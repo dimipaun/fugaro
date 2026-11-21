@@ -59,8 +59,15 @@ func buildBudgetWorld(t *testing.T, f *cloudFixture) *gcpfake.RTDB {
 	if f.db != nil {
 		return f.db
 	}
-	db := gcpfake.NewRTDB(t)
-	f.appendConfig(t, budgetBlock(db))
+	if f.budget == nil {
+		t.Fatal("buildBudgetWorld needs a fixture whose installation has a budget database (newCloudFixture)")
+	}
+	db := f.budget.DB
+	f.rewriteConfig(t, f.budget.ConfigBlock(), budgetBlock(db))
+	// The block in the config is this world's from here on, and the field names
+	// the harness's own line: a later helper (noBudget, appendConfig) would
+	// otherwise look for the line this just replaced.
+	f.budget = nil
 	adoptBudgetFake(db)
 	buildBudgetCaps(db)
 	stubBuildPricer(t)

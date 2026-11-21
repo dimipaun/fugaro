@@ -949,13 +949,15 @@ func TestJoinPlanTaskDropsAnIDThatIsNotOne(t *testing.T) {
 
 // TestJoinCarriesTheRunsRigor: the row carries the record's rigor block, and
 // the JSON key is `rigor`, so `runs ls --json`, `diagnose` and the console
-// read the mode, the layer that won and the areas that matched from the one
-// place the record wrote them (D24). A run with no block carries none: nil,
-// never an empty block a reader would render as a decision nobody took.
+// read the level, the layer that won and the areas that matched from the one
+// place the record wrote them (D24). The block reaches the row under both
+// keys, `mode` and `level` (LD2), so a reader written against either CLI's
+// record reads the same figure. A run with no block carries none: nil, never
+// an empty block a reader would render as a decision nobody took.
 func TestJoinCarriesTheRunsRigor(t *testing.T) {
 	r := rec(runstore.StatusSucceeded, nil)
-	r.Rigor = &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
-		Areas: []runstore.RigorArea{{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap}},
+	r.Rigor = &runstore.RigorRecord{Level: rigor.Critical, From: rigor.FromArea,
+		Areas: []runstore.RigorArea{{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtBootstrap}},
 		At:    runstore.RigorAtFinalize, Revision: "origin/main"}
 	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
 	if row.Rigor == nil || row.Rigor.Mode != rigor.Critical || row.Rigor.From != rigor.FromArea ||
@@ -966,7 +968,7 @@ func TestJoinCarriesTheRunsRigor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"rigor":{"mode":"critical","from":"area"`) {
+	if !strings.Contains(string(b), `"rigor":{"mode":"critical","level":"critical","from":"area"`) {
 		t.Fatalf("the row does not carry the block under %q:\n%s", "rigor", b)
 	}
 	if plain := Join(Input{Task: spec}, prices, now); plain.Rigor != nil {
@@ -999,10 +1001,10 @@ func TestJoinBoundsTheRecordedRigor(t *testing.T) {
 	// block whose answer contradicts its own mode.
 	var many []runstore.RigorArea
 	for i := range 3 * rigor.MaxAreas {
-		many = append(many, runstore.RigorArea{Name: fmt.Sprintf("a%03d", i), Mode: rigor.POC, At: runstore.RigorAtRound})
+		many = append(many, runstore.RigorArea{Name: fmt.Sprintf("a%03d", i), Level: rigor.POC, At: runstore.RigorAtRound})
 	}
-	many[len(many)-1] = runstore.RigorArea{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap}
-	r.Rigor = &runstore.RigorRecord{Mode: rigor.POC, From: rigor.FromRepo, Areas: many, At: runstore.RigorAtFinalize}
+	many[len(many)-1] = runstore.RigorArea{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtBootstrap}
+	r.Rigor = &runstore.RigorRecord{Level: rigor.POC, From: rigor.FromRepo, Areas: many, At: runstore.RigorAtFinalize}
 	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
 	if row.Rigor == nil || len(row.Rigor.Areas) != rigor.MaxAreas {
 		t.Fatalf("an oversized block reached the row as %+v", row.Rigor)
@@ -1013,9 +1015,9 @@ func TestJoinBoundsTheRecordedRigor(t *testing.T) {
 	// An area whose own mode is unreadable is dropped whole rather than
 	// reaching a reader as a rule it cannot rank.
 	noMode := rec(runstore.StatusSucceeded, nil)
-	noMode.Rigor = &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
+	noMode.Rigor = &runstore.RigorRecord{Level: rigor.Critical, From: rigor.FromArea,
 		Areas: []runstore.RigorArea{
-			{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap},
+			{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtBootstrap},
 			{Name: "web", At: runstore.RigorAtRound},
 		}, At: runstore.RigorAtFinalize}
 	if got := Join(Input{Task: spec, Launch: launch, Record: noMode}, prices, now).Rigor; got == nil || len(got.Areas) != 1 || got.Areas[0].Name != "payments" {

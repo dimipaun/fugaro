@@ -38,6 +38,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/redact"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -123,6 +124,13 @@ type launchResult struct {
 	// block wherever the read could answer one at all, even with nothing but an
 	// empty chain in it.
 	*ChainLimits
+	// ReviewSpecReason is why this launch's review spec was dropped: the job
+	// image predates reviewSpecSince and cannot read review_spec, from_findings
+	// or own_text, so the launcher leaves them out and the review judges the
+	// code alone (D2933, reviewSpecSkew). It is the same reason the one warning
+	// line on stderr carries, so a caller reading only the document is told
+	// what the person read; empty for every launch whose spec was not dropped.
+	ReviewSpecReason string `json:"review_spec_reason,omitempty"`
 	// Error is the refusal this launch is answered with, nil for a launch
 	// that was not refused: a --retry of a run that already started starts
 	// nothing, and the document carries the refusal the command exits with,
@@ -233,6 +241,21 @@ type runOptions struct {
 	// fact; the release that owns that file documents it (reconciliation
 	// F22/E4).
 	reviewRun string
+	// codeOnly is --code-only: review the pull request's code alone. It is one
+	// of the two flags `fugaro review` and `fugaro run --recipe <a mode: review
+	// recipe>` share (R11, D2934), and it is the per-launch switch beside the
+	// repository's and the project's setting (spec §3): the launcher resolves a
+	// spec of no spec, reason --code-only, so the review job records that it
+	// judged the code alone. Refused with --spec, and refused on a recipe that
+	// is not mode: review, which is a launch that has no review to switch.
+	codeOnly bool
+	// specFile is --spec: the FILE whose text is the task this review judges
+	// the pull request's diff against, overriding the task of the run that
+	// opened it (spec §4). It is the way an orphan pull request — one no run
+	// produced — is reviewed against something, and its text is redacted like
+	// any other a launcher adds (R13). A file over MaxReviewSpecBytes is
+	// refused with its size rather than clipped (R4).
+	specFile string
 	// ownerRuled is --owner-ruled: the repository owner's answer to the
 	// findings a run on this PR left for them (OD1). A follow-up whose
 	// previous run stopped waiting on owner decisions is refused without it
@@ -248,7 +271,16 @@ type runOptions struct {
 	// that already holds a task, refused unless the launch resolves to an
 	// artifact recipe, and refused over any of the workflow's three
 	// inputs caps before the first byte is uploaded.
-	attach        []string
+	attach []string
+	// commitReports is --commit-reports: hand the project's stored reports to
+	// the run this launch starts (R16, D2754). It is refused on a run id that
+	// already holds a task, refused together with --attach (a report object is
+	// never a recipe input), refused unless the run's recipe carries the
+	// commit_reports step, and refused on a job image whose runner does not
+	// read the reports a task hands in — all before the first byte, which is
+	// read from the store with this launcher's own credential and uploaded
+	// under the run's own prefix.
+	commitReports bool
 	asJSON        bool
 	noBudgetCheck bool
 	recipe        string
@@ -281,7 +313,7 @@ type runOptions struct {
 	// its own, takes the title of the pull request it continues
 	// (newFollowUpSpec, followUpPRTitle).
 	title string
-	// token is the named Claude account (docs/design/named-oauth-tokens.md)
+	// token is the named Claude account (docs/named-oauth-tokens/spec.md)
 	// this run uses: fugaro run --token. A follow-up (--pr) inherits its
 	// previous run's account when this is empty; an explicit value overrides
 	// it instead (owner ruling, 2026-10-12, task 9b review), through the
@@ -298,6 +330,14 @@ type runOptions struct {
 	// display fact and reaches no other reader: the task is the record, and
 	// it carries the resolved account alone (F4).
 	account launchAccount
+	// reviewSpecReason is why this launch's review spec was dropped, set by
+	// the gate that drops it (reviewSpecSkew) where the launch begins
+	// (finishLaunch) and read there into the reply (launchResult.
+	// ReviewSpecReason), so the one reason reaches both the warning line on
+	// stderr and the launch's --json document. Empty is every launch whose
+	// spec was not dropped, and the field is cleared before the gates run, so
+	// one attempt's drop never lands in the next attempt's document.
+	reviewSpecReason string
 	// allowDuplicate is --allow-duplicate: the launcher's own word that a
 	// second run of the plan task above is deliberate, and the one way past
 	// the duplicate refusal (planTaskDuplicate). False (the default) is the
@@ -476,7 +516,7 @@ func newRunCmd() *cobra.Command {
 			"overriding its fugaro.yaml. There is no --compression flag: turning compression\n" +
 			"on is a reviewed fugaro.yaml change. A follow-up (--pr) keeps its run's choice,\n" +
 			"and --retry takes none (the stored task keeps its own).\n\n" +
-			"--mode MODE asks for a rigor mode for this run: " + rigor.ModeList() + ".\n" +
+			"--mode MODE asks for a rigor mode for this run: " + rigor.RigorList() + ".\n" +
 			"It may raise the mode the run resolves from its own configuration\n" +
 			"(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)\n" +
 			"and never lower it, so a launch that asks for less cannot outvote a repository\n" +
@@ -515,7 +555,8 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
-	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
+	f.BoolVar(&o.commitReports, "commit-reports", false, "hand the project's stored reports (reports/ of the runs bucket) to the run this launch starts: reads them with your own account, uploads every one the checkout's mirror folder does not already hold byte for byte into the run's own reports/, and names them in the task for the commit_reports step to commit. Needs --recipe commit-reports (the step is what reads them), is refused together with --attach, and is refused on a run ID that already has a task")
+	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.RigorList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
 	f.StringArrayVar(&o.contextRepos, "context", nil, "a repository this run reads and never writes, as owner/name: repeatable, at most "+fmt.Sprint(task.MaxContextRepos)+", each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
@@ -524,6 +565,8 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.reviewRun, "review-run", "", "carry the findings of review RUN (<repo-slug>/<run-id> or a run ID) into this fix round's brief; needs --pr, and refused with a mode: review recipe")
 	_ = f.MarkHidden("review-run")
 	f.StringVar(&o.ownerRuled, "owner-ruled", "", "the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run")
+	f.BoolVar(&o.codeOnly, "code-only", false, "review the pull request's code alone: the reviewer is given no task and judges the diff on its own merits (the per-launch switch beside the repository's agent.review_against_task and the project's published key). Needs a mode: review recipe and --pr, and refused with --spec")
+	f.StringVar(&o.specFile, "spec", "", "review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over "+fmt.Sprint(task.MaxReviewSpecBytes)+" bytes is refused with its size. Needs a mode: review recipe and --pr, and refused with --code-only")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
 	f.BoolVar(&o.security, "security", false, "ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — as --mode raises a mode and never lowers one, and a run that says nothing resolves its levels from its configuration alone")
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
@@ -534,7 +577,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "change-set", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "context", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
+var taskFlags = []string{"repo", "change-set", "ref", "workflow", "run-id", "batch", "title", "plan-task", "allow-duplicate", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "commit-reports", "mode", "path", "context", "tier", "security", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -825,6 +868,21 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			}
 		}
 	}
+	// --code-only and --spec, R11's two refusals: together they ask a review
+	// for different things, and on a launch that resolved no mode: review
+	// recipe (an ordinary recipe, a follow-up, a retry) neither has a review to
+	// switch. Made here, where the recipe's mode is known and before any spec
+	// builder runs, so a launch refused over the flags leaves nothing behind —
+	// and before --attempts and --change-set return below, because neither of
+	// those takes a review either, and a batch's own refusals are its own
+	// (runAttempts).
+	mode := ""
+	if reviewRecipe != nil {
+		mode = recipe.ModeReview
+	}
+	if err := reviewSpecFlagsRefusal(o.codeOnly, o.specFile, mode); err != nil {
+		return err
+	}
 	if attemptsSet {
 		// The batch opens its own reporter once its own refusals are behind
 		// it (runAttempts): a batch this launcher refuses is no run to keep a
@@ -867,6 +925,12 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// a repeated --run-id against and the whole of what it stores, so a
 		// repeat of this same launch finds the task it stored instead of a
 		// text that differs from it by the findings.
+		//
+		// ownText is the person's own words, kept before the findings are put
+		// in front of them: a review of this pull request quotes them and
+		// leaves the reviewer's report out (from_findings and own_text, R2,
+		// F30).
+		ownText := text
 		if o.reviewRun != "" {
 			repo := o.repo
 			if repo == "" {
@@ -881,6 +945,17 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			text = findings + text
 		}
 		slug, spec, reused, err = prSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
+		// A stored task that is this same launch keeps what it was launched
+		// with, and a fresh one carries the two fields now: a follow-up
+		// accepted today keeps being accepted, so the person's text is
+		// clipped rather than refused (R2).
+		if err == nil && o.reviewRun != "" && !reused {
+			spec.FromFindings = true
+			spec.OwnText = clipReviewSpecText(redact.Text(ownText, nil))
+			if err := spec.Validate(); err != nil {
+				return userErr("%v", err)
+			}
+		}
 	default:
 		slug, spec, err = newSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
 		firstRun = true
@@ -1143,6 +1218,15 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			return launchResult{}, err
 		}
 	}
+	// The same check for --commit-reports, and for the same reason: the
+	// reports a launch hands in are create-only writes under the run's own
+	// prefix, so a run id that already holds a task is refused here rather
+	// than after a report of a finished run was written over.
+	if o.commitReports {
+		if err := commitReportsRefusesStoredRun(ctx, s, spec.RunID); err != nil {
+			return launchResult{}, err
+		}
+	}
 	prior, err := existingLaunch(ctx, env, s, spec)
 	if err != nil {
 		return launchResult{}, err
@@ -1158,6 +1242,14 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// went: it started with the task it started with.
 	if prior != nil && len(o.attach) > 0 {
 		return launchResult{}, userErr("run ID %s has already launched; --attach uploads a run's files before it starts, so it never adds attachments to a run that already went — use a new run ID", spec.RunID)
+	}
+	// And the other half for the reports: every --commit-reports step lives
+	// inside the prior == nil block below — the recipe refusal, the image
+	// gate, the upload — so a launch that found a prior would write a task
+	// naming no reports while the reports the person asked for went nowhere.
+	// A run commits the reports it started with.
+	if prior != nil && o.commitReports {
+		return launchResult{}, userErr("run ID %s has already launched; --commit-reports hands the stored reports in before the run starts, so it never adds them to a run that already went — use a new run ID", spec.RunID)
 	}
 	// The check is the pull request link's, and IsFollowUp is the stored task's
 	// own branch: a reused --retry or a reused --pr follow-up carries one, while
@@ -1213,6 +1305,10 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			skipBudget = true
 		}
 	}
+	// This attempt's own reasons, cleared before the gates below fill them: the
+	// options are the caller's and a batch runs this once per attempt, so a
+	// line kept from one attempt must not be reported as the next one's.
+	o.reviewSpecReason = ""
 	if prior == nil {
 		caps, err := freshLaunchGates(ctx, env, o, slug, s, spec, compressionGate, warn, skipBudget)
 		if err != nil {
@@ -1226,6 +1322,16 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// exactly the bytes that are in the bucket.
 		if err := attachUpload(ctx, env, spec, s.Prefix(), o.attach, caps); err != nil {
 			return launchResult{}, err
+		}
+		// The stored reports, by the same rule and in the same place: read
+		// from reports/ with this launcher's own credential, uploaded one
+		// object each under the run's own prefix, and named in the task
+		// createTask writes next. A launch without --commit-reports does
+		// nothing here — not even a listing of the store.
+		if o.commitReports {
+			if err := commitReportsUpload(ctx, env, spec, s.Prefix(), warn); err != nil {
+				return launchResult{}, err
+			}
 		}
 		// The manifest a mode: evaluate launch leaves for its own recipe's step
 		// (A5.2), by the same rule as the attachments above: after every
@@ -1258,6 +1364,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// path would be a second telling of it on a launch that never happened.
 	res.Project = env.lc.Name
 	res.Recipe = launchRecipeOf(spec, chooses)
+	res.ReviewSpecReason = o.reviewSpecReason
 	if spec.ProjectLayer != nil {
 		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
 	}
@@ -1392,6 +1499,18 @@ func sampledPair(ctx context.Context, env *cloudEnv, o *runOptions, slug string,
 	// be, and a task file that names inputs has the same shape.
 	if len(o.attach) > 0 || len(spec.Inputs) > 0 {
 		why := "the launch attaches files, and a challenger would read them under its own run id, where they are not"
+		pairSkip(warn, why)
+		return nil, why
+	}
+	// A launch that hands stored reports in samples nothing either, and for
+	// the reason the attachments above give: the objects are under THIS run's
+	// prefix, and the challenger is a run id of its own (launchChallenger
+	// clones the champion's task after the upload filled in spec.Reports), so
+	// its task would name report objects that are not in its bucket and the
+	// commit step would refuse at bootstrap. The two arms cannot be the one
+	// run a pair needs them to be.
+	if o.commitReports || len(spec.Reports) > 0 {
+		why := "the launch hands the stored reports in, and a challenger would read them under its own run id, where they are not"
 		pairSkip(warn, why)
 		return nil, why
 	}
@@ -1834,6 +1953,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := contextReposRefusal(ctx, env, slug, spec); err != nil {
 		return config.Inputs{}, err
 	}
+	// The Batch backend's own gate, beside the two above and for the same
+	// reason: a Batch job mounts nothing, so a launch there whose repository
+	// the credentials service does not serve is a run with no model credential
+	// at all, refused here rather than started (batchLaunchRefusal, BR11).
+	if err := batchLaunchRefusal(ctx, env, spec); err != nil {
+		return config.Inputs{}, err
+	}
 	co, kind, clone, shared, mode, err := launchWorkflowShape(ctx, env, spec)
 	if err != nil {
 		return config.Inputs{}, err
@@ -1841,6 +1967,16 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	agentRecipe := ""
 	if co != nil {
 		agentRecipe = co.Agent.Recipe
+	}
+	// --commit-reports, ahead of --attach: its pair refusal is the one that
+	// must fire when both flags are given, and it is the sentence that names
+	// both of them (commitReportsLaunch). It uploads nothing here either —
+	// commitReportsUpload does that below, with attachUpload, after the last
+	// gate that can still refuse this launch.
+	if o.commitReports {
+		if err := commitReportsLaunch(ctx, env, slug, spec, kind, clone, len(o.attach) > 0, warn); err != nil {
+			return config.Inputs{}, err
+		}
 	}
 	// --attach, before the gates below: its recipe refusal, its caps,
 	// D9's line and its image gate (design §4, plan P7/P9). It uploads
@@ -1858,6 +1994,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// (baseBranchSkew). Here, and not with the gates below, because it
 	// decides what the task createTask writes.
 	baseBranchSkew(ctx, env, slug, spec, mode, warn)
+	// The review spec's own gate, beside it and for the same reason: a runner
+	// older than reviewSpecSince refuses a task carrying review_spec,
+	// from_findings or own_text outright, so a review's spec is dropped rather
+	// than the launch, with one line naming `fugaro update` (reviewSpecSkew,
+	// D2933). Here, and not with the gates below, because it decides what the
+	// task createTask writes.
+	o.reviewSpecReason = reviewSpecSkew(ctx, env, slug, spec, mode, warn)
 	// What this launch asks of its job image's runner about review
 	// levels, resolved once for the two branches below (a derived image
 	// and a checkout: clone workflow), the way compressionGate is: a
@@ -1973,6 +2116,20 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// than on a task field: see checkRigorImage. Unconditional, since
 		// the repository's file alone can carry the key.
 		if err := checkCloneRigorImage(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The spelling gate on that same file, judged the same way: the
+		// key above passes on any image newer than 0.11.0, and an area
+		// rule's `level:` or the scalar shorthand still dies at bootstrap
+		// on one older than this release: see checkRigorSpellingImage.
+		if err := checkCloneRigorSpellingImage(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The members and the per-repo map of that same block, on the newer
+		// rigorMembersSince and in the layer alone: a repository's file
+		// refuses members: and has no repos: key. See
+		// checkRigorMembersImage.
+		if err := checkCloneRigorMembersImage(ctx, env, spec, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The governance: gate, judged the same way and for the same
@@ -2100,10 +2257,26 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneStopFractionImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The keep-warm beat's switch, on the same configuration read and
+		// for the same reason: a runner older than workspaceBeatSince
+		// refuses agent.workspace_beat and the layer's
+		// defaults.agent.workspace_beat at bootstrap, whatever they say
+		// (checkCloneWorkspaceBeatImage).
+		if err := checkCloneWorkspaceBeatImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The triage stage's switch, on the same configuration read: a
 		// runner older than triageSince refuses agent.triage at
 		// bootstrap, whatever it says (checkCloneTriageImage).
 		if err := checkCloneTriageImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The review-against-task switch, on the same configuration read
+		// and for the same reason: a runner older than reviewSpecSince
+		// refuses agent.review_against_task at bootstrap, whatever it
+		// says, and runs no such review whatever the file asks
+		// (checkCloneReviewAgainstTaskImage).
+		if err := checkCloneReviewAgainstTaskImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The vision slot, on the same configuration read: a runner
@@ -2205,6 +2378,16 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkRigorImage(ctx, env, slug, spec, kind, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The spelling gate on that same file: see checkRigorSpellingImage.
+		if err := checkRigorSpellingImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The members and the per-repo map of that same block, on the newer
+		// rigorMembersSince and in the layer alone: see
+		// checkRigorMembersImage.
+		if err := checkRigorMembersImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The governance: gate, the same shape as the clone branch's
 		// above and for the same reason.
 		if err := checkGovernanceImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -2293,8 +2476,18 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 			return config.Inputs{}, err
 		}
 		// The same gate as the clone branch's above, and for the same
+		// reason: see checkWorkspaceBeatImage.
+		if err := checkWorkspaceBeatImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
 		// reason: see checkTriageImage.
 		if err := checkTriageImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see checkReviewAgainstTaskImage.
+		if err := checkReviewAgainstTaskImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The same gate as the clone branch's above, and for the same
@@ -2757,7 +2950,7 @@ func planTaskFlag(cmd *cobra.Command, o *runOptions) error {
 
 // rigorFlags is the run's own rigor request, validated once for every launch
 // shape that accepts it (a first run, a best-of-N batch, a review, a
-// follow-up): the mode against the closed vocabulary (rigor.Modes, D20), and
+// follow-up): the mode against the closed vocabulary (rigor.Rigors, D20), and
 // the declared paths against the two bounds a task spec carries
 // (task.MaxDeclaredPaths, task.MaxDeclaredPathBytes).
 //
@@ -2768,8 +2961,8 @@ func planTaskFlag(cmd *cobra.Command, o *runOptions) error {
 // same rules are applied again by task.Spec.Validate to whatever a task
 // carries, so a hand-written task.json cannot smuggle one past a launcher.
 func rigorFlags(o *runOptions) error {
-	if o.rigor != "" && !rigor.Known(rigor.Mode(o.rigor)) {
-		return userErr("--mode %q: use %s, or leave it off to resolve the mode from the run's own configuration", o.rigor, rigor.ModeList())
+	if o.rigor != "" && !rigor.Known(rigor.Rigor(o.rigor)) {
+		return userErr("--mode %q: use %s, or leave it off to resolve the mode from the run's own configuration", o.rigor, rigor.RigorList())
 	}
 	if len(o.paths) > task.MaxDeclaredPaths {
 		return userErr("--path: at most %d paths may be declared, got %d", task.MaxDeclaredPaths, len(o.paths))
@@ -2879,7 +3072,7 @@ var changeSetExcludes = []struct{ name, why string }{
 // the layers already meet: the request may raise and never lower (D6), so such
 // a request is recorded as asked and changes nothing, and a launcher that typed
 // it would otherwise believe it took effect. Hotfix is not one of those cases:
-// it is the mode a request takes whole (rigor.Mode.PerRun), so a resolution
+// it is the mode a request takes whole (rigor.Rigor.PerRun), so a resolution
 // that names the request as the layer that decided it — which is what this
 // reads — is the request that did take effect. It reads the checkout's
 // fugaro.yaml with the project layer, the closest thing to the base branch the
@@ -2894,10 +3087,10 @@ func noteRigorRequest(ctx context.Context, o *runOptions, repo string, warn io.W
 		return
 	}
 	cfg := c.RigorConfig()
-	if rigor.Resolve(cfg, rigor.Request{Mode: rigor.Mode(o.rigor), Paths: o.paths}).From == rigor.FromRequest {
+	if rigor.Resolve(cfg, rigor.Request{Level: rigor.Rigor(o.rigor), Paths: o.paths}).From == rigor.FromRequest {
 		return
 	}
-	resolved := rigor.Resolve(cfg, rigor.Request{Paths: o.paths}).Mode
+	resolved := rigor.Resolve(cfg, rigor.Request{Paths: o.paths}).Level
 	fmt.Fprintf(warn, "--mode %s is not higher than the repository's resolved mode %s: it has no effect\n", o.rigor, resolved)
 }
 
@@ -3048,7 +3241,7 @@ func buildAttemptSpec(plan *attemptPlan, o *runOptions, text string) (string, *t
 	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: plan.repo, Ref: plan.ref, BaseBranch: plan.base, Workflow: plan.workflow, Task: text, Title: o.title,
 		PlanTask: o.planTask, RequestedBy: plan.me, Batch: o.batch, Recipe: plan.recipe, Mode: plan.mode,
-		Rigor: rigor.Mode(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier), DigestRuns: plan.digestRuns}
+		Rigor: rigor.Rigor(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier), DigestRuns: plan.digestRuns}
 	if plan.totalOverride != "" {
 		spec.Overrides.TotalTimeout = plan.totalOverride
 	}
@@ -3518,7 +3711,18 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	printRecipeNote(warn, rr, true)
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, BaseBranch: base, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...),
-		Rigor: rigor.Mode(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier)}
+		Rigor: rigor.Rigor(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier)}
+	// The task the pull request was written for, resolved here rather than by
+	// the job: the launcher is the only side that reads the runs bucket, and
+	// the review job is handed the answer (R1, D2934). A review of a pull
+	// request no run produced, or one whose runs are older than the lookback,
+	// carries a none with the reason instead of no block at all — the review
+	// says so in its artifact, and the person reads why it judged the code
+	// alone.
+	ask := launchSpecAsk{PRs: o.pr, CodeOnly: o.codeOnly, SpecFile: o.specFile}
+	if spec.ReviewSpec, err = resolveLaunchSpec(ctx, env, slug, ask, warn); err != nil {
+		return "", nil, err
+	}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
@@ -3542,7 +3746,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // and not a stage's. A non-default name is refused (claudeAccountAllowed)
 // unless config.AllowedClaudeAccounts (the local config's claude_accounts)
 // lists it for repo, before any launch (design
-// docs/design/named-oauth-tokens.md §3 T7) — checked whether or not a checkout
+// docs/named-oauth-tokens/spec.md §3 T7) — checked whether or not a checkout
 // is available here, so --repo X --token N outside any checkout is held to the
 // same rule a checkout's own resolution would be.
 //
@@ -3561,7 +3765,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // The mix rule is judged first, for every call and whatever stage was asked
 // for (config.CheckStageAccountMix): an api-key run may name one Claude
 // account, for the senior review and the adversarial review and no other stage
-// (docs/design/mixed-credentials.md §11, the owner's B0 ruling), and a run
+// (docs/mixed-credentials/spec.md §11, the owner's B0 ruling), and a run
 // under vertex or cascade may name none at all. That refusal belongs to the
 // launch rather than to the stage it was asked about: a config that declares a
 // mix the ruling does not admit is refused before anything is read or started,
@@ -3598,14 +3802,14 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // Both halves are the run's, and neither is the working tree's. The account is
 // read at the ref the run checks out, out of this checkout's git objects
 // (agentAtRef/checkoutFugaroYAMLAtRef), because the committed fugaro.yaml is
-// the only place that may name an account (docs/design/named-oauth-tokens.md
+// the only place that may name an account (docs/named-oauth-tokens/spec.md
 // T2) — a working tree left on another branch, or carrying an uncommitted
 // edit, would otherwise select the account the launch runs as: the job it
 // lands on holds that account's token, and that account's allow_repos is what
 // decides whether this repository may use it. The auth is the *run's* too, and
 // that means the ref's bytes resolved over the project layer (agentAtRef's
 // second answer), not the ref's bytes alone: agent.auth is a project-scope,
-// layerable key (docs/design/layered-config.md's scopes table), so the run
+// layerable key (docs/layered-config/spec.md's scopes table), so the run
 // resolves it layer-applied (projectJobAgentAuth) — a launcher that read the
 // raw file would answer Fugaro's own default (applyDefaults' vertex) for the
 // shape projects adopt accounts with, a layer whose defaults say
@@ -3883,7 +4087,7 @@ func claudeAccountChoice(ctx context.Context, env *cloudEnv, repo, flag, stage, 
 
 // mixedRunAccount is the account a mixed run's launch lands on: the one Claude
 // OAuth account this run's review stages are served by, and "" when the run is
-// no mix at all (docs/design/mixed-credentials.md §11).
+// no mix at all (docs/mixed-credentials/spec.md §11).
 //
 // It is the launch's own account for a mixed run and not the stages' alone,
 // because the account is what picks the job: spec.OAuthToken names the job
@@ -4020,7 +4224,7 @@ func mixMode(ctx context.Context, env *cloudEnv, repo string, co *config.Config)
 
 // mixedStageAccount is the account rung 4 puts on one of the mix's two stages
 // of an api-key run, its whole rule, and "" when the mix is not admitted for
-// that stage (docs/design/mixed-credentials.md §11, the owner's ruling of
+// that stage (docs/mixed-credentials/spec.md §11, the owner's ruling of
 // 2026-11-05: "IF default_claude_account is set AND we have an Anthropic model
 // for senior review and/or security review, then we get mixed runs"). rung 2 is
 // read before this call and wins, so the stage's own key is not consulted here.
@@ -4096,7 +4300,7 @@ func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth str
 	if mixMode(ctx, env, repo, co) != policy.ModeEnforce {
 		return "", "", nil
 	}
-	// The run holds one Claude account (docs/design/mixed-credentials.md §11,
+	// The run holds one Claude account (docs/mixed-credentials/spec.md §11,
 	// "never a second provider's key"): the other mixed stage's own key names
 	// the mix's account when it names one, and a project default that names a
 	// *different* one would be a second credential this run may not hold. It is
@@ -4152,9 +4356,9 @@ func mixedStageModel(a config.Agent, stage string) string {
 // never the working tree), and the two facts are read differently because the
 // two keys have different scopes. agent.oauth_token is repository-scope — the
 // committed fugaro.yaml is the only place that may name an account
-// (docs/design/named-oauth-tokens.md T2) and no project layer may name one —
+// (docs/named-oauth-tokens/spec.md T2) and no project layer may name one —
 // so the file's own value is the run's, via the strict config.AgentOf. And
-// agent.auth is project-scope and layerable (docs/design/layered-config.md's
+// agent.auth is project-scope and layerable (docs/layered-config/spec.md's
 // scopes table): the run composes it from the ref's bytes and the project
 // layer its task carries, through runner.ResolveConfig, exactly as
 // projectJobAgentAuth does, and a launcher that answered from the raw file
@@ -4368,7 +4572,7 @@ func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 // claudeAccountMembership is the allow-list half of claudeAccountAllowed, and
 // the whole check for a *stage* account: every name is held to the account's own
 // allow_data_to for the repository, whatever permitted rung it came from
-// (docs/design/mixed-credentials.md §11, "every name is still held to
+// (docs/mixed-credentials/spec.md §11, "every name is still held to
 // claude_accounts's allow-list"). It is one function rather than two copies so
 // that the run's own rungs and the stage's cannot drift: a name one admits for
 // this repository is a name the other admits, and a name one refuses the other
@@ -4536,10 +4740,11 @@ func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *
 	}
 	// The job this launch runs on, decided by the function the launch itself
 	// decides it with (project_job.go's launchProjectJobFor): a shared project
-	// job is never handed the service's address, so the question below is about
-	// this launch's job and not about the repository alone. A gate that asked
-	// it of the repository's own job for a launch that lands on a shared one
-	// would pass a launch whose run is handed no address at all.
+	// job is handed the service's address on its PROFILE's switch and not on
+	// this repository's, so the question below is about this launch's job and
+	// not about the repository alone. A gate that asked it of the repository's
+	// own job for a launch that lands on a shared one would pass a launch whose
+	// run is handed no address at all.
 	//
 	// A review launch is not one of those: its execution runs on the
 	// review-only variant, which its own deployment tells the address
@@ -4551,20 +4756,22 @@ func contextReposRefusal(ctx context.Context, env *cloudEnv, slug string, spec *
 	if err != nil {
 		return err
 	}
-	jobName := ""
+	jobName, jobProfile := "", ""
 	if job != nil && spec.Mode != recipe.ModeReview {
-		jobName = job.Name
+		jobName, jobProfile = job.Name, job.Profile
 	}
 	auth, deployed := env.repoServiceAuth(ctx, spec, io.Discard)
-	if len(credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, auth, env.policyMode(ctx), deployed, false)) == 0 {
+	if len(credentialsServiceLaunchEnv(env.lc, jobProfile, spec.Repo, auth, env.policyMode(ctx), deployed, false)) == 0 {
 		if jobName != "" {
-			// A shared project job is told the address on the same switch a
-			// repository's own job is (B5.2), so the sentence below would
+			// A shared project job is told the address on its profile's
+			// switch (B5.2, and B5.7 for the drop), so the sentence below would
 			// answer for the repository's own job and name a remedy that is the
-			// repository's: the profile's switch is its own record and its
-			// document's auth, and `fugaro update --repo` is what writes it.
-			return userErr("--context needs the credentials service's address on the job this launch runs on, and this launch runs on %s, a shared project job that is not switched onto the service: the address is written on a shared project job only where the installation carries the service, this repository's record says its runs use it, and agent.auth is one the service serves (today agent.auth: cascade alone), and a run of one without it could read no context repository, so this launch stops before any execution exists. Run '%s update --repo %s' in your own terminal after setting agent.auth: cascade in the repository's fugaro.yaml, or run the task in the repository whose files it needs, with no --context",
-				pluginwire.Printable(jobName), selfCommand(), spec.Repo)
+			// repository's: what puts such a job on the service is one of the
+			// profile's repositories carrying the record — `fugaro update
+			// --repo` in THAT checkout — and this launch's own repository
+			// cannot answer it.
+			return userErr("--context needs the credentials service's address on the job this launch runs on, and this launch runs on %s, the shared project job of profile %s, which is not switched onto the service: the address is written on a shared project job where the installation carries the service, the profile is one this config declares, and one of the repositories the profile admits is on the switch — agent.auth one the service serves (today agent.auth: cascade alone) with a record saying its root was applied with the service on, which is what '%s update --repo <that repository>' writes — and a run of one without it could read no context repository, so this launch stops before any execution exists. Put one of profile %s's repositories on the switch, or run the task in the repository whose files it needs, with no --context",
+				pluginwire.Printable(jobName), pluginwire.Printable(jobProfile), selfCommand(), pluginwire.Printable(jobProfile))
 		}
 		return userErr("--context needs a credentials service that serves %s, and this installation's does not: the service is what would read a context repository for a run, and the address it is reached at is written on the job only where the installation carries the service and this repository's runs use an auth it serves (today agent.auth: cascade alone). Run '%s update' in your own terminal to deploy the service where the installation can carry it, then set agent.auth: cascade in %s's fugaro.yaml and run '%s update --repo %s' to apply that repository's root with the switch on — or drop --context",
 			spec.Repo, selfCommand(), spec.Repo, selfCommand(), spec.Repo)
@@ -6150,18 +6357,19 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	}
 	// The credentials service, when its switch is on for this repository: a
 	// repository's own job and, since B5.2, the shared project job a switched
-	// profile's launch runs on (see the helper). A review launch is told
+	// profile's launch runs on — judged on the PROFILE, which is the switch
+	// B5.7's drop is taken on (see the helper). A review launch is told
 	// nothing: its variant carries the address from its own deployment. The
 	// pair the switch is judged with is repoServiceAuth's, read the same way
 	// by the proxy gate that has to know whether this launch is a proxied one
 	// (proxiedRepo) — one reader, because a gate reading the published node
 	// alone would refuse a launch whose run holds the repository's own token.
-	jobName := ""
+	jobProfile := ""
 	if job != nil {
-		jobName = job.Name
+		jobProfile = job.Profile
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
-	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, env.policyMode(ctx), deployed, reviewJob)
+	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobProfile, spec.Repo, svcAuth, env.policyMode(ctx), deployed, reviewJob)
 	// The run's slip, asked for exactly where the service's address was just
 	// written: the grant the credentials service keeps for this run, whose id
 	// the job claims at its first call and presents on every call after it
@@ -6240,6 +6448,12 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s launches the task only if it never started, and refuses with nothing launched, naming the run's pull request, if it did",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
+	// The pull-request index entry of a `--pr` launch, written here: the run
+	// really exists from the line above, and a follow-up started on a job
+	// image older than the index writes none of its own (followup.go's
+	// writePRIndex). The runner's own write of the same run is a no-op
+	// against this one, whichever lands first.
+	writePRIndex(ctx, env, slug, spec, now, launchWarn)
 	// The backend the launch actually used, from the seam, as above: the
 	// launch succeeded on env.be, so env.be's codec is what names it.
 	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: launchBackend(env.be), Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, PlanTask: spec.PlanTask, LaunchedAt: now.UTC()}
@@ -6334,10 +6548,10 @@ func servicesLaunchEnv(entry config.Entry) string {
 // credentialsServiceLaunchEnv is what this launch puts on the execution's
 // environment for the credentials service (plan task C1.24, D146/D147): the
 // service's URL, under the one name the runner and the keyless GitHub path
-// both read, or nothing at all. job is the shared project job this launch
-// resolved, or "" for a repository's own job, repo is the repository the run
-// works on and auth its agent.auth as the run will read it (the ref's
-// fugaro.yaml, else the checkout's).
+// both read, or nothing at all. sharedProfile is the PROFILE of the shared
+// project job this launch resolved, or "" for a repository's own job, repo is
+// the repository the run works on and auth its agent.auth as the run will read
+// it (the ref's fugaro.yaml, else the checkout's).
 //
 // THE SWITCH DECIDES, and it is the same function the plan decides with
 // (infra.CredentialsServiceServes): the installation has the block, the record
@@ -6353,6 +6567,10 @@ func servicesLaunchEnv(entry config.Entry) string {
 // proxied one (proxiedRepo). A job that still mounts its own model credential
 // and is handed the address of a service that cannot serve it would lose the
 // credential it has and get nothing in its place.
+//
+// That is the answer for a repository's OWN job. A launch on a shared project
+// job is judged on its PROFILE (below), because that is the switch its mounts
+// were taken on.
 //
 // mode is the budget mode the published node carries, read by the launcher
 // (policyMode) and handed in: it is the switch's fourth condition for an
@@ -6372,31 +6590,55 @@ func servicesLaunchEnv(entry config.Entry) string {
 // PR #903). So a teammate's `fugaro run`, on a machine that never ran the
 // opt-in, still hands the job the installation's service.
 //
-// A SHARED PROJECT JOB IS TOLD, on the same switch a repository's own job is
-// (B5.2, D505, D2078): its profile's repositories are served by the service, so
-// the execution is handed the address exactly as a repository job's is. What
-// made this function refuse every `job != ""` was the service's own admission,
-// which refused a shared project job's account whole before any route
-// (internal/credsvc/auth.go's verifyJob, Global Constraint 6, C3.9) — and B5.1
-// is the change that replaced that rule with the profile's: the account is
-// admitted for the repositories its profile admits (F40, G21), and the module
-// grants it roles/run.invoker on the service
-// (deploy/terraform/gcp/modules/project/sa.tf). The job keeps every mount it
-// has (G17): the address arrives first and the model credential is dropped only
-// by B5.7's flip, so a run here reaches its git provider and its model through
-// the service while the container still holds what it held.
+// A SHARED PROJECT JOB IS TOLD ON ITS PROFILE'S SWITCH (B5.2, D505, D2078;
+// B5.7): the repositories a profile serves reach the service through its job's
+// account, so the execution is handed the address as a repository job's is —
+// and the answer is infra.CredentialsServiceServesProfile, the very one the
+// drop was taken on, because the drop is the profile's: one repository of the
+// profile on takes the model mounts off every job of it
+// (projectJobServesTheCredentialsService, config.SharedJobServedClasses). A
+// launch judged per repository here would leave a repository of a switched
+// profile whose own record is off — and every launch whose document could not
+// be read — with neither the mount nor the address: the run dies at its first
+// model call with config.MissingAnthropicKey, whose printed remedy cannot put
+// back a mount the profile's switch took away. The pair belongs to one answer
+// because the drop does.
 //
-// The address is withheld from a shared job whose document could not be read,
-// which is the one place the two paths differ. A repository's own job is handed
-// it on its record (or on this machine's tfvars) alone, because its mounts are
-// already gone where its record says on and withholding would halt the run at
-// the service's door (D143). A shared job still holds its mounts, so a launch
-// that cannot read the document the run will use starts the run it started
-// before this task — and one that handed the address to a repository whose file
-// says `vertex` (the default of a documentless repository,
-// config.DefaultAgentAuth) would open its git provider keyless
-// (internal/gitprov/providers/providers.go) for a mint the service refuses,
-// breaking every GitHub run of that job.
+// What made this function refuse every shared job was the service's own
+// admission, which refused a shared project job's account whole before any
+// route (internal/credsvc/auth.go's verifyJob, Global Constraint 6, C3.9) —
+// and B5.1 is the change that replaced that rule with the profile's: the
+// account is admitted for the repositories its profile admits (F40, G21), and
+// the module grants it roles/run.invoker on the service
+// (deploy/terraform/gcp/modules/project/sa.tf). The address arrived one release
+// before the drop, which is G17's order: a run this function hands the address
+// to makes every model call at the service — the container holds nothing to
+// make one with — and its git traffic is the service's keyless mint for the
+// reason above. What the container still holds is the GitHub App key, which no
+// path of such a run reads: its own flip is config.ServiceHeldSecretNames'
+// (#907, G22).
+//
+// ONE THING A SHARED JOB KEEPS OUT OF ITS PROFILE'S ANSWER, and it is the auth
+// the service does not serve: a `vertex` run reads no credential of the
+// service's (its model calls go through the gateway on the job's own Google
+// credentials) and its git traffic is served by the App key the drop leaves
+// mounted, so the address would move a path that works onto a mint that
+// repository has no use for. Its model mounts are gone all the same — the drop
+// is the profile's and reads no auth — and neither of the two it takes is one a
+// `vertex` run reads (internal/runner's providers), so the state that leaves is
+// a job whose own auth needs neither. A repository whose auth IS one the
+// service serves, and the documentless launch whose auth this read does not
+// know, are told: withholding there is the mountless, addressless run above.
+//
+// The DOCUMENTLESS launch is where the two arms differ most, and it is why this
+// one reads neither a record nor a tfvars: an empty auth is a launcher that
+// could not read the repository's fugaro.yaml (the desktop console spawns
+// `fugaro run --repo` from a private empty directory, so it is every console
+// launch), so nothing here can say whether the run about to start reads a
+// credential the service serves — while the profile's own answer can say that
+// its job has none to read. A served profile's shared job is therefore handed
+// the address on its profile alone, and the run reads its real auth from the
+// ref, which is the first place either side sees it.
 //
 // A REVIEW LAUNCH IS NOT TOLD, and it is the variant's own deployment that
 // carries the address (internal/infra's reviewVariant): a review runs on the
@@ -6450,7 +6692,7 @@ func servicesLaunchEnv(entry config.Entry) string {
 // review says this launch runs on a shared job's review-only variant
 // (spec.Mode's review mode), which the caller resolves before it calls this:
 // such a launch is told nothing, whatever the job and the config say.
-func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth, mode string, deployed, review bool) []string {
+func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth, mode string, deployed, review bool) []string {
 	if lc == nil || review {
 		return nil
 	}
@@ -6459,9 +6701,32 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth, mode stri
 	// module's unassigned placeholder as its audience, and there is no address
 	// to put on a job's environment either.
 	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
+	if sharedProfile != "" {
+		// The profile's own answer, and it is the deployer's: this job's model
+		// mounts were dropped on infra.CredentialsServiceServesProfile, so a
+		// launch that judged the repository instead would withhold the address
+		// from a job the drop has already emptied (above). An undeclared
+		// profile is the same held-off answer the deployer reads (declared,
+		// internal/infra's RefreshProjectJobCredentialsService): no job of a
+		// profile this config does not define was composed from it either.
+		pr, declared := lc.Profiles[sharedProfile]
+		if !installed || !declared || !infra.CredentialsServiceServesProfile(lc, pr) {
+			return nil
+		}
+		if auth != "" && auth != config.AuthCascade && !runner.ServiceSwitchedAuth(auth) {
+			// An auth the service does not serve: the address would open this
+			// job's git provider keyless for a credential a run of that auth
+			// reads from the App key the drop leaves mounted, and its model
+			// calls need none of the service's. An empty auth is a document
+			// this launcher could not read and is told, because the profile's
+			// own answer already says the mount is gone.
+			return nil
+		}
+		return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
+	}
 	local, _ := lc.RepoFor(repo)
 	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth, mode)
-	if auth == "" && job == "" {
+	if auth == "" {
 		// No document this launcher could read, so the switch's third
 		// condition is judged on the two answers that do not need one: the
 		// repository's own record, and this machine's tfvars of the root it

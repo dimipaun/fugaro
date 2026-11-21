@@ -66,6 +66,7 @@ import type { CostView, DegradedDocument, RecordView } from '../../shared/schema
 import { displayRuns, shortRun } from '../../shared/shortid'
 import type { RunRef } from '../../shared/shortid'
 import { putReading, putText } from '../app'
+import { EMPTY_RUNS, renderEmpty } from '../section'
 import { feedReading, notionalReading } from './live'
 import type { FeedHealth, LiveTheme, ScreenElement, ScreenFactory } from './live'
 
@@ -609,6 +610,15 @@ export function renderNoFirebase(
   section.append(caps(factory, model))
   section.append(totals(factory, model))
   const runs = cell(section, factory, 'ol', 'degraded-runs')
+  // **A project with no run says so** (R1): an empty list is a section that
+  // looks like one still being read, and the console's own sentence is the
+  // difference between "nothing is running" and "nothing has arrived". The
+  // sentence is `section.ts`'s, beside the other empty states the console draws,
+  // so two sections cannot word the same fact differently.
+  if (model.runs.length === 0) {
+    runs.append(renderEmpty(factory, EMPTY_RUNS))
+    return section
+  }
   // The endings are answered for **this list**: the run records are the rows
   // drawn together, so a run whose last four characters another row shares is
   // extended until the two are told apart (spec part 3), and a record drawn

@@ -37,6 +37,7 @@ import (
 	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -607,6 +608,40 @@ func TestReviewRecordCarriesTheIndependentTier(t *testing.T) {
 	}
 }
 
+// TestReviewWritesThePullRequestIndexEntry: the artifact stage is what puts a
+// review on a pull request, so it is what writes the review's entry in that
+// pull request's index. Without it an old finished review is a row the scan
+// lists and a listing that reads the index cannot find (D2962, D2964).
+func TestReviewWritesThePullRequestIndexEntry(t *testing.T) {
+	bucket := memblob.OpenBucket(nil)
+	t.Cleanup(func() { _ = bucket.Close() })
+	r, _ := reviewJobRun(t, func(r *run) { r.d.Bucket = &blobx.Bucket{Bucket: bucket} })
+	res := reviewResult(t, reviewAnswerOf("ship", "nothing to flag"))
+	if err := r.writeReviewArtifact(context.Background(), res); err != nil {
+		t.Fatalf("writeReviewArtifact: %v", err)
+	}
+	entries, err := runstore.ListPRIndex(context.Background(), bucket, svcSlug, reviewJobPR, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("the index holds %d entries for PR %d, want this run's one: %+v", len(entries), reviewJobPR, entries)
+	}
+	e := entries[0]
+	if e.RunID != svcRunID || e.Slug != svcSlug || e.PR != reviewJobPR {
+		t.Errorf("the entry is %+v, want run %s of %s on #%d", e, svcRunID, svcSlug, reviewJobPR)
+	}
+	if e.Kind != runstore.PRIndexReviewed {
+		t.Errorf("the entry's kind is %q, want %q: a review neither opened nor followed the pull request", e.Kind, runstore.PRIndexReviewed)
+	}
+	if want := r.d.Now(); !e.At.Equal(want) {
+		t.Errorf("the entry's time is %v, want the run's own clock, %v", e.At, want)
+	}
+	if e.At.Location() != time.UTC {
+		t.Errorf("the entry's time is %v, want UTC", e.At)
+	}
+}
+
 func TestReviewRunFailsWhenTheSignCallFails(t *testing.T) {
 	r, _ := reviewJobRun(t, nil)
 	setReviewSigner(t, func(*run) (ReviewSigner, error) {
@@ -954,7 +989,7 @@ func TestVerifyWrapsAVerifierRefusalOnce(t *testing.T) {
 // shape it was asked for. The axes are the same for both, because they are
 // D1's anchored scale and the artifact carries them unchanged.
 func TestArtifactPromptNamesTheArtifactsOwnSeverity(t *testing.T) {
-	p := reviewArtifactPrompt("", "", "origin/main", DiffSize{}, false)
+	p := reviewArtifactPrompt("", "", "origin/main", DiffSize{}, false, "")
 	if !strings.Contains(p, artifactSeverity) {
 		t.Errorf("the artifact's brief does not ask for the artifact's severity vocabulary (%s):\n%s", artifactSeverity, p)
 	}
@@ -986,8 +1021,8 @@ func TestArtifactPromptNamesTheArtifactsOwnSeverity(t *testing.T) {
 	// And the in-run prompts are untouched by that split: the same five labels,
 	// exactly as they always were.
 	for _, q := range []string{
-		ReviewPrompt("", "", "origin/main", DiffSize{}, false),
-		PickPrompt("", "", []int{9}, []string{"/review/9"}),
+		ReviewPrompt("", "", "origin/main", DiffSize{}, false, ""),
+		PickPrompt("", "", []int{9}, []string{"/review/9"}, ""),
 	} {
 		if !strings.Contains(q, inRunSeverity) {
 			t.Errorf("an in-run prompt does not carry the in-run severity vocabulary:\n%s", q)

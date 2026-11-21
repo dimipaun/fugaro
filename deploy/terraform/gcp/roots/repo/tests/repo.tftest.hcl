@@ -149,6 +149,34 @@ run "names_are_inputs" {
   }
 }
 
+# A container created from now on is replicated in the installation's region
+# (D3082, F9, R5), and the resource ignores the field so one that exists keeps
+# whatever it has. What the plan can say is the first half; the second is
+# roots/installation/tests/secret_replication.tftest.hcl's two runs and
+# internal/infra's own tests against a synthetic prior state.
+run "secrets_are_replicated_in_the_region" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = var.bitbucket.repo
+  }
+
+  assert {
+    condition = alltrue([for s in google_secret_manager_secret.this :
+      length(s.replication) == 1 && length(s.replication[0].user_managed) == 1 &&
+    s.replication[0].user_managed[0].replicas[0].location == var.bitbucket.region])
+    error_message = "every one of the repository's containers must be replicated in the installation's region (D3082)"
+  }
+}
+
 run "labels" {
   command = plan
 
@@ -372,7 +400,7 @@ run "bucket_condition_exact" {
 }
 
 # The job's read-only grant on its own repository's budget token objects
-# (docs/design/budget-token-channel.md section 7.2, D16): objectViewer, never
+# (docs/budget-token-channel/spec.md section 7.2, D16): objectViewer, never
 # objectUser, on exactly tokens/<slug>/ of the runs bucket, and the runs/,
 # cache/ and locks/ grant does not reach tokens/.
 run "token_condition_exact" {
@@ -1500,7 +1528,7 @@ run "bad_fugaro_project" {
   expect_failures = [var.fugaro_project]
 }
 
-# The resolved secret reaches every reader (design docs/design/project-secrets.md
+# The resolved secret reaches every reader (design docs/project-secrets/spec.md
 # §5, Task 5): the workflow module's job mount, the job account's accessor
 # grant, the build account's grant and the check job's secret_key_ref must all
 # name the IDENTICAL project-wide container for bitbucket-token, while a name
@@ -2215,15 +2243,24 @@ run "credentials_service_off_github_app_key" {
   }
 }
 
-# The build account keeps the App key, opt-in or not (C2.3, F3): `fugaro image
-# build` and the daily check clone the repository with it, so the service is
-# the only FUGARO RUNTIME identity with the model credentials — never the only
-# identity with Secret Manager access, which is the wording D148 settled on.
+# The build account's Secret Manager list with the service ON (B4.9, the S4
+# flip; D2076, D2077): the class list carries "git" and "build", so a
+# repository the service serves names no secret in its build request — the
+# credential step reads the git credential and the workflow's build secrets
+# from the service instead (B4.5) — and the accessor list goes whole with it.
+# The request and the list leave together, and they have to: a build that named
+# a secret its account may no longer read is a job Cloud Build refuses. The
+# check job's mount goes with the class "git" (check.tf), the credential it
+# mounted being the build account's own: a mount that stayed would be the job
+# Cloud Run refuses to create (C2.3).
 #
-# This run is the guard that C2.3 did not reach into modules/repo/build.tf:
-# with the service ON, the build account's grant set is byte for byte the
-# build_secrets it had with the service off.
-run "credentials_service_on_build_keeps_the_app_key" {
+# This run is the guard on the gate, and the run below is its other side — the
+# same repository with the service off, where every accessor and the mount must
+# be exactly what the release before the flip planned (G9, D147). It fails if
+# the flip is backed out (the class list emptied again), and the pair fails if
+# the switch stops gating: with the gate ignored the repository below would
+# give up credentials nothing serves it.
+run "credentials_service_on_build_gives_up_the_accessors" {
   command = plan
 
   module {
@@ -2238,14 +2275,38 @@ run "credentials_service_on_build_keeps_the_app_key" {
     repo           = var.github.repo
   }
 
-  override_resource {
-    target          = google_service_account.build
-    override_during = plan
-    values = {
-      name   = "projects/proj-1234/serviceAccounts/fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
-      email  = "fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
-      member = "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
-    }
+  assert {
+    condition     = length(google_secret_manager_secret_iam_member.build) == 0
+    error_message = "with the credentials service serving this repository's builds, the build account must hold no secretAccessor at all: the build request names none of these secrets (D2076, D2077), so an accessor left behind is one nothing reads, and the release before the flip's list is not what a switched repository gets"
+  }
+  assert {
+    condition = length([for e in google_cloud_run_v2_job.check[0].template[0].template[0].containers[0].env :
+      one(one(e.value_source).secret_key_ref).secret
+    if length(e.value_source) > 0]) == 0
+    error_message = "the daily check job of a served repository must mount no secret: it runs as the build account, which the flip leaves no accessor on, and a job that mounted one is a job Cloud Run refuses to create (C2.3) — it reads its git credential from the service instead (B4.5)"
+  }
+}
+
+# The other side of the same gate: the service off, and the build account's
+# grants and the check's mount are byte for byte the build_secrets and the
+# secret_env the release before the flip planned. This is where C2.3's wording
+# is still true — the service is the only Fugaro runtime identity with the
+# MODEL credentials, never the only identity with Secret Manager access (D148)
+# — and it is what keeps the drop a consequence of the switch rather than of
+# the module knowing about the service.
+run "credentials_service_off_build_keeps_the_accessors" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = var.github.installation
+    repo           = var.github.repo
   }
 
   assert {
@@ -2253,13 +2314,13 @@ run "credentials_service_on_build_keeps_the_app_key" {
       github-app-key = "fugaro-acme-webapp-github-app-key-35b331db19bcc682"
       npm-token      = "fugaro-acme-webapp-npm-token-bacfa0e910c36bb9"
     })
-    error_message = "with the credentials service on, the BUILD account must still read the GitHub App's private key: the build clones the repository with it, and F3 is why the service is the only Fugaro runtime identity with the MODEL credentials and not the only one with Secret Manager access (D148)"
+    error_message = "with the credentials service off, the build account keeps secretAccessor on the GitHub App's private key and on the workflow's build secrets exactly as it does today (G9, D147): a repository the service does not serve reads its own (B4.9)"
   }
   assert {
-    condition = alltrue([for m in google_secret_manager_secret_iam_member.build :
-      m.role == "roles/secretmanager.secretAccessor" &&
-    m.member == "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"])
-    error_message = "the build account's grants stay secretAccessor to its own account, opt-in or not"
+    condition = [for e in google_cloud_run_v2_job.check[0].template[0].template[0].containers[0].env :
+      one(one(e.value_source).secret_key_ref).secret
+    if length(e.value_source) > 0] == ["fugaro-acme-webapp-github-app-key-35b331db19bcc682"]
+    error_message = "with the credentials service off, the daily check job mounts the git credential from the repository's own container exactly as it does today (D147): the mount is gated on the switch, never on the class list alone"
   }
 }
 

@@ -18,7 +18,7 @@ import (
 
 // TestEditionIsCoreUntagged: a build without the ee tag is core, which is the
 // whole of the marker's default — the assembly file the tag compiles in is what
-// flips it, and nothing else can (design docs/design/ee-boundary-moves.md §7).
+// flips it, and nothing else can (design docs/ee-reorg/boundary-moves.md §7).
 // The setter refuses a second call, so a second registration cannot quietly
 // halve what the first one set (design §5.5).
 //

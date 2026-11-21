@@ -21,7 +21,7 @@ import (
 // leaves D13's "separate profiles" mitigation open for the owner. Its red state is this test: the document
 // did not exist.
 func TestDocsBudgetTokenChannelDesignIsWritten(t *testing.T) {
-	const path = "docs/design/budget-token-channel.md"
+	const path = "docs/budget-token-channel/spec.md"
 	doc := readDoc(t, path)
 	for _, want := range []string{
 		// The subject and where it sits.
@@ -67,7 +67,7 @@ func TestDocsBudgetTokenChannelDesignIsWritten(t *testing.T) {
 // required here and the superseded ones refused, both on §1's own text, so §7.1
 // or §7.2 cannot stand in for it.
 func TestDocsBudgetTokenChannelSection1IsTheSealedChannel(t *testing.T) {
-	const path = "docs/design/budget-token-channel.md"
+	const path = "docs/budget-token-channel/spec.md"
 	doc := readDoc(t, path)
 	i := strings.Index(doc, "## 1. The channel as it is")
 	j := strings.Index(doc, "## 2. What phase 3 changes about it")
@@ -119,12 +119,12 @@ func TestDocsBudgetTokenChannelSection1IsTheSealedChannel(t *testing.T) {
 // the job's definition and the only alternative carrier this design allows is
 // the rejected C2. This test holds the three places that answer now live in —
 // the design's own paragraph, the compute backend design's §1.6 and its C10
-// row, and the refusal `internal/backend/batch/run.go` emits — to the same
+// row, and the refusal `internal/backend/batch/seal.go` emits — to the same
 // sentence, so one of them cannot be rewritten back into a question without the
 // others failing here. It is the docs half of
 // TestLaunchRefusesASecretEnv, which holds the message's own shape.
 func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
-	const design = "docs/design/budget-token-channel.md"
+	const design = "docs/budget-token-channel/spec.md"
 	doc := readDoc(t, design)
 	i := strings.Index(doc, "**The Batch backend refuses a sealed launch")
 	j := strings.Index(doc, "Every symbol below was read on")
@@ -187,7 +187,7 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 	// The compute backend design carries the same answer, in §1.6 and in its
 	// C10 row, so a reader of the design that owns the backend finds it there
 	// too rather than only in the seal's own document.
-	const cbDesign = "docs/design/compute-backend.md"
+	const cbDesign = "docs/compute-backend/spec.md"
 	cb := readDoc(t, cbDesign)
 	k := strings.Index(cb, "### 1.6 Secrets")
 	l := strings.Index(cb, "### 1.7 Networking")
@@ -225,29 +225,29 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 
 	// And the refusal the code emits says the same sentence — the same three
 	// phrases, read out of the source rather than typed twice. The slice is
-	// the refusal *message* and not the file: run.go cites this document in
+	// the refusal *message* and not the file: seal.go cites this document in
 	// its comments too, and an assertion over the whole file cannot see the
 	// message's own citation move (which is exactly what the mutation run for
 	// this test found, when the citation was rewritten in the message alone
 	// and this test still passed).
-	run, err := os.ReadFile("../../internal/backend/batch/run.go")
+	seal, err := os.ReadFile("../../internal/backend/batch/seal.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	code := strings.Join(strings.Fields(string(run)), " ")
+	code := strings.Join(strings.Fields(string(seal)), " ")
 	const opens = `fmt.Errorf("launching %s: the launch carries`
 	start := strings.Index(code, opens)
 	if start < 0 {
-		t.Fatalf("internal/backend/batch/run.go no longer builds the seal's refusal with %s: this test reads that message", opens)
+		t.Fatalf("internal/backend/batch/seal.go no longer builds the seal's refusal with %s: this test reads that message", opens)
 	}
 	end := strings.Index(code[start:], "full, kv.Name)")
 	if end < 0 {
-		t.Fatalf("internal/backend/batch/run.go's seal refusal no longer ends at `full, kv.Name)`: this test cannot find the message's end")
+		t.Fatalf("internal/backend/batch/seal.go's seal refusal no longer ends at `full, kv.Name)`: this test cannot find the message's end")
 	}
 	message := code[start : start+end]
 	for _, want := range []string{
 		"the job's definition",
-		"docs/design/budget-token-channel.md",
+		"docs/budget-token-channel/spec.md",
 		// The answer, in the words the documents use: the installation, not a
 		// run, is what cannot use this backend, and it says what the operator
 		// has to do instead. This is the phrase the review of this branch
@@ -256,20 +256,20 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 		"a budget database with budget mode on, or a published policy",
 	} {
 		if !strings.Contains(message, want) {
-			t.Errorf("internal/backend/batch/run.go's refusal does not carry %q, which %s's answer does: the document and the message an operator actually sees have to say the same thing\n\nmessage: %s", want, design, message)
+			t.Errorf("internal/backend/batch/seal.go's refusal does not carry %q, which %s's answer does: the document and the message an operator actually sees have to say the same thing\n\nmessage: %s", want, design, message)
 		}
 	}
 	// The refusal is not allowed to promise a run kind that can still go to
 	// Batch, which "runs its budget-on path on Cloud Run" did.
 	if strings.Contains(message, "budget-on path") {
-		t.Errorf("internal/backend/batch/run.go's refusal still says \"budget-on path\": an installation has one backend, so the refusal has to say that no run of a minting installation can go to Batch\n\nmessage: %s", message)
+		t.Errorf("internal/backend/batch/seal.go's refusal still says \"budget-on path\": an installation has one backend, so the refusal has to say that no run of a minting installation can go to Batch\n\nmessage: %s", message)
 	}
 	// The message is refused rather than carried, and the value is never in
 	// it: the entry's name is the most an operator may be shown, which is
 	// checked on the real error in
 	// internal/backend/batch's TestLaunchRefusesASecretEnv too.
 	if strings.Contains(message, "kv.Value") {
-		t.Errorf("internal/backend/batch/run.go's refusal formats the secret's value into its text: the value must never appear in a refusal\n\nmessage: %s", message)
+		t.Errorf("internal/backend/batch/seal.go's refusal formats the secret's value into its text: the value must never appear in a refusal\n\nmessage: %s", message)
 	}
 }
 
@@ -287,7 +287,7 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 func TestDocsBudgetTokenChannelNamesTheMintingCondition(t *testing.T) {
 	// The document's half: both disjuncts, in the words the message and this
 	// test use, and the signer that both branches need.
-	const design = "docs/design/budget-token-channel.md"
+	const design = "docs/budget-token-channel/spec.md"
 	doc := readDoc(t, design)
 	i := strings.Index(doc, "**The owner's answer: Batch runs no sealed budget run")
 	j := strings.Index(doc, "Every symbol below was read on")
@@ -305,14 +305,14 @@ func TestDocsBudgetTokenChannelNamesTheMintingCondition(t *testing.T) {
 		}
 	}
 	// The §1.6 half, which is the design that owns the backend.
-	cb := readDoc(t, "docs/design/compute-backend.md")
+	cb := readDoc(t, "docs/compute-backend/spec.md")
 	k := strings.Index(cb, "### 1.6 Secrets")
 	l := strings.Index(cb, "### 1.7 Networking")
 	if k < 0 || l < k {
-		t.Fatalf("docs/design/compute-backend.md has no §1.6 followed by §1.7: the section that states the condition is gone")
+		t.Fatalf("docs/compute-backend/spec.md has no §1.6 followed by §1.7: the section that states the condition is gone")
 	}
 	if sec16 := strings.Join(strings.Fields(cb[k:l]), " "); !strings.Contains(sec16, "a budget database with budget mode on, or a published policy") {
-		t.Errorf("docs/design/compute-backend.md §1.6 does not state the full minting condition (\"a budget database with budget mode on, or a published policy\"): a project whose budget mode is on with no published policy still gets every launch refused, and §1.6 is where that project's operator reads why")
+		t.Errorf("docs/compute-backend/spec.md §1.6 does not state the full minting condition (\"a budget database with budget mode on, or a published policy\"): a project whose budget mode is on with no published policy still gets every launch refused, and §1.6 is where that project's operator reads why")
 	}
 
 	// The code's half: the two disjuncts, read out of the functions that
@@ -368,11 +368,11 @@ func TestDocsBudgetTokenChannelNamesTheMintingCondition(t *testing.T) {
 //
 // Every path below was read on `next` on 2026-10-15 and is in this branch's tree.
 // The two documents the check-number paragraph cites from `main` —
-// docs/design/artifact-runs.md and docs/plans/2026-10-15-desktop-console.md — are
+// docs/artifact-runs/spec.md and docs/desktop-console/implementation-plan.md — are
 // deliberately not stat'ed: they are `main`'s files (#393 and #401 merged there),
 // this branch is `next`'s, and the paragraph says so in its own words.
 func TestDocsBudgetTokenChannelCitationsExist(t *testing.T) {
-	const path = "docs/design/budget-token-channel.md"
+	const path = "docs/budget-token-channel/spec.md"
 	doc := readDoc(t, path)
 	for _, cited := range []string{
 		// The grants the move changes, and the modules that carry them.
@@ -404,11 +404,11 @@ func TestDocsBudgetTokenChannelCitationsExist(t *testing.T) {
 		// The documents it is read against.
 		"SECURITY.md",
 		"docs/gcp-live-checklist.md",
-		"docs/plans/2026-10-14-project-centric.md",
-		"docs/design/compute-backend.md",
-		"docs/design/m9-budget-and-dashboard.md",
-		"docs/design/bucket-iam.md",
-		"docs/design/project-centric.md",
+		"docs/project-centric/implementation-plan.md",
+		"docs/compute-backend/spec.md",
+		"docs/m9-budget-and-dashboard/spec.md",
+		"docs/bucket-iam/spec.md",
+		"docs/project-centric/spec.md",
 	} {
 		// The document links its neighbours relatively (../plans/…,
 		// ../../SECURITY.md), so a citation counts in either form.
@@ -775,7 +775,7 @@ func section(t *testing.T, doc, from, to string) string {
 // `gcp.LauncherBucketConditionTitle` or from `token.TakeObject`'s contract
 // without this failing.
 func TestDocsBudgetTokenChannelSection72IsTheMergedTree(t *testing.T) {
-	const path = "docs/design/budget-token-channel.md"
+	const path = "docs/budget-token-channel/spec.md"
 	doc := readDoc(t, path)
 	i := strings.Index(doc, "### 7.2 ")
 	j := strings.Index(doc, "### 7.3 ")
@@ -811,7 +811,7 @@ func TestDocsBudgetTokenChannelSection72IsTheMergedTree(t *testing.T) {
 // sentence: the pre-seal shape is named as pre-seal, and the pointer to §7.2
 // names the widening rather than the old expression.
 func TestDocsBudgetTokenChannelC3PricesThePreSealGrant(t *testing.T) {
-	const path = "docs/design/budget-token-channel.md"
+	const path = "docs/budget-token-channel/spec.md"
 	doc := readDoc(t, path)
 	i := strings.Index(doc, "### C3. ")
 	if i < 0 {
@@ -844,7 +844,7 @@ func TestDocsBudgetTokenChannelC3PricesThePreSealGrant(t *testing.T) {
 // overstating it. The pointer is asserted on the D13 paragraph's own line, so
 // wording elsewhere in the file cannot stand in for it.
 func TestDocsSecurityMdPointsAtTheTokenChannelDesign(t *testing.T) {
-	const design = "docs/design/budget-token-channel.md"
+	const design = "docs/budget-token-channel/spec.md"
 	sec := readDoc(t, "SECURITY.md")
 	var pointer string
 	for _, line := range strings.Split(sec, "\n") {

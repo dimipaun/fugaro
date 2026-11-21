@@ -311,7 +311,7 @@ func configListWriteState(t *testing.T, body string) string {
 // empty, that repository's repos.<repo>.base_branch. They are the two layers a
 // console launch may be cut from (the launch has no checkout of the repository
 // as its working directory, so the checkout layer of the CLI's merged order is
-// out of reach — docs/design/desktop-console.md §5.1 rule 11), so a fixture
+// out of reach — docs/desktop-console/spec.md §5.1 rule 11), so a fixture
 // needs a way to set them without enrolling anything else. A later enrollRepo
 // adds to the block this writes.
 func configListRecordBaseBranch(t *testing.T, project, projectBranch string, entries ...[2]string) {

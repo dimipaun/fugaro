@@ -52,6 +52,7 @@ type lsOptions struct {
 	state                    string
 	groupBy                  string
 	all, mine, watch, asJSON bool
+	stream                   bool // with --json: one line per run, then the line that ends the feed
 	debt                     bool // only the runs filed from a triage deferral, when set
 	interval                 time.Duration
 	pr                       int    // only the runs on this pull request, when set
@@ -124,6 +125,20 @@ type lsFilter struct {
 	// runs ls --no-cache sets it too: the whole cache is an optimisation,
 	// so ignoring it must cost nothing but time.
 	noCache bool
+	// indexNote asks for the two lines that say why a --pr read fell back to
+	// the window: the index could not be read, or the pull request has no
+	// entry in it (runs_pr.go, D2964).
+	//
+	// They are a listing's, and the listing is the only reader that sets it.
+	// The person watching `runs ls --pr N` is the one who reads why it is
+	// slow, while a caller that reads a pull request's runs to decide
+	// something -- the launcher resolving the spec a review is handed
+	// (reviewspec.go's launchSpecForPR), a follow-up's own resolvePR -- is
+	// not reading a listing, and a line about this implementation's shortcut
+	// is not something a launch prints. The read is the same either way: the
+	// note is a note, never a different set of runs (RL3's acceptance, which
+	// keeps those callers on the index).
+	indexNote bool
 }
 
 // lsRef names one run a listing means to read.
@@ -284,7 +299,15 @@ func newLsCmd() *cobra.Command {
 			"ends: while it is going, its row reads that pull request's state though\n" +
 			"its pr is still empty. A run's own state is in its result.json, so this\n" +
 			"filter reads every run it filters -- it narrows the listing, never the\n" +
-			"reads.\n\n" +
+			"reads. running and launching are the exception: a run that is going, and a\n" +
+			"run whose launch is in flight, are answered from the live set -- the\n" +
+			"executions the backend is still running, and the claims a launch in flight\n" +
+			"holds -- so those two read only the runs that set names, never every run of\n" +
+			"the window (D2960). One run launching can miss: a relaunch under an older\n" +
+			"run ID (run --retry, or a re-issue by the resident launcher) holds a fresh\n" +
+			"claim on a run older than the claim window, which is what bounds the\n" +
+			"listing those claims are found by, so a scan shows that run and this query\n" +
+			"does not.\n\n" +
 			"The fourth state of a pull request, orphan (no run ever produced or follows\n" +
 			"it), is one no listing of runs can name: such a pull request has no run and\n" +
 			"so no row here, and telling one from every other would take a call to the\n" +
@@ -304,7 +327,16 @@ func newLsCmd() *cobra.Command {
 			"with --limit, --after or --watch.\n\n" +
 			"--pr N lists the runs on pull request N of one repository (the first run and\n" +
 			"its follow-ups), over the last " + prLookback + " unless --since says otherwise; the totals\n" +
-			"line is then the PR's total cost.",
+			"line is then the PR's total cost.\n\n" +
+			"--stream, with --json, prints the listing as newline-delimited JSON instead of\n" +
+			"as one document: a line per run, each carrying one element of --json's runs\n" +
+			"array unchanged under `row`, then a line saying how many rows the feed\n" +
+			"carried (`end`). A consumer renders a run as its line arrives rather than\n" +
+			"holding the whole document, and a feed with no end line is a read that was\n" +
+			"interrupted. A listing that stopped after its first line writes an `error`\n" +
+			"line with the sentence the command would have printed, and exits non-zero.\n" +
+			"The rows of a page are the page's, so --limit and --after mean here what\n" +
+			"they mean without it.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runLs(cmd, &o) },
 	}
@@ -326,6 +358,7 @@ func newLsCmd() *cobra.Command {
 	f.BoolVar(&o.noCache, "no-cache", false, "read every run object from the bucket instead of the local run cache")
 	_ = f.MarkHidden("no-cache")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
+	f.BoolVar(&o.stream, "stream", false, "with --json: one line per run, then a line saying how many there were")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -383,13 +416,26 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	if o.groupBy != "" && o.watch {
 		return userErr("--group-by reads the whole window: --watch redraws the listing until every run has settled, so the two don't go together")
 	}
+	// The feed is JSON lines -- one element of --json's runs array per line --
+	// so --stream without --json would be a listing in a shape the flag does
+	// not write, and the two combinations below are documents the feed has no
+	// line for: a redraw of the listing, and a block beside the rows.
+	if o.stream && !o.asJSON {
+		return userErr("--stream needs --json: the feed is JSON lines, one per run of the document's runs array")
+	}
+	if o.stream && o.watch {
+		return userErr("--stream prints the listing once: --watch redraws it until every run has settled, so the two don't go together")
+	}
+	if o.stream && o.groupBy != "" {
+		return userErr("--stream has no line for --group-by's block: the feed carries the document's runs, and the block is a reading of the whole window")
+	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
 		return err
 	}
 	defer env.Close()
 
-	f := lsFilter{batch: o.batch, state: o.state, debt: o.debt, pr: o.pr, warn: cmd.ErrOrStderr(), noCache: o.noCache}
+	f := lsFilter{batch: o.batch, state: o.state, debt: o.debt, pr: o.pr, warn: cmd.ErrOrStderr(), noCache: o.noCache, indexNote: true}
 	if prSet && o.repo == "" && len(env.lc.Repos) != 1 {
 		return userErr("runs ls --pr needs --repo: the local config lists %d repositories", len(env.lc.Repos))
 	}
@@ -437,7 +483,9 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		if clear {
 			fmt.Fprint(out, "\x1b[H\x1b[2J")
 		}
-		if o.groupBy != "" {
+		if o.stream {
+			err = streamRows(out, page)
+		} else if o.groupBy != "" {
 			err = printGroupsWithTotals(out, env.lc.Name, page, runview.Sum(rows), warnings, now, o.asJSON)
 		} else {
 			err = printRowsWithTotals(out, env.lc.Name, page, runview.Sum(rows), warnings, now, o.asJSON)
@@ -492,6 +540,24 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 	return slugs, nil
 }
 
+// windowRefs is every run of the window f names, per repository: one listing
+// per slug, which is the listing every other path narrows -- the live set by
+// the executions that are still running, --pr by the pull request's index.
+// What it answers is what a listing read before either of those paths existed.
+func windowRefs(ctx context.Context, env *cloudEnv, f lsFilter) ([]lsRef, error) {
+	var refs []lsRef
+	for _, slug := range f.slugs {
+		ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, f.since)
+		if err != nil {
+			return nil, remote(err)
+		}
+		for _, id := range ids {
+			refs = append(refs, lsRef{slug, id})
+		}
+	}
+	return refs, nil
+}
+
 // loadRows reads the runs f selects, joins each with its execution, and
 // returns the rows newest first. It reads the whole window whatever the
 // listing goes on to print: the totals cover every row it read, so a page is
@@ -500,8 +566,14 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 // error row with a warning. Any other failed read but absence fails the whole
 // listing: ls never shows a status guessed from a partial read.
 //
-// It reads every run's objects first -- but the two f.pr cannot need, for a
-// run whose own task names another pull request (taskOnOtherPR) -- keeps the
+// Which runs it reads is the filter's: every run of the window, the live set
+// for the two live states, one run for a run reference, and for f.pr the runs
+// the pull request's index names, the runs of the last day and the runs that
+// are going (prRefs) -- falling back to the window when the index has nothing
+// to say about the pull request.
+//
+// Each run is read objects first -- but the two f.pr cannot need, for a
+// run whose own task names another pull request (taskOnOtherPR) -- and keeps the
 // runs f.pr selects, and the review run going on that pull request, which the
 // fold needs and the listing does not print, and only then asks the backend
 // about executions, so a PR's listing costs no backend call for the runs off
@@ -514,23 +586,52 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	if warn == nil {
 		warn = io.Discard
 	}
+	var mu sync.Mutex // guards warn
+	warnf := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		fmt.Fprint(warn, multiLine(fmt.Sprintf(format, args...)))
+	}
 	var refs []lsRef
-	if f.runRef != "" {
+	// live is set when --state named one of the two live states: the refs are
+	// then the live set, and its executions are the join's (liveRuns).
+	var live *liveSet
+	switch {
+	case f.runRef != "":
 		slug, id, err := parseRunRef(f.runRef)
 		if err != nil {
 			return nil, err
 		}
 		refs = append(refs, lsRef{slug, id})
-	} else {
-		for _, slug := range f.slugs {
-			ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, f.since)
-			if err != nil {
-				return nil, remote(err)
-			}
-			for _, id := range ids {
-				refs = append(refs, lsRef{slug, id})
+	case liveState(f.state):
+		set, err := liveRuns(ctx, env, f, now)
+		if err != nil {
+			return nil, err
+		}
+		live, refs = &set, set.refs
+	case f.pr != 0:
+		// --pr reads the pull request's index, the runs of the last day and the
+		// runs that are going; only what those name is read, and every run of
+		// them is checked against its own records below (D2962, D2963, D2964).
+		// A pull request the index does not know -- everything that ran before
+		// it, an installation that has not been through an update -- reads the
+		// window as it always did, and prRefs says so in one line on stderr.
+		r, err := prRefs(ctx, env, f, now, warnf)
+		if err != nil {
+			return nil, err
+		}
+		if r == nil {
+			if r, err = windowRefs(ctx, env, f); err != nil {
+				return nil, err
 			}
 		}
+		refs = r
+	default:
+		r, err := windowRefs(ctx, env, f)
+		if err != nil {
+			return nil, err
+		}
+		refs = r
 	}
 
 	// The bucket's objects, for every run, through the run cache when this
@@ -538,7 +639,12 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// run's three objects' generations, so the runs the previous listing
 	// already read are answered locally and the reads that leave the machine
 	// are the objects that changed.
-	readers := lsReaders(ctx, env, !f.noCache, refs)
+	//
+	// A live listing reads the bucket: an index is built from a listing of
+	// every object of the repository, which is the cost the live set was read
+	// to avoid, and a repository with a long history is exactly where a live
+	// run would be answered from a cache it took a full listing to build.
+	readers := lsReaders(ctx, env, live == nil && !f.noCache, refs)
 	runs := make([]runObjects, len(refs))
 	errs := make([]error, len(refs))
 	parallel(len(refs), func(i int) {
@@ -584,8 +690,15 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// One listing covers most runs' executions; it reaches an hour further
 	// back than the runs, since a run ID is minted before its launch only
 	// by moments, but clocks differ.
+	//
+	// A live listing made that call already, and the runs it read are the runs
+	// that listing found: its answer is the join's, so the two states cost one
+	// backend call and never two (U2).
 	execs := map[string]backend.Execution{}
-	if f.runRef == "" && slices.ContainsFunc(runs, func(r runObjects) bool { return r.execution != "" }) {
+	switch {
+	case live != nil:
+		execs = live.execs
+	case f.runRef == "" && slices.ContainsFunc(runs, func(r runObjects) bool { return r.execution != "" }):
 		lf := backend.ListFilter{}
 		if !f.since.IsZero() {
 			lf.Since = f.since.Add(-time.Hour)
@@ -601,12 +714,6 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 		}
 	}
 
-	var mu sync.Mutex // guards warn
-	warnf := func(format string, args ...any) {
-		mu.Lock()
-		defer mu.Unlock()
-		fmt.Fprint(warn, multiLine(fmt.Sprintf(format, args...)))
-	}
 	// The price book warns through warnf too: a VM run whose region or
 	// machine type the price table does not carry is listed with compute not
 	// estimated, and this is where the operator reads why (design
@@ -1336,7 +1443,7 @@ func modeCell(r runview.Row) string {
 	if rg == nil {
 		return "-"
 	}
-	cell := string(rg.Mode) + " (" + string(rg.From)
+	cell := string(rg.LevelOf()) + " (" + string(rg.From)
 	if len(rg.Areas) > 0 {
 		cell += " " + clipRunes(rg.Areas[0].Name, maxNameCellRunes)
 		if n := len(rg.Areas) - 1; n > 0 {

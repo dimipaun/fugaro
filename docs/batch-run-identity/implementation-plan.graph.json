@@ -1,0 +1,1033 @@
+{
+  "schema_version": 3,
+  "plan": "docs/batch-run-identity/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the claim's attestation and the registration",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/batch-run-identity/contract-batch-claim.md",
+          "internal/identitywire/batchclaim.go",
+          "internal/identitywire/wire.go",
+          "internal/identitywire/wire_test.go",
+          "internal/credsvc/identity_config.go",
+          "internal/credsvc/identity_stub.go"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/credsvc/identity_stub.go"
+      ]
+    },
+    {
+      "id": "BRS",
+      "title": "the job definition, split along its seams",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/batch/run.go",
+          "internal/backend/batch/batch.go",
+          "internal/backend/batch/env.go",
+          "internal/backend/batch/seal.go",
+          "internal/backend/batch/account.go",
+          "internal/backend/batch/secrets.go",
+          "internal/backend/deployedjob.go",
+          "internal/cli/docs_budget_token_channel_test.go",
+          "deploy/terraform/secret_readers_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR0",
+      "title": "Check 830, the probe",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-830.sh",
+          "scripts/live-checks/check-830_test.sh",
+          "docs/gcp-live-checklist.md",
+          "scripts/live_checks_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR1",
+      "title": "the launcher gives a Batch launch its ticket, or refuses",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/launch_identity.go",
+          "internal/cli/launch_batch.go",
+          "internal/cli/launch_batch_test.go",
+          "internal/backend/batch/seal.go",
+          "internal/backend/batch/seal_test.go",
+          "internal/backend/batch/register.go",
+          "internal/backend/batch/register_test.go",
+          "internal/cli/docs_budget_token_channel_test.go",
+          "docs/budget-token-channel/spec.md",
+          "docs/compute-backend/spec.md"
+        ]
+      }
+    },
+    {
+      "id": "BR2",
+      "title": "the attestation the claim is served on",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/identity_claim.go",
+          "internal/credsvc/claim_attestation.go",
+          "internal/credsvc/claim_attestation_test.go",
+          "internal/credsvc/audit.go"
+        ]
+      }
+    },
+    {
+      "id": "BR3",
+      "title": "the link from a VM to its job",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/joblink.go",
+          "internal/credsvc/joblink_test.go",
+          "internal/gcpfake/batch.go",
+          "internal/gcpfake/compute.go"
+        ]
+      }
+    },
+    {
+      "id": "BR4",
+      "title": "the runner attests its VM",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/identity_claim.go",
+          "internal/runner/budget_session.go",
+          "internal/runner/batch_attest.go",
+          "internal/runner/batch_attest_test.go",
+          "internal/gitops/gitops.go"
+        ]
+      }
+    },
+    {
+      "id": "BR5",
+      "title": "the link's permission, and the grants that go with Batch",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/compute/**",
+          "deploy/terraform/gcp/roots/compute/**",
+          "internal/infra/tf/cover.go",
+          "internal/infra/tf/testdata/golden/**",
+          ".claude/rules/credentials-service.md",
+          "deploy/terraform/terraform_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR6",
+      "title": "update applies the compute root",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_stages.go",
+          "internal/cli/init_compute.go",
+          "internal/cli/update.go",
+          "internal/apply/steps.go",
+          "internal/cli/update_batch_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR7",
+      "title": "doctor and validate say where the claim stands",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor_batch.go",
+          "internal/cli/doctor_batch_test.go",
+          "internal/cli/validate_batch.go",
+          "internal/cli/validate_batch_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR8",
+      "title": "a Batch job carries what a deployed job carries",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/batch/env.go",
+          "internal/backend/batch/env_test.go",
+          "internal/backend/launchenv.go",
+          "internal/infra/spec.go",
+          "internal/infra/spec_batch_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR9",
+      "title": "the runner places a Batch run",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/projectjob.go",
+          "internal/runner/projectjob_batch_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR10",
+      "title": "Batch runs a project job's workflow",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/batch/account.go",
+          "internal/backend/batch/account_test.go",
+          "internal/backend/batch/run.go"
+        ]
+      }
+    },
+    {
+      "id": "BR11",
+      "title": "nothing is mounted on a Batch job",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/batch/secrets.go",
+          "internal/backend/batch/secrets_test.go",
+          "internal/cli/launch_batch.go",
+          "internal/cli/launch_batch_test.go",
+          "internal/cli/run.go",
+          "internal/cli/cloud_openers_test.go",
+          "deploy/terraform/secret_readers_test.go",
+          "docs/secrets-brokering/secret-readers.md"
+        ]
+      }
+    },
+    {
+      "id": "BR12",
+      "title": "the documents",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "SECURITY.md",
+          "website/content/security.md",
+          "docs/backends.md",
+          "internal/cli/docs_security_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR13",
+      "title": "Check 831, the proof",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-831.sh",
+          "scripts/live-checks/check-831_test.sh",
+          "docs/gcp-live-checklist.md",
+          "scripts/live_checks_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR14",
+      "title": "the reaper ends a Batch run at its ticket's life",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/batch/reap.go",
+          "internal/backend/batch/reap_claim_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR15",
+      "title": "doctor and the readers' table follow",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor_batch.go",
+          "internal/cli/doctor_batch_test.go",
+          "internal/cli/doctor_secret_readers.go",
+          "docs/secrets-brokering/secret-readers.md",
+          "docs/secrets-brokering/reconciliation.md",
+          "SECURITY.md",
+          "website/content/security.md",
+          "deploy/terraform/secret_readers_test.go",
+          "internal/cli/docs_security_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR16",
+      "title": "update writes the block",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_compute.go",
+          "internal/cli/init_compute_block_test.go",
+          "internal/infra/compute.go",
+          "internal/infra/compute_test.go",
+          "docs/releases/**"
+        ]
+      }
+    },
+    {
+      "id": "BR17",
+      "title": "the registration",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/batchclaim_register.go",
+          "internal/credsvc/batchclaim_register_test.go",
+          "internal/credsvc/server.go",
+          "internal/budget/rules/**"
+        ]
+      }
+    },
+    {
+      "id": "BR18",
+      "title": "selecting the backend does not wait for the claim",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/backends.go",
+          "internal/cli/backends_use_test.go",
+          "docs/backends.md"
+        ]
+      }
+    },
+    {
+      "id": "BR19",
+      "title": "publishing never drops the opt-in",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/localcfg/shared.go",
+          "internal/localcfg/shared_test.go",
+          "internal/cli/sharedcfg.go",
+          "internal/cli/sharedcfg_test.go"
+        ]
+      }
+    },
+    {
+      "id": "BR20",
+      "title": "an operator opts out",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/backends.go",
+          "internal/cli/backends_optout_test.go",
+          "internal/cli/launch_batch.go",
+          "docs/backends.md",
+          "website/content/cli-reference.md",
+          "plugin/skills/**"
+        ]
+      }
+    },
+    {
+      "id": "BR21",
+      "title": "update retires the grants after an opt-out",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_compute.go",
+          "internal/cli/update_batch_optout_test.go",
+          "docs/design/update-in-flight.md",
+          "internal/apply/steps.go"
+        ]
+      }
+    },
+    {
+      "id": "BR22",
+      "title": "the service refuses a ticket or a registration where Batch is off",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/batchclaim_register.go",
+          "internal/credsvc/batchclaim_register_test.go",
+          "internal/cli/credentials_serve.go",
+          "internal/cli/init_credentials.go",
+          "internal/infra/tfvars.go",
+          "deploy/terraform/gcp/modules/installation/credentials.tf",
+          ".claude/rules/credentials-service.md"
+        ]
+      }
+    },
+    {
+      "id": "BR23",
+      "title": "the key-release code retires",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/token/wrap_contract.go",
+          "internal/budget/token/wrap_contract_test.go",
+          "internal/credsvc/sealkey_wire.go",
+          "internal/credsvc/sealkey_wire_test.go",
+          "internal/credsvc/sealkey_stub.go",
+          "internal/credsvc/sealkey_stub_test.go",
+          "internal/localcfg/batch.go",
+          "internal/localcfg/batch_test.go",
+          "internal/localcfg/localcfg.go",
+          "internal/localcfg/shared_test.go",
+          "internal/localcfg/testdata/shared.golden.yaml",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json",
+          "internal/cli/sharedcfg.go",
+          "internal/cli/sharedcfg_validate_test.go",
+          "internal/cli/writers_labels.go",
+          "docs/batch-run-identity/contract-key-release.md"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "integration",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/identity_stub.go",
+          "internal/credsvc/server.go",
+          "internal/cli/credentials_serve.go",
+          "internal/cli/cloud.go",
+          "internal/cli/batch_claim_end_to_end_test.go",
+          "internal/cli/update_in_flight_batch_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "R-C1-link-permission",
+      "title": "amend the claim's contract: the link's read, as the owner settled it",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/batch-run-identity/contract-batch-claim.md",
+          "internal/identitywire/batchclaim.go"
+        ]
+      },
+      "kind": "contract_change"
+    },
+    {
+      "id": "R-C1-project-job-account",
+      "title": "amend the claim's contract: the project job's account",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/batch-run-identity/contract-batch-claim.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "I1",
+      "needs": "BRS",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR0",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR1",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR2",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR3",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR4",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR5",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR6",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR7",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR8",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR9",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR10",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR11",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR12",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR13",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR14",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR15",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR16",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR17",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR18",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR19",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR20",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR21",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR22",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "BR23",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "C1",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "I1",
+      "needs": "R-C1-link-permission",
+      "reason": "it wires the real sides and proves them together"
+    },
+    {
+      "task": "BR1",
+      "needs": "C1",
+      "reason": "the ticket's job field and the registration's route"
+    },
+    {
+      "task": "BR2",
+      "needs": "C1",
+      "reason": "the attestation's shape and the rule that a job record needs one"
+    },
+    {
+      "task": "BR3",
+      "needs": "C1",
+      "reason": "the attestation's link, as an interface the claim calls"
+    },
+    {
+      "task": "BR4",
+      "needs": "C1",
+      "reason": "the claim's attestation field and the ticket's name"
+    },
+    {
+      "task": "BR6",
+      "needs": "C1",
+      "reason": "the block's opt-in fact"
+    },
+    {
+      "task": "BR7",
+      "needs": "C1",
+      "reason": "the block's opt-in fact"
+    },
+    {
+      "task": "BR12",
+      "needs": "C1",
+      "reason": "the names the documents quote"
+    },
+    {
+      "task": "BR13",
+      "needs": "C1",
+      "reason": "the names the script reads"
+    },
+    {
+      "task": "BR14",
+      "needs": "C1",
+      "reason": "the ticket's name"
+    },
+    {
+      "task": "BR16",
+      "needs": "C1",
+      "reason": "the block's opt-in fact and the root's names"
+    },
+    {
+      "task": "BR17",
+      "needs": "C1",
+      "reason": "the route, its bodies and the record's two fields"
+    },
+    {
+      "task": "BR19",
+      "needs": "C1",
+      "reason": "the opt-in fact"
+    },
+    {
+      "task": "R-C1-link-permission",
+      "needs": "C1",
+      "reason": "amends a file C1 creates"
+    },
+    {
+      "task": "R-C1-link-permission",
+      "needs": "BR0",
+      "reason": "data: the owner's run of Check 830"
+    },
+    {
+      "task": "R-C1-project-job-account",
+      "needs": "C1",
+      "reason": "amends a file C1 creates"
+    },
+    {
+      "task": "BR3",
+      "needs": "R-C1-link-permission",
+      "reason": "data: it carries the owner's result of Check 830 and his answer on the second read"
+    },
+    {
+      "task": "BR5",
+      "needs": "R-C1-link-permission",
+      "reason": "data: it carries the owner's result of Check 830 and his answer on the second read, and comes after C1"
+    },
+    {
+      "task": "BR12",
+      "needs": "R-C1-link-permission",
+      "reason": "data: the page names the service's grants as the owner settled them"
+    },
+    {
+      "task": "BR1",
+      "needs": "BRS",
+      "reason": "one file: seal.go"
+    },
+    {
+      "task": "BR8",
+      "needs": "BRS",
+      "reason": "one file: env.go, and the deployed-job variable's name"
+    },
+    {
+      "task": "BR9",
+      "needs": "BRS",
+      "reason": "the deployed-job variable's name, which BRS defines"
+    },
+    {
+      "task": "BR10",
+      "needs": "BRS",
+      "reason": "one file: account.go"
+    },
+    {
+      "task": "BR11",
+      "needs": "BRS",
+      "reason": "one file: secrets.go"
+    },
+    {
+      "task": "BR11",
+      "needs": "BR1",
+      "reason": "two files: launch_batch.go and launch_batch_test.go"
+    },
+    {
+      "task": "BR10",
+      "needs": "BR8",
+      "reason": "behaviour: a project job's environment is what BR8 builds"
+    },
+    {
+      "task": "BR13",
+      "needs": "BR0",
+      "reason": "two files: the checklist and the scripts' list"
+    },
+    {
+      "task": "BR15",
+      "needs": "BR7",
+      "reason": "one file: doctor_batch.go"
+    },
+    {
+      "task": "BR15",
+      "needs": "BR12",
+      "reason": "one file: SECURITY.md"
+    },
+    {
+      "task": "BR16",
+      "needs": "BR6",
+      "reason": "one file: init_compute.go"
+    },
+    {
+      "task": "BR17",
+      "needs": "BR2",
+      "reason": "one file: server.go"
+    },
+    {
+      "task": "BR18",
+      "needs": "BR7",
+      "reason": "behaviour: it reads which failure BR7's check reports"
+    },
+    {
+      "task": "BR18",
+      "needs": "BR12",
+      "reason": "one file: docs/backends.md"
+    },
+    {
+      "task": "BR20",
+      "needs": "BR18",
+      "reason": "two files: backends.go and docs/backends.md"
+    },
+    {
+      "task": "BR20",
+      "needs": "BR11",
+      "reason": "one file: launch_batch.go"
+    },
+    {
+      "task": "BR21",
+      "needs": "BR16",
+      "reason": "one file: init_compute.go"
+    },
+    {
+      "task": "BR21",
+      "needs": "BR5",
+      "reason": "behaviour: it applies the root with the input BR5 adds"
+    },
+    {
+      "task": "BR22",
+      "needs": "BR17",
+      "reason": "one file: batchclaim_register.go"
+    },
+    {
+      "task": "BR22",
+      "needs": "BR5",
+      "reason": "one file: .claude/rules/credentials-service.md, and the golden plans"
+    },
+    {
+      "task": "BR23",
+      "needs": "BR1",
+      "reason": "behaviour: the launcher stops using the sealed entry before it is deleted"
+    },
+    {
+      "task": "BR23",
+      "needs": "BR2",
+      "reason": "behaviour: the claim route replaces the release route before it is deleted"
+    },
+    {
+      "task": "BR23",
+      "needs": "BR4",
+      "reason": "behaviour: the runner stops fetching a key before the fetch is deleted"
+    },
+    {
+      "task": "BR23",
+      "needs": "BR17",
+      "reason": "behaviour: the registration replaces the seal-key registration"
+    },
+    {
+      "task": "BR23",
+      "needs": "BR19",
+      "reason": "two files: sharedcfg.go and shared_test.go"
+    },
+    {
+      "task": "BR23",
+      "needs": "BR16",
+      "reason": "behaviour: the writer stops naming the retired key's field and type, which this deletion removes"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR16",
+        "needs": "BR5"
+      },
+      "integration": "I1",
+      "reason": "the update needs the root's output and input names, not the resources"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR1",
+        "needs": "BR16"
+      },
+      "integration": "I1",
+      "reason": "the backend needs the block's opt-in fact, not the update that writes it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR7",
+        "needs": "BR16"
+      },
+      "integration": "I1",
+      "reason": "doctor needs the block's opt-in fact, not the update that writes it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR2",
+        "needs": "BR1"
+      },
+      "integration": "I1",
+      "reason": "the service needs the claim's shapes, not the launcher that sends one"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR3",
+        "needs": "BR2"
+      },
+      "integration": "I1",
+      "reason": "the link implements an interface the claim calls; it does not need the claim"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR4",
+        "needs": "BR2"
+      },
+      "integration": "I1",
+      "reason": "the runner needs the claim's request shape, not the claim"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR12",
+        "needs": "BR2"
+      },
+      "integration": "I1",
+      "reason": "the documents quote the route's and the ticket's names, not their code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR13",
+        "needs": "BR4"
+      },
+      "integration": "I1",
+      "reason": "the script reads the ticket's and the attestation's names, not the runner"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR14",
+        "needs": "BR1"
+      },
+      "integration": "I1",
+      "reason": "the reaper needs the ticket's name, not the code that writes it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR17",
+        "needs": "BR1"
+      },
+      "integration": "I1",
+      "reason": "the registration needs the route's bodies and the record's fields, not the launcher that calls it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR6",
+        "needs": "BR5"
+      },
+      "integration": "I1",
+      "reason": "the update's stage needs the block's opt-in fact and the root's input names, not the root's resources"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "BR19",
+        "needs": "BR16"
+      },
+      "integration": "I1",
+      "reason": "the merge needs the fact's shape, not the update that writes it"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-C1-link-permission",
+      "contract": "C1",
+      "raised_by": "BR0",
+      "reason": "always runs: once the owner has run Check 830 and answered O1, it writes the link's read into the contract",
+      "affects": [
+        "BR3",
+        "BR5",
+        "BR12"
+      ]
+    },
+    {
+      "change": "R-C1-project-job-account",
+      "contract": "C1",
+      "raised_by": "BR10",
+      "reason": "if LaunchSpec cannot name the project job's account",
+      "affects": [
+        "BR10"
+      ]
+    }
+  ]
+}

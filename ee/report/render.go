@@ -268,14 +268,25 @@ func jsonLine(w Row, noHours bool) JSONLine {
 	return l
 }
 
+// JSONLines is what a report is in the document's own JSON values: the
+// elements of its `rows` array, in the document's order, and its `totals`
+// member. It is the one conversion from a Report to those values, so the
+// document and the line-delimited feed `fugaro report --stream` writes carry
+// the same rows and the same totals, member for member -- a second conversion
+// would be a shape that drifts from this one.
+func JSONLines(rep Report) (rows []JSONLine, totals JSONLine) {
+	rows = make([]JSONLine, 0, len(rep.Rows))
+	for _, r := range rep.Rows {
+		rows = append(rows, jsonLine(r, rep.NoHours))
+	}
+	return rows, jsonLine(rep.Totals, rep.NoHours)
+}
+
 // JSON writes the document.
 func JSON(w io.Writer, rep Report, m Meta) error {
+	rows, totals := JSONLines(rep)
 	doc := JSONDoc{Project: Text(m.Project), Source: m.Source, Degraded: m.Degraded, Notice: Text(m.Notice),
-		By: string(rep.By), Since: m.Since, Until: m.Un, Weeks: "iso-utc-monday", Rows: []JSONLine{}, Warnings: []string{}}
-	for _, r := range rep.Rows {
-		doc.Rows = append(doc.Rows, jsonLine(r, rep.NoHours))
-	}
-	doc.Totals = jsonLine(rep.Totals, rep.NoHours)
+		By: string(rep.By), Since: m.Since, Until: m.Un, Weeks: "iso-utc-monday", Rows: rows, Totals: totals, Warnings: []string{}}
 	for _, x := range m.Warnings {
 		doc.Warnings = append(doc.Warnings, Text(x))
 	}

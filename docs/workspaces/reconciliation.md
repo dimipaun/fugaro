@@ -780,7 +780,7 @@ number. So
 `grep -rhoE 'D[0-9]{3,4}' docs` is not enough on its own, for the two reasons the MCP design records
 and this reading confirms: it returns `D1000`, which is not a decision at all but the test name
 `TestSelftestManagedSettingsDirUID1000` in
-`docs/plans/2026-09-30-m9a-gateway-and-project-identity.md`:229, `:949` and `:1181`; and a concurrent
+`docs/m9-budget-and-dashboard/implementation-plan-m9a.md`:229, `:949` and `:1181`; and a concurrent
 work's block may be written only in its own README, in its own diff — #1676's and #1678's are, and
 #1487's is on `main` now. Read with a boundary on both sides
 (`[^A-Za-z0-9]D[0-9]{3,4}[^0-9]`), the highest number written on `main` is **D1189**.
@@ -926,8 +926,8 @@ pool asks the repository's own admission child and the member's two canonical `a
 over the slug the run identity verified, and it asks nothing about the repository the **calling job
 account** belongs to — the comparison the installation's own front door makes
 (`internal/credsvc/server.go`:737), because a member's row names its job accounts and no repository
-(`WorkspaceCredentialMember`, `internal/projectpolicy/workspace_credentials.go`:115, `JobAccounts` at
-`:149`). The reach of that is bounded by the member's own lists: both legs are asked over the
+(`WorkspaceCredentialMember`, `internal/projectpolicy/workspace_credentials.go`:127, `JobAccounts` at
+`:161`). The reach of that is bounded by the member's own lists: both legs are asked over the
 identity's own slug, so a job of one of a member's repositories reaches no other member's pool and no
 repository the member's own lists do not name — what it reaches is another repository of the **same**
 member, admitted by the member itself (spec.md §8's residual risk 7).
@@ -947,7 +947,7 @@ decide — which is why §8 left it here rather than enforcing it — and a colu
 not a check.
 
 **O4 — Which task carries the region of a member's database (`database_region`).** The node carries a
-member's `database_region` (`internal/projectpolicy/workspace_credentials.go`:187) and the service
+member's `database_region` (`internal/projectpolicy/workspace_credentials.go`:242) and the service
 derives that member's database host from it (`workspaceDatabase`, `internal/credsvc/workspace.go`),
 because a Firebase project adopted with a **regional** database is named
 `<firebase_project>-default-rtdb.<region>.firebasedatabase.app` and not the legacy default host. No
@@ -957,7 +957,7 @@ naming a repository the member contributes
 (`internal/cli/workspace.go`:422-429, `--repo` at `:480`),
 `localcfg.WorkspaceMember` has no field for a region (`internal/localcfg/localcfg.go`:541-567), and
 **the node itself has no writer anywhere in the tree** — its own comment says so
-(`internal/projectpolicy/workspace_credentials.go`:101).
+(`internal/projectpolicy/workspace_credentials.go`:113).
 
 - **(A, recommended) The task that gives the node its writer.** The region is one value beside the
   others that writer publishes, and the derivation this release ships is what keeps a member on a

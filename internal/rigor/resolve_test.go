@@ -6,18 +6,18 @@ import (
 )
 
 // TestResolveLayerPrecedence pins D6/D20/D21: the narrowest layer that sets a
-// mode wins — an area the run's paths matched, then the repository's own
+// level wins — an area the run's paths matched, then the repository's own
 // value, then the project default, then Fugaro's own default — and a
-// narrower layer may set a *lower* mode than a wider one, because the order
+// narrower layer may set a *lower* level than a wider one, because the order
 // is a precedence and not an only-tightens rule.
 func TestResolveLayerPrecedence(t *testing.T) {
 	cases := []struct {
-		name     string
-		cfg      Config
-		req      Request
-		wantMode Mode
-		wantFrom Layer
-		wantArea []string
+		name      string
+		cfg       Config
+		req       Request
+		wantLevel Rigor
+		wantFrom  Layer
+		wantArea  []string
 	}{
 		{
 			"nothing set: Fugaro's own default, D19",
@@ -46,28 +46,28 @@ func TestResolveLayerPrecedence(t *testing.T) {
 		},
 		{
 			"a matched area beats the repository",
-			Config{Repo: POC, RepoAreas: []Area{{Name: "pay", Match: "p/**", Mode: Critical}}},
+			Config{Repo: POC, RepoAreas: []Area{{Name: "pay", Match: "p/**", Level: Critical}}},
 			Request{Paths: []string{"p/x.go"}},
 			Critical, FromArea, []string{"pay"},
 		},
 		{
 			"a matched area may go below the repository (D21)",
-			Config{Repo: Critical, RepoAreas: []Area{{Name: "docs", Match: "d/**", Mode: POC}}},
+			Config{Repo: Critical, RepoAreas: []Area{{Name: "docs", Match: "d/**", Level: POC}}},
 			Request{Paths: []string{"d/x.md"}},
 			POC, FromArea, []string{"docs"},
 		},
 		{
 			"the strictest of the matched areas decides (D23)",
 			Config{
-				ProjectAreas: []Area{{Name: "docs", Match: "d/**", Mode: POC}},
-				RepoAreas:    []Area{{Name: "pay", Match: "p/**", Mode: Critical}},
+				ProjectAreas: []Area{{Name: "docs", Match: "d/**", Level: POC}},
+				RepoAreas:    []Area{{Name: "pay", Match: "p/**", Level: Critical}},
 			},
 			Request{Paths: []string{"d/x.md", "p/x.go"}},
 			Critical, FromArea, []string{"pay", "docs"},
 		},
 		{
 			"a run that matches no area keeps the layer below it",
-			Config{Repo: Startup, RepoAreas: []Area{{Name: "pay", Match: "p/**", Mode: Critical}}},
+			Config{Repo: Startup, RepoAreas: []Area{{Name: "pay", Match: "p/**", Level: Critical}}},
 			Request{Paths: []string{"README.md"}},
 			Startup, FromRepo, nil,
 		},
@@ -78,47 +78,47 @@ func TestResolveLayerPrecedence(t *testing.T) {
 		},
 		{
 			"a request raises",
-			Config{Repo: Startup}, Request{Mode: Critical},
+			Config{Repo: Startup}, Request{Level: Critical},
 			Critical, FromRequest, nil,
 		},
 		{
 			"a request cannot lower",
-			Config{Repo: Critical}, Request{Mode: POC},
+			Config{Repo: Critical}, Request{Level: POC},
 			Critical, FromRepo, nil,
 		},
 		{
 			"a request cannot lower an area",
-			Config{RepoAreas: []Area{{Name: "pay", Match: "p/**", Mode: Critical}}},
-			Request{Mode: POC, Paths: []string{"p/x.go"}},
+			Config{RepoAreas: []Area{{Name: "pay", Match: "p/**", Level: Critical}}},
+			Request{Level: POC, Paths: []string{"p/x.go"}},
 			Critical, FromArea, []string{"pay"},
 		},
 		{
-			"a request equal to the resolved mode leaves the tighter layer named",
-			Config{Repo: Critical}, Request{Mode: Critical},
+			"a request equal to the resolved level leaves the tighter layer named",
+			Config{Repo: Critical}, Request{Level: Critical},
 			Critical, FromRepo, nil,
 		},
 		{
 			"a request for hotfix is taken whole: it needs no opt-in and is not compared by rank",
-			Config{Repo: Pro}, Request{Mode: Hotfix},
+			Config{Repo: Pro}, Request{Level: Hotfix},
 			Hotfix, FromRequest, nil,
 		},
 		{
 			"a request for hotfix decides over an area rule too",
-			Config{Repo: Pro, RepoAreas: []Area{{Name: "pay", Match: "p/**", Mode: Critical}}},
-			Request{Mode: Hotfix, Paths: []string{"p/x.go"}},
+			Config{Repo: Pro, RepoAreas: []Area{{Name: "pay", Match: "p/**", Level: Critical}}},
+			Request{Level: Hotfix, Paths: []string{"p/x.go"}},
 			Hotfix, FromRequest, []string{"pay"},
 		},
 		{
 			"an area may set hotfix, and it is then the answer",
-			Config{Repo: Pro, RepoAreas: []Area{{Name: "chore", Match: "c/**", Mode: Hotfix}}},
+			Config{Repo: Pro, RepoAreas: []Area{{Name: "chore", Match: "c/**", Level: Hotfix}}},
 			Request{Paths: []string{"c/x"}},
 			Hotfix, FromArea, []string{"chore"},
 		},
 	}
 	for _, c := range cases {
 		got := Resolve(c.cfg, c.req)
-		if got.Mode != c.wantMode || got.From != c.wantFrom {
-			t.Errorf("%s: Resolve = (%q, %q); want (%q, %q)", c.name, got.Mode, got.From, c.wantMode, c.wantFrom)
+		if got.Level != c.wantLevel || got.From != c.wantFrom {
+			t.Errorf("%s: Resolve = (%q, %q); want (%q, %q)", c.name, got.Level, got.From, c.wantLevel, c.wantFrom)
 		}
 		if names := areaNames(got.Areas); !slices.Equal(names, c.wantArea) {
 			t.Errorf("%s: areas = %v; want %v", c.name, names, c.wantArea)
@@ -126,8 +126,49 @@ func TestResolveLayerPrecedence(t *testing.T) {
 	}
 }
 
+// TestResolveReadsTheProjectsPerRepoLevel pins the project layer's per-repo
+// map (LD4): one repository of the project and the level it runs at, stated by
+// the layer that speaks for more than one repository. It sits where the spec
+// puts it and where D20 as amended leaves it — stronger than the project's own
+// default, weaker than the repository's own file, so a repository that states
+// its own level still wins over the project's entry for it. A run of a
+// repository the map does not name is unchanged, and so is a resolution whose
+// request carries no repository at all.
+func TestResolveReadsTheProjectsPerRepoLevel(t *testing.T) {
+	cfg := Config{
+		Project:      Startup,
+		ProjectRepos: map[string]Rigor{"acme/payments-core": Critical},
+	}
+	if got := Resolve(cfg, Request{Repo: "acme/payments-core"}); got.Level != Critical || got.From != FromProject {
+		t.Errorf("Resolve(project startup, payments-core critical) = (%q, %q); want (%q, %q)", got.Level, got.From, Critical, FromProject)
+	}
+	if got := Resolve(cfg, Request{Repo: "acme/console-web"}); got.Level != Startup || got.From != FromProject {
+		t.Errorf("Resolve of a repository the map does not name = (%q, %q); want the project default (%q, %q)", got.Level, got.From, Startup, FromProject)
+	}
+	if got := Resolve(cfg, Request{}); got.Level != Startup || got.From != FromProject {
+		t.Errorf("Resolve with no repository = (%q, %q); want the project default (%q, %q)", got.Level, got.From, Startup, FromProject)
+	}
+	// D20 as amended: the repository's own file beats every project-level
+	// setting, its per-repo entry included.
+	own := Resolve(Config{Project: Startup, ProjectRepos: map[string]Rigor{"acme/payments-core": Critical}, Repo: POC},
+		Request{Repo: "acme/payments-core"})
+	if own.Level != POC || own.From != FromRepo {
+		t.Errorf("Resolve(repo poc over the project's per-repo critical) = (%q, %q); want (%q, %q)", own.Level, own.From, POC, FromRepo)
+	}
+	// A level the map states but the vocabulary does not know is no level: a
+	// hand-built Config reaches here, and the resolution must still carry one.
+	if got := Resolve(Config{ProjectRepos: map[string]Rigor{"acme/app": ""}}, Request{Repo: "acme/app"}); got.Level != Default {
+		t.Errorf("Resolve over an unknown per-repo level = %q; want %q", got.Level, Default)
+	}
+	// And the field opts a Config in on its own: a project that states nothing
+	// but this map is configured.
+	if !cfg.Configured() {
+		t.Error("a Config carrying only ProjectRepos reports itself unconfigured, so a run would skip the resolver")
+	}
+}
+
 // TestResolveTakesAHotfixRequestWhole pins the owner's ruling of 2026-11-13
-// (docs/rigor-command/implementation-plan.md R7): `fugaro run --mode hotfix`
+// (docs/rigor-command/implementation-plan.md R7): `fugaro run --level hotfix`
 // takes effect with no opt-in, so a request for it decides the run whether the
 // layers below resolved poc or critical, and whether an area rule matched. The
 // gate D12 named is dropped rather than built, and nothing here reads a key
@@ -136,111 +177,111 @@ func TestResolveLayerPrecedence(t *testing.T) {
 // The other half is the raise-only rule, which this must not have moved:
 // every on-axis request is still compared by Rank and still cannot lower.
 //
-// Mutation (drop req.Mode.PerRun() from Resolve's request block, leaving the
+// Mutation (drop req.Level.PerRun() from Resolve's request block, leaving the
 // rank comparison): hotfix ranks 0, so every case here answers the layer's
-// mode instead and the test fails on the first one.
+// level instead and the test fails on the first one.
 func TestResolveTakesAHotfixRequestWhole(t *testing.T) {
 	cases := []struct {
 		name string
 		cfg  Config
 		req  Request
 	}{
-		{"over the built-in default", Config{}, Request{Mode: Hotfix}},
-		{"over a project default", Config{Project: Critical}, Request{Mode: Hotfix}},
-		{"over a repository default", Config{Repo: Critical}, Request{Mode: Hotfix}},
+		{"over the built-in default", Config{}, Request{Level: Hotfix}},
+		{"over a project default", Config{Project: Critical}, Request{Level: Hotfix}},
+		{"over a repository default", Config{Repo: Critical}, Request{Level: Hotfix}},
 		{"over an area the paths match", Config{
 			Repo:      Pro,
-			RepoAreas: []Area{{Name: "pay", Match: "p/**", Mode: Critical}},
-		}, Request{Mode: Hotfix, Paths: []string{"p/x.go"}}},
+			RepoAreas: []Area{{Name: "pay", Match: "p/**", Level: Critical}},
+		}, Request{Level: Hotfix, Paths: []string{"p/x.go"}}},
 	}
 	for _, c := range cases {
 		got := Resolve(c.cfg, c.req)
-		if got.Mode != Hotfix || got.From != FromRequest {
-			t.Errorf("%s: Resolve = (%q, %q); want (%q, %q): --mode hotfix takes effect with no opt-in",
-				c.name, got.Mode, got.From, Hotfix, FromRequest)
+		if got.Level != Hotfix || got.From != FromRequest {
+			t.Errorf("%s: Resolve = (%q, %q); want (%q, %q): --level hotfix takes effect with no opt-in",
+				c.name, got.Level, got.From, Hotfix, FromRequest)
 		}
 	}
-	// D22's monotone rule is untouched: a mode the run has already reached
+	// D22's monotone rule is untouched: a level the run has already reached
 	// still holds over a weaker answer. The request is given to every moment
 	// the runner resolves at, so a run that asked for hotfix reached it at
 	// bootstrap and this is the defensive reading of a record that says
 	// otherwise — the fail-closed one.
-	if got := Resolve(Config{Repo: Pro}, Request{Mode: Hotfix, Reached: Critical}); got.Mode != Critical {
-		t.Errorf("Resolve(repo pro, request hotfix, reached critical) = %q; want critical: a mode a run has reached never falls", got.Mode)
+	if got := Resolve(Config{Repo: Pro}, Request{Level: Hotfix, Reached: Critical}); got.Level != Critical {
+		t.Errorf("Resolve(repo pro, request hotfix, reached critical) = %q; want critical: a level a run has reached never falls", got.Level)
 	}
-	// Raise-only is unchanged for every other mode: a request below what the
+	// Raise-only is unchanged for every other level: a request below what the
 	// layers resolved still leaves the layers' answer standing, and one equal
 	// to it still leaves the layer that set it named.
-	for _, m := range []Mode{POC, Startup} {
-		if got := Resolve(Config{Repo: Critical}, Request{Mode: m}); got.Mode != Critical || got.From != FromRepo {
-			t.Errorf("Resolve(repo critical, request %q) = (%q, %q); want (critical, repo): a request may not lower a run", m, got.Mode, got.From)
+	for _, m := range []Rigor{POC, Startup} {
+		if got := Resolve(Config{Repo: Critical}, Request{Level: m}); got.Level != Critical || got.From != FromRepo {
+			t.Errorf("Resolve(repo critical, request %q) = (%q, %q); want (critical, repo): a request may not lower a run", m, got.Level, got.From)
 		}
 	}
 }
 
-// TestLayersModeAnswersOnlyBesideARequestThatTakesTheRunWhole: the mode the
-// layers resolve is what a reader of the owner's floor holds beside the mode
+// TestLayersRigorAnswersOnlyBesideARequestThatTakesTheRunWhole: the level the
+// layers resolve is what a reader of the owner's floor holds beside the level
 // the request chose (policy.Effective.ReviewFloorFor), because a request raises
-// a mode and never lowers a floor (D8, LF5). It is asked for exactly when the
+// a level and never lowers a floor (D8, LF5). It is asked for exactly when the
 // request took the run off the axis: for every other request the layers'
-// answer is already the mode the run is at, and "" is the answer that says so.
-func TestLayersModeAnswersOnlyBesideARequestThatTakesTheRunWhole(t *testing.T) {
+// answer is already the level the run is at, and "" is the answer that says so.
+func TestLayersRigorAnswersOnlyBesideARequestThatTakesTheRunWhole(t *testing.T) {
 	cfg := Config{
 		Project:      Startup,
 		Repo:         Pro,
-		RepoAreas:    []Area{{Name: "pay", Match: "p/**", Mode: Critical}},
+		RepoAreas:    []Area{{Name: "pay", Match: "p/**", Level: Critical}},
 		ProjectAreas: nil,
 	}
 	for _, c := range []struct {
 		name string
 		req  Request
-		want Mode
+		want Rigor
 	}{
-		{"a request for hotfix", Request{Mode: Hotfix}, Pro},
-		{"a request for hotfix over an area", Request{Mode: Hotfix, Paths: []string{"p/x.go"}}, Critical},
-		{"a request for an on-axis mode", Request{Mode: Critical}, ""},
+		{"a request for hotfix", Request{Level: Hotfix}, Pro},
+		{"a request for hotfix over an area", Request{Level: Hotfix, Paths: []string{"p/x.go"}}, Critical},
+		{"a request for an on-axis level", Request{Level: Critical}, ""},
 		{"no request at all", Request{}, ""},
 	} {
-		if got := LayersMode(cfg, c.req, ""); got != c.want {
-			t.Errorf("%s: LayersMode = %q; want %q", c.name, got, c.want)
+		if got := LayersRigor(cfg, c.req, ""); got != c.want {
+			t.Errorf("%s: LayersRigor = %q; want %q", c.name, got, c.want)
 		}
 	}
 	// reached folds the way Resolve's own Reached does, so a caller asking at
 	// each of D22's moments never takes the answer down.
-	if got := LayersMode(Config{Repo: Startup}, Request{Mode: Hotfix}, Critical); got != Critical {
-		t.Errorf("LayersMode(repo startup, request hotfix, reached critical) = %q; want critical: the mode the layers gave never falls", got)
+	if got := LayersRigor(Config{Repo: Startup}, Request{Level: Hotfix}, Critical); got != Critical {
+		t.Errorf("LayersRigor(repo startup, request hotfix, reached critical) = %q; want critical: the level the layers gave never falls", got)
 	}
 }
 
-// TestResolveNeverAnswersAnEmptyMode pins the shape every caller relies on:
-// whatever the configuration and the request say, a resolution carries a mode
+// TestResolveNeverAnswersAnEmptyRigor pins the shape every caller relies on:
+// whatever the configuration and the request say, a resolution carries a level
 // a runner can run. An empty answer would be a run with no rigor at all.
-func TestResolveNeverAnswersAnEmptyMode(t *testing.T) {
+func TestResolveNeverAnswersAnEmptyRigor(t *testing.T) {
 	for _, cfg := range []Config{{}, {Project: ""}, {Repo: ""}, {Project: POC}, {Repo: Hotfix}} {
-		for _, req := range []Request{{}, {Mode: ""}, {Reached: ""}, {Paths: []string{"x"}}} {
-			if got := Resolve(cfg, req); !Known(got.Mode) {
-				t.Errorf("Resolve(%+v, %+v).Mode = %q; want a mode", cfg, req, got.Mode)
+		for _, req := range []Request{{}, {Level: ""}, {Reached: ""}, {Paths: []string{"x"}}} {
+			if got := Resolve(cfg, req); !Known(got.Level) {
+				t.Errorf("Resolve(%+v, %+v).Level = %q; want a level", cfg, req, got.Level)
 			}
 		}
 	}
 }
 
 // TestResolveHoldsTheModeAReachedRunAlreadyReached pins D22's monotone rule:
-// a mode a run reaches never falls, so a second resolution that comes back
+// a level a run reaches never falls, so a second resolution that comes back
 // weaker leaves the reached value standing, and the layer that set it is the
 // one that set the reached value rather than the weaker current one.
 func TestResolveHoldsTheModeAReachedRunAlreadyReached(t *testing.T) {
 	// The first moment resolved Critical from an area; the run's measured
 	// diff at the second moment matches nothing, and the layers below would
 	// answer Pro. The reached value stands.
-	cfg := Config{Repo: Pro, RepoAreas: []Area{{Name: "pay", Match: "p/**", Mode: Critical}}}
+	cfg := Config{Repo: Pro, RepoAreas: []Area{{Name: "pay", Match: "p/**", Level: Critical}}}
 	first := Resolve(cfg, Request{Paths: []string{"p/x.go"}})
-	if first.Mode != Critical || first.From != FromArea {
-		t.Fatalf("first moment = (%q, %q); want (critical, area)", first.Mode, first.From)
+	if first.Level != Critical || first.From != FromArea {
+		t.Fatalf("first moment = (%q, %q); want (critical, area)", first.Level, first.From)
 	}
-	second := Resolve(cfg, Request{Paths: []string{"README.md"}, Reached: first.Mode})
-	if second.Mode != Critical {
-		t.Errorf("second moment = %q; a mode a run reached never falls", second.Mode)
+	second := Resolve(cfg, Request{Paths: []string{"README.md"}, Reached: first.Level})
+	if second.Level != Critical {
+		t.Errorf("second moment = %q; a level a run reached never falls", second.Level)
 	}
 	if second.From != FromReached {
 		t.Errorf("second moment from = %q; want %q, the layer says the run is holding an earlier answer", second.From, FromReached)
@@ -248,22 +289,22 @@ func TestResolveHoldsTheModeAReachedRunAlreadyReached(t *testing.T) {
 
 	// And a later moment that resolves stronger still moves up.
 	third := Resolve(cfg, Request{Paths: []string{"p/x.go"}, Reached: Pro})
-	if third.Mode != Critical || third.From != FromArea {
-		t.Errorf("third moment = (%q, %q); want (critical, area)", third.Mode, third.From)
+	if third.Level != Critical || third.From != FromArea {
+		t.Errorf("third moment = (%q, %q); want (critical, area)", third.Level, third.From)
 	}
 }
 
 // TestResolveKeepsTheAreasItMatchedAtTheSecondMoment pins that D24's areas
 // are the ones the current resolution matched: a moment whose paths match
-// nothing records no area, even when the mode is held by D22's monotone rule.
-// The two facts are separate — the mode the run is at, and the rules this
+// nothing records no area, even when the level is held by D22's monotone rule.
+// The two facts are separate — the level the run is at, and the rules this
 // moment saw — and a record that conflated them would claim a rule decided a
 // diff it never matched.
 func TestResolveKeepsTheAreasItMatchedAtTheSecondMoment(t *testing.T) {
-	cfg := Config{RepoAreas: []Area{{Name: "pay", Match: "p/**", Mode: Critical}}}
+	cfg := Config{RepoAreas: []Area{{Name: "pay", Match: "p/**", Level: Critical}}}
 	got := Resolve(cfg, Request{Paths: []string{"README.md"}, Reached: Critical})
-	if got.Mode != Critical {
-		t.Fatalf("mode = %q; want the reached value held", got.Mode)
+	if got.Level != Critical {
+		t.Fatalf("level = %q; want the reached value held", got.Level)
 	}
 	if got.Areas != nil {
 		t.Errorf("areas = %v; want none: this moment's paths matched no rule", got.Areas)
@@ -275,59 +316,59 @@ func TestResolveKeepsTheAreasItMatchedAtTheSecondMoment(t *testing.T) {
 // a hand-rolled reduction in either direction would differ — and that what it
 // carries is the rules themselves, strictest first, not just their names: a
 // caller that folds two resolutions together (internal/runstore's
-// RigorRecord.Applied) re-establishes D23's order from exactly these modes.
+// RigorRecord.Applied) re-establishes D23's order from exactly these levels.
 func TestStrictestOverASetIsWhatResolveReads(t *testing.T) {
 	areas := []Area{
-		{Name: "a", Match: "a/**", Mode: POC},
-		{Name: "b", Match: "b/**", Mode: Startup},
-		{Name: "c", Match: "c/**", Mode: Pro},
-		{Name: "d", Match: "d/**", Mode: Critical},
+		{Name: "a", Match: "a/**", Level: POC},
+		{Name: "b", Match: "b/**", Level: Startup},
+		{Name: "c", Match: "c/**", Level: Pro},
+		{Name: "d", Match: "d/**", Level: Critical},
 	}
 	got := Resolve(Config{RepoAreas: areas}, Request{Paths: []string{"a/x", "b/x", "c/x", "d/x"}})
-	if got.Mode != Critical {
-		t.Fatalf("mode = %q; want %q", got.Mode, Critical)
+	if got.Level != Critical {
+		t.Fatalf("level = %q; want %q", got.Level, Critical)
 	}
-	if want := []Area{areas[3], areas[2], areas[1], areas[0]}; !slices.Equal(got.Areas, want) {
+	if want := []Area{areas[3], areas[2], areas[1], areas[0]}; !slices.Equal(areaNames(got.Areas), areaNames(want)) {
 		t.Errorf("areas = %+v; want %+v", got.Areas, want)
 	}
 }
 
 // TestResolvePrecedenceHoldsOverEveryPairOfModes pins the property over every
-// pair of on-axis modes rather than over the handful of pairs a hand-written
+// pair of on-axis levels rather than over the handful of pairs a hand-written
 // table names: a narrower layer wins outright in *either* rank direction
 // (D21), and on top of that a rank comparison runs in exactly two places — a
 // request may only raise, and D22's reached value only holds. A comparison
 // inverted anywhere in Resolve breaks some pair here, which the table cases
 // above cannot show because they each pick one direction.
 func TestResolvePrecedenceHoldsOverEveryPairOfModes(t *testing.T) {
-	axis := Modes[:len(Modes)-1] // the four on-axis modes
+	axis := Rigors[:len(Rigors)-1] // the four on-axis levels
 	for _, a := range axis {
 		for _, b := range axis {
 			// a in the project layer, b in the repository layer: the
 			// repository wins whatever the two ranks are.
-			if got := Resolve(Config{Project: a, Repo: b}, Request{}); got.Mode != b {
-				t.Errorf("Resolve(project %q, repo %q) = %q; want %q, the narrower layer wins outright", a, b, got.Mode, b)
+			if got := Resolve(Config{Project: a, Repo: b}, Request{}); got.Level != b {
+				t.Errorf("Resolve(project %q, repo %q) = %q; want %q, the narrower layer wins outright", a, b, got.Level, b)
 			}
 			// A rule the paths match beats the repository outright, in either
 			// direction.
-			cfg := Config{Repo: b, RepoAreas: []Area{{Name: "x", Match: "x/**", Mode: a}}}
-			if got := Resolve(cfg, Request{Paths: []string{"x/y"}}); got.Mode != a {
-				t.Errorf("Resolve(area %q over repo %q) = %q; want %q", a, b, got.Mode, a)
+			cfg := Config{Repo: b, RepoAreas: []Area{{Name: "x", Match: "x/**", Level: a}}}
+			if got := Resolve(cfg, Request{Paths: []string{"x/y"}}); got.Level != a {
+				t.Errorf("Resolve(area %q over repo %q) = %q; want %q", a, b, got.Level, a)
 			}
 			// A request may only raise: the answer is never weaker than the
-			// mode the layers resolved.
-			if got := Resolve(Config{Repo: b}, Request{Mode: a}); got.Mode.Rank() < b.Rank() {
-				t.Errorf("Resolve(repo %q, request %q) = %q; a request lowered the mode", b, a, got.Mode)
+			// level the layers resolved.
+			if got := Resolve(Config{Repo: b}, Request{Level: a}); got.Level.Rank() < b.Rank() {
+				t.Errorf("Resolve(repo %q, request %q) = %q; a request lowered the level", b, a, got.Level)
 			}
-			// The same for the reached value: never weaker than the mode this
+			// The same for the reached value: never weaker than the level this
 			// resolution would otherwise answer.
-			if got := Resolve(Config{Repo: b}, Request{Reached: a}); got.Mode.Rank() < b.Rank() {
-				t.Errorf("Resolve(repo %q, reached %q) = %q; a reached value lowered the mode", b, a, got.Mode)
+			if got := Resolve(Config{Repo: b}, Request{Reached: a}); got.Level.Rank() < b.Rank() {
+				t.Errorf("Resolve(repo %q, reached %q) = %q; a reached value lowered the level", b, a, got.Level)
 			}
 			// And each of the two raise paths does move up when it should:
 			// the stricter of the two is the answer.
-			if got := Resolve(Config{Repo: b}, Request{Mode: a}); got.Mode != Strictest(a, b) {
-				t.Errorf("Resolve(repo %q, request %q) = %q; want %q", b, a, got.Mode, Strictest(a, b))
+			if got := Resolve(Config{Repo: b}, Request{Level: a}); got.Level != Strictest(a, b) {
+				t.Errorf("Resolve(repo %q, request %q) = %q; want %q", b, a, got.Level, Strictest(a, b))
 			}
 		}
 	}
@@ -340,29 +381,29 @@ func TestResolvePrecedenceHoldsOverEveryPairOfModes(t *testing.T) {
 // layer a resolution can return and Layers does not carry would be a record
 // field a reader silently drops.
 func TestLayersIsTheSetResolveNames(t *testing.T) {
-	onAxis, offAxis := Modes[:len(Modes)-1], Hotfix
-	for _, m := range append([]Mode{""}, Modes...) {
+	onAxis, offAxis := Rigors[:len(Rigors)-1], Hotfix
+	for _, m := range append([]Rigor{""}, Rigors...) {
 		// Every path through Resolve, over every value that changes its
-		// answer: a mode in each layer, an area rule, a request, a reached
+		// answer: a level in each layer, an area rule, a request, a reached
 		// value, and nothing at all.
 		for _, cfg := range []Config{
 			{},
 			{Project: m},
 			{Repo: m},
 			{Project: onAxis[0], Repo: m},
-			{Repo: m, RepoAreas: []Area{{Name: "x", Match: "x/**", Mode: onAxis[1]}}},
-			{ProjectAreas: []Area{{Name: "y", Match: "y/**", Mode: offAxis}}, Repo: m},
+			{Repo: m, RepoAreas: []Area{{Name: "x", Match: "x/**", Level: onAxis[1]}}},
+			{ProjectAreas: []Area{{Name: "y", Match: "y/**", Level: offAxis}}, Repo: m},
 		} {
 			for _, req := range []Request{
 				{},
 				{Paths: []string{"x/y"}},
-				{Mode: m},
+				{Level: m},
 				{Reached: m},
-				{Mode: m, Paths: []string{"x/y"}, Reached: onAxis[2]},
+				{Level: m, Paths: []string{"x/y"}, Reached: onAxis[2]},
 			} {
 				got := Resolve(cfg, req)
-				if !Known(got.Mode) {
-					t.Errorf("Resolve(%+v, %+v).Mode = %q, which is not in the vocabulary", cfg, req, got.Mode)
+				if !Known(got.Level) {
+					t.Errorf("Resolve(%+v, %+v).Level = %q, which is not in the vocabulary", cfg, req, got.Level)
 				}
 				if !KnownLayer(got.From) {
 					t.Errorf("Resolve(%+v, %+v).From = %q, which Layers does not name", cfg, req, got.From)
@@ -388,12 +429,12 @@ func TestConfiguredIsAnyLayerSettingAnything(t *testing.T) {
 	if (Config{}).Configured() {
 		t.Error("a zero Config reports itself configured")
 	}
-	area := []Area{{Name: "docs", Match: "docs/**", Mode: POC}}
+	area := []Area{{Name: "docs", Match: "docs/**", Level: POC}}
 	for name, c := range map[string]Config{
 		"repo block":    {RepoBlock: true},
 		"repo default":  {Repo: Pro},
 		"repo areas":    {RepoAreas: area},
-		"project mode":  {Project: Critical},
+		"project level": {Project: Critical},
 		"project areas": {ProjectAreas: area},
 	} {
 		if !c.Configured() {

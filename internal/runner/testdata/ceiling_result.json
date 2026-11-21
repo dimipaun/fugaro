@@ -7,7 +7,7 @@
     ],
     "total": 1
   },
-  "config_sha256": "7930a55060121a690077fd5af19e42785539a0baf2d853cdc60bcb9dc225a91c",
+  "config_sha256": "20c542ebba0809f2ffc89712044d35d33ea4b161b7a528fa0b9452cc9554d1f2",
   "cost": {
     "compute_estimated": false,
     "compute_usd": 0,
@@ -22,6 +22,10 @@
   "finalize_reserve_s": 30,
   "finished_at": "<time>",
   "head_sha": "<sha>",
+  "messages": {
+    "accepting": false,
+    "format": 1
+  },
   "outcome": "ready",
   "policy": {
     "effective": {
@@ -55,6 +59,11 @@
   },
   "reviews": [
     {
+      "against": {
+        "run": "20260926-221530-abcd",
+        "sha256": "ad1a0237e3a04fa9cb0850107dfa9239e8bf4cb9776b251e0db5cca20c3a09cf",
+        "source": "run"
+      },
       "findings": 0,
       "head": "<sha>",
       "round": 1,
@@ -64,6 +73,7 @@
   "rigor": {
     "at": "bootstrap",
     "from": "default",
+    "level": "pro",
     "mode": "pro",
     "revision": "origin/main"
   },

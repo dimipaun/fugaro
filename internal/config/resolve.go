@@ -77,7 +77,7 @@ func (c *Config) SHA256() string {
 }
 
 // Resolve is a repository's fugaro.yaml resolved over the project layer l
-// and Fugaro's defaults (docs/design/layered-config.md §4): for every key,
+// and Fugaro's defaults (docs/layered-config/spec.md §4): for every key,
 // the repository's value, else its workflow's profile's, else the project
 // layer's defaults', else Fugaro's default. Maps merge key by key; a
 // scalar or a list is replaced whole; null is "not set here". A nil l is
@@ -110,13 +110,17 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		}
 		repo.RepoRigor = repo.Rigor
 		repo.RepoRigorSet = setsRigor(tree)
+		repo.RepoRigorLevelSet = setsRigorLevel(tree)
+		repo.RepoRigorScalarSet = setsRigorScalar(tree)
 		repo.RepoGovernanceSet = setsGovernance(tree)
 		repo.RepoGitAuthorSet = setsGitAuthor(tree)
 		repo.RepoSecuritySet = setsSecurity(tree)
 		repo.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 		repo.RepoPlanningSet = setsPlanning(tree)
 		repo.RepoStopFractionSet = setsStopFraction(tree)
+		repo.RepoWorkspaceBeatSet = setsWorkspaceBeat(tree)
 		repo.RepoTriageSet = setsTriage(tree)
+		repo.RepoReviewAgainstTaskSet = setsReviewAgainstTask(tree)
 		repo.RepoModelGradesSet = setsModelGrades(tree)
 		repo.RepoVisionSet = setsVision(tree)
 		repo.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(tree)
@@ -137,6 +141,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	top := maps1(tree)
 	delete(top, "workflows")
 	overlay(merged, top, "", SourceRepo, res.Sources)
+	dropLayerRigorRepos(merged, res.Sources)
 	wfs, profileOf, ps := resolveWorkflows(tree, repo, l, res.Sources)
 	if len(ps) > 0 {
 		return nil, nil, ps
@@ -165,13 +170,17 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	// a mode needs both (Config.RigorConfig).
 	c.RepoRigor = repo.Rigor
 	c.RepoRigorSet = setsRigor(tree)
+	c.RepoRigorLevelSet = setsRigorLevel(tree)
+	c.RepoRigorScalarSet = setsRigorScalar(tree)
 	c.RepoGovernanceSet = setsGovernance(tree)
 	c.RepoGitAuthorSet = setsGitAuthor(tree)
 	c.RepoSecuritySet = setsSecurity(tree)
 	c.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 	c.RepoPlanningSet = setsPlanning(tree)
 	c.RepoStopFractionSet = setsStopFraction(tree)
+	c.RepoWorkspaceBeatSet = setsWorkspaceBeat(tree)
 	c.RepoTriageSet = setsTriage(tree)
+	c.RepoReviewAgainstTaskSet = setsReviewAgainstTask(tree)
 	c.RepoModelGradesSet = setsModelGrades(tree)
 	c.RepoVisionSet = setsVision(tree)
 	c.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(tree)
@@ -422,6 +431,27 @@ func dropSources(sources map[string]string, path string) {
 	}
 }
 
+// dropLayerRigorRepos removes defaults.rigor.repos from the document the merged
+// config is decoded from. The map is the project layer's alone (LD4): it names
+// the level each repository of the project runs at, and a repository's own file
+// cannot write it — Rigor.UnmarshalYAML refuses a key that is not default or
+// areas — so the key has no repository half to merge with and, left in the
+// merged block, the strict decode below refuses it ("field repos not found in
+// type config.Rigor") and every repository of the project stops resolving. The
+// layer keeps the map, and ProjectRigor reads it there.
+func dropLayerRigorRepos(merged map[string]any, sources map[string]string) {
+	r, ok := merged["rigor"].(map[string]any)
+	if !ok {
+		return
+	}
+	if _, ok := r["repos"]; !ok {
+		return
+	}
+	delete(r, "repos")
+	delete(sources, "rigor.repos")
+	dropSources(sources, "rigor.repos")
+}
+
 // markLeaves records source for every leaf of v under path.
 func markLeaves(v any, path, source string, sources map[string]string) {
 	if m, ok := v.(map[string]any); ok {
@@ -448,6 +478,83 @@ func markLeaves(v any, path, source string, sources map[string]string) {
 func setsRigor(tree map[string]any) bool {
 	_, ok := tree["rigor"]
 	return ok
+}
+
+// setsRigorLevel is setsRigor for the `level:` key of a rigor area rule:
+// whether the text writes one, at any value. It reads the tree for that
+// method's reason and one more of its own — rigor.Area.UnmarshalYAML folds
+// `level:` and `mode:` into the rule's level, so the parsed rules cannot say
+// which spelling was written — and a runner older than rigorSpellingSince
+// refuses `level:` as a field it does not know, in a file it decodes with
+// KnownFields. Its answer becomes Config.RepoRigorLevelSet.
+func setsRigorLevel(tree map[string]any) bool {
+	return rigorAreaLevelWritten(tree["rigor"])
+}
+
+// setsRigorScalar is setsRigor for the rigor: key written as a scalar — the
+// shorthand `rigor: critical`, which Rigor.UnmarshalYAML reads as a block
+// carrying only default. The two forms decode to the same block, so the parsed
+// value cannot tell them apart, and a runner older than rigorSpellingSince
+// refuses the scalar outright ("cannot unmarshal !!str into config.Rigor")
+// where it reads the block. Its answer becomes Config.RepoRigorScalarSet.
+func setsRigorScalar(tree map[string]any) bool {
+	n, ok := tree["rigor"].(*yaml.Node)
+	return ok && n.ShortTag() == "!!str"
+}
+
+// rigorAreaLevelWritten is whether a decoded rigor: value writes the `level:`
+// key of one of its area rules: the shared walk behind setsRigorLevel and
+// ProjectLayer.SetsRigorLevel, which read it out of a repository's tree and a
+// layer's respectively.
+func rigorAreaLevelWritten(node any) bool {
+	return rigorAreaKeyWritten(node, "level")
+}
+
+// rigorMembersWritten is whether a decoded rigor: value writes what LD4 adds
+// to the project layer's rigor block: a `members:` key of one of its area
+// rules, or the per-repository `repos:` map beside them. It is what
+// ProjectLayer.SetsRigorMembers answers, and both keys are the project
+// layer's alone — a repository's own file knows no repos: and refuses members:
+// on a rule of its own (rigor.Area.Validate) — so a runner older than
+// rigorMembersSince (internal/cli) refuses either as something its KnownFields
+// decoder does not know, in the layer it decodes at bootstrap, for every
+// repository of the project at once.
+func rigorMembersWritten(node any) bool {
+	m, ok := node.(map[string]any)
+	if !ok {
+		return false
+	}
+	if _, ok := m["repos"]; ok {
+		return true
+	}
+	return rigorAreaKeyWritten(node, "members")
+}
+
+// rigorAreaKeyWritten is whether a decoded rigor: value writes key as a key of
+// one of its area rules, at any value. The rules are a mapping's value in this
+// tree only when the whole rigor: block is one, so the list arrives as the node
+// Resolve keeps it as (nodeTree's answer for a sequence) and is walked as
+// nodes.
+func rigorAreaKeyWritten(node any, key string) bool {
+	m, ok := node.(map[string]any)
+	if !ok {
+		return false
+	}
+	areas, ok := m["areas"].(*yaml.Node)
+	if !ok || areas.Kind != yaml.SequenceNode {
+		return false
+	}
+	for _, rule := range areas.Content {
+		if rule.Kind != yaml.MappingNode {
+			continue
+		}
+		for i := 0; i+1 < len(rule.Content); i += 2 {
+			if rule.Content[i].Value == key {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // setsGovernance is ProjectLayer.SetsGovernance for a repository file's own
@@ -492,6 +599,23 @@ func setsStopFraction(tree map[string]any) bool {
 	return ok
 }
 
+// setsWorkspaceBeat is setsStopFraction for the agent.workspace_beat key:
+// whether the repository's text writes it, at any value. It reads the tree and
+// not the resolved Agent.WorkspaceBeat for the same reason — the key written
+// true, the default, resolves to the same answer as the key's absence — and
+// the gate needs the key, because a runner older than workspaceBeatSince
+// (internal/cli) decodes the file with KnownFields and refuses
+// agent.workspace_beat whatever it says. Its answer becomes
+// Config.RepoWorkspaceBeatSet.
+func setsWorkspaceBeat(tree map[string]any) bool {
+	agent, ok := tree["agent"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = agent["workspace_beat"]
+	return ok
+}
+
 // setsTriage is setsStopFraction for the agent.triage key: whether the
 // repository's text writes it, at any value. It reads the tree and not the
 // resolved Agent.Triage for the reason the fields beside it read the tree — a
@@ -512,6 +636,29 @@ func setsTriage(tree map[string]any) bool {
 		return false
 	}
 	_, ok = agent["triage"]
+	return ok
+}
+
+// setsReviewAgainstTask is setsTriage for the agent.review_against_task key:
+// whether the repository's text writes it, at any value. It reads the tree and
+// not the resolved Agent.ReviewAgainstTask for the reason the fields beside it
+// read the tree — a runner older than reviewSpecSince (internal/cli) decodes
+// the file with KnownFields and refuses agent.review_against_task whatever it
+// says, so the key's presence is the question the image-skew gate needs, and
+// the resolved pointer answers a different one (whether the check runs). Its
+// answer becomes Config.RepoReviewAgainstTaskSet.
+//
+// The project layer's half of this key does not exist: agent.review_against_task
+// is not a layer key at all (config.Scopes gives it InRepo alone), so there is
+// no ProjectLayer.SetsReviewAgainstTask beside SetsStopFraction. The owner's
+// published node is the other home, and it is carried into the run as a ceiling
+// (policy.Layer.ReviewAgainstTask) rather than through this tree.
+func setsReviewAgainstTask(tree map[string]any) bool {
+	agent, ok := tree["agent"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = agent["review_against_task"]
 	return ok
 }
 

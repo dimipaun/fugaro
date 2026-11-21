@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The console's read-only state after the grace period (subscriptions plan
-// S6.2; the design is `docs/design/lapse-read-only.md`, D436 and T12).
+// S6.2; the design is `docs/lapse-read-only/spec.md`, D436 and T12).
 //
 // **What this file is.** Two halves of one subject: the licence state of an
 // installation. The first is one mapping from the verifier's answer about the key

@@ -15,7 +15,7 @@ still appends none, and `internal/cli/doctor_layer.go` is byte for byte the file
 
 **Re-checked at `4053a300`** (2026-10-31), the merge of `origin/main` (`48754c01`) into this
 branch: `main`'s side of it gained the console's graph redesign (`console/**` and
-`docs/design/console-styling.md`) and the settings design's own folder (`docs/settings-commands`),
+`docs/console-styling/spec.md`) and the settings design's own folder (`docs/settings-commands`),
 and **not one file or symbol this folder names changed with it** — `internal/initflow/stage.go`,
 `internal/cli/init_stages.go`, `internal/cli/init.go`, `internal/cli/doctor_layer.go`,
 `internal/cli/config_publish.go`, `internal/localcfg/localcfg.go`, `internal/cli/layer_resolve.go`,
@@ -225,7 +225,7 @@ checkout is shown as unknown (D839, spec §2.3) rather than read from the workin
 answer for this machine instead of for the branch the run will use.
 
 **F17: Exists. The console reads no rigor configuration.** Its sources are the CLI documents listed
-in `docs/design/desktop-console.md` §2.1; rigor reaches it only through each run's `rigor` block in
+in `docs/desktop-console/spec.md` §2.1; rigor reaches it only through each run's `rigor` block in
 `fugaro watch --json` (`console/docs/json-contract.md` §5). The console's project view is planned,
 not built: it is plan **P6** in `docs/coordinator/implementation-plan.md` (§5, "The console's
 project view"), which `docs/console-dependency-graph/implementation-plan.md` cites as

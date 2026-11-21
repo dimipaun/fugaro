@@ -57,10 +57,16 @@
 # update` applies the installation root BEFORE it applies Firebase. On an
 # installation that already exists the signer is there and the binding is
 # created; on an installation opting in on its very first apply the account
-# does not exist yet and this binding fails that apply. Nothing can opt in
-# today (the variable has no CLI writer, below), and the release that adds one
-# either orders the two steps or moves this binding into modules/firebase,
-# which is where the role it names is declared.
+# does not exist yet and this binding fails that apply. The writer orders the
+# two steps rather than this file: `fugaro update --firebase-project <id>
+# --orchestrator` writes var.orchestrator at the stage that runs AFTER the
+# Firebase root (internal/cli's ensureOrchestratorBlock, called from the
+# installation stage's --firebase-project branch), so the block reaches this
+# root only once the signer and its role exist — and an installation whose
+# Firebase root has never been applied has no budget block and no Firebase
+# outputs either, which is what the writer refuses by name. The other way out
+# stays open: moving this binding into modules/firebase, where the role it
+# names is declared.
 #
 # What the account may never do is the design's section 6 and it is not
 # expressible as a comment here: no IAM (nothing this file creates carries
@@ -151,12 +157,22 @@ resource "google_secret_manager_secret" "pairing_key" {
     fugaro_project = var.fugaro_project
   }
 
+  # A container the CLI created is replicated in the installation's region, and
+  # replication is creation-time only: a differing value here would plan a
+  # replacement, which prevent_destroy refuses and which deletes every version
+  # first. So the field is ignored below, and this block decides only a
+  # container Terraform itself creates.
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [replication]
   }
 
   depends_on = [google_project_service.this]
@@ -327,13 +343,18 @@ resource "google_service_account_iam_member" "orchestrator_token_minter" {
 # pin are told apart by their argv — which is what internal/infra/tf's case for
 # this address reads.
 #
-# The environment is the process's whole configuration and it is three names,
+# The environment is the process's whole configuration and it is six names,
 # none of them a credential and none of them a secret (the process's own header
 # counts them): the project that names this installation's node, the Firebase
-# project that node belongs to, and the database URL it is read from. There is
+# project that node belongs to, and the database URL it is read from — and,
+# since P5.1d, the launch's own three: the GCP project the installation's jobs
+# are in, the region they were deployed to, and the runs bucket's URL. There is
 # deliberately no model key, no git credential and no secret ID here — section
 # 6's rules 4 and 5, and the account's table has no secretAccessor for one to be
-# read with.
+# read with. Nor is there a budget mode or a signer account: the launcher reads
+# the Firebase project above and derives both (internal/infra's SignerAccountID,
+# which the Firebase root's own outputs check), so a name an operator could set
+# to another account's is not a field of this deployment.
 resource "google_cloud_run_v2_service" "orchestrator" {
   count = local.orchestrator_on ? 1 : 0
 
@@ -389,6 +410,35 @@ resource "google_cloud_run_v2_service" "orchestrator" {
       env {
         name  = "FUGARO_RTDB_URL"
         value = var.orchestrator.rtdb_url
+      }
+      # The launch's own three (mobile plan task P5.1d). The service starts the
+      # runs the node records, and the launcher reads its backend, its region
+      # and its runs bucket out of the config it builds from them: the project
+      # the jobs are in and the region they were deployed to, and the URL of the
+      # bucket the claim, the task, the launch record and the run's sealed budget
+      # token live in. They are the same three names a run's own container
+      # carries them under (internal/infra's GCPProjectEnv, RegionEnv and
+      # BucketEnv), so what this service launches is a launch of the
+      # installation's own jobs and never a second, differently-addressed one.
+      # None of them is a credential: two are names, and the third is the bucket
+      # the two bindings above already reach under runs/, tokens/ and issues/.
+      # They are not a second spelling of anything above: the Firebase project is
+      # where the database is, the GCP project is where the jobs are, and on an
+      # installation whose database lives in another project the two differ.
+      # internal/cli reads exactly this list as orchestratorServiceEnvNames, and
+      # TestOrchestratorServiceEnvIsTheDeploymentsOwn holds the two to each other
+      # in both directions.
+      env {
+        name  = "FUGARO_GCP_PROJECT"
+        value = var.project
+      }
+      env {
+        name  = "FUGARO_REGION"
+        value = var.region
+      }
+      env {
+        name  = "FUGARO_BUCKET"
+        value = "gs://${var.runs_bucket}"
       }
     }
   }

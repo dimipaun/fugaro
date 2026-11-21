@@ -3,7 +3,7 @@ project: aurora
 git: { provider: github }
 rigor:
   areas:
-    - { name: ledger, match: "internal/ledger/**", mode: pro }
-    - { name: ci, match: ".github/workflows/**", mode: critical }
+    - { name: ledger, match: "internal/ledger/**", level: pro }
+    - { name: ci, match: ".github/workflows/**", level: critical }
 workflows:
   server: { commands: { build: make, test: make test } }

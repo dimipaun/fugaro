@@ -6,17 +6,26 @@ package credsvc
 // C2.3 takes the job's grant and mount away, and this file is the endpoint
 // they meet at.
 //
-// Three things make "the run's own repository" a property of this service
+// Four things make "the run's own repository" a property of this service
 // rather than a check on something the caller sent:
 //
 //   - The repository is never the caller's to name. A mint call carries the
-//     App's ID and nothing else; the repository is the one the calling job
-//     account is bound to (JobAccount.Repo), and the pairing between the run
-//     identity and that account is the admission ServeHTTP already makes
-//     before any route is served (review finding N1: a run identity is
-//     honoured only by the job whose repository it belongs to). A run that
-//     asked for another repository has no field to ask in, and a job account
-//     bound to another repository never reaches this function.
+//     App's ID and nothing else; the repository is the one the SCOPE's table
+//     pairs the calling job account with (Scope.Repos, C1) — the deployment's
+//     own table, derived from the job accounts it serves — and the pairing
+//     between the run identity and that account is the admission ServeHTTP
+//     already makes before any route is served (review finding N1: a run
+//     identity is honoured only by the job whose repository it belongs to). A
+//     run that asked for another repository has no field to ask in, and a job
+//     account bound to another repository never reaches this function.
+//   - The repository the table answers is held to the coverage this call's
+//     forge credentials reach (ForgeReader.Covers, R5, WS17): a workspace's
+//     owner declares the repositories its shared App key is spent on, and this
+//     fence holds the table's answer to that declaration. An installation
+//     covers every repository its table holds, so the fence refuses nothing
+//     its own pairing admitted; a workspace whose owner's declaration does not
+//     name the repository is refused before the bundle is read, so the key is
+//     never spent on it.
 //   - The permissions are the class's and this service adds none: a repository
 //     caller is issued github.RunTokenPermissions(), the exported spelling of
 //     the set internal/gitprov/github's own provider mints with, so the
@@ -151,9 +160,9 @@ var (
 )
 
 // MintRequest is the body of a mint call: the GitHub App's ID, and nothing
-// else. There is no repository field on purpose — the repository is the one
-// the calling job account is bound to, and a body that names one is refused by
-// the strict decoder rather than ignored (Convention 6).
+// else. There is no repository field on purpose — the repository is the one the
+// scope pairs the calling job account with, and a body that names one is refused
+// by the strict decoder rather than ignored (Convention 6).
 type MintRequest struct {
 	AppID string `json:"app_id"`
 }
@@ -249,9 +258,10 @@ func readMintRequest(r *http.Request) (MintRequest, error) {
 // mintRepository splits the canonical repository name the calling job account
 // is bound to into the owner and the repository GitHub's API takes.
 //
-// The name is the deployment's own (JobAccount.Repo, built by JobAccountsFor
-// from the repository the operator onboarded) and never the caller's, so this
-// is a parse of a name this service was configured with — and it still refuses
+// The name is the deployment's own — the table the scope resolves the calling
+// job account in (Scope.Repos, built by JobAccountsFor from the repository the
+// operator onboarded) and never the caller's — so this is a parse of a name this
+// service was configured with — and it still refuses
 // anything that is not exactly "<provider>/<owner>/<name>" of provider github,
 // because a name this code cannot read is a name it must not guess a
 // repository out of: the token it mints is scoped to what these two strings
@@ -292,10 +302,10 @@ func appKey(b *Bundle) (*rsa.PrivateKey, error) {
 	return key, nil
 }
 
-// mint answers one mint call. The caller has been verified and bound to a
+// mint answers one mint call. The caller has been verified and paired with a
 // repository before this is reached (ServeHTTP), so what is left is: choose the
-// permission set, read the body, read the App key, resolve the repository,
-// mint, and answer.
+// permission set, read the body, ask the scope for the repository this token is
+// scoped to and hold it to the coverage, read the App key, mint, and answer.
 //
 // Every refusal of the mint's own is a state_unavailable refusal — the run
 // halts on it (D143) and never falls back to a key of its own — and every one,
@@ -304,7 +314,7 @@ func appKey(b *Bundle) (*rsa.PrivateKey, error) {
 // exists to record. The class's refusal is the one that is not
 // state_unavailable: it is a fact about the run identity, and it is answered —
 // and recorded — with the pairing's own vocabulary.
-func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity, ja JobAccount) {
+func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity) {
 	// The set is chosen first because it is a fact about the identity and not
 	// about the request: a class this endpoint does not mint for, and a
 	// review-class caller the claim rule refuses, are answered before the body
@@ -322,7 +332,20 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 		s.refuseMint(ctx, w, id, err.Error())
 		return
 	}
-	owner, repo, err := mintRepository(ja.Repo)
+	// The repository is the scope's answer and not this handler's to read off
+	// the job row: a workspace's table holds the CALLING job account's own
+	// repositories and no other member's, so reading the row here would be a
+	// second answer to a question the scope has already narrowed. The scope's
+	// two fences are asked in that one call and before the bundle is read — the
+	// PAIRING, which refuses a slug no table holds, and the COVERAGE, which
+	// refuses a repository the workspace owner's declaration does not name — so
+	// a repository this caller may not be served costs this service no read of
+	// the App key at all.
+	canonical, ok := s.admitMintRepository(ctx, w, id)
+	if !ok {
+		return
+	}
+	owner, repo, err := mintRepository(canonical)
 	if err != nil {
 		s.refuseMint(ctx, w, id, err.Error())
 		return
@@ -354,7 +377,7 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 		// and never beside its value.
 		attrs := []any{
 			"purpose", PurposeMint, "credential", config.GitHubAppKeySecret,
-			"repository", ja.Repo, "run", id.Run,
+			"repository", canonical, "run", id.Run,
 		}
 		var se *httpjson.StatusError
 		if errors.As(err, &se) {
@@ -368,7 +391,71 @@ func (s *Server) mint(ctx context.Context, w http.ResponseWriter, r *http.Reques
 	// answerMint: an answer the service cannot build is a refusal that writes
 	// its own line and no issuance line at all, and an issuance whose line
 	// cannot be written is a refusal too (C1.13, D143).
-	s.answerMint(ctx, w, id, MintResponse{Token: token, ExpiresAt: expires, Repository: ja.Repo})
+	s.answerMint(ctx, w, id, MintResponse{Token: token, ExpiresAt: expires, Repository: canonical})
+}
+
+// admitMintRepository answers the canonical repository this call's installation
+// token is scoped to, and it is the whole of what the scope decides for a mint:
+// the name the calling job account is paired with in the scope's own table, held
+// to the coverage this call's forge credentials reach.
+//
+// ok is false when the call was refused, and that is the one answer a caller has
+// to act on by returning: every refusal here is already written, audited and
+// answered by the helper that chose it.
+//
+// **The pairing is read here and no longer passed in.** It is the same read
+// ServeHTTP made — the slug a run identity carries resolved through the
+// deployment's table (Scope.Repos, review finding N1) — and it is made again
+// because the table is the scope's and not the server's: a workspace's holds
+// the repositories of the CALLING job account and no other member's, and what
+// this endpoint mints must be scoped to one of those. Reading the row the
+// dispatcher resolved would be reading the server's table, which is the answer
+// this task put behind the scope.
+func (s *Server) admitMintRepository(ctx context.Context, w http.ResponseWriter, id Identity) (string, bool) {
+	sc := scopeOfCall(ctx, s)
+	canonical, paired := sc.Repos()[id.Slug]
+	if !paired {
+		// Unreachable through ServeHTTP — the gate resolved this very table and
+		// refused an unpaired slug before it dispatched the route, with the
+		// sentence below — and kept rather than assumed: the alternative to
+		// refusing is minting for the zero repository, which is a token for a
+		// repository nobody named. The call reaching it is refused exactly as the
+		// gate refuses it, with the pairing's own vocabulary, so a reader of the
+		// line cannot tell the two apart and does not have to.
+		const message = "the run identity is not a run of the calling job's repository"
+		s.refuseCall(ctx, w, id, PurposeMint, config.GitHubAppKeySecret, "", StatusUnverified, ErrorUnverifiedRunIdentity, message)
+		return "", false
+	}
+	covered, err := sc.Forge().Covers(ctx, canonical)
+	if err != nil {
+		// A coverage that could not be read is not a coverage that names nothing
+		// (C1's own rule for Covers): the fail-closed direction is to refuse, and
+		// the sentence is this file's rather than the reader's, which may carry a
+		// node's path or a database's error.
+		s.refuseMint(ctx, w, id, mintCoverageUnreadable)
+		return "", false
+	}
+	if !covered {
+		s.refuseMint(ctx, w, id, mintNotCovered(canonical))
+		return "", false
+	}
+	return canonical, true
+}
+
+// mintCoverageUnreadable is what a mint is refused with when the coverage this
+// call's forge credentials reach could not be read.
+const mintCoverageUnreadable = "the repositories this call's forge credentials reach could not be read, so no installation token is issued for any of them"
+
+// mintNotCovered is the refusal of a repository the coverage does not name: the
+// workspace owner's declaration is the list of repositories a shared App key is
+// spent on, and the fix is the owner's own.
+//
+// It names the repository, which is a name and never a credential, and it names
+// the one command that publishes a different declaration (R19, F28): a member's
+// operator reading this line has nothing to change on their own side, and a
+// sentence that left the fix out would send them looking for one.
+func mintNotCovered(canonical string) string {
+	return "the coverage this call's forge credentials reach does not name " + canonical + ": a workspace's shared GitHub credential is spent on the repositories its owner declares, and the owner's `fugaro update` is what publishes them"
 }
 
 // answerMint builds the mint's answer, audits the issuance and writes it.
@@ -599,7 +686,24 @@ func (a *contextAdmission) Error() string { return a.message }
 // A policy that is not published is not read as an empty allow-list: it refuses
 // the call, which is the fail-closed direction the launcher takes for the same
 // repository (a launch naming a context repository needs a published policy).
-func (s *Server) admitContextRepos(ctx context.Context, id Identity, repos []string) error {
+//
+// The policy is read from the SCOPE and not from the service's configuration
+// (WS17): an installation's scope answers its own store, which is where this
+// route has always read it, and a workspace's answers the MEMBER's — the project
+// whose repositories the run was launched to read, which is the project whose
+// policy admitted them at the launch (C1's rule 2: the readers are the caller's,
+// and the workspace's own node is not the one a context repository is admitted
+// by).
+//
+// The workspace OWNER's coverage is deliberately not asked here, and a reader
+// who expects R5's third fence will look for it: a context repository is one a
+// run reads from outside its own repository, so it is often outside the
+// installation's own table too (contexttoken_test.go's second one is), and C1
+// gives an installation the one answer that its coverage is its table — asking
+// it here would refuse calls this service answers today, which is the half of
+// WS17's acceptance that binds. The claim and the member's policy are this
+// route's two fences, and a workspace's policy is the member's own.
+func (s *Server) admitContextRepos(ctx context.Context, sc Scope, id Identity, repos []string) error {
 	claimed := make(map[string]bool, len(id.ContextRepos))
 	for _, repo := range id.ContextRepos {
 		claimed[repo] = true
@@ -610,7 +714,7 @@ func (s *Server) admitContextRepos(ctx context.Context, id Identity, repos []str
 				message: requestRefused + "the repository " + repo + " is not one this run's context repositories name, and a context token covers the repositories the launch recorded and no others"}
 		}
 	}
-	shared, found, err := s.cfg.Policy.Shared(ctx)
+	shared, found, err := sc.Policy().Shared(ctx)
 	if err != nil || !found {
 		// A node that is not there is not a read that failed (labelRead answers a
 		// nil err as nil), so the two share one sentence: there is no allow-list
@@ -646,7 +750,7 @@ func (s *Server) admitContextRepos(ctx context.Context, id Identity, repos []str
 // contextTokens answers one context mint call (C5b, D613). The caller has been
 // verified and paired before this is reached (ServeHTTP), so what is left is:
 // read the body, hold the repositories to the run's own claim and to the
-// project's policy, read the App key, mint one token per installation, and
+// calling scope's policy, read the App key, mint one token per installation, and
 // answer.
 //
 // The order is the boundary's and not an accident. The claim and the policy are
@@ -667,7 +771,7 @@ func (s *Server) contextTokens(ctx context.Context, w http.ResponseWriter, r *ht
 		s.refuseContextTokens(ctx, w, id, StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
 		return
 	}
-	if err := s.admitContextRepos(ctx, id, req.Repositories); err != nil {
+	if err := s.admitContextRepos(ctx, scopeOfCall(ctx, s), id, req.Repositories); err != nil {
 		var refused *contextAdmission
 		if errors.As(err, &refused) {
 			s.refuseContextTokens(ctx, w, id, refused.status, refused.typ, refused.message)

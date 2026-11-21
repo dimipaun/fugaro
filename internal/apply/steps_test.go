@@ -111,14 +111,29 @@ func TestStepsMatchesRealSettingKeys(t *testing.T) {
 		// workspace's own project is applied from (its service account and the
 		// one grant) and what the record stage publishes, so it owes both.
 		{"workspace_members.*.repos", []string{initflow.WorkspaceProject, initflow.Workspace}},
+		{"workspace_members.*.job_service_accounts.*.repos", []string{initflow.WorkspaceProject, initflow.Workspace}},
+		{"workspace_members.*.database_region", []string{initflow.WorkspaceProject, initflow.Workspace}},
 		{"workspace_cap.monthly", []string{initflow.WorkspaceProject, initflow.Workspace}},
-		// The workspace MEMBER's half, which owes no step: nothing publishes
-		// either key, and the workspace stage skips on a member. The two are
-		// declared rather than missing, so Steps answers true with no steps —
-		// a row mapping them to the workspace stage would queue a step that can
-		// never run on the machine that asked for it.
-		{"workspace", nil},
+		// The shared list is the owner's too: it is published in the same record
+		// the member table is, and it is the same project the record's service
+		// account and grant belong to, so a credential shared or unshared owes
+		// both stages and not a third one of its own.
+		{"workspace_shared.*.kind", []string{initflow.WorkspaceProject, initflow.Workspace}},
+		{"workspace_shared.*.projects", []string{initflow.WorkspaceProject, initflow.Workspace}},
+		{"workspace_shared.*.covers", []string{initflow.WorkspaceProject, initflow.Workspace}},
+		// The workspace MEMBER's half. The membership key and the pin's address
+		// are what the member's own credential-route record is derived from, so
+		// each owes the route stage: a project that joins or leaves a workspace,
+		// or that changes the address it takes the workspace's service from,
+		// has a record to publish or to remove (update_route.go, WS9). The rest
+		// of the pin owes no step — nothing publishes them, and the workspace
+		// stage skips on a member — and they are declared rather than missing,
+		// so Steps answers true with no steps: a row mapping them to the
+		// workspace stage would queue a step that can never run on the machine
+		// that asked for it.
+		{"workspace", []string{initflow.CredentialsRoute}},
 		{"workspace_pin.issuer", nil},
+		{"workspace_pin.service_address", []string{initflow.CredentialsRoute}},
 	} {
 		got, ok := Steps(Change{Kind: Setting, Key: tc.key})
 		if !ok {

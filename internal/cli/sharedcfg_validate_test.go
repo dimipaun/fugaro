@@ -56,6 +56,35 @@ repos:
 
 var sharedAnchor = SharedAnchor{Name: "belong", GCPProject: "fugaro-belong", Bucket: "fugaro-runs-fugaro-belong"}
 
+// sharedSealKeyPEM is a key fact's public key in the one PEM form a Cloud KMS
+// key version publishes one in: a PUBLIC KEY block holding the PKIX
+// SubjectPublicKeyInfo of a 2048-bit RSA key. It is a PUBLIC key and nobody's,
+// and it is here because the version beside it is what the cases below move:
+// that the public key is the version's is a cloud fact doctor reads (BR7) and
+// never something this reader or this file could check.
+const sharedSealKeyPEM = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Fv8ySELukpawETOn/JA
+erEjF78WwHFXQbsRxNPGJcbW5FmvKOO6xHvIxxP1JqZay7gStNr1HJ0S3dnXH0Q9
+tpChSqB+YLI/CFqD8szA972a/T3aTZ2UZJplxhU7k6+M9jp774fqiiKyOamBVqnI
+vxxuAIyaPgZOG0YGIFc6O0ej/3Wiqj5dG+4sBlnhp+TkS9b9ZKUqvq7eLCazwutg
+OCSLNQNpJKegmc646/SQhietJUQNsBHM1lWyHYtLS3E2/dC7R6LK6TnNWqqP5Bbz
+7VE5RZ5TsQrIkCo/GlmHPrSnjKJEAgLsRvLwogs+ijZx08tdTwNM5ZYGnixhGZAk
+2QIDAQAB
+-----END PUBLIC KEY-----
+`
+
+// sealKeyOn is the valid file with a key fact added to its batch block, whose
+// version names the project: the refusals and the positive below are about
+// that name, so the block has to carry a readable key fact for the version to
+// be read at all.
+func sealKeyOn(s, project string) string {
+	return strings.Replace(s, "    socket_gid: 412\n",
+		"    seal_key:\n"+
+			"        version: projects/"+project+"/locations/us-east5/keyRings/fugaro-batch/cryptoKeys/seal-key/cryptoKeyVersions/1\n"+
+			"        public_key: |\n"+indentLines(sharedSealKeyPEM, "            ")+
+			"    socket_gid: 412\n", 1)
+}
+
 func TestParseSharedRefusals(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -229,6 +258,21 @@ func TestParseSharedRefusals(t *testing.T) {
 		{"batch subnetwork of another project", func(s string) string {
 			return strings.Replace(s, "projects/fugaro-belong/regions/us-east5/subnetworks/fugaro-runs", "projects/evil-proj/regions/us-east5/subnetworks/fugaro-runs", 1)
 		}, "batch.subnetwork"},
+		// The key fact's version decides whose key every seal key of this
+		// installation is wrapped to (R13, D3101), so it is held to the
+		// anchor's project like the resources above: a writer of the runs
+		// bucket who published a version of their own would receive the seal
+		// key of every Batch run of this installation, and every machine with
+		// no local config would wrap to it. What the reader does NOT check is
+		// the half a name cannot answer — that the version exists, and that
+		// the public key beside it is that version's — which is doctor's on
+		// the machine whose block it is (BR7).
+		{"batch seal key version of another project", func(s string) string {
+			return sealKeyOn(s, "evil-proj")
+		}, "batch.seal_key.version"},
+		{"batch seal key version of a look-alike project", func(s string) string {
+			return sealKeyOn(s, "fugaro-belong-evil")
+		}, "batch.seal_key.version"},
 		{"batch service account of another project", func(s string) string {
 			return strings.Replace(s, "fugaro-batch@fugaro-belong.iam.gserviceaccount.com", "fugaro-batch@evil-proj.iam.gserviceaccount.com", 1)
 		}, "batch.service_account"},
@@ -611,6 +655,13 @@ func TestParseSharedAcceptsTheValidFileAndTheSizeCap(t *testing.T) {
 //     run's image derives FROM, so a writer with objectAdmin on the runs bucket
 //     cannot put code of their own in it. A later decision to refuse it is a
 //     decision, not a hole this test happened to leave open.
+//   - a key fact whose version names the ANCHOR'S OWN project is accepted, the
+//     other half of refusing a foreign one above: the check is about
+//     whose project the version names, and the version `fugaro update` writes
+//     from the compute root's own outputs is the anchor's (R13, D3101). The
+//     public key beside it is held to its shape by localcfg and to nothing more
+//     here — that the version exists and that the key is that version's are
+//     cloud facts, read by doctor on the machine whose block it is (BR7).
 func TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen(t *testing.T) {
 	otherRegion := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-central1-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", 1)
 	baseRepo := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-base:0.3.1", 1)
@@ -647,10 +698,24 @@ func TestParseSharedAcceptsThePositivesTheBatchRefusalsLeaveOpen(t *testing.T) {
 			t.Errorf("%s: parsed with no batch block", name)
 		}
 	}
+
+	// The key fact of the anchor's own key version, which is what the converge
+	// publishes and what a teammate's machine reads: the version check above
+	// must not be a refusal of this installation's own build.
+	own, err := ParseShared([]byte(sealKeyOn(validShared(), sharedAnchor.GCPProject)), sharedAnchor)
+	if err != nil {
+		t.Fatalf("this project's own key fact was refused: %v", err)
+	}
+	if own.Batch == nil || own.Batch.SealKey == nil {
+		t.Fatalf("the key fact was dropped: %+v", own.Batch)
+	}
+	if own.Batch.SealKey.Version == "" || own.Batch.SealKey.PublicKey == "" {
+		t.Fatalf("the key fact reads half-written: %+v", own.Batch.SealKey)
+	}
 }
 
 // TestParseSharedLeavesAnotherPullThroughRepository pins the residue the design
-// now states instead of smoothing over (docs/design/shared-config.md §5, the
+// now states instead of smoothing over (docs/shared-config/spec.md §5, the
 // follow-up to Task 8's first half): the fugaro-ghcr refusal is by that one
 // repository ID, so a SECOND pull-through repository of the anchor's project —
 // one an operator created under another ID, whose contents are its upstream's
@@ -673,7 +738,7 @@ func TestParseSharedLeavesAnotherPullThroughRepository(t *testing.T) {
 	published := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro/edgeweb:1", ref, 1)
 	c, err := ParseShared([]byte(published), sharedAnchor)
 	if err != nil {
-		t.Fatalf("ParseShared refused %q: %v — the refusal is by the one repository ID fugaro-ghcr and the reader has no repository list, so a refusal here is the change Task 10 step 5 makes, and docs/design/shared-config.md §5 and this test's comment have to move with it", ref, err)
+		t.Fatalf("ParseShared refused %q: %v — the refusal is by the one repository ID fugaro-ghcr and the reader has no repository list, so a refusal here is the change Task 10 step 5 makes, and docs/shared-config/spec.md §5 and this test's comment have to move with it", ref, err)
 	}
 	if c.Batch == nil || c.Batch.Image != ref {
 		t.Fatalf("batch.image = %+v, want %q: the reader passed the reference but not as the batch image", c.Batch, ref)

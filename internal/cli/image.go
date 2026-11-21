@@ -367,18 +367,30 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if note := buildRecordNote(lc); note != "" {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", note)
 	}
-	// The provider credential's ID as live state resolves it, checked
-	// against what this repository's build account is actually granted
-	// (B1): a build submitted with an ID that account may not read fails
-	// its clone at the build's end, long after it was billed.
-	gitID, err := gitSecretID(ctx, lc, rs, nodePolicy(ctx, &env.policy, lc), "the image build of "+rs.Name)
+	// A repository the credentials service serves names no secret at all
+	// (B4.9, D2076): its build account holds no accessor to check this ID
+	// against and the request mounts none of them, so the resolution — and the
+	// grant check it makes, which would refuse a build that is exactly the one
+	// the flip exists to serve — is the unserved builds' own.
+	serviceURL, err := buildServiceURL(lc, repo, rs.BuildMountsServed())
 	if err != nil {
 		return err
+	}
+	gitID := ""
+	if serviceURL == "" {
+		// The provider credential's ID as live state resolves it, checked
+		// against what this repository's build account is actually granted
+		// (B1): a build submitted with an ID that account may not read fails
+		// its clone at the build's end, long after it was billed.
+		if gitID, err = gitSecretID(ctx, lc, rs, nodePolicy(ctx, &env.policy, lc), "the image build of "+rs.Name); err != nil {
+			return err
+		}
 	}
 	spec, err := cloudBuildSpec(rs, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL(), gitID)
 	if err != nil {
 		return err
 	}
+	spec.CredentialsServiceURL = serviceURL
 	spec.NoSmoke = o.noSmoke
 	b, err := gcp.NewBuilder(ctx, env.gcp, lc.BuildRegion())
 	if err != nil {
@@ -513,13 +525,88 @@ func buildRecordNote(lc *localcfg.Config) string {
 	return fmt.Sprintf("the build records its image in the runs bucket %s (the only bucket its account may write), but ls and image status read bucket_url %s, so they won't see it", rec, lc.Bucket)
 }
 
+// buildServiceURL is the credentials service a build of repository repo has to
+// fetch its credentials from (B4.9, the S4 flip; D2076, D2077), and "" for a
+// build that holds them itself: an installation that deploys no service, and a
+// repository the switch holds off, whose build account keeps every accessor
+// and whose request keeps every mount (G9, D147). plan is whether the spec this
+// build is submitted against says the service serves it
+// (RepoSpec.BuildMountsServed), and err is the refusal for the one state a
+// build cannot be submitted in.
+//
+// Which repositories the switch serves is answered here, and never derived a
+// second time: a build that judged the switch for itself — on this machine's
+// budget.mode, or on an exact repos.<name> key — would submit a request naming
+// the secrets a root whose accessors are already gone cannot read, which Cloud
+// Build refuses, and the two ways it could be wrong are the two ways the
+// converge's own build would then fail.
+//
+// The two answers a build can be judged on are the plan this run is about to
+// apply (plan, the converge's own spec) and the root that is applied today, as
+// this machine records it — the installation's published block plus the record
+// of that root's last apply, which is the plan's own answer to the switch
+// written back by the apply that made it (localcfg.Repo.CredentialsServiceOn,
+// init_credentials' recordCredentialsServiceReady: "the one predicate, not a
+// second copy of its conjunction"). Either one being on is enough, and the
+// wider answer is the deliberate one: both are written by a state in which the
+// build account holds no accessor on the git credential or on the workflow's
+// own build secrets, so a request that named one of them is the request D2077
+// is about. The launch decides its job's address the same way and for the same
+// reason (credentialsServiceLaunchEnv, D143).
+//
+// The record is what answers for fugaro image build and the image refresh:
+// their spec is built from the checkout and carries no installation outputs
+// (buildSecrets' own note), so its own answer is off whatever the root was
+// applied with.
+//
+// The address is the installation's published one, and never a value of this
+// process's environment (configuredCredentialsServiceURL). A served repository
+// this config records no address for is a refusal and not a fallback: the
+// root it builds against holds no accessor on the git credential any more, so
+// a request submitted without the address would name no secret and no service
+// and fail at its credential step, long after it was billed.
+func buildServiceURL(lc *localcfg.Config, repo string, plan bool) (string, error) {
+	if !plan && !appliedBuildMountsServed(lc, repo) {
+		return "", nil
+	}
+	if url := configuredCredentialsServiceURL(lc); url != "" {
+		return url, nil
+	}
+	return "", userErr("repository %s reads its builds' credentials at the installation's credentials service, and this config records no address for it (credentials_service.url): its build account holds no accessor on the git credential any more, so a build submitted without the address would hold no credential at all. Run %s at the installation's own checkout — that records the service's address — and then run this again", repo, selfCommand()+" update")
+}
+
+// appliedBuildMountsServed is whether the repository's root is applied with the
+// credentials service serving its BUILDS (B4.9): the installation's block this
+// config holds, and the record of that root's last apply.
+//
+// The record is the plan's own answer to the switch, written by the apply that
+// made it, and the four conditions of infra.CredentialsServiceServes are
+// inside it — the published node's mode included, which a build that read this
+// machine's own budget.mode would get wrong for an `api-key` or `oauth`
+// repository (D2071). A repository whose entry says off, and one this config
+// holds no entry for, are both repositories the service does not serve: an
+// unswitched repository keeps every accessor and every mount (G9, D147).
+//
+// The entry is read through localcfg.RepoFor's canonical match, the one the
+// plan reads it with: repos: is keyed by the name a person wrote, while a build
+// is submitted for the repository this checkout's own origin answers.
+func appliedBuildMountsServed(lc *localcfg.Config, repo string) bool {
+	if lc == nil || lc.CredentialsService == nil {
+		return false
+	}
+	entry, ok := lc.RepoFor(repo)
+	return ok && entry.CredentialsServiceOn()
+}
+
 // cloudBuildSpec is the Cloud Build build of workflow name of the
 // repository rs, from base, recording to bucket (gs://…, the local
 // config's RecordBucketURL): the one spec fugaro image build, the
 // converge's first build and the daily image check submit. gitSecretID is the
 // secret the build's clone reads (rs.Secrets[ws.GitSecret] would be the
 // repository's own copy, which Readiness may have resolved past: design
-// docs/design/project-secrets.md §5), never looked up here.
+// docs/project-secrets/spec.md §5), never looked up here, and "" for a
+// repository the credentials service serves, whose request names no secret
+// (CredentialsServiceURL, which the caller sets).
 func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineType, bucket, gitSecretID string) (gcp.BuildSpec, error) {
 	if _, ok := rs.Workflows[name]; !ok {
 		return gcp.BuildSpec{}, userErr("fugaro.yaml has no workflow %q", name)
@@ -559,6 +646,13 @@ func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineTy
 // repository's own for a name Readiness resolved to the project's copy, which
 // is not the container the job mounts.
 //
+// A served repository's own secrets are the one exception, and it is the same
+// answer read twice (B4.9, D2077): B3.8's dropVaultMounts takes them off the
+// job of a switched repository, so they are in no mount of the spec this is
+// read from, while the build still reads them — fetched from the credentials
+// service at the credential step, under the names the spec answered for the
+// module (WorkflowSpec.VaultSecretNames, the only place those names survive).
+//
 // The mounts are the deployment's answer, so what is read here has to be a
 // spec Readiness produced, and only the converge's first image build is handed
 // one (planRepo's spec, through offerBuilds to buildImages). Every other path
@@ -577,13 +671,24 @@ func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineTy
 // project covers, or one D2313's door ignores — reaches the request, and Cloud
 // Build refuses that build.
 func buildSecrets(rs infra.RepoSpec, name string, declared []config.Secret) []gcp.BuildSecret {
-	mounted := make(map[string]bool, len(rs.Workflows[name].SecretEnv))
-	for _, logical := range rs.Workflows[name].SecretEnv {
-		mounted[logical] = true
+	ws := rs.Workflows[name]
+	reads := make(map[string]bool, len(ws.SecretEnv)+len(ws.VaultSecretNames))
+	for _, logical := range ws.SecretEnv {
+		reads[logical] = true
+	}
+	// A served repository's own build secrets are the second half of the same
+	// answer (B4.9, D2077): the class list takes their mounts off the job
+	// (B3.8's dropVaultMounts, which is why they are in neither SecretEnv nor
+	// SecretIDs) and the build's credential step fetches them from the service
+	// under the names the spec answered for the module
+	// (WorkflowSpec.VaultSecretNames). A build that named none of them would
+	// fetch none, and its build step would read no file secret at all.
+	for _, logical := range ws.VaultSecretNames {
+		reads[logical] = true
 	}
 	out := make([]gcp.BuildSecret, 0, len(declared))
 	for _, s := range declared {
-		if !mounted[s.Name] {
+		if !reads[s.Name] {
 			continue
 		}
 		if id := rs.MountSecretID(s.Name); id != "" {

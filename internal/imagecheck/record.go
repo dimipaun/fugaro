@@ -66,7 +66,7 @@ type Record struct {
 	// always knows its own.
 	Edition string `json:"edition,omitempty"`
 	// SealedBudgetToken is true when the fugaro that rendered this record
-	// reads the sealed budget token (docs/design/budget-token-channel.md
+	// reads the sealed budget token (docs/budget-token-channel/spec.md
 	// §7.1). That fugaro is the BASE image's own binary, which runs the image
 	// build's render step (images/derived/cloudbuild.yaml): the field says
 	// only that the base image's own build step recorded it. It does not say

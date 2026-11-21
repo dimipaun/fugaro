@@ -98,7 +98,7 @@ new mechanism.
   from.
 
 **Consequence.** The feature's whole cloud-side cost is zero new resource types and zero new grant
-shapes, exactly as `docs/design/project-secrets.md` §4 argued when it added the project container.
+shapes, exactly as `docs/project-secrets/spec.md` §4 argued when it added the project container.
 The design's job is to say so plainly rather than propose a mechanism the tree already has.
 
 ### F3. Eligibility is one exported function, and six call sites ask it
@@ -176,7 +176,7 @@ than hiding it.
 
 **What the code does.** `workflows.tf`'s `module "workflow"` is placed with `secrets = local.secrets`
 (`:25`, from the map `:9` builds), which is the map the workflow module's own
-`google_secret_manager_secret_iam_member` and `secret_key_ref` read (`docs/design/project-secrets.md`
+`google_secret_manager_secret_iam_member` and `secret_key_ref` read (`docs/project-secrets/spec.md`
 §4: *"No new Terraform resource type for IAM, in either module"*). A project container lives in the
 installation root, in a different state, and the grant is written from the repository's own root
 against the ID string.
@@ -292,7 +292,7 @@ workflow_secrets.<name>.allow_data_to …` today is told the key is not one Fuga
 had"*); `SECURITY.md:38` (*"`workflows.<n>.secrets` cannot be shared this way at all: a workflow's
 own secret stays a repository copy"*); `docs/project-layer.md:244` (*"`workflows.*.secrets` stays a
 repository's own application secret, and a name with a project-wide meaning cannot be shared through
-a workflow's block"*); `docs/design/project-secrets.md` §3 step 4 (*"Else: refused — never a
+a workflow's block"*); `docs/project-secrets/spec.md` §3 step 4 (*"Else: refused — never a
 workflow's own secret, which has no project-wide meaning"*); `internal/cli/secrets.go:308` (the help
 text the issue quotes) and `:859` (the store-time note); and
 `plugin/skills/setup/SKILL.md:128` (*"Setup's prompts (step 9) have no `--repo` to pass: they store a
@@ -391,7 +391,7 @@ work (#1682) writes no decision yet and is to take **D1220–D1259**.
   convention, the harness OAuth namespaces and the `creds-bundle` refusal stay exactly as they are;
   D1261 restates them, it does not amend them.
 - **The precedence.** `resolveSecretID` is cited (F5) and never edited.
-- **`docs/design/project-secrets.md`.** It is the parent design and its D-numbers are not this
+- **`docs/project-secrets/spec.md`.** It is the parent design and its D-numbers are not this
   work's; the one line that changes is §3's step 4, and D1272 makes it a documentation edit with a
   pointer to this folder, not a rewrite.
 - **`deploy/terraform/`.** No task edits a `.tf` file (F2, F7). If one finds itself needing to, it
@@ -888,7 +888,7 @@ rather than an open question.
 
 **Recommendation.** All of F14's, plus one addition: `SECURITY.md`'s project-scope section gains the
 reach sentence for a workflow secret (D1273). Concretely — `SECURITY.md:28`, `SECURITY.md:38`,
-`docs/project-layer.md:244`, `docs/design/project-secrets.md` §3 step 4 (a pointer to this folder,
+`docs/project-layer.md:244`, `docs/project-secrets/spec.md` §3 step 4 (a pointer to this folder,
 not a rewrite), `internal/cli/secrets.go`'s `set` help (`:308`) and store-time note (`:859`),
 `plugin/skills/setup/SKILL.md:128`, and this folder's own status lines. `internal/cli/docs_*_test.go`
 pins each.
@@ -898,7 +898,7 @@ pins each.
 - **Ship the feature and fix the docs later.** It costs the sentence a person uses to decide whether
   storing one value for sixty-five repositories is safe — the one thing `SECURITY.md`'s project-scope
   section exists to give them before they type the command. Rejected.
-- **Rewrite `docs/design/project-secrets.md` in place.** It is the parent design of this one and its
+- **Rewrite `docs/project-secrets/spec.md` in place.** It is the parent design of this one and its
   own record. It costs a reader's ability to see what changed and when, which is what the folder per
   design exists for.
 

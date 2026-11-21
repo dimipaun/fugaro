@@ -1,0 +1,748 @@
+{
+ "schema_version": 3,
+ "plan": "docs/launcher-does-not-mint/implementation-plan.md",
+ "stream": "cli",
+ "nodes": [
+  {
+   "id": "C1",
+   "title": "the identity wire contract",
+   "kind": "contract",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "stubs": [
+    "internal/credsvc/identity_stub.go"
+   ],
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/identitywire/wire.go",
+     "internal/identitywire/wire_test.go",
+     "internal/credsvc/identity_config.go",
+     "internal/credsvc/identity_stub.go",
+     "internal/credsvc/server.go",
+     "internal/credsvc/scope_installation.go",
+     "docs/launcher-does-not-mint/contract.md"
+    ]
+   }
+  },
+  {
+   "id": "LM0",
+   "title": "Check 840, as a script",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "scripts/live-checks/check-840.sh",
+     "scripts/live-checks/check-840_test.sh",
+     "docs/gcp-live-checklist.md",
+     "scripts/live_checks_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM1",
+   "title": "the ticket route and the issuance record",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/credsvc/identity_ticket.go",
+     "internal/credsvc/identity_record.go",
+     "internal/credsvc/identity_ticket_test.go",
+     "internal/credsvc/identity_record_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM2",
+   "title": "the claim route and the signing",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/credsvc/identity_claim.go",
+     "internal/credsvc/identity_sign.go",
+     "internal/credsvc/identity_claim_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM3",
+   "title": "the caller classes",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/credsvc/identity_callers.go",
+     "internal/credsvc/auth.go",
+     "internal/credsvc/identity_callers_test.go",
+     "internal/credsvc/launchers.go"
+    ]
+   }
+  },
+  {
+   "id": "LM4",
+   "title": "the pairing and device routes",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/credsvc/identity_pair.go",
+     "internal/credsvc/identity_pair_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM5",
+   "title": "the rules keep the record the service's",
+   "run": null,
+   "version": null,
+   "tier": "trivial",
+   "size": 0.5,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/budget/rules/rules_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM6",
+   "title": "the launcher asks the issuer, the resident launcher included",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2.5,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/launch_identity.go",
+     "internal/cli/launch_budget.go",
+     "internal/cli/run.go",
+     "internal/cli/troubleshoot_launch.go",
+     "internal/cli/orchestrator_launcher.go",
+     "internal/cli/orchestrator_serve.go",
+     "internal/cli/launch_identity_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM7",
+   "title": "the runner claims",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/runner/identity_claim.go",
+     "internal/runner/budget_session.go",
+     "internal/runner/projectpolicy.go",
+     "internal/runner/identity_claim_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM8",
+   "title": "a new launcher refuses an image that cannot claim",
+   "run": null,
+   "version": null,
+   "tier": "trivial",
+   "size": 0.5,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/recipes_skew.go",
+     "internal/cli/recipes_skew_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM10",
+   "title": "fugaro pair asks the issuer",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/pair.go",
+     "internal/cli/pair_identity.go",
+     "internal/cli/pair_identity_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM11",
+   "title": "the Firebase root can carry the issuer's row",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "deploy/terraform/gcp/modules/firebase/iam.tf",
+     "deploy/terraform/gcp/modules/firebase/variables.tf",
+     "deploy/terraform/gcp/roots/firebase/main.tf",
+     "deploy/terraform/gcp/roots/firebase/variables.tf",
+     "deploy/terraform/gcp/roots/firebase/tests/firebase.tftest.hcl",
+     "deploy/terraform/terraform_test.go",
+     ".claude/rules/credentials-service.md"
+    ]
+   }
+  },
+  {
+   "id": "LM12",
+   "title": "the installation root: the orchestrator's row and the service's configuration",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "deploy/terraform/gcp/modules/installation/orchestrator.tf",
+     "deploy/terraform/gcp/modules/installation/credentials.tf",
+     "deploy/terraform/gcp/modules/installation/iam.tf",
+     "deploy/terraform/gcp/modules/installation/variables.tf",
+     "deploy/terraform/gcp/roots/installation/variables.tf",
+     "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
+     "deploy/terraform/gcp/modules/installation/orchestrator_test.go",
+     "internal/infra/tf/cover.go"
+    ]
+   }
+  },
+  {
+   "id": "LM13",
+   "title": "update writes the issuer's row",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/firebase.go",
+     "internal/infra/tfvars.go",
+     "internal/infra/launchers.go",
+     "internal/infra/tf/cover.go",
+     "internal/infra/tf/cover_grants_test.go",
+     "internal/infra/tf/testdata/golden/**",
+     "internal/cli/init_firebase.go"
+    ]
+   }
+  },
+  {
+   "id": "I1",
+   "title": "wire the issuer in",
+   "kind": "integration",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 1.5,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/credsvc/identity_stub.go",
+     "internal/credsvc/identity_mount.go",
+     "internal/cli/credentials_serve.go",
+     "internal/credsvc/identity_e2e_test.go",
+     "internal/cli/launch_identity_e2e_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM14",
+   "title": "update moves the grant",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/init_identity.go",
+     "internal/cli/init_identity_test.go",
+     "internal/cli/init_stages.go",
+     "internal/cli/update_in_flight.go",
+     "internal/cli/update_in_flight_test.go",
+     "internal/cli/init_firebase.go"
+    ]
+   }
+  },
+  {
+   "id": "LM15",
+   "title": "doctor reads the signers against the new design",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/tokensigners.go",
+     "internal/infra/tokensigners_test.go",
+     "internal/cli/doctor_signers.go",
+     "internal/cli/doctor_signers_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM16",
+   "title": "the documents",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "SECURITY.md",
+     "website/content/security.md",
+     "docs/budget-token-channel/spec.md",
+     "docs/roles/spec.md",
+     "docs/mobile/design/always-on-orchestrator.md",
+     "docs/releases/*.md"
+    ]
+   }
+  },
+  {
+   "id": "LM17",
+   "title": "Check 841, as a script",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "scripts/live-checks/check-841.sh",
+     "scripts/live-checks/check-841_test.sh",
+     "docs/gcp-live-checklist.md",
+     "scripts/live_checks_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM18",
+   "title": "remove the bridge (one release later)",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/launch_budget.go",
+     "internal/cli/pair.go",
+     "internal/runner/budget_session.go",
+     "internal/budget/token/seal.go",
+     "internal/budget/token/object.go",
+     "deploy/terraform/gcp/modules/firebase/iam.tf"
+    ]
+   }
+  },
+  {
+   "id": "LM19",
+   "title": "amend batch-run-identity (documents)",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "docs/batch-run-identity/**"
+    ]
+   }
+  },
+  {
+   "id": "LM20",
+   "title": "the update's own deletes are listed",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/identity_allow_delete.go",
+     "internal/infra/identity_allow_delete_test.go",
+     "internal/cli/init.go",
+     "internal/cli/update_managed.go",
+     "internal/managed/plan_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM21",
+   "title": "the policy version moves",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/projectpolicy/version.go",
+     "internal/projectpolicy/migrate.go",
+     "internal/projectpolicy/migrate_test.go",
+     "internal/cli/launch_budget_test.go",
+     "internal/projectpolicy/version_since_test.go",
+     "internal/credsvc/policy_test.go",
+     "docs/release.md",
+     "docs/project-layer.md"
+    ]
+   }
+  },
+  {
+   "id": "LM22",
+   "title": "the service's new environment names, and their reader",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/infra/tf/cover.go",
+     "internal/infra/tf/cover_test.go",
+     "internal/cli/credentials_serve.go",
+     "internal/cli/credentials_serve_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM23",
+   "title": "the issuer enforces the launch scope",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/credsvc/identity_scope.go",
+     "internal/credsvc/identity_scope_test.go",
+     "internal/cli/access_issuer_agree_test.go"
+    ]
+   }
+  },
+  {
+   "id": "LM24",
+   "title": "the orchestrator's asks are bound to its record",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/credsvc/identity_orchestrated.go",
+     "internal/credsvc/identity_orchestrated_test.go"
+    ]
+   }
+  }
+ ],
+ "edges": [
+  {
+   "task": "LM2",
+   "needs": "C1",
+   "reason": "built against the identity wire"
+  },
+  {
+   "task": "LM3",
+   "needs": "C1",
+   "reason": "built against the identity wire"
+  },
+  {
+   "task": "LM4",
+   "needs": "C1",
+   "reason": "built against the identity wire"
+  },
+  {
+   "task": "LM5",
+   "needs": "C1",
+   "reason": "built against the identity wire"
+  },
+  {
+   "task": "LM6",
+   "needs": "C1",
+   "reason": "built against the identity wire"
+  },
+  {
+   "task": "LM7",
+   "needs": "C1",
+   "reason": "built against the identity wire"
+  },
+  {
+   "task": "LM10",
+   "needs": "C1",
+   "reason": "built against the identity wire"
+  },
+  {
+   "task": "LM23",
+   "needs": "C1",
+   "reason": "built against the identity wire"
+  },
+  {
+   "task": "LM12",
+   "needs": "LM22",
+   "reason": "the cover's rule: a name is on its list before a module renders it"
+  },
+  {
+   "task": "LM13",
+   "needs": "LM11",
+   "reason": "the golden plans are generated from its variables"
+  },
+  {
+   "task": "LM13",
+   "needs": "LM12",
+   "reason": "the golden plans are generated from its variables"
+  },
+  {
+   "task": "LM20",
+   "needs": "LM11",
+   "reason": "it names the addresses of the rows the switch removes"
+  },
+  {
+   "task": "LM20",
+   "needs": "LM12",
+   "reason": "it names the addresses of the rows the switch removes"
+  },
+  {
+   "task": "LM14",
+   "needs": "I1",
+   "reason": "its test launches through the real issuer after the move"
+  },
+  {
+   "task": "LM14",
+   "needs": "LM13",
+   "reason": "it turns the switch LM13 writes"
+  },
+  {
+   "task": "LM14",
+   "needs": "LM20",
+   "reason": "without the list the guard refuses the delete"
+  },
+  {
+   "task": "LM15",
+   "needs": "LM13",
+   "reason": "it classifies the row LM13 writes"
+  },
+  {
+   "task": "LM16",
+   "needs": "I1",
+   "reason": "it states what is true after it"
+  },
+  {
+   "task": "LM16",
+   "needs": "LM14",
+   "reason": "it states what is true after it"
+  },
+  {
+   "task": "LM16",
+   "needs": "LM21",
+   "reason": "it states what is true after it"
+  },
+  {
+   "task": "LM17",
+   "needs": "LM14",
+   "reason": "it proves the move on a live installation"
+  },
+  {
+   "task": "LM17",
+   "needs": "LM21",
+   "reason": "it proves the older CLI's refusal on a live installation"
+  },
+  {
+   "task": "LM18",
+   "needs": "LM14",
+   "reason": "a released version must sit between them"
+  },
+  {
+   "task": "I1",
+   "needs": "LM8",
+   "reason": "once it merges a launch holds a real ticket, and an image that cannot claim must be refused at launch"
+  },
+  {
+   "task": "I1",
+   "needs": "LM1",
+   "reason": "the integration runs every side together"
+  },
+  {
+   "task": "I1",
+   "needs": "LM2",
+   "reason": "the integration runs every side together"
+  },
+  {
+   "task": "I1",
+   "needs": "LM3",
+   "reason": "the integration runs every side together"
+  },
+  {
+   "task": "I1",
+   "needs": "LM4",
+   "reason": "the integration runs every side together"
+  },
+  {
+   "task": "I1",
+   "needs": "LM5",
+   "reason": "the integration runs every side together"
+  },
+  {
+   "task": "I1",
+   "needs": "LM6",
+   "reason": "the integration runs every side together"
+  },
+  {
+   "task": "I1",
+   "needs": "LM7",
+   "reason": "the integration runs every side together"
+  },
+  {
+   "task": "I1",
+   "needs": "LM10",
+   "reason": "the integration runs every side together"
+  },
+  {
+   "task": "I1",
+   "needs": "LM23",
+   "reason": "the integration runs every side together"
+  },
+  {
+   "task": "LM6",
+   "needs": "LM8",
+   "reason": "it calls the gate LM8 writes"
+  },
+  {
+   "task": "LM14",
+   "needs": "LM21",
+   "reason": "the move never ships without the lever, and the convergence test needs the bump"
+  },
+  {
+   "task": "LM21",
+   "needs": "I1",
+   "reason": "the lever ships with what it levers"
+  },
+  {
+   "task": "LM24",
+   "needs": "C1",
+   "reason": "built against the identity wire"
+  },
+  {
+   "task": "I1",
+   "needs": "LM24",
+   "reason": "the integration runs every side together"
+  },
+  {
+   "task": "LM15",
+   "needs": "LM14",
+   "reason": "before the grant has moved doctor would report every launcher as still signing"
+  }
+ ],
+ "decoupling": [
+  {
+   "contract": "C1",
+   "was": {
+    "task": "LM2",
+    "needs": "LM1"
+   },
+   "integration": "I1",
+   "reason": "the claim needs the record's shape and the store's interface, not LM1's store"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "LM3",
+    "needs": "LM1"
+   },
+   "integration": "I1",
+   "reason": "the classes return the caller the record names; they need its type, not the route"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "LM5",
+    "needs": "LM1"
+   },
+   "integration": "I1",
+   "reason": "the test needs the record's path"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "LM6",
+    "needs": "LM1"
+   },
+   "integration": "I1",
+   "reason": "the launcher needs the ticket route's shape, not a running route"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "LM23",
+    "needs": "LM1"
+   },
+   "integration": "I1",
+   "reason": "the scope check needs the ticket route's hook, an interface, not the route"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "LM7",
+    "needs": "LM2"
+   },
+   "integration": "I1",
+   "reason": "the runner needs the claim's shape"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "LM4",
+    "needs": "LM2"
+   },
+   "integration": "I1",
+   "reason": "the pairing routes need a signer's interface, not LM2's signer"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "LM10",
+    "needs": "LM4"
+   },
+   "integration": "I1",
+   "reason": "fugaro pair needs the pairing routes' shape"
+  },
+  {
+   "contract": "C1",
+   "was": {
+    "task": "LM24",
+    "needs": "LM23"
+   },
+   "integration": "I1",
+   "reason": "the orchestrator's check needs the scope hook's interface, not LM23's resolver"
+  }
+ ],
+ "contract_changes": []
+}

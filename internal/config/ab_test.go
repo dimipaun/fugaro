@@ -52,7 +52,7 @@ func TestABStrictDecode(t *testing.T) {
 	if want := []string{"deepseek/chat-x", "anthropic/claude-haiku-4-5"}; !reflect.DeepEqual(a.Challengers, want) {
 		t.Errorf("ab.challengers = %v, want %v", a.Challengers, want)
 	}
-	if want := map[rigor.Mode]float64{rigor.POC: 0, rigor.Startup: 0.25, rigor.Pro: 0.5, rigor.Critical: 2, rigor.Hotfix: 0}; !reflect.DeepEqual(a.ExchangeRate, want) {
+	if want := map[rigor.Rigor]float64{rigor.POC: 0, rigor.Startup: 0.25, rigor.Pro: 0.5, rigor.Critical: 2, rigor.Hotfix: 0}; !reflect.DeepEqual(a.ExchangeRate, want) {
 		t.Errorf("ab.exchange_rate = %v, want %v", a.ExchangeRate, want)
 	}
 	// A repository's own file carries its opt-out through the same type, so
@@ -178,7 +178,7 @@ func TestABRepoCannotNameChallengers(t *testing.T) {
 // override of them: POC 0, Startup 0.25, Pro 0.5, Critical 2.0, and Hotfix 0
 // (D558 never samples one).
 func TestABExchangeRateDefaults(t *testing.T) {
-	want := map[rigor.Mode]float64{rigor.POC: 0, rigor.Startup: 0.25, rigor.Pro: 0.5, rigor.Critical: 2, rigor.Hotfix: 0}
+	want := map[rigor.Rigor]float64{rigor.POC: 0, rigor.Startup: 0.25, rigor.Pro: 0.5, rigor.Critical: 2, rigor.Hotfix: 0}
 	var none *AB
 	if got := none.ExchangeRates(); !reflect.DeepEqual(got, want) {
 		t.Errorf("a nil block's exchange rates = %v, want %v", got, want)
@@ -193,7 +193,7 @@ func TestABExchangeRateDefaults(t *testing.T) {
 	if l.AB.ExchangeRate[rigor.Startup] != 0 {
 		t.Errorf("ExchangeRates wrote into the layer's block: %v", l.AB.ExchangeRate)
 	}
-	for mode, want := range map[rigor.Mode]float64{rigor.POC: 0, rigor.Startup: 0.25, rigor.Pro: 0.5, rigor.Critical: 2, rigor.Hotfix: 0} {
+	for mode, want := range map[rigor.Rigor]float64{rigor.POC: 0, rigor.Startup: 0.25, rigor.Pro: 0.5, rigor.Critical: 2, rigor.Hotfix: 0} {
 		if got := ABExchangeRateDefault(mode); got != want {
 			t.Errorf("ABExchangeRateDefault(%s) = %v, want %v", mode, got, want)
 		}

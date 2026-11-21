@@ -904,10 +904,10 @@ func TestBudgetPricesJSONPinsTheFigures(t *testing.T) {
 		{"claude-opus-5-5", `{"id":"claude-opus-5-5","input_per_m":4,"output_per_m":20,"cache_read_per_m":0.2,"cache_write_5m_per_m":5,"cache_write_1h_per_m":8,"web_search_per_1k":10,"local":false,"unverified":false}`},
 		// The catalog row the openrouter route claims: the zdr tier's dearest
 		// end, which is what a route that names no price_policy is charged
-		// (D2644), its 15 endpoints (10 of them ZDR-eligible) and the dearest
+		// (D2644), its 13 endpoints (10 of them ZDR-eligible) and the dearest
 		// price the tier carries — the same figures, since the row is charged
 		// at the top of the range.
-		{"deepseek/deepseek-v4-flash", `{"id":"deepseek/deepseek-v4-flash","input_per_m":0.7,"output_per_m":1.32,"cache_read_per_m":0.2,"cache_write_5m_per_m":0.875,"cache_write_1h_per_m":1.4,"web_search_per_1k":0,"local":false,"unverified":false,"catalog":{"tier":"zdr","bound":"max","endpoints":15,"zdr_endpoints":10,"source":"https://openrouter.ai/api/v1/models","checked_at":"2026-10-23","stale":false,"tier_input_max_per_m":0.7,"tier_output_max_per_m":1.32}}`},
+		{"deepseek/deepseek-v4-flash", `{"id":"deepseek/deepseek-v4-flash","input_per_m":0.21,"output_per_m":0.56,"cache_read_per_m":0.07,"cache_write_5m_per_m":0.2625,"cache_write_1h_per_m":0.42,"web_search_per_1k":0,"local":false,"unverified":false,"catalog":{"tier":"zdr","bound":"max","endpoints":13,"zdr_endpoints":10,"source":"https://openrouter.ai/api/v1/models","checked_at":"2026-11-21","stale":false,"tier_input_max_per_m":0.21,"tier_output_max_per_m":0.56}}`},
 		// The override: the owner's own numbers, marked local, with the cache
 		// multipliers the table's defaults give them.
 		{"vendor/model-y", `{"id":"vendor/model-y","input_per_m":1,"output_per_m":2,"cache_read_per_m":0.1,"cache_write_5m_per_m":1.25,"cache_write_1h_per_m":2,"web_search_per_1k":10,"local":true,"unverified":false}`},

@@ -4,7 +4,7 @@ package cli
 //
 // website/content/cli-reference.md is generated from the command tree by
 // `go run ./ee/clidoc` -- the tagged tree, because one binary ships and the
-// page describes that binary (design docs/design/ee-boundary-moves.md §9) --
+// page describes that binary (design docs/ee-reorg/boundary-moves.md §9) --
 // and it is what the site's docs hub renders (W1.7), so a command or a flag
 // that lands in the tree without the reference being regenerated is a page that
 // lies to a reader. The two tests here are the two directions the console

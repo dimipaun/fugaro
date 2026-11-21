@@ -40,7 +40,7 @@ import (
 //   - It is the only holder of the signer permission. It mints the run's
 //     Firebase custom token after winning the launch claim and leaves it in
 //     the runs bucket, sealed under a key it draws for this launch alone
-//     (docs/design/budget-token-channel.md §7.1); the runner takes it. The
+//     (docs/budget-token-channel/spec.md §7.1); the runner takes it. The
 //     token is never in the jobs.run request (the request reaches audit
 //     logs), an env var, an error or a message.
 //   - The seal key is not the token and grants nothing by itself: it opens
@@ -476,14 +476,14 @@ type chainLimitPolicy struct {
 	// "ceiling", and a figure the node wrote must be reported as the node's
 	// (H1, internal/runner's policySources says the same at bootstrap).
 	fromNode map[string]bool
-	mode     rigor.Mode
+	mode     rigor.Rigor
 }
 
 // chainLimitPolicyOf resolves the layers above for a launch. cfg is the file
 // the run will read (launchLevelsConfig), which is never nil: a launcher with
 // no checkout of the repository merges the project layer the task carries.
 func chainLimitPolicyOf(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config) chainLimitPolicy {
-	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
+	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Level: rigor.Rigor(spec.Rigor), Paths: spec.Paths}).Level
 	c := chainLimitPolicy{
 		ceiling: modeScaledCeiling(ceilingLayer(env.lc), mode),
 		under:   []policy.Layer{defaultBranchPolicyLayer(ctx, spec.Repo), runner.FileLayer(cfg)},
@@ -524,7 +524,7 @@ func chainLimitPolicyOf(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg
 // the deployed one (envCeiling), and a cap the published node sets is the
 // owner's word taken exactly as it stands (policyCeiling, H1) — which is why
 // this runs before the node's keys are folded in above it.
-func modeScaledCeiling(l policy.Layer, mode rigor.Mode) policy.Layer {
+func modeScaledCeiling(l policy.Layer, mode rigor.Rigor) policy.Layer {
 	if l.PerRunUSD <= 0 {
 		return l
 	}
@@ -612,7 +612,7 @@ func layerWord(src string) string {
 // function is the narrower, true claim: the number a run of this mode starts
 // from is this one, and it is a default rather than a cap — the recipe's bound
 // is the only ceiling either number is held under.
-func chainRoundCeiling(m rigor.Mode) int {
+func chainRoundCeiling(m rigor.Rigor) int {
 	return min(rigor.DefaultRounds(m).Senior, recipe.MaxReviewRounds)
 }
 

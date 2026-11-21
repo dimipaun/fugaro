@@ -36,7 +36,9 @@ import (
 const wsOwnerTable = `workspace_members:
   member-b:
     job_service_accounts:
-      - job-account-b@member-b-gcp.iam.gserviceaccount.com
+      - account: job-account-b@member-b-gcp.iam.gserviceaccount.com
+        repos:
+          - owner/repo-b
     firebase_project: member-b-fb
     fp: member-b
     exchange_url: https://exchange.example.com/v1
@@ -45,15 +47,51 @@ const wsOwnerTable = `workspace_members:
       - owner/repo-a
 `
 
+// wsOwnerRepos is the provider of every repository the owner's table names, in
+// the indented shape that lands inside the `repos:` block a project config's
+// fixture ends with. The credentials node publishes a job account's
+// repositories canonically, `<provider>/<owner>/<name>` (contract-node.md, R6),
+// because the workspace's service compares the repository a run's identity
+// carries to them — so a fixture whose member table names a repository has to
+// say which forge it is on, exactly as an installation's config does for the
+// repositories it runs jobs on.
+const wsOwnerRepos = "  owner/repo-a: {provider: github}\n  owner/repo-b: {provider: github}\n  owner/repo-d: {provider: github}\n"
+
 // wsOwnerCap is the workspace's own cap, in dollars as the file writes it.
 const wsOwnerCap = "workspace_cap:\n  monthly: 25\n"
+
+// wsWithRepos is a project config's text with the fixture repositories'
+// providers written into its own `repos:` block, wherever in the file that block
+// is. A fixture that appends the owner's half to a config the rig has already
+// written states the providers this way rather than by appending the indented
+// lines: what comes before them in the file is the rig's business.
+func wsWithRepos(text string) string {
+	return strings.Replace(text, "repos:\n", "repos:\n"+wsOwnerRepos, 1)
+}
+
+// appendWorkspaceConfig writes the owner's half onto the rig's config with the
+// providers of the repositories it names (wsWithRepos), which a member table
+// alone cannot state: the repositories of a job account are published
+// canonically, so the forge of each one comes from the config's own repos map.
+func appendWorkspaceConfig(t *testing.T, r *initRig, yaml string) {
+	t.Helper()
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, []byte(wsWithRepos(string(b))+yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // wsOwnerTwoMembers is the same table with a project the published node does
 // not carry yet: the write that admits a member, and so the one this stage
 // reserves for the owner's own session (D1555).
 const wsOwnerTwoMembers = wsOwnerTable + `  member-d:
     job_service_accounts:
-      - job-account-d@member-d-gcp.iam.gserviceaccount.com
+      - account: job-account-d@member-d-gcp.iam.gserviceaccount.com
+        repos:
+          - owner/repo-d
     firebase_project: member-d-fb
     fp: member-d
     exchange_url: https://exchange.example.com/v1
@@ -125,7 +163,13 @@ func (h *wsUpdateHome) add(t *testing.T, name, gcp, extra string) *wsUpdateProje
 		"user: person-1@example.com\nmax_parallel: 2\n" +
 		"budget: { mode: enforce, per_run_usd: 5, firebase_project: " + gcp + ", rtdb_url: " + db.URL + " }\n" +
 		"endpoints: { firestore: " + h.fs.URL + ", no_auth: true }\n" +
-		"repos:\n  owner/repo-a: {}\n" +
+		// The repositories the member tables name carry their provider, because
+		// the workspace credentials node publishes a job account's repositories
+		// canonically (workspaceCanonicalRepos): every installation in this home
+		// gets them, which is the fixture's way of saying that this machine's
+		// configs are where the provider of a repository the owner did not enroll
+		// is read from when the member's own is here too.
+		"repos:\n" + wsOwnerRepos +
 		extra
 	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
@@ -1278,7 +1322,7 @@ func TestUpdateSkipsAWorkspaceDatabaseThisInstallationDoesNotOwn(t *testing.T) {
 	// Another installation's database: its mark names a Fugaro project and a
 	// GCP project that are not this installation's.
 	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
-	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+	appendWorkspaceConfig(t, r, wsOwnerTable+wsOwnerCap)
 
 	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update")
@@ -1325,7 +1369,7 @@ func TestUpdatePublishesTheWorkspaceRecordInTheRunThatNamesTheBackend(t *testing
 	// database setup already created so the run asks no location question.
 	r.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
 	r.fs.SetDatabase("us-east5")
-	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+	appendWorkspaceConfig(t, r.initRig, wsOwnerTable+wsOwnerCap)
 	r.save(t)
 	fakeTerminal(t)
 	// The one confirmation no flag stands in for: the group's first record is
@@ -1370,7 +1414,7 @@ func TestUpdatePublishesIntoTheDatabaseTheRunHasJustPointedAt(t *testing.T) {
 	old := gcpfake.NewRTDB(t)
 	old.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
 	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+old.URL+", firebase_project: \""+fpID+"\" }\n")
-	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
+	appendWorkspaceConfig(t, r.initRig, wsOwnerTable+wsOwnerCap)
 	r.save(t)
 	fakeTerminal(t)
 	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe")

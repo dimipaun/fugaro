@@ -50,11 +50,14 @@
 # credentials service (_CREDENTIALS_SERVICE_URL set, B4.5), the credential
 # step fetches the workflow's secrets with its git credential and writes each
 # one into the fugaro-secrets volume, which only the credential step and the
-# build step mount; the build step takes that file in place of the variable
-# availableSecrets would have given it, and removes it. The variable the build
-# step reads them under, SECRET_ENVS, is the same list either way, and the
-# secrets of a build that does not fetch them reach it exactly as they did
-# before: the file is written only where the service answered.
+# build step mount. The build step prefers the variable availableSecrets
+# filled for it wherever that variable is set, so while the request carries
+# the entry the mount is what reaches the Dockerfile and the fetched file is
+# left in the volume unread; the fetched file is what reaches it once a
+# request carries no entry for that name (B4.9). The variable the build step
+# reads them under, SECRET_ENVS, is the same list either way, and the secrets
+# of a build that does not fetch them reach it exactly as they did before:
+# the file is written only where the service answered.
 #
 # Substitution is textual, so no ${_…} ever appears in a step's shell
 # script: a crafted value (a branch named x$(…) is a valid git ref) would
@@ -87,7 +90,7 @@ substitutions:
   _SECRET_ENVS: ""    # space-separated workflow secret variables; each is also in availableSecrets
   _BUCKET: ""         # the runs bucket, gs://<name>, which holds the build record
   _SLUG: ""           # the repository's storage slug: the record is builds/<slug>/<workflow>/image.json
-  _PROJECT_LAYER_SHA256: ""  # the project layer's sha256, "" for none: render reads builds/<slug>/project-layer.yaml and refuses another (docs/design/layered-config.md §8)
+  _PROJECT_LAYER_SHA256: ""  # the project layer's sha256, "" for none: render reads builds/<slug>/project-layer.yaml and refuses another (docs/layered-config/spec.md §8)
   _CREDENTIALS_SERVICE_URL: ""  # the installation's credentials service, "" until a repository is switched to it. The credential step fetches the build's credentials there when it is set (B4.5)
   _CATALOG_TAG: ""    # a catalog build's content tag: the sha256 of the definition it built. A repository's own build never reads it
   _SELFTEST_B64: ""   # a catalog build's smoke spec, base64 (image.SpecForCloud as the submitter rendered it). A repository's own build never reads it

@@ -152,7 +152,7 @@ func (r *run) rebaseResolve(ctx context.Context, base string) bool {
 	req := agent.Request{
 		Prompt:             RebasePrompt(base, paths),
 		SessionID:          agent.NewSessionID(),
-		AppendSystemPrompt: SystemPrompt(r.systemPromptData(), r.instructions),
+		AppendSystemPrompt: SystemPrompt(r.systemPromptData(), r.instructions, r.coderPersona()),
 	}
 	res, ok, _ := r.stage(ctx, "implement", req, stageOpts{})
 	r.noteSession(req, res)

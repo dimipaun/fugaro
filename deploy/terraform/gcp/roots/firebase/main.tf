@@ -40,6 +40,7 @@ module "firebase" {
   source = "../../modules/firebase"
 
   project             = var.project
+  database_region     = var.database_region
   fugaro_project      = var.fugaro_project
   names               = var.names
   manage_apis         = var.manage_apis
@@ -51,6 +52,11 @@ module "firebase" {
   budget_admins       = var.budget_admins
   history_account     = var.history_account
   coordinator_account = var.coordinator_account
+
+  # The public mobile service's runtime account, when the installation runs that
+  # service: the module creates the device-only signer and grants it signJwt
+  # (iam.tf, mobile_token_minter).
+  mobile_account = var.mobile_account
 
   # The workspace service account this member's own workspace_pin names, when
   # it names one: the Firebase module grants it a read-only role on this

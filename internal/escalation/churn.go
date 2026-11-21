@@ -86,7 +86,7 @@ type Round []Finding
 // the item's own recipe loop, today's behaviour. That is the one answer here
 // that spends nothing, so it is the answer for everything this code cannot
 // place.
-func Churn(mode rigor.Mode, rounds []Round) Kind {
+func Churn(mode rigor.Rigor, rounds []Round) Kind {
 	if !churnOn(mode) || len(rounds) < 2 {
 		return KindNone
 	}
@@ -127,7 +127,7 @@ func Churn(mode rigor.Mode, rounds []Round) Kind {
 // records can answer the question. Anything else — the other three modes, and
 // a value outside the vocabulary — is off, which is the same answer for the
 // same reason and not a separate rule.
-func churnOn(mode rigor.Mode) bool { return mode == rigor.Startup || mode == rigor.Pro }
+func churnOn(mode rigor.Rigor) bool { return mode == rigor.Startup || mode == rigor.Pro }
 
 // repeated reports whether a finding is one an earlier round already raised.
 func repeated(f Finding, earlier []Round) bool {

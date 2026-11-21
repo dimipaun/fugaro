@@ -434,6 +434,15 @@ func layerSelected(row settings.Row, want []string) bool {
 // was for the six orchestrator rows and the two nudge thresholds until they moved
 // to the owners that carry them.
 //
+// `settings block` is the token of the rows that are blocks rather than settings
+// (settings.IsBlock, W2 of docs/config-ownership): `governance.stage_timeout`
+// holds a stage's own bound and has no value of its own, so the write refuses the
+// block's spelling and its row may not name the generic writer bare (D1178, F13)
+// — the read prints `writable: false` beside an owner, and the owner has to be
+// the sentence that is true of the block: `settings set` writes the settings it
+// holds, one at a time. The registry's row names the token (ownerBlockToken) and
+// this table is where it becomes those words.
+//
 // `project policy` is that shape's third entry and not a file's: the orchestrator
 // block is stated in the machine's own config like the two nudge thresholds
 // beside it, and what its sentence names is the command that carries it from
@@ -444,6 +453,7 @@ func layerSelected(row settings.Row, want []string) bool {
 // sentence in place of, for keys no `fugaro project` subcommand edits.
 var settingsOwnerCommands = map[string]string{
 	"settings set":      "fugaro settings set",
+	"settings block":    "fugaro settings set, which writes the settings the block holds",
 	"models":            "fugaro models",
 	"rigor":             "fugaro rigor set",
 	"rigor floor":       "fugaro rigor floor",
@@ -784,7 +794,7 @@ func stepInto(v reflect.Value, part string) (reflect.Value, string) {
 		}
 		// A path element is text, so a map is addressable only by a string
 		// key: every map the config types carry is one — map[string]Workflow
-		// and map[rigor.Mode]float64 alike, and the second is a named string
+		// and map[rigor.Rigor]float64 alike, and the second is a named string
 		// type a comparison of the two types would refuse. A map keyed by
 		// anything else is not addressable by a path, and says so by returning
 		// the invalid value rather than guessing at a rendering of its key.

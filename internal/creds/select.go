@@ -5,31 +5,38 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // Tier is a credential's cost class: A is a shared subscription OAuth token
 // (someone's donated quota, free to spend and scarce), B is the project's
-// Anthropic API key (paid, bounded by the caps). The cascade walks them in that
-// order — cheapest usable first — and never the other way round.
+// Anthropic API key (paid, bounded by the caps) and C is a named provider key
+// (paid, at a third party: the route D3000 gates for a Claude model). The
+// cascade walks them in that order — cheapest usable first — and never the
+// other way round.
 type Tier string
 
 const (
 	TierA Tier = "a"
 	TierB Tier = "b"
-	// TierC is reserved and never selected. It is the third-party route (an
-	// OpenRouter key) that serves a Claude model under another model ID, and
-	// this release does not build it: it waits for Check 50 to measure Claude's
-	// prompt-cache markers through that route (D150, C3.6). The constant exists
-	// so that a state node or a policy a later release writes reads as a tier
-	// here and not as a name, and so that a caller offering one is refused
-	// rather than quietly served by something else.
+	// TierC is the third-party route (an OpenRouter key): a provider's own key,
+	// held by the credentials service, that serves a model the provider runs.
+	// It is selected only for a model that is not a Claude one, and that is the
+	// whole of D3000: a CLAUDE model through a provider key waits for Check 50,
+	// which measures Claude's prompt-cache markers through that route (D150,
+	// C3.6, R3), while a non-Claude provider model is served without waiting —
+	// and, the same fact read backwards, by this tier alone: a model that is not
+	// Claude's cannot be run by a subscription token or the project's key, so
+	// those candidates are dropped for it (checkCandidates, D3007).
+	// Which models are Claude's is config.IsClaudeModel — the pin vocabulary
+	// every reader already shares (R3), never a list of this package's.
 	//
-	// Since AK6b a bundle really can hold such a credential: the project's
-	// provider key is in the document, and the credentials service offers it to
-	// the one review caller whose pairing names it (internal/credsvc, F15,
-	// D1418). So this is no longer a tier no credential can be offered at —
-	// what keeps the route unserved is checkCandidates' refusal below and not
-	// the absence of a credential, which is why a call offered one is answered
+	// Since AK6b a bundle really can hold such a credential — the project's
+	// provider key is in the document (F15, D1418), and KS1 adds one entry per
+	// repository and provider beside it (R2, D3008) — so what keeps the Claude
+	// case unserved is checkCandidates' refusal below and not the absence of a
+	// credential, which is why a call whose only credential is one is answered
 	// a typed refusal naming Check 50 rather than served by another tier.
 	TierC Tier = "c"
 )
@@ -40,6 +47,18 @@ const (
 type Credential struct {
 	Name string
 	Tier Tier
+	// Provider is the provider whose key this credential is, for a tier-C one,
+	// named as the published policy's providers block names it (R2) — one
+	// provider's key is the key of ONE provider, and a caller's list can hold
+	// several of them (the offering offers one per provider the policy names).
+	// It is what ties a key to the models it may serve beside the class rule
+	// (Selector.Provider, checkCandidates): a key handed to another provider's
+	// model is a bearer token sent to an endpoint it was not issued for.
+	//
+	// The tiers below carry nothing here: a shared subscription token and the
+	// project's own Anthropic key belong to no provider and run a Claude model
+	// alone.
+	Provider string
 }
 
 // Run is the run a selection is made for: the repository slug and the run id
@@ -83,7 +102,16 @@ const (
 // because the service is stateless and several instances select at once.
 type Selector struct {
 	// Store is the cascade's shared state. It must not be nil.
-	Store Store
+	//
+	// It is CascadeState and not Store deliberately: a selection reads marks,
+	// leases, placements, the tie-breaker and nothing else, and the
+	// per-repository auth record — which the ADMISSION around this selection
+	// does read — is not the selection's state but a repository's own
+	// configuration, read where that repository's own update wrote it (D2070
+	// (a)). A selection that could reach RepoAuth through this handle would be
+	// a second way to the record, and in a two-deployment world a way to the
+	// wrong database.
+	Store CascadeState
 	// Settings are the policy's settings as this package enforces them.
 	Settings Settings
 	// Now is the clock. nil is time.Now.
@@ -92,6 +120,42 @@ type Selector struct {
 	// (Strategy). It never outranks the tier: the strategy decides which member
 	// of a tier a run goes to and never which tier (F7).
 	Strategy Strategy
+	// Model is the model this call is for, as the request names it, and it is
+	// what tells a Claude model from any other: a tier-C candidate — a named
+	// provider key — is served for any model that is not a Claude one, and a
+	// Claude model through one waits for Check 50 (D3000, R3, TierC). It is the
+	// same fact read the other way for the tiers below it: a model that is not
+	// Claude's is served by a provider's key alone, and the Anthropic tiers a
+	// provider's model cannot run are dropped from the list (D3007).
+	//
+	// It is the CALLER's answer and not this package's: a selection knows no
+	// model ids and reads no request, so the side that parsed the call hands
+	// the model it names (the credentials service's provider route and its
+	// cascade route, KS4 and KS5), and "" means a caller that named none —
+	// which reads as a Claude model, the fail-closed direction this gate has
+	// always had. A caller that never sets it therefore selects exactly what it
+	// selected before this field existed.
+	Model string
+	// Provider is the provider that runs this call's model — the name the
+	// published policy's providers block gives it (R2) — and it is what a
+	// tier-C candidate is tied to: a caller's list can hold several providers'
+	// keys (one per provider the policy names), so the key of a provider this
+	// call did not name is dropped (checkCandidates), because one provider's
+	// key served for another's model is a bearer token sent to an endpoint it
+	// was not issued for, on a route that cannot run the model at all.
+	//
+	// Which provider runs a model is a fact of the project's published policy
+	// (config.ModelProvider.Matches over its `models` patterns), and this
+	// package cannot read it: the side that resolved the call hands the answer
+	// in, exactly as it hands in the model (the credentials service's provider
+	// route, KS4 — a provider is named there, and the name IS the provider).
+	//
+	// "" means a caller that named none, and then NO tier-C candidate is served
+	// at all. That is the fail-closed direction, and it is not the same as the
+	// class rule: a list holding one provider's key is no evidence that that
+	// provider runs this call's model — a model whose provider's key the bundle
+	// does not hold would otherwise be sent to whichever one was left.
+	Provider string
 }
 
 // Select answers the credential the run's next call goes to, or the wait until
@@ -117,24 +181,48 @@ type Selector struct {
 //     credential of a refused tier that could not serve the call anyway (a
 //     broken one, one whose mark carries no time) is not this error: it is
 //     ErrNoCredential, because a policy change would not make the call succeed.
+//   - ("", 0, the Check 50 refusal) — every candidate left is a tier-C one and
+//     this call is a Claude model's (or names no model): a Claude model through
+//     a provider key waits for Check 50 (D3000, D150). A refusal, and the one
+//     sentence that says which check and which decision: the caller named a
+//     provider credential and this release does not select that route for a
+//     Claude model yet.
+//   - ("", 0, the model's own refusal) — every candidate left is of a tier this
+//     call's model cannot be run on, the other way round: the two Anthropic
+//     tiers offered for a model that is not Claude's (D3000, D3007). A refusal,
+//     because the alternative is a provider's model sent to Anthropic on quota
+//     that route cannot spend, and because a list of the wrong class is a
+//     caller's mistake rather than an account's exhausted state.
+//   - ("", 0, the provider's own refusal) — every candidate left is a named
+//     provider's key and none of them belongs to the provider this call named
+//     as the one that runs its model (or the call named none at all): one
+//     provider's key never serves another's model, and the sentence names the
+//     two providers it holds apart (D3000).
 //   - another error — the state could not be read or written. Fail closed: an
 //     unreadable state is not an empty one.
 //
 // candidates is the caller's list, and Select never widens it: exactly the
-// credentials the project policy admits for this call, tier A before tier B.
-// Nothing here reads an admission (that is C1.11's, from what C1.2 publishes)
-// and nothing here invents a credential the caller did not offer. The tier
+// credentials the project policy admits for this call, in the tier order
+// (tiers: A, then B where the policy spends, then C). Nothing here reads an
+// admission (that is C1.11's, from what C1.2 publishes) and nothing here
+// invents a credential the caller did not offer. The tier
 // decides which credential is taken and the order within a tier does not —
 // except in a tie, which the offered order breaks, so a pool is listed the way
 // its owner ordered it and the listed order never outranks the tier (F7). What
 // picks among the usable members of one tier is the caller's Strategy — the
 // rule above, or a rotation through them in that same order — and the tier is
 // decided before it, so neither rule can move a call off the cheaper one. A
-// candidate whose tier is not one this release selects is refused rather than
-// skipped. A tier B
-// candidate offered under `oauth-only` is not refused — it carries no mistake —
-// but it is never selected, and a call that nothing else can serve is answered
-// with ErrFallbackForbidden when that candidate could actually serve it (see the
+// candidate of a tier this release does not know is refused rather than
+// skipped, and so is a list left with nothing but tier-C candidates this call's
+// model may not be served by; a tier-C candidate that is merely one of several
+// is dropped from the list instead, because the call would never have been
+// served by it (checkCandidates, D3000). The tiers below it are dropped the
+// other way round for a call whose model is not Claude's: a shared token or the
+// project's key cannot run such a model either, and a list left with nothing
+// but those is the model's own refusal (D3007). A tier B candidate offered under
+// `oauth-only` is not refused — it carries no mistake — but it is never
+// selected, and a call that nothing else can serve is answered with
+// ErrFallbackForbidden when that candidate could actually serve it (see the
 // list above: a broken one, or one held with no time to wait for, is
 // ErrNoCredential).
 //
@@ -161,12 +249,58 @@ type Selector struct {
 // Lease's: the cap can be exceeded by the number of instances selecting at once,
 // for at most one lease TTL.
 func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential) (Credential, time.Duration, error) {
+	return s.selectCredential(ctx, run, candidates, true)
+}
+
+// MayServe answers whether ONE credential may serve this run's call now, and it
+// writes NOTHING: no placement, no lease, no mark, no counter.
+//
+// It is the judgement Select makes over a list of that one credential
+// (selectCredential), and the one thing it leaves out is the recording of the
+// decision. Every rule is therefore the same rule and every refusal the same
+// error: the class rule and the provider tie (checkCandidates, D3000), the
+// credential's own mark, the room the cap leaves, and the wait a mark that will
+// lift answers with (ExhaustedUntil) — so a caller renders one sentence for one
+// state, and no credential is ever judged twice by two spellings of a rule.
+//
+// # Why a caller wants the judgement without the placement
+//
+// A call whose credential is DERIVED has no decision to record. The credentials
+// service's provider route builds its entry from the run's verified repository
+// and the provider's name the call carries, and it is the same entry for every
+// call that run makes to that provider: there is no pool for the run to be moved
+// around, no other credential this call could have been served by, and so
+// neither D154's stickiness nor D142's slot means anything for it.
+//
+// What placing it would do is the harm. A run's current credential and its lease
+// are ONE fact — where this run is (SetPlacement, take) — and a run that mixes
+// Claude calls with routed ones is on a shared subscription token for the first.
+// The routed call would move the run onto the provider's entry, which takes the
+// lease the run still holds on the account with it: the account's concurrency
+// slot (D142) is freed while the run is using it, and the next Claude call finds
+// no current credential to stay on (D154) and either re-selects off the prompt
+// cache's credential or waits on the cap. A run's placement is the cascade's to
+// write, and only for a call the cascade served.
+//
+// The judgement itself is not optional, and that is the other half: a caller
+// that skipped it and attached the credential anyway would serve an entry a mark
+// holds, or one the class rule and the provider tie refuse.
+func (s *Selector) MayServe(ctx context.Context, run Run, c Credential) error {
+	_, _, err := s.selectCredential(ctx, run, []Credential{c}, false)
+	return err
+}
+
+// selectCredential is the selection Select and MayServe share, and `place` is
+// the whole difference between them: Select records the decision (take), which
+// is D154's stickiness and D142's lease written as one placement, and MayServe
+// answers it and writes nothing.
+func (s *Selector) selectCredential(ctx context.Context, run Run, candidates []Credential, place bool) (Credential, time.Duration, error) {
 	set := s.Settings.withDefaults()
 	now := s.now()
 	if err := run.valid(); err != nil {
 		return Credential{}, 0, err
 	}
-	cs, err := checkCandidates(candidates)
+	cs, err := checkCandidates(candidates, s.Model, s.Provider)
 	if err != nil {
 		return Credential{}, 0, err
 	}
@@ -190,8 +324,10 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 	}
 	if found {
 		if c, ok := lookup(cs, cur); ok && reachable(c, set) && free(c, marks, leases, run, now, set) {
-			if err := s.take(ctx, run, c, now, set); err != nil {
-				return Credential{}, 0, err
+			if place {
+				if err := s.take(ctx, run, c, now, set); err != nil {
+					return Credential{}, 0, err
+				}
 			}
 			return c, 0, nil
 		}
@@ -218,8 +354,10 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 			if err != nil {
 				return Credential{}, 0, err
 			}
-			if err := s.take(ctx, run, c, now, set); err != nil {
-				return Credential{}, 0, err
+			if place {
+				if err := s.take(ctx, run, c, now, set); err != nil {
+					return Credential{}, 0, err
+				}
 			}
 			return c, 0, nil
 		}
@@ -294,16 +432,31 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 }
 
 // tiers is the cascade's order under this policy: tier A always, tier B only
-// when the policy spends. It is the one place the paid tier is admitted, so
-// "oauth-only never spends" is a property of this function rather than of a
-// check below it — the earlier shape of this code gated only the wait-vs-switch
-// decision and fell through to the paid key whenever every shared token was
-// broken, which is exactly when the platform must refuse (D152).
+// when the policy spends, and tier C — a named provider key — whichever the
+// fallback says. It is the one place the paid tier is admitted, so "oauth-only
+// never spends" is a property of this function rather than of a check below it
+// — the earlier shape of this code gated only the wait-vs-switch decision and
+// fell through to the paid key whenever every shared token was broken, which is
+// exactly when the platform must refuse (D152).
+//
+// Tier C is not part of that decision, and the reason is what a tier-C
+// candidate is (R3, D3000): it is in the list only because the call's own
+// published policy names that provider credential for the calling repository —
+// an entry the credentials service reads out of the bundle and offers, and one
+// no policy that names no provider can produce (internal/credsvc's offering).
+// So the owner has already decided to spend there, and `fallback` is about
+// something else: it is the rule for moving a CLAUDE call off a shared
+// subscription token onto the project's own paid ANTHROPIC key, and a
+// non-Claude provider model was never on a subscription token to be moved off
+// one. D3007 reads the same way from the owner: a repository's auth mode is
+// there for the models and not the other way round, so a project whose Claude
+// calls run on donated tokens (`oauth-only`, the protective default) can still
+// have its DeepSeek calls served by its own OpenRouter key.
 func (s Settings) tiers() []Tier {
 	if s.Fallback.Spends() {
-		return []Tier{TierA, TierB}
+		return []Tier{TierA, TierB, TierC}
 	}
-	return []Tier{TierA}
+	return []Tier{TierA, TierC}
 }
 
 // reachable reports whether a credential is of a tier this policy admits. It is
@@ -311,8 +464,12 @@ func (s Settings) tiers() []Tier {
 // while the policy was `auto` does not keep spending after the operator turns
 // the policy back to `oauth-only` — its call waits for a shared credential, or
 // is refused, and the run is moved when one is taken.
+//
+// Tier C is admitted the way tiers admits it and for the same reason: a run
+// placed on a named provider key stays on it, and a call whose model is not a
+// Claude one keeps being served, whatever the fallback says.
 func reachable(c Credential, set Settings) bool {
-	return c.Tier == TierA || set.Fallback.Spends()
+	return c.Tier == TierA || c.Tier == TierC || set.Fallback.Spends()
 }
 
 // reachableOnly is the candidates this policy admits, in the order offered.
@@ -320,7 +477,7 @@ func reachableOnly(cs []Credential, set Settings) []Credential {
 	if set.Fallback.Spends() {
 		return cs
 	}
-	return groupOf(cs, TierA)
+	return append(groupOf(cs, TierA), groupOf(cs, TierC)...)
 }
 
 // Mark applies a state change to one credential's mark, under the store's
@@ -695,28 +852,110 @@ func groupOf(cs []Credential, tier Tier) []Credential {
 //   - an empty list is ErrNoCandidates, because a caller with no credential to
 //     offer (an admission that dropped every account, a bundle read that came
 //     back empty) must see that, not an exhausted account;
-//   - a tier C candidate is refused, because this release does not select it
-//     (D150, C3.6) and serving the call from another tier would hide the fact
-//     that the policy asked for something not built;
-//   - an unknown tier is refused for the same reason, and an empty name too;
+//   - a candidate of an unknown tier is refused, and an empty name too;
 //   - the same name twice is refused: it would be one credential counted twice
-//     in a tie, which is a worse round robin for a reason nobody could see.
-func checkCandidates(cs []Credential) ([]Credential, error) {
+//     in a tie, which is a worse round robin for a reason nobody could see;
+//   - a tier C candidate — a named provider key — is refused unless this call's
+//     model is one it may be served by, and a list that leaves nothing but such
+//     candidates is refused with the sentence naming Check 50 (D3000, D150);
+//   - a tier A or tier B candidate is refused when this call's model is NOT a
+//     Claude one, which is the same rule read the other way (D3000, D3007): a
+//     provider's key runs a model that is not Claude's, and a shared
+//     subscription token or the project's key cannot. A list that leaves
+//     nothing but those is refused rather than run on one;
+//   - a tier C candidate is refused unless it is the key of the provider this
+//     call named as the one that runs its model (D3000, R2): a list can hold
+//     several providers' keys, and one provider's key handed to another's model
+//     is a bearer token sent to an endpoint it was not issued for. A list left
+//     with nothing but such keys is refused with a sentence naming the caller's
+//     provider and the candidate's, or the call's own silence about it.
+//
+// # Which tier-C candidates this call may be served by, and why the list is the
+// # answer (D3000, R3, F5)
+//
+// A tier C credential is a third-party provider's key, and this release serves
+// it for every model but a Claude one: a CLAUDE model through a provider key
+// waits for Check 50, which measures Claude's prompt-cache markers on that route
+// and nothing about another model (D150, D3000). So the model decides, and the
+// model is the caller's (Selector.Model) — an empty one reads as a Claude model
+// and keeps this gate exactly as wide as it was before the model arrived.
+//
+// The rule cuts the other way for the tiers below it, and by the same fact: a
+// call whose model is not Claude's is a call neither a subscription token nor
+// the project's own Anthropic key can run, so those candidates are dropped too
+// (D3007). Without that, the offering would be worse than useless: the cascade
+// walks tier A first, so a provider's model would be served by whatever shared
+// token happened to be in the list — the wrong route entirely, on donated quota
+// — and the provider key the caller offered for it would never be reached. This
+// is the one place the two directions are decided, so a caller cannot be served
+// a credential its model's route cannot use.
+//
+// The class is not the whole of the tier-C question, and the second half is the
+// tie the same sentence asks for: WHICH provider. A list of a project's named
+// entries holds one key per provider the published policy names, so several of
+// them are ordinary and not a mistake, and the model's own name does not tell
+// them apart (the patterns of the policy's `models` are what do, and OpenRouter
+// runs models other vendors made). The caller therefore names the provider that
+// runs this model (Selector.Provider) and a key of any other is dropped; a
+// call that names none gets no tier-C credential at all, since a key of one
+// provider is no evidence that the model is its own. Without the tie the list's
+// first provider key would be handed the model — at best a route that cannot
+// run it, at worst one provider's bearer token at another's endpoint.
+//
+// A refused candidate is DROPPED from the list, and the rest of the call is not
+// its business. That is the difference a bundle of named entries makes (KS1
+// offers a coding caller the provider entries of its own repository), and
+// without it the gate would be far wider than the decision it implements: a
+// repository that holds an OpenRouter key would be refused EVERY Claude call it
+// makes — the cascade's own model entries are offered beside the provider entry,
+// and the whole call would fail on a candidate that call would never have been
+// served by. What the refusal is for is the call whose only credential is a
+// provider's: a Claude model routed through one, which is exactly what the
+// gateway pins and what the service's provider route builds a list of one for.
+// Such a call reads the sentence, and it is the sentence that names the check,
+// the reason and the decision.
+func checkCandidates(cs []Credential, model, provider string) ([]Credential, error) {
 	if len(cs) == 0 {
 		return nil, ErrNoCandidates
 	}
+	// Which classes of credential can run this call at all is the model's
+	// question, and it is asked before the policy's (D3000, D3007). A provider's
+	// key runs every model but a Claude one, and the two Anthropic tiers run a
+	// Claude one alone: the same fact in both directions, so a candidate of the
+	// wrong class is dropped here rather than offered to the cascade — a model a
+	// provider runs sent to Anthropic is a call that route cannot serve, made on
+	// quota somebody donated for a Claude model.
+	byProvider := ProviderServes(model)
 	out := make([]Credential, 0, len(cs))
 	seen := make(map[string]bool, len(cs))
+	var refused, wrongProvider []Credential
 	for _, c := range cs {
 		if c.Name == "" {
 			return nil, fmt.Errorf("creds: a candidate of tier %q has no name", c.Tier)
 		}
 		switch c.Tier {
 		case TierA, TierB:
+			if byProvider {
+				refused = append(refused, c)
+				continue
+			}
 		case TierC:
-			return nil, fmt.Errorf("creds: %q is tier C, and this release does not select a third-party route for a Claude model: it waits for Check 50 (D150, C3.6)", c.Name)
+			if !byProvider {
+				refused = append(refused, c)
+				continue
+			}
+			// The second half of the tier-C question, and the one the model
+			// cannot answer on its own: which provider's key this is against
+			// which provider runs this call's model (Selector.Provider). A
+			// candidate with no provider of its own is never served either:
+			// an unnamed key is no more evidence that it is this call's than
+			// an unnamed call is evidence that it is the key's.
+			if provider == "" || c.Provider != provider {
+				wrongProvider = append(wrongProvider, c)
+				continue
+			}
 		default:
-			return nil, fmt.Errorf("creds: %q has tier %q, which is not a tier this Fugaro knows: it selects tier a (a shared subscription token) and tier b (the project's API key)", c.Name, c.Tier)
+			return nil, fmt.Errorf("creds: %q has tier %q, which is not a tier this Fugaro knows: it selects tier a (a shared subscription token), tier b (the project's API key) and tier c (a named provider's key, for a model that is not Claude's)", c.Name, c.Tier)
 		}
 		if seen[c.Name] {
 			return nil, fmt.Errorf("creds: %q is offered twice, and one credential offered twice would be counted twice", c.Name)
@@ -724,7 +963,68 @@ func checkCandidates(cs []Credential) ([]Credential, error) {
 		seen[c.Name] = true
 		out = append(out, c)
 	}
+	if len(out) == 0 {
+		if len(wrongProvider) > 0 {
+			// Every candidate left is a provider's key and none of them is the
+			// provider's this call is for — the other half of the tier-C
+			// question, and a refusal of its own because its fix is not the
+			// policy's or the account's but the CALLER's: the provider that
+			// runs the model it named, or that provider's key in the list. The
+			// alternative is the harm the tie exists for — one provider's
+			// bearer token sent to another's endpoint.
+			switch p := wrongProvider[0]; {
+			case provider == "":
+				return nil, fmt.Errorf("creds: %q is a provider's key, and this call names no provider: a credential of tier C is served only to a call that says which provider runs its model (D3000)", p.Name)
+			case p.Provider == "":
+				return nil, fmt.Errorf("creds: %q is offered with no provider, and this call's model is run by %q: a provider's key is served only for the provider it belongs to (D3000)", p.Name, provider)
+			default:
+				return nil, fmt.Errorf("creds: %q is the key of the provider %q, and this call's model is run by %q: one provider's key never serves another provider's model (D3000)", p.Name, p.Provider, provider)
+			}
+		}
+		if byProvider {
+			// Nothing is left but the tiers a Claude call runs on, and this
+			// call's model is not Claude's. As above, the answer is not "no
+			// credential is offered" — the caller offered some, and the mistake
+			// is which — and it is not the Check 50 sentence, which is about the
+			// other direction.
+			return nil, fmt.Errorf("creds: %q is tier %s, and a call whose model is not Claude's is served by a provider's own key: neither a shared subscription token nor the project's key can run it (D3000, D3007)", refused[0].Name, refused[0].Tier)
+		}
+		// Nothing is left but provider keys this call's model may not be served
+		// by, and that is the refusal D150's gate is: the answer is not "no
+		// credential is offered" (which would send the caller to the bundle for
+		// a call the bundle answered) and not "everything is exhausted" (which
+		// would idle a run on a credential that is not coming).
+		return nil, fmt.Errorf("creds: %q is tier C, and this release does not select a third-party route for a Claude model: it waits for Check 50 (D150, C3.6)", refused[0].Name)
+	}
 	return out, nil
+}
+
+// ProviderServes reports whether a call for this model may be served by a
+// provider's own key: every model but a Claude one (D3000, R3). A caller that
+// named no model is not one of them — the fail-closed direction, and the one
+// every caller had before a selection could be told the model at all.
+//
+// It is the whole of the class question, which is why it answers both
+// directions of it: a call it answers true for is a call the Anthropic tiers
+// cannot run, so checkCandidates drops them, and a call it answers false for is
+// one a provider's key cannot (D3007). It says nothing about WHICH provider's
+// key: a call may be served by a provider's and still not by the one offered,
+// which is the tie Selector.Provider decides beside this one (checkCandidates).
+//
+// The vocabulary is config's own (IsClaudeModel over ClaudePatterns): which
+// models are Claude's is the pin ladder the config, the mount and the launch
+// already share (R3), and a second list here would be a second answer to a
+// question that has one.
+//
+// It is exported because the rule has a second reader outside this package: the
+// credentials service decides which candidates a probe may run on, and a probe
+// sends the call's OWN model through the credential it asks about — so a probe
+// on a provider key for a Claude model would be exactly the route Check 50
+// gates, made by the service rather than by the agent
+// (internal/credsvc's probeCandidates). A caller that restated the rule instead
+// would be a second answer to it.
+func ProviderServes(model string) bool {
+	return model != "" && !config.IsClaudeModel(model)
 }
 
 func (s *Selector) now() time.Time {

@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -245,6 +246,20 @@ type ReviewSummary struct {
 	// for the cheap loop after the first one, and so on. Always 0 on a
 	// senior (tier "" or "senior") review.
 	Bounce int `json:"bounce,omitempty"`
+	// Against is what this round was checked against: the task the pull
+	// request was written for, or the spec a launcher wrote (spec §2, R8).
+	// It is the same record the independent review job's artifact carries
+	// (Against, review.json's against), so a reader that wants to know
+	// whether a verdict judged the change against a brief reads one object
+	// in both — and, as there, it is a CLAIM and never evidence (R16).
+	//
+	// Every round carries one: a round with no brief to check against
+	// records source none with the reason, so a code-only review says so in
+	// its own record rather than leaving a reader to guess. Absent on a
+	// round written before the field existed, which is every record an
+	// older release wrote; the field is additive, so such a record stays
+	// valid and version stays 1.
+	Against *Against `json:"against,omitempty"`
 }
 
 // Review tiers (ReviewSummary.Tier).
@@ -571,7 +586,7 @@ type ToleratedFinding struct {
 	Label rigor.Label `json:"label"`
 	// Mode is the mode that tolerated the finding: the run's resolved mode,
 	// which is one value (D9, D22).
-	Mode rigor.Mode `json:"mode"`
+	Mode rigor.Rigor `json:"mode"`
 	// Likelihood, Impact, FixCost and Class are the score the mode's table
 	// read, as the reviewer wrote it (D3).
 	Likelihood int         `json:"likelihood"`
@@ -648,7 +663,7 @@ type AcceptedFindings struct {
 	Total int `json:"total"`
 	// Mode is the mode the run resolved, which is the mode whose stop row
 	// accepted them (one value, D9, D22).
-	Mode rigor.Mode `json:"mode"`
+	Mode rigor.Rigor `json:"mode"`
 	// Round is the review round whose findings were accepted: the deciding
 	// level's last round, which is the round readiness read.
 	Round int `json:"round"`
@@ -666,7 +681,7 @@ type AcceptedFindings struct {
 // facts beside the entries are read here as well: a round is at least 1 and the
 // half is one of the two the schema closes on, so a caller cannot store a
 // block whose reason a reader cannot place.
-func NewAccepted(mode rigor.Mode, round int, at string, findings []ToleratedFinding) *AcceptedFindings {
+func NewAccepted(mode rigor.Rigor, round int, at string, findings []ToleratedFinding) *AcceptedFindings {
 	if round < 1 || (at != StopRoundsSpent && at != StopTimeThreshold) {
 		return nil
 	}
@@ -906,7 +921,7 @@ type TriageRound struct {
 	// Mode is the mode reached at this round (F14): the mode's persona is what
 	// the judge was asked from, and it is not necessarily the run's starting
 	// mode.
-	Mode rigor.Mode `json:"mode"`
+	Mode rigor.Rigor `json:"mode"`
 	// Level is the review level in force at the round (internal/policy's
 	// vocabulary, D1847).
 	Level policy.Level `json:"level"`
@@ -1491,7 +1506,7 @@ type StageTiming struct {
 	// the run's own: CredentialOAuth for a stage a stage-scoped Claude OAuth
 	// account served, which is the one stage of a mixed run whose calls went
 	// straight to Anthropic instead of through the gateway
-	// (docs/design/mixed-credentials.md §5, §11). It is what makes this
+	// (docs/mixed-credentials/spec.md §5, §11). It is what makes this
 	// stage's ModelUSD readable: the figure is Claude Code's own, not the
 	// gateway's ledger, which is why the stage has no Calls either, and why
 	// ModelNotionalUSD equals ModelUSD for it. Empty for every stage the
@@ -1552,7 +1567,7 @@ type StageTiming struct {
 
 // CredentialOAuth is the word for a Claude OAuth credential in this record:
 // StageTiming.Credential for a stage the run's stage-scoped Claude OAuth
-// account served (docs/design/mixed-credentials.md §5), and
+// account served (docs/mixed-credentials/spec.md §5), and
 // StageTiming.ServedBy for any stage one served -- the account's token or the
 // run's own.
 const CredentialOAuth = "oauth"
@@ -1613,7 +1628,7 @@ type Record struct {
 	Workflow string `json:"workflow,omitempty"`
 	// OAuthAccount is the named Claude OAuth account this run's agent.auth:
 	// oauth workflow used ("" meaning the repository's default account,
-	// docs/design/named-oauth-tokens.md); informational only, never read by
+	// docs/named-oauth-tokens/spec.md); informational only, never read by
 	// anything that makes a security decision. Absent in records from
 	// before this field existed.
 	OAuthAccount string `json:"oauth_account,omitempty"`
@@ -1641,7 +1656,7 @@ type Record struct {
 	Outcome       Outcome           `json:"outcome"`
 	Reason        string            `json:"reason,omitempty"`
 	// FailureClass is why the run did not end succeeded, in the closed
-	// vocabulary of internal/failure (docs/design/failure-classes.md §3). It
+	// vocabulary of internal/failure (docs/failure-classes/design.md §3). It
 	// is additive beside Reason, which keeps its text and its meaning: the
 	// class is what a report groups and counts, and the reason is what a
 	// person reads. Absent on a run that succeeded, on a mode: review run that
@@ -1729,11 +1744,11 @@ type Record struct {
 	// root run's stored task. Absent — never an empty list — for a chain
 	// nobody raised, which is every record written before this field existed.
 	ChainRaises []ChainRaise `json:"chain_raises,omitempty"`
-	// Recipe is the recipe the run's loop came from (docs/design/recipes.md
+	// Recipe is the recipe the run's loop came from (docs/recipes/spec.md
 	// §8); absent in records from before 0.5.0.
 	Recipe *RecipeRecord `json:"recipe,omitempty"`
 	// ProjectLayer is the project layer the run's task carried
-	// (docs/design/layered-config.md §8); absent when it carried none, and
+	// (docs/layered-config/spec.md §8); absent when it carried none, and
 	// in records from before 0.6.0.
 	ProjectLayer *ProjectLayerRecord `json:"project_layer,omitempty"`
 	// ConfigSHA256 is the sha256 of the resolved fugaro.yaml, before the
@@ -1994,6 +2009,17 @@ type Record struct {
 	// written before this field existed, so an old reader sees the record it
 	// always saw.
 	ConflictPaths []string `json:"conflict_paths,omitempty"`
+	// Messages is the run's part in the message channel
+	// (docs/run-messages, F13, F24, F25): whether this run reads messages at
+	// all, the format and the flags its runner knows, and what became of each
+	// message it saw. The block is written at bootstrap, so a sender can tell
+	// a run whose runner predates the feature from one that will read the
+	// message, and it carries no message text: the record is writable by the
+	// run's own agent, so it is an audit trail and never the message. Absent —
+	// never an empty block — for a run written before this field existed, so
+	// an old reader sees the record it always saw: the field is additive, and
+	// the format's version stays 1.
+	Messages *runmsg.Record `json:"messages,omitempty"`
 }
 
 // PatchName is a run's patch object under its own prefix:
@@ -2291,7 +2317,7 @@ func (s *Store) Prefix() string { return s.prefix }
 
 // PutFile writes a file under the run's prefix. Routed through blobx.Put so
 // a GCS 403 is blobx.ErrForbidden, not gocloud's unclassified NotFound
-// (docs/design/bucket-iam.md §2.3).
+// (docs/bucket-iam/spec.md §2.3).
 func (s *Store) PutFile(ctx context.Context, name string, data []byte, contentType string) error {
 	key := s.prefix + strings.TrimPrefix(name, "/")
 	if err := blobx.Wrap(s.bucket).Put(ctx, key, data, contentType); err != nil {

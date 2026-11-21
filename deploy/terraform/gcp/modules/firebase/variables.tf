@@ -12,6 +12,26 @@ variable "project" {
   }
 }
 
+# Where a NEW Realtime Database instance is created: the installation's region
+# mapped to the nearest of the three locations Google offers (internal/place,
+# D3089), computed by fugaro update and written into the tfvars. It is an
+# input rather than a constant because the mapping's answer differs by
+# installation; the three values are the whole of what Google offers, so
+# anything else is a mistyped tfvars and is refused here rather than by the
+# provider. An instance that already exists ignores this: the resource's
+# region is a creation-time field and the module's ignore_changes keeps the one
+# it has (F8, R4), which is what makes an installation whose mapping has since
+# changed plan no change at all.
+variable "database_region" {
+  description = "The Realtime Database location for a NEW default instance: us-central1, europe-west1 or asia-southeast1, the mapping's answer for the installation's region. An instance that already exists keeps its own location."
+  type        = string
+
+  validation {
+    condition     = contains(["us-central1", "europe-west1", "asia-southeast1"], var.database_region)
+    error_message = "database_region must be one of the three Realtime Database locations: us-central1, europe-west1 or asia-southeast1."
+  }
+}
+
 variable "fugaro_project" {
   description = "The Fugaro project's name. It is in the signer's description; the RTDB's /fugaro/project holds it too, written by fugaro update."
   type        = string
@@ -139,6 +159,17 @@ variable "history_account" {
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", var.history_account))
     error_message = "history_account must be a service account email, <id>@<project>.iam.gserviceaccount.com."
+  }
+}
+
+variable "mobile_account" {
+  description = "The email of the public mobile service's runtime account (mobile plan task P5; D2782 as amended by F31, O1, O8): the account the installation root creates (modules/installation/mobile_service.tf) and the service runs as, handed over here because this is the root that creates the account it SIGN AS. When set, iam.tf creates the device-only signer account and grants this account iam.serviceAccounts.signJwt on it — the one grant, in the one plan, that makes a custom token a phone can redeem. Empty, which is every installation until the credentials image runs the mode the module starts that service in, creates neither the signer nor a grant naming anyone: IAM refuses a member that does not exist, and the installation root is applied BEFORE this one on every `fugaro update` (internal/cli/init_stages.go), so a grant left there would be a plan that fails the first update that carried it."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.mobile_account == "" || can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", var.mobile_account))
+    error_message = "mobile_account must be empty or a service account email, <id>@<project>.iam.gserviceaccount.com."
   }
 }
 

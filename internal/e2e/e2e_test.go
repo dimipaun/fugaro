@@ -67,6 +67,18 @@ type scenario struct {
 	cancelOnAgentStart bool   // write the cancel marker once the agent has actually started
 }
 
+// runScenario runs the scenarios below the way every one of them is meant: as
+// the CLI's local invocation (`--task-file`, D149), whose job carries no budget
+// database at all. That is the state a local run is in, and the one an
+// installation that has never had the budget stage gives its runs; from AB1a on
+// it is also the state a run may be accounted for nothing in, because a job
+// that names a database is a job whose launcher minted this run a token (the
+// launcher mints for every launch on an installation with a database, whatever
+// the mode: D11, AB4) and the run then opens a session against it. A harness
+// that names one without minting describes a launch no launcher makes, so these
+// scenarios ask for none; what a run does with a database is
+// runBudget's (budget_test.go), which plays the launcher and where the run
+// opens its session end to end.
 func runScenario(t *testing.T, sc scenario) result {
 	t.Helper()
 	testutil.IsolateGit(t)

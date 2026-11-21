@@ -598,6 +598,30 @@ func TestTheThreeEditorsPreserveBytesTheSameWay(t *testing.T) {
 	}
 }
 
+// settingsGetRowLine is the one row `settings get` prints for key: the line
+// whose first field is the key, under the table's columns header. The two
+// tests below read it by its key rather than by its line number, because `get`
+// prints the setting's own label and description above the table as soon as
+// the metadata table has an entry for the key (SM-E, D2908) and neither key
+// here has one yet: the two lines SM4 adds for max_parallel and commit_name
+// move the row down without changing it.
+func settingsGetRowLine(t *testing.T, out, key string) string {
+	t.Helper()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	for i, line := range lines {
+		fields := strings.Fields(line)
+		if i == 0 || len(fields) == 0 || fields[0] != key {
+			continue
+		}
+		if got := strings.Join(strings.Fields(lines[i-1]), " "); got != "KEY SCOPE VALUE WINS DEFAULT STATE" {
+			continue
+		}
+		return line
+	}
+	t.Fatalf("settings get %s prints no row for it under the table's columns header, got:\n%s", key, out)
+	return ""
+}
+
 // TestSettingsGetOnAKeySetNowhereIsTheDefaultRowAndExitZero: `get` is this
 // task's subcommand, and a key set nowhere prints its default row and exits 0
 // rather than failing an idempotent script (spec §4.1, D852).
@@ -607,13 +631,10 @@ func TestSettingsGetOnAKeySetNowhereIsTheDefaultRowAndExitZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("settings get on a key set nowhere = %v, want exit 0", err)
 	}
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("one key prints its header and its row, got:\n%s", out)
-	}
-	fields := strings.Fields(lines[1])
-	if len(fields) < 5 || fields[0] != "max_parallel" {
-		t.Fatalf("row = %q, want max_parallel and its columns", lines[1])
+	row := settingsGetRowLine(t, out, "max_parallel")
+	fields := strings.Fields(row)
+	if len(fields) < 5 {
+		t.Fatalf("row = %q, want max_parallel and its columns", row)
 	}
 	if fields[3] != "default" {
 		t.Errorf("WINS = %q, want default", fields[3])
@@ -635,13 +656,10 @@ func TestSettingsGetShowsTheRowOfAKeyALayerSets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("one key prints its header and its row, got:\n%s", out)
-	}
-	fields := strings.Fields(lines[1])
-	if len(fields) < 5 || fields[0] != "commit_name" {
-		t.Fatalf("row = %q, want commit_name and its columns", lines[1])
+	row := settingsGetRowLine(t, out, "commit_name")
+	fields := strings.Fields(row)
+	if len(fields) < 5 {
+		t.Fatalf("row = %q, want commit_name and its columns", row)
 	}
 	if fields[2] != "person-1" {
 		t.Errorf("VALUE = %q, want the value the layer holds", fields[2])
@@ -779,12 +797,15 @@ var settingsProbeItems = map[string]string{
 
 // settingsAddLands reports whether `--add` lands on key, in the layer the row
 // is set in. It asks the command rather than a second list, so what "a key that
-// takes a list" means is the documents' own loaders' answer.
+// takes a list" means is the documents' own loaders' answer. The row comes from
+// settingsWriteLookup — the write path's own resolution — rather than from
+// settings.Lookup: a wildcard row's concrete spelling (`workflows.web.needs`) is
+// the key a write lands on, and no registry row is keyed under it.
 func settingsAddLands(t *testing.T, key string) bool {
 	t.Helper()
-	row, ok := settings.Lookup(key)
+	row, _, ok := settingsWriteLookup(key)
 	if !ok {
-		t.Fatalf("%s is not a registry row", key)
+		t.Fatalf("%s is not a key the write resolves to a row", key)
 	}
 	layer := settingsDefaultLayer(row)
 	if layer == "" {
@@ -883,8 +904,16 @@ func TestSettingsAddHintListKeysAreTheKeysThatTakeAList(t *testing.T) {
 		t.Fatal("no row of the registry is one the write accepts: the probe checked nothing")
 	}
 	// The other direction: a name on the list the write refuses would be a key
-	// the loop above never reaches, so it is probed on its own.
+	// the loop above never reaches, so it is probed on its own. A wildcard entry
+	// is the one exception and is probed at its concrete spelling instead: the
+	// literal `*` is a map entry no write lands on — settingsAddLands would
+	// measure the map rule rather than the key — while the concrete spelling is
+	// the one a person types and the one the writer table's argv is built for
+	// (`workflows.web.needs`, W3).
 	for key := range settingsHintListKeys {
+		if strings.Contains(key, "*") {
+			key = writerProbeKey(key)
+		}
 		if !settingsAddLands(t, key) {
 			t.Errorf("%s: the hint's list names it, and --add does not land there", key)
 		}
@@ -914,6 +943,14 @@ func settingsWriteLayerFile(t *testing.T, extra string) string {
 // `defaults.git.*` are `layer.default_profile` and `layer.defaults.git.*` here,
 // and a wildcard block is spelled by its pattern (D1161).
 //
+// `credentials.` left this list with K1 (D2613): §4.4 hands the name to this
+// path, but the registry's `credentials.*` rows are the published node's
+// spelling of the credentials cascade, whose writer is `fugaro accounts cascade
+// set` — and the prefix is what let a `credentials.` name reach the allowlist's
+// own branch at all. Every other key under it is refused with it, and the
+// refusal names the command rather than this list (settingsRefuseRow's
+// family-first order).
+//
 // The list is the first of the refusals, not the only one: a name it holds is
 // still refused when a family owns it (layer.defaults.agent.model) or when it
 // has a varying segment (the literal `workflows.*.commands.test`).
@@ -928,7 +965,7 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 		"followup.trusted", "followup.allow_public",
 		"governance.review_ratio", "governance.stage_budget", "layer.governance.review_ratio",
 		"layer.default_profile", "layer.defaults.git.provider", "layer.defaults.agent.review_rounds",
-		"credentials.fallback", "clone_urls.github",
+		"clone_urls.github",
 		// D1179: the four rows of a repository's own budget block are one set.
 		"budget.mode", "budget.per_day_usd",
 		// D1161: the wildcard blocks this design manages, in the registry's
@@ -950,6 +987,11 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 		"credentials_service.url", "budget.rtdb_url", "budget.firebase_api_key",
 		"name", "runs_bucket", "bucket_url", "repos.*.vertex",
 		"providers.*.base_url", "bitbucket_api_roots", "model_prices", "routing.claude",
+		// K1: the cascade's block left this list's prefixes, and both spellings
+		// of a member are the accounts family's — the carrier the command
+		// writes and the node's own leaf beside it (D2607, D2613).
+		"credentials.fallback", "credentials.concurrency_per_token",
+		"credential_cascade.fallback", "credential_cascade.concurrency_per_token",
 		// The registry's other wildcard rows, and the blocks the layer's own
 		// file holds that this design hands to no command of this path.
 		"claude_accounts.*.allow_data_to", "project_secrets.*.proxy",
@@ -959,6 +1001,46 @@ func TestSettingsGenericKeyIsSpec44sAllowlist(t *testing.T) {
 		if settingsGenericKey(key) {
 			t.Errorf("settingsGenericKey(%q) = true, and no decision hands it to the generic path", key)
 		}
+	}
+}
+
+// TestSettingsSetCredentialsRefusesNamingTheCascadeCommand is item 5 of the
+// owner's direction on the cascade (K1, D2613): the generic path does not write
+// a cascade member, and the refusal names the command that does — the whole
+// command line with the flag that writes the member, so a person who typed the
+// key is handed the write rather than a family they would have to look up.
+//
+// Both spellings are held to it: `credentials.<leaf>` is the published node's
+// name for the block, which is the spelling `fugaro settings` reads, and
+// `credential_cascade.<leaf>` is this machine's own carrier, which is the file
+// the command edits (F23, D2607). A refusal that answered one of the two with
+// the allowlist's sentence would send a person looking for a key this release
+// does not write either way.
+func TestSettingsSetCredentialsRefusesNamingTheCascadeCommand(t *testing.T) {
+	_, localPath := settingsWriteHome(t)
+	before := readFileString(t, localPath)
+
+	for _, key := range []string{"credentials.fallback", "credential_cascade.fallback"} {
+		t.Run(key, func(t *testing.T) {
+			out, _, err := execute(t, "settings", "set", key, "oauth-only")
+			if err == nil {
+				t.Fatalf("settings set wrote %s:\n%s", key, out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+			}
+			for _, want := range []string{
+				key + " is written by fugaro accounts cascade set, not by the generic path",
+				"run `fugaro accounts cascade set --fallback <value>`",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not carry %q: %v", want, err)
+				}
+			}
+		})
+	}
+	if got := readFileString(t, localPath); got != before {
+		t.Errorf("a refused write changed the file:\n%s", got)
 	}
 }
 
@@ -2741,10 +2823,12 @@ func TestSettingsSetAddToAWideningListRowIsTyped(t *testing.T) {
 // verifier_accounts is (D231, D1165), so the widening classification is the
 // same one — asked of settingsTypedWrite directly, because the rows' own
 // spelling carries a `*` and no write lands on one: the literal `*` meets the
-// map rule, a concrete spelling meets the unknown-key answer, and W3's allowlist
-// is what reaches their concrete spellings. What the test pins is the half that
-// is true today and the half that has to hold the day it is not: the row's
-// TypedWhy is the sentence `--add` and a truthy `set` both carry.
+// map rule, and a concrete spelling is one no row answers for, so the write
+// lands on the block's own name instead (W3 admits `mobile_allow`, and
+// settingsEntryRow builds the row an entry write is about from these leaves).
+// What the test pins is the half that is true today and the half that has to
+// hold the day it is not: the row's TypedWhy is the sentence `--add` and a
+// truthy `set` both carry.
 func TestSettingsTypedAddCoversTheMobileAllowRows(t *testing.T) {
 	for _, key := range []string{"mobile_allow.*.uid", "mobile_allow.*.address", "mobile_allow.*.role"} {
 		row, ok := settings.Lookup(key)
@@ -2772,18 +2856,20 @@ func TestSettingsTypedAddCoversTheMobileAllowRows(t *testing.T) {
 
 	// Neither spelling is a write today, and each refusal is the one it should
 	// be: the literal `*` meets the map rule, and the concrete name is one the
-	// lookup does not resolve — the allowlist carries no `mobile_allow.` prefix
-	// and no wildcard row of it by name, so a concrete spelling has no row to
-	// land on and W3's task is what gives it one (D1162). It is the writer
-	// table that registers the concrete form, which is why all three are
-	// testdata/writer_gaps.golden's until then.
+	// lookup does not resolve — the allowlist names the block `mobile_allow`,
+	// not a `mobile_allow.` prefix and not a wildcard row of it (W3), so the
+	// spelling a person declares a phone with is the block itself (D1162). It is
+	// the writer table that would register a leaf's concrete form, which is why
+	// all three are testdata/writer_gaps.golden's: a write of
+	// `mobile_allow.operator.uid` would edit a mapping the file's own list
+	// reader refuses.
 	if _, err := settingsWriteRow("mobile_allow.*.uid"); err == nil {
 		t.Error("the literal mobile_allow.*.uid is writable, and a key with a `*` is a map entry the generic path never writes")
 	} else if !strings.Contains(err.Error(), "a key with a * is a map entry") {
 		t.Errorf("the literal spelling is refused with %v, want the map rule's own words", err)
 	}
 	if _, err := settingsWriteRow("mobile_allow.operator.uid"); err == nil {
-		t.Error("mobile_allow.operator.uid is writable, and the allowlist carries no row of the declared allowlist: W3's task is what registers one (D1162)")
+		t.Error("mobile_allow.operator.uid is writable, and the allowlist names the block the entries are declared in rather than a leaf of it (D1162)")
 	} else if !strings.Contains(err.Error(), "no setting has that name") {
 		t.Errorf("the concrete spelling is refused with %v, want the unknown-key answer the allowlist's silence gives", err)
 	}
@@ -2847,10 +2933,10 @@ func TestSettingsOrchestratorGuardrailsAreMeasuredAgainstTheDaemonBlock(t *testi
 // classified by the block it lands in and not by a row (D1165), so the two
 // blocks R1 hands the generic path — the orchestrator's decision-model map and
 // the declared mobile allowlist — carry the sentence the fence prints for an
-// entry added to them. The mobile block's writer is W3's (`settingsWriteRow`
-// refuses the bare block name today: the registry holds the three leaf rows and
-// no row for the block), and registering the widening before the writer is what
-// makes the guard hold the day the writer lands rather than a release later.
+// entry added to them. The mobile block's writer is the allowlist's block name
+// (W3), which is what makes the fence reachable at all: registering the widening
+// before the writer is what makes the guard hold from the day the writer lands
+// rather than a release later.
 func TestSettingsTypedWriteCoversTheEntryBlocksThatWiden(t *testing.T) {
 	for _, key := range []string{"orchestrator.decision_model_per_class", "mobile_allow"} {
 		block, ok := settingsEntryBlocks[key]

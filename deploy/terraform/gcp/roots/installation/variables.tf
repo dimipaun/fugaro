@@ -196,7 +196,8 @@ variable "catalog_check" {
         title      = string
         expression = string
       })
-      git_secret_id = optional(string)
+      git_secret_id     = optional(string)
+      own_git_secret_id = optional(string)
     }))
   })
   default = null
@@ -327,6 +328,20 @@ variable "voice_service" {
     image      = string
   })
   default = null
+}
+
+# The public mobile service's switch (mobile plan task P5; D2782 as amended by
+# F31, O8). OFF, and it stays off until a released credentials image runs the
+# mode the module starts that service in: `fugaro update` writes no key for it,
+# so an installation gets it only from a hand-edited tfvars — which is what this
+# root has to declare it for, and what internal/infra's own test holds the
+# binary to (it writes no such key, so nothing this release does turns it on).
+# The module's variable carries the reasoning; the release that lands the mode
+# sets it here and hands the account to the Firebase root in the same change.
+variable "enable_mobile_service" {
+  type     = bool
+  default  = false
+  nullable = false
 }
 
 variable "credentials_service" {
@@ -487,8 +502,9 @@ variable "orchestrator" {
   # installation's node out of, and the tick's Scheduler job name and region.
   # The module's type is this same object and its validations are the ones that
   # hold them to their shape, so this root declares the value and decides
-  # nothing about it; nothing in internal/infra composes the block yet (the
-  # module variable's description says so), so the one installation that has it
-  # is one whose owner wrote it into terraform.tfvars.json by hand.
+  # nothing about it. internal/infra composes the block (Orchestrator) for the
+  # one door that may write it — `fugaro update --firebase-project <id>
+  # --orchestrator` — and every run that was not asked for an orchestrator
+  # leaves the key exactly as it found it.
   default = null
 }

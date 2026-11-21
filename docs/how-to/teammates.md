@@ -1,6 +1,6 @@
 # Teammates: no setup
 
-A launcher or an operator in a checkout of an onboarded repository can run `fugaro run`, `fugaro runs ls`, `fugaro diagnose`, `fugaro logs` and `fugaro watch` on a fresh machine with no local config and no `fugaro setup`. Design: [design/shared-config.md](../design/shared-config.md).
+A launcher or an operator in a checkout of an onboarded repository can run `fugaro run`, `fugaro runs ls`, `fugaro diagnose`, `fugaro logs` and `fugaro watch` on a fresh machine with no local config and no `fugaro setup`. Design: [shared-config/spec.md](../shared-config/spec.md).
 
 ## The shared file (**per installation**)
 

@@ -94,12 +94,14 @@ import {
   MAX_PAYLOAD_WIDTH,
   MAX_REPLY_REASON_LENGTH,
   MAX_REPOSITORY_LENGTH,
+  MAX_SETUP_ANSWER_LENGTH,
   MAX_URL_LENGTH,
   NEVER_REACHABLE,
   NO_ACTIVE_INSTALLATION,
   REDUCED_REFUSAL,
   REDUCED_VIEW_OPERATIONS,
   RUNS_LIST_MAX_LIMIT,
+  RUNS_STREAM_SINCE_WINDOWS,
   SENDER_REFUSAL,
   assertReachableSurface,
   channelForOperation,
@@ -664,6 +666,26 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // drives it; its one row of argv is the command and `--json`, with no
   // argument of any kind (cobra's `NoArgs`).
   { command: 'models ls', kind: 'allowed', where: 'internal/cli/models_ls.go:47' },
+  // The image catalog (the console improvements plan's MO-C, AL): what this
+  // project's image catalog names, each entry's tags, default, build source and
+  // last recorded digest -- `fugaro image ls --json`. `allowed` because the
+  // surface drives it, and it is the `image` group's **only** reachable word:
+  // the group's three catalog writers (`image add`, `image rm` and `image
+  // promote` below) and `image build`, `image gate`, `image record`, `image
+  // refresh` and the credential helper are all on `NEVER_REACHABLE`, each as a
+  // command and, for the seven writers, as a word of `image` too -- so no
+  // writer of this group is reachable from the console. It takes no argument
+  // (cobra's `NoArgs`) and its `--shared` is not a word this surface fixes.
+  { command: 'image ls', kind: 'allowed', where: 'internal/cli/image_catalog.go:65' },
+  // The recipes (the console improvements plan's RB4/RS2, AL): the recipes this
+  // project may run, with what each is for and what it needs -- `fugaro recipes
+  // ls --json`. **It was `unused` until AL and is `allowed` now**, and the
+  // change is the whole of the row: the console grew the screen that reads it.
+  // The group's other two words stay on `NEVER_REACHABLE` below, as commands
+  // and as words of `recipes`: `recipes publish` is a write and `recipes
+  // validate` takes a free `FILE` positional, so this is the group's whole
+  // reach. It takes no argument.
+  { command: 'recipes ls', kind: 'allowed', where: 'internal/cli/recipes.go:257' },
   // **The rest of the models group, classified by what each word does.** The
   // three writers edit a configuration a reviewer signed off on -- the project
   // config's routes and allowed models, or one repository's `agent.models`
@@ -718,9 +740,16 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // unreachable.
   { command: 'run', kind: 'allowed', where: 'internal/cli/run.go:134' },
   { command: 'cancel', kind: 'mutating', where: 'internal/cli/cancel.go:72' },
-  // The converge is two doors since W1.2 (`fugaro setup` is the first run and
-  // creates; `fugaro update` re-converges and creates nothing) and both apply
-  // Terraform, so both are writers; the word they replaced is a tombstone.
+  // **The converge is two doors since W1.2 and now the first-run wizard's too**
+  // (`fugaro setup` is the first run and creates; `fugaro update` re-converges
+  // and creates nothing) and both apply Terraform, so both stay writers; the
+  // word they replaced is a tombstone. **`setup` is the one mutating command the
+  // allow-list reaches at all** (the console improvements plan, AL and D2904):
+  // its command row on `NEVER_REACHABLE` stays and excepts `setup.plan` and
+  // `setup.apply` by name, so the two wizard argvs are driven and every other
+  // argv of it is refused -- which is why this row keeps its `mutating` class
+  // rather than becoming `allowed` like `run` did (there, no command row was
+  // left behind at all). The per-command test below reads the exception back.
   { command: 'setup', kind: 'mutating', where: 'internal/cli/setup.go:235' },
   { command: 'update', kind: 'mutating', where: 'internal/cli/update.go:58' },
   { command: 'init', kind: 'retired', where: 'internal/cli/retired.go:39 (hidden)' },
@@ -734,6 +763,9 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'config init', kind: 'mutating', where: 'internal/cli/config_init.go:80' },
   { command: 'config publish', kind: 'mutating', where: 'internal/cli/config_publish.go:31' },
   { command: 'recipes publish', kind: 'mutating', where: 'internal/cli/recipes.go:327' },
+  { command: 'image add', kind: 'mutating', where: 'internal/cli/image_catalog.go:337' },
+  { command: 'image rm', kind: 'mutating', where: 'internal/cli/image_catalog.go:705' },
+  { command: 'image promote', kind: 'mutating', where: 'internal/cli/image_promote.go:22' },
   { command: 'image build', kind: 'mutating', where: 'internal/cli/image.go:77' },
   { command: 'image gate', kind: 'mutating', where: 'internal/cli/image_record.go:63 (hidden)' },
   { command: 'image record', kind: 'mutating', where: 'internal/cli/image_record.go:148 (hidden)' },
@@ -754,7 +786,6 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   { command: 'image selftest', kind: 'unused', where: 'internal/cli/image.go:45 (hidden)' },
   { command: 'image check', kind: 'unused', where: 'internal/cli/imagecheck.go:64' },
   { command: 'image status', kind: 'unused', where: 'internal/cli/imagecheck.go:929' },
-  { command: 'recipes ls', kind: 'unused', where: 'internal/cli/recipes.go:257' },
   { command: 'recipes show', kind: 'unused', where: 'internal/cli/recipes.go:292' },
   { command: 'recipes validate', kind: 'unused', where: 'internal/cli/recipes.go:443' },
   { command: 'budget preview', kind: 'unused', where: 'internal/cli/budget_preview.go:70' },
@@ -792,7 +823,7 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is thirty argvs, and this surface is the same thirty.** (The
+ * **It is thirty-eight argvs, and this surface is the same thirty-eight.** (The
  * enumeration below numbers twenty-two of them: CG9a's `graph --json` landed
  * after it was written and sits between `plan status --json` and
  * `coordinator status --from-store --all --json`, and this plan's
@@ -845,11 +876,29 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * never appears
  * in this list at all, and needs no numbering: it is the one row in
  * `CONSOLE_OPERATIONS` that carries no command, so there is no argv of a child
- * for a renderer to fill.) **The composite-commands plan's AP8 is the thirtieth
- * and the last**: the pending-steps read, `apply --status --json`, whose
+ * for a renderer to fill.) **The composite-commands plan's AP8 is the thirtieth**
+ * -- the pending-steps read, `apply --status --json`, whose
  * `--status` is a word of the command path rather than a flag this table fixes
  * -- the bare `apply` is the chain, and the word is the whole difference
  * between the read and the write.
+ *
+ * **The console improvements plan's AL added the last eight**, and they are
+ * appended below for the reason every row above was: what the task added must
+ * be visible as a diff. Four are the live form of a read already here
+ * (`runs ls --stream --json`, `report --stream --json`,
+ * `budget show --stream --json` and, on the roster's command,
+ * `user ls --me --json`), and four are new reads and a write with no
+ * whole-document sibling in this list (`image ls --json`,
+ * `recipes ls --json` and the wizard's two `setup` argvs). The mode word of
+ * each is a word of its row's **`command`** and not a flag this table fixes,
+ * which is what `graph --watch --json` above established: a word that decides
+ * what the child does -- a stream rather than a read, the caller rather than
+ * the roster, a plan rather than a converge -- belongs where no payload can
+ * reach it. So `argvOf` above still reads each of these as the command and its
+ * one fixed `--json`, and the whole argv is what the `spawn.test.ts` pins hold.
+ * **`settings.editor.open` is the one operation of the nine that adds no row
+ * here at all**: its `command` is `null` (`licence.read`'s shape), because the
+ * editor is a window rather than a child.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -987,6 +1036,47 @@ const DESIGN_ARGV: readonly string[] = [
   // whole argv, `apply --status --json --project <name> [--config <path>]` and
   // all.
   'apply --status --json',
+  // **The console improvements' eight argvs (AL)**, appended here for the
+  // reason every row above was: what the task added must be visible as a diff.
+  // Four are the live form of a read already in this list -- `--stream` is a
+  // word of each row's **command path** and not a flag this table fixes, for
+  // `graph --watch`'s reason: it is what makes the child a stream rather than a
+  // read, and a declared flag would be a word a renderer could turn off -- and
+  // each carries exactly the arguments its whole-document sibling declares, so
+  // the two forms of one figure cannot be narrowed two ways. Four are reads and
+  // a read-and-write with no whole-document sibling here:
+  // `user ls --me --json` (the caller's own role), `image ls --json` (the
+  // installation's image catalog), `recipes ls --json` (the project's recipes)
+  // and the two `setup` argvs below.
+  //
+  // **The `--since` of `runs.stream` is absent**, like every other argument
+  // filled by a schema key: it is the operation's one required argument and
+  // `--since <w>` is the word it becomes. **The `--answers-file -` of the two
+  // `setup` rows is present**, and it is the one place in this list where a
+  // word of the command path is also the thing a reader must look at twice: the
+  // `-` is main's own credential-free hand-off -- the answers reach the child
+  // on its standard input, from bytes this process made, so no path is in the
+  // argv and no file exists for another process to swap.
+  'runs ls --stream --json',
+  'report --stream --json',
+  'budget show --stream --json',
+  // `user ls --me --json`: the caller's own role (WH1, D2907). `--me` is in the
+  // command path for `--stream`'s reason read as a privacy rule: there is no
+  // form of this read that is about anybody else, so a flag a payload could
+  // drop would be a payload that asked the roster question.
+  'user ls --me --json',
+  'image ls --json',
+  'recipes ls --json',
+  // The first-run wizard's plan (SW3a, D2904). It is the one row here whose
+  // argument is an **object** rather than a word: the answers are validated key
+  // by key in main and serialised by main, so what reaches the child is main's
+  // own bytes on its stdin, and `--answers-file -` is the fixed word that reads
+  // them.
+  'setup --plan-only --answers-file - --events --json',
+  // The wizard's apply: the row above less `--plan-only`, and the console's
+  // third write. It declares no argument at all, because the file it reads is
+  // the one main held at plan time.
+  'setup --answers-file - --events --json',
 ]
 
 /** argvOf is an operation's command and the flags it fixes, as one string. */
@@ -1016,13 +1106,16 @@ describe("the allow-list's read-only invariant", () => {
     expect(driven).toHaveLength(DESIGN_ARGV.length)
   })
 
-  it('has exactly eleven operations spawn nothing at all, and names each of them', () => {
+  it('has exactly twelve operations spawn nothing at all, and names each of them', () => {
     // Task 3.3 added the handshake's answer, Task 3.4b `installation.current`
     // (plan step 6: "added to SHIPPED_SURFACE deliberately"), the owner's
     // design ruling of 2026-10-25 the rail's five store-and-window operations,
     // K2a `link.openPullRequest`, and S2.7 `licence.read` and `licence.save`.
-    // The number is the claim: these rows are the console's own state, and a
-    // twelfth operation with no command would be a surface that answers
+    // **The console improvements plan's AL added the twelfth**,
+    // `settings.editor.open`: the settings editor's window, which spawns no
+    // child of its own (the dry run and the write behind it are `settings.edit`'s
+    // row). The number is the claim: these rows are the console's own state, and
+    // a thirteenth operation with no command would be a surface that answers
     // something no CLI read produced.
     //
     // **The two licence rows are a different kind of no-command operation from
@@ -1044,6 +1137,7 @@ describe("the allow-list's read-only invariant", () => {
       'link.openPullRequest',
       'licence.read',
       'licence.save',
+      'settings.editor.open',
     ])
     // Each of them, by name, so the test fails naming the row rather than on a
     // list that a reader has to diff.
@@ -1059,10 +1153,11 @@ describe("the allow-list's read-only invariant", () => {
       'openPullRequest',
       'readLicence',
       'saveLicence',
+      'openSettingsEditor',
     ])
   })
 
-  it('drives every CLI command with at most one operation, except logs and settings', () => {
+  it('drives every CLI command with at most one operation, except the seven the console has two reads of', () => {
     // Two operations share `logs` and differ by their flags, which is the point
     // of writing the allow-list by exact argv: `logs RUN --json` and
     // `logs RUN --url` cannot be combined (`internal/cli/logs.go:63`), so the
@@ -1070,31 +1165,80 @@ describe("the allow-list's read-only invariant", () => {
     const shared = CLI_COMMANDS.map((entry) => entry.command).filter(
       (command) => operationsDriving(command).length > 1,
     )
-    expect(shared).toEqual(['logs', 'settings'])
+    expect(shared).toEqual([
+      // The console improvements' four live pairs (AL), in `CLI_COMMANDS`'
+      // order: each whole-document read gained its `--stream` form, and the
+      // two are one read asked two ways rather than two reads.
+      'budget show',
+      'report',
+      'runs ls',
+      // `logs` has been the pair here since Task 1.2 and is untouched by AL.
+      'logs',
+      // `settings` is a read and a write of one group (the settings-edit plan's
+      // C1 and C3, D1102 and D1103). They differ by their whole argv rather
+      // than by a flag -- the read is `settings --json` and the write is
+      // `settings` with its subcommand, key and value as arguments -- so
+      // neither can be expressed through the other.
+      'settings',
+      // The roster and the caller's own role (RS7's row and WH1's, AL): the
+      // same command asked about everybody and about the caller alone, and the
+      // two differ by the `--me` word in the second's command path.
+      'user ls',
+      // The first-run wizard's plan and apply (AL, D2904): `setup --plan-only
+      // …` is a read and `setup …` is the console's fourth write, and the two
+      // differ by the one mode word in their command path.
+      'setup',
+    ])
     expect(operationsDriving('logs').map((operation) => operation.flags.join(' ')).sort()).toEqual([
       '--json',
       '--url',
     ])
-    // `settings` is the second, and it is a different kind of pair: a read and a
-    // write of the same group (the settings-edit plan's C1 and C3, D1102 and
-    // D1103). They differ by their whole argv rather than by a flag -- the read
-    // is `settings --json` and the write is `settings` with its subcommand, key
-    // and value as arguments -- so neither can be expressed through the other,
-    // and the write's own words are pinned below.
     expect(operationsDriving('settings').map((operation) => operation.name).sort()).toEqual([
       'settings.edit',
       'settings.read',
     ])
     expect(operationsDriving('settings').map((operation) => operation.flags.join(' ')).sort()).toEqual(['', '--json'])
+    // The four live pairs, read the same way: each is the whole-document read
+    // and its stream, and the two are told apart by the mode word in the
+    // stream's command path rather than by any flag.
+    expect(operationsDriving('budget show').map((operation) => operation.name).sort()).toEqual([
+      'budget.show',
+      'budget.stream',
+    ])
+    expect(operationsDriving('report').map((operation) => operation.name).sort()).toEqual([
+      'spend.report',
+      'spend.stream',
+    ])
+    expect(operationsDriving('runs ls').map((operation) => operation.name).sort()).toEqual([
+      'runs.list',
+      'runs.stream',
+    ])
+    expect(operationsDriving('user ls').map((operation) => operation.name).sort()).toEqual([
+      'members.list',
+      'whoami',
+    ])
   })
 
   for (const entry of CLI_COMMANDS) {
     it(`drives ${entry.command} only because the design's allow-list admits it`, () => {
       const drivers = operationsDriving(entry.command)
       if (entry.kind === 'allowed') return
+      // **A mutating command may still be driven when the never table's own row
+      // for it excepts the operations by name** (the console improvements plan,
+      // AL): `setup` is a write in every form but the first-run wizard's two, so
+      // its command row stays and `except` names `setup.plan` and
+      // `setup.apply`. The claim below is narrower than "nothing drives it" and
+      // stronger than "something may": every driver of a command this console
+      // may not run is one of the names its own never row grants -- and for
+      // every mutating command but `setup` that row grants nothing, so the
+      // mutation control this loop is stays as sharp as it was.
+      const row = NEVER_REACHABLE.find(
+        (candidate) => candidate.shape === 'command' && candidate.value === entry.command,
+      )
+      const granted = new Set(row?.except ?? [])
       expect(
-        drivers.map((operation) => operation.name),
-        `${entry.command} (${entry.where}) is ${entry.kind}: nothing in the allow-list may drive it`,
+        drivers.filter((operation) => !granted.has(operation.name)).map((operation) => operation.name),
+        `${entry.command} (${entry.where}) is ${entry.kind}: nothing in the allow-list may drive it but the names its never row grants`,
       ).toEqual([])
     })
 
@@ -1103,7 +1247,20 @@ describe("the allow-list's read-only invariant", () => {
         // Neither is forbidden -- the console just has no screen for the
         // unused ones. What keeps them unreachable is that the surface is the
         // table: an operation is the only way to a command.
-        expect(NEVER_REACHABLE.some((row) => row.value === entry.command)).toBe(false)
+        //
+        // **An `argv` row is read under the command it belongs to**, the way
+        // the row-identity check below keys one: it refuses *one word of one
+        // command*, so a word row under `recipes` says nothing about the
+        // top-level `validate` command of the same name (`recipes validate`
+        // is the `unused` read AL's fence refuses as a word, and `fugaro
+        // validate` is another command entirely). Comparing the value alone
+        // would read the two as one row.
+        expect(
+          NEVER_REACHABLE.some(
+            (row) =>
+              row.value === entry.command && (row.shape !== 'argv' || row.command === entry.command),
+          ),
+        ).toBe(false)
         return
       }
       expect(
@@ -1125,6 +1282,63 @@ describe("the allow-list's read-only invariant", () => {
     expect(drivers.map((operation) => operation.name)).toEqual(['run.launch'])
     const driver = drivers[0]
     expect(driver === undefined ? null : argvOf(driver)).toBe('run --task-file - --json')
+  })
+
+  it('drives `setup` from the never row’s own two names alone, and only by the wizard’s argv', () => {
+    // **The console's second command that is a write in every form but a named
+    // few** (the console improvements plan, AL and D2904), and the turned-around
+    // half of the per-command loop above for it: `setup` keeps its command row
+    // on the never table, so this is where the two names that row grants are
+    // read back. The word that decides what the child does -- `--plan-only` --
+    // is in each row's `command`, which is what keeps it out of a payload; the
+    // answers travel on stdin, so no argv here can name a file.
+    const drivers = operationsDriving('setup')
+    expect(drivers.map((operation) => operation.name)).toEqual(['setup.plan', 'setup.apply'])
+    expect(drivers.map((operation) => argvOf(operation))).toEqual([
+      'setup --plan-only --answers-file - --events --json',
+      'setup --answers-file - --events --json',
+    ])
+    // Both are unreachable for a caller that names no operation: the exception
+    // is a fact about these two rows and not a permission for the command.
+    expect(isNeverReachable({ command: 'setup', flags: ['--json'] })?.value).toBe('setup')
+    // And a third argv of `setup` is refused, in both the shapes a later edit
+    // could take: a name this table does not grant, and a command path of the
+    // bare word under a name that is not one of the two.
+    expect(isNeverReachable({ name: 'setup.other', command: 'setup', flags: ['--json'] })?.value).toBe('setup')
+    expect(isNeverReachable({ name: 'some.new.row', command: 'setup --answers-file -', flags: ['--json'] })?.value).toBe(
+      'setup',
+    )
+    // A word like `--yes` is not refused here -- it is not on the never table --
+    // but `src/main/spawn.ts`'s `assertArgvFlags` refuses it for every row,
+    // because it is on no `SPAWN_FLAGS` entry (`spawn.test.ts` pins that for
+    // `setup.apply` by name).
+    expect(isNeverReachable({ name: 'setup.apply', command: 'setup', flags: ['--json'] })).toBeNull()
+  })
+
+  it('grants through a command row’s `except` only the operations it names, and only under that command', () => {
+    // A name-keyed exception is the one thing on this table that can turn a
+    // total ban into a ban that refuses nothing, so both halves of it are
+    // mutations here (AL): a name that is **not an operation of the surface**
+    // -- a typo, or a row deleted without its exception -- and a name that is
+    // an operation of the surface but drives **another command**, which would
+    // grant the ban away from the command the row is about.
+    expect(() =>
+      assertReachableSurface(CONSOLE_OPERATIONS.filter((operation) => operation.name !== 'setup.plan')),
+    ).toThrow(/excepts setup\.plan, which is not an operation of the surface/)
+
+    const wandering = CONSOLE_OPERATIONS.map((operation) =>
+      operation.name === 'setup.plan' ? { ...operation, command: 'doctor --json' } : operation,
+    )
+    expect(() => assertReachableSurface(wandering)).toThrow(
+      /excepts setup\.plan, which drives doctor --json/,
+    )
+
+    // ...and the real surface passes, so neither case is one that refuses every
+    // table: `setup.plan` really is an operation of the surface and really does
+    // drive an argv under `setup`.
+    expect(() => assertReachableSurface(CONSOLE_OPERATIONS)).not.toThrow()
+    const plan = CONSOLE_OPERATIONS.find((operation) => operation.name === 'setup.plan')
+    expect(plan?.command?.startsWith('setup ')).toBe(true)
   })
 
   for (const command of NOT_ON_THIS_TREE) {
@@ -1346,6 +1560,106 @@ describe("the allow-list's read-only invariant", () => {
         },
       ]),
     ).toThrow(/user\.grant drives user grant/)
+  })
+
+  it('reaches no `image` word but `ls` and no `recipes` word but `ls`, and refuses each writer in both shapes', () => {
+    // **The image and recipes groups' fences** (the console improvements plan's
+    // AL: its contract text and design rows claim the groups' writers are the
+    // never table's, and the first review round found the claim true of some of
+    // them and the fence drawn in neither of the two shapes). `fugaro image ls
+    // --json` and `fugaro recipes ls --json` are the one word of each group this
+    // console may drive, and each group's other words are refused in the two
+    // shapes the models and `user` fences are drawn in: a `command` row per
+    // writer, and an `argv` row per word. Both are read back here in an argv
+    // that could actually be spawned, because the loops above read a row's
+    // `command` and never its `value`: a dropped row, or a word spelled into a
+    // longer command path or into a row's flags, would otherwise leave the half
+    // of the fence a command row cannot see unguarded while every test above
+    // stayed green.
+    const refusedBy = (command: string, flags: readonly string[]): string | null =>
+      isNeverReachable({ command, flags })?.value ?? null
+
+    expect(
+      CONSOLE_OPERATIONS.filter((operation) => operation.name === 'image.catalog.ls').map(argvOf),
+    ).toEqual(['image ls --json'])
+    expect(CONSOLE_OPERATIONS.filter((operation) => operation.name === 'recipes.ls').map(argvOf)).toEqual([
+      'recipes ls --json',
+    ])
+    expect(refusedBy('image ls', ['--json'])).toBeNull()
+    expect(refusedBy('image ls', ['--json', '--shared'])).toBeNull()
+    expect(refusedBy('recipes ls', ['--json'])).toBeNull()
+
+    for (const word of ['add', 'rm', 'promote', 'build', 'gate', 'record', 'refresh'] as const) {
+      expect(
+        NEVER_REACHABLE.filter((row) => row.shape === 'command' && row.value === `image ${word}`),
+        word,
+      ).toHaveLength(1)
+      expect(
+        NEVER_REACHABLE.filter(
+          (row) => row.shape === 'argv' && row.command === 'image' && row.value === word,
+        ),
+        word,
+      ).toHaveLength(1)
+      // The command path the design's never list names...
+      expect(refusedBy(`image ${word}`, ['--json']), word).toBe(`image ${word}`)
+      // ...the same word spelled into a longer command path...
+      expect(refusedBy(`image ls ${word}`, ['--json']), word).toBe(word)
+      // ...and into the flags, which is the half a command row cannot see.
+      expect(refusedBy('image ls', ['--json', word]), word).toBe(word)
+    }
+    // `git-credential` is the one refused word of this group with no `argv` row,
+    // as the `secrets` group's words have none: it is a secret value's helper
+    // rather than a word an argv could carry into a read, and the command row is
+    // what refuses it.
+    expect(refusedBy('image git-credential', ['--json'])).toBe('image git-credential')
+    expect(refusedBy('image ls', ['--json', 'git-credential'])).toBeNull()
+
+    // `recipes`' two other words: `publish` is a write with both rows, and
+    // `validate` is a read with **no command row at all** (it is `unused`
+    // above), so the word row is the only one it can ever match.
+    expect(
+      NEVER_REACHABLE.filter((row) => row.shape === 'command' && row.value === 'recipes publish'),
+    ).toHaveLength(1)
+    expect(refusedBy('recipes publish', ['--json'])).toBe('recipes publish')
+    expect(refusedBy('recipes ls publish', ['--json'])).toBe('publish')
+    expect(refusedBy('recipes ls', ['--json', 'publish'])).toBe('publish')
+    for (const [command, flags] of [
+      ['recipes validate', ['--json']],
+      ['recipes ls validate', ['--json']],
+      ['recipes ls', ['--json', 'validate']],
+    ] as const) {
+      expect(refusedBy(command, flags), command).toBe('validate')
+    }
+
+    // The whole-table controls: an operation driving either group's writer, or
+    // the free-`FILE` read, cannot be added to the surface at all, and the
+    // refusal names it.
+    expect(() =>
+      assertReachableSurface([
+        ...CONSOLE_OPERATIONS,
+        {
+          name: 'image.add',
+          method: 'addImage',
+          command: 'image add',
+          flags: ['--json'],
+          summary: 'a write this console must not have',
+          args: [],
+        },
+      ]),
+    ).toThrow(/image\.add drives image add/)
+    expect(() =>
+      assertReachableSurface([
+        ...CONSOLE_OPERATIONS,
+        {
+          name: 'recipes.validate',
+          method: 'validateRecipe',
+          command: 'recipes ls',
+          flags: ['--json', 'validate'],
+          summary: 'a read this console must not have',
+          args: [],
+        },
+      ]),
+    ).toThrow(/recipes\.validate drives validate/)
   })
 
   it('drives no command whose argv carries a never-table flag', () => {
@@ -1812,6 +2126,38 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // `NoArgs` and the operation declares no key -- so there is no step name, no
   // key and no project here for a caller to spell.
   'apply.pending': {},
+  // The console improvements' nine (AL). The three live reads carry the
+  // arguments of their whole-document siblings -- `runs.stream`'s window is
+  // required, where `runs.list`'s is optional, because a feed whose window
+  // nobody chose is the read a screen must not make on the operator's behalf,
+  // and it is the console's own day rather than the command's whole grammar
+  // (`RUNS_STREAM_SINCE_WINDOWS`, the pins below) -- and the three reads that
+  // take no argument at all take none here either.
+  'runs.stream': { since: '24h' },
+  'spend.stream': { by: 'model', since: '7d', until: '2026-10-16', repo: 'acme/app' },
+  'budget.stream': { repo: 'acme/app', all: false, compute: true },
+  'whoami': {},
+  'image.catalog.ls': {},
+  'recipes.ls': {},
+  // The wizard's answers, as the renderer sends them: **an object of the five
+  // questions and never a path**. The value here is the payload a screen builds,
+  // not the document the child reads -- main adds `version` and serialises it
+  // (`setupAnswersValue`, `src/main/ipc.ts`) -- so there is no `version` key
+  // here, and a sixth key or a path-shaped answer is refused before a child
+  // exists (the pins below).
+  'setup.plan': {
+    answers: { gcp_project: 'aurora-prod', region: 'europe-west1', name: 'aurora', rigor: 'startup', bake_repos: false },
+  },
+  // The empty payload: the apply carries nothing at all, because the answers
+  // file it hands the child is the one main held when it showed the plan
+  // window (AL, D2904). A second answers object here would be a second thing to
+  // validate and a second thing to disagree with the window.
+  'setup.apply': {},
+  // The one key of the settings editor (SU1, D2902): the setting the window is
+  // for, a key of the document the settings read answered. The layer and the
+  // phase are the main process's, so there is no `layer`, no `phase` and no
+  // `value` here -- which the pin below reads back key by key.
+  'settings.editor.open': { key: 'budget.cap_usd' },
 }
 
 const RUN_ID = '20261016-121029-4a1b'
@@ -2011,7 +2357,7 @@ describe('the argument schemas', () => {
     }
   })
 
-  it('takes no command and no flag name, wherever a value goes, for every operation but the rail’s project name and the licence key’s', () => {
+  it('takes no command and no flag name, wherever a value goes, for every operation but the three kinds that are a shape', () => {
     const words = ['budget kill', 'run', '--repo', '-x', 'ls -la', 'fugaro run']
     for (const operation of CONSOLE_OPERATIONS) {
       for (const spec of operation.args) {
@@ -2025,13 +2371,104 @@ describe('the argument schemas', () => {
         // `licenceKey` is skipped for the reason the case above it gives: its
         // value reaches no argv at all, and the case below pins what its shape
         // check does admit.
-        if (spec.kind === 'installationName' || spec.kind === 'licenceKey') continue
+        //
+        // `settingKey` is skipped for `installationName`'s reason read off the
+        // CLI's own registry (D1102): the kind is a key's **shape** and nothing
+        // more, so `run` is a key shape this table admits -- and whether the
+        // generic path owns a key of that name is the CLI's own allow-list, not
+        // this surface's. The case beneath names what the shape does and does
+        // not admit, and it reaches the kind through `settings.editor.open`,
+        // whose `key` is its only argument: `settings.edit`'s own `key` is
+        // masked in this loop by the missing `op`, which is why nothing here
+        // noticed the kind before.
+        if (
+          spec.kind === 'installationName' ||
+          spec.kind === 'licenceKey' ||
+          spec.kind === 'settingKey'
+        ) {
+          continue
+        }
         for (const word of words) {
           const decision = validateArguments(operation.name, { [spec.key]: word })
           expect(decision.ok, `${operation.name}.${spec.key} accepted ${word}`).toBe(false)
         }
       }
     }
+  })
+
+  it('takes a setting key as a shape, and leaves the registry’s own key list to the CLI', () => {
+    // The grammar is `SETTINGS_KEY_RE`: lower-case ASCII words joined by dots,
+    // with `*` allowed for a glob and no leading `-` -- so the two command-
+    // shaped spellings (`-x`, `--repo`) are refused here and a bare word like
+    // `run` is admitted, exactly as the `installationName` case above says of
+    // its own kind.
+    for (const key of ['budget.cap_usd', 'agent.max_budget_usd', 'models.routes', 'run', 'budget.*']) {
+      expect(validateArguments('settings.editor.open', { key }).ok, key).toBe(true)
+    }
+    for (const key of ['--repo', '-x', 'ls -la', 'fugaro run', 'budget kill', '', 'Budget.cap', 'budget..cap']) {
+      expect(validateArguments('settings.editor.open', { key }).ok, JSON.stringify(key)).toBe(false)
+    }
+  })
+
+  it('refuses a path in the wizard’s answers, and a sixth key, before any child exists', () => {
+    // The wizard's payload is an **object of the five questions** and never a
+    // path (AL, D2904): the only `--answers-file` word this surface ever emits
+    // is the literal `-` main writes into the row's argv, so nothing a renderer
+    // sends can name a file -- and an answer that *holds* a path is refused
+    // here, member by member, before any child exists. The object is rebuilt
+    // from the checked members (`setupAnswersValue`), so the string the child
+    // reads is main's own serialisation: a member that rode along unchecked
+    // would have nowhere to ride.
+    const answers = {
+      gcp_project: 'aurora-prod',
+      region: 'europe-west1',
+      name: 'aurora',
+      rigor: 'startup',
+      bake_repos: false,
+    }
+    const refused = (payload: unknown): string => {
+      const decision = validateArguments('setup.plan', { answers: payload })
+      expect(decision.ok).toBe(false)
+      return decision.ok ? '' : decision.reason
+    }
+    // A path-shaped answer, in either separator, and in either of the three
+    // questions that are words.
+    for (const key of ['gcp_project', 'region', 'name'] as const) {
+      expect(refused({ ...answers, [key]: '/etc/passwd' }), key).toContain(key)
+      expect(refused({ ...answers, [key]: '..\\..\\etc' }), key).toContain(key)
+    }
+    // The payload itself is never a path or a string: the member is an object.
+    expect(refused('/etc/passwd')).toContain('answers')
+    expect(refused('aurora-prod')).toContain('answers')
+    // A sixth key -- including the answers file's own `version`, which is
+    // main's to add and not a question a renderer answers.
+    expect(refused({ ...answers, version: 1 })).toContain('version')
+    expect(refused({ ...answers, answers_file: '/tmp/wizard.json' })).toContain('answers_file')
+    // A question that is missing is not defaulted: every one of the five is
+    // required, which is what keeps a half-answered wizard off the child.
+    expect(refused({ gcp_project: 'aurora-prod' })).toContain('region')
+    // The two members with a grammar of their own.
+    expect(refused({ ...answers, rigor: 'hotfix' })).toContain('poc, startup, pro, critical')
+    expect(refused({ ...answers, bake_repos: 'yes' })).toContain('bake_repos')
+    expect(refused({ ...answers, name: '' })).toContain('name')
+    expect(refused({ ...answers, name: 'a'.repeat(MAX_SETUP_ANSWER_LENGTH + 1) })).toContain('name')
+    expect(refused({ ...answers, name: 'au‮bora' })).toContain('name')
+
+    // ...and the well-formed payload is accepted, with main's own document
+    // handed back as the string the child reads on its stdin: the five
+    // questions and the `version` main added, and nothing the renderer sent.
+    const decision = validateArguments('setup.plan', { answers })
+    expect(decision.ok).toBe(true)
+    const file = decision.ok ? decision.args['answers'] : null
+    expect(typeof file).toBe('string')
+    expect(JSON.parse(String(file))).toEqual({ version: 1, ...answers })
+
+    // **The apply carries no answers at all.** Its own handler hands the child
+    // the file main held when it showed the plan window, so a payload here is a
+    // payload the operation does not declare -- which is what stops a renderer
+    // slipping a second set of answers in between the plan and the apply.
+    expect(validateArguments('setup.apply', {}).ok).toBe(true)
+    expect(validateArguments('setup.apply', { answers }).ok).toBe(false)
   })
 
   it('takes a project name for the rail’s name kind only as one word, and never a flag', () => {
@@ -2910,6 +3347,64 @@ describe('the day and window arguments', () => {
       .flatMap((operation) => operation.args.map((spec) => spec.kind))
     expect(kinds).toEqual(['summarySince'])
   })
+
+  // `runs ls --stream --since` is **the console's own closed set**
+  // (`RUNS_STREAM_SINCE_WINDOWS`) and not the command's grammar either: `runs
+  // ls` reads `parseSince`, so every form in `runWindows` above is a form the
+  // command takes and this surface refuses. The live read is where that matters
+  // most -- `0` is no lower bound, and on a feed it is every run the
+  // installation ever made, one line at a time -- so the set is one window, the
+  // day `RUNS_SINCE` reads a run list for, and the same day the whole-document
+  // fallback covers.
+  const streamWindows: readonly (readonly [string, boolean, string])[] = [
+    ['24h', true, 'the console’s own window: the day `RUNS_SINCE` reads a run list for'],
+    ['0', false, 'parseSince’s “no bound” is the whole history arriving one line at a time'],
+    ['7d', false, 'a window no `runs ls` here is read for, and the set is closed rather than a bound'],
+    ['1d', false, 'a day is 24h in this grammar: the set is exact, not a duration comparison'],
+    ['36h', false, 'a Go duration is a form of the command and not of this set'],
+    ['1h30m', false, 'nor a compound one'],
+    ['2026-10-16', false, 'and a UTC day is neither'],
+    ['12w', false, 'nor weeks'],
+    ['24H', false, 'the set is exact: the spelling is part of the word'],
+    [' 24h', false, 'a leading space'],
+    ['24h ', false, 'a trailing one'],
+    ['', false, 'empty'],
+    ['all', false, 'a word'],
+    ['--json', false, 'and a flag is not a window'],
+  ]
+
+  for (const [value, accepted, why] of streamWindows) {
+    it(`${accepted ? 'accepts' : 'refuses'} the stream window ${JSON.stringify(value)} (${why})`, () => {
+      expect(validateArguments('runs.stream', { since: value }).ok).toBe(accepted)
+    })
+  }
+
+  it('refuses a stream window the command itself takes, which is the set’s whole point', () => {
+    // The pair that makes the claim above a fact rather than a coincidence:
+    // `7d` is `parseSince`'s, so `runs.list` and `runs.summary` both take it,
+    // and this operation refuses it before a child exists.
+    expect(validateArguments('runs.list', { since: '7d' }).ok).toBe(true)
+    expect(validateArguments('runs.stream', { since: '7d' }).ok).toBe(false)
+    expect(validateArguments('runs.stream', { since: '24h' }).ok).toBe(true)
+    // The set itself, so a second window cannot join it without this line
+    // moving: one member, the console's own day, and the table above refuses
+    // every other form the command takes.
+    expect(RUNS_STREAM_SINCE_WINDOWS).toStrictEqual(['24h'])
+  })
+
+  it('requires the stream’s window, where the listing it falls back to defaults it', () => {
+    // The one argument of the read that has no default: a feed opened on the
+    // command's own window would be a live read whose window nobody chose, and
+    // the screen that falls back to `runs.list` passes the same word.
+    expect(validateArguments('runs.list', {}).ok).toBe(true)
+    expect(validateArguments('runs.stream', {}).ok).toBe(false)
+  })
+
+  it('gives the stream its own window kind, so the four `--since`s cannot drift', () => {
+    const kinds = CONSOLE_OPERATIONS.filter((operation) => operation.name === 'runs.stream')
+      .flatMap((operation) => operation.args.map((spec) => spec.kind))
+    expect(kinds).toEqual(['runsStreamSince'])
+  })
 })
 
 describe('the closed sets', () => {
@@ -3155,7 +3650,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these forty-three, and no others".
+ * channel. The claim is "these fifty-two, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -3387,6 +3882,31 @@ describe('the spend read’s arguments', () => {
  * are commands this console may not run at all -- the credential one is the
  * owner's. So the rows are drawn, and the fix is handed to the operator as
  * text, exactly as the never table requires.
+ *
+ * **The console improvements plan's AL added the last nine** -- the forty-fourth
+ * to the fifty-second -- and left the other forty-three exactly where they were.
+ * They are appended here for the reason every row above was: what the task added
+ * must be visible as a diff, and the next task that adds a channel cannot do it
+ * quietly. Four things about them are theirs rather than the rows' above.
+ *
+ *   - **Four are the live form of a read already on this list** (`runs.stream`,
+ *     `spend.stream`, `budget.stream` and `whoami`, whose whole-document
+ *     siblings are `runs.list`, `spend.report`, `budget.show` and
+ *     `members.list`). Each is reached through the mode word in its **command
+ *     path** -- `--stream` or `--me` -- rather than through a flag, which is the
+ *     shape `graph.watch` established, and each carries exactly the arguments
+ *     its sibling declares.
+ *   - **`setup.apply` is the surface's fourth write** and the only one of the
+ *     nine with `refusedAfterLapse`, which is what makes a lapsed console refuse
+ *     it while `setup.plan` -- the same command as a read -- keeps answering.
+ *   - **`settings.editor.open` is the one operation of the nine that spawns
+ *     nothing** (`command: null`, `licence.read`'s shape), so the surface's
+ *     no-command count goes from eleven to twelve.
+ *   - **Every one of them is inert until the CLI release that carries its
+ *     flags**: each floor in `src/shared/version.ts` is `null` today, and the
+ *     handler behind each answers 'not available in this build' until I-OPS
+ *     registers the real one. The rows are here rather than in a later task
+ *     because the allow-list is the thing the whole console spawns through.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -3474,6 +3994,27 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // pending-steps panel is that plan's own console task -- so the row is the
   // surface's fence rather than a read the shipped app makes.
   ['apply.pending', 'readPendingSteps'],
+  // **The console improvements' nine** (the console improvements plan, AL),
+  // appended for the reason every row above was: what the task added must be
+  // visible as a diff, and the next task that adds a channel cannot do it
+  // quietly. They are five reads of what the installation and the project
+  // already have (the run list's live form, the caller's own role, the image
+  // catalog, the recipes and the wizard's plan), the spend and caps reads' live
+  // forms, the console's **fourth write** (`setup.apply`, the only one of the
+  // nine with `refusedAfterLapse`) and the settings editor's window -- the one
+  // operation of the nine whose `command` is `null`. Every one of them is inert
+  // until the CLI release that carries its flags, which is why the floors in
+  // `src/shared/version.ts` are `null` and the handlers answer 'not available in
+  // this build' until I-OPS registers the real ones.
+  ['runs.stream', 'streamRuns'],
+  ['spend.stream', 'streamSpend'],
+  ['budget.stream', 'streamBudget'],
+  ['whoami', 'whoAmI'],
+  ['image.catalog.ls', 'listImageCatalog'],
+  ['recipes.ls', 'listRecipes'],
+  ['setup.plan', 'planSetup'],
+  ['setup.apply', 'applySetup'],
+  ['settings.editor.open', 'openSettingsEditor'],
 ]
 
 /**
@@ -3504,7 +4045,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these forty-three, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these fifty-two, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -3521,11 +4062,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A forty-fourth channel: what each task added must stay one row, and the
+    // A fifty-third channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const fortyFourth = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(fortyFourth).toContain('fleet.report: a channel this console does not ship')
-    expect(fortyFourth).toContain('44 rows, and this console ships 43')
+    const fiftyThird = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(fiftyThird).toContain('fleet.report: a channel this console does not ship')
+    expect(fiftyThird).toContain('53 rows, and this console ships 52')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -3539,7 +4080,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('42 rows, and this console ships 43')
+    expect(withoutTheNewRow).toContain('51 rows, and this console ships 52')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -3554,8 +4095,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the forty-three methods and nothing else', () => {
-    // The bridge the window is handed: the forty-three methods and the names,
+  it('is frozen, and hands the window a bridge with the fifty-two methods and nothing else', () => {
+    // The bridge the window is handed: the fifty-two methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -4609,11 +5150,17 @@ describe('the source of the allow-list and the preload', () => {
  */
 const THE_WITHHELD_OPERATIONS: readonly OperationName[] = [
   'budget.show',
+  // The stream form of the caps read (the console improvements plan, AL): the
+  // same figures, one line at a time, so withholding the read and answering the
+  // stream would put a withheld figure on screen by another name.
+  'budget.stream',
   'settings.read',
   'policy.show',
   'runs.stats',
   'runs.summary',
   'spend.report',
+  // ...and the stream form of the report, for the same reason (AL).
+  'spend.stream',
 ]
 
 /** theRest is every operation that is *not* withheld: the non-vacuity guard for
@@ -4729,7 +5276,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: thirty-six of the surface's forty-three operations,
+    // The non-vacuity half: forty-three of the surface's fifty-two operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -4774,7 +5321,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // above them: they reach no child at all (`command: null`), so there is no
     // document of theirs for the mode to withhold a figure from -- and the key
     // screen has to stay reachable in every state, which is the design's own
-    // rule for it (`docs/design/lapse-read-only.md`: "the key screen in
+    // rule for it (`docs/lapse-read-only/spec.md`: "the key screen in
     // particular is never gated", because a lapse is exactly when the operator
     // has to reach the box that takes a renewal). **`graph.watch` (CG9b) is the
     // thirtieth**, for `graph.read`'s reason exactly: the document it streams is
@@ -4817,7 +5364,25 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // withhold. Withholding them would take away the one read that says why a
     // repository cannot run, which is exactly what an operator bringing an
     // installation back needs.
-    expect(THE_OPEN_OPERATIONS.length).toBe(36)
+    //
+    // **The console improvements' seven are the thirty-seventh to forty-third**
+    // (AL), and each is here for a reason already given rather than a new one.
+    // `runs.stream` is `runs.list`'s reason: a run row is repository state, and
+    // the window it streams carries no dollar. `whoami` is `members.list`'s:
+    // the caller's own role and scope are not money. `image.catalog.ls` is
+    // `models.list`'s: a catalog entry's tags and digests are the installation's
+    // own configuration. `recipes.ls` is the same shape again -- what this
+    // project may run, and what each recipe needs. `setup.plan` is `apply
+    // --status`'s, and more strongly: a wizard's plan writes nothing and
+    // creates nothing, so a reduced console is exactly the one whose operator
+    // needs to see what a converge would do. `setup.apply` is `settings.edit`'s:
+    // the operation is not in `REDUCED_VIEW_OPERATIONS`, and the mode withholds
+    // figures rather than writes -- whether a converge may be offered at all is
+    // the lapse's own gate (`refusedAfterLapse`, tested below), not this one.
+    // `settings.editor.open` reaches no child at all, for `licence.read`'s
+    // reason, and its answer is the outcome object the settings write answers
+    // with.
+    expect(THE_OPEN_OPERATIONS.length).toBe(43)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

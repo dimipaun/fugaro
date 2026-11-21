@@ -215,7 +215,7 @@ func TestTriageRunsAfterEachReviewRound(t *testing.T) {
 // area set to Pro, so the fix between the two rounds resolves the mode again
 // (D22's second moment) and the second round's brief is Pro's.
 func TestTriagePersonaFollowsTheReachedMode(t *testing.T) {
-	block := "rigor:\n  default: startup\n  areas:\n    - { name: app, match: feature.txt, mode: pro }\n"
+	block := "rigor:\n  default: startup\n  areas:\n    - { name: app, match: feature.txt, level: pro }\n"
 	h := newHarness(t, triageCfg(t, block, 2, ""), nil)
 	rec, err := h.run(t,
 		implement("feature"),

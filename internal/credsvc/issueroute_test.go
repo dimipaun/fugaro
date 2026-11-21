@@ -1007,6 +1007,39 @@ func TestIssueRouteAuditsEveryCall(t *testing.T) {
 			code:   StatusUnavailable, status: ErrorStateUnavailable, repo: routeSlug, reaches: true,
 		},
 		{
+			// The one refusal of this route that asking again cannot clear, and
+			// the only answer of it that is not 503: the daemon's issue client
+			// reads the status and blocks the item over it rather than retrying
+			// the launch (B9, D2720).
+			name:   "a read of an issue the repository does not hold",
+			mutate: func(_ *testing.T, _ *svc, _ *Config, gh *issueFake) { gh.readStatus = http.StatusNotFound },
+			call: func(t *testing.T, s *svc) (*http.Response, []byte) {
+				return s.issueRead(t, creds.IssueActionGet, issuePersonNumber)
+			},
+			code: StatusIssueGone, status: ErrorIssueGone, repo: routeSlug, reaches: true,
+		},
+		{
+			// The other half of that read: a host failure that is not the host
+			// saying the issue is not there is an outage, retried like any
+			// other.
+			name:   "a read GitHub refuses with an outage",
+			mutate: func(_ *testing.T, _ *svc, _ *Config, gh *issueFake) { gh.readStatus = http.StatusInternalServerError },
+			call: func(t *testing.T, s *svc) (*http.Response, []byte) {
+				return s.issueRead(t, creds.IssueActionGet, issuePersonNumber)
+			},
+			code: StatusUnavailable, status: ErrorStateUnavailable, repo: routeSlug, reaches: true,
+		},
+		{
+			// And the gone answer is the single read's alone: a listing the host
+			// answers 404 for is an outage, and a route that read it as a gone
+			// ticket would tell the daemon to block an item over a repository it
+			// transiently cannot see.
+			name:   "a listing GitHub answers 404",
+			mutate: func(_ *testing.T, _ *svc, _ *Config, gh *issueFake) { gh.listStatus = http.StatusNotFound },
+			call:   func(t *testing.T, s *svc) (*http.Response, []byte) { return s.issueRead(t, creds.IssueActionList, 0) },
+			code:   StatusUnavailable, status: ErrorStateUnavailable, repo: routeSlug, reaches: true,
+		},
+		{
 			name: "a repository over its read rate",
 			after: func(t *testing.T, s *svc) {
 				// The window is spent here rather than through 240 calls: what
@@ -1317,5 +1350,28 @@ func TestIssueRoutePathMatchesClient(t *testing.T) {
 	}
 	if !strings.Contains(string(body), IssuePath) {
 		t.Errorf("the not-found answer does not name %s among the routes this service serves: %s", IssuePath, body)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The gone read
+// ---------------------------------------------------------------------------
+
+// TestIssueRouteGoneMatchesClient: the read of an issue the repository does not
+// hold is answered with a status of its own, and the daemon's issue client is
+// what reads it — a 404 is a ticket that is gone and every other refusal is an
+// outage (creds.IssueGoneStatus, issueclient.go's call). The two spellings are
+// held to each other here because credsvc imports creds and not the other way
+// round, and the status the gone read is answered with is asserted apart from
+// the outage's own: a service that answered 503 for a missing issue — which is
+// what this route did before the read had a status — leaves the daemon reading
+// the ticket again every cycle while its item stays running, the loop B9 closes
+// (D2720).
+func TestIssueRouteGoneMatchesClient(t *testing.T) {
+	if StatusIssueGone != creds.IssueGoneStatus {
+		t.Errorf("the service answers a gone read with %d and the client reads %d as one, so the daemon cannot tell a gone ticket from an outage", StatusIssueGone, creds.IssueGoneStatus)
+	}
+	if StatusIssueGone == StatusUnavailable {
+		t.Errorf("the gone read is answered with the outage's own status %d, and a caller cannot act on both", StatusUnavailable)
 	}
 }

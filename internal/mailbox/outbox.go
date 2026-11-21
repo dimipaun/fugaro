@@ -1,7 +1,7 @@
 // The outbox write (mobile P4.1, Task T2a): the one value this command puts in
 // front of the phone, built, signed and written in that order.
 //
-// §8.2 of docs/plans/2026-10-18-mobile-mailbox-consumer.md is the rule this file
+// §8.2 of docs/mobile/mailbox-consumer-plan.md is the rule this file
 // implements, and §6 is where the node lives:
 // `mailbox/<mailbox>/outbox/<id>` = `{id, sender, text, at, mac}` plus whatever
 // the message's kind carries (`kind`, `reply_to`, `agent`). The merged rules give
@@ -234,11 +234,29 @@ func OutboxPath(mailbox, id string) (string, error) {
 	return "mailbox/" + mailbox + "/outbox/" + id, nil
 }
 
+// InboxPath is the node one phone writes its messages to:
+// `mailbox/<mailbox>/inbox`. It sits beside OutboxPath because the two are the
+// mailbox's two message nodes and the name they share is validated by one
+// function (mailboxKey below) — a path a caller built itself would be a second
+// spelling of the same key rule, and a reader on the other side of the wire can
+// only write where the rules point.
+//
+// **It is the mailbox and no id**, so nothing here validates a key: an inbox
+// child's key is the phone's choice and the store's business, and a reader
+// reads the node and decodes what it finds (a child the schema refuses is
+// refused there, by Decode and the gate).
+func InboxPath(mailbox string) (string, error) {
+	if err := mailboxKey(mailbox); err != nil {
+		return "", err
+	}
+	return "mailbox/" + mailbox + "/inbox", nil
+}
+
 // mailboxKey validates a mailbox name as the node key the database will treat it
-// as. It is one function because two paths read it — the heartbeat's
-// (lease.go's HeartbeatPath) and the outbox's (OutboxPath above) — and a rule
-// about what a mailbox name may be is a rule with one implementation or two that
-// drift.
+// as. It is one function because three paths read it — the heartbeat's
+// (lease.go's HeartbeatPath), the outbox's (OutboxPath above) and the inbox's
+// (InboxPath above) — and a rule about what a mailbox name may be is a rule
+// with one implementation or two that drift.
 //
 // The bound is SenderMax, not the schema's IDMax: a mailbox is a Firebase uid
 // (at most 128 characters), and it is also the `sender` of every message written

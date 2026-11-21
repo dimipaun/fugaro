@@ -478,7 +478,7 @@ guard_project() {
   # --project that disagrees with it, or a doctor that could not run here at
   # all.
   local doctor_out
-  doctor_out=$(fugaro doctor --project fugaro || true)
+  doctor_out=$(fugaro doctor --project fugaro --all || true)
   # `grep` reads every line it is given here — no -q, no -m, so it never closes
   # the pipe on its match. With -q it would: printf, still writing doctor's
   # output, would be killed by the closed pipe (141), and pipefail would report

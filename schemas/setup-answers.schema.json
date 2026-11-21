@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/setup-answers.schema.json",
+  "title": "fugaro setup --answers-file",
+  "description": "The answers file `fugaro setup` and `fugaro update` read with --answers-file: the wizard's own questions answered as one document, so a caller that drives the CLI from another surface (the console's setup wizard, D2904 of docs/console-improvements) never needs a terminal. The file carries the questions of the wizard's table (`setupQuestions`, internal/cli/setup.go) and its own version, and nothing else — the place question contributing two members, `location` and `region`, because the region is the precise form of the same answer: the steps that are a person's — creating the GCP project, linking its billing account, the permanent Firestore location, every secret value — are not fields here, because a document is not a person and `--json` confirms no step. The reader decodes it strictly in the same binary that reads it (internal/cli/setup_answers.go): a member this build does not know is refused by name with the fix, never read past. A caller that cannot be asked anything (--json, a pipe) is answered by this file alone; where a question is left unanswered the run behaves exactly as it does without the flag, asking it at a terminal or refusing with the flag that answers it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "rigor"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "The document's own version. It rises only when a field's meaning has to change (the standing rule that a field never changes meaning), and a reader refuses a document whose version is not its own rather than reading it as this one.",
+      "$comment": "setupAnswersVersion in internal/cli/setup_answers.go."
+    },
+    "gcp_project": {
+      "type": "string",
+      "description": "The GCP project's ID: the wizard's --gcp-project, and the installation the run stands up in. A first run of `fugaro setup` creates it, which is a step no document can take: the run that creates goes on only where a person is at the real terminal, and the file's answer is what that person would have typed."
+    },
+    "location": {
+      "type": "string",
+      "enum": ["us", "eu"],
+      "description": "Where the installation lives: the wizard's --location, and the place a first run asks for (docs/location-preference, D3081). `us` is the suggestion, and its region is us-east5; `eu`'s is europe-west1 (D3086). The place is not the setting the installation stores — the region is (D3080), and every located resource is derived from it (internal/place) — so a document may answer this or the region below, and the two together must agree: a run whose place and region name different places is refused at once. A region in neither place (London, Zürich) is written as the region alone; the place of a region is derived from it wherever it is read."
+    },
+    "region": {
+      "type": "string",
+      "description": "The region the installation's jobs and the scheduler run in: the wizard's --region, and the precise form of the same answer `location` gives. It is not the Firestore database's location, which is permanent and is confirmed by a person at the terminal (internal/cli/init_firebase.go); it is what the mapping (internal/place) answers the Firestore database's location, the Realtime Database's, the secret containers' and the run log bucket's from."
+    },
+    "name": {
+      "type": "string",
+      "description": "The Fugaro project's name: the wizard's --name, and the name of the local config a first run writes."
+    },
+    "rigor": {
+      "type": "string",
+      "enum": ["poc", "startup", "pro", "critical"],
+      "description": "The project's rigor mode: the wizard's --rigor, written as defaults.rigor.default of the project layer the same run publishes. It is required and has no default (D900, the owner's ruling of 2026-10-31): the mode decides how much review every run of the project gets, so a value nobody chose is exactly the state that ruling ends. hotfix is not in the enum: it is an operator's own per-run mode and no layer sets it (D834).",
+      "$comment": "rigorChoices in internal/cli/setup.go; the vocabulary is internal/rigor's Modes minus Hotfix."
+    },
+    "bake_repos": {
+      "type": "boolean",
+      "description": "Whether a repository the build can read is baked into the image its job runs: the wizard's --bake-repos (D1901). The switch is the project's, so the answer is written into the local config the run writes and published by the same run. It changes the images built from then on, not the ones that exist (internal/cli/setup.go's noteBakeRebuild)."
+    }
+  }
+}

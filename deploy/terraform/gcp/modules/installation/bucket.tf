@@ -61,7 +61,7 @@ resource "google_storage_bucket" "runs" {
   # read, never deleted, by the job (its grant on tokens/ is read-only), and
   # the token in it is dead after an hour; the object goes after a day.
   # runs/ stays in the rule for the plaintext objects launchers before the
-  # seal left there (docs/design/budget-token-channel.md section 7.2).
+  # seal left there (docs/budget-token-channel/spec.md section 7.2).
   dynamic "lifecycle_rule" {
     for_each = var.enable_budget ? [1] : []
     content {
@@ -73,6 +73,27 @@ resource "google_storage_bucket" "runs" {
         matches_prefix = ["runs/", "tokens/"]
         matches_suffix = ["/budget-token"]
       }
+    }
+  }
+
+  # A message a person sends a run that is going (docs/run-messages, D2941) is
+  # a PLAINTEXT object a launcher writes under tokens/<slug>/<run>/messages/
+  # and the job only reads. It is worth keeping while the run it steered is
+  # recent and no longer, so it goes at the message age; unlike the budget
+  # token's rule above, this one is unconditional, because a run accepts a
+  # message whether or not the budget is enabled. GCS matches a prefix and a
+  # suffix and never a middle segment, so the suffix is the whole of what keeps
+  # this rule off the budget token beside it under tokens/ — and that suffix is
+  # the store's own constant (runmsg.Suffix), which internal/infra's
+  # TestMessageLifecycleSuffixMatchesRunmsg pins to this literal (F11, U4).
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      age            = var.bucket_lifecycle.messages_days
+      matches_prefix = ["tokens/"]
+      matches_suffix = [".msg.json"]
     }
   }
 

@@ -87,7 +87,25 @@ golden=$repo/internal/infra/tf/testdata/golden
 # schedule, and the Firebase root's database grant to it. The opt-in is off by
 # default, so they are goldens of their own and every other golden here plans
 # no coordinator at all.
-for pair in installation:installation installation-accounts:installation installation-managed:installation installation-credentials:installation installation-voice:installation installation-review:installation installation-coordinator:installation installation-viewers:installation repo:repo firebase:firebase firebase-same-project:firebase firebase-coordinator:firebase firebase-viewers:firebase; do
+# installation-mobile is the installation root with the public mobile service's
+# switch ON beside the credentials service (mobile plan task P5; D2782 as
+# amended by F31, O8): the second Cloud Run service of the credentials image,
+# its account, its allUsers invoker binding and its database binding. The key is
+# added to the tfvars HERE rather than written in the fixture — and the golden
+# is a golden of its own rather than installation-credentials carrying it —
+# because the switch is off by default and `fugaro update` writes no key for it:
+# it stays off until a released credentials image runs the mode the module
+# starts that service in (internal/cli's
+# TestMobileServiceIsOffUntilThisBinaryRunsIt is what says so). Every other
+# installation golden here plans no mobile service at all, which is the shape a
+# previous-version installation converges to, and installation-credentials and
+# installation-voice stay the pair that differs by the voice hop ALONE
+# (deploy/terraform's TestVoiceProviderKeyOptOutIsTwoSteps reads the two plans
+# against each other). firebase-mobile is the Firebase root with the runtime
+# account handed over as mobile_account: the device-only signer, and the one
+# grant that names it, are planned and covered there, and every other Firebase
+# golden here plans neither.
+for pair in installation:installation installation-accounts:installation installation-managed:installation installation-credentials:installation installation-mobile:installation installation-voice:installation installation-review:installation installation-coordinator:installation installation-viewers:installation repo:repo firebase:firebase firebase-same-project:firebase firebase-coordinator:firebase firebase-viewers:firebase firebase-mobile:firebase; do
   r=${pair%%:*}
   root=${pair##*:}
   (
@@ -98,6 +116,8 @@ for pair in installation:installation installation-accounts:installation install
       installation-accounts) cp "$repo/internal/infra/testdata/installation-accounts.tfvars.json" terraform.tfvars.json ;;
       installation-managed) jq '. + {managed_deployer_scoped: true}' "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" > terraform.tfvars.json ;;
       installation-credentials) cp "$repo/internal/infra/testdata/installation-credentials.tfvars.json" terraform.tfvars.json ;;
+      installation-mobile) jq '. + {enable_mobile_service: true}' "$repo/internal/infra/testdata/installation-credentials.tfvars.json" > terraform.tfvars.json ;;
+      firebase-mobile) jq '. + {mobile_account: "fugaro-mobile@proj-1234.iam.gserviceaccount.com"}' "$repo/internal/infra/testdata/firebase.tfvars.json" > terraform.tfvars.json ;;
       installation-voice) cp "$repo/internal/infra/testdata/installation-voice.tfvars.json" terraform.tfvars.json ;;
       installation-review) cp "$repo/internal/infra/testdata/installation-review.tfvars.json" terraform.tfvars.json ;;
       installation-coordinator) cp "$repo/internal/infra/testdata/installation-coordinator.tfvars.json" terraform.tfvars.json ;;
@@ -113,7 +133,7 @@ for pair in installation:installation installation-accounts:installation install
 done
 
 # repo-scope-move.plan.json is the one golden that needs a PRIOR state. It is
-# design docs/design/project-secrets.md §6 step 4: a secret name that stops
+# design docs/project-secrets/spec.md §6 step 4: a secret name that stops
 # being repo-only and becomes project-shared (the repo copy has no version,
 # the project copy is resolved), so its grants move to the project's container
 # while the repository's own container is kept. Only a plan with a state to

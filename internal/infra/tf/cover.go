@@ -190,6 +190,22 @@ const (
 	// job's reason. It is not a job account of a repository and not a person:
 	// BuildIdentityAccountID says why it is a kind of its own.
 	toBuildIdentity
+	// The public mobile service's own kind (mobile plan task P5; D2782 as
+	// amended by F31, O8), appended rather than inserted for the reports job's
+	// reason. MobileAccountID says why it is a kind of its own.
+	//
+	// It carries exactly two rows, and both are narrower than the bit: the
+	// unchanged database role fugaroCredentialsDatabase — on the FIREBASE
+	// project, under no condition (O1, whole instance, rules bypassed) — and
+	// iam.serviceAccounts.signJwt on the device-only signer of that project,
+	// which mobileMinterGrant holds to this run's own signer account. The
+	// account's remaining reach is its PUBLIC invoker binding, whose member is
+	// allUsers: that is deliberately not a kind here, for the hop's own reason
+	// (toVoice) — a plan that grants to everybody is a plan with a principal
+	// nobody classified and the step that carries it shows the finding, while
+	// the Terraform suite's TestAllUsersIsRefusedOnEveryOtherResource and
+	// internal/infra/managed are what refuse a second one.
+	toMobile
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -246,11 +262,13 @@ var grantRules = map[string]map[string]who{
 		// or any other Cloud Asset role, is refused, because viewer carries
 		// cloudasset.assets.listResource and the read makes no ListAssets call.
 		customKey + CloudAssetRole: toPeople,
-		// The credentials service's own database role: the account, and
-		// nothing else, in the ONE binding credentials.tf writes (toCredentials
-		// alone — granting it to a job account or to a person is not a grant
-		// the installation makes).
-		customKey + CredentialsDatabaseRole: toCredentials,
+		// The credentials service's own database role: the credentials account
+		// and, since mobile plan task P5, the public mobile service's account,
+		// each in a binding of its own in credentials.tf (O1: the role is
+		// unchanged — whole instance, rules bypassed — and the mobile binding is
+		// the one project-level binding the task adds). Granting it to a job
+		// account or to a person is not a grant the installation makes.
+		customKey + CredentialsDatabaseRole: toCredentials | toMobile,
 		// The dynamic-delivery class (D1931, DS2.2). fugaroIntakeSecrets is
 		// create, version-add and delete of the grammar's containers, held by
 		// the intake's own account and by nothing else, and only under the
@@ -304,8 +322,16 @@ var grantRules = map[string]map[string]who{
 		// design says so rather than pretending otherwise (E4), which is why
 		// the bit is here on purpose: an account that may mint any claim set
 		// for any uid is one the review has to see classified, not one a
-		// widened toAccounts row would quietly accept.
-		customKey + "fugaroTokenMinter": toPeople | toOrchestrator,
+		// widened toAccounts row would quietly accept. Since mobile plan task P5
+		// the row carries toMobile too: the public mobile service's own account
+		// holds the same role on the DEVICE-ONLY signer of the Firebase project
+		// (a second account, because Firebase accepts a custom token only from
+		// an account of the Firebase project), and it is the row's kind for the
+		// orchestrator's reason — what narrows it further is mobileMinterGrant,
+		// which reads the target account and reads it in this run's own Firebase
+		// project, so the grant the module writes on the devices' signer is the
+		// only one this cell admits.
+		customKey + "fugaroTokenMinter": toPeople | toOrchestrator | toMobile,
 		// The operators' actAs on the accounts a build runs as. Two module
 		// sites hold it now: the per-repository build account
 		// (modules/repo/build.tf's operator_build, on google_service_account
@@ -645,7 +671,7 @@ type Cover struct {
 }
 
 // CloudAssetRole is the installation's whole-project inventory read role
-// (Task 4.1a of docs/plans/2026-10-16-managed-projects.md, the owner's ruling
+// (Task 4.1a of docs/managed-projects/implementation-plan.md, the owner's ruling
 // of 2026-10-17): a custom role of the installation holding exactly
 // cloudasset.assets.searchAllResources, the one permission the whole-project
 // read's SearchAllResources call needs. The predefined roles/cloudasset.viewer
@@ -962,6 +988,56 @@ const OrchestratorAccountID = "fugaro-orch"
 // for it.
 const VoiceAccountID = "fugaro-voice"
 
+// MobileAccountID is the public mobile service's own account (mobile plan task
+// P5; D2782 as amended by F31, O8), the one
+// modules/installation/mobile_service.tf creates in the installation's project
+// and the service runs as. It is NOT among FugaroAccounts, for the voice hop's
+// reason and the same one twice over: as one of them every toAccounts row would
+// have accepted it, and this account runs the tree's other service anyone on
+// the internet may call — holding, unlike the hop, iam.serviceAccounts.signJwt
+// on a signer account, which mints an identity for any uid. It is a kind of its
+// own (toMobile), and its two grants are the row's own role and the signJwt
+// mobileMinterGrant narrows: the custom database role bound to it in
+// credentials.tf, and iam.serviceAccounts.signJwt on the Firebase project's
+// device-only signer.
+//
+// The ID is a LITERAL in the module (mobile_service.tf's account_id) — the
+// service's name and the account's are the same word there, so that a reader of
+// a plan knows which public endpoint they are looking at — and
+// deploy/terraform's TestMobileServiceNamesAreTheGoSpellings holds the module's
+// two literals to this constant and to MobileServiceName.
+const MobileAccountID = "fugaro-mobile"
+
+// DeviceSignerAccountID is the devices' own signer in the FIREBASE project
+// (mobile plan task P5; O1, O8), the second google_service_account
+// modules/firebase/iam.tf creates beside the runs' own signer (FugaroAccounts'
+// "fugaro-token-signer"). There are two because Firebase accepts a custom token
+// only from an account OF the Firebase project and an installation can span
+// two, and this one is the account the public mobile service holds signJwt on —
+// iam.serviceAccounts.signJwt and not roles/iam.serviceAccountTokenCreator,
+// whose holder could also mint access tokens as it (the role is the Firebase
+// root's fugaroTokenMinter, the same role the runs' signer is minted through).
+//
+// What the second account buys is a key that can be disabled alone and an audit
+// trail of its own, and NO narrowing of what may be signed: signJwt signs any
+// claim set for any uid, IAM cannot express "device claims only", and what
+// holds the service to device tokens is the route allowlist its mobile mode
+// mounts and the tests over it. SECURITY.md states the residual risk.
+//
+// The literal is the module's own (firebase/iam.tf's account_id), pinned to
+// this constant by deploy/terraform's TestDeviceSignerIsOneSpelling, which also
+// reads the mobile service's grant of it back — the two sides of a
+// cross-project grant whose account no variable carries.
+const DeviceSignerAccountID = "fugaro-device-signer"
+
+// MobileServiceName is the public mobile service's Cloud Run name, a literal of
+// modules/installation/mobile_service.tf rather than a member of
+// var.credentials_service: the service is the installation's one public
+// endpoint of this kind, and a name an operator's hand-edited tfvars could move
+// is a name a review screen cannot read. TestMobileServiceNamesAreTheGoSpellings
+// holds the module's literal to this one.
+const MobileServiceName = "fugaro-mobile"
+
 // IntakeSecretsRole and SecretListerRole are the dynamic class's two custom
 // roles (intake.tf, D1931, DS2.2). They are two and not one because an IAM
 // binding's condition cannot be lifted for a single permission of its role:
@@ -1000,7 +1076,7 @@ var (
 
 // The deployer account of D75, and the condition that fences the half of it
 // that may touch an existing resource (Task 1.5 of
-// docs/plans/2026-10-16-managed-projects.md).
+// docs/managed-projects/implementation-plan.md).
 //
 // A managed apply does not run as the operator: it assumes the deployer
 // account the installation module creates, which holds eight custom roles,
@@ -1038,7 +1114,7 @@ const (
 	// could not be applied (17 logical operators where IAM allows 12, a
 	// resource.name.contains() which is not a supported function, and
 	// resource.name unsupported for five of the nine types it named), so the
-	// fence was gated off and redesigned — docs/design/managed-deployer-fence.md.
+	// fence was gated off and redesigned — docs/managed-deployer-fence/spec.md.
 	// The module creates them, and their bindings, only with
 	// managed_deployer_scoped, which fugaro writes for an installation that
 	// uses managed projects (0.10.0). A plan without them has
@@ -1120,7 +1196,7 @@ const (
 // empty string), and the empty string does not start with the prefix, so a
 // non-match denies under that same reading — C7, which the design records as
 // UNVERIFIED and models with extractSegment rather than by a live probe
-// (docs/design/managed-deployer-fence.md). What remains UNVERIFIED,
+// (docs/managed-deployer-fence/spec.md). What remains UNVERIFIED,
 // and what Check 68 measures, is whether these services honour resource.name at
 // all (C3).
 type DeployerClause struct {
@@ -1142,7 +1218,7 @@ func (c DeployerClause) String() string {
 // the one condition its one binding carries.
 //
 // The split is what makes the fence expressible at all (F1 of
-// docs/design/managed-deployer-fence.md): one condition covering all nine
+// docs/managed-deployer-fence/spec.md): one condition covering all nine
 // types needs nine clauses and 17 logical operators where IAM allows 12, a
 // resource.name.contains() that is not a supported function, and resource.name
 // forms five of those services do not have. One condition per service needs
@@ -1402,6 +1478,27 @@ func (c Cover) isOrchestratorMember(m string) bool {
 func (c Cover) isVoiceMember(m string) bool {
 	p := c.installationProject()
 	return p != "" && m == "serviceAccount:"+VoiceAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
+// isMobileMember is whether m is the public mobile service's own account as an
+// IAM member, in the installation's project: the account mobile_service.tf
+// creates and the service runs as (MobileAccountID). Like isOrchestratorMember
+// it is the INSTALLATION's project even though one of the account's rows is
+// bound on the Firebase root's device signer: the account itself is this
+// module's (var.project), and the project a binding names is not the principal.
+//
+// It classifies the account's two grants, and the two are held to different
+// rules on purpose. The database role is the row's own, checked here exactly as
+// far as the credentials account's own binding is (the row's role and kind,
+// with the source pinned by deploy/terraform's
+// TestCredentialsDatabaseRoleIsTheTwoDataPermissions, which holds both
+// bindings to the Firebase project). The signJwt is not: it is
+// mobileMinterGrant's, because what makes that grant the devices' is the
+// account it is on. The service's remaining reach is its PUBLIC invoker
+// binding, whose member is allUsers, which no kind here carries (toMobile).
+func (c Cover) isMobileMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+MobileAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
 // voiceStateReadGrant is mcpauthStateReadGrant's rule for the hop's own
@@ -1815,13 +1912,16 @@ var credentialsServiceEnv = []string{
 // intake.tf writes for the secrets intake's container, and nothing else is
 // admitted on it: the released image's `intake serve` subcommand (the image is
 // the credentials service's own, whose default command serves the other
-// service), and the four names internal/cli/intake_serve.go reads — the
-// project, the service's own URL (the audience a caller's ID token is minted
-// for), the runs bucket holding the derived admin list, and the launcher class
-// the process admits.
+// service), and the five names the process's configuration is made of, which
+// internal/cli/intake_serve.go reads: the project, the service's own URL (the
+// audience a caller's ID token is minted for), the runs bucket holding the
+// derived admin list, the launcher class the process admits, and the region a
+// container it creates is replicated in, which the intake is told from its
+// deployment because it runs in the cloud with no project config and no
+// installation record it may read (D3082).
 var (
 	intakeServiceArgs = []string{"intake", "serve"}
-	intakeServiceEnv  = []string{"FUGARO_GCP_PROJECT", "FUGARO_INTAKE_URL", "FUGARO_RUNS_BUCKET", "FUGARO_LAUNCHER_ACCOUNTS"}
+	intakeServiceEnv  = []string{"FUGARO_GCP_PROJECT", "FUGARO_REGION", "FUGARO_INTAKE_URL", "FUGARO_RUNS_BUCKET", "FUGARO_LAUNCHER_ACCOUNTS"}
 )
 
 // voiceServiceArgs and voiceServiceEnv are the argv and the environment
@@ -1850,15 +1950,70 @@ var (
 	voiceServiceEnv  = []string{"FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_GCP_PROJECT"}
 )
 
+// mobileServiceArgs and mobileServiceEnv are the argv and the environment
+// mobile_service.tf writes for the public mobile service's container (mobile
+// plan task P5; D2782 as amended by F31): the credentials service's OWN image,
+// started in its mobile mode, which mounts the allowlisted mobile routes and
+// none of the existing ones (I1 owns that mode and its cross-class test).
+//
+// The argv is THREE words and not the hop's two, because this service is the
+// same COMMAND the private service's default runs, told apart by a mode: the
+// image's entrypoint is the binary, `credentials serve` is what the private
+// service runs by default, and the flag is what a reader of a plan needs to
+// see to know that this URL does not serve the credentials routes. The pair is
+// P5's inference of I1's mode — the mode's own spelling is that task's
+// (internal/cli/credentials_serve.go) — and the two move together: this
+// constant and the module's args are one rule, and a plan naming anything else
+// is refused here rather than applied as a public service running whatever
+// code the module did not write.
+//
+// The environment is the SAME SEVEN names the private service carries, and
+// deliberately a second literal list rather than a slice of
+// credentialsServiceEnv: the two services run the same binary and the seven
+// are what it refuses to bind a port without, whatever mode it is in, but a
+// name added to that list for the private service must not silently become a
+// name a PUBLIC container may carry — the widening would be one edit away and
+// invisible in the diff that made it. Values are literals and no value_source,
+// for the credentials service's reason: an environment is the one path a
+// credential could reach a container without a Secret Manager read, and this
+// container is reachable by anyone.
+var (
+	mobileServiceArgs = []string{"credentials", "serve", "--mobile"}
+	mobileServiceEnv  = []string{
+		"FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "FUGARO_REGION",
+		"FUGARO_RTDB_URL", "FUGARO_FIREBASE_PROJECT",
+		"FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_JOB_ACCOUNTS",
+	}
+)
+
+// MobileServiceArgs is mobileServiceArgs for a caller outside this package, and
+// the coupling it exists for is one this package cannot test: the argv the
+// module writes has to be a command the CLI CAN RUN. The `--mobile` mode is
+// I1's (internal/cli/credentials_serve.go defines none until the mobile routes
+// land), and cobra answers a flag it does not know with `unknown flag: --mobile`
+// — so a revision started with these args never becomes ready and the apply
+// that carried it fails, on an installation whose runs are doing nothing wrong.
+// Until that flag exists the module starts nothing with them (its own switch is
+// OFF, var.enable_mobile_service); internal/cli's
+// TestMobileServiceIsOffUntilThisBinaryRunsIt runs this slice through the real
+// command tree and fails while the switch and the binary disagree.
+//
+// A copy rather than the slice itself: the caller is a test, and the slice it
+// would otherwise hold is what every plan of this tree is checked against.
+func MobileServiceArgs() []string { return slices.Clone(mobileServiceArgs) }
+
 // orchestratorServiceResource, orchestratorServiceArgs, orchestratorServiceEnv
 // and orchestratorTickPath are the same quartet for the resident orchestrator's
-// own service (mobile plan task P5.1c; modules/installation/orchestrator.tf):
-// the resource name the service case dispatches on, the argv of the released
-// image's `orchestrator serve` subcommand, the three names
-// internal/cli/orchestrator_serve.go reads and nothing else — the project that
-// names this installation's node, the Firebase project it belongs to and the
-// database URL it is read from — and the one route that process answers, which
-// is the only path a tick of this installation may be pointed at.
+// own service (mobile plan tasks P5.1c and P5.1d;
+// modules/installation/orchestrator.tf): the resource name the service case
+// dispatches on, the argv of the released image's `orchestrator serve`
+// subcommand, the six names internal/cli/orchestrator_serve.go reads and nothing
+// else — the project that names this installation's node, the Firebase project
+// it belongs to and the database URL it is read from, plus the launch's own
+// three (the GCP project the jobs are in, the region they were deployed to and
+// the runs bucket's URL, which P5.1d's launcher builds a launch from) — and the
+// one route that process answers, which is the only path a tick of this
+// installation may be pointed at.
 //
 // A scheduling job of this service is the tree's ONE tick whose target is a
 // run.app URL rather than the run API's job path, and whose token is therefore
@@ -1871,7 +2026,7 @@ const (
 
 var (
 	orchestratorServiceArgs = []string{"orchestrator", "serve"}
-	orchestratorServiceEnv  = []string{"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL"}
+	orchestratorServiceEnv  = []string{"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_GCP_PROJECT", "FUGARO_REGION", "FUGARO_BUCKET"}
 )
 
 // CredentialsServiceEnvAwaitingTheModule are the names credentialsServiceEnv
@@ -2154,6 +2309,13 @@ const (
 	// names its service and its account "voice" too, and the dispatch below
 	// reads this one.
 	voiceServiceResource = "voice"
+	// mobileAccountResource and mobileServiceResource are the same word a third
+	// time (mobile plan task P5): mobile_service.tf names the public mobile
+	// service and the account it runs as "mobile", and the two reads below —
+	// accountOfResource for the account, cloudRunServiceName for the service —
+	// dispatch on it.
+	mobileAccountResource = "mobile"
+	mobileServiceResource = "mobile"
 )
 
 // accountPlan is one of those accounts as a plan carries it, which the two
@@ -2179,12 +2341,13 @@ type accountPlan struct {
 	held    map[string]bool
 }
 
-// serviceAccountsPlan is the installation module's four service accounts as a
+// serviceAccountsPlan is the installation module's five service accounts as a
 // plan carries them, which the google_cloud_run_v2_service case reads: the
-// credentials service's (D146), the secrets intake's (D1931, DS2.2) and the
-// voice hop's (P5.3.3) and the resident orchestrator's (mobile plan task P5.1c).
+// credentials service's (D146), the secrets intake's (D1931, DS2.2), the voice
+// hop's (P5.3.3), the resident orchestrator's (mobile plan task P5.1c) and the
+// public mobile service's (P5).
 //
-// They are four and not one because the four services run as four different
+// They are five and not one because the five services run as five different
 // identities: a check that admitted either of the first two for the others
 // would let a plan run the intake's container as the account that reads every
 // model credential in the bundle — the account the intake's own roles
@@ -2196,15 +2359,19 @@ type accountPlan struct {
 // from the bundle. The orchestrator's is the fourth: it holds
 // iam.serviceAccounts.signJwt on the budget signer, so admitting it anywhere
 // else would run a service as the identity that may mint a token for any uid
-// (section 4.5 E4).
+// (section 4.5 E4). The mobile service's is the fifth, and it is the sharpest
+// of the five for the two reasons at once: it is public, and it signs custom
+// tokens — a plan that ran any other container as this account would put the
+// signJwt reach behind whatever routes that container serves.
 type serviceAccountsPlan struct {
 	credentials  accountPlan
 	intake       accountPlan
 	voice        accountPlan
 	orchestrator accountPlan
+	mobile       accountPlan
 }
 
-// planServiceAccounts reads the four accounts out of a plan. Every change
+// planServiceAccounts reads the five accounts out of a plan. Every change
 // counts, a no-op included: an unchanged account is one the plan holds and the
 // service it runs keeps naming, which is the shape of every plan after the one
 // that created the service.
@@ -2214,6 +2381,7 @@ func planServiceAccounts(p *Plan) serviceAccountsPlan {
 		intake:       accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
 		voice:        accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
 		orchestrator: accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
+		mobile:       accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
 	}
 	for _, rc := range p.ResourceChanges {
 		for _, a := range []struct {
@@ -2224,6 +2392,7 @@ func planServiceAccounts(p *Plan) serviceAccountsPlan {
 			{intakeAccountResource, &c.intake},
 			{voiceAccountResource, &c.voice},
 			{orchestratorAccountResource, &c.orchestrator},
+			{mobileAccountResource, &c.mobile},
 		} {
 			id, ok := accountOfResource(rc, a.resource)
 			if !ok || id == "" {
@@ -2413,6 +2582,14 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	// every job account of the installation.
 	if why == "" && t == "google_service_account_iam_member" && c.isOrchestratorMember(str(rc.Change.After["member"])) {
 		why = c.orchestratorMinterGrant(rc.Change)
+	}
+	// ... and the public mobile service's same row, one account over and on the
+	// devices' signer rather than the runs': the bit opens the minter cell by
+	// member and by role, and this closes it again to the account of THIS run's
+	// Firebase project (mobileMinterGrant). Its other grant — the database role
+	// — is the project row's, covered by the row itself.
+	if why == "" && t == "google_service_account_iam_member" && c.isMobileMember(str(rc.Change.After["member"])) {
+		why = c.mobileMinterGrant(rc.Change)
 	}
 	if why == "" {
 		why = c.deployerGrant(t, rc.Change, dep.accounts[modulePrefix(rc)])
@@ -2694,6 +2871,20 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// address would otherwise be able to grant it any toAccounts row's
 			// role.
 			kind = toVoice
+		case c.isMobileMember(m):
+			// ... and the public mobile service's own account (mobile plan
+			// task P5): its own kind, whose two grants are the custom database
+			// role — the row's, checked here exactly as the private service's
+			// own binding is — and the signJwt on the Firebase project's
+			// device-only signer, which mobileMinterGrant narrows to that
+			// account. Every other grant it is given is refused and the update
+			// that carries one asks its owner. Read here, before the review
+			// screen's list, for the deployer's reason, and with this account
+			// most of all: it runs the tree's other service anyone on the
+			// internet may call, and it mints an identity for any uid, so a
+			// plan that listed its address would otherwise be able to grant it
+			// any toAccounts row's role on top of that.
+			kind = toMobile
 		case c.isBuildIdentityMember(m):
 			// ... and the project's build identity (B5, D2301): its own kind,
 			// which the cells B6 added accept — the invoker bit on the
@@ -3094,6 +3285,56 @@ func (c Cover) orchestratorMinterGrant(ch Change) string {
 	return fmt.Sprintf("grants fugaroTokenMinter on %s to the resident orchestrator: the design's row is the budget signer account of this run (%s), and signJwt on any other account makes the resident orchestrator that account — the job accounts holding the model credentials among them (section 4.3, section 6 rule 5)", id, signerID+"@<one of this run's projects>.iam.gserviceaccount.com")
 }
 
+// mobileMinterGrant is orchestratorMinterGrant's rule for the public mobile
+// service's own account (mobile plan task P5, O1, O8), and it is the function
+// that makes P5's acceptance sentence a property of a plan rather than of the
+// module's text: the account's signJwt is on the DEVICE-ONLY signer of the
+// installation's Firebase project and on nothing else.
+//
+// Why the target is the whole of the check here. The role's row already says
+// the account may hold fugaroTokenMinter, and iam.serviceAccounts.signJwt is
+// the widest grant of this tree: its holder signs ANY claim set for ANY uid as
+// the account it is on (orchestrator.tf's own sentence, section 4.3), and IAM
+// cannot limit which claims a signer signs. So what holds this service to
+// device tokens is not this grant but the route allowlist its mobile mode
+// mounts and the tests over it (I1) — and what holds the grant itself to the
+// devices' key, and away from the runs' signer and from every other account of
+// the installation, is this comparison. A plan that pointed it at
+// fugaro-token-signer would make the public endpoint the identity that mints
+// every run's and every launcher's token; one that pointed it at a job account
+// would put the model credentials' identity behind a URL anyone may call.
+//
+// The account has to be named: the row is written in the root that CREATES the
+// signer (modules/firebase/iam.tf's mobile_token_minter), and it spells the
+// account and the role out as literals rather than referencing the two
+// resources beside it, because a reference reaches a plan as UNKNOWN — a
+// principal and a role nobody can read off the review screen. A plan that
+// computes either is refused, as a computed role is.
+//
+// The project is this run's and not a fixed one, for orchestratorMinterGrant's
+// reason: the Firebase project may be the installation's own or one of its own
+// (D6, D2781), and which of them it is is a fact of the tfvars and not of this
+// package. What the grant must not do is name a project the review was not
+// shown.
+func (c Cover) mobileMinterGrant(ch Change) string {
+	key, ok := c.roleKey(str(ch.After["role"]))
+	if !ok || key != customKey+"fugaroTokenMinter" {
+		return ""
+	}
+	if unknown(ch, "service_account_id") {
+		return "a fugaroTokenMinter grant to the public mobile service whose account is not known: the account is the device-only signer of the Firebase project, written out as a literal in the row that binds it (firebase/iam.tf's mobile_token_minter), and a plan that computes it is one whose signer nobody can name"
+	}
+	id := str(ch.After["service_account_id"])
+	if m := saName.FindStringSubmatch(id); m != nil {
+		for _, p := range c.Projects {
+			if m[1] == p && m[3] == p && m[2] == DeviceSignerAccountID {
+				return ""
+			}
+		}
+	}
+	return fmt.Sprintf("grants fugaroTokenMinter on %s to the public mobile service: its one signJwt is on the devices' signer account of this run's Firebase project (%s), never on the runs' own signer and never on a job account — signJwt signs any claim set for any uid, so the account it is on IS the identity this public service may mint (P5, O1, O8)", id, DeviceSignerAccountID+"@<one of this run's projects>.iam.gserviceaccount.com")
+}
+
 // accountClause is one clause of a job or build account's bucket condition,
 // as gcp.BucketCondition writes it.
 var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/(runs|cache|locks|builds)/([a-z0-9][a-z0-9_-]*)/"\)$`)
@@ -3242,7 +3483,7 @@ func IntakeAdminListCondition(bucket string) string {
 }
 
 // bucketCondition says why a bucket grant's condition is not the modules'
-// (docs/design/bucket-iam.md H6), "" when it is: objectAdmin carries none; an
+// (docs/bucket-iam/spec.md H6), "" when it is: objectAdmin carries none; an
 // objectViewer carries none, except an account's, which may carry exactly
 // one tokens/<slug>/ clause on one of this run's buckets (the job's read of
 // its own budget token objects, budget-token-channel.md §7.2) — and then only
@@ -4060,19 +4301,22 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 			}
 		}
 	case "google_cloud_run_v2_service":
-		// The installation module's four services are four shapes, and which
+		// The installation module's five services are five shapes, and which
 		// rules a change is held to is the resource the plan names and nothing
 		// an editor of the variables can reach: intake.tf hardcodes the
 		// intake's account, its args and its environment names, so the change
 		// at that address is the intake's, orchestrator.tf does the same for
-		// the resident orchestrator's (P5.1c), and everything else falls to the
-		// credentials service's case below — which is what refuses a Cloud Run
-		// service this module does not create.
+		// the resident orchestrator's (P5.1c), mobile_service.tf for the public
+		// mobile service's (P5), and everything else falls to the credentials
+		// service's case below — which is what refuses a Cloud Run service this
+		// module does not create.
 		switch cloudRunServiceName(rc) {
 		case intakeServiceResource:
 			return c.intakeServiceChange(rc, a, rc.Change.AfterUnknown, pre, creds, proj)
 		case orchestratorServiceResource:
 			return c.orchestratorServiceChange(rc, a, rc.Change.AfterUnknown, pre, creds, proj)
+		case mobileServiceResource:
+			return c.mobileServiceChange(rc, a, rc.Change.AfterUnknown, pre, creds, proj)
 		}
 		// ... and the voice hop (P5.3.3), the third subcommand of the same
 		// image: voice.tf hardcodes the hop's account, its args, its two
@@ -4534,6 +4778,22 @@ func (c Cover) voiceAccount(a map[string]any, unk any, pre string, plans service
 	return c.accountFrom(a, unk, pre, plans.voice, "the voice hop", voiceAccountResource)
 }
 
+// mobileAccount is the same check on the fifth service of the module (mobile
+// plan task P5): the plan's own google_service_account.mobile[0], which
+// mobile_service.tf writes into the template and which the same rules hold.
+//
+// It is a check of its own for intakeAccount's reason, and its stakes are the
+// hop's and one more: this identity holds iam.serviceAccounts.signJwt on the
+// devices' signer, so a plan that ran the credentials service's container as
+// it would put the reach of minting an identity for any uid behind the private
+// service's own routes, and one that ran this container as the credentials
+// account would put the bundle's read behind a URL anyone may call. The two
+// services of the same image therefore may not swap identities, which is the
+// whole of what this check is.
+func (c Cover) mobileAccount(a map[string]any, unk any, pre string, plans serviceAccountsPlan) string {
+	return c.accountFrom(a, unk, pre, plans.mobile, "the public mobile service", mobileAccountResource)
+}
+
 // orchestratorAccount is the same check on the fourth service of the module
 // (mobile plan task P5.1c): the plan's own google_service_account.
 // orchestrator[0], which orchestrator.tf writes into the template and which the
@@ -4591,7 +4851,7 @@ func (c Cover) accountFrom(a map[string]any, unk any, pre string, plan accountPl
 //     credential in the bundle — the read its own two roles deliberately do not
 //     hold (R3, F30).
 //
-// The environment is the four names the process reads (intakeServiceEnv), held
+// The environment is the five names the process reads (intakeServiceEnv), held
 // to literal values and no value_source for the credentials service's reason:
 // an environment is the one path a value could reach this process without a
 // Secret Manager read, and this process writes containers it never reads.
@@ -4692,7 +4952,7 @@ func (c Cover) voiceServiceChange(rc ResourceChange, a map[string]any, unk any, 
 	if a["invoker_iam_disabled"] != false {
 		return "a service that does not require IAM, which would make the hop public through a flag the plan's review never reads instead of through the binding voice.tf writes"
 	}
-	if why := c.voiceMinInstances(a, unk, rc.Address); why != "" {
+	if why := c.publicServiceMinInstances(a, unk, rc.Address, "the voice hop", "voice.tf", "it is a public endpoint whose work arrives with a phone's call and whose idle cost is the installation's to pay for nothing"); why != "" {
 		return why
 	}
 	cs := objects(at(a["template"], "containers"))
@@ -4743,12 +5003,104 @@ func (c Cover) voiceServiceChange(rc ResourceChange, a map[string]any, unk any, 
 	return ""
 }
 
+// mobileServiceChange holds the public mobile service to the same rules the hop
+// is held to, and the running of it is the same four checks; what is this
+// service's own is the argv and the account.
+//
+//   - the argv. This process is the credentials service's OWN image started in
+//     its mobile mode (mobile_service.tf), so the module writes
+//     `args = ["credentials", "serve", "--mobile"]` — the private service's own
+//     command plus the flag that mounts the mobile routes — and the flag is the
+//     one thing that tells this service from the private one running the same
+//     pin. A change whose args are not exactly that is refused in both
+//     directions, and the direction that matters here is the empty one: a
+//     container with no args at all serves the credentials service's routes at a
+//     public URL, as the account that may mint a device identity, which is
+//     precisely the outcome F31 exists to prevent. The command stays empty, as
+//     every service of this image's does: the image's entrypoint is the binary.
+//   - the account, which is this service's own google_service_account.mobile[0]
+//     (mobileAccount) and never a sibling's, for mobileAccount's reason: it
+//     holds signJwt on the devices' signer, so running the credentials service
+//     as it — or this container as the account that reads every model
+//     credential in the bundle — is a pairing nothing announced.
+//
+// The zero-minimum scaling is the third, and it is the reason this service
+// shares publicServiceMinInstances with the hop: a public endpoint kept warm is
+// a monthly bill whether or not anybody calls it.
+//
+// The environment is the seven names the process refuses to start without
+// (mobileServiceEnv), held to literal values and no value_source for the
+// credentials service's reason — and with more force here, since an entry the
+// module did not write is one an unauthenticated caller's request would run
+// with.
+func (c Cover) mobileServiceChange(rc ResourceChange, a map[string]any, unk any, pre string, plans serviceAccountsPlan, proj string) string {
+	if unknown(rc.Change, "invoker_iam_disabled") {
+		return "an IAM setting that is not known"
+	}
+	// The flag is checked rather than merely required to be literal: with the
+	// IAM check off the service would be reachable without the plan's own
+	// allUsers member — that is, with no resource a reviewer reads — which is
+	// the shape this tree refuses everywhere (mobile_service.tf states it).
+	if a["invoker_iam_disabled"] != false {
+		return "a service that does not require IAM, which would make the mobile service public through a flag the plan's review never reads instead of through the binding mobile_service.tf writes"
+	}
+	if why := c.publicServiceMinInstances(a, unk, rc.Address, "the public mobile service", "mobile_service.tf", "a device pairs, refreshes or restores on a call of its own and an instance kept warm is a bill the installation pays for nobody's call"); why != "" {
+		return why
+	}
+	cs := objects(at(a["template"], "containers"))
+	if unknownAt(unk, "template", 0, "containers") {
+		return "containers that are not known"
+	}
+	if len(cs) == 0 {
+		return "no container"
+	}
+	if why := c.mobileAccount(a, unk, pre, plans); why != "" {
+		return why
+	}
+	for i, m := range cs {
+		cp := []any{"template", 0, "containers", i}
+		for _, attr := range []string{"image", "command", "args"} {
+			if unknownAt(unk, append(slices.Clone(cp), attr)...) {
+				return "a container " + attr + " that is not known"
+			}
+		}
+		img := str(m["image"])
+		if !c.credentialsImageOK(img, proj) {
+			return fmt.Sprintf("runs the image %q, which is not this installation's released pin read back through the pull-through repository (%s/%s/%s/%s/fugaro-<kind>:<version>@sha256:<digest>): the mobile service is the credentials service's own binary in another mode, so it runs that pin and never an image of its own",
+				img, c.Registry, proj, c.Ghcr, c.Owner)
+		}
+		cmd, args := strList(m["command"]), strList(m["args"])
+		if len(cmd) != 0 || !slices.Equal(args, mobileServiceArgs) {
+			return "a container whose command or args are not the module's: the mobile service runs the released image with no command of its own and args " +
+				strings.Join(mobileServiceArgs, " ") + ", and a container that named none of them would serve the credentials service's routes at this public URL as the account that signs device tokens"
+		}
+		if unknownAt(unk, append(slices.Clone(cp), "env")...) {
+			return "an environment that is not known"
+		}
+		for j, e := range objects(m["env"]) {
+			ep := append(slices.Clone(cp), "env", j)
+			if unknownAt(unk, append(slices.Clone(ep), "name")...) || unknownAt(unk, append(slices.Clone(ep), "value")...) ||
+				unknownAt(unk, append(slices.Clone(ep), "value_source")...) {
+				return "an environment variable that is not known"
+			}
+			if n := str(e["name"]); !slices.Contains(mobileServiceEnv, n) {
+				return fmt.Sprintf("an environment variable %q, which the mobile service does not read: its container sets only %s",
+					n, strings.Join(mobileServiceEnv, ", "))
+			}
+			if refs := objects(e["value_source"]); len(refs) > 0 {
+				return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's own names and nothing else"
+			}
+		}
+	}
+	return ""
+}
+
 // orchestratorServiceChange holds the resident orchestrator's own service
-// (mobile plan task P5.1c, modules/installation/orchestrator.tf) to the same
-// four rules intakeServiceChange holds the intake's to, and the reasoning for
-// the shape is that function's and credentials.tf's case above. It is a case of
-// its own and not an arm of the intake's, because two of the four are this
-// service's own:
+// (mobile plan tasks P5.1c and P5.1d, modules/installation/orchestrator.tf) to
+// the same four rules intakeServiceChange holds the intake's to, and the
+// reasoning for the shape is that function's and credentials.tf's case above.
+// It is a case of its own and not an arm of the intake's, because two of the
+// four are this service's own:
 //
 //   - the argv. This process is the released image's `orchestrator serve`
 //     subcommand (internal/cli/orchestrator_serve.go), and the image's own
@@ -4758,15 +5110,18 @@ func (c Cover) voiceServiceChange(rc ResourceChange, a map[string]any, unk any, 
 //     or the intake's routes from this URL as an account that may mint a token
 //     for any uid, and anything else would run code orchestrator.tf does not
 //     write. The command is empty, as the two other services' is.
-//   - the environment, which is THREE names and not four
-//     (orchestratorServiceEnv): the project that names this installation's
-//     node, the Firebase project it belongs to, and the database URL it is read
-//     from. Those three are what internal/cli/orchestrator_serve.go reads, and
-//     an environment is the one path a credential could reach this process
-//     without a Secret Manager read — so an entry off the list, or one whose
-//     value comes from a source, is refused here rather than under the one
-//     confirmation that covered the plan. The database URL is on the list as a
-//     NAME; the check that the value is THIS installation's database is the
+//   - the environment, which is SIX names and not seven
+//     (orchestratorServiceEnv): P5.1c's three — the project that names this
+//     installation's node, the Firebase project it belongs to and the database
+//     URL it is read from — beside P5.1d's own three, the GCP project the jobs
+//     are in, the region they were deployed to and the runs bucket's URL (the
+//     same three names a run's own container carries). Those six are what
+//     internal/cli/orchestrator_serve.go reads, and an environment is the one
+//     path a credential could reach this process without a Secret Manager read
+//     — so an entry off the list, or one whose value comes from a source, is
+//     refused here rather than under the one confirmation that covered the
+//     plan. The database URL is on the list as a NAME; the check that the value
+//     is THIS installation's database is the
 //     process's own (it compares the host to the Firebase project it was
 //     given), because only the project's own services know which database is
 //     theirs.
@@ -4831,13 +5186,16 @@ func (c Cover) orchestratorServiceChange(rc ResourceChange, a map[string]any, un
 	return ""
 }
 
-// voiceMinInstances holds the hop's two scaling blocks to a literal zero
-// (voiceServiceChange's third rule). address is the change's own, for the
-// message: a reader of the refusal has to know which of the two blocks moved.
-func (c Cover) voiceMinInstances(a map[string]any, unk any, address string) string {
+// publicServiceMinInstances holds a PUBLIC service's two scaling blocks to a
+// literal zero, and it is called by both of the tree's public services: the
+// voice hop's (voiceServiceChange's third rule) and the mobile service's
+// (mobileServiceChange, mobile plan task P5). address is the change's own and
+// what names the service, for the messages: a reader of the refusal has to know
+// which of the two blocks moved.
+func (c Cover) publicServiceMinInstances(a map[string]any, unk any, address, what, source, reason string) string {
 	// The service-level block and the template's: the first is what the managed
-	// gate prices and the second is what Cloud Run keeps warm, and voice.tf
-	// writes both because the provider computes one of them otherwise (the
+	// gate prices and the second is what Cloud Run keeps warm, and both modules
+	// write both because the provider computes one of them otherwise (the
 	// service-level block's). An unknown count is a no here for the service-level
 	// reason: the gate cannot price a service whose floor it cannot read.
 	for _, b := range []struct {
@@ -4858,10 +5216,10 @@ func (c Cover) voiceMinInstances(a map[string]any, unk any, address string) stri
 		}
 		blocks := objects(at(a, b.read...))
 		if len(blocks) != 1 {
-			return fmt.Sprintf("%s states %d scaling blocks, want one: the hop's minimum instance count is zero and it is written at both the service and the template level", address, len(blocks))
+			return fmt.Sprintf("%s states %d scaling blocks, want one: %s keeps zero minimum instances and the count is written at both the service and the template level", address, len(blocks), what)
 		}
 		if n := blocks[0]["min_instance_count"]; n != float64(0) {
-			return fmt.Sprintf("%s keeps %v instance(s) warm: the voice hop's minimum instance count is zero (voice.tf), because it is a public endpoint whose work arrives with a phone's call and whose idle cost is the installation's to pay for nothing", address, n)
+			return fmt.Sprintf("%s keeps %v instance(s) warm: %s keeps no instance warm (%s), because %s", address, n, what, source, reason)
 		}
 	}
 	return ""

@@ -9,7 +9,7 @@
 // on a mailbox and writes them to the corpus, which
 // `internal/mailbox/lease_test.go` (TestLeaseCorpusReplay) and
 // `shared/lease/parity.test.js` both read. Ruling M9 of
-// `docs/plans/2026-10-18-mobile-mailbox-consumer.md`: parity is proven by
+// `docs/mobile/mailbox-consumer-plan.md`: parity is proven by
 // committed vectors where they exist and by a data corpus where they do not,
 // and `shared/lease` carries no vector file.
 //

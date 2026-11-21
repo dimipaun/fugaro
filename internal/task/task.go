@@ -242,7 +242,7 @@ type Spec struct {
 	// changeSetSince) instead.
 	ChangeSet *ChangeSet `json:"change_set,omitempty"`
 	// ProjectLayer is the project layer the launching CLI read
-	// (docs/design/layered-config.md §8): its exact text, which the runner
+	// (docs/layered-config/spec.md §8): its exact text, which the runner
 	// resolves fugaro.yaml against. Nil: none. A runner before 0.6.0
 	// refuses an unknown field, so fugaro run's own launch-time image gate
 	// (checkImageSince, layered-config plan Task 11) refuses the launch
@@ -254,10 +254,10 @@ type Spec struct {
 	// at most config.MaxClaudeAccountNameLen characters, never
 	// config.DefaultClaudeAccount itself — "" means that — and never the name
 	// the bundle reserves, config.ReservedClaudeAccountName) this run holds
-	// (docs/design/named-oauth-tokens.md): the account an agent.auth: oauth
+	// (docs/named-oauth-tokens/spec.md): the account an agent.auth: oauth
 	// workflow used, and, for a mixed agent.auth: api-key run, the one Claude
 	// account its review and adversarial stages are served by, beside the
-	// provider key the gateway holds (docs/design/mixed-credentials.md §11).
+	// provider key the gateway holds (docs/mixed-credentials/spec.md §11).
 	// Both are the account whose job variant the run is on, which is the job
 	// that mounts its token, so a reader outside this binary reads it as the
 	// run's own account either way. A runner before namedTokensSince refuses
@@ -267,7 +267,7 @@ type Spec struct {
 	OAuthToken string `json:"oauth_token,omitempty"`
 	// CompressionOff, when true, disables agent.compression for this run
 	// only, overriding fugaro.yaml (fugaro run --no-compression;
-	// docs/design/headroom-compression.md §4's deliberately one-directional
+	// docs/headroom-compression/spec.md §4's deliberately one-directional
 	// override: there is no field and no flag to force compression *on*,
 	// only off). A runner before compressionSince refuses the field, since
 	// this package's decoder disallows unknown fields, which is why the
@@ -358,7 +358,7 @@ type Spec struct {
 	// Validate below, by the launcher before it writes anything, and by the
 	// resolver's own Known — a near miss is a launcher's bug, not a run's
 	// opinion about its own rigor.
-	Rigor rigor.Mode `json:"rigor,omitempty"`
+	Rigor rigor.Rigor `json:"rigor,omitempty"`
 	// Paths are the paths the run declares it will touch (fugaro run --path,
 	// repeatable): D22's first moment, where the area rules are matched
 	// before any of the work is done. Nil for every launch that declares
@@ -394,7 +394,7 @@ type Spec struct {
 	//
 	// It is the launcher's list and nobody else's: the job reads each named
 	// record by name and never lists (a list is a bucket-level call the
-	// per-repository grant cannot hold, docs/design/bucket-iam.md), so this
+	// per-repository grant cannot hold, docs/bucket-iam/spec.md), so this
 	// field is what decides which records a run reads — the reason T3.6 is
 	// reviewed as a security change. The runner reads the IDs of its own
 	// repository's prefix only, whatever this list says (G2).
@@ -609,6 +609,53 @@ type Spec struct {
 	// set it (taskGradeSince, internal/cli/recipes_skew.go) rather than let
 	// the run fail at bootstrap after the task was written.
 	ModelGrade escalation.Grade `json:"model_grade,omitempty"`
+	// ReviewSpec is the spec the launched review of a pull request is checked
+	// against (docs/review-against-task R2): the task the pull request was
+	// written for, the follow-up's own text beside it, and the plan task
+	// whose section of its plan the reviewer is also pointed at. The
+	// launcher writes it — `fugaro review` and `fugaro run --recipe
+	// review-only` resolve it through one shared resolver (D2934) — and the
+	// review job's runner reads it and reads no other run; an in-run review
+	// carries no block, since its runner holds the run's own task already.
+	//
+	// It is DATA and never an instruction (R3): the reviewer compares the
+	// diff against it, and the runner quotes it redacted, cleaned and
+	// nonce-fenced under a sentence that says so. Never the pull request
+	// body, which whoever can edit the pull request can rewrite (spec §2),
+	// and never a source the review job fetches itself (F3): the launcher
+	// hands the bytes in.
+	//
+	// Nil for every launch that is not a launched review, which is every
+	// spec written before this field, so a spec carrying none is
+	// byte-identical to what the release before it wrote and is still read
+	// by a runner that has never heard of the field. A task that carries one
+	// needs a runner that knows it: Parse decodes with DisallowUnknownFields,
+	// so an older runner refuses the whole spec — the skew every new task
+	// field has, which is why the launcher omits the field, and warns with
+	// the reason, against a job image older than reviewSpecSince (D2933).
+	ReviewSpec *ReviewSpec `json:"review_spec,omitempty"`
+	// FromFindings marks a follow-up launched from a review's own findings
+	// (fugaro run --pr N --review-run R, R2/F30): such a run's task text is
+	// the rendered findings followed by the person's TEXT, and only the
+	// person's part is a brief — the rest is a reviewer's words, and quoting
+	// them as the spec would make a reviewer the author of the brief the next
+	// review judges against (F25).
+	//
+	// False is every other launch, and every spec written before this field,
+	// so a spec carrying false is byte-identical to the previous release's.
+	// OwnText beside it is the field it gates: Validate refuses own_text
+	// without it.
+	FromFindings bool `json:"from_findings,omitempty"`
+	// OwnText is the person's own words on a findings follow-up
+	// (Spec.FromFindings, R2): the TEXT they typed, kept apart from the
+	// findings the task text opens with, so a review of that pull request
+	// quotes what the person asked for and leaves the reviewer's words out
+	// (R1). Empty — and so no key at all — for every other launch, which is
+	// every spec written before this field. It is bounded by
+	// MaxReviewSpecBytes, and Validate refuses it without FromFindings, since
+	// a launch that did not mark the findings has no person's text to keep
+	// apart from them.
+	OwnText string `json:"own_text,omitempty"`
 }
 
 // FollowUpOf is the parent a triage follow-up came from: the run whose
@@ -669,7 +716,7 @@ var Importances = []Importance{ImportanceImportant, ImportanceMinor}
 func KnownImportance(i Importance) bool { return slices.Contains(Importances, i) }
 
 // ImportanceList is Importances as a message names the vocabulary, the way
-// rigor.ModeList and tier.List are read by a refusal.
+// rigor.RigorList and tier.List are read by a refusal.
 func ImportanceList() string {
 	names := make([]string, len(Importances))
 	for i, im := range Importances {
@@ -1159,7 +1206,7 @@ func PlanTaskProblem(t string) string {
 	return ""
 }
 
-// Recipe is the recipe the launching CLI resolved (docs/design/recipes.md §5).
+// Recipe is the recipe the launching CLI resolved (docs/recipes/spec.md §5).
 type Recipe struct {
 	Name   string `json:"name"`
 	Source string `json:"source"`           // "repo" | "project" | "catalog"
@@ -1176,7 +1223,7 @@ type ProjectLayer struct {
 
 // ABArm, ABPublish, ABChallengerSource and ABSlot are the pair block's four
 // closed vocabularies. Each is a named string type with one exported list, as
-// rigor.Mode and tier.Tier are, because a near miss is a launcher's bug
+// rigor.Rigor and tier.Tier are, because a near miss is a launcher's bug
 // rather than a run's opinion about which arm it is — and a named type is
 // what keeps an arbitrary string out of a field the schemas pin to an enum.
 type (
@@ -1217,7 +1264,7 @@ const (
 )
 
 // ABArms, ABPublishes, ABChallengerSources and ABSlots are each whole
-// vocabulary, closed the way rigor.Modes and tier.Tiers are: a value outside
+// vocabulary, closed the way rigor.Rigors and tier.Tiers are: a value outside
 // one is refused where it is written, never matched as an unknown arm later.
 var (
 	ABArms              = []ABArm{ABArmChampion, ABArmChallenger}
@@ -1734,6 +1781,26 @@ func (s *Spec) Validate() error {
 			bad("task spec: plan_task %s", p)
 		}
 	}
+	// The spec a launched review is checked against (Spec.ReviewSpec, R2),
+	// through the one list the launcher applies before it writes anything
+	// (ReviewSpecProblem): a block the launcher accepts has to be one the
+	// runner accepts, or the launch writes a task the review job then refuses
+	// at bootstrap. An absent block is legal — an in-run review, and every
+	// spec written before this field, carry none.
+	if p := ReviewSpecProblem(s.ReviewSpec); p != "" {
+		bad("task spec: review_spec %s", p)
+	}
+	// The person's own words on a findings follow-up (Spec.OwnText, R2): they
+	// are quoted as the brief only when the launch marked its task text as
+	// carrying a reviewer's findings too, so a task that carries own_text
+	// without that mark is one whose text a reader cannot take apart (F30).
+	// The text itself is held to the same cap as the spec's own two texts.
+	if s.OwnText != "" && !s.FromFindings {
+		bad("task spec: own_text needs from_findings: it is the person's own words beside a review's findings, and a launch that did not mark them has none to keep apart")
+	}
+	if p := ReviewSpecTextProblem("own_text", s.OwnText); p != "" {
+		bad("task spec: %s", p)
+	}
 	// config.ClaudeAccountNameRE and config.MaxClaudeAccountNameLen are the
 	// single source of truth for a named account's shape (internal/config/
 	// claude_accounts.go, Task 1): this package imports them rather than
@@ -1777,7 +1844,7 @@ func (s *Spec) Validate() error {
 	// the run then refuses at bootstrap), and an absent request is legal —
 	// it is what every launch without the flags carries.
 	if s.Rigor != "" && !rigor.Known(s.Rigor) {
-		bad("task spec: rigor %q must be one of %s or empty", s.Rigor, rigor.ModeList())
+		bad("task spec: rigor %q must be one of %s or empty", s.Rigor, rigor.RigorList())
 	}
 	// The expectation envelope's own two fields (T8.1): the tier's vocabulary
 	// is closed the way rigor's is, and the expected scope is bounded the way

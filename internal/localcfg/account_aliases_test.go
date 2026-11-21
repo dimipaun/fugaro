@@ -115,7 +115,7 @@ func TestLocalConfigWithoutAliasesRoundTrips(t *testing.T) {
 	// the two accounts the choice keys name, and no alias block. The second
 	// fixture is the same file with the block written where the writer puts it,
 	// which is where the loader reads it back from too.
-	const before = `version: 2
+	const before = `version: 3
 name: aurora
 gcp_project: my-project
 region: us-central1

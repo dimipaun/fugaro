@@ -517,7 +517,7 @@ func TestAccessRevokingTheLastGrantLeavesNobody(t *testing.T) {
 }
 
 // TestAccessBudgetKillAndResumeAskTheResolver: the kill switch is the budget
-// admins' (docs/design/roles.md, §1.1), and the scope it is set at is the grant
+// admins' (docs/roles/spec.md, §1.1), and the scope it is set at is the grant
 // it needs — an all-repos admin holds no project-level thing, so it can neither
 // halt every run of the project nor let them spend again (D1542: a resume is a
 // raise), and a viewer of one repository cannot move that repository's switch.

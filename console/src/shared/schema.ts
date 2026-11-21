@@ -96,7 +96,7 @@ import type { TextClass } from './sanitize'
  * for most of the people who use it. The **whole** recorded value is drawn in
  * the Run screen's header, in `person`, exactly as this map says -- so no
  * address is drawn anywhere. `console/README.md`'s class table and
- * `docs/design/desktop-console.md` §6.2 record the decision; `launcher.ts` is
+ * `docs/desktop-console/spec.md` §6.2 record the decision; `launcher.ts` is
  * the module and carries the reasoning.
  */
 export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.freeze({
@@ -307,7 +307,7 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // class, which draws `HOST_PLACEHOLDER` for every value. That is the
   // console's rule for a machine and not a decision this document gets to
   // change -- the panel cannot show which host a route points at, and
-  // `docs/design/desktop-console.md` §5.1's row is where that is stated.
+  // `docs/desktop-console/spec.md` §5.1's row is where that is stated.
   host: 'host',
   // A route's or a model's `note`, a row's `refused` (why it has no price) and
   // a repository's `problems[]` (the refusals a launch would give for its pins)
@@ -388,12 +388,21 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
  */
 export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   'mode',
-  // `rigor.from` -- which layer decided the mode (`internal/rigor`'s `Layer`,
+  // `rigor.level` is the same enum under the key this axis is spelled with now
+  // (LD2): `runstore.RigorRecord` carries the level under `level` and under
+  // `mode` beside it, with the same value, so that a reader which knows only the
+  // older key still finds one, and a reader prefers `level` (the record's
+  // `LevelOf`, `shared/rigor.ts`'s reader). Both are the CLI's own table of five
+  // levels -- `poc`, `startup`, `pro`, `critical`, `hotfix` -- never text a job
+  // wrote, which is what this list claims of every key in it.
+  'level',
+  // `rigor.from` -- which layer decided the level (`internal/rigor`'s `Layer`,
   // docs/rigor-modes D24), one of the words this build's own table writes -- sat
   // here until CG9a and is now a drawn key above: the graph read's `edges[]`
   // carry a node key under `from`, and a key with two readings takes the drawn
-  // reading. `rigor.areas[].mode` is that same `mode` vocabulary again, and
-  // `rigor.at` and the moments of `rigor.areas[]` are `at`, already below.
+  // reading. `rigor.areas[].level` and the older `rigor.areas[].mode` are that
+  // same vocabulary again, and `rigor.at` and the moments of `rigor.areas[]` are
+  // `at`, already below.
   'health',
   'status',
   // `derived` is the read side's own derivation for a run whose record was
@@ -1230,11 +1239,19 @@ export const FINISHED_KEYS = [
  * a node of its plan's graph is GV2.3's, on its own document.
  *
  * **`rigor` arrived with the rigor modes (0.11.0)**, between `changed_files`
- * and `artifact_count` in the struct, and a run that resolved a mode writes it:
- * the mode, the layer that decided it (`from`), the areas that matched -- each
- * with the mode it sets and the moment it was applied at, strictest first
+ * and `artifact_count` in the struct, and a run that resolved a level writes it:
+ * the level, the layer that decided it (`from`), the areas that matched -- each
+ * with the level it sets and the moment it was applied at, strictest first
  * (D23) -- the moment of the block and the revision the configuration was read
- * from (`runstore.RigorRecord`, docs/rigor-modes D24, D25). **It is read now**
+ * from (`runstore.RigorRecord`, docs/rigor-modes D24, D25). **The level is
+ * carried under two keys since LD2**: `level` is the axis's name now -- in
+ * the repository config, in the project layer and in everything a person reads -- and
+ * `mode` stays beside it with the same value, because this block is a wire shape
+ * a reader outside the CLI's binary consumes and a field never changes meaning
+ * (CLAUDE.md); the record's `version` stays 1, the key was added and not
+ * retyped. A record written before the rename carries `mode` alone, so a reader
+ * **prefers `level` and falls back to `mode`** (`runstore.RigorRecord.LevelOf`,
+ * `shared/rigor.ts`). **It is read now**
  * -- `shared/rigor.ts` parses it for the Live chip, the Projects MODE cell and
  * the Run screen's Rigor row (owner request 2026-10-25) -- and it is here for
  * `launched_by`'s reason: a list without the key refuses a real
@@ -1242,7 +1259,7 @@ export const FINISHED_KEYS = [
  * classes rather than exemptions: `from` is an enum this build may not know and
  * `revision` is a git ref, so both go through the sanitizer if a later screen
  * ever draws them. The reader drops a key it does not know the class of; the
- * `mode` word is drawn only when this build's own table names it, and
+ * level word is drawn only when this build's own table names it, and
  * otherwise as bounded text.
  *
  * **`owner_decisions` arrived with OD1 (2026-11-07)**, between `changed_files`
@@ -1262,7 +1279,7 @@ export const FINISHED_KEYS = [
  * names a cause for — not on a row that did not fail, and not on a row the read
  * side ended itself, a row the CLI could not follow among them (contract
  * section 5): one value of the closed vocabulary of
- * `docs/design/failure-classes.md` §3 — the class the runner wrote beside the
+ * `docs/failure-classes/design.md` §3 — the class the runner wrote beside the
  * terminal status, or, for a record written before the field shipped, this
  * build's reading of the record's own `reason` (`runview.ClassOf`; contract
  * section 5). It is `plan_task`'s and `owner_decisions`' omission a fifth time,

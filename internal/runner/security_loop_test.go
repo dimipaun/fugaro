@@ -143,7 +143,7 @@ func TestRunEscalationKeepsAPOCRunFromStoppingOnTheCheapLoop(t *testing.T) {
 func TestRunEscalationRunsTheAdversarialStepWhenTheFixRaisesTheMode(t *testing.T) {
 	base := testutil.FixtureFiles(t)["fugaro.yaml"]
 	cfg := strings.Replace(base, "agent:\n",
-		"rigor:\n  default: poc\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+		"rigor:\n  default: poc\n  areas:\n    - { name: app, match: \"feature.txt\", level: critical }\nagent:\n", 1)
 	if cfg == base {
 		t.Fatal("the fixture has no agent: block to put rigor: before, so the repository would not opt in")
 	}

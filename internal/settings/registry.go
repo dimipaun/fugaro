@@ -22,7 +22,9 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // Merge is how a key's layers combine into the effective value a run gets.
@@ -248,6 +250,12 @@ var yamlMeta = map[string]Row{
 	"agent.max_run_tokens":             {Merge: Tighten, Default: unset("the ceiling's")},
 	"agent.first_line_review":          {Default: value(config.FirstLineAuto, "config.FirstLineAuto")},
 	"agent.first_line_rounds":          {Default: unset("the run's rigor mode decides (rigor.DefaultRounds)")},
+	// The keep-warm beat's switch (R10, D2985). On is the default and the
+	// constant is the literal "true" rather than a config constant, as
+	// git.pr.early_draft's is: the readers are the accessor
+	// (config.Agent.WorkspaceBeatOn) and this row, and a Go constant between
+	// them would be a third name for one value.
+	"agent.workspace_beat": {Default: value("true", ""), Doc: docWorkspaceService},
 	// The per-level review block (L1.3, D722). The model a level resolves to
 	// when the block names none is the resolver's rule (L3.1): level 2 and
 	// level 3 are the reviewer's model, level 1 the coder's.
@@ -275,6 +283,13 @@ var yamlMeta = map[string]Row{
 	// for the stage being off.
 	"agent.triage": {
 		Default: unset("on (startup and pro only, config.TriageMode)"),
+	},
+	// The review-against-task switch (R7 of docs/review-against-task/): an
+	// absent key is the check running — every review stage is handed the task
+	// the pull request was written for — so the DEFAULT column says so rather
+	// than reading "none", which a reader would take for the check being off.
+	"agent.review_against_task": {
+		Default: unset("on (config.Agent.ReviewAgainstTaskOn)"),
 	},
 
 	"agent.recipe":      {Owner: "models", Default: unset("the built-in recipe"), Doc: "docs/recipes.md"},
@@ -377,6 +392,15 @@ var yamlMeta = map[string]Row{
 		Doc:     "docs/rigor-modes/spec.md",
 	},
 	"rigor.areas": {Owner: "rigor", Merge: Union, Default: unset("no area rules"), Doc: "docs/rigor-modes/spec.md"},
+	// The project layer's per-repository level (LD4, LF4): the key is the
+	// layer's alone — a repository's fugaro.yaml may not state it at all, and
+	// says the level it runs at with its own rigor.default — and the file it is
+	// stated in is the layer, which `fugaro config publish` carries. That is why
+	// the owner is not "rigor", the family that edits an area rule's own fields,
+	// and why it is not the fallback `settings set`: the generic path's allowlist
+	// is the keys a repository is edited into, and it refuses this one, which is
+	// the F13 shape the four header keys above are.
+	"rigor.repos": {Owner: "config", Doc: docRigor},
 
 	// The security list is rigor.areas' twin in the two fields a Scopes row
 	// cannot answer. Its merge is Union and not the default Replace (D1506):
@@ -408,7 +432,7 @@ var yamlMeta = map[string]Row{
 // `fugaro.yaml` rows from config.Scopes (so the two cannot drift), the project
 // layer's from config.ProjectLayer, the local config's from localcfg.Config.
 func buildRows() []Row {
-	out := make([]Row, 0, len(config.Scopes)+len(layerRows)+len(localRows)+len(cloudRows)+len(config.RunStages))
+	out := make([]Row, 0, len(config.Scopes)+len(layerRows)+len(localRows)+len(cloudRows)+len(config.RunStages)+len(governanceStages)*3)
 	for _, s := range config.Scopes {
 		out = append(out, yamlRow(s))
 	}
@@ -417,10 +441,25 @@ func buildRows() []Row {
 	out = append(out, cloudRows...)
 	out = append(out, policyRows...)
 	out = append(out, stageAccountRows()...)
+	out = append(out, governanceLeafRows()...)
 	for i := range out {
 		out[i].Sensitive = sensitiveKeys[out[i].Key]
 		if v, ok := defaultValues[out[i].Key]; ok {
 			out[i].Default = v
+		}
+		if strings.HasPrefix(out[i].Key, "governance.") {
+			out[i].Doc = docGovernance
+		}
+		// A block of settings is not the generic writer's row. The write refuses
+		// the block's own spelling — a block is a shape, so a scalar written at
+		// it has no value to land on (IsBlock, settingsRefuseRow) — and a row
+		// naming `settings set` while the write refuses it is the pair D1178 and
+		// F13 forbid: the read prints `writable: false` beside the command it
+		// says writes the key. The truth about a block is the other way round —
+		// `settings set` writes the settings the block holds, one at a time — so
+		// the row names that instead (ownerBlockToken).
+		if out[i].Owner == "settings set" && blockAmong(out, out[i].Key) {
+			out[i].Owner = ownerBlockToken
 		}
 	}
 	// Each document's rows are written in its own order, so the three groups
@@ -486,11 +525,22 @@ func scopeLayers(in config.Scope) []string {
 // The documents a row's Doc names. A key whose document is not one of these
 // names it in full.
 const (
-	docSetup  = "docs/gcp-setup.md"
-	docLayer  = "docs/project-layer.md"
-	docModels = "docs/multi-model.md"
-	docRigor  = "docs/rigor-modes/spec.md"
-	docCrafts = "docs/model-crafts/spec.md"
+	docSetup = "docs/gcp-setup.md"
+	docLayer = "docs/project-layer.md"
+	// docLocations is the record's own document (LP0 of
+	// docs/location-preference/, D3087): what the block is, that it is one
+	// machine's own, and that nothing reads it as an input (R5).
+	docLocations = "docs/location-preference/record.md"
+	// docGovernance is docLayer plus the one fact about a governance key the
+	// table has no column for (F12): the guardrails are enforced by a build with
+	// the `ee` tag, so an untagged build reads the block and holds no run to it
+	// (internal/policy/hook.go, D522). The released runner image is built with
+	// the tag, which is why the row says so rather than that the keys do
+	// nothing.
+	docGovernance = docLayer + " (enforced by the ee build)"
+	docModels     = "docs/multi-model.md"
+	docRigor      = "docs/rigor-modes/spec.md"
+	docCrafts     = "docs/model-crafts/spec.md"
 	// docEscalation is the escalation ladder's own document. The two model
 	// grades are stated in the plan rather than in the spec — the spec is the
 	// ladder's design and the plan is where each key it adds is defined (E2,
@@ -512,6 +562,12 @@ const (
 	// §5 and §6). The folder's own README, reconciliation and plan are not the
 	// document a key's meaning is stated in, so the row points at the spec.
 	docWorkspace = "docs/workspaces/spec.md"
+	// docWorkspaceService is the document that states the keep-warm beat's
+	// switch (R10, D2985). It is the folder's reconciliation and not its spec:
+	// the spec is the owner's brief and the ruling the switch comes from is
+	// R10, which only the reconciliation states — the plan writes it as WS13's
+	// acceptance and no document of the folder has it as a spec sentence.
+	docWorkspaceService = "docs/workspace-service/reconciliation.md"
 	// docPeriodicReviews is the document that states the project's jobs:
 	// block (R13). It is the work's plan rather than a spec, for
 	// docOrchestrator's reason: the two keys and the default that turns a
@@ -541,6 +597,13 @@ const (
 	// of the stage's own would take the row over.
 	docTriage    = "docs/post-review-triage/implementation-plan.md"
 	docCloneURLs = "docs/project-claude-accounts.md"
+	// docReviewAgainstTask is the document that states the check every review
+	// stage makes of the task a pull request was written for, and the local key
+	// the publish carries the switch from (R7 of docs/review-against-task/). It
+	// is the work's plan, docTriage's reason: the key, its default and D2935's
+	// two directions are stated there and nowhere else yet, and a document of
+	// the check's own would take the row over.
+	docReviewAgainstTask = "docs/review-against-task/implementation-plan.md"
 	// docABJobmax is the document that states the A/B reviewer arm's key (O12).
 	// It is the work's plan rather than a spec, for docOrchestrator's reason:
 	// the ask is named there and in the reconciliation that records the ruling,
@@ -578,8 +641,8 @@ const (
 	// backoff's two ends and the two owner-headroom knobs are named in the
 	// credentials service's plan, and the spec of the service (its README's
 	// sibling) is the design of the service rather than of the policy an
-	// operator writes. K1's command and the carrier N1 adds take the rows over
-	// the day they land.
+	// operator writes. K1's command and the carrier N1 adds are what state the
+	// rows now.
 	docCredentialsCascade = "docs/credentials-service/implementation-plan.md"
 	// docOrchestratorGraph is the document that states the orchestrator's
 	// switch and the project's issue adapter (D2701, D2733, D2739): both keys
@@ -723,6 +786,7 @@ var layerRows = []Row{
 	layerRow("defaults.agent.max_budget_usd", "25", "settings set", docLayer),
 	layerRow("defaults.agent.first_line_review", "auto", "settings set", docLayer),
 	layerRow("defaults.agent.first_line_rounds", "the run's rigor mode decides (rigor.DefaultRounds)", "settings set", docLayer),
+	layerRow("defaults.agent.workspace_beat", "true", "settings set", docWorkspaceService),
 	layerRow("defaults.agent.levels.l1.model", "the coder's model", "models", docModels),
 	layerRow("defaults.agent.levels.l1.effort", "the model's own default", "models", docModels),
 	layerRow("defaults.agent.levels.l1.none", "the run's rigor mode and the recipe decide", "settings set", docLayer),
@@ -738,10 +802,25 @@ var layerRows = []Row{
 	layerRow("defaults.agent.adversarial_rounds", "the run's rigor mode decides (rigor.AdversarialDefault)", "settings set", docLayer),
 	layerRow("defaults.agent.review_stop_fraction", "0.8 (config.DefaultReviewStopFraction)", "settings set", docLayer),
 	layerRow("defaults.agent.recipe", "the built-in recipe", "models", docModels),
-	layerRow("defaults.rigor.default", "the built-in mode (pro)", "rigor", docRigor),
+	layerRow("defaults.rigor.default", "the built-in level (pro)", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.name", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.match", "none", "rigor", docRigor),
-	layerRow("defaults.rigor.areas.*.mode", "none", "rigor", docRigor),
+	layerRow("defaults.rigor.areas.*.level", "none", "rigor", docRigor),
+	// What an area of the project layer is made of (LD4): each member is a
+	// repository of the project, or a repository with the paths of it that are
+	// in the area. No command of the settings surface writes them yet — a
+	// project area is written by hand, or by the project's own tooling — so the
+	// row names the generic writer and the write refuses the spelling, exactly
+	// as the other rows of a shape no family owns do.
+	layerRow("defaults.rigor.areas.*.members.*.repo", "none", "settings set", docRigor),
+	layerRow("defaults.rigor.areas.*.members.*.paths", "none", "settings set", docRigor),
+	// The project layer's per-repository level, one entry per repository of the
+	// project it names one by one (LD4). Written by hand like the members above:
+	// the key a repository sets about itself is its own rigor.default, and
+	// `fugaro rigor set --layer repo` writes that one. Its row under the
+	// fugaro.yaml spelling is yamlMeta's, which names `config` as the owner
+	// because a repository's own file may not set the key at all.
+	layerRow("defaults.rigor.repos", "none", "settings set", docRigor),
 	// The planning pass's switch, read the way defaults.git.pr.early_draft
 	// above is: a layer that states nothing leaves it as the fugaro.yaml row
 	// says (docs/contract-first-decoupling, D1813).
@@ -877,6 +956,19 @@ var localRows = []Row{
 	loc("backend", "cloud-run", "setup", "docs/backends.md"),
 	loc("log_view", "the project's default logs", "setup", docSetup),
 	loc("scheduler_region", "the region the jobs run in", "setup", docSetup),
+	// The locations record (LP0 of docs/location-preference/, D3087): where
+	// this installation's located things already are, as the converge read
+	// them from the cloud. One row per member, and each is local-only — the
+	// record is never published, because the shared config decodes strictly
+	// and a teammate's older CLI would refuse the key — and written by the
+	// two converge doors from what the cloud holds rather than by any
+	// editor: no flag states a location, because nothing that exists is
+	// given a place by a rule — what already is somewhere is read from the
+	// cloud (R5) — and an absent member means no converge has read it yet.
+	locLocal("locations.firestore", "not known yet: no converge has read where the project's Firestore database is", "setup", docLocations),
+	locLocal("locations.log_bucket", "not known yet: no converge has read where the installation's run log bucket is", "setup", docLocations),
+	locLocal("locations.rtdb", "not known yet: no converge has read where the project's Realtime Database is", "setup", docLocations),
+	locLocal("locations.secrets", "not known yet: no converge has read what the installation's own secret containers do", "setup", docLocations),
 	loc("user", "none", "setup", docSetup),
 	// The keys of the installation a repository's own settings file also holds
 	// say `settings set` where the allowlist carries them (D1178): commit_name,
@@ -926,6 +1018,17 @@ var localRows = []Row{
 	loc("batch.secrets", "none", "secrets", "docs/backends.md"),
 	loc("batch.socket_gid", "the image's own docker group", "setup", "docs/backends.md"),
 	loc("batch.task_timeout", "Fugaro's own task timeout", "setup", "docs/backends.md"),
+	// The Batch installation's two identity facts (R2, R13, D3110, D3111). Their
+	// owner is `update` and not `setup` and not a settings family, and that is
+	// the rule rather than a column: R13 says `fugaro update` writes the key
+	// fact from the compute root's own output and no settings command writes it,
+	// because a key fact a settings command could write is a substituted public
+	// key — and a substituted one hands its holder every seal key wrapped to it.
+	// The opt-in fact is an OPERATOR's, written by opting in (R2) and by opting
+	// out (R16), and never by a machine that merely selects the backend again.
+	loc("batch.opt_in", "the installation has not opted in, so no compute root is applied", "update", "docs/backends.md"),
+	loc("batch.seal_key.public_key", "none: without the key fact a sealed launch is refused", "update", "docs/backends.md"),
+	loc("batch.seal_key.version", "none: without the key fact a sealed launch is refused", "update", "docs/backends.md"),
 
 	loc("build.service_account", "the project's default service account", "setup", docSetup),
 	{Key: "build.machine_type", Layers: []string{LayerLocal, LayerShared}, Merge: Replace, Owner: "setup", Doc: docSetup},
@@ -1032,6 +1135,13 @@ var localRows = []Row{
 	locLocal("pools.*.owner", "required: the pool is served to its owner and the users it names", "accounts", docCrafts),
 	locLocal("pools.*.allowed_users", "only the owner", "accounts", docCrafts),
 	locLocal("pools.*.legacy_open", "false: only the policy migration writes this, for a pool that predates owners", "accounts", docCrafts),
+	// The cascade's own marker, legacy_open's neighbour in every way that
+	// matters here: `fugaro update` is its only writer, for the pool it
+	// migrates out of a project whose cascade serves (D3064 as amended), so it
+	// is in the registry for `fugaro settings` to name and is no key an
+	// operator writes — a marker written by hand is refused where the config is
+	// validated (config.ValidateCascadePools).
+	locLocal("pools.*.cascade", "false: only `fugaro update` writes this, for the pool it migrates out of a cascade that serves", "accounts", docCrafts),
 	// The pools' subscription switch (F22, D1622, D1636): whether a run may
 	// spread a project across two or more Claude OAuth subscriptions at all.
 	// With it off a pool of two or more subscriptions serves nothing and a
@@ -1176,6 +1286,17 @@ var localRows = []Row{
 	// a pull request back (D1854), and the publish is what carries the value to
 	// the node every run of the project reads it from.
 	loc("triage", "true: a review round's findings are judged by the triage stage in the modes that triage at all, and a written false turns the stage off for the project", "settings set", docTriage),
+	// The review-against-task switch is that policy key's shape one over (R7 of
+	// docs/review-against-task/, D2935): a local key the node is published from,
+	// whose owner is `settings set` for the triage row's reason — a boolean in
+	// the machine's own config is the generic path's. It is the owner's answer
+	// for the whole project, and the publish is what carries it to the node
+	// every run of the project reads it from. The absent key reads as on rather
+	// than as "none", because a reader would take "none" for the check itself
+	// being off; a written false is the project-wide default a repository's own
+	// `true` overrides, and a written true is the check no repository may walk
+	// out of.
+	loc("review_against_task", "on: every review stage is handed the task its pull request was written for, and a written false is the project-wide default a repository's own true turns back on", "settings set", docReviewAgainstTask),
 	// The clone URLs the project's repositories clone from (settings spec
 	// §5.6, SD5, D842). The block moved out of the policy node and into the
 	// owner's local config, and `fugaro project clone-url` is the family that
@@ -1421,26 +1542,44 @@ var localRows = []Row{
 	// the same reason: every key a config file can hold is one a settings
 	// read has to be able to name.
 	loc("repos.*.credentials_service_ready", "false: no update has applied this repository's root with the service on — its bundle holds no model credential, or its agent.auth is not the cascade", "project", docSetup),
+	// The two facts the same record carries beside the switch (R12, KS19):
+	// whether the bundle holds an entry for every provider credential this
+	// repository's config names — the fact a routed call is sent through the
+	// service for — and whether a stage account of this repository is one the
+	// service serves. Both are machine-written like the switch, both are read
+	// back by the plan a repository's root is built with (infra's
+	// providerKeysServed/stageAccountServed) and both are written off as
+	// well as on, so a row here for the same reason the switch has one.
+	loc("repos.*.provider_keys_served", "false: no update has found this repository's bundle holding an entry for every provider credential its config names, or the deployed service is not at the release that serves one, or the project publishes no allow-list", "project", docSetup),
+	loc("repos.*.stage_account_served", "false: no update has found a stage account this repository mixes with a provider key, or the deployed service is not at the release that serves one", "project", docSetup),
 
-	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all eleven of
+	// The workspace keys (docs/workspaces/spec.md §2, §5, §6), all seventeen of
 	// them local-only: the pin is the member's own trust and the member table
-	// is the workspace owner's own declaration, and a launcher who could write
-	// either into the shared file could aim this project's exchange and this
-	// project's database grant (internal/cli/sharedcfg.go's sharedForbidden).
-	// Their owner is the `fugaro workspace` family, so the generic writer
-	// refuses them (D853) — a member entry and a pin are written whole by the
-	// commands that know what the four values have to agree about.
+	// and shared list are the workspace owner's own declaration, and a launcher
+	// who could write any of them into the shared file could aim this project's
+	// exchange, this project's database grant and this project's calls, or
+	// choose what the workspace's credentials service offers
+	// (internal/cli/sharedcfg.go's sharedForbidden). Their owner is the `fugaro
+	// workspace` family, so the generic writer refuses them (D853) — a member
+	// entry, a pin and a shared entry are written whole by the commands that
+	// know what the values have to agree about.
 	locLocal("workspace", "this project is a member of no workspace", "workspace", docWorkspace),
 	locLocal("workspace_pin.firebase_project", "no workspace is pinned", "workspace", docWorkspace),
 	locLocal("workspace_pin.issuer", "no workspace is pinned", "workspace", docWorkspace),
 	locLocal("workspace_pin.assertion_key", "no workspace is pinned", "workspace", docWorkspace),
 	locLocal("workspace_pin.service_account", "no workspace is pinned", "workspace", docWorkspace),
+	locLocal("workspace_pin.service_address", "this project takes no workspace credential", "workspace", docWorkspace),
 	locLocal("workspace_members.*.repos", "the member contributes no repository", "workspace", docWorkspace),
-	locLocal("workspace_members.*.job_service_accounts", "no job service account is declared for the member", "workspace", docWorkspace),
+	locLocal("workspace_members.*.job_service_accounts.*.account", "no job service account is declared for the member", "workspace", docWorkspace),
+	locLocal("workspace_members.*.job_service_accounts.*.repos", "the account is a job of no repository", "workspace", docWorkspace),
+	locLocal("workspace_members.*.database_region", "the member's database lives in its project's default region", "workspace", docWorkspace),
 	locLocal("workspace_members.*.firebase_project", "none", "workspace", docWorkspace),
 	locLocal("workspace_members.*.fp", "none", "workspace", docWorkspace),
 	locLocal("workspace_members.*.exchange_url", "none", "workspace", docWorkspace),
 	locLocal("workspace_cap.monthly", "the workspace states no cap", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.kind", "the workspace offers no credential", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.projects", "the credential is offered to no member", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.covers", "the credential covers no repository", "workspace", docWorkspace),
 
 	// The terminal Issues section's nudge thresholds (T-IS15). They are
 	// local-only rather than loc's two layers: the section is printed on the
@@ -1539,13 +1678,22 @@ var cloudRows = []Row{
 // one of the three file layers would send the read and the write at a file the
 // key is not in.
 //
-// The spelling is `credentials.<leaf>`, which is §4.4's own name for the
-// block — `credentials.` is one of the generic path's prefixes — and the owner
-// is the `accounts` family's, so the generic path refuses every one of the six
-// in that family's name rather than writing an operator's node policy as a
-// local setting (D2603, R1 of docs/config-ownership). K1 registers
-// `fugaro accounts cascade set` as their writer; until it lands the six are
-// testdata/writer_gaps.golden's.
+// The spelling is `credentials.<leaf>`, which is §4.4's own name for the block,
+// and the owner is the `accounts` family's, so the generic path refuses every
+// one of the six in that family's name rather than writing an operator's node
+// policy as a local setting (D2603, R1 of docs/config-ownership). `credentials.`
+// left the generic path's prefixes with K1, which registers `fugaro accounts
+// cascade set` as their writer, so a refusal now names that command.
+//
+// The six stay testdata/writer_gaps.golden's, and the carrier's six beside
+// them. A registered writer is measured where the row spells the key, and these
+// six are the node's own spelling while the write lands in this machine's
+// carrier (`credential_cascade.<leaf>`, writers_cascade.go) — and the carrier's
+// six owe the publish the write ends on (D2615), which a hermetic installation
+// cannot complete, so the command exits non-zero after the bytes land. That is
+// the gap every semantic family's rows show for the same reason (pools',
+// providers' and the crafts' among them): the golden lists them until I1's
+// strict ratchet has a rig that can run a stage.
 //
 // Every default is a sentence naming the constant the node's own reader falls
 // back to (projectpolicy.FallbackValue, WaitThresholdDuration,
@@ -1579,8 +1727,8 @@ var policyRows = []Row{
 	// What the family does *not* have is a carrier for either: no key of the
 	// local config states the switch or the adapter (D2701, D2733), so a person
 	// writes the node's own member and `publish` carries it from the node
-	// forward — which is why the two are testdata/writer_gaps.golden's, the
-	// cascade's six before K1.
+	// forward — which is why the two are testdata/writer_gaps.golden's, as the
+	// cascade's own twelve are.
 	//
 	// The switch merges by Tighten, and it is the rule rather than a figure
 	// here: false is its stricter value and the only one that can undo the
@@ -1618,6 +1766,127 @@ func stageAccountRows() []Row {
 	return out
 }
 
+// governanceStages are the stages the governance block bounds, in the block's
+// own order: the ones a run's stages carry (config.StageTimeout's fields, the
+// three names config's validator lists). An artifact run's plan and render
+// steps have no governance — no budget share, no token ceiling and no timeout
+// of their own — so the vocabulary is these three and not config.RunStages.
+var governanceStages = []string{"implement", "review", "fix"}
+
+// governanceTierKeys are the keys every tier of governance.tiers carries
+// (policy's own three, T8.1). A tier's own key is one of them, so the twelve
+// names below are built from the tier's name rather than declared.
+var governanceTierKeys = []string{policy.KeyExpectedUSD, policy.KeyExpectedMinutes, policy.KeyMaxSubagents}
+
+// governanceLeafRows are the concrete rows of the governance block at the two
+// layers a project and a repository set it in (composite D2604, W2).
+//
+// The block's own rows (yamlMeta) are the read's: `governance.stage_timeout` is
+// a mapping of keys, so its own spelling is no setting and the write refuses it
+// (IsBlock, settingsRefuseRow). What a person writes is a stage's own bound,
+// and before this the only spelling of it was the project layer's
+// `layer.governance.stage_timeout.implement` — a concrete unprefixed
+// `governance.stage_timeout.implement` found no row at all and `settings set`
+// answered "no setting has that name" for the owner's 99% case (F1).
+//
+// The rows are a literal table rather than a walk of the config structs,
+// because a row's fields are decisions and not the struct's: the layers are
+// project and repo (D2604 — the project layer is the one layer that may
+// loosen the guardrail, and a repository may only tighten it), the merge is
+// Tighten, and the DEFAULT column repeats the block's own sentence so that the
+// long and the short spelling of one stage's bound read alike. The ratchet that
+// keeps the table complete is TestRegistryCarriesEveryGovernanceLeaf
+// (registry_stage_test.go), which walks config.Governance by reflection: a
+// stage, a tier or a key added to the block and left out here is that test's
+// failure.
+func governanceLeafRows() []Row {
+	out := make([]Row, 0, len(governanceStages)*3+len(tier.Tiers)*len(governanceTierKeys))
+	add := func(key, def string) {
+		out = append(out, Row{
+			Key:     key,
+			Layers:  []string{LayerProject, LayerRepo},
+			Merge:   Tighten,
+			Default: unset(def),
+			Owner:   "settings set",
+			Doc:     docLayer,
+		})
+	}
+	for _, stage := range governanceStages {
+		add("governance.stage_budget."+stage, "Fugaro's own stage budgets")
+		add("governance.stage_tokens."+stage, "Fugaro's own stage token caps")
+		add("governance.stage_timeout."+stage, "Fugaro's own stage timeouts")
+	}
+	for _, t := range tier.Tiers {
+		for _, key := range governanceTierKeys {
+			add("governance.tiers."+string(t)+"."+key, "Fugaro's own tiers")
+		}
+	}
+	return out
+}
+
+// ownerBlockToken is the owner column's entry for a block of settings: the key
+// whose own spelling holds other rows below it and no value of its own
+// (IsBlock). No command writes such a key, and the command that writes the
+// settings under it is `settings set` — which is what the token's sentence in
+// the read says (settingsOwnerCommands). It is a token of its own rather than
+// the default one because the write refuses the block's spelling
+// (settingsRefuseRow): a row naming the generic writer while the write refuses
+// it is the pair D1178 and F13 forbid, and the read's own blanking rule is only
+// the display half of it.
+const ownerBlockToken = "settings block"
+
+// blockAmong reports whether any row of the table sits below key. It is the
+// question IsBlock asks of the assembled table, and buildRows cannot ask it
+// there: the table is what it is building, so the rows it holds are not yet the
+// package's (rows).
+func blockAmong(out []Row, key string) bool {
+	prefix := key + "."
+	for _, r := range out {
+		if strings.HasPrefix(r.Key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsBlock reports whether key is a block of the registry: a key whose own
+// spelling holds other rows below it, so a write of it as one value is a write
+// of a shape and not of a setting. `governance.stage_timeout` is one against
+// its three stages, `governance.tiers` against its four, and the layer file's
+// own `layer.profiles.*` against the profile the pattern covers.
+//
+// The read keeps the row — a person reading `fugaro settings` wants to see the
+// block and what it holds — and the write refuses it rather than failing at the
+// file's own re-read ("cannot unmarshal !!str into config.StageTimeout"), which
+// is what the four governance block rows did while they listed themselves
+// writable (D2604).
+func IsBlock(key string) bool {
+	return len(BlockChildren(key)) > 0
+}
+
+// BlockChildren are the keys key holds, by the segment that follows it in
+// registry order: `governance.tiers` holds `governance.tiers.large`,
+// `governance.tiers.medium`, `governance.tiers.small` and
+// `governance.tiers.trivial`. A key no row sits under answers nothing, which is
+// what makes it a setting rather than a block (IsBlock).
+func BlockChildren(key string) []string {
+	prefix := key + "."
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range rows {
+		if !strings.HasPrefix(r.Key, prefix) {
+			continue
+		}
+		child := prefix + strings.SplitN(strings.TrimPrefix(r.Key, prefix), ".", 2)[0]
+		if seen[child] {
+			continue
+		}
+		seen[child] = true
+		out = append(out, child)
+	}
+	return out
+}
+
 // defaultValues are the rows whose default is a value the loaders leave in
 // place, named by the constant that holds it — or by no constant where the
 // loader is the only place the value lives. They are held apart from the tables
@@ -1632,7 +1901,7 @@ var defaultValues = map[string]Default{
 	// release writes for a file that sets it nowhere (localcfg.Parse), which is
 	// localcfg.ConfigVersion, so the value is written here and read back out of
 	// a parsed config like the two above.
-	"local.version": value("2", "localcfg.ConfigVersion"),
+	"local.version": value("3", "localcfg.ConfigVersion"),
 	// The Issues section's nudge thresholds (T-IS15): the loader answers the
 	// constants for a file that sets neither, through the accessors rather
 	// than the fields, so "the file wrote nothing" and "the file wrote the

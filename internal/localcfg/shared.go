@@ -30,7 +30,7 @@ const SharedVersion = 1
 // carry, so a published switch would name routes nothing in the file defines
 // (the node, where a run is actually routed, is written by `project policy
 // publish`), and claude_accounts:, whose allow-list is decision T1's operator-only
-// trust anchor (design docs/design/named-oauth-tokens.md §3: never
+// trust anchor (design docs/named-oauth-tokens/spec.md §3: never
 // published, never settable from fugaro.yaml or the project layer, so it
 // must not round-trip through the runs bucket either, which any launcher
 // with objectAdmin on it can write) and the account-choice keys
@@ -53,7 +53,7 @@ const SharedVersion = 1
 // not one machine's — the machine that launches is often not the machine that
 // opted in, and a local-only copy of it is exactly what goes missing (the
 // ledger item of PR #903). **batch: is published**, for the opposite reason: it is the
-// installation's own facts (design docs/design/compute-backend.md §4.4, plan
+// installation's own facts (design docs/compute-backend/spec.md §4.4, plan
 // 2026-10-19-compute-backend.md Task 8 step 2) — the image a run's job runs,
 // the machine type, the network and subnetwork its VMs are placed in, the
 // account they run as, the socket gid — and a machine that onboarded before
@@ -77,11 +77,12 @@ func (c *Config) Shared() *Config {
 	// The published document is version 1 whatever the file it was read from
 	// says, because the version is what a READER refuses by name and the
 	// published document is the one thing here a teammate's older Fugaro meets
-	// first: ConfigVersion 2 renamed the two lists in the terraform block, and
-	// this copy carries no terraform block at all (dropped on the next line),
-	// so nothing in it is version 2's. Publishing this machine's 2 would stop
-	// every teammate whose Fugaro is not upgraded yet with "version 2 is newer
-	// than the 1 this Fugaro writes ... then run fugaro update" — a sentence
+	// first: ConfigVersion 2 renamed the two lists in the terraform block and
+	// version 3 the member table's accounts, and this copy carries neither the
+	// terraform block nor the member table (both dropped below), so nothing in
+	// it is either version's. Publishing this machine's ConfigVersion would
+	// stop every teammate whose Fugaro is not upgraded yet with "version N is
+	// newer than the 1 this Fugaro writes ... then run fugaro update" — a sentence
 	// naming a command they cannot run until the shared config they are
 	// refused by is readable again.
 	s.Version = SharedVersion
@@ -151,6 +152,17 @@ func (c *Config) Shared() *Config {
 	// and budget session name. ParseShared refuses the key besides, because a
 	// shared config carrying it was not written by the converge.
 	s.CloneURLs = nil
+	// Locations is local-only, and it is the one key here dropped for a
+	// reason that is not about who may write the runs bucket: the published
+	// copy decodes strictly, so a `locations:` key in it stops every teammate
+	// whose Fugaro is older than the release that wrote it with "field
+	// locations not found in type localcfg.Config" (F17, D3087 as amended).
+	// The record is one machine's reading of the cloud and is never an input,
+	// so there is nothing in it for another machine to read anyway — every
+	// machine writes its own on its next `fugaro update` — and ParseShared
+	// refuses the key besides, because a shared config carrying it was not
+	// written by the converge.
+	s.Locations = nil
 	// Profiles are the owner's policy, published through `fugaro project
 	// policy publish` into the policy node — not through the shared config a
 	// launcher can write (the node is what the runner reads and fails closed
@@ -201,7 +213,7 @@ func (c *Config) Shared() *Config {
 	// would therefore move every teammate who has no local config onto VMs
 	// with a `batch:` block they wrote, while the machine that ran the
 	// provisioning and the doctor reading never sees the file at all
-	// (docs/design/shared-config.md §4; the reader refuses the key besides).
+	// (docs/shared-config/spec.md §4; the reader refuses the key besides).
 	s.BackendName = ""
 	// ReviewFloor is the owner's policy and travels the way BaseBranch does,
 	// through `fugaro project policy publish` into the policy node. It is
@@ -266,6 +278,14 @@ func (c *Config) Shared() *Config {
 	// it besides, because a shared config carrying it was not written by the
 	// converge.
 	s.Triage = nil
+	// ReviewAgainstTask travels the triage switch's way too, and is dropped
+	// here for its reason one key over: the switch is what turns off the check
+	// every review stage makes of a run's own work, so a launcher who could
+	// write it into the shared file would be having every teammate's pull
+	// requests reviewed against nothing — the check the owner published the
+	// node for. ParseShared refuses it besides, because a shared config
+	// carrying it was not written by the converge.
+	s.ReviewAgainstTask = nil
 	// RigorPending is dropped here for Triage's reason and one of its own that
 	// is nearer still: it is the wizard's rigor answer waiting to be written
 	// into the project layer, and the mode decides how much review every run of
@@ -318,12 +338,16 @@ func (c *Config) Shared() *Config {
 	// verifies against — at a party of its choosing. The membership key and
 	// the owner's member table are dropped with it: a shared file that could
 	// name a workspace would be one that could join this project to a group
-	// nobody here chose, and ParseShared refuses all four keys besides,
+	// nobody here chose, and the owner's shared list goes with the member table
+	// for its reason once more — a launcher who could write it would be
+	// choosing what the workspace's credentials service offers, which is the
+	// owner's act and no one else's. ParseShared refuses all five keys besides,
 	// because a shared config carrying one was not written by the converge.
 	s.Workspace = ""
 	s.WorkspacePin = WorkspacePin{}
 	s.WorkspaceMembers = nil
 	s.WorkspaceCap = nil
+	s.WorkspaceShared = nil
 	s.Repos = withoutRepoLocalKeys(c.Repos)
 	s.ModelPrices = withoutCacheSpellings(s.ModelPrices)
 	return &s
@@ -539,14 +563,32 @@ func MergeShared(published, local *Config) *Config {
 //
 // unionMaps' local-wins rule covers every other field of the entry, and a
 // fresh map is returned, so neither argument is modified.
+//
+// The credentials service's records are carried one by one rather than as one,
+// because they are three keys of the file and a machine can hold some and not
+// the others: the entry a repository door writes carries all of them at once
+// (internal/cli's recordCredentialsServiceReady), while the upgrade backfill —
+// the door that repairs the roots no checkout here applies — writes the switch
+// alone, and an entry written before R12's fields existed carries the switch
+// with no fact beside it. Carrying them together would drop the published fact
+// of a machine whose own entry holds the switch, which is the one record that
+// door keeps.
 func mergeRepoRecords(published, local map[string]Repo) map[string]Repo {
 	out := unionMaps(published, local)
 	for name, l := range local {
 		p, ok := published[name]
-		if !ok || l.CredentialsServiceReady != nil {
+		if !ok {
 			continue
 		}
-		l.CredentialsServiceReady = p.CredentialsServiceReady
+		if l.CredentialsServiceReady == nil {
+			l.CredentialsServiceReady = p.CredentialsServiceReady
+		}
+		if l.ProviderKeysServed == nil {
+			l.ProviderKeysServed = p.ProviderKeysServed
+		}
+		if l.StageAccountServed == nil {
+			l.StageAccountServed = p.StageAccountServed
+		}
 		out[name] = l
 	}
 	return out
@@ -565,20 +607,24 @@ func mergeRepoRecords(published, local map[string]Repo) map[string]Repo {
 // Both arguments are the YAML forms SharedDiff compares (so "carries no
 // record" is the key's absence, which is what omitempty writes). The published
 // entry is never modified.
+//
+// It is the same rule for every record of the credentials service — the switch
+// and R12's two facts beside it — because the merge above carries each of them
+// the same way: a key the local entry does not hold is not a difference, and a
+// key it does hold is.
 func withoutUnwrittenRecord(local, published any) any {
 	le, lok := local.(map[string]any)
 	pe, pok := published.(map[string]any)
 	if !lok || !pok {
 		return published
 	}
-	if _, ok := le["credentials_service_ready"]; ok {
-		return published
-	}
-	if _, ok := pe["credentials_service_ready"]; !ok {
-		return published
-	}
 	out := maps.Clone(pe)
-	delete(out, "credentials_service_ready")
+	for _, key := range []string{"credentials_service_ready", "provider_keys_served", "stage_account_served"} {
+		if _, ok := le[key]; ok {
+			continue
+		}
+		delete(out, key)
+	}
 	return out
 }
 

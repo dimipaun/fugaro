@@ -197,6 +197,10 @@ func bitbucketRun(t *testing.T, early bool) {
 		"--bucket", "file://"+bucket, "--task-file", taskFile,
 		"--workdir", work, "--remote", remote.URL, "--state-dir", filepath.Join(tmp, "state"),
 		"--provider", "bitbucket", "--claude", claude, "--cancel-poll", "100ms")
+	// The job carries no budget database, as runScenario's does and for the
+	// same reason: from AB1a on a job that names one is a job whose launcher
+	// minted this run a token, and this harness plays no launcher (see
+	// runScenario). What a run does with a database is runBudget's rig.
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + tmp,
 		"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",

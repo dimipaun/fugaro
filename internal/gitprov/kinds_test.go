@@ -69,12 +69,15 @@ var forgeKindGoSites = map[string]string{
 	"internal/cli/reviewverify.go":             "reading a pull request's head per provider",
 	"internal/cli/run.go":                      "the kind a launch resolves for the slug it runs on, refused for a read-only context repository the credentials service cannot fetch",
 	"internal/cli/update_proxy_switch.go":      "the project's own repositories the update's Bitbucket proxy switch has to reach, and the workspace they are all in (D2306, D2314)",
+	"internal/cli/update_route.go":             "the credential route a member publishes (WS9, D2973): which of a repository's git credentials is the workspace's to serve and which is the project's own, read against the repository's own provider kind — a second forge's kind reaches no repository of an installation that is not on it",
 	"internal/config/validate.go":              "config.Providers, the config-side list, and the per-provider identity checks — held to runner.jobProviderKinds by internal/cli's TestProviderKindsAgreeWithTheConfigsList",
+	"internal/creds/route.go":                  "the kind vocabulary a run routes each credential by: the model credentials a run's calls go out on and the two forge credentials, whose spellings are this package's own KindBitbucket and KindGitHub so a route and a forge line up, held to them by TestRouteNamesArePinned (C2)",
 	"internal/credsvc/auth.go":                 "the provider a repository's build account is bound to, refused for one this service does not mint at",
 	"internal/credsvc/bitbucket.go":            "the credentials service's admission of a Bitbucket provider",
 	"internal/credsvc/bitbucketproxy.go":       "the proxied Bitbucket request's provider",
 	"internal/credsvc/build.go":                "the provider the build-credentials route issues its git credential from: the App key's mint on GitHub, the bundle's own token and host on Bitbucket",
 	"internal/credsvc/buildtoken.go":           "the provider a build's credential is minted at, and which of the build route's two answers the call is served",
+	"internal/credsvc/bundle_workspace.go":     "the pool's forge entries: the kind a shared entry is read as, and the accessor of the bundle that holds that kind's credential (WS15)",
 	"internal/credsvc/github.go":               "the credentials service's admission of a GitHub provider",
 	"internal/credsvc/githubread.go":           "the credentials service's GitHub read mint",
 	"internal/gitprov/gitprov.go":              "KindForHost and KindForURL's host table",
@@ -86,6 +89,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/infra/discover_github.go":        "the kind every repository the App answers with carries",
 	"internal/infra/projectjobs.go":            "githubProvider, bitbucketProvider and sharedJobProviders: the shared coding jobs only GitHub has, and the implicit review job each kind gets",
 	"internal/infra/spec.go":                   "GitSecret, the git user and the credential the spec mounts",
+	"internal/localcfg/localcfg.go":            "the owner's shared list's own kind: the two forge kinds spelled as the route record spells them (WorkspaceSharedBitbucket, WorkspaceSharedGitHub, R4), beside the model kind that is no forge at all",
 	"internal/localcfg/select.go":              "ProviderHosts, the host each kind is reached at",
 	"internal/pluginwire/remove.go":            "the plugin wire's removal, and the source kind it refuses to take a pin out of",
 	"internal/pluginwire/status.go":            "the plugin wire's GitHub-only status form",
@@ -102,6 +106,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/runner/reviewmode.go":            "review mode's Bitbucket form",
 	"internal/runner/runner.go":                "the run's provider kind, its host table and NoWorkflows",
 	"internal/runner/runnertest/runnertest.go": "the slug the test runner fixtures a GitHub repository with",
+	"internal/settings/meta_layer.go":          "the forge kinds the metadata table offers a console for layer.defaults.git.provider: config.Providers written out rather than read, which internal/cli's TestSettingsMetaLayerComplete holds to it",
 }
 
 // forgeKindNonGoSites are the places outside Go where a forge kind is written

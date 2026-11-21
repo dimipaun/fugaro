@@ -31,8 +31,9 @@
 #     one its own `fugaro.yaml` selected unreadable, and the shared job's name is
 #     built from the profile's), that profile serves provider `bitbucket`, it
 #     lists `claude_accounts` — the model access this check's last row is about —
-#     and the published budget mode is not `off` (the gateway exists only in
-#     observe and enforce, and no gateway is no path to the service);
+#     and the published budget mode is one the gateway exists in (`observe` or
+#     `enforce` — off is not a mode any more, D3009 — since no gateway is no
+#     path to the service);
 #   * the profile's shared jobs, read back with `gcloud run jobs list`: at least
 #     one is named `fugaro-p-<profile>-bitbucket…` (one job per (profile,
 #     provider, account), gcp.ProjectJobName), EVERY one of them carries
@@ -606,13 +607,19 @@ elif cmd == "policy":
     print("mode=%s" % word(budget.get("mode"), 20))
 elif cmd == "jobs":
     prefix = sys.argv[3]
+    profile = sys.argv[4] if len(sys.argv) > 4 else ""
     n = urls = tokens = 0
     names = []
     for doc in load(sys.argv[2]) or []:
         if not isinstance(doc, dict):
             continue
         name = ((doc.get("metadata") or {}).get("name")) or ""
-        if not name or not name.startswith(prefix):
+        labels = ((doc.get("metadata") or {}).get("labels")) or {}
+        # The name is truncated before its hash when the parts are long
+        # (fugaro-p-<profile>-bitbucke-<hash>), so the prefix alone misses a
+        # real job; the labels the job carries are what name its profile.
+        by_label = bool(profile) and labels.get("fugaro_profile") == profile and labels.get("fugaro_provider") == "bitbucket"
+        if not name or not (name.startswith(prefix) or by_label):
             continue
         containers = containers_of(doc)
         n += 1
@@ -872,13 +879,8 @@ step_policy() {
   local mode
   mode=$(field "$SCRATCH/policy.txt" mode)
   case "$mode" in
-  off)
-    fact policy FAIL "the profile '${PROFILE}' admits ${REPO} and the published budget mode is 'off': the gateway is what reaches the credentials service, and it exists only in observe and enforce (D2071, GatewayOn), so a run of this repository would stop in bootstrap with no path to the service — every row below would be a row about nothing. Raise the mode ('fugaro project policy publish', observe or enforce) and run this check again"
-    PROFILE_STOP=yes
-    return 0
-    ;;
   - | '')
-    unmeasured policy "${REPO} is on the profile '${PROFILE}' and the policy document carries no budget mode (it reads '${mode:-<none>}'), so a mode that is not off is NOT measured: a mode the document does not carry is not a mode that is not off, and the gateway's own existence turns on it. Publish the project policy so it carries one ('fugaro project policy publish', observe or enforce) and run this check again"
+    unmeasured policy "${REPO} is on the profile '${PROFILE}' and the policy document carries no budget mode (it reads '${mode:-<none>}'), so whether the gateway exists for a run of this repository is NOT measured: the gateway exists in observe and enforce (D2071, GatewayOn), and a mode the document does not carry is neither. Publish the project policy so it carries one ('fugaro project policy publish', observe or enforce) and run this check again"
     PROFILE_STOP=yes
     return 0
     ;;
@@ -907,7 +909,7 @@ step_job() {
     JOB_STOP=yes
     return 0
   fi
-  if ! reader jobs "$SCRATCH/jobs.out" "$SHARED_PREFIX" >"$SCRATCH/jobs.txt" 2>"$SCRATCH/jobs.reader.err"; then
+  if ! reader jobs "$SCRATCH/jobs.out" "$SHARED_PREFIX" "$PROFILE" >"$SCRATCH/jobs.txt" 2>"$SCRATCH/jobs.reader.err"; then
     unmeasured job "gcloud run jobs list printed a document this check could not read: what it printed is in $SCRATCH/jobs.out"
     JOB_STOP=yes
     return 0

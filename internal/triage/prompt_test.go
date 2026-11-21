@@ -231,7 +231,7 @@ func TestPersonasAreEmbedded(t *testing.T) {
 	if got := strings.Join(names, ","); got != want {
 		t.Fatalf("the embedded personas are %s, want %s", got, want)
 	}
-	texts := map[rigor.Mode]string{}
+	texts := map[rigor.Rigor]string{}
 	for mode, file := range personaFiles {
 		data, err := personaFS.ReadFile(file)
 		if err != nil {
@@ -254,5 +254,27 @@ func TestPersonasAreEmbedded(t *testing.T) {
 	}
 	if !strings.HasPrefix(texts[rigor.Startup], startupPersonaHeading) || !strings.HasPrefix(texts[rigor.Pro], proPersonaHeading) {
 		t.Error("a persona's first line is not the question TestPromptNamesThePersonaOfTheMode pins")
+	}
+}
+
+// TestTriagePromptNamesScopeFloor is R6's last clause: the brief's statement of
+// the floor names the task scope beside the class, the impact and the owner
+// flag, because the floor is what the judge may not move (D1840) and a judge
+// told the three words without being told a scope is one of them would not know
+// that a change which does not do what its task asks is floor.
+func TestTriagePromptNamesScopeFloor(t *testing.T) {
+	p := Prompt(rigor.Startup, "Bump the request timeout.", nil)
+	_, rest, ok := strings.Cut(p, "The floor is binding")
+	if !ok {
+		t.Fatalf("the brief states no floor:\n%s", p)
+	}
+	// The sentence and not the whole brief: the goal block below quotes a
+	// launcher's own words, and a word that arrived there would be a judge told
+	// nothing.
+	floor, _, _ := strings.Cut(rest, "\n")
+	for _, word := range []string{"unmet", "differs"} {
+		if !strings.Contains(floor, word) {
+			t.Errorf("the floor statement does not name %q:\n%s", word, floor)
+		}
 	}
 }

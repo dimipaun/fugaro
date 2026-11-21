@@ -85,6 +85,10 @@ func (r *run) notePR(ctx context.Context, pr gitprov.PR) {
 	}
 	r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL, Desc: r.pr.desc}
 	r.save(ctx)
+	// The run has opened this pull request: the index entry goes in now, the
+	// moment the number is known, so `runs ls --pr N` finds the run while it
+	// is still going (prindex.go).
+	r.writePRIndex(ctx, pr.Number, runstore.PRIndexOpened)
 	r.noteRegistryPRURL(r.rec.PR.URL)
 	r.noteChangeSetMember(ctx, pr)
 }
@@ -844,7 +848,7 @@ func (r *run) rigorPart() string {
 	if rg == nil {
 		return ""
 	}
-	out := "rigor: " + string(rg.Mode) + " (" + string(rg.From)
+	out := "rigor: " + string(rg.LevelOf()) + " (" + string(rg.From)
 	if len(rg.Areas) > 0 {
 		out += " " + inlineText(rg.Areas[0].Name)
 		if n := len(rg.Areas) - 1; n > 0 {

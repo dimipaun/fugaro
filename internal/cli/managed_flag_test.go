@@ -264,7 +264,7 @@ func TestManagedFlagSaysWhichHalfIsMissingWhenTheLabelIsRefused(t *testing.T) {
 		}
 	}
 	// The recovery: the owner's own terminal, and the doc with the line.
-	for _, want := range []string{"owner's own terminal", "docs/design/managed-projects.md"} {
+	for _, want := range []string{"owner's own terminal", "docs/managed-projects/spec.md"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}

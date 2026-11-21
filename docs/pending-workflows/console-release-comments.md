@@ -49,7 +49,7 @@ section. Do them in the same commit: no test can see a dangling reference here, 
 `.md` and neither `internal/cli`'s docs tests nor `website/test/readme.mjs`
 enumerates them.
 
-`docs/design/desktop-console.md` §9.4 and `docs/release.md` ("What fences a
+`docs/desktop-console/spec.md` §9.4 and `docs/release.md` ("What fences a
 release now") carry the same correction in prose, and the latter gives the one
 `gh api` call that restores the click.
 

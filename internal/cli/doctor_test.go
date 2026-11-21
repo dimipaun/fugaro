@@ -100,7 +100,7 @@ func doctorFakeTerraform(t *testing.T, dir string) {
 func putSecret(t *testing.T, sm *gcpfake.Secrets, project, slug, name string, value []byte) {
 	t.Helper()
 	ctx := context.Background()
-	s, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: project, Endpoints: gcp.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
+	s, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: project, Region: "us-east5", Endpoints: gcp.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1159,7 +1159,7 @@ func TestDoctorGitHubApp(t *testing.T) {
 // addClaudeAccounts appends a claude_accounts: block to the rig's local
 // config, as an owner's own hand edit would (claude_accounts is
 // local-config-only, never written by any Fugaro command itself; design
-// docs/design/named-oauth-tokens.md §3 T1).
+// docs/named-oauth-tokens/spec.md §3 T1).
 func addClaudeAccounts(t *testing.T, r *doctorRig, yaml string) {
 	t.Helper()
 	data, err := os.ReadFile(r.cfgPath)
@@ -1921,7 +1921,7 @@ func repoLabel(t *testing.T, slug string) string {
 }
 
 // projectLabels are the labels of a project-wide container (design
-// docs/design/project-secrets.md §4).
+// docs/project-secrets/spec.md §4).
 func projectLabels(fugaroProject, name string) map[string]string {
 	return map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: fugaroProject, gcp.LabelSecret: name}
 }
@@ -1942,7 +1942,7 @@ func seedProjectSecret(t *testing.T, sm *gcpfake.Secrets, fugaroProject, name st
 func putProjectSecret(t *testing.T, sm *gcpfake.Secrets, fugaroProject, name string, value []byte) string {
 	t.Helper()
 	ctx := context.Background()
-	s, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: "proj-1234", Endpoints: gcp.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
+	s, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: "proj-1234", Region: "us-east5", Endpoints: gcp.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,7 +12,7 @@ import (
 )
 
 // ObjectPrefix is the runs bucket prefix the token objects live under, out of
-// runs/ (docs/design/budget-token-channel.md §7.2, D16): runs/ is where a
+// runs/ (docs/budget-token-channel/spec.md §7.2, D16): runs/ is where a
 // run's task, launch record and logs live, and a job account may write there,
 // while tokens/ is read-only for it, so a peer run cannot delete a queued
 // run's token. The Terraform modules grant on exactly this prefix — the job's
@@ -42,8 +42,11 @@ func ObjectKey(slug, run string) string {
 // with ObjectKey as the additional authenticated data) and the caller hands
 // the same key to the one execution the token is for (D15). There is no
 // plaintext form: a key that is not one is ErrSealKey and nothing is written,
-// because a plaintext object in the bucket is the exposure the seal closes
-// (§7.4), and a reader of tokens/ must never find one written by Fugaro.
+// because a plaintext TOKEN object in the bucket is the exposure the seal
+// closes (§7.4), and a reader of tokens/ must never find one written by
+// Fugaro. The plaintext under tokens/ is the messages a launcher sends a
+// running run (docs/run-messages, D2941, F2), which are not this: a token is
+// never one of them.
 func PutObject(ctx context.Context, b *blobx.Bucket, slug, run, tok string, key []byte) error {
 	if !ValidSegment(slug) || !ValidSegment(run) {
 		return errors.New("budget token: invalid slug or run id")
@@ -104,7 +107,7 @@ func DeleteObject(ctx context.Context, b *blobx.Bucket, slug, run string) error 
 // it means "missing, or not readable" and nothing narrower: its grant on
 // tokens/ is a conditioned objectViewer with no storage.objects.list, so GCS
 // answers its read of a missing object with 403, and a job without the grant
-// gets 403 whether the object is there or not (docs/design/bucket-iam.md
+// gets 403 whether the object is there or not (docs/bucket-iam/spec.md
 // §2.3). The runner's refuseStrayToken says what it makes of that.
 //
 // It reads the object's bytes rather than asking a driver for its metadata

@@ -73,6 +73,7 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 			return strconv.FormatFloat(plain.Agent.MaxBudgetUSD, 'f', -1, 64)
 		},
 		"agent.first_line_review":      func() string { return plain.Agent.FirstLineReview },
+		"agent.workspace_beat":         func() string { return strconv.FormatBool(plain.Agent.WorkspaceBeatOn()) },
 		"planning.decoupling":          func() string { return strconv.FormatBool(plain.Planning.DecouplingOn()) },
 		"workflows.*.checkout":         func() string { return web.Checkout },
 		"workflows.*.resources.cpu":    func() string { return strconv.Itoa(web.Resources.CPU) },

@@ -702,6 +702,7 @@ describe('the class rules', () => {
         'repoPattern',
         'repository',
         'runId',
+        'scope',
         'sentence',
         'slug',
         'url',
@@ -768,6 +769,62 @@ describe('the class rules', () => {
     expect(text(longest, 'repoPattern')).toBe(longest)
     expect(refused('x'.repeat(MAX_REPO_PATTERN_LENGTH + 1), 'repoPattern')).toContain(
       'not a valid repository pattern',
+    )
+  })
+
+  it('keeps a stored grant scope, and refuses anything that is not one', () => {
+    // The shapes `ParseScope` answers with (`internal/access`, and the canonical
+    // spelling `Scope.String` writes): the two whole scopes, one pattern, a
+    // nested path, and a comma-separated list.
+    for (const good of [
+      'project',
+      'all-repos',
+      'github/acme/*',
+      'github/acme/app',
+      'bitbucket/acme/group/app',
+      'github/acme/app,github/acme/*',
+    ]) {
+      expect(text(good, 'scope'), good).toBe(good)
+    }
+    for (const bad of [
+      // A bare `owner/name` is not one: a scope entry is provider-qualified
+      // (`ValidPattern`), and `ParseScope` reads a repository of that shape as
+      // an owner and a repository with no provider to match.
+      'acme/app',
+      // The lone star is `all-repos`' meaning, and `all-repos` is a project
+      // admin's to grant: `ParseScope` refuses `*` so a grant cannot mint the
+      // scope its holder does not hold.
+      '*',
+      // A wildcard provider is the allow-list's spelling and not a grant's:
+      // `MatchRepo` admits `*/acme/*` for `allow_repos`, and a grant names the
+      // repositories it covers.
+      '*/acme/*',
+      // A doubled star crosses a `/` to a reader and never does to the matcher.
+      'github/**/app',
+      // A whole scope is spelled alone: `ParseScope` refuses a reserved word
+      // mixed with a repository list.
+      'project,github/acme/app',
+      // Upper case and a `.git` ending are what `ParseScope` folds and trims
+      // before it stores an entry, so a *stored* scope carries neither.
+      'GitHub/acme/app',
+      'github/acme/app.git',
+      // An empty entry, at either end of a list.
+      'github/acme/app,',
+      // A `.` or `..` segment covers nothing (`CanonicalRepo` refuses such a
+      // repository), as it does for `repoPattern`.
+      'github/../../etc',
+      '',
+    ]) {
+      expect(refused(bad, 'scope', 'grants[0].scope'), bad).toContain('grants[0].scope')
+    }
+    // The bound is the CLI's own per-entry one: `ParseScope` canonicalises an
+    // entry through `ValidPattern`, whose `MaxPatternLen` is the longest entry
+    // the grants node's reader accepts.
+    const longest = 'github/' + 'a'.repeat(MAX_REPO_PATTERN_LENGTH - 'github/'.length - 4) + '/app'
+    expect(longest.length).toBe(MAX_REPO_PATTERN_LENGTH)
+    expect(text(longest, 'scope')).toBe(longest)
+    expect(refused(`github/acme/${'a'.repeat(MAX_REPO_PATTERN_LENGTH)}`, 'scope')).toContain(
+      'not a valid scope',
     )
   })
 

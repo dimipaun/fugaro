@@ -6,6 +6,10 @@ variable "project" {
   type = string
 }
 
+variable "database_region" {
+  type = string
+}
+
 variable "fugaro_project" {
   type = string
 }
@@ -65,6 +69,17 @@ variable "history_account" {
 }
 
 variable "coordinator_account" {
+  type    = string
+  default = ""
+}
+
+# The public mobile service's runtime account (mobile plan task P5; D2782 as
+# amended by F31, O1, O8): the account the installation root creates, handed
+# over here because the signer it signs AS is created here. It is empty in every
+# tfvars `fugaro update` writes — the service is off until a released image runs
+# its mode — and the module then creates neither the device-only signer nor a
+# grant naming anyone.
+variable "mobile_account" {
   type    = string
   default = ""
 }

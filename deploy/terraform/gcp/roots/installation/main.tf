@@ -54,6 +54,7 @@ module "installation" {
   reports                   = var.reports
   licence                   = var.licence
   credentials_service       = var.credentials_service
+  enable_mobile_service     = var.enable_mobile_service
   intake                    = var.intake
   voice_service             = var.voice_service
   project_secrets           = var.project_secrets
@@ -61,7 +62,7 @@ module "installation" {
   orchestrator              = var.orchestrator
 }
 
-# The shared project jobs (design docs/design/project-centric.md §4.1): one
+# The shared project jobs (design docs/project-centric/spec.md §4.1): one
 # Cloud Run job and one job service account per (profile, provider,
 # account), from the local config's profiles. The key is absent for an
 # installation that names no profile, and the module then creates nothing.

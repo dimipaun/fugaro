@@ -30,7 +30,7 @@ import (
 // TestDefaultLoopGolden pins the loop of a repository that names no recipe:
 // stage order, review tiers, each call's model and the outcome. It was
 // written against the hard-coded loop and must pass unchanged on the
-// recipe-driven one (docs/design/recipes.md §10, equivalence).
+// recipe-driven one (docs/recipes/spec.md §10, equivalence).
 func TestDefaultLoopGolden(t *testing.T) {
 	one := 1
 	override := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature",

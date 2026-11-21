@@ -19,7 +19,7 @@ import (
 )
 
 // fugaro backends ls (plan 2026-10-19-compute-backend.md Task 8 step 3, design
-// docs/design/compute-backend.md §4.4, P7: build it). Two things are worth a
+// docs/compute-backend/spec.md §4.4, P7: build it). Two things are worth a
 // test and they are different things: the command answers the design's question
 // ("which backend does this project use?") from the project config, offline;
 // and the names it lists are the seam's own, so the list can neither offer a

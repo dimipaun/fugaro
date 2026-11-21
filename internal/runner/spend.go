@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 )
@@ -32,9 +33,18 @@ const (
 // Spend is the job's budget: the mode, the per-run cap and the prices the
 // ledger charges.
 type Spend struct {
-	Mode   string         // off | observe | enforce
+	// Mode is the mode string this run holds, exactly as the job's
+	// environment or a policy layer wrote it. Its *meaning* is C1's and never
+	// the string's: c1.Effective answers observe for a mode left unset and for
+	// the word that was a mode, so every reader of what a run is accounted for
+	// asks there (On below, and the budget record's own mode). The raw string
+	// survives because two questions are still asked of it as a string: the
+	// gateway's, which only AB1b makes unconditional, and projectpolicy's
+	// liveMode, which reads what the *job's own environment* names to tell a
+	// launch its launcher mints for from one it mints nothing for (D3009, R3).
+	Mode   string
 	Cap    pricing.Micros // 0: none
-	Prices *pricing.Table // the built-in table with the owner's overrides; nil when off without overrides
+	Prices *pricing.Table // the built-in table with the owner's overrides; nil only for a Spend built by hand
 	// MaxRunTokens is the ceiling's token cap; 0: none. It applies whatever
 	// the mode.
 	MaxRunTokens int64
@@ -43,15 +53,28 @@ type Spend struct {
 	AllowedModels []string
 }
 
-// On reports whether the budget accounts for spend (observe or enforce).
-func (s Spend) On() bool { return s.Mode == "observe" || s.Mode == "enforce" }
+// On reports whether the budget accounts for spend, and from AB1a on every run
+// does: the mode that did not account for it is gone, and C1 answers observe
+// for a mode left unset (D3009, R3). The question is asked through C1's
+// vocabulary rather than by comparing the string, so a mode nobody wrote is
+// accounted for too — which is what every reader of it (the session, the policy
+// read, the switch's guards) has to agree about. Until I1, which deletes the
+// question with the mode it used to ask.
+func (s Spend) On() bool {
+	switch policy.Mode(s.Mode).Effective() {
+	case policy.ModeObserve, policy.ModeEnforce:
+		return true
+	}
+	return false
+}
 
 // SpendFromEnv reads the budget from the job's environment. lookup reports
 // whether a variable is present, because the two policy variables must tell
 // "not set" from "set to nothing": a present-but-empty one is damage to the
-// ceiling and an error, never a silent unset. Unset, or off, is off, whatever
-// else is set. A malformed value is an error, which the runner reports as an
-// infra_error at bootstrap: never a silent off.
+// ceiling and an error, never a silent unset. A job that names no mode is
+// accounted for as observe (C1, D3009, R3), and so is one whose mode is the
+// word that was a mode. A malformed value is an error, which the runner reports
+// as an infra_error at bootstrap: never a silent off.
 func SpendFromEnv(lookup func(string) (string, bool)) (Spend, error) {
 	tokens, models, err := policyFromEnv(lookup)
 	if err != nil {
@@ -93,13 +116,17 @@ func policyFromEnv(lookup func(string) (string, bool)) (int64, []string, error) 
 func spendFromEnv(lookup func(string) (string, bool)) (Spend, error) {
 	getenv := func(k string) string { v, _ := lookup(k); return v }
 	var s Spend
-	switch mode := getenv(BudgetModeEnv); mode {
-	case "", "off":
-		s.Mode = "off"
-	case "observe", "enforce":
-		s.Mode = mode
+	switch mode := policy.Mode(getenv(BudgetModeEnv)); {
+	case mode == "", mode.Removed(), mode == policy.ModeObserve, mode == policy.ModeEnforce:
+		// A mode left unset, and the word that was a mode, are the observe C1
+		// answers for them (D3009, R3): both are accounted for, and the session
+		// of such a run opens. The string itself is kept exactly as the job
+		// wrote it, because the gateway's question reads it and only AB1b makes
+		// that question unconditional; every reader of what it means — On
+		// below, and the mode the run records — asks C1.
+		s.Mode = string(mode)
 	default:
-		return Spend{}, fmt.Errorf("%s %q: it must be off, observe or enforce", BudgetModeEnv, mode)
+		return Spend{}, fmt.Errorf("%s %q: it must be observe or enforce", BudgetModeEnv, string(mode))
 	}
 	// The cap and the price overrides are the owner's ceiling whatever the
 	// mode: a repository that escalates an off ceiling to enforce runs at
@@ -117,15 +144,15 @@ func spendFromEnv(lookup func(string) (string, bool)) (Spend, error) {
 			return Spend{}, fmt.Errorf("%s %q: it rounds to nothing; the smallest cap is $0.000001", MaxRunUSDEnv, v)
 		}
 	}
-	raw := getenv(ModelPricesEnv)
-	if s.On() || raw != "" {
-		o, err := pricing.ParseOverrides(raw)
-		if err != nil {
-			return Spend{}, err
-		}
-		if s.Prices, err = priceTableFromEnv(lookup, o); err != nil {
-			return Spend{}, err
-		}
+	// Every run is accounted for now, so every run prices: the table holds the
+	// ceiling's overrides when the environment carries them and the built-in
+	// catalog behind them, as it did for a budget-on run.
+	o, err := pricing.ParseOverrides(getenv(ModelPricesEnv))
+	if err != nil {
+		return Spend{}, err
+	}
+	if s.Prices, err = priceTableFromEnv(lookup, o); err != nil {
+		return Spend{}, err
 	}
 	return s, nil
 }
@@ -151,8 +178,8 @@ func priceTableFromEnv(lookup func(string) (string, bool), ov pricing.Overrides)
 var loadCatalog = catalog.Load
 
 // priceTable is config.PriceTable with the built-in catalog and the clock:
-// the one place the runner builds a table, so a run with the budget off is
-// priced by the same rules as one with it on.
+// the one place the runner builds a table, so every run is priced by the same
+// rules — the ceiling's overrides, the providers the job carries, the catalog.
 func priceTable(providers map[string]config.ModelProvider, ov pricing.Overrides) (*pricing.Table, error) {
 	cat, err := loadCatalog()
 	if err != nil {

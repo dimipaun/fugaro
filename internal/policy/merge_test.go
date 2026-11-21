@@ -274,18 +274,18 @@ func TestBinariesCapTightensOnly(t *testing.T) {
 // TestReviewFloorMergesTightenOnly is D722's G1: the owner's review-level
 // floor is a union over the layers, so a layer below it can only ever add a
 // level to a rigor mode. The layers under the floor are the ones a launcher
-// writes — the project layer and the task (docs/design/bucket-iam.md §10 L1,
+// writes — the project layer and the task (docs/bucket-iam/spec.md §10 L1,
 // L2) — and the whole point of the floor is that neither can take a level
 // away: a merge that let a lower layer's shorter list replace the owner's
 // would be the launcher choosing how much review it gets.
 func TestReviewFloorMergesTightenOnly(t *testing.T) {
-	owner := Layer{ReviewFloor: map[rigor.Mode][]Level{
+	owner := Layer{ReviewFloor: map[rigor.Rigor][]Level{
 		rigor.Pro:      {LevelL2},
 		rigor.Critical: {LevelL2, LevelL3},
 	}}
 	// A layer that asks for more review than the owner requires, and one that
 	// names no floor at all — the shape every launcher-written layer has.
-	more := Layer{ReviewFloor: map[rigor.Mode][]Level{rigor.Pro: {LevelL1, LevelL3}}}
+	more := Layer{ReviewFloor: map[rigor.Rigor][]Level{rigor.Pro: {LevelL1, LevelL3}}}
 	none := Layer{}
 	e := Merge(owner, more, none)
 
@@ -299,7 +299,7 @@ func TestReviewFloorMergesTightenOnly(t *testing.T) {
 		t.Errorf("ReviewFloor(startup) = %v, want nil: no layer set a floor for that mode", got)
 	}
 	// A layer that repeats a level the owner already required adds nothing.
-	e = Merge(owner, Layer{ReviewFloor: map[rigor.Mode][]Level{rigor.Critical: {LevelL3, LevelL3}}})
+	e = Merge(owner, Layer{ReviewFloor: map[rigor.Rigor][]Level{rigor.Critical: {LevelL3, LevelL3}}})
 	if got, want := e.ReviewFloor(rigor.Critical), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
 		t.Errorf("ReviewFloor(critical) = %v, want %v: the union holds a level once", got, want)
 	}
@@ -319,13 +319,13 @@ func TestReviewFloorMergesTightenOnly(t *testing.T) {
 // to hotfix's row *and* to the row the layers resolved for it. Reading one
 // row would let a per-run flag drop a floor the owner set.
 func TestReviewFloorForHoldsBothRowsOfAnOffAxisRequest(t *testing.T) {
-	e := Merge(Layer{ReviewFloor: map[rigor.Mode][]Level{
+	e := Merge(Layer{ReviewFloor: map[rigor.Rigor][]Level{
 		rigor.Pro:    {LevelL2, LevelL3},
 		rigor.Hotfix: {LevelL1},
 	}})
 
 	// No second row: the request did not take the run off the axis ("" is
-	// what rigor.LayersMode answers for every on-axis request), so the answer
+	// what rigor.LayersRigor answers for every on-axis request), so the answer
 	// is ReviewFloor's own.
 	if got, want := e.ReviewFloorFor(rigor.Pro, ""), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
 		t.Errorf("ReviewFloorFor(pro, no beside) = %v, want %v", got, want)
@@ -369,7 +369,7 @@ func TestParseFloor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[rigor.Mode][]Level{rigor.Pro: {LevelL2}, rigor.Critical: {LevelL2, LevelL3}}
+	want := map[rigor.Rigor][]Level{rigor.Pro: {LevelL2}, rigor.Critical: {LevelL2, LevelL3}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ParseFloor = %v, want %v", got, want)
 	}
@@ -829,6 +829,80 @@ func TestAgentTriageOffInPolicyWinsOverARepositoryOn(t *testing.T) {
 			for _, ig := range e.Ignored {
 				if ig.Key != KeyTriage || ig.Value != "true" || ig.Effective != "false" {
 					t.Errorf("Ignored = %+v: a dropped value is the repository's true under an effective false", ig)
+				}
+				if ig.Source != tc.wantSrc {
+					t.Errorf("Ignored = %+v: source = %q, want the layer the effective value came from, %q", ig, ig.Source, tc.wantSrc)
+				}
+			}
+		})
+	}
+}
+
+// TestMergeReviewAgainstTaskOnIsStricter is D2935's direction for the switch
+// that makes a review check a pull request against its task
+// (docs/review-against-task): it has the two homes triage has — the
+// repository's own agent.review_against_task and the owner's published policy
+// node (Layer.ReviewAgainstTask, which the runner puts on the ceiling) — and
+// the opposite polarity. ON is the stricter answer here, so a later layer may
+// turn the check on over an off, and turning it off over an on is the value
+// the merge drops and records. That is what makes the owner's published `true`
+// a check no repository can walk out of, while his published `false` is only
+// the default a repository's own `true` overrides (D2935).
+//
+// The layers are the three Merge is always handed — the owner's node as the
+// ceiling, the project's default branch, the task's own branch.
+func TestMergeReviewAgainstTaskOnIsStricter(t *testing.T) {
+	on, off := true, false
+	cases := []struct {
+		name                 string
+		ceiling, def, branch *bool
+		want                 *bool
+		wantSrc              string
+		ignored              int
+	}{
+		{"nothing set", nil, nil, nil, nil, "", 0},
+		{"the owner's node turns it on", &on, nil, nil, &on, "ceiling", 0},
+		{"the default branch turns it on", nil, &on, nil, &on, "default-branch", 0},
+		{"the repository turns it on", nil, nil, &on, &on, "branch", 0},
+		{"the repository turns it on over a published off", &off, nil, &on, &on, "branch", 0},
+		{"the default branch turns it on over a published off", &off, &on, nil, &on, "default-branch", 0},
+		{"a branch off under a default-branch on", nil, &on, &off, &on, "default-branch", 1},
+		{"the repository turns it off under a published on", &on, nil, &off, &on, "ceiling", 1},
+		{"the default branch turns it off under a published on", &on, &off, nil, &on, "ceiling", 1},
+		{"the repository turns it off under nothing", nil, nil, &off, &off, "branch", 0},
+		{"the repository turns it off twice", nil, &off, &off, &off, "default-branch", 0},
+		{"two equals are not ignored", &on, nil, &on, &on, "ceiling", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := Merge(Layer{ReviewAgainstTask: tc.ceiling}, Layer{ReviewAgainstTask: tc.def}, Layer{ReviewAgainstTask: tc.branch})
+			switch {
+			case tc.want == nil && e.ReviewAgainstTask != nil:
+				t.Fatalf("ReviewAgainstTask = %v, want nil: a layer that says nothing is not a value", *e.ReviewAgainstTask)
+			case tc.want != nil && (e.ReviewAgainstTask == nil || *e.ReviewAgainstTask != *tc.want):
+				t.Fatalf("ReviewAgainstTask = %v, want %v", e.ReviewAgainstTask, *tc.want)
+			}
+			if got := e.Sources[KeyReviewAgainstTask]; got != tc.wantSrc {
+				t.Errorf("Sources[%s] = %q, want %q", KeyReviewAgainstTask, got, tc.wantSrc)
+			}
+			// The two accessors are the merge's direction read: on is stricter,
+			// so the merged value is forced exactly when some layer asked for it
+			// and the default is off exactly when some layer asked off and none
+			// asked on.
+			wantForced := tc.want != nil && *tc.want
+			wantDefaultOff := tc.want != nil && !*tc.want
+			if got := e.ReviewAgainstTaskForced(); got != wantForced {
+				t.Errorf("ReviewAgainstTaskForced() = %v, want %v (ReviewAgainstTask = %v)", got, wantForced, e.ReviewAgainstTask)
+			}
+			if got := e.ReviewAgainstTaskDefaultOff(); got != wantDefaultOff {
+				t.Errorf("ReviewAgainstTaskDefaultOff() = %v, want %v (ReviewAgainstTask = %v)", got, wantDefaultOff, e.ReviewAgainstTask)
+			}
+			if len(e.Ignored) != tc.ignored {
+				t.Fatalf("Ignored = %v, want %d record(s)", e.Ignored, tc.ignored)
+			}
+			for _, ig := range e.Ignored {
+				if ig.Key != KeyReviewAgainstTask || ig.Value != "false" || ig.Effective != "true" {
+					t.Errorf("Ignored = %+v: a dropped value is a layer's false under an effective true", ig)
 				}
 				if ig.Source != tc.wantSrc {
 					t.Errorf("Ignored = %+v: source = %q, want the layer the effective value came from, %q", ig, ig.Source, tc.wantSrc)

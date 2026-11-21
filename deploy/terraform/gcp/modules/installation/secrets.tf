@@ -1,5 +1,5 @@
 # The installation's project-wide secret containers (design
-# docs/design/project-secrets.md §4). They hold no value here: values are
+# docs/project-secrets/spec.md §4). They hold no value here: values are
 # added with fugaro secrets set NAME --project-wide, so none ever reaches
 # Terraform or its state. The labels are the marks that command sets and
 # that fugaro update's discovery checks before adopting one.
@@ -19,14 +19,22 @@ resource "google_secret_manager_secret" "project" {
     fugaro_secret  = each.key
   }
 
-  # The adopted secrets are replicated automatically; any other replication
-  # would replace them, which deletes every version first.
+  # A container the CLI created is replicated in the installation's region, and
+  # replication is creation-time only: a differing value here would plan a
+  # replacement, which prevent_destroy refuses and which deletes every version
+  # first. So the field is ignored below, and this block decides only a
+  # container Terraform itself creates.
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [replication]
   }
 }
 
@@ -106,12 +114,22 @@ resource "google_secret_manager_secret" "voice_provider_keys" {
     fugaro_project = var.fugaro_project
   }
 
+  # A container the CLI created is replicated in the installation's region, and
+  # replication is creation-time only: a differing value here would plan a
+  # replacement, which prevent_destroy refuses and which deletes every version
+  # first. So the field is ignored below, and this block decides only a
+  # container Terraform itself creates.
   replication {
-    auto {}
+    user_managed {
+      replicas {
+        location = var.region
+      }
+    }
   }
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [replication]
   }
 
   depends_on = [google_project_service.this]

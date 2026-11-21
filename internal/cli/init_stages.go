@@ -228,7 +228,7 @@ func (e *initEngine) redaction() func() []string {
 func (e *initEngine) options() initflow.Options {
 	r, o := e.r, e.r.o
 	e.slots() // built once: the loop, the stage and the log share the slots
-	return initflow.Options{
+	opts := initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: r.stdinTerminal(), JSON: o.asJSON, Agent: agentMarker(os.Getenv, r.stdinTerminal()), Out: r.w,
 		Program: o.loopProgram(),
@@ -246,6 +246,15 @@ func (e *initEngine) options() initflow.Options {
 		// mark on account of this line.
 		ManagedGate: e.managedStage,
 	}
+	// The event feed (setup_events.go): a run told to write one hands the loop
+	// the three moments a consumer renders — a stage reached, a stage settled,
+	// and a step left for the user — and a run without --events hands it
+	// nothing at all, which leaves the hooks nil and is exactly the run the CLI
+	// had before the flag existed.
+	if r.events != nil {
+		opts.OnStep, opts.OnStage, opts.OnLeft = r.events.step, r.events.stage, r.events.left
+	}
+	return opts
 }
 
 // initStages is the stages converge() runs, in the canonical order, built
@@ -329,6 +338,15 @@ func initStages(e *initEngine) []initflow.Stage {
 	// database to publish the record in.
 	e.r.workspaceStage = workspace
 	stages = append(stages, workspace)
+	// The credential route right after the workspace record and before the
+	// layer: it is the MEMBER's own published document, derived from the policy
+	// node the run has just published (which accounts and forge credentials the
+	// member's own policy admits) and from the membership key and pin the
+	// workspace stage's own subjects declare (update_route.go, WS9). A project
+	// in no workspace registers it and publishes nothing, removing whatever a
+	// former membership left behind — which is what makes leaving a workspace
+	// converge with no step of its own.
+	stages = append(stages, newCredentialsRouteStage(e))
 	// The layer stage after the policy one: the project layer this run would
 	// publish is read under the node the policy stage just moved in place, so a
 	// layer whose claims the older node could not carry is judged by the same
@@ -433,6 +451,15 @@ func stagesNamed(e *initEngine, names ...string) (stages []initflow.Stage, unans
 // decides is what is applied and in what order — the canonical one
 // (initflow.Names), not the order the questions were asked in.
 func (e *initEngine) converge(ctx context.Context) error {
+	// The owner's own local config, read before anything else this run does and
+	// before the first stage plans (update_catalog_guard.go): every image
+	// catalog entry this release will refuse is named here, and the one entry
+	// whose fix is unambiguous — a pin to a branch the repository no longer has
+	// whose file the default branch also has — is fixed in the file itself. It
+	// touches nothing in the installation's cloud and it can fail nothing, so it
+	// is safe with runs in flight and never a step the one command the upgrade
+	// is can be stopped at.
+	e.guardCatalogEntries(ctx)
 	e.announceAlreadySetUp()
 	stages := initStages(e)
 	e.r.review = &runReview{cover: e.cover, firebase: e.firebaseVerified, owner: e.owner, screen: e.reviewScreen}
@@ -588,6 +615,17 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// this run leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
+	// And D2965's, the seventh: the runs that opened, followed or reviewed a
+	// pull request before this release wrote an entry as it came to be on one,
+	// so `runs ls --pr N` finds them in the index instead of scanning the
+	// repository
+	// (update_prindex.go). It is here for the reason the six above are — the
+	// converge applied everything it had, so the runs it walks are the ones this
+	// run leaves behind — and it is beside writeAdminList because it is the
+	// other object of this run's that a later read of the installation takes:
+	// both are derived from what the installation holds and neither fails an
+	// update (the HARD RULE).
+	e.backfillPRIndex(ctx)
 	// And D2716's: the checkout's docs/backlog/ folder, folded into the
 	// project's standing backlog once (update_backlog.go). It is here for the
 	// reason the four above are — the converge has applied everything it had, so
@@ -614,10 +652,21 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// an issue on GitHub needs (`gh`), and that nothing else about issues does.
 	e.announceGhHint()
 	if len(res.Left) > 0 && !o.planOnly {
-		return userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))
+		return &notFinished{userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))}
 	}
 	return nil
 }
+
+// notFinished is a run's own end with steps left for the user: it applied
+// everything it had, the steps that remain are the person's, and that is exit
+// 1 and not a failure. It is a type of its own rather than a plain userErr
+// because the event feed tells the two apart with it (setup_events.go): a run
+// with steps left ends its feed `done` with exit 1 — the hand-off a wizard
+// draws — where a refusal ends it `error`, and this error and the refusals
+// above it are otherwise the same error with the same code.
+type notFinished struct{ error }
+
+func (e *notFinished) Unwrap() error { return e.error }
 
 // planned is the one-line summary of the installation plan the engine
 // just showed, if it showed one.
@@ -921,8 +970,9 @@ func (e *initEngine) writeCarriedCredentials(ctx context.Context, doc []byte) ([
 	// service, no account and no invoker binding — and nothing about the hop is
 	// planned or deployed. The block is the opt-in itself, and prepare's carry
 	// (init.go's CarriedVoiceService) is what keeps an installation that wrote
-	// one, which is where the third service of this one image differs from the
-	// intake above.
+	// one, which is where the hop's opt-in differs from the
+	// intake's above, the intake being a block this run deploys and the hop a
+	// block only the installation's own edit turns on.
 	if err := e.wd.WriteVars(next); err != nil {
 		return nil, userErr("writing the installation's %s: %v", infra.VarsFile, err)
 	}
@@ -1043,9 +1093,10 @@ func (e *initEngine) credentialsMoveHeld() string {
 // about a document it cannot read.
 //
 // It asks servicesImageStale and not the credentials service's own image,
-// because the move it is a precondition for is the three services' (the hop's
-// image is the one a hand-written block leaves behind): a node this stage raises
-// while a hop on the release behind stays where it is is the same refusal one
+// because the move it is a precondition for is the four services' (the hop's
+// and the resident orchestrator's are the two blocks a hand-written or
+// once-written image is left behind in): a node this stage raises while a hop or
+// a daemon on the release behind stays where it is is the same refusal one
 // service over, and the resolve has to fail here rather than after the write.
 func (e *initEngine) credentialsResolveBeforeRaise(ctx context.Context) error {
 	ver := releaseVersion()
@@ -1082,10 +1133,11 @@ func (e *initEngine) credentialsResolve(ctx context.Context) (string, error) {
 
 // moveCredentialsImage moves the installation's recorded credentials image
 // forward onto this release's, in the installation root's tfvars, and the
-// intake's and the hop's beside it — the three are one pin of one image, and
-// what this step has to do is read over all three (servicesImageStale), so an
-// installation whose credentials image is already this release's is still a
-// move when the hop's block, the one the run never writes, names an older
+// intake's, the hop's and the resident orchestrator's beside it — the four are
+// one pin of one image, and what this step has to do is read over all four
+// (servicesImageStale), so an installation whose credentials image is already
+// this release's is still a move when the hop's block, the one the run never
+// writes, or the orchestrator's, the one the run writes once, names an older
 // release. It is the credentials-service stage's step (newCredentialsStage):
 // it runs after the policy stage, so the node every call of the service is read
 // under is this release's before the process that reads it is replaced (the
@@ -1125,9 +1177,10 @@ func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// The three images decide, not the credentials service's alone: an
+	// The four images decide, not the credentials service's alone: an
 	// installation whose credentials image is already this release's and whose
-	// hop's is not is a move with work to do (servicesImageStale says why).
+	// hop's or orchestrator's is not is a move with work to do
+	// (servicesImageStale says why).
 	stale, err := servicesImageStale(ver, next)
 	if err != nil {
 		return userErr("reading the installation's %s: %v", infra.VarsFile, err)
@@ -1156,7 +1209,7 @@ func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
 		}
 	}
 	// And the voice hop, in the same write and for the intake's reason: it is
-	// the third subcommand of that pin, and it is the one reader of the
+	// a subcommand of that pin, and it is the one reader of the
 	// published voice policy (internal/voicesvc/policy.go, at
 	// config/policy/voice) — a node the policy stage has just raised to this
 	// release's version. A revision left on the release behind's binary reads a
@@ -1173,6 +1226,22 @@ func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
 		spec.Image = pinned
 		if updated, err = infra.SetVoiceService(updated, spec); err != nil {
 			return userErr("setting the voice hop's image in the installation's %s: %v", infra.VarsFile, err)
+		}
+	}
+	// And the resident orchestrator, in the same write: `fugaro orchestrator
+	// serve` is the fourth subcommand of that one pin, and the service the
+	// installation root deploys runs it. A revision left on the release
+	// behind's binary is a daemon that reads the mailbox and the installation's
+	// nodes with a process this run's own state may have moved past — the same
+	// lag the hop's own move is for, one service over. Nothing else in the
+	// block moves: the account, its five bindings and the two names are the
+	// installation's state, and an image is the whole of what a release
+	// changes about them.
+	if _, haveOrchestrator, err := infra.OrchestratorOf(updated); err != nil {
+		return userErr("reading the installation's %s: %v", infra.VarsFile, err)
+	} else if haveOrchestrator {
+		if updated, err = infra.SetOrchestratorImage(updated, pinned); err != nil {
+			return userErr("setting the resident orchestrator's image in the installation's %s: %v", infra.VarsFile, err)
 		}
 	}
 	if err := e.wd.WriteVars(updated); err != nil {
@@ -1203,31 +1272,33 @@ func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
 // It is one function because two callers ask it: the move itself, and the
 // credentials-service stage's own skip, which may not answer "nothing to do"
 // about a block the move would rewrite. And it reads a reference of any of the
-// three services this run writes, not only the credentials service's:
-// servicesImageStale asks it about the intake's and the hop's images too, the
-// three being one reference shape of one image.
+// four services this run writes, not only the credentials service's:
+// servicesImageStale asks it about the intake's, the hop's and the resident
+// orchestrator's images too, the four being one reference shape of one image.
 func credentialsImageStale(ver, image string) bool {
 	recorded := infra.CredentialsServiceImageRelease(image)
 	return recorded == "" || newer(ver, recorded)
 }
 
 // servicesImageStale reports whether the installation's tfvars carry an image
-// this release's move replaces: the credentials service's, the intake's or the
-// voice hop's — the three services of one pin, which moveCredentialsImage
-// re-pins in one write.
+// this release's move replaces: the credentials service's, the intake's, the
+// voice hop's or the resident orchestrator's — the four services of one pin,
+// which moveCredentialsImage re-pins in one write.
 //
-// It is wider than credentialsImageStale on purpose, and the hop is why. Its
-// block is the one the run never writes (it is the installation's own opt-in,
-// hand-written into the installation root's tfvars), so a hand-written
-// reference is the ordinary way its image is left behind while the credentials
-// service's own is already this release's: the hop's revision would then run a
-// binary that may have no `voice serve` at all and whose reader is a release
-// behind the policy node this run's policy stage has just raised — which
-// internal/voicesvc refuses, so every device call of that installation is
-// refused — and every later update would answer "the recorded image is already
-// this release's" and leave it there. The intake is read for the same reason
-// one step weaker: the run writes its block, but a document whose intake image
-// was hand-edited or left by an interrupted run has the same shape.
+// It is wider than credentialsImageStale on purpose, and the two blocks the run
+// does not write on every apply are why. The hop's block is the installation's
+// own opt-in, hand-written into the installation root's tfvars, and the
+// orchestrator's is the one the writer writes once (internal/cli's
+// ensureOrchestratorBlock): either may name the release that wrote it while the
+// credentials service's own image is already this release's. The hop's revision
+// would then run a binary that may have no `voice serve` at all and whose reader
+// is a release behind the policy node this run's policy stage has just raised —
+// which internal/voicesvc refuses, so every device call of that installation is
+// refused — and the daemon's is the same lag on the service that holds signJwt:
+// every later update would answer "the recorded image is already this release's"
+// and leave it there. The intake is read for the same reason one step weaker:
+// the run writes its block, but a document whose intake image was hand-edited or
+// left by an interrupted run has the same shape.
 //
 // The comparison is credentialsImageStale's, image by image: a reference that
 // names NO release is replaced, and one that names a release NEWER than this
@@ -1251,7 +1322,20 @@ func servicesImageStale(ver string, doc []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return have && credentialsImageStale(ver, spec.Image), nil
+	if have && credentialsImageStale(ver, spec.Image) {
+		return true, nil
+	}
+	// And the resident orchestrator, the fourth service of the same pin and the
+	// one the run writes only once: an installation that opted in keeps its
+	// block with the image of the release that opted it in, so the credentials
+	// service's own image being this release's says nothing about the daemon
+	// beside it — and a daemon left on the release behind's binary is the same
+	// lag the hop's image is, on the service that holds signJwt.
+	ospec, haveOrch, err := infra.OrchestratorOf(doc)
+	if err != nil {
+		return false, err
+	}
+	return haveOrch && credentialsImageStale(ver, ospec.Image), nil
 }
 
 // deployCredentialsService writes the block an installation that has none gets:
@@ -1346,8 +1430,8 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 	}
 	// The voice hop is deliberately NOT written here, and that is its opt-in:
 	// the run that deploys the credentials service on an installation that has
-	// none is the run that deploys the intake beside it, and the hop — the
-	// third subcommand of the same image — only for an installation that asked
+	// none is the run that deploys the intake beside it, and the hop — a
+	// subcommand of the same image — only for an installation that asked
 	// for it. The block is the ask (var.voice_service, off unless the
 	// installation turns it on), nothing composes it from the local config the
 	// way the service's own block is composed, and an installation that never
@@ -1364,6 +1448,131 @@ func (e *initEngine) deployCredentialsService(ctx context.Context) error {
 	// and what every later stage of the run plans the root from.
 	e.specReviewJobsOfTheService()
 	return nil
+}
+
+// ensureOrchestratorBlock is `--orchestrator`'s write: the installation root's
+// orchestrator block, composed from state this run already holds (mobile plan
+// tasks P5.1b and P5.1c; docs/mobile/design/always-on-orchestrator.md sections
+// 4.1 and 4.3). It is the only writer of that key in the tree, and it runs at
+// the stage that has the Firebase outputs — newInstallation2Stage, on the
+// --firebase-project path — because of the ordering the module states: the
+// block's token-minter row is bound on the FIREBASE root's signer account, in
+// that root's project, and a run applies the installation root BEFORE it
+// applies Firebase (init_firebase.go's initFirebase, steps 1 and 2). An
+// installation whose very first apply carried the block would fail that
+// binding; by this stage the Firebase root is applied (r.fb) and the outputs it
+// just produced are in the local config, which is what makes every member of
+// the block derivable off this run's own state (infra.Orchestrator).
+//
+// It writes ONCE. The block is the installation's record of having opted in —
+// the account, its five bindings, the pairing container and the service are
+// state — so a run that finds the key already recorded writes nothing here: on
+// later releases what moves is the image inside the block
+// (moveCredentialsImage), and a run that recomposed the block would be
+// re-deciding the grants and planning the replacement of two names that are
+// force-new. That is also why the flag is idempotent: `--orchestrator` on an
+// installation that has the block is a no-op, not a second opt-in.
+//
+// The three refusals are named, each with the fix, because the run is one the
+// owner asked for: a block this installation cannot carry is a failure rather
+// than the tolerance the credentials service's own deploy gets (a service that
+// cannot exist in a project is not a run to stop). The orchestrator is the
+// credentials service's own caller class, so an installation with no service
+// has no route for the account to reach; its process reads the installation's
+// Firebase database, so an installation whose config names none has nothing to
+// configure it with; and it runs the released image, so a run that cannot
+// resolve this release's pin — a development build, or a registry read that
+// failed — must not write a block whose image would have to be invented.
+//
+// The write is the PLAN's input and not yet a fact: it lands in the workdir
+// before the apply the block needs, so the run in between can still end with
+// nothing created — the plan refused, the owner's answer a no, --plan-only's
+// stop. What comes back is therefore the spec it composed and whether it wrote
+// anything, and the caller is what decides which of the two the run's outcome
+// makes true: the block stays where the apply carried it or where the plan
+// found the installation already holding it, and is taken back out of the
+// document everywhere else (unsetOrchestratorBlock). An installation that
+// already holds the block wrote nothing here and is the caller's to leave
+// alone — this is a no-op, not a second opt-in.
+func (e *initEngine) ensureOrchestratorBlock(ctx context.Context) (infra.OrchestratorSpec, bool, error) {
+	if !e.r.o.orchestrator {
+		return infra.OrchestratorSpec{}, false, nil
+	}
+	base, err := e.wd.Vars()
+	if err != nil {
+		return infra.OrchestratorSpec{}, false, userErr("reading the installation's tfvars: %v", err)
+	}
+	if len(base) == 0 {
+		base = e.wd.PrevVars
+	}
+	if len(base) == 0 {
+		base = []byte("{}")
+	}
+	recorded, err := infra.OrchestratorRecorded(base)
+	if err != nil {
+		return infra.OrchestratorSpec{}, false, userErr("reading the installation's %s: %v", infra.VarsFile, err)
+	}
+	if recorded {
+		return infra.OrchestratorSpec{}, false, nil
+	}
+	if _, have, err := infra.CredentialsServiceImageOf(base); err != nil {
+		return infra.OrchestratorSpec{}, false, userErr("reading the installation's %s: %v", infra.VarsFile, err)
+	} else if !have {
+		return infra.OrchestratorSpec{}, false, userErr("--orchestrator turns on the resident orchestrator, which is the credentials service's own caller class — the label route and the gated merge mint admit its account by name, and the module binds roles/run.invoker on the service for it — and this installation's %s carries no credentials_service block: run 'fugaro update --firebase-project <gcp-project-id>' without --orchestrator first, which deploys the service, then run 'fugaro update --firebase-project <gcp-project-id> --orchestrator'", infra.VarsFile)
+	}
+	pinned, err := e.credentialsResolve(ctx)
+	if err != nil {
+		return infra.OrchestratorSpec{}, false, userErr("the resident orchestrator runs this release's image, resolved exactly as the credentials service's and the intake's are, and this run cannot resolve it: %v", err)
+	}
+	spec, err := infra.Orchestrator(e.lc, pinned)
+	if err != nil {
+		return infra.OrchestratorSpec{}, false, err
+	}
+	doc, err := infra.SetOrchestrator(base, spec)
+	if err != nil {
+		return infra.OrchestratorSpec{}, false, userErr("setting the resident orchestrator in the installation's %s: %v", infra.VarsFile, err)
+	}
+	if err := e.wd.WriteVars(doc); err != nil {
+		return infra.OrchestratorSpec{}, false, userErr("writing the installation's %s: %v", infra.VarsFile, err)
+	}
+	return spec, true, nil
+}
+
+// unsetOrchestratorBlock takes the block ensureOrchestratorBlock wrote back out
+// of the installation's tfvars, for the run that never applied it.
+//
+// Nothing is created and nothing is promised then: the document is the one the
+// run's own writers left, minus the key, so a later plain `fugaro update` — or
+// a managed project's, which asks nobody — plans no orchestrator at all, which
+// is the state the owner's silence has to leave behind (the opt-in's refusal of
+// --yes and of a run with no terminal is worth nothing if the block outlives
+// the run that failed to get an answer). A tfvars the run cannot read back, or
+// one this program cannot write, is a failure of its own rather than a silent
+// leave-behind: the caller joins it with whatever ended the run.
+func (e *initEngine) unsetOrchestratorBlock() error {
+	vars, err := e.wd.Vars()
+	if err != nil {
+		return userErr("reading the installation's tfvars: %v", err)
+	}
+	if len(vars) == 0 {
+		return nil
+	}
+	doc, err := infra.UnsetOrchestrator(vars)
+	if err != nil {
+		return userErr("removing the resident orchestrator from the installation's %s: %v", infra.VarsFile, err)
+	}
+	if err := e.wd.WriteVars(doc); err != nil {
+		return userErr("writing the installation's %s: %v", infra.VarsFile, err)
+	}
+	fmt.Fprintf(e.r.w, "the resident orchestrator was not applied: this run created nothing for it, so the installation's %s carries no orchestrator block and a later run plans none. Run 'fugaro %s --firebase-project %s --orchestrator' again to opt in.\n", infra.VarsFile, e.r.o.doorName(), e.lc.GCPProject)
+	return nil
+}
+
+// announceOrchestrator is what the opt-in's run says once the block it wrote is
+// a fact about the installation: the apply carried it, or the plan found the
+// installation already holding every resource the block names.
+func (e *initEngine) announceOrchestrator(spec infra.OrchestratorSpec) {
+	fmt.Fprintf(e.r.w, "the installation is opted in to the resident orchestrator: %s will run the service %s in %s, woken every minute by the Scheduler job %s, holding the design's section 4.3 table and nothing else. The next fugaro update carries the block and moves only the image in it.\n", infra.OrchestratorAccountID+"@"+e.lc.GCPProject+".iam.gserviceaccount.com", spec.Service, e.lc.Region, spec.SchedulerJob)
 }
 
 // specReviewJobsOfTheService replaces this run's review set with the one the
@@ -1811,7 +2020,50 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			e.spec.Reports = next.Reports
 			e.spec.ProjectJobs = next.ProjectJobs
 			if e.r.o.firebase != "" {
-				return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
+				// The resident orchestrator's block, before the apply that
+				// carries it: this is the stage that has the Firebase outputs
+				// (the module's token-minter row is bound on that root's
+				// signer), and the write is a no-op for a run that was not
+				// asked for one and for an installation that already holds the
+				// block (ensureOrchestratorBlock).
+				spec, wrote, err := e.ensureOrchestratorBlock(ctx)
+				if err != nil {
+					return err
+				}
+				// The two answers below are THIS call's and no other's: every
+				// stage before this one planned the same root, and a plan of
+				// theirs that changed nothing says nothing about the block
+				// this run has just written.
+				e.r.rootPlanEmpty, e.r.rootApplied = false, false
+				err = e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
+				switch {
+				case !wrote:
+					return err
+				case e.r.rootApplied, e.r.rootPlanEmpty:
+					// The block is a fact about the installation: the apply
+					// carried it, or the plan found every resource it names
+					// already there (an empty plan is Terraform's statement
+					// that the state holds them, and a document that dropped
+					// the key would be the plan of their removal, which D1551
+					// refuses rather than applies).
+					e.announceOrchestrator(spec)
+					return err
+				}
+				// The run ended between the write and its apply — the plan
+				// refused, the confirmation declined, --plan-only's stop — so
+				// nothing of the opt-in exists and the block goes back out of
+				// the document. Left behind, it would be the whole of the gate
+				// gone: the next run that asks nobody (a plain `fugaro update
+				// --yes`, a managed project's) would bring the account, its
+				// bindings and the service up for an installation whose owner
+				// never answered.
+				if undoErr := e.unsetOrchestratorBlock(); undoErr != nil {
+					if err == nil {
+						return undoErr
+					}
+					return errors.Join(err, undoErr)
+				}
+				return err
 			}
 			return e.r.installCatalogCheck(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},
@@ -1838,10 +2090,10 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 // apart in the tfvars — the block, then the image inside it.
 //
 // Its skip is what keeps a converged installation from planning the root a
-// second time: a run whose three recorded images are already this release's, or
+// second time: a run whose four recorded images are already this release's, or
 // whose tfvars carry no block at all, has nothing to move and answers with the
 // sentence rather than an apply. It asks the same predicate the move does
-// (servicesImageStale, which is credentialsImageStale over all three services),
+// (servicesImageStale, which is credentialsImageStale over all four services),
 // so the two can never disagree about whether there is anything to do — the
 // disagreement that would leave a hop hand-written onto an older release where
 // it is while the credentials service beside it is current.

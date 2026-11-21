@@ -47,7 +47,7 @@ type prChain struct {
 	// inherits it by default, never re-deriving it from fugaro.yaml or
 	// anything else a first run would read — but an explicit --token on the
 	// follow-up command overrides it (newFollowUpSpec, owner ruling
-	// 2026-10-12, task 9b review; design docs/design/named-oauth-tokens.md
+	// 2026-10-12, task 9b review; design docs/named-oauth-tokens/spec.md
 	// §3 T6 and §6b).
 	OAuthToken string
 	// CompressionOff is the previous run's own override (task.Spec.
@@ -88,7 +88,7 @@ type prChain struct {
 	// readable block whose mode is hotfix, which is off the axis and so not a
 	// mode a follow-up inherits (resolvePR) — imposes nothing, which is what
 	// the record of an older run says.
-	Rigor rigor.Mode
+	Rigor rigor.Rigor
 	// Tier is the tier the previous run recorded (runstore.TierRecord.Tier),
 	// when it recorded a readable one: a follow-up keeps it, as it keeps the
 	// mode above, so a chain of follow-ups stays the one envelope its pull
@@ -254,11 +254,11 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		// never inherits it. Hotfix is a mode an operator asks for on the run
 		// that needs it, and a follow-up that inherited it would reach it
 		// through a launch that asked for nothing — which is not the explicit
-		// per-run choice the mode is (rigor.Mode.PerRun). A follow-up that
+		// per-run choice the mode is (rigor.Rigor.PerRun). A follow-up that
 		// wants it says so: --mode hotfix is accepted on one. The record still
 		// says hotfix; that is what the run it describes resolved.
-		if bounded := rec.Rigor.Bounded(); bounded != nil && bounded.Mode != rigor.Hotfix {
-			c.Rigor = bounded.Mode
+		if bounded := rec.Rigor.Bounded(); bounded != nil && bounded.LevelOf() != rigor.Hotfix {
+			c.Rigor = bounded.LevelOf()
 		}
 		// The tier this run recorded, bounded the same way: the record is an
 		// object the job's service account can write, so a block naming a tier
@@ -519,6 +519,34 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 	}
 	spec, err = newFollowUpSpec(ctx, env, o, repo, c, text, total, warn)
 	return slug, spec, false, err
+}
+
+// writePRIndex records a `--pr` launch's run in the pull-request index, so
+// `runs ls --pr N` finds the runs of a pull request without scanning the
+// repository (design docs/runs-ls-speed, D2962).
+//
+// The launcher writes this beside the runner's own write of the same run
+// because the job's image may predate the index: a follow-up started on one
+// writes nothing itself, and the run would stay invisible to `--pr N` until
+// the backfill. Both writes are create-if-absent and per run, so whichever
+// lands first stands and neither can replace the other.
+//
+// It is best effort and never a refusal, and it never waits: the index is a
+// hint, and a reader checks every run it names against that run's own
+// records before it shows a row (D2963), so a write that fails is a warning
+// on the launch's stderr and the launch goes on.
+func writePRIndex(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, now time.Time, warn io.Writer) {
+	if spec.PR < 1 {
+		return
+	}
+	e := runstore.PRIndexEntry{RunID: spec.RunID, Slug: slug, PR: spec.PR, Kind: runstore.PRIndexFollowed, At: now.UTC()}
+	if err := runstore.PutPRIndex(ctx, env.bucket.Bucket, e); err != nil {
+		// The run by its ending, as a person reads one (spec.md §1): the launch
+		// has just named the repository, and the ending is what tells this run
+		// from the next one.
+		fmt.Fprintf(warn, "warning: no pull-request index entry was written for run %s in %s, so runs ls --pr %d may have to scan for it: %s\n",
+			task.ShortRun(spec.RunID), oneLine(slug), spec.PR, oneLine(err.Error()))
+	}
 }
 
 // repeatOverrides is the overrides a repeat of this launch must find stored,
@@ -1037,8 +1065,8 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 // flag stands exactly as it does on a first run. A recorded hotfix is dropped
 // before it gets here, for the reason resolvePR gives, so it imposes nothing
 // the same way.
-func followUpRigor(o *runOptions, c *prChain) (rigor.Mode, error) {
-	req := rigor.Mode(o.rigor)
+func followUpRigor(o *runOptions, c *prChain) (rigor.Rigor, error) {
+	req := rigor.Rigor(o.rigor)
 	if err := refuseFollowUpRigor(req, c.Rigor, task.ShortRun(oneLine(c.Previous.Run)), o.pr[0], "--mode", ""); err != nil {
 		return "", err
 	}
@@ -1066,7 +1094,7 @@ func followUpRigor(o *runOptions, c *prChain) (rigor.Mode, error) {
 // (F13) and its own flag would otherwise be the way down.
 //
 // Hotfix is not refused and not resolved: it is the mode a request takes whole
-// (rigor.Mode.PerRun), so it is neither below nor above the recorded mode and
+// (rigor.Rigor.PerRun), so it is neither below nor above the recorded mode and
 // the operator who asks for it on a follow-up means it exactly as they mean it
 // on a first run — the owner's ruling of 2026-11-13 dropped the base branch's
 // opt-in rather than building it (docs/rigor-command/implementation-plan.md
@@ -1077,7 +1105,7 @@ func followUpRigor(o *runOptions, c *prChain) (rigor.Mode, error) {
 // stored task, reused as it is, has no resolution left to make — which is why
 // recheckFollowUp asks this with the task's own request. subject names the
 // request in the refusal's sentence, and cure what the launcher does instead.
-func refuseFollowUpRigor(req, recorded rigor.Mode, recordedBy string, pr int, subject, cure string) error {
+func refuseFollowUpRigor(req, recorded rigor.Rigor, recordedBy string, pr int, subject, cure string) error {
 	switch {
 	case req.PerRun():
 		return nil
@@ -1117,7 +1145,7 @@ func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task
 	// the cure is a new follow-up, which resolves the mode again.
 	subject := fmt.Sprintf("the stored task of run %s", task.ShortRun(slug+"/"+spec.RunID))
 	cure := fmt.Sprintf("; start a new follow-up: fugaro run --pr %d", spec.PR)
-	if err := refuseFollowUpRigor(rigor.Mode(spec.Rigor), c.Rigor, task.ShortRun(oneLine(c.Previous.Run)), spec.PR, subject, cure); err != nil {
+	if err := refuseFollowUpRigor(rigor.Rigor(spec.Rigor), c.Rigor, task.ShortRun(oneLine(c.Previous.Run)), spec.PR, subject, cure); err != nil {
 		return err
 	}
 	if spec.Rigor == "" && c.Rigor != "" {

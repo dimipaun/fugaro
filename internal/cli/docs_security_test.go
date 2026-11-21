@@ -34,7 +34,7 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"fugaro verify",
 		"followup.trusted",
 		"docs/design/v1.md",
-		"docs/design/bucket-iam.md",
+		"docs/bucket-iam/spec.md",
 		"Budget mode defaults to off.",
 		"Vertex has no dollar cap, in any mode.",
 		"roles/storage.objectAdmin",
@@ -105,17 +105,22 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 }
 
 // knownEnvName reports whether name appears, as a whole word, in one of the
-// files that build the agent's or the runner's environment or mint its
-// tokens: internal/agent/env.go, internal/runner/*.go,
-// internal/gitops/credentials.go, internal/gitprov/github/github.go and
-// deploy/terraform. A variable renamed in all of them makes a SECURITY.md
-// mention of its old name, and so this test, fail.
+// files that build the agent's, the runner's or a build step's environment or
+// mint its tokens: internal/agent/env.go, internal/runner/*.go,
+// internal/gitops/credentials.go, internal/gitprov/github/github.go,
+// internal/backend/gcp/build.go (the Cloud Build request's own env, which is
+// where the credential step's mounted variables are declared),
+// internal/cli/gitcred.go (the step that reads them) and deploy/terraform. A
+// variable renamed in all of them makes a SECURITY.md mention of its old name,
+// and so this test, fail.
 func knownEnvName(t *testing.T, name string) bool {
 	t.Helper()
 	files := []string{
 		"../agent/env.go",
 		"../gitops/credentials.go",
 		"../gitprov/github/github.go",
+		"../backend/gcp/build.go",
+		"gitcred.go",
 	}
 	runnerGo, err := filepath.Glob("../runner/*.go")
 	if err != nil {
@@ -201,7 +206,7 @@ func TestSecurityMdNamesTheDeployersNinthGrant(t *testing.T) {
 	// (§7 and §8 count it) is not mistaken for the paragraph.
 	const f4aOpening = "**F4a — the ninth grant"
 	var f4a []string
-	for _, line := range strings.Split(readDoc(t, "docs/design/managed-deployer-fence.md"), "\n") {
+	for _, line := range strings.Split(readDoc(t, "docs/managed-deployer-fence/spec.md"), "\n") {
 		if len(f4a) == 0 {
 			if !strings.HasPrefix(line, f4aOpening) {
 				continue
@@ -513,6 +518,46 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"**A repository on `backend: cloud-batch` keeps its workflow secrets on the VM (D2075):**",
 		"a Batch VM is not a job account the service admits",
 		"a permanent listed exception",
+		// S4 (B4.6). A build's credential step fetches from the service, and
+		// the claim that matters is D2076's: what moves is where the build
+		// reads the value, not what a Dockerfile can reach — the service
+		// hands the build its repository's own token, and the value lands in
+		// the volume the build step reads, exactly where BuildKit's mounted
+		// secret was. Pinned separately from S3's sentences, because a reader
+		// who takes "the build fetches from the service" as a narrowing
+		// concludes that a Dockerfile can no longer read the token, which
+		// D2076 (a) does not do.
+		"**A build's credential step fetches from the service when its environment names it, and the reach does not change (S4, D2076 (a), D2077).**",
+		"asks the service's build route for the git credential and for every workflow build secret the build mounts",
+		// The wiring the review found missing: the tree carries the fetch in
+		// the step and the request builder, and no request it submits is
+		// given an address, so a repository's build and check job read their
+		// mounts today. Pinned, because a reader who takes "the build fetches"
+		// as the tree's behaviour would conclude the mount is already unused.
+		"**No repository's build or check job is handed that address on this tree**",
+		"a repository's build and its daily image check therefore still read their mounts",
+		// The check job runs as the same account (E3), so it fetches the same
+		// way: pinned, because a reader who takes "builds" to mean the image
+		// build alone would think the daily check never fetches.
+		"the daily image-check job, which runs as that same account",
+		"asks the same route for its clone credential when it is handed the address",
+		"the value lands in the volume the build step reads",
+		"a Dockerfile reaches it exactly as it did through BuildKit's mounted secret",
+		// The copy the fetch does not remove: the build account's accessor
+		// and the request's own `availableSecrets` entries are what B4.9's
+		// flip takes.
+		"**And the build account has not given its copy up yet.**",
+		"the build account keeps its `secretAccessor`",
+		"`availableSecrets`",
+		"until the flip takes them away (B4.9)",
+		// The two classes do not read alike: the git credential's fetched
+		// value is the one the clone uses, while a workflow build secret's
+		// mount is what reaches the Dockerfile until the flip drops the
+		// `availableSecrets` entry the build step prefers over the fetched
+		// file. Pinned because the blanket "the fetched value wins" the first
+		// draft carried was wrong for the second class.
+		"**The git credential's fetched value wins over the mounted one**",
+		"**a workflow build secret's mounted value wins until B4.9**",
 		// The invariant, spelled as the code enforces it.
 		"an OAuth token is only ever sent to Anthropic's own endpoint",
 		// Unreachable halts rather than falls back (D143) — and the claim is
@@ -524,6 +569,16 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"never falls back",
 		"the mount is the switch's, not the outage's",
 		"halts at the service's door rather than being answered from the App key its container still holds",
+		// WS12 (D2983): an unreachable service is waited for before it halts,
+		// which is the one shape of an outage a wait can end — a service that
+		// is up and answers unreadably, or refuses, still halts the run at
+		// once. Pinned with the bound and the naming, because the paragraph
+		// said "halts" flat before this task, while a run now spends minutes
+		// of its own budget on the wait and reports which service it was.
+		"**Unreachable waits, then halts, and never falls back.**",
+		"is waited for and retried for a bounded time",
+		"a reason that names **which** service could not be reached",
+		"its reason is already known, so it halts the run at once",
 		// The stop flag.
 		"fugaro budget kill --all",
 		// The database role's reach, said plainly rather than left to be
@@ -680,10 +735,29 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		// takes "the runner fetches them" as the whole story would conclude a
 		// switched job no longer holds one.
 		"the read leaves the job only when the flip lands",
+		// S4's own limit (B4.6): the build's fetch is wired and reached by no
+		// repository's build or check job, so the read is still the mount's;
+		// and the copy the flip ends is still there — the build account keeps
+		// its accessor on the git secret and on the workflow build secrets,
+		// and the request keeps the `availableSecrets` entries.
+		"a repository's build and its daily image check still read their mounts on this tree",
+		"nothing hands a repository's build request the URL",
+		"the build's own copy of the git credential and of the workflow build secrets is still there",
 		// And the App key's own limit stays: the mount and the grant are
 		// still there, the runner just no longer reads the key.
 		"the release after the owner's live Check 96 proves the deployed service mints",
 		"no longer reads the key and mints at the service instead",
+		// KS4's own limit (D3003, R11): the service checks the route for
+		// every caller, and the cap is still the gateway's, so a call an
+		// agent builds itself and posts to the provider route directly is
+		// served under the policy's rules and never priced. Stated here
+		// rather than only where the route is described, because a reader
+		// who takes "the service holds the credentials" as the whole story
+		// would conclude the run's cap bounds every call that spends one.
+		"a hand-built call reaches the service without the gateway, and escapes the run's cost cap",
+		"whoever built the request",
+		"is not counted against the run's own cap",
+		"Metering these calls in the service was considered and declined",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the `### The credentials service` section does not state the known limit %q: a limit that is not stated is read as a guarantee", want)
@@ -787,9 +861,17 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		"names `bitbucket-token`",
 		"reads no token at all",
 		"holds no `secretAccessor` on the token",
-		// The build account's copy until S4.
+		// The build account's copy until S4 — and B4.6's half of the same
+		// fact: the read is the service's once the step is handed the
+		// address, this tree hands one to no repository's build or check job,
+		// the service hands the build this repository's own token when it is
+		// asked, and what the flip ends is the accessor and the mounted copy
+		// rather than the reach (D2076 (a)).
 		"build account still holds the token",
 		"until S4",
+		"hands one to no repository's build or check job",
+		"the service hands the build this repository's own token",
+		"what the flip ends is the account's accessor and the mounted copy, not the reach",
 		// The three token types (T14 of docs/bitbucket-token-types, D2350,
 		// D2355): the bundle holds any mix, the narrowest covering one serves
 		// each request, a reader of this page has to know that coverage is not

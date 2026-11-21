@@ -152,6 +152,10 @@ type Deps struct {
 	// internal/cli), never from repository content, so nothing on a run's
 	// branch can reach it.
 	StartHeadroom func(context.Context, headroomproc.Options) (SidecarProcess, error)
+	// WrapUpBound, for tests only, shortens how long a wrap-up turn may run
+	// before the coder stage ends (rule 3). The owner's own bound is fifteen
+	// minutes, which no test can wait for; zero means that bound.
+	WrapUpBound time.Duration
 }
 
 type run struct {
@@ -237,6 +241,20 @@ type run struct {
 	// spec.IsFollowUp(); cross-checked against the resolved recipe's own
 	// Mode once it is known, since the two must always agree.
 	review bool
+	// reviewSpec is what this run's reviews are checked against (taskspec.go):
+	// the brief the pull request was written for, the follow-up's own text
+	// beside it and the plan task the brief names. It is read once at
+	// bootstrap and before any agent stage — the run's own task, the root
+	// task the branch names for a follow-up, or the block the launcher wrote
+	// for a launched review — and never from the branch under review, which
+	// the run's own agent controls (R16).
+	reviewSpec *task.ReviewSpec
+	// inRunAgainst is what this run's review rows record they were checked
+	// against (RA2, R8). It is resolved once, where the shared review brief is
+	// built (reviewTaskBlock), from the same answer that brief's task block is
+	// built from, so the prompt a round read and the row it wrote never
+	// disagree. Nil until then, and for a run that never reaches a review.
+	inRunAgainst *runstore.Against
 	// reviewHeads is what bootstrap's checkReviewPRs resolved for a review
 	// run: one entry per spec.ReviewPRs, in order, each already past the
 	// fork and open checks. Empty for any other run.
@@ -254,7 +272,7 @@ type run struct {
 	env    []string
 	// mixedStages are the stages of this run that run on a stage-scoped
 	// Claude OAuth account of its own instead of the run's own credential,
-	// keyed by stage (docs/design/mixed-credentials.md §11, the owner's B0
+	// keyed by stage (docs/mixed-credentials/spec.md §11, the owner's B0
 	// ruling). It holds at most the senior review and the adversarial review,
 	// and it is empty for every run that does not mix credentials. It is read
 	// once at bootstrap (resolveMixedStages, agentenv.go) and never changes: a
@@ -379,6 +397,13 @@ type run struct {
 	// because the beat's own goroutine runs while the run goes on.
 	slip   *slipHold
 	slipMu sync.Mutex
+	// workspaceBeat is the keep-warm beat this run sends to its workspace's
+	// credentials service, or nil for a run whose route record serves no kind
+	// there, a run whose agent.workspace_beat is off, and a local run — which
+	// is not routed at all (WS13, R10). workspaceMu guards it, because the
+	// beat's own goroutine runs while the run goes on.
+	workspaceBeat *workspaceBeat
+	workspaceMu   sync.Mutex
 	// The gateway, when the budget is on for an api-key or vertex run, and
 	// what its stages cost; all guarded by mu. gwUsed is the money its calls
 	// settled -- the run's billed model spend -- and gwNotional is the tier-A
@@ -405,7 +430,7 @@ type run struct {
 	gwNotional     pricing.Micros
 	// direct is the model spend of the stages a stage-scoped Claude OAuth
 	// account served -- a mixed run's review and adversarial stages
-	// (docs/design/mixed-credentials.md §11). The gateway saw none of their
+	// (docs/mixed-credentials/spec.md §11). The gateway saw none of their
 	// calls, so nothing settles them: their figure is Claude Code's own result
 	// event, recorded here by recordAccountStageCost, and it is in
 	// record.CostUSD and cost.model_usd beside the ledger's two (P11, P12).
@@ -530,6 +555,11 @@ type run struct {
 	// this level with the challenger model and publishes nothing (B1.2). It is
 	// set at bootstrap, before anything reads a model, and never cleared.
 	replay policy.Level
+	// msgs is the message channel (messages.go): what this run has read out
+	// of its message prefix, what a coder stage has been given, and what the
+	// record says about each message. It is opened once at bootstrap, and it
+	// is the only authority for what has been delivered (F13).
+	msgs messageState
 	// pr is the early draft pull request's state (prflow.go).
 	pr prFlow
 	// baseSHA is the base branch's commit as bootstrap fetched it (the
@@ -567,13 +597,13 @@ type run struct {
 	rigorCfg rigor.Config
 	rigorRev string
 	// layersRigor is the mode the layers alone resolved at the moments that
-	// have run — the run's own request left out (rigor.LayersMode) — and it is
+	// have run — the run's own request left out (rigor.LayersRigor) — and it is
 	// set only when that request took the run off the axis
-	// (rigor.Mode.PerRun, hotfix). It is the mode whose floor holds beside
+	// (rigor.Rigor.PerRun, hotfix). It is the mode whose floor holds beside
 	// hotfix's own row: a request raises a mode and never lowers a floor (D8,
 	// LF5), so reading only the row of the mode the request chose would lower
 	// one (policy.Effective.ReviewFloorFor, resolveLevelsForcing).
-	layersRigor rigor.Mode
+	layersRigor rigor.Rigor
 	// baseCfg is the whole resolved configuration the base branch's
 	// fugaro.yaml produced at bootstrap, of which rigorCfg is the mode's
 	// half: the triage stage's switch is the other key read from there and
@@ -758,11 +788,12 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("panic: %v", p)
 		}
-		// First, on every path out of here: the keep-warm beat is the one
-		// goroutine of this run that is not waited for anywhere else, and a
+		// First, on every path out of here: the keep-warm beats are the two
+		// goroutines of this run that are not waited for anywhere else, and a
 		// request still in flight when the run ends is a request of a
-		// finished run (DS1.5).
+		// finished run (DS1.5, WS13's beat for the workspace's service).
 		r.stopSlipBeat()
+		r.stopWorkspaceBeat()
 		if errors.Is(err, ErrDuplicateExecution) || errors.Is(err, errOwnerUnknown) {
 			// Another execution owns this run, or may: its result.json and
 			// lock are not ours to touch.
@@ -874,6 +905,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
+	stopMessages := r.watchMessages(runCtx)
 	switch {
 	case r.artifact:
 		r.runArtifactMode(runCtx)
@@ -890,6 +922,11 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	default:
 		r.runAgentLoop(runCtx)
 	}
+	// Stopped here rather than deferred: the stop waits for the poll, and
+	// everything below it — the stopping agent's checkpoint report and the
+	// final writes — must not have another goroutine publishing the record
+	// beside it.
+	stopMessages()
 	// The stop's own last call, before anything that cannot make one: a
 	// governance halt asks the stopping agent for the three fields of its
 	// checkpoint report, from a fresh session, and the answers go into the
@@ -1659,7 +1696,7 @@ func (r *run) stampTrailers(model string) []gitops.Trailer {
 //
 // The stage's credential is the part of it that is not the run's own: a stage
 // the run's stage-scoped Claude OAuth account serves gets that account's
-// environment instead (stageAgentEnv, docs/design/mixed-credentials.md §11),
+// environment instead (stageAgentEnv, docs/mixed-credentials/spec.md §11),
 // and the error here is the refusal of a stage whose account token the runner
 // does not hold.
 func (r *run) stageEnv(stage string, pins map[string]string) ([]string, error) {
@@ -2743,6 +2780,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if len(spec.ReviewPRs) > 0 {
 		r.review = true
 	}
+	// What this run's reviews are checked against, read here rather than at the
+	// review stage: the root task of a follow-up is read out of the runs bucket
+	// before any agent of this run has run, so an agent that rewrote the record
+	// it is judged against could not (taskspec.go, R16, F34).
+	r.readReviewSpec(ctx)
 	// An artifact run's shape comes from the TASK SPEC's mode, beside
 	// r.review and for the same reason: resolveRecipe runs further down,
 	// after the configuration is read, and the checkout arm above is
@@ -3231,7 +3273,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// else here knows it -- the launch gate runs in the launcher, on the other
 	// side of the job.
 	if r.artifact && r.jobEnv(backend.BackendEnv) == backend.CloudBatch {
-		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket, and this run's job is on the cloud-batch backend: an artifact-producing run is never launched on it, because a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/design/artifact-runs.md §8.5 and D11, plan 2026-10-19-compute-backend.md Global Constraint 13). Launch an artifact recipe on backend: cloud-run", rrec.Name)
+		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket, and this run's job is on the cloud-batch backend: an artifact-producing run is never launched on it, because a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/artifact-runs/spec.md §8.5 and D11, plan 2026-10-19-compute-backend.md Global Constraint 13). Launch an artifact recipe on backend: cloud-run", rrec.Name)
 	}
 	// A task that attached files under a resolved recipe of another mode
 	// fails the run before its first step (design §8.2): the launcher
@@ -3262,6 +3304,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
 	r.rcp, r.derived = rcp, derived
 	r.gateSteps = checkGateSteps(rcp)
+	// The message channel opens here and not earlier: every flag coderStages
+	// reads is set by now, and a block written before the recipe is resolved
+	// could promise a coder stage a review-only run has not got. It is before
+	// any stage, which is what a sender reads to tell this runner from one
+	// that predates the feature (F9).
+	r.openMessages()
 	if err := checkGateCommands(rcp, wf, spec.Ref); err != nil {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 	}
@@ -3770,7 +3818,7 @@ type ConfigResolution struct {
 
 // ResolveConfig resolves fugaro.yaml (data) over pl, the task's embedded
 // project layer (nil for none), anchored to the job's own project
-// (project, r.d.Project — docs/design/layered-config.md §8). The layer
+// (project, r.d.Project — docs/layered-config/spec.md §8). The layer
 // applies only to a file whose project: and gcp_project: are the layer's;
 // a launch from outside a checkout may carry one for a file that is not,
 // and Applied says so. Exported so a consumer that must prove it resolves
@@ -3818,7 +3866,7 @@ func ResolveConfig(data []byte, pl *task.ProjectLayer, project, base string) Con
 }
 
 // resolveConfig resolves fugaro.yaml (data) over the task's project layer
-// (docs/design/layered-config.md §8) and records which layer and which
+// (docs/layered-config/spec.md §8) and records which layer and which
 // resolved config the run uses. The layer applies only to a file whose
 // project: and gcp_project: are the layer's; a launch from outside a
 // checkout may carry one for a file that is not, and the record says the
@@ -3958,6 +4006,44 @@ func (r *run) systemPromptData() PromptData {
 	return pd
 }
 
+// reviewTaskBlock resolves what this run's reviews are judged against, keeps
+// the record every review row carries, and returns the block the review brief
+// gains (RA2).
+//
+// It is resolved once per run, where the brief the three levels share is built
+// (agentLoop), so level 1, level 2 and level 3 read one answer and their rows
+// record the one they read: a level that resolved it again could record a
+// different answer than the prompt in front of it. The block is quoted as data
+// — redacted, cleaned, nonce-fenced under a nonce minted here, which is what
+// keeps a brief from passing itself off as one more instruction of the prompt
+// (R3, R5).
+//
+// An empty return is an ordinary answer and not a failure: the run's reviews
+// judged the code alone, and inRunAgainst says why (spec §9).
+func (r *run) reviewTaskBlock(ctx context.Context) string {
+	spec := r.resolveReviewSpec(ctx)
+	r.inRunAgainst = againstRecord(spec)
+	if !spec.found() {
+		return ""
+	}
+	return taskSpecBlock(spec, r.redactor(), followup.NewNonce())
+}
+
+// againstRecord is what a review row records it was checked against (RA2, R8):
+// the source the launcher named or this run resolved, the root run when the
+// brief came out of one, the digest of the text the reviewer was shown, and —
+// for a review checked against nothing — the reason why.
+//
+// The name is the launcher's claim and is not evidence (R16). It is a record
+// of what the reviewer was given and not of what the text is worth; the text
+// itself travels in the prompt rather than here.
+func againstRecord(s reviewSpecFound) *runstore.Against {
+	if !s.found() {
+		return &runstore.Against{Source: runstore.AgainstSourceNone, Reason: s.source.reason}
+	}
+	return &runstore.Against{Source: string(s.source.source), Run: s.source.run, SHA256: s.source.sha256}
+}
+
 func (r *run) agentLoop(ctx context.Context) {
 	// A rebase run's whole work is one step, and it is not a step of this
 	// loop: no implement stage, no review level, no plan walk (rebase.go,
@@ -3966,7 +4052,7 @@ func (r *run) agentLoop(ctx context.Context) {
 		r.rebaseStep(ctx)
 		return
 	}
-	sys := SystemPrompt(r.systemPromptData(), r.instructions)
+	sys := SystemPrompt(r.systemPromptData(), r.instructions, r.coderPersona())
 	req := agent.Request{Prompt: r.spec.Task, SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
 	var opts stageOpts
 	if f := r.follow; f != nil {
@@ -4111,6 +4197,18 @@ func (r *run) agentLoop(ctx context.Context) {
 	// implement, so there is no session yet for fix (below) to resume.
 	var sessionID string
 	if !skipImplement {
+		// Rule 1's first call site. The block is taken once and rides in both
+		// this request and the fresh one a recovered stage is retried with:
+		// the retry is the same stage, and a second take would find the queue
+		// already drained.
+		mb := r.messageBlock(ctx, "implement")
+		brief := req.Prompt
+		if mb != "" {
+			req.Prompt += "\n\n" + mb
+		}
+		// A `now` or `wrap_up` message may stop this stage where it stands and
+		// resume it with the brief and the message (yield.go, rules 2 and 3).
+		opts.Yield = &yieldOpts{Resume: func(block string) string { return brief + "\n\n" + block }}
 		res, ok, err := r.stage(ctx, "implement", req, opts)
 		r.noteSession(req, res)
 		r.countTokens(res)
@@ -4118,8 +4216,15 @@ func (r *run) agentLoop(ctx context.Context) {
 		// one that came with a timeout or a cancel is a failed stage.
 		if rec := (recoveredError{}); !ok && errors.As(err, &rec) {
 			r.fellBackFresh(ctx)
-			req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
-			res, ok, _ = r.stage(ctx, "implement", req, stageOpts{})
+			req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: SystemPrompt(r.systemPromptData(), r.instructions, r.coderPersona())}
+			if mb != "" {
+				req.Prompt += "\n\n" + mb
+			}
+			// The same stage, so the same yield: a message may stop the retry
+			// too, and it resumes on this prompt rather than the first one.
+			fresh := req.Prompt
+			res, ok, _ = r.stage(ctx, "implement", req,
+				stageOpts{Yield: &yieldOpts{Resume: func(block string) string { return fresh + "\n\n" + block }}})
 			r.noteSession(req, res)
 			r.countTokens(res)
 		}
@@ -4161,10 +4266,29 @@ func (r *run) agentLoop(ctx context.Context) {
 	// cut from another branch than its ref is narrowed to its own commits
 	// here, once, before the prompt and every round's input read the range.
 	r.narrowReviewRange(ctx)
-	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable())
+	// Everything the review prompt says but the level's own stance is resolved
+	// once here: the range the reviewer is pointed at, the size read off it,
+	// the task the pull request was written for and the follow-up addenda. The
+	// stance is not, and it is the one part that moves: D22's round moment
+	// raises the level after a fix, and the round that follows has to judge the
+	// change by the level the run is at then rather than by the one it started
+	// its reviews at (persona.go, reconciliation §3b item 10). reviewPrompt is
+	// therefore a builder, and every round reads it again.
+	rev, size, unread := r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable()
+	tail := ""
+	// The task the pull request was written for, quoted after the brief the
+	// levels already read (RA2, R3). It goes on the one prompt all three
+	// levels are handed — first line, senior and adversarial — so a finding of
+	// `unmet` or `differs` can be made at every level rather than only at the
+	// one that happened to be given the task. Appended and never prepended: a
+	// configured review may be a slash command (agent.review starting with
+	// "/"), and the reviewer's skill only loads when the prompt starts with it.
+	if block := r.reviewTaskBlock(ctx); block != "" {
+		tail += "\n\n" + block
+	}
 	if f := r.follow; f != nil {
 		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
-			reviewPrompt += "\n\n" + add
+			tail += "\n\n" + add
 		}
 		// The ruling the run was launched with (OD1) reaches the reviewer here
 		// and not only the implement brief: the review stages read in sessions
@@ -4179,8 +4303,11 @@ func (r *run) agentLoop(ctx context.Context) {
 		// owner answered two rulings ago. All three levels are handed this one
 		// brief (reviewPromptWithFocus, AdversarialPrompt), so they all read it.
 		if add := followup.RulingAddendum(r.ownerRulings(), f.nonce, r.redactor()); add != "" {
-			reviewPrompt += "\n\n" + add
+			tail += "\n\n" + add
 		}
+	}
+	reviewPrompt := func() string {
+		return ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, rev, size, unread, r.reviewerPersona()) + tail
 	}
 	tier := ""
 	// The plan is read through the slice on every step, rather than ranged
@@ -4214,7 +4341,7 @@ func (r *run) agentLoop(ctx context.Context) {
 		case recipe.StepFirstLine:
 			tier = runstore.TierSenior
 			var ok bool
-			if sessionID, ok = r.firstLine(ctx, st.Rounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.Rounds, r.firstLinePrompt(reviewPrompt), sessionID); !ok {
 				return
 			}
 		case recipe.StepReview:
@@ -4223,11 +4350,11 @@ func (r *run) agentLoop(ctx context.Context) {
 			// could not finish — a failed stage, a cap, a closed pull request,
 			// an answer with no verdict — is where the run stops, and the
 			// levels after it are not run (checkPlan keeps the order fixed).
-			if !r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID) {
+			if !r.seniorLoop(ctx, st, tier, reviewPrompt, sessionID) {
 				return
 			}
 		case recipe.StepAdversarial:
-			if !r.adversarialLoop(ctx, st, reviewPrompt, sys, sessionID) {
+			if !r.adversarialLoop(ctx, st, reviewPrompt, sessionID) {
 				return
 			}
 		}
@@ -4295,11 +4422,13 @@ func (r *run) stopNow() bool {
 //
 // It reports whether the plan may go on to the step after it, which is false
 // for every way the run stops here.
-func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) bool {
+func (r *run) seniorLoop(ctx context.Context, st planStep, tier string, reviewPrompt func() string, sessionID string) bool {
 	// Level 2's own reviewer reads the level's focus quoted under the run's
 	// heading (reviewPromptWithFocus), exactly as level 3's does; the bounce's
-	// cheap loop below is level 1's and reads level 1's.
-	prompt := reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL2))
+	// cheap loop below is level 1's and reads level 1's. The prompt itself is
+	// built inside the round: the fix at the end of a round can raise the level
+	// the run is at (D22's round moment), and the round that follows is then
+	// handed the raised level's own stance rather than this level's first one.
 	for round := 1; ; round++ {
 		if r.stopNow() {
 			r.timeStop()
@@ -4320,6 +4449,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		// moves the branch, and the summary keeps the commit *this* round read
 		// (D727), so the levels can be told apart by the head they approved.
 		head := r.reviewedHead(ctx)
+		prompt := reviewPromptWithFocus(reviewPrompt(), r.levelFocus(policy.LevelL2))
 		v, parsed, ok := r.seniorRound(ctx, round, prompt)
 		if !ok {
 			return false
@@ -4328,7 +4458,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.lastSenior = seniorRound{Round: round}
 			r.seniorLevelLast = r.lastSenior
 			model, effort := r.reviewFacts("review")
-			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none", Head: head, Model: model, Effort: effort})
+			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: "none", Head: head, Model: model, Effort: effort, Against: r.inRunAgainst})
 			r.save(ctx)
 			r.d.Log.Warn("the review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
 			return false
@@ -4341,7 +4471,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
 		r.seniorLevelLast = r.lastSenior
 		model, effort := r.reviewFacts("review")
-		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
+		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort, Against: r.inRunAgainst})
 		r.save(ctx)
 		if r.capReached() {
 			return false
@@ -4426,16 +4556,26 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.timeStop()
 			return false
 		}
-		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sys, sessionID); !ok {
+		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sessionID); !ok {
 			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
 			r.bounce++
-			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, r.firstLinePrompt(reviewPrompt), sessionID); !ok {
 				return false
 			}
 		}
 	}
+}
+
+// firstLinePrompt is the cheap loop's prompt builder: the brief the caller's
+// reviewPrompt builds at the moment a round is bought, with level 1's own focus
+// quoted under the run's heading (reviewPromptWithFocus). It is a builder and
+// not a string because both the focus and the stance are read at that moment,
+// whichever step bought the loop — level 1's own step, or a bounce carrying its
+// rounds into it (seniorLoop's and adversarialLoop's).
+func (r *run) firstLinePrompt(reviewPrompt func() string) func() string {
+	return func() string { return reviewPromptWithFocus(reviewPrompt(), r.levelFocus(policy.LevelL1)) }
 }
 
 // adversarialLoop is level 3's step: up to (*run).adversarialRounds adversarial
@@ -4454,8 +4594,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 // It reports whether the run may go on, which the plan does not ask of it: the
 // adversarial step is the plan's last, so the answer only decides whether the
 // loop returns early or falls out of its own bottom.
-func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sys, sessionID string) bool {
-	prompt := AdversarialPrompt(reviewPrompt, r.levelFocus(policy.LevelL3))
+func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt func() string, sessionID string) bool {
 	for round := 1; ; round++ {
 		if r.stopNow() {
 			r.timeStop()
@@ -4471,6 +4610,7 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		// (stopNow).
 		r.reviewRoundsRun++
 		head := r.reviewedHead(ctx)
+		prompt := AdversarialPrompt(reviewPrompt(), r.levelFocus(policy.LevelL3))
 		v, parsed, ok := r.adversarialRound(ctx, round, prompt)
 		if !ok {
 			return false
@@ -4482,14 +4622,14 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			// the same).
 			r.lastSenior = seniorRound{Round: round}
 			model, effort := r.reviewFacts(stageAdversarial)
-			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: "none", Head: head, Model: model, Effort: effort})
+			r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: "none", Head: head, Model: model, Effort: effort, Against: r.inRunAgainst})
 			r.save(ctx)
 			r.d.Log.Warn("the adversarial review round returned no parseable verdict after a retry; the run carries on and ends a draft", "round", round)
 			return false
 		}
 		r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
 		model, effort := r.reviewFacts(stageAdversarial)
-		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort})
+		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: runstore.TierAdversarial, Verdict: v.Verdict, Findings: len(v.Findings), Head: head, Model: model, Effort: effort, Against: r.inRunAgainst})
 		r.save(ctx)
 		if r.capReached() {
 			return false
@@ -4535,12 +4675,12 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			r.timeStop()
 			return false
 		}
-		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sys, sessionID); !ok {
+		if sessionID, ok = r.fix(ctx, triaged.fixable(v), sessionID); !ok {
 			return false
 		}
 		if st.Bounce && st.FirstRounds > 0 {
 			r.bounce++
-			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, r.firstLinePrompt(reviewPrompt), sessionID); !ok {
 				return false
 			}
 		}
@@ -4725,11 +4865,22 @@ func (r *run) seniorRound(ctx context.Context, round int, reviewPrompt string) (
 // findings those are — the judge's answer and the mode's table, applied inside
 // the floor (triageOutcome.fixable). A round that deferred everything never
 // reaches here at all; the loop ends on it.
-func (r *run) fix(ctx context.Context, findings []Finding, sys, sessionID string) (string, bool) {
+func (r *run) fix(ctx context.Context, findings []Finding, sessionID string) (string, bool) {
 	if r.sessionID != "" {
 		sessionID = r.sessionID
 	}
-	req := agent.Request{Prompt: FixPrompt(findings), AppendSystemPrompt: sys}
+	// The system prompt is built here, at the moment the fix runs, and never
+	// carried in from the implement stage: the level the run is at when this
+	// round's brief is built is the one its coder stance comes from
+	// (persona.go), so the two halves of one request — this and FixPrompt
+	// below — name the same level however far the run has climbed since
+	// implement (finding 2).
+	sys := SystemPrompt(r.systemPromptData(), r.instructions, r.coderPersona())
+	// Rule 1's third call site, with rule 4 in it: FixPrompt writes the
+	// widening sentence for the block, so the turn a message resumes this fix
+	// into carries it the same way the first turn did (D2943).
+	opts := stageOpts{Yield: &yieldOpts{Resume: func(block string) string { return FixPrompt(findings, block, r.coderPersona()) }}}
+	req := agent.Request{Prompt: FixPrompt(findings, r.messageBlock(ctx, "fix"), r.coderPersona()), AppendSystemPrompt: sys}
 	if sessionID == "" {
 		// No session exists to resume: a Fixed check gate (gate.go) skipped
 		// implement entirely, so this fix is the run's first real agent
@@ -4741,7 +4892,7 @@ func (r *run) fix(ctx context.Context, findings []Finding, sys, sessionID string
 	} else {
 		req.SessionID, req.Resume = sessionID, true
 	}
-	res, ok, _ := r.stage(ctx, "fix", req, stageOpts{})
+	res, ok, _ := r.stage(ctx, "fix", req, opts)
 	r.noteSession(req, res)
 	r.countTokens(res)
 	if !ok || r.capReached() {
@@ -4777,7 +4928,7 @@ func (r *run) fix(ctx context.Context, findings []Finding, sys, sessionID string
 // loop is never the decider, and a bounce's extra rounds must not overwrite the
 // senior round the mode's findings policy is read off (outcome.go,
 // findingsPolicy).
-func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
+func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt func() string, sessionID string) (string, bool) {
 	for round := 1; round <= rounds; round++ {
 		// Read per round, not once before the loop: the fix at the end of a
 		// round can turn level 3 on (the escalation's fix seam, security.go),
@@ -4803,12 +4954,12 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		// time half read the run's review rounds, never one level's.
 		r.reviewRoundsRun++
 		head := r.reviewedHead(ctx)
-		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt()), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 		res, ok, err := r.stage(ctx, "review_first", req, stageOpts{Skippable: true})
 		r.noteReviewSession(req, res)
 		r.countTokens(res)
 		model, effort := r.reviewFacts("review_first")
-		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Head: head, Model: model, Effort: effort, Bounce: r.bounce}
+		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Head: head, Model: model, Effort: effort, Bounce: r.bounce, Against: r.inRunAgainst}
 		var v Verdict
 		// parsed is whether this round answered a verdict at all, read by the
 		// triage step below: a round with none has nothing for a judge to weigh,
@@ -4898,7 +5049,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			return r.firstLineStop(sessionID)
 		}
 		var more bool
-		if sessionID, more = r.fix(ctx, triaged.fixable(v), sys, sessionID); !more {
+		if sessionID, more = r.fix(ctx, triaged.fixable(v), sessionID); !more {
 			return sessionID, false
 		}
 	}
@@ -5084,6 +5235,32 @@ type stageOpts struct {
 	// which review round a row is for a reader, and not which triage round.
 	Round int
 	Level policy.Level
+	// Yield marks a coder stage — a first run's implement, a follow-up's
+	// implement, a fix (rule 1) — as one a `now` or `wrap_up` message may
+	// stop mid-stage and resume (yield.go, rules 2 and 3). It carries how
+	// the turn that resumes is prompted. Every other stage leaves it nil
+	// and is therefore never run with a yield request at all.
+	Yield *yieldOpts
+	// The three fields below are the yield's own, set by stage for each
+	// attempt of a coder stage and left zero everywhere else.
+	//
+	// YieldAsk is the ask the attempt's segment is stopped by: the message
+	// watch closes it when a flagged message reaches the run's queue, and a
+	// wrap-up turn's own bound closes it too.
+	YieldAsk <-chan struct{}
+	// YieldBound is how long that segment may then wait for a quiet point
+	// before the agent stops it where it stands (rule 2's ten minutes, or
+	// none at all on a wrap-up turn, whose own bound is the whole of its
+	// clock — rule 3).
+	YieldBound time.Duration
+	// BudgetUSD, when non-nil, is what is left of the stage's model budget:
+	// a segment resumed after a stop gets the stage's remainder and not a
+	// second agent.max_budget_usd (rule 2).
+	BudgetUSD *float64
+	// Bounds, when non-nil, carries the stage's own clock from its first
+	// attempt to the ones that resume it: a resume does not restart the
+	// stage's deadline or its governance.stage_timeout (rule 2).
+	Bounds *stageBounds
 }
 
 // transientRetries is the run's own bound on the retry a closed model stream
@@ -5141,10 +5318,66 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	// round of its own — is a stage of its own with its own one retry, under
 	// the run's own ceiling the same way.
 	retried := false
+	// A coder stage runs under the message channel's stop-and-resume
+	// (yield.go, rules 2 and 3): the watch that closes a segment's ask when a
+	// flagged message reaches the run's queue, and what each stop cost the
+	// stage it is resuming into. Bounds is filled by the first attempt, so
+	// every resume runs under the clock the stage started with.
+	var y *coderYield
+	var ys *yieldStage
+	if opts.Yield != nil {
+		y = r.beginYield(name)
+		defer y.stop()
+		opts.Bounds = &stageBounds{}
+		ys = &yieldStage{before: r.stageSpend()}
+	}
 	for {
 		once := opts
 		once.RetryTransient = !retried && r.transientRetryLeft()
+		if y != nil {
+			once.YieldAsk, once.YieldBound = y.segment(ys.wrapUp)
+			once.BudgetUSD = ys.remaining
+			if ys.forced {
+				once.Recoverable = yieldRecoverable(opts.Recoverable)
+			}
+		}
 		res, ok, err := r.stageOnce(ctx, name, req, once)
+		if y != nil {
+			y.endSegment()
+		}
+		// A forced stop may leave a session that cannot be resumed at all:
+		// the agent was killed at its bound, on an unanswered tool call, and
+		// the next turn finds no session to continue (rule 2's fallback). The
+		// stage starts again from the repository, in a fresh session, with
+		// the message and the instruction to read what is already there
+		// first, and the record says why.
+		var rec recoveredError
+		if y != nil && ys.forced && errors.As(err, &rec) && errors.Is(err, agent.ErrNoSession) {
+			ys.forced = false
+			r.retagYield(ys.msgs, yieldSessionLost)
+			req.Prompt = opts.Yield.Resume(r.resumeBlock(ys.msgs, ys.wrapUp, true))
+			req.SessionID, req.Resume = agent.NewSessionID(), false
+			continue
+		}
+		// The message's stop, and not a failure: the agent stopped itself
+		// between two tool calls, the session is intact, and the segment just
+		// ended is charged for what it spent before the stage carries on in
+		// that same session with the message in its next prompt (D2945). It
+		// is stage's own loop and not a second call to stage, so the attempt
+		// counts against the run's caps and deadlines exactly as a transient
+		// retry's does.
+		if y != nil && err == nil && res.Yielded {
+			next, done := r.yieldStopped(name, res, &req, opts, ys)
+			if done {
+				// Rule 3: the wrap-up turn ended, or reached its own bound,
+				// and the coder stage ends here as succeeded (D2946). The
+				// run carries on to its reviews and its finalize on whatever
+				// the turn committed.
+				return res, true, nil
+			}
+			req = next
+			continue
+		}
 		// The model's stream ended before it finished, and nothing about
 		// the work did: the stage is run once more, in the session it
 		// already had, so the conversation and everything it committed are
@@ -5190,6 +5423,36 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 			// sees the last attempt of this stage.
 			r.countTokens(res)
 			req.SessionID, req.Resume = agent.NewSessionID(), false
+			continue
+		}
+		var un *unreachableError
+		if errors.As(err, &un) {
+			// The credentials service could not be reached at all (D2983):
+			// the stage in flight ended -- it did not fail -- and the run waits
+			// for the service until the instant the gateway's own bound names,
+			// then resumes the stage's session. The attempt that ended spent
+			// what it spent, for the reason the exhausted branch below counts
+			// its own (countTokens, halt.go).
+			//
+			// No cap of its own, unlike the exhausted branch: the bound is the
+			// gateway's and it halts the run, naming the service, on the first
+			// call that meets the spent bound -- so the wait below ends at the
+			// bound, and the call the resumed stage makes either reaches the
+			// service or ends the run. maxCredentialResumes is not it: an
+			// outage is not a credential the run could switch to, and a run
+			// stopped with a credential's reason would send its operator to
+			// 'fugaro accounts ls'.
+			r.countTokens(res)
+			session := res.SessionID
+			if !agent.ValidSessionID(session) {
+				session = req.SessionID
+			}
+			if werr := r.waitForService(ctx, name, un.Service, un.Until); werr != nil {
+				return res, false, werr
+			}
+			r.d.Log.Info("the wait for the credentials service is over; resuming the stage",
+				"stage", name, "service", un.Service, "session", session)
+			req.SessionID, req.Resume = session, true
 			continue
 		}
 		var ex *exhaustedError
@@ -5442,9 +5705,15 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		// absolute path, so nothing else moves with the working directory.
 		req.Dir = opts.Dir
 	}
-	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.cfg.Agent.MaxBudgetUSD
+	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.stageBudget(opts)
+	if opts.YieldAsk != nil {
+		// The agent stops itself at its next quiet point when this closes
+		// (RM3, internal/agent/quiet.go); the bound is how long it may wait
+		// for one first, after which it stops where it stands instead.
+		req.Yield = &agent.YieldRequest{Ask: opts.YieldAsk, Bound: opts.YieldBound}
+	}
 
-	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
+	deadlineCtx, cancelDeadline := opts.stageDeadline(ctx, r.budget)
 	defer cancelDeadline()
 	// The stage's own governance.stage_timeout, when the run resolved one: it
 	// only ever shortens a stage, so a value at or above the run's own
@@ -5465,7 +5734,13 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	r.noteIgnoredStageBound(name, own)
 	ownCtx, cancelOwn := deadlineCtx, context.CancelFunc(func() {})
 	if own > 0 && own < r.budget.Stage {
-		ownCtx, cancelOwn = context.WithTimeout(deadlineCtx, own)
+		// An attempt that resumes a stage a message stopped runs under that
+		// stage's own bound and not a fresh one (rule 2).
+		if b := opts.Bounds; b != nil && !b.own.IsZero() {
+			ownCtx, cancelOwn = context.WithDeadline(deadlineCtx, b.own)
+		} else {
+			ownCtx, cancelOwn = context.WithTimeout(deadlineCtx, own)
+		}
 	} else {
 		if own > 0 {
 			r.noteStageTimeoutClamped(name, own)
@@ -5476,13 +5751,27 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	if dl, ok := ownCtx.Deadline(); ok {
 		r.beginBudgetStage(name, n, dl)
 	}
+	// The stage's own clock, kept for the attempts that resume it: this one
+	// is the first, and what it runs under is what they run under (rule 2).
+	if b := opts.Bounds; b != nil {
+		if b.deadline.IsZero() {
+			if dl, ok := deadlineCtx.Deadline(); ok {
+				b.deadline = dl
+			}
+		}
+		if b.own.IsZero() && own > 0 && own < r.budget.Stage {
+			if dl, ok := ownCtx.Deadline(); ok {
+				b.own = dl
+			}
+		}
+	}
 	// The halt's way to stop this stage: cancelling with the halt as the
 	// cause, which StageError reads.
 	stageCtx, cancelCause := context.WithCancelCause(ownCtx)
 	// A stage the run's stage-scoped Claude OAuth account serves opens no stage
 	// in the gateway and takes no figure of its own from it: its calls go
 	// straight to Anthropic, so the gateway has nothing to admit, nothing to
-	// refuse and nothing to report for it (docs/design/mixed-credentials.md
+	// refuse and nothing to report for it (docs/mixed-credentials/spec.md
 	// §11, P11). Its account stage is cleared of the previous stage's report
 	// for the same reason: nothing of this stage may be read from r.lastStage.
 	direct := r.stageDirect(name)
@@ -5694,6 +5983,31 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.noteStageExhausted(name)
 		r.save(ctx)
 		return res, false, exhausted
+	}
+
+	// A call that could not reach the credentials service at all ended this
+	// stage (D2983), the way an exhausted answer does and with the same
+	// reading: the stage did not fail, nothing is recorded about it, and stage
+	// waits for the instant the answer names and resumes the stage's session.
+	// It has no counterpart of noteStageExhausted above: which service the
+	// call goes to is not a walk, and the call the resumed stage makes is
+	// served by the same one.
+	var unreachable *unreachableError
+	if errors.As(context.Cause(stageCtx), &unreachable) && (err != nil || res.IsError) {
+		r.save(ctx)
+		return res, false, unreachable
+	}
+
+	// The message's stop, before everything below: the agent stopped itself
+	// at a quiet point between two tool calls because the ask closed (rules 2
+	// and 3), so this attempt did not fail and must not be read as one — not
+	// as a recoverable error, not as a skipped stage, and above all not as
+	// the ordinary failure the exit path would otherwise make of an attempt
+	// whose process was told to stop. What it spent is recorded above, like
+	// any attempt's; stage's own loop resumes it with the message.
+	if res.Yielded && err == nil && stageCtx.Err() == nil {
+		r.save(ctx)
+		return res, false, nil
 	}
 
 	switch {
@@ -5969,7 +6283,7 @@ var transientStagePhrases = []string{"stream closed before completion"}
 // ends before any text arrives may report an error with no words in it at
 // all, and the only thing left to read is the exit that killed its process.
 // It is asked only for a stage the gateway served: a stage the run's
-// stage-scoped Claude OAuth account serves (docs/design/mixed-credentials.md)
+// stage-scoped Claude OAuth account serves (docs/mixed-credentials/spec.md)
 // forwards its calls itself, so there is no gateway to witness anything for
 // it, and such a stage is retried on its text alone -- or not at all. That is
 // the whole of the mixed-credential case here: no report of its own, no
@@ -6121,6 +6435,11 @@ func (r *run) logTail(ready bool, records []verify.Record) *LogTail {
 
 func (r *run) finalize(ctx context.Context) error {
 	r.rec.Stage = "finalize"
+	// Rule 5's last read, before anything else saves the record: a message
+	// written after the final poll is recorded rather than lost, and every
+	// message still pending becomes undelivered here, which is the only place
+	// a run that ends without another coder stage can say so (D2944, F18).
+	r.finalReadMessages(ctx)
 	// The paths this run changed, recorded before anything else saves the
 	// record, so every run that reaches finalize carries them — the ones
 	// that end without a pull request included (design D27, V2.1.2).
@@ -6543,7 +6862,8 @@ func (r *run) finalize(ctx context.Context) error {
 		fu = r.followUpSection()
 		fu.MovedToDraft = r.follow.wasReady && !ready
 	}
-	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes), r.secretList())
+	report := agent.Redact(reportWithMessages(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes,
+		r.reportMessages(pr.Number)), r.secretList())
 	// A follow-up's pull request is the one people watch: an earlier
 	// attempt of this execution may already have posted this report.
 	if r.follow != nil && r.reportPosted(ctx, pr) {

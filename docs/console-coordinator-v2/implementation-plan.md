@@ -14,7 +14,7 @@ Three conventions this plan keeps:
 - **Security-sensitive is a label, not a mood.** A task that adds or moves an entry on
   `SPAWN_COMMANDS` (`console/src/main/spawn.ts`) or `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts`)
   needs an independent review, its pinning test in `console/test/unit/`, and the §5.1 table of
-  `docs/design/desktop-console.md` updated in the same change (`.claude/rules/console.md`).
+  `docs/desktop-console/spec.md` updated in the same change (`.claude/rules/console.md`).
 
 **No release-note migration is needed for any of this.** Nothing here changes a policy version, a
 rules version, a node shape or an image contract, so `fugaro update` has nothing to converge and
@@ -112,7 +112,7 @@ change or the console refuses the whole document.
 6. `console/src/main/spawn.ts` — the `runs.list` row's two new declared arguments.
 7. `console/src/main/ipc.ts` — the operation's schema for the same two.
 8. `console/test/unit/ipc.test.ts`, `console/test/unit/spawn.test.ts` — the pinning tests.
-9. `docs/design/desktop-console.md` §5.1 — the allow-list table's `runs ls` row.
+9. `docs/desktop-console/spec.md` §5.1 — the allow-list table's `runs ls` row.
 
 **Interfaces.**
 
@@ -162,7 +162,7 @@ a credential, so the read has to be a CLI one.
 9. `console/src/main/ipc.ts` — the new operation.
 10. `console/src/shared/schema.ts` — the document's decoder.
 11. `console/test/unit/ipc.test.ts` — the pinning test.
-12. `docs/design/desktop-console.md` §5.1 — the allow-list table's new row.
+12. `docs/desktop-console/spec.md` §5.1 — the allow-list table's new row.
 
 **Interfaces.** The argv the console spawns is exactly
 `fugaro coordinator show --repo <owner/name> --pr <n> --json`. The document is `{ number, url, title,
@@ -222,7 +222,7 @@ today (reconciliation §5.8).
 8. `console/src/main/ipc.ts` — the operation.
 9. `console/src/shared/schema.ts` — the decoder.
 10. `console/test/unit/ipc.test.ts` — the pinning test.
-11. `docs/design/desktop-console.md` §5.1 — the allow-list table's new row.
+11. `docs/desktop-console/spec.md` §5.1 — the allow-list table's new row.
 
 **Interfaces.** `fugaro coordinator intents --all --json` prints, per repository,
 `{repo, provider, intents: [{id, declared_by, at, branch, release, files, services}]}` — the fields
@@ -455,7 +455,7 @@ C0 ──────────► (fills the spec's numbers)     K1 ──►
 | `console/src/shared/schema.ts` | C1, C3, C4, K3 | strict decoding: a key one side gains without the other is a refusing console, not an unread field |
 | `console/src/renderer/screens/coordinator.ts` | K1, K2, K3, K4, K5 | four of the five append a section; K1 owns the model, the rest own their section |
 | `console/src/renderer/entry.ts` | K1, K3, K4, K5 | one `showCoordinator`, and the parallel start lives in it |
-| `docs/design/desktop-console.md` §5.1 | C2, C3, C4 | the allow-list table, which the Go docs tests pin |
+| `docs/desktop-console/spec.md` §5.1 | C2, C3, C4 | the allow-list table, which the Go docs tests pin |
 | `console/docs/json-contract.md` | C1, C2, C3, C4 | one section per document |
 
 **Order:** C0, C1, C2, C3, C4 (CLI, 0.15.0), then K1, K2, K4, K3, K5

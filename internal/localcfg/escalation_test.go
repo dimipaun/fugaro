@@ -54,7 +54,7 @@ func TestEscalationKeysDefaultsPerMode(t *testing.T) {
 	if got.CostCeiling != 0 || want.CostCeiling != 0 {
 		t.Errorf("cost_ceiling = %v for a file that sets none, want the 0 that means no ceiling", got.CostCeiling)
 	}
-	for _, mode := range rigor.Modes {
+	for _, mode := range rigor.Rigors {
 		if got.Rows[mode] != want.Rows[mode] {
 			t.Errorf("%s: row = %+v, want the shipped %+v", mode, got.Rows[mode], want.Rows[mode])
 		}
@@ -76,7 +76,7 @@ func TestEscalationKeysDefaultsPerMode(t *testing.T) {
 	if th.CostCeiling != 40 {
 		t.Errorf("cost_ceiling = %v, want the written 40", th.CostCeiling)
 	}
-	for _, mode := range rigor.Modes {
+	for _, mode := range rigor.Rigors {
 		row := th.Rows[mode]
 		// Pro is the mode whose own members the block overrides; every other
 		// mode reads the block's scalars.

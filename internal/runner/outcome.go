@@ -533,7 +533,7 @@ func (r *run) levelRound(l policy.Level, round int) (seniorRound, bool) {
 type FindingsPolicy struct {
 	// Mode is the mode the run resolved (D22's fold). A tolerated round's
 	// reason names it, so the record says which mode let the findings through.
-	Mode rigor.Mode
+	Mode rigor.Rigor
 	// Round is the review round the split was made from. Decide checks it
 	// against the summary it was given, so a split from another round is a
 	// policy it cannot read — and a policy that cannot decide blocks (F3).
@@ -605,7 +605,7 @@ type FindingsPolicy struct {
 // ends at. A run whose mode never rose has none, which is D19.
 type RigorRaise struct {
 	// Mode is the mode this raise reached, which is the mode the reason names.
-	Mode rigor.Mode
+	Mode rigor.Rigor
 	// Area is the rule the raising moment matched — its own strictest, which
 	// D23 makes the deciding one — and "" when the layer that decided it is not
 	// an area: a raise by a layer, or by a built-in floor outside every layer
@@ -754,7 +754,7 @@ func (pol FindingsPolicy) acceptsAtStop(last *runstore.ReviewSummary) bool {
 // stop, so it is a draft at the stop whatever this branch does; a task that
 // named a mode is a run in that mode (rigor.Request.Mode), and the ruling's
 // answer is the mode's.
-func findingsPolicyOf(cfg rigor.Config, mode rigor.Mode, round int, findings []rigor.Score, atStop string) FindingsPolicy {
+func findingsPolicyOf(cfg rigor.Config, mode rigor.Rigor, round int, findings []rigor.Score, atStop string) FindingsPolicy {
 	// D9 first, and the mode's own round rule with it: a mode may not let a
 	// finding through where the repository has not asked for the mode, so the
 	// split is taken only where both hold — the repository opted in
@@ -1045,9 +1045,9 @@ type seniorRound struct {
 }
 
 // scoresOf presents the reviewer's findings to the threshold table: the three
-// anchored axes and the class it reads, never the free-form severity string
-// beside them (D2). A finding with no score reads as the zero Score, which
-// blocks in every mode (D4).
+// anchored axes, the class and the task scope it reads, never the free-form
+// severity string beside them (D2). A finding with no score reads as the zero
+// Score, which blocks in every mode (D4).
 func scoresOf(findings []Finding) []rigor.Score {
 	out := make([]rigor.Score, 0, len(findings))
 	for _, f := range findings {
@@ -1056,9 +1056,16 @@ func scoresOf(findings []Finding) []rigor.Score {
 	return out
 }
 
-// scoreOf is one finding as the table reads it.
+// scoreOf is one finding as the table reads it. The scope goes in as the
+// reviewer wrote it, the way internal/runner reads the class: the words are
+// closed by the schema the reviewer is held to and by the artifact's own check
+// (issuescope.go), and a word the table does not know is one it must not let
+// decide a merge.
 func scoreOf(f Finding) rigor.Score {
-	return rigor.Score{Likelihood: f.Likelihood, Impact: f.Impact, FixCost: f.FixCost, Class: rigor.Class(f.Class)}
+	return rigor.Score{
+		Likelihood: f.Likelihood, Impact: f.Impact, FixCost: f.FixCost,
+		Class: rigor.Class(f.Class), Scope: rigor.Scope(f.Scope),
+	}
 }
 
 // Plural formats "1 finding" / "3 findings".

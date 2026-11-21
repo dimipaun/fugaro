@@ -142,7 +142,7 @@ const mixedToken = "oauth-token-abcdef"
 const gatewayToken = "gateway-token-abcdef"
 
 // mixedStageRun is the one run the owner's B0 ruling admits
-// (docs/design/mixed-credentials.md §11): an api-key run whose coder stays on
+// (docs/mixed-credentials/spec.md §11): an api-key run whose coder stays on
 // the provider key the gateway holds, with the stage-scoped Claude OAuth
 // account the published node names for review and adversarial alone. Its own
 // environment (r.env) is what agent.BuildEnv built for the run's stages — the

@@ -1,0 +1,537 @@
+{
+  "schema_version": 3,
+  "plan": "docs/location-preference/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "LP0",
+      "title": "the locations record",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/localcfg/locations.go",
+          "internal/localcfg/localcfg.go",
+          "internal/settings/registry.go",
+          "internal/cli/writers_labels.go",
+          "schemas/settings.schema.json",
+          "docs/location-preference/record.md"
+        ]
+      }
+    },
+    {
+      "id": "LP1",
+      "title": "the mapping",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/place/*.go",
+          "internal/backend/gcp/names.go",
+          "docs/location-preference/locations.md"
+        ]
+      }
+    },
+    {
+      "id": "LP2",
+      "title": "a new budget database goes where the mapping says",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/firebase/firebase.tf",
+          "deploy/terraform/gcp/modules/firebase/variables.tf",
+          "deploy/terraform/gcp/roots/firebase/*.tf",
+          "deploy/terraform/gcp/roots/firebase/tests/firebase.tftest.hcl",
+          "internal/infra/firebase.go",
+          "internal/infra/discover_firebase.go",
+          "internal/infra/testdata/firebase*.tfvars.json",
+          "internal/infra/tf/testdata/golden/firebase*.plan.json",
+          "internal/cli/init_firebase.go"
+        ]
+      }
+    },
+    {
+      "id": "LP3",
+      "title": "Firestore goes where the mapping says",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/firestore.go",
+          "internal/infra/firestore_test.go",
+          "internal/gcpfake/firestore.go",
+          "internal/cli/init_firebase.go",
+          "internal/cli/init_firestore_test.go",
+          "internal/cli/init_confirm_test.go",
+          "internal/cli/init_review_test.go",
+          "internal/cli/update_test.go",
+          "internal/cli/init_converge_test.go",
+          "internal/cli/managed_money_steps_test.go",
+          "scripts/live-checks/check27*.sh"
+        ]
+      }
+    },
+    {
+      "id": "LP4",
+      "title": "setup asks the place",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/wizard_stage.go",
+          "internal/cli/init_inputs.go",
+          "internal/cli/init.go",
+          "internal/cli/setup_answers.go",
+          "schemas/setup-answers.schema.json",
+          "website/content/cli-reference.md",
+          "plugin/skills/setup/SKILL.md",
+          "internal/cli/init_inputs_test.go",
+          "internal/cli/testdata/region_prompts.golden",
+          "internal/cli/setup_answers_test.go"
+        ]
+      }
+    },
+    {
+      "id": "LP5a",
+      "title": "a secret created from now on is replicated in the region",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/installation/secrets.tf",
+          "deploy/terraform/gcp/modules/installation/licence.tf",
+          "deploy/terraform/gcp/modules/installation/orchestrator.tf",
+          "deploy/terraform/gcp/modules/installation/credentials.tf",
+          "deploy/terraform/gcp/modules/installation/intake.tf",
+          "deploy/terraform/gcp/modules/repo/secrets.tf",
+          "deploy/terraform/gcp/roots/installation/tests/*.tftest.hcl",
+          "deploy/terraform/gcp/roots/repo/tests/*.tftest.hcl",
+          "internal/infra/tf/testdata/golden/installation*.plan.json",
+          "internal/infra/tf/testdata/golden/repo*.plan.json",
+          "internal/infra/tf/cover.go",
+          "internal/infra/tf/cover_test.go"
+        ]
+      }
+    },
+    {
+      "id": "LP5b",
+      "title": "a secret the CLI creates is replicated in the region",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/gcp/secrets.go",
+          "internal/backend/gcp/secrets_test.go",
+          "internal/gcpfake/secrets.go"
+        ]
+      }
+    },
+    {
+      "id": "LP5c",
+      "title": "the intake service's secrets are replicated in the region",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/intake/gcp.go",
+          "internal/intake/gcp_test.go",
+          "internal/cli/intake_serve.go"
+        ]
+      }
+    },
+    {
+      "id": "LP6",
+      "title": "a new installation's run log bucket is in its region",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/installation/logging.tf",
+          "deploy/terraform/gcp/modules/installation/variables.tf",
+          "deploy/terraform/gcp/roots/installation/*.tf",
+          "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
+          "internal/infra/discover.go",
+          "internal/infra/imports.go",
+          "internal/infra/tfvars.go",
+          "internal/cli/init.go",
+          "internal/cli/doctor_batch.go",
+          "internal/infra/testdata/installation*.tfvars.json",
+          "internal/infra/tf/testdata/golden/installation*.plan.json",
+          "internal/infra/forget.go",
+          "internal/infra/forget_test.go",
+          "internal/e2e/update_test.go",
+          "internal/gcpfake/logging.go",
+          "internal/infra/discover_test.go",
+          "internal/cli/init_test.go"
+        ]
+      }
+    },
+    {
+      "id": "LP7",
+      "title": "what the cloud holds",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/locations_observe.go",
+          "internal/infra/locations_observe_test.go",
+          "internal/gcpfake/logging.go"
+        ]
+      }
+    },
+    {
+      "id": "LP8",
+      "title": "a region that is not the installation's is refused where it would plan",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init.go",
+          "internal/cli/init_new_machine.go",
+          "internal/cli/region_refusal_test.go",
+          "internal/cli/update_managed_test.go",
+          "internal/gcpfake/gcs.go"
+        ]
+      }
+    },
+    {
+      "id": "LP9",
+      "title": "a workspace member's database region comes from the member",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace.go",
+          "internal/cli/workspace_region_test.go"
+        ]
+      }
+    },
+    {
+      "id": "LP10",
+      "title": "no step confirms a location",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_firebase.go",
+          "internal/cli/init.go",
+          "internal/cli/init_confirm_test.go",
+          "internal/cli/init_converge_test.go",
+          "internal/cli/init_inputs_test.go",
+          "internal/cli/init_review_test.go",
+          "internal/cli/setup_refusals_test.go",
+          "internal/cli/update_test.go",
+          "internal/cli/testdata/region_prompts.golden",
+          "internal/cli/init_firebase_always_test.go",
+          "docs/no-prompt-policy/reconciliation.md",
+          "internal/cli/setup.go",
+          "website/content/cli-reference.md",
+          "internal/cli/init_firestore_test.go",
+          "internal/cli/managed_money_steps_test.go",
+          "internal/cli/update.go",
+          "internal/cli/init_review.go",
+          "internal/cli/testdata/init_review.golden",
+          "internal/cli/report_test.go",
+          "internal/cli/restore.go"
+        ]
+      }
+    },
+    {
+      "id": "LP11",
+      "title": "the documents say where the data lives",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "SECURITY.md",
+          "website/content/security.md",
+          "docs/gcp-setup.md",
+          "docs/m9-budget-and-dashboard/spec.md",
+          "internal/cli/docs_location_test.go",
+          "docs/releases/*.md"
+        ]
+      }
+    },
+    {
+      "id": "LP12",
+      "title": "doctor says where the data is",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor_locations.go",
+          "internal/cli/doctor_locations_test.go",
+          "internal/cli/doctor.go"
+        ]
+      }
+    },
+    {
+      "id": "LP13",
+      "title": "the two live checks, as scripts",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-820*.sh",
+          "scripts/live-checks/check-821*.sh",
+          "docs/location-preference/check820-steps.md",
+          "docs/location-preference/check821-steps.md",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "LP14",
+      "title": "the record is written by setup and update, and the whole is proven",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init_stages.go",
+          "internal/cli/locations_end_to_end_test.go",
+          "internal/infra/testdata/*-eu.tfvars.json",
+          "internal/infra/tf/testdata/golden/installation-eu.plan.json",
+          "internal/infra/tf/testdata/golden/firebase-eu.plan.json",
+          "scripts/gen-golden-plans.sh"
+        ]
+      }
+    },
+    {
+      "id": "LP15",
+      "title": "the key service finds an installation whose database is regional",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/keyservice/workspaces.go",
+          "ee/keyservice/workspaces_test.go",
+          "docs/release.md"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "LP2",
+      "needs": "LP1",
+      "reason": "the mapping's answers; the mapping is smaller than a contract for it"
+    },
+    {
+      "task": "LP3",
+      "needs": "LP1",
+      "reason": "the mapping's answers; the mapping is smaller than a contract for it"
+    },
+    {
+      "task": "LP4",
+      "needs": "LP1",
+      "reason": "the mapping's answers; the mapping is smaller than a contract for it"
+    },
+    {
+      "task": "LP6",
+      "needs": "LP1",
+      "reason": "the mapping's answers; the mapping is smaller than a contract for it"
+    },
+    {
+      "task": "LP12",
+      "needs": "LP1",
+      "reason": "the mapping's answers; the mapping is smaller than a contract for it"
+    },
+    {
+      "task": "LP2",
+      "needs": "LP8",
+      "reason": "order: a mistyped region is refused before a region decides a permanent location"
+    },
+    {
+      "task": "LP3",
+      "needs": "LP8",
+      "reason": "order: a mistyped region is refused before a region decides a permanent location"
+    },
+    {
+      "task": "LP3",
+      "needs": "LP2",
+      "reason": "one file, internal/cli/init_firebase.go"
+    },
+    {
+      "task": "LP5c",
+      "needs": "LP5a",
+      "reason": "the variable LP5a's module sets"
+    },
+    {
+      "task": "LP6",
+      "needs": "LP5a",
+      "reason": "shared files: the installation root's test file and the same golden plans"
+    },
+    {
+      "task": "LP6",
+      "needs": "LP4",
+      "reason": "one file, internal/cli/init.go"
+    },
+    {
+      "task": "LP12",
+      "needs": "LP0",
+      "reason": "the record's type"
+    },
+    {
+      "task": "LP10",
+      "needs": "LP3",
+      "reason": "shared files: internal/cli/init_firebase.go and the tests of the note"
+    },
+    {
+      "task": "LP10",
+      "needs": "LP4",
+      "reason": "shared files: internal/cli/init.go, the CLI reference and the region prompts golden file"
+    },
+    {
+      "task": "LP10",
+      "needs": "LP6",
+      "reason": "one file, internal/cli/init.go"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP0",
+      "reason": "it runs this side with the others and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP2",
+      "reason": "it runs this side with the others and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP3",
+      "reason": "it runs this side with the others and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP4",
+      "reason": "it runs this side with the others and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP5a",
+      "reason": "it runs this side with the others and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP5b",
+      "reason": "it runs this side with the others and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP5c",
+      "reason": "it runs this side with the others and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP6",
+      "reason": "it runs this side with the others and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP7",
+      "reason": "it runs this side with the others and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP9",
+      "reason": "it runs this side with the others and proves the whole"
+    },
+    {
+      "task": "LP14",
+      "needs": "LP12",
+      "reason": "it runs this side with the others and proves the whole"
+    },
+    {
+      "task": "LP11",
+      "needs": "LP14",
+      "reason": "it states what ships"
+    },
+    {
+      "task": "LP11",
+      "needs": "LP10",
+      "reason": "it states that no step confirms a location"
+    },
+    {
+      "task": "LP11",
+      "needs": "LP15",
+      "reason": "it states that the key service finds a regional installation"
+    },
+    {
+      "task": "LP13",
+      "needs": "LP14",
+      "reason": "the scripts run the shipped commands"
+    },
+    {
+      "task": "LP4",
+      "needs": "LP8",
+      "reason": "one file, internal/cli/init.go"
+    },
+    {
+      "task": "LP7",
+      "needs": "LP5b",
+      "reason": "the secrets fake stores a container's replication only after LP5b"
+    },
+    {
+      "task": "LP6",
+      "needs": "LP7",
+      "reason": "one file, internal/gcpfake/logging.go, whose listing route LP7 adds"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}

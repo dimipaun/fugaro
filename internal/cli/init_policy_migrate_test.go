@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -800,6 +801,56 @@ func TestUpdatePublishesTheFirstPolicyNodeForTheTriageSwitch(t *testing.T) {
 	p := publishedPolicy(t, f)
 	if p.Triage == nil || *p.Triage {
 		t.Fatalf("the published node carries triage %v, want the false the config writes", p.Triage)
+	}
+}
+
+// TestUpdatePublishesTheFirstPolicyNodeForTheReviewAgainstTaskSwitch is the same
+// member class for the switch RA8b gives the local config (R7, D2935): the
+// answer a project's runs read is the node's — a published false is the
+// project-wide default a repository's own true turns back on, and a written true
+// forces the check on — so a project whose config writes the switch and which
+// never published a node had left the owner's own ceiling in a file no run
+// reads, with `fugaro project policy publish` as the second command the HARD
+// RULE forbids. The check is reached by the key's presence rather than by its
+// value, the triage switch's rule one key over: what a first publish must not
+// leave behind is a member the node does not carry while the file states it.
+func TestUpdatePublishesTheFirstPolicyNodeForTheReviewAgainstTaskSwitch(t *testing.T) {
+	f := newProjectFixture(t, "review_against_task: false\n")
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "no policy is published") {
+		t.Errorf("the check does not say the project has no node: %q", st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the review-against-task switch") || strings.Contains(st.Detail, "the triage switch") {
+		t.Errorf("the check names a switch this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "review_against_task") {
+		t.Errorf("the diff the operator confirmed does not name the switch it creates the node with:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if p.ReviewAgainstTask == nil || *p.ReviewAgainstTask {
+		t.Fatalf("the published node carries review_against_task %v, want the false the config writes", p.ReviewAgainstTask)
 	}
 }
 
@@ -1734,6 +1785,7 @@ func currentPolicyNode() map[string]any {
 	return map[string]any{
 		"version": projectpolicy.Version,
 		"budget":  map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"mobile":  defaultMobileNode(),
 	}
 }
 
@@ -1816,6 +1868,111 @@ func TestUpdateLeavesACurrentNodeAloneWhateverTheRulesAre(t *testing.T) {
 	}
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Errorf("the node's version is %d, want %d", got, projectpolicy.Version)
+	}
+}
+
+// TestUpdatePolicyMigrationRewritesAnOffModeInPlace is AB8a's Red step at the
+// door that runs it: before the same-version step, `fugaro update` read a node
+// already at this version, found no version to walk and wrote nothing, so the
+// published node still said the word the vocabulary dropped and every run of
+// the project was refused by a reader that no longer knows it (F22). The step
+// runs at the version rather than across two, so the node's own number does not
+// move (R4, D3025), and what the operator reads is the one line that says what
+// was rewritten rather than a version move that is not there.
+//
+// The local config's own mode is the rows here. `observe` is the file that
+// states the mode the step writes, so the diff the migration produces is the
+// whole of this run's work; the word is the file this stage must still converge
+// over — the population the step exists for, whose local config is AB8b's to
+// rewrite — and a row that only had the first spelling hid a node the publish
+// half put the word back into, with the update failing on a policy it had just
+// written.
+//
+// The word's third row is the same file with one other member the node does not
+// carry (a ceiling the config has moved since that publish), which is what makes
+// this stage's publish half run at all: the mode is no drift of its own (the
+// file's word asks for the mode the step writes), so a node whose every other
+// member agrees is left alone — and it is the publish half, not the migration,
+// that builds the node from the file and could put the word back into it.
+func TestUpdatePolicyMigrationRewritesAnOffModeInPlace(t *testing.T) {
+	for _, tc := range []struct {
+		name, fileMode string
+		nodeCeiling    float64
+	}{
+		{name: policy.ModeObserve, fileMode: policy.ModeObserve, nodeCeiling: 5},
+		{name: config.BudgetOff, fileMode: config.BudgetOff, nodeCeiling: 5},
+		{name: config.BudgetOff + " with a member the publish half writes", fileMode: config.BudgetOff, nodeCeiling: 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			setConfig(t, f, func(s string) string {
+				return strings.Replace(s, "budget: { mode: enforce,", "budget: { mode: "+tc.fileMode+",", 1)
+			})
+			node := currentPolicyNode()
+			node["budget"] = map[string]any{"mode": config.BudgetOff, "per_run_usd": tc.nodeCeiling}
+			f.db.Set(projectpolicy.PathShared(), node)
+			h := newMigrationRig(t, f, &initOptions{})
+
+			st, err := h.s.Check(context.Background())
+			if err != nil {
+				t.Fatalf("a node that says the word was refused by the check: %v", err)
+			}
+			if st.State != initflow.Todo {
+				t.Errorf("the check reports %q (%s), want the step as a todo", st.State, st.Detail)
+			}
+			if !strings.Contains(st.Detail, "rewrites it in place") {
+				t.Errorf("the check line does not say what this run does: %s", st.Detail)
+			}
+			if strings.Contains(st.Detail, "writes version") {
+				t.Errorf("the check line words the step as a version move the node does not make: %s", st.Detail)
+			}
+
+			out, err := h.apply(t, true)
+			if err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+				t.Fatalf("the node is version %d after the step, want %d: the step runs at the version and does not bump it (R4, D3025)", got, projectpolicy.Version)
+			}
+			if p := publishedPolicy(t, f); p.Budget.Mode != policy.ModeObserve || p.Budget.PerRunUSD != 5 {
+				t.Errorf("the published node's budget is %+v, want the mode the step writes and the ceiling the file states", p.Budget)
+			}
+			if !strings.Contains(out, fmt.Sprintf("rewritten in place at version %d", projectpolicy.Version)) {
+				t.Errorf("the diff does not say the node was rewritten at its own version:\n%s", out)
+			}
+			// The step's own line, and not a version move: the numbers a walk
+			// reports would say the node went from a version to itself.
+			if !strings.Contains(out, fmt.Sprintf("the budget mode: %s -> %s", config.BudgetOff, policy.ModeObserve)) {
+				t.Errorf("the diff does not say what the mode became, in the step's own words:\n%s", out)
+			}
+			if strings.Contains(out, fmt.Sprintf("%d to %d:", projectpolicy.Version, projectpolicy.Version)) {
+				t.Errorf("the diff words the step as a version move the node does not make:\n%s", out)
+			}
+			// The update converged: the node it wrote is the one this reader
+			// serves, so the verification of the write has nothing to refuse —
+			// the state a file that says the word used to break by having the
+			// publish half copy it back over the step's own answer.
+			if err := h.s.Verify(context.Background()); err != nil {
+				t.Errorf("the update cannot verify the node it wrote: %v", err)
+			}
+			// A second update leaves the node where the first one put it: the
+			// step is a fixed point, which is what keeps the one command the
+			// upgrade is from rewriting a converged node on every run of it.
+			h2 := newMigrationRig(t, f, &initOptions{})
+			out2, err := h2.apply(t, true)
+			if err != nil {
+				t.Fatalf("%v\n%s", err, out2)
+			}
+			if strings.Contains(out2, "rewritten in place") {
+				t.Errorf("a second update rewrote the node again:\n%s", out2)
+			}
+			if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+				t.Errorf("the node is version %d after a second update, want %d", got, projectpolicy.Version)
+			}
+			if p := publishedPolicy(t, f); p.Budget.Mode != policy.ModeObserve {
+				t.Errorf("the node's mode is %q after a second update, want %q", p.Budget.Mode, policy.ModeObserve)
+			}
+		})
 	}
 }
 

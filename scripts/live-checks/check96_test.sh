@@ -1280,6 +1280,24 @@ test_the_drop_without_the_code_is_a_fail() {
   expect_contains "$out" "the two have moved apart" "the drop without the code: the pair it names"
 }
 
+test_another_repositorys_app_key_container_is_not_this_ones() {
+  setup_case twokeys
+  printf 'var ServiceHeldSecretNames = []string{"github-app-key"}\n' >"$dir/state/providers.go"
+  JOB_APP_KEY=no write_job "$dir"
+  write_secrets "$dir" operator
+  # Each repository has its own App key container, labelled with its slug: the
+  # second repository's must not make the sandbox's one read as two.
+  cat >"$dir/state/secrets.json" <<JSON
+[{"name": "$APPKEY", "labels": {"fugaro": "managed", "fugaro_repo": "$SANDBOX_SLUG", "fugaro_secret": "$APPKEY"}},
+ {"name": "${APPKEY}-other", "labels": {"fugaro": "managed", "fugaro_repo": "$OTHER_SLUG", "fugaro_secret": "$APPKEY"}},
+ {"name": "$BUNDLE", "labels": {"fugaro": "managed", "fugaro_project": "$FUGARO_PROJECT"}}]
+JSON
+  RUN96_ENV=(CHECK96_PROVIDERS="$dir/state/providers.go")
+  run96
+  expect_absent "$out" "not the shape this check reads" "two repositories' App key containers: no stop"
+  expect_contains "$out" "FACT app-key: PASS — " "two repositories' App key containers: the row reads the sandbox's own"
+}
+
 test_the_switch_hook_may_only_name_the_file_it_reads() {
   setup_case hook
   RUN96_ENV=(CHECK96_PROVIDERS="$dir/state/elsewhere.go")
@@ -1755,6 +1773,7 @@ t test_a_url_on_a_job_while_the_config_records_no_service_is_a_fail
 t test_a_job_of_a_repository_the_config_records_as_off_is_a_pass
 t test_the_drop_landed_is_a_pass
 t test_the_drop_without_the_code_is_a_fail
+t test_another_repositorys_app_key_container_is_not_this_ones
 t test_the_switch_hook_may_only_name_the_file_it_reads
 t test_a_bundle_with_the_job_as_a_second_member_is_a_fail
 t test_a_bundle_whose_one_member_is_not_the_service_account_is_a_fail

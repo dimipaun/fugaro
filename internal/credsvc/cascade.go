@@ -26,20 +26,24 @@ import (
 // candidates narrows the bundle to the credentials this call may use, and
 // reports the ones it did not, with why.
 //
-// A tier-B credential needs no admission: it is the project's own paid key,
-// and the policy that admits spending at all (`fallback: auto`) is the same
-// policy that admits it. A tier-A credential needs O4's three-legged
-// admission, and that is why the admission is read only when the bundle holds
-// one: a repository with no shared token is never given tier A, and an
-// installation whose bundle holds no tier-A credential never consults an
-// admission at all (Global Constraint 4's drop, if it had applied).
+// It is the scope's narrowing in two halves (C1, R1). The SCOPE answers what the
+// caller may be offered at all — the bundle's entries for an installation, the
+// workspace's shared node over them for a member (Offering) — and this function
+// narrows that list by what the scope's own policy admits and by what the
+// repository's own record says. A tier-B credential needs no admission: it is
+// the project's own paid key, and the policy that admits spending at all
+// (`fallback: auto`) is the same policy that admits it. A tier-A credential
+// needs O4's three-legged admission, and that is why the admission is read only
+// when the list holds one: a repository with no shared token is never given
+// tier A, and an installation whose bundle holds no tier-A credential never
+// consults an admission at all (Global Constraint 4's drop, if it had applied).
 //
 // A review caller is the one caller whose candidate list is not this
 // narrowing: the pairing has already resolved the ONE credential it may be
-// served by, and the class buys no other (reviewCandidates). It is asked here rather
-// than after the selector because this function is the one place that decides
-// which credentials a call may be offered — a review caller's list must never
-// contain an entry the cascade could fall to.
+// served by, and the class buys no other (reviewCandidates). The scope answers
+// that list as final (Offered), because a narrowed list would never contain an
+// entry a review caller may fall to — and this function is where the two are
+// told apart rather than after the selector, because the list is decided here.
 //
 // The project's crafts narrow it once more (poolOffering, MC6): a node that
 // publishes crafts offers the union of what they go out on and nothing beside
@@ -57,55 +61,92 @@ import (
 // cascade's rule, which is what a list no strategy was written for has always
 // had.
 func (s *Server) candidates(ctx context.Context, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle) ([]creds.Credential, creds.Strategy, []Tried, error) {
-	// b.Credentials() and never b.Entries(): the bundle holds the GitHub App
-	// key (C2.1), the upstream Bitbucket token (D506), the read consumer (F21),
-	// the review-signing keys (D1069) and the provider key (AK6b) as well, and
-	// none of them is a candidate for a caller's Anthropic calls. A cascade that
-	// offered one would attach an App private key, the caller's own git token or
-	// a signing key to an Anthropic call as its credential, and the provider key
-	// would refuse the whole call (a tier-C candidate is refused by
-	// checkCandidates rather than skipped) — so the filter is the accessor's
-	// rather than this loop's. The one caller offered an entry outside
-	// Credentials is a review caller, and it is offered it by its own list
-	// (reviewOfferings).
-	all := b.Credentials()
+	// The pool this call may be served from is the SCOPE's (C1, R1): which
+	// credentials a call may be served is a fact about the caller the scope
+	// verified — the member it resolved to — and the scope is what decides it,
+	// out of the bundle's entries for an installation and out of the
+	// workspace's shared node over them for a member. The identity and the
+	// repository arrive as arguments because that is how the front door passes
+	// them down; they were read from the scope (ServeHTTP), and so is every
+	// reader below.
+	sc := scopeOfCall(ctx, s)
+	pool, err := sc.Offering().Offering(ctx, b)
+	if err != nil {
+		// The scope could not read what it offers: the refusal's own sentence is
+		// the answer, and it travels as this error rather than as an empty list,
+		// which the selector would answer with a sentence about the bundle.
+		return nil, creds.StrategyFailover, nil, err
+	}
 	if id.JobClass == ClassReview {
-		// The lookup is guarded although the pairing has already refused an
-		// account this table does not hold (pairReview): the class is the
-		// verifier's answer and the two lists are configured separately, so a
-		// caller admitted as a review one whose email this table does not carry
-		// is a deployment disagreeing with itself — and a service that panicked
-		// on a state it cannot name would be the worse answer to it.
+		// A review caller's list is its own and final (reviewCandidates): that
+		// class's credentials are decided before the cascade's own narrowing,
+		// and what it is served is the account's read-only set rather than the
+		// pool. The rule is the class's and not the scope's, because it is the
+		// pairing's answer read one way for one class (spec §2.3); what the
+		// scope answered above is asked for the same reason every other reader
+		// is — it is the pool this call belongs to — and is then not what a
+		// review call is served by.
 		ra, ok := s.reviewAccount(id.JobAccount)
 		if !ok {
+			// The lookup is guarded although the pairing has already refused an
+			// account this table does not hold (pairReview): the class is the
+			// verifier's answer and the two lists are configured separately, so
+			// a caller admitted as a review one whose email this table does not
+			// carry is a deployment disagreeing with itself — and a service that
+			// panicked on a state it cannot name would be the worse answer to
+			// it.
 			return nil, creds.StrategyFailover, nil, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
 		}
 		out, skipped := reviewCandidates(reviewOfferings(b), ra.Account)
 		return out, creds.StrategyFailover, skipped, nil
 	}
-	cands := all
-	strategy := creds.StrategyFailover
-	var skipped []Tried
-	if offer, offerStrategy, narrowed, err := poolOffering(shared, b); err != nil {
+	// The project's crafts narrow the pool one step further (poolOffering, MC6),
+	// which is where a pool's members enter this list and where a credential no
+	// craft names leaves it. A node that publishes no crafts block narrows
+	// nothing and the call is served the whole pool — which is every
+	// installation today.
+	crafted, strategy, narrowed, err := poolOffering(shared, b)
+	if err != nil {
 		// The crafts leave this call nothing at all (poolRefusal): the refusal's
-		// own sentence is the answer, and it travels as this error rather than
-		// as an empty list, which the selector would answer with a sentence
-		// about the bundle.
+		// own sentence is the answer, and it names the crafts and not the bundle
+		// an operator would otherwise go looking in.
 		return nil, creds.StrategyFailover, nil, err
-	} else if narrowed {
-		cands, strategy = offer, offerStrategy
-		// The credentials the crafts leave out are ones this call may not be
-		// served by, which is what not_admitted means for a caller (the rule a
-		// review caller's list is built by). They are reported rather than
-		// dropped, so the run's halt message reads the same list either way:
-		// what was considered, and why each one was skipped. A fifth reason
-		// would be a value this contract's closed set does not carry.
-		for _, c := range all {
-			if !named(offer, c.Name) {
-				skipped = append(skipped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
-			}
+	}
+	cands := pool
+	var skipped []Tried
+	if narrowed {
+		// The crafts are a narrowing of the POOL and never a widening of it: the
+		// list is the intersection, so a workspace's pool can only ever lose
+		// entries to a node that names more, and every credential the crafts and
+		// the pool disagree about is reported rather than dropped, so the run's
+		// halt message reads the list it was served from and what the two
+		// documents differed on.
+		cands = heldBy(crafted, pool)
+		skipped = append(skipped, craftsAndPoolSkips(crafted, pool)...)
+		if len(cands) == 0 {
+			// The crafts and this call's pool hold nothing in common: every name
+			// the crafts go out on is one the pool does not hold, so this call
+			// has no candidate at all. The refusal is the crafts' own
+			// (poolRefusal) and not an empty list handed to the selector, which
+			// answers an empty list with a sentence about the bundle — the one
+			// document that is not at fault, since what disagrees is the
+			// published node and the pool this call belongs to.
+			return nil, creds.StrategyFailover, nil, &poolRefusal{message: poolRefusalHead +
+				"the crafts go out on " + credentialNames(crafted) + ", and the pool this call belongs to holds " + credentialNames(pool)}
 		}
 	}
+	// This repository's own named entries join the list the crafts left
+	// (ownNamedEntries, KS3): the providers the call's own published policy
+	// names and the repository's own Anthropic key where the bundle holds one.
+	// AFTER the narrowing, because a craft's access names a credential of the
+	// bundle's old vocabulary and every one of them is a tier A or B name
+	// (craftOffering): an entry joined before the intersection would leave it
+	// again here, reported as one more name the crafts and the pool disagreed
+	// on, and the repository would be offered neither its provider key (F32) nor
+	// its own Anthropic one (D3008) on exactly the projects that publish crafts.
+	// A review caller above is served by its own list and never by this one, so
+	// the accessor is read only for a caller that is served from a pool at all.
+	cands = ownNamedEntries(cands, shared, b, id.Slug)
 	hasA := false
 	for _, c := range cands {
 		if c.Tier == creds.TierA {
@@ -113,6 +154,11 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 			break
 		}
 	}
+	// The admission is the scope's policy read (R1): the child node of the
+	// repository the pairing resolved, intersected with the project's shared
+	// node. For a workspace's member it is that member's own node, read from
+	// the member's database — never the installation's, and never another
+	// member's.
 	admitted := map[string]bool{}
 	if hasA {
 		var err error
@@ -135,7 +181,16 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	// R7): the declaration is checked against the record and never trusted, and
 	// a repository whose record says something this call does not declare is
 	// refused rather than served the cascade (G16).
-	rec, found, err := s.cfg.State.RepoAuth(ctx, id.Slug)
+	//
+	// The record is read through the scope's OWN reader and never through its
+	// state (C1's rule 2): `fugaro update` writes it in the database of the
+	// repository's own project, so an installation answers it out of its own
+	// database and a workspace out of the MEMBER's, while the state the cascade
+	// keeps its marks and leases in is the workspace's own — and a record read
+	// out of the wrong database is an absent one, which narrowToRepoAuth reads
+	// as "the cascade, unchanged" and would serve a member's run the whole of
+	// the workspace's pool.
+	rec, found, err := sc.RepoAuth().RepoAuth(ctx, id.Slug)
 	if err != nil {
 		return nil, creds.StrategyFailover, nil, err
 	}
@@ -143,11 +198,114 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	if found {
 		record = &rec
 	}
-	out, dropped, err := narrowToRepoAuth(out, record, id.AuthMode, id.AuthAccount)
+	out, dropped, err := narrowToRepoAuth(out, record, id.Slug, id.AuthMode, id.AuthAccount)
 	if err != nil {
 		return nil, creds.StrategyFailover, nil, err
 	}
 	return out, strategy, append(skipped, dropped...), nil
+}
+
+// ownNamedEntries adds this repository's own named entries to the list the
+// crafts left (candidates): the offerings KS3 builds, read out of the bundle
+// through C1's accessor (contract-provider.md, ReadProviderKey).
+//
+// They are two facts of the same family (R2, D3008), and both are derived from
+// the identity the service verified and never from anything the call says:
+//
+//   - one entry per provider the call's own published policy names — the
+//     project's `providers` block, whose keys are the providers a run may route
+//     a model to (config.ModelProvider) and whose names are the credential half
+//     of the family's key. It is offered at tier C, and it carries the provider
+//     it is the key OF (creds.Credential.Provider): one provider's key serves
+//     one provider's models, and the tie is the only thing that keeps a list of
+//     several providers' keys from being served the wrong one — which models a
+//     key may serve at all is the selection's (creds' D3000 gate), not this
+//     function's.
+//   - the repository's OWN Anthropic key, where the bundle holds one, at tier B
+//     (D3008). A repository with such an entry is served that key and not the
+//     project's — which narrowToRepoAuth is what enforces, because the two are
+//     both tier B and the paid tier is not what tells them apart.
+//
+// An entry the bundle does not hold is not offered: ReadProviderKey is what
+// answers that, and a candidate the service would then fail to attach is worse
+// than no candidate at all — the accessor's "no such credential" is the answer
+// that serves nobody, which is what a repository whose key was never copied
+// must meet.
+//
+// The names are offered in a settled order (the providers sorted by name, the
+// Anthropic key after them) because the offered order is what breaks a tie
+// within a tier (F7), and a map's iteration order would make a tie a matter of
+// the Go runtime's choice. A name the list already holds is not offered twice:
+// the scope's offering may hold the same entry once KS1's bundle answers the
+// family (a candidate offered twice is refused by checkCandidates, which is a
+// refusal and not a duplicate).
+//
+// The list is a copy and never the scope's own slice: what a reader answered is
+// the reader's, and this function only ever adds to it.
+func ownNamedEntries(cands []creds.Credential, shared *projectpolicy.Policy, b *Bundle, slug string) []creds.Credential {
+	var providers []string
+	if shared != nil {
+		providers = make([]string, 0, len(shared.Providers))
+		for name := range shared.Providers {
+			providers = append(providers, name)
+		}
+		slices.Sort(providers)
+	}
+	extra := make([]creds.Credential, 0, len(providers)+1)
+	for _, name := range providers {
+		c, ok := ownNamedEntry(b, slug, name, creds.TierC)
+		if !ok {
+			continue
+		}
+		// The provider this key is the key OF, which is the loop's own name:
+		// the policy's providers block is what named this credential, and the
+		// family's key carries it as the credential half.
+		c.Provider = name
+		extra = append(extra, c)
+	}
+	if c, ok := ownNamedEntry(b, slug, config.AnthropicKeyAccount, creds.TierB); ok {
+		extra = append(extra, c)
+	}
+	if len(extra) == 0 {
+		return cands
+	}
+	out := make([]creds.Credential, 0, len(cands)+len(extra))
+	out = append(out, cands...)
+	for _, c := range extra {
+		if _, held := lookupCredential(cands, c.Name); held {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// ownNamedEntry is one named entry of C1's family, offered with the tier the
+// call's list carries it at: the bundle's answer about this repository and this
+// credential's name, turned into the candidate's name — or nothing at all, for
+// an entry the bundle does not hold or a pair the family's naming rule refuses
+// (which no bundle can hold either, RepoCredentialKey being what writes one).
+func ownNamedEntry(b *Bundle, slug, credential string, tier creds.Tier) (creds.Credential, bool) {
+	if _, ok := ReadProviderKey(b, slug, credential); !ok {
+		return creds.Credential{}, false
+	}
+	name, err := RepoCredentialKey(slug, credential)
+	if err != nil {
+		return creds.Credential{}, false
+	}
+	return creds.Credential{Name: name, Tier: tier}, true
+}
+
+// lookupCredential is a candidate list's member by name, for the callers that
+// ask about a list this file built and not about the selection's own copy of
+// one (creds' lookup is that one's).
+func lookupCredential(cs []creds.Credential, name string) (creds.Credential, bool) {
+	for _, c := range cs {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return creds.Credential{}, false
 }
 
 // The two auths a non-cascade record may name that this service can serve a
@@ -165,6 +323,22 @@ const (
 // installation this release has not written, and a repository that asks for the
 // cascade, are served exactly as they were before this narrowing existed.
 //
+// Two things are settled before the record is read, because they are about
+// WHICH repository's credentials these are and not about the auth they go out
+// on:
+//
+//   - the named entries of C1's family are this repository's own (R2, D3008).
+//     Every member of the family carries the repository it was entered for, and
+//     a call is served only its own: another repository's entry is dropped
+//     here, which is what makes "a repository is never served another
+//     repository's Anthropic key" a fact of this function rather than of the
+//     order the bundle happens to list its entries in (F42).
+//   - a repository that has an Anthropic key of its OWN, entered for it
+//     (D3008), is served that one, and the project's key is dropped: the two
+//     are both tier B, so the tier cannot tell them apart and this is the one
+//     place that can. A repository the bundle holds no own entry for keeps the
+//     project's key, exactly as it is served it today.
+//
 // Every other record serves the call only what it names:
 //
 //   - `oauth` keeps the ONE tier-A credential of the declared account, and the
@@ -172,9 +346,14 @@ const (
 //     workflows' accounts is one nothing can be decided from, and a call that
 //     declares an account its repository does not use is refused rather than
 //     served — the paid key beside that subscription is not this repository's.
-//   - `api-key` keeps tier B alone, and no account may be declared beside it: an
-//     account names a subscription, and a call that declares both has declared
-//     two contradictory things.
+//     It keeps every named provider credential as well: a provider's key is not
+//     a subscription and not the project's own key, and which models it serves
+//     is a question about the model and never about the auth the repository's
+//     Claude calls go out on (F32, D3007). Without that, a repository on oauth
+//     would be offered no provider credential at all, whatever its policy names.
+//   - `api-key` keeps tier B and every named provider credential, and no
+//     account may be declared beside it: an account names a subscription, and a
+//     call that declares both has declared two contradictory things.
 //   - any other recorded auth (`vertex`) is refused. The service holds no
 //     credential of that kind — the built-in Vertex credential's calls are the
 //     project's own GCP service and are made where the run authenticates as
@@ -196,9 +375,12 @@ const (
 // That is not a hole: the record still has to name the account, so a call that
 // declares none is served the default account only where its repository's own
 // configuration names that account.
-func narrowToRepoAuth(cands []creds.Credential, rec *creds.RepoAuth, mode, account string) ([]creds.Credential, []Tried, error) {
+func narrowToRepoAuth(cands []creds.Credential, rec *creds.RepoAuth, slug, mode, account string) ([]creds.Credential, []Tried, error) {
+	cands, own := ownRepositorysEntries(cands, slug)
+	cands, preferred := ownKeyBeforeTheProjects(cands, slug)
+	settled := append(own, preferred...)
 	if rec == nil || rec.Auth == config.AuthCascade {
-		return cands, nil, nil
+		return cands, settled, nil
 	}
 	if mode != rec.Auth {
 		return nil, nil, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is %s, and this call %s: the credentials service serves a repository only the auth its own configuration records, and never the cascade (docs/secrets-brokering, D2070)", rec.Auth, declaredAuthText(mode))}
@@ -213,20 +395,69 @@ func narrowToRepoAuth(cands []creds.Credential, rec *creds.RepoAuth, mode, accou
 			return nil, nil, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is oauth, and this call declares the account %q, which its record does not name (it names %s): the credentials service serves a repository only the accounts its own configuration records (docs/secrets-brokering, D2070)", account, rec.AccountText())}
 		}
 		out, dropped := keepCandidates(cands, func(c creds.Credential) bool {
-			return c.Tier == creds.TierA && c.Name == account
+			return c.Tier == creds.TierC || (c.Tier == creds.TierA && c.Name == account)
 		})
 		if len(out) == 0 {
 			return nil, dropped, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is oauth and its record names the account %q, and no credential this call may be served by is that account's: the account is not in this service's bundle, or the repository is not admitted to it (docs/secrets-brokering, D2070)", account)}
 		}
-		return out, dropped, nil
+		return out, append(settled, dropped...), nil
 	case authModeAPIKey:
-		out, dropped := keepCandidates(cands, func(c creds.Credential) bool { return c.Tier == creds.TierB })
+		out, dropped := keepCandidates(cands, func(c creds.Credential) bool {
+			return c.Tier == creds.TierB || c.Tier == creds.TierC
+		})
 		if len(out) == 0 {
 			return nil, dropped, &poolRefusal{message: "this repository's recorded auth is api-key, and this service's bundle holds no paid key to serve it by (docs/secrets-brokering, D2070)"}
 		}
-		return out, dropped, nil
+		return out, append(settled, dropped...), nil
 	}
 	return nil, nil, &poolRefusal{message: fmt.Sprintf("this repository's recorded auth is %s, which the credentials service does not serve a call by: only a repository whose auth is cascade, oauth or api-key is served here (docs/secrets-brokering, D2070)", rec.Auth)}
+}
+
+// ownRepositorysEntries drops every named entry of C1's family that belongs to
+// another repository (R2, D3008, F42), reporting each as a credential this call
+// may not be served by.
+//
+// The family's key carries its repository (RepoCredentialByKey), so this is a
+// read of the name and never a second lookup: the entry a call may be served is
+// the one the SERVICE built for its own verified repository, and an entry whose
+// name says another repository is one this call could only have been offered by
+// a bundle listing every repository's keys. The reason it is reported rather
+// than dropped in silence is the run's halt message: it reads the list it was
+// served from and what was left out of it, and "not admitted" is the closed
+// reason set's own word for a credential a repository's configuration leaves
+// out (keepCandidates).
+func ownRepositorysEntries(cands []creds.Credential, slug string) ([]creds.Credential, []Tried) {
+	return keepCandidates(cands, func(c creds.Credential) bool {
+		owner, _, ok := RepoCredentialByKey(c.Name)
+		return !ok || owner == slug
+	})
+}
+
+// ownKeyBeforeTheProjects drops the project's own Anthropic key where this
+// repository has an entry of its own (D3008): one repository, one entry for its
+// Anthropic key, and the repository's own is the one its runs are served.
+//
+// The project's key is named by the bundle's own spelling of it
+// (config.AnthropicSecret, at tier B, CredentialKey) and the repository's own by
+// the family's (RepoCredentialKey with config.AnthropicKeyAccount) — the two
+// names R2 keeps apart on purpose, so a provider may be called
+// "anthropic-api-key" without its entry colliding with the repository's.
+//
+// Nothing happens for a repository whose own entry the list does not hold: the
+// project's key is then exactly what it is served, which is what every
+// installation does today and what an installation that copies no key keeps
+// doing.
+func ownKeyBeforeTheProjects(cands []creds.Credential, slug string) ([]creds.Credential, []Tried) {
+	own, err := RepoCredentialKey(slug, config.AnthropicKeyAccount)
+	if err != nil {
+		return cands, nil
+	}
+	if _, held := lookupCredential(cands, own); !held {
+		return cands, nil
+	}
+	return keepCandidates(cands, func(c creds.Credential) bool {
+		return !(c.Tier == creds.TierB && c.Name == config.AnthropicSecret)
+	})
 }
 
 // declaredAuthText is what a call declared, as one clause of a refusal: the
@@ -307,12 +538,13 @@ func reviewOfferings(b *Bundle) []creds.Credential {
 //     provider key, which the bundle holds at tier C under its own logical name
 //     (config.ProviderKeySecret, AK6b). The entry is offered the same way — by
 //     name and tier together — and the offer is where the CALL is refused:
-//     creds.Select does not select a tier-C credential in this release, and its
-//     refusal names Check 50 (checkCandidates, D150). So a review run paired
-//     with this value is answered a typed refusal and reaches no provider
-//     until that check has run, which is what this half is for: the bundle can
-//     hold the key and the service can forward with it, and nothing routes a
-//     Claude model to a third party yet.
+//     creds.Select serves a tier-C credential to every model but a Claude one
+//     (D3000), and nothing fills Selector.Model yet, which reads as a Claude
+//     one: so the run paired with this value reads the refusal that names Check
+//     50 (checkCandidates, D150) and reaches no provider until that check has
+//     run. That is what this half is for: the bundle can hold the key and the
+//     service can forward with it, and nothing routes a Claude model to a third
+//     party yet.
 //
 // Every credential it did not offer is reported as not admitted, which is what
 // that reason means for a caller: this call may not be served by it. A new
@@ -387,15 +619,22 @@ func offeredToReview(c creds.Credential, account string) bool {
 // The profile is the identity's own — id.Profile, which only a shared caller
 // carries and which the verifier read from this service's own row — and never
 // anything the caller sent (G21, spec §2.1).
+//
+// The policy all three facts are read from is the call's SCOPE's (R1) and not
+// this server's configuration: the installation's own published node for a call
+// an installation serves, and the member's for one a workspace serves, which is
+// what lets one admission serve both deployments. It is read from the call's
+// context, exactly as `candidates` reads its own scope (scopeOfCall).
 func (s *Server) admittedAccounts(ctx context.Context, id Identity, canonical string) (map[string]bool, error) {
-	child, found, err := s.cfg.Policy.Admissions(ctx, id.Slug)
+	policy := scopeOfCall(ctx, s).Policy()
+	child, found, err := policy.Admissions(ctx, id.Slug)
 	if err != nil {
 		return nil, err
 	}
 	if !found || child == nil || child.Credentials == nil {
 		return map[string]bool{}, nil
 	}
-	shared, found, err := s.cfg.Policy.Shared(ctx)
+	shared, found, err := policy.Shared(ctx)
 	if err != nil {
 		return nil, err
 	}

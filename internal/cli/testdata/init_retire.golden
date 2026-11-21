@@ -50,7 +50,7 @@ Still missing for acme/sandbox:
   Then rerun fugaro setup --repo when they are stored.
 deleted the orphaned Cloud Run job fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0])
 The local config <tmp> changes:
-  + version: 2
+  + version: 3
   - version: 1
   + base_images:
   +     base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0
@@ -77,6 +77,8 @@ The local config <tmp> changes:
   +         workflows:
   +             - app
   +         credentials_service_ready: false
+  +         provider_keys_served: false
+  +         stage_account_served: false
   -   acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }
   - base_images: {base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:0.4.0}
 backed up the old local config to <tmp>

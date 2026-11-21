@@ -18,6 +18,7 @@ var (
 	goldenSHA  = regexp.MustCompile(`\b[0-9a-f]{40}\b|\b[0-9a-f]{7}\b`)
 	goldenDur  = regexp.MustCompile(`\| (\d+(\.\d+)?(ms|µs|s|m\d+s|m|h\d+m\d+s)) \|`)
 	goldenPct  = regexp.MustCompile(`, \d+% of the run's`)
+	goldenWall = regexp.MustCompile(`of the run.s \d+s wall clock`)
 )
 
 // normalize blanks what differs between two runs of the same task: clock
@@ -32,6 +33,7 @@ func normalize(s string) string {
 	s = goldenTime.ReplaceAllString(s, "<time>")
 	s = goldenSHA.ReplaceAllString(s, "<sha>")
 	s = goldenPct.ReplaceAllString(s, ", <pct>% of the run's")
+	s = goldenWall.ReplaceAllString(s, "of the run's 0s wall clock")
 	return goldenDur.ReplaceAllString(s, "| <dur> |")
 }
 

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -69,7 +71,7 @@ func newWSCreateRig(t *testing.T, stdin, extra string) *wsCreateRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := strings.Replace(string(b), "name: aurora", "name: "+wsProjectName, 1)
+	cfg := wsWithRepos(strings.Replace(string(b), "name: aurora", "name: "+wsProjectName, 1))
 	if err := os.WriteFile(ri.cfg, []byte(cfg+extra), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -160,6 +162,18 @@ func wsAccountChange(actions ...string) planChange {
 	}
 }
 
+// wsIAMAccountChange is the SA fallback's IAM account as the root plans it
+// (WU3, D2803): the second account the root creates, whose id is the root's own
+// literal rather than one of its variables. It is the ONLY change an
+// installation that already has the service account and its one grant plans.
+func wsIAMAccountChange(actions ...string) planChange {
+	return planChange{
+		"address": "google_service_account.workspace_iam", "mode": "managed", "type": "google_service_account",
+		"change": map[string]any{"actions": actions, "after": map[string]any{
+			"project": wsProject, "account_id": tf.WorkspaceIAMAccountID}},
+	}
+}
+
 // wsGrantChange is the root's one grant as the root really plans it: the member
 // is the address of the account this plan creates, so terraform knows it only
 // at apply.
@@ -171,6 +185,203 @@ func wsGrantChange(actions ...string) planChange {
 			"after_unknown": map[string]any{"member": true}},
 	}
 }
+
+// The workspace root's plan, resource by resource, as an owner's run really
+// plans it: the shapes tf.WorkspaceNotCovered reads, in the map form the fake
+// terraform is scripted with (setPlanAt). A test that handed the stage a plan
+// the root does not make would be testing the cover rather than the stage, so
+// every field below is one the root's own main.tf writes. The module-level
+// fixture of the same shapes is internal/infra/tf/workspace_test.go's.
+
+// wsProjectAccount is the workspace's own service account's address: the
+// identity the root's service runs as and its one database grant binds.
+func wsProjectAccount() string {
+	return tf.WorkspaceServiceAccountID + "@" + wsProject + ".iam.gserviceaccount.com"
+}
+
+// wsRolePlan is the root's own custom role, holding the ONE role's two pinned
+// permissions.
+func wsRolePlan() planChange {
+	return planChange{
+		"address": "google_project_iam_custom_role.workspace_database", "mode": "managed",
+		"type": "google_project_iam_custom_role",
+		"change": planChange{"actions": []string{"create"}, "after": planChange{
+			"project": wsProject, "role_id": tf.WorkspaceDatabaseRoleID,
+			"permissions": tf.WorkspaceDatabasePermissions}},
+	}
+}
+
+// wsServicePlan is the workspace's own credentials service as the root plans it
+// on image: the workspace's own project and region, IAM required, R9's limits,
+// the zero minimum at both levels, one container on the image and the
+// environment names the process reads — the one that tells a workspace's
+// service from an installation's among them (tf.WorkspaceServiceEnv).
+func wsServicePlan(image string) planChange {
+	env := make([]any, 0, len(tf.WorkspaceServiceEnv))
+	for _, n := range tf.WorkspaceServiceEnv {
+		env = append(env, planChange{"name": n, "value": "v", "value_source": []any{}})
+	}
+	return planChange{
+		"address": "google_cloud_run_v2_service.workspace", "mode": "managed",
+		"type": "google_cloud_run_v2_service",
+		"change": planChange{"actions": []string{"create"}, "after": planChange{
+			"project": wsProject, "location": "us-east5", "name": creds.WorkspaceServiceName,
+			"invoker_iam_disabled": false,
+			"scaling":              []any{planChange{"scaling_mode": "AUTOMATIC", "min_instance_count": 0}},
+			"template": []any{planChange{
+				"service_account":                  wsProjectAccount(),
+				"max_instance_request_concurrency": tf.WorkspaceConcurrency,
+				"scaling":                          []any{planChange{"min_instance_count": 0, "max_instance_count": tf.WorkspaceMaxInstances}},
+				"containers":                       []any{planChange{"image": image, "env": env}},
+			}},
+		}},
+	}
+}
+
+// wsServicePlanWith is wsServicePlan under another action list: terraform plans
+// the service as a create on a first run, as a no-op where it is listed and not
+// moved, and as an update where the state already holds it and only one
+// environment value changes — the audience, which is the one attribute this
+// root can move in a converged state.
+func wsServicePlanWith(image string, actions ...string) planChange {
+	p := wsServicePlan(image)
+	p["change"].(planChange)["actions"] = actions
+	return p
+}
+
+// wsServiceAudiencePlan is what the audience write's own apply plans: the
+// workspace's service and nothing else, the URL moving, which is the plan a
+// converged root makes when the block it is planned with carries the audience
+// the service is served with (fillServiceURL writes the tfvars first and plans
+// that document).
+func wsServiceAudiencePlan(image string) planChange {
+	return wsServicePlanWith(image, "update")
+}
+
+// wsServiceNoOpPlan is the workspace's own service as a plan holds it on a run
+// that is not moving it: terraform lists it with no action, and it is where the
+// plan's own service name is read from (planWorkspaceServiceName) — so a plan
+// whose changes are a member's grant going away and nothing else still carries
+// the service the grant is on.
+func wsServiceNoOpPlan(image string) planChange {
+	return wsServicePlanWith(image, "no-op")
+}
+
+// wsAccessorPlan is the root's ONE bundle accessor: the workspace's own
+// container, the read, and the workspace's own account. ws is the workspace's
+// name, which is the project's own (localcfg's Name) and what the container is
+// derived from.
+func wsAccessorPlan(ws string) planChange {
+	return planChange{
+		"address": "google_secret_manager_secret_iam_member.workspace_bundle", "mode": "managed",
+		"type": "google_secret_manager_secret_iam_member",
+		"change": planChange{"actions": []string{"create"}, "after": planChange{
+			"project": wsProject, "secret_id": credsvc.WorkspaceBundleSecretID(ws),
+			"role": tf.WorkspaceBundleAccessorRole, "member": wsProjectAccount()}},
+	}
+}
+
+// wsInvokerAfter is one member's invoke grant as the root writes it.
+func wsInvokerAfter(member string) planChange {
+	return planChange{
+		"project": wsProject, "location": "us-east5", "name": creds.WorkspaceServiceName,
+		"role": tf.WorkspaceInvokerRole, "member": member}
+}
+
+// wsInvokerPlan is one member's invoke grant on the workspace's service.
+func wsInvokerPlan(member string) planChange {
+	return planChange{
+		"address": "google_cloud_run_v2_service_iam_member.workspace_invoker", "mode": "managed",
+		"type":   "google_cloud_run_v2_service_iam_member",
+		"change": planChange{"actions": []string{"create"}, "after": wsInvokerAfter(member)},
+	}
+}
+
+// wsInvokerRemovedPlan is the same grant as terraform plans it when the member
+// leaves the owner's table: the state it had, and no `after`. It is the ONE
+// deletion the root's cover admits (F25), and the plan that makes it carries no
+// other change for that member.
+func wsInvokerRemovedPlan(member string) planChange {
+	return planChange{
+		"address": "google_cloud_run_v2_service_iam_member.workspace_invoker", "mode": "managed",
+		"type":   "google_cloud_run_v2_service_iam_member",
+		"change": planChange{"actions": []string{"delete"}, "before": wsInvokerAfter(member), "after": nil},
+	}
+}
+
+// wsRootPlan is the whole workspace root as an owner's first apply plans it, on
+// image, with one invoke grant per member job account the owner's table names.
+// ws is the workspace's name (the project's own).
+func wsRootPlan(ws, image string, members ...string) []planChange {
+	out := []planChange{wsRolePlan(), wsAccountChange("create"), wsIAMAccountChange("create"),
+		wsGrantChange("create"), wsServicePlan(image), wsAccessorPlan(ws)}
+	for _, m := range members {
+		out = append(out, wsInvokerPlan(m))
+	}
+	return out
+}
+
+// wsRootVars is the workspace root's tfvars as a converge left them: the
+// document an owner's run writes into the workdir of its own
+// (infra.WorkspaceWorkdir), read from the fixture's state home rather than from
+// a rig's, because the tests that read it run the whole update door.
+func wsRootVars(t *testing.T) workspaceVars {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(wsWorkdirRoot(), infra.VarsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v workspaceVars
+	if err := json.Unmarshal(b, &v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// wsWorkdirRoot is the workspace root's own directory in the fixture's state
+// home: $XDG_STATE_HOME's project tree, beside the installation's.
+func wsWorkdirRoot() string {
+	return filepath.Join(os.Getenv("XDG_STATE_HOME"), "fugaro", "terraform", wsProject, "workspace", "gcp", "roots", "workspace")
+}
+
+// wsSeedRecorded writes the workspace root's tfvars as a run of an earlier
+// release left them — the block this update either replaces or carries forward,
+// and the image the in-flight note reads (workspaceServiceRevisionStale). It is
+// the state a workdir is in before the run's own prepare rebuilds the tree:
+// PrepareWorkdir snapshots the file first, and that snapshot is what a run that
+// deploys nothing writes back.
+//
+// url is the audience that run read back from the root's own output, and an
+// empty one is the state a run leaves behind when its second apply never landed
+// — a create the apply never made, a `--plan-only` pass: the block names an
+// image and no audience, so the revision it is the tfvars of admits nobody.
+func wsSeedRecorded(t *testing.T, ws, image, url string) {
+	t.Helper()
+	if err := os.MkdirAll(wsWorkdirRoot(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := workspaceVars{Project: wsProject, Workspace: ws, Members: map[string]workspaceMemberVar{}}
+	doc.Names.WorkspaceAccountID = tf.WorkspaceServiceAccountID
+	doc.Service = &workspaceServiceVar{
+		Service: creds.WorkspaceServiceName, Image: image, Region: "us-east5",
+		BundleSecret:    credsvc.WorkspaceBundleSecretID(ws),
+		FirebaseProject: wsProject, RTDBURL: "https://proj-1234-default-rtdb.firebaseio.com",
+		URL: url}
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wsWorkdirRoot(), infra.VarsFile), append(b, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// wsServiceURL is the address the fake root's outputs assign the workspace's
+// service: Cloud Run's own uri, which the second apply writes into
+// credentials_service.url and a member's run mints its ID token for. It is a
+// URL and not an address anybody reaches: nothing in a run of these tests
+// resolves it.
+const wsServiceURL = "https://fugaro-workspace-credentials-abc123-ue.a.run.app"
 
 // TestWorkspaceProjectStageSkipsAnInstallationThatIsNotAWorkspace: a member's
 // project and a plain one carry no workspace of their own (spec §5), so the
@@ -332,7 +543,7 @@ func splitWorkspaceOwnerConfig(t *testing.T) {
 	if text == string(b) {
 		t.Fatalf("the fixture's config does not name budget.firebase_project %s:\n%s", initProject, b)
 	}
-	if err := os.WriteFile(path, []byte(text+wsOwnerTable+wsOwnerCap), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(wsWithRepos(text)+wsOwnerTable+wsOwnerCap), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -503,6 +714,68 @@ func TestWorkspaceProjectStageConvergesTheWorkspacesOwnProject(t *testing.T) {
 	}
 }
 
+// TestWorkspaceProjectStageNamesTheIAMAccountWhenThePlanCreatesOnlyIt: on an
+// installation whose workspace already converges — the service account and its
+// one grant are in the cloud — the ONLY change this stage's plan carries is
+// creating the SA fallback's IAM account (WU3, D2803), the identity a member's
+// owner gives roles/owner on their own project. The stage's own rule beside the
+// confirmation (workspaceAccount) is that the sentence the owner types names
+// the identity being created, so a sentence naming the service account alone
+// would ask the owner to type their project's name for a change it never
+// described — and would leave out the account that ends up holding authority
+// over every linked member.
+func TestWorkspaceProjectStageNamesTheIAMAccountWhenThePlanCreatesOnlyIt(t *testing.T) {
+	fakeTerminal(t)
+	g := newWSCreateOwnerRig(t, wsProjectName+"\n")
+	g.ri.setPlanAt(t, "workspace", wsIAMAccountChange("create"))
+	iamAccount := tf.WorkspaceIAMAccountID + "@" + wsProject + ".iam.gserviceaccount.com"
+
+	st := g.check(t)
+	if st.State != initflow.Todo {
+		t.Fatalf("check = %v (%s), want a todo", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, iamAccount) {
+		t.Errorf("the todo does not name the account the plan creates (%s): %s", iamAccount, st.Detail)
+	}
+
+	if _, err := g.plan(t, initflow.Env{Interactive: true}); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	oc, err := g.apply(t, initflow.Env{Interactive: true})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !oc.Changed {
+		t.Errorf("apply = %+v, want the IAM account created", oc)
+	}
+	// The sentence the owner types is the CONFIRM line, read on its own: the
+	// success line below names the same accounts, so a check over the whole
+	// output would pass with the confirmation unchanged.
+	var confirmation, created string
+	for _, line := range strings.Split(g.out.String(), "\n") {
+		switch {
+		case strings.HasPrefix(line, "⚠ CONFIRM "):
+			confirmation = line
+		case strings.HasPrefix(line, "created "):
+			created = line
+		}
+	}
+	if confirmation == "" {
+		t.Fatalf("the stage asked nothing: no CONFIRM line in the run's output:\n%s", g.out.String())
+	}
+	for _, want := range []string{workspaceAccount(wsProject), tf.WorkspaceDatabaseRole(wsProject), iamAccount} {
+		if !strings.Contains(confirmation, want) {
+			t.Errorf("the sentence the operator types does not name %q:\n%s", want, confirmation)
+		}
+	}
+	if created == "" || !strings.Contains(created, iamAccount) {
+		t.Errorf("the line the run prints after the apply does not name the account it created (%s): %q", iamAccount, created)
+	}
+	if !strings.Contains(oc.Detail, iamAccount) {
+		t.Errorf("the apply's own detail does not name the account it created (%s): %s", iamAccount, oc.Detail)
+	}
+}
+
 // TestWorkspaceProjectStageVerifyRefusesARootThatStillHasChanges: the apply's
 // own re-read is a boundary and not a formality — a fresh plan that still finds
 // work names the workdir the operator reads the plan in.
@@ -544,6 +817,162 @@ func TestWorkspaceProjectStageConvergesACapWithoutAMember(t *testing.T) {
 	}
 	if !oc.Changed {
 		t.Errorf("apply = %+v, want the workspace's own account created", oc)
+	}
+}
+
+// wsBudget is the budget block an owner's config carries once
+// `fugaro update --firebase-project` has run in it: the two Firebase facts the
+// workspace's own credentials service reads before it serves anything
+// (workspaceServiceFacts). The tests that need the carry branches BEHIND that
+// question — a resolve, an image this release's — are the ones that have to
+// answer it first.
+const wsBudget = "budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: https://proj-1234-default-rtdb.firebaseio.com }\n"
+
+// wsOtherImageSource is a config whose release images come from a host the
+// installation's remote repository cannot mirror (baseSourceHost is the only one
+// its upstream serves): the state a resolve is refused in, without a network.
+const wsOtherImageSource = "image_source: example.com/acme\n"
+
+// TestWorkspaceProjectStageCarriesTheRecordedBlockWhenItDeploysNothing is the
+// security property serviceBlock's carry exists for, in the four states that
+// deploy no service: the block the workdir already holds goes back exactly as it
+// stands — its image and its audience — because var.credentials_service's
+// default is null, and null plans the destruction of the running service with
+// its bundle accessor and every member's invoke grant. The root's cover admits
+// exactly one deletion (a member's grant, F25), so a run that deployed nothing
+// would either hand the operator a plan that is refused or, where nothing gated
+// it, take a working workspace's service away.
+//
+// Every other test that seeds a recorded block runs as the owner on a release,
+// so it reaches the deploy branch or the not-stale one. These four are the only
+// ones that reach carry, and each is reached with its own line:
+//
+//   - a coding agent's session (agentMarker),
+//   - a development build (releaseVersion),
+//   - a config that names no Firebase project and database
+//     (workspaceServiceFacts),
+//   - a release image this run cannot resolve through the installation's remote
+//     repository.
+//
+// The mutation the assertions below are for is the one assignment inside carry:
+// `s.svc = nil` writes `"credentials_service": null` into the tfvars of every
+// state here, and no other test in this file fails on it.
+func TestWorkspaceProjectStageCarriesTheRecordedBlockWhenItDeploysNothing(t *testing.T) {
+	// The block a previous release's run deployed, stale on purpose: this
+	// release's image is not what the workdir holds, so the resolve is worth
+	// attempting (credentialsImageStale) and a run that reached it would move the
+	// block — which is exactly what the carried states must not do.
+	stale := oldCredentialsRef("1.0.0")
+	// The block wsSeedRecorded wrote, field for field: what the workdir holds
+	// before the run, and what every assertion below reads back out of it.
+	recorded := workspaceServiceVar{
+		Service:         creds.WorkspaceServiceName,
+		Image:           stale,
+		Region:          "us-east5",
+		BundleSecret:    credsvc.WorkspaceBundleSecretID(wsProjectName),
+		FirebaseProject: wsProject,
+		RTDBURL:         "https://proj-1234-default-rtdb.firebaseio.com",
+		URL:             wsServiceURL,
+	}
+	for _, c := range []struct {
+		name string
+		// version is what this run is: a released fugaro (releaseVersion), or a
+		// build from a checkout, whose version is not a release number and whose
+		// carry is the dev-build line.
+		version string
+		extra   string
+		before  func(t *testing.T, g *wsCreateRig)
+		reason  string
+	}{
+		{
+			name:    "a coding agent's session",
+			version: "1.9.9",
+			extra:   wsOwnerTable + wsOwnerCap + wsBudget,
+			before: func(t *testing.T, g *wsCreateRig) {
+				t.Setenv(agentMarkers[0], "1")
+			},
+			reason: credentialsSessionHeld,
+		},
+		{
+			name:    "a development build",
+			version: "dev",
+			extra:   wsOwnerTable + wsOwnerCap + wsBudget,
+			reason:  credentialsDevBuildHeld,
+		},
+		{
+			name:    "a config that names no Firebase project and database",
+			version: "1.9.9",
+			extra:   wsOwnerTable + wsOwnerCap,
+			reason:  "budget.firebase_project",
+		},
+		{
+			name:    "a resolve this run cannot make",
+			version: "1.9.9",
+			extra:   wsOwnerTable + wsOwnerCap + wsBudget + wsOtherImageSource,
+			before: func(t *testing.T, g *wsCreateRig) {
+				// The engine every door builds carries the images stage, and the
+				// resolve reads the run's source through it (imagesStage.allow).
+				g.e.images = newImagesStage(g.e)
+			},
+			reason: "is pinned through the installation's remote repository",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			old := Version
+			Version = c.version
+			t.Cleanup(func() { Version = old })
+			g := newWSCreateRig(t, wsProjectName+"\n", c.extra)
+			wsSeedRecorded(t, wsProjectName, stale, wsServiceURL)
+			if c.before != nil {
+				c.before(t, g)
+			}
+			// The plan the carry's own document makes: this run holds the block the
+			// workdir carries, so the root it plans is converged and there is
+			// nothing for an apply to do.
+			g.noChanges(t)
+
+			g.check(t)
+			if _, err := g.plan(t, initflow.Env{Interactive: true}); err != nil {
+				t.Fatalf("plan: %v", err)
+			}
+
+			raw, err := os.ReadFile(filepath.Join(g.root(), infra.VarsFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), `"credentials_service": null`) {
+				t.Errorf("the workspace root's tfvars carry credentials_service: null after a run that deployed nothing, and null plans the destruction of the running service, its bundle accessor and every member's invoke grant:\n%s", raw)
+			}
+			v := g.tfvars(t)
+			if v.Service == nil {
+				t.Fatalf("a run that deploys nothing wrote no credentials_service at all: %s", raw)
+			}
+			// Field for field, because the block is a document a plan reads: the
+			// image is which revision serves, the url is the audience a member's
+			// run mints its ID token for, and the rest are the project, the
+			// database and the bundle the running revision was deployed with.
+			if got := *v.Service; got != recorded {
+				t.Errorf("the carried credentials_service = %+v, want the block the workdir held %+v: a run that deploys nothing moves no revision (the image) and takes no audience away (the url)", got, recorded)
+			}
+
+			out := g.out.String()
+			line := "the workspace's credentials service is not deployed: "
+			var said []string
+			for _, l := range strings.Split(out, "\n") {
+				if strings.HasPrefix(l, line) {
+					said = append(said, l)
+				}
+			}
+			if len(said) != 1 {
+				t.Errorf("the run printed the not-deployed line %d time(s), want one: a run deploys nothing once, and that one line is what tells the owner which state held it\n%s", len(said), out)
+			}
+			if len(said) == 1 && !strings.Contains(said[0], c.reason) {
+				t.Errorf("the not-deployed line does not carry this state's own reason (%q):\n%s", c.reason, said[0])
+			}
+			if applied := g.ri.ran(t, "apply"); len(applied) != 0 {
+				t.Errorf("a run that deploys nothing applied the workspace root: %q", applied)
+			}
+		})
 	}
 }
 
@@ -646,5 +1075,58 @@ func TestWorkspaceProjectStageRefusesAPlanThatIsNotTheAccountAndItsOneGrant(t *t
 	}
 	if applied := g.ri.ran(t, "apply"); len(applied) != 0 {
 		t.Errorf("a refused plan was applied: %q", applied)
+	}
+}
+
+// TestSplitFirebaseGetsNoService is R12's own half: a workspace whose Firebase
+// is another project's gets NO credentials service — the stage skips before it
+// reads a plan, composes a block or opens the root's workdir, so no revision is
+// ever deployed here — and the line the owner reads says why, naming the service
+// among the things the split leaves alone.
+//
+// The run in flight is the other half of the same fact, and the half a later
+// update reads: the note names the workspace's service step only where a revision
+// of it is really being replaced (workspaceServiceRevisionStale), and a split
+// workspace holds none however stale the document in its own workdir is. So an
+// owner whose workspace deploys no service reads no such step — and the seed is
+// what makes the assertion mean that, rather than the workdir being empty.
+func TestSplitFirebaseGetsNoService(t *testing.T) {
+	r := newConvergeRig(t, v3Node(nil))
+	currentRelease(t)
+	splitWorkspaceOwnerConfig(t)
+	r.db.Set(projectpolicy.PathWorkspace(initProjectName), map[string]any{
+		"version": projectpolicy.WorkspaceVersion,
+		"name":    initProjectName,
+		"members": []any{wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b")},
+		"cap":     map[string]any{"monthly_micros": 25_000_000},
+	})
+	wsSeedRecorded(t, initProjectName, oldCredentialsRef(convergePrev), "")
+
+	startRunInFlight(t, r)
+	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
+
+	if line := inFlightLine(t, out); strings.Contains(line, "workspace service:") {
+		t.Errorf("the note names the workspace's service over an installation that deploys none, so an owner reads a step no run makes (R12):\n%s", line)
+	}
+	// The reason travels the pair the skip always does: the first clause on the
+	// screen, the whole sentence in the log (report.Brief).
+	whole := out + newestLog(t, "update")
+	for _, want := range []string{"its Firebase is another project's", wsSplitFirebaseProject,
+		"no credentials service is deployed", "docs/workspaces/spec.md §3"} {
+		if !strings.Contains(whole, want) {
+			t.Errorf("the split's line does not carry %q, so nothing tells the owner why the workspace's own project holds no service:\n%s", want, whole)
+		}
+	}
+	for _, root := range r.applies(t) {
+		if root == "workspace" {
+			t.Errorf("the split workspace applied the workspace root: %v", r.applies(t))
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(wsWorkdirRoot(), infra.VarsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), oldCredentialsRef(convergePrev)) {
+		t.Errorf("the workspace's own document was rewritten by a stage that deploys nothing here:\n%s", b)
 	}
 }

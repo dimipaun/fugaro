@@ -51,13 +51,17 @@ the modes decide readiness today — but `runner.Decide` reads a mode's blocking
 only where the repository opted in (`rigor.Config.Configured`: a `rigor:` block, or
 a project `defaults.rigor`), and a repository that configures nothing still blocks
 on every finding it did not fix. The loud migration note plus the one-line pin
-`rigor.default: critical` are what a repository uses to keep today's behaviour.
+`rigor.default: critical` are what a repository uses to keep its runs at
+Critical's finding thresholds.
 The security-sensitive tier is **not a mode floor in this tree**: T1.5's built-in
 sensitive-path floors are unbuilt, and what the runner guarantees a
 security-sensitive diff today is review level 3, forced on a matching path
 whatever mode the run resolved — the escalation raises a level and never the mode.
-Every claim that a cut "relaxes nothing" or is "byte-identical to today" is
-therefore about **Critical mode only**.
+Every claim in this folder that a cut leaves a run unchanged is therefore true
+of less than it says, and the owner's answer of 2026-10-22 restated them all as
+**Critical's finding thresholds are unchanged; its prompts, its PR body's
+hand-back sections and two presence checks are new**
+([levels-reconciliation.md](levels-reconciliation.md) §3b item 1).
 
 The owner's 2026-10-20 spec was written without seeing this repository, so
 several of its premises moved work: the top-level `review:` configuration it
@@ -195,7 +199,7 @@ operators` section:
 - [docs/dogfooding.md](../dogfooding.md) — the practice the modes automate
   (F30). The modes are a formalisation of sentences the owner already wrote, and
   the document the backlog ruling's practice sentence lands in (D32, T4.7).
-- [docs/plans/2026-10-17-managed-projects-review-follow-ups.md](../plans/2026-10-17-managed-projects-review-follow-ups.md)
+- [docs/managed-projects/review-follow-ups.md](../managed-projects/review-follow-ups.md)
   — the deferral practice the backlog replaces (F46), and what D32's sweep would
   convert into items.
 - [docs/credentials-service/implementation-plan.md](../credentials-service/implementation-plan.md)

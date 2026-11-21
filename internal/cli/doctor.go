@@ -462,6 +462,14 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	if c := doctorWorkspaceSplitCheck(lc); c != nil {
 		o.Checks = append(o.Checks, *c)
 	}
+	// Where the installation's data is: the region, its place and where each
+	// thing this machine's locations record knows about is (LP12 of
+	// docs/location-preference/, D3087, D3091). Read from the local config
+	// alone, like the workspace line above, and never a failure: a database
+	// outside the installation's place is the cloud's own answer.
+	if c := doctorLocationsCheck(lc); c != nil {
+		o.Checks = append(o.Checks, *c)
+	}
 	// Both sides' checks, in the order main has them: the catalog's age (P7),
 	// the ZDR note (P9), and the project-wide provider secrets' own checks.
 	o.Checks = append(o.Checks, doctorPriceCatalog(budgetNow()))
@@ -575,6 +583,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// projectpolicy.Read and answer their own questions from it — and it is not
 	// gated on the credentials service — pools predate it.
 	o.Checks = append(o.Checks, doctorLegacyOpenPoolChecks(ctx, lc)...)
+	// The workspace this project is in, or the one it is (WS14, F20): the
+	// workspace's own three lines on the machine that deploys and publishes it,
+	// a member's pin and the credential route each of this project's
+	// repositories publishes on the machine that takes from it (R3, R4). It
+	// reads the cloud and writes nothing, and it computes no alarm (D2991).
+	o.Checks = append(o.Checks, doctorWorkspaceChecks(ctx, lc)...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
 		iamSvc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)
@@ -1759,7 +1773,7 @@ func doctorAccountsAdd(lc *localcfg.Config, account, profile string) string {
 }
 
 // claudeAccountsStoredCheck is doctor's "claude-accounts-stored" check
-// (design docs/design/named-oauth-tokens.md §6f, plan Task 8): every named
+// (design docs/named-oauth-tokens/spec.md §6f, plan Task 8): every named
 // Claude account repo may choose (config.AllowedClaudeAccounts, "default"
 // excluded, since that is the repository's existing, unconditionally
 // required secret and already covered by doctor's other checks) should have
@@ -2087,7 +2101,7 @@ func projectAccountStoredCheck(lc *localcfg.Config, project []gcp.SecretInfo, pr
 }
 
 // oauthTokenAllowedCheck is doctor's "oauth-token-allowed" check (design
-// docs/design/named-oauth-tokens.md §6f, plan Task 8): the checkout's
+// docs/named-oauth-tokens/spec.md §6f, plan Task 8): the checkout's
 // agent.oauth_token, if set, must name an account config.AllowedClaudeAccounts
 // says repo may actually use, for a workflow whose agent.auth is oauth — a
 // name the local config does not know, one whose allow_data_to omits repo,
@@ -2597,6 +2611,18 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	if c := doctorAllowListUncovered(lc, p); c != nil {
 		checks = append(checks, *c)
 	}
+	// The mobile block's own line (P6 of docs/mobile-identity-pairing, D2796):
+	// what a project that turns sync on stores in the identity project, said on
+	// the node the pairing route reads. A measurement, not a finding, and
+	// silent where the block is absent or the surface is off.
+	checks = append(checks, doctorMobileChecks(lc, p)...)
+	// The project layer's own rigor names (LD4), judged against the same node:
+	// an area's member or a per-repo entry that names a repository the published
+	// allow_repos does not admit describes a level no run of it will ever take,
+	// because the run is refused before it starts.
+	if c := layerRigorRepoAdmissionCheck(lc, layer.RigorRepos, p); c != nil {
+		checks = append(checks, *c)
+	}
 	checks = append(checks, doctorCredsRules(ctx, db, p, lc)...)
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)
@@ -2852,6 +2878,13 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 type doctorRoutingLayer struct {
 	Claims map[string][]string
 	Repo   string
+	// RigorRepos are the repository names the layer's defaults.rigor states,
+	// as members of its areas and as keys of its per-repo map
+	// (config.RigorRepoNamesOf). They travel beside the claims because the
+	// policy node is read once, further down this file, and the admission
+	// check over them (layerRigorRepoAdmissionCheck) is one of the questions
+	// asked of it.
+	RigorRepos []string
 }
 
 // claimsFor are the layer's claims for repo, nil when this machine did not read
@@ -2882,17 +2915,18 @@ func doctorRoutingLayerOf(ctx context.Context, rf *resolvedFile) doctorRoutingLa
 	if rf == nil {
 		return doctorRoutingLayer{}
 	}
+	rigorRepos := config.RigorRepoNamesOf(rf.Layer.Layer)
 	claims := config.ClaudeClaimsOf(rf.Layer.Layer)
 	if claims == nil {
-		return doctorRoutingLayer{}
+		return doctorRoutingLayer{RigorRepos: rigorRepos}
 	}
 	// The repository the claims were resolved for is the checkout's own: it is
 	// that repository's fugaro.yaml the layer was applied to.
 	repo, err := originRepo(ctx)
 	if err != nil {
-		return doctorRoutingLayer{Claims: claims}
+		return doctorRoutingLayer{Claims: claims, RigorRepos: rigorRepos}
 	}
-	return doctorRoutingLayer{Claims: claims, Repo: repo}
+	return doctorRoutingLayer{Claims: claims, Repo: repo, RigorRepos: rigorRepos}
 }
 
 // doctorRoutes are the routes a run of repo carries: this machine's providers
@@ -3168,11 +3202,19 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// mailbox and only the coordinator's read grant is new to it, a
 		// coordinator-generation marker already has that grant too and only the
 		// voice policy node is new to it, a voice-generation marker already has
-		// that node and only the registration kind's fields are new to it, and a
+		// that node and only the registration kind's fields are new to it, a
 		// registration-generation marker already has those fields and only the
-		// four day-counter leaves a stage report writes per model are new to it.
+		// four day-counter leaves a stage report writes per model are new to it,
+		// a spend-leaves-generation marker already has those leaves and only the
+		// paired device's read of a run's outcome is new to it, and an
+		// outcome-generation marker already has that read and only the credential
+		// route a run reads is new to it (workspace-service task WS22).
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesOutcomeGeneration:
+			adds = "the credential route a run reads"
+		case gen >= rulesSpendLeavesGeneration:
+			adds = "the paired device's read of a run's outcome"
 		case gen >= rulesRegistrationGeneration:
 			adds = "the four day-counter leaves a run's stage report writes per model"
 		case gen >= rulesVoiceGeneration:

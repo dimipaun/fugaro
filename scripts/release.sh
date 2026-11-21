@@ -55,11 +55,22 @@
 # the CLI stream's current in docs/release-streams.yaml -- and prints exactly
 # which of the three is missing instead of writing any of them (they are the
 # branch's own commits, docs/release.md). With all three there: the branch is
-# pushed (plain push, never force), CI is dispatched on it (`gh workflow run ci
-# --ref release/X.Y`, which is what vouches for the commit the gate reads), the
-# release gate waits for it (--timeout-minutes), and the tag goes on the branch
-# tip and is pushed. The last step of both paths is scripts/verify-release.sh,
-# which waits for every workflow the tag started.
+# pushed (plain push, never force), a full CI run is dispatched on it (`gh
+# workflow run ci --ref release/X.Y`, with `-f full=true` and `-f
+# live_scripts=always` when that branch's own ci.yml declares those inputs --
+# GitHub refuses an input a workflow does not declare -- which is what vouches
+# for the commit the gate reads), the release gate waits for it
+# (--timeout-minutes), and the tag goes on the branch tip and is pushed. The last
+# step of both paths is scripts/verify-release.sh, which waits for every workflow
+# the tag started.
+#
+# The ordinary path's step 4 dispatches the same run on the merge commit itself
+# when that commit has none (`gh workflow run ci`, with `-f full=true` and `-f
+# live_scripts=always` when main's own ci.yml declares those inputs, R12): CI
+# starts on no commit by itself, and the release gate reads the checks of a full
+# run. A dispatch runs a workflow at its ref's tip, so when main has moved past the
+# merge the run lands elsewhere and the release is refused, naming the commit and a
+# command that puts a full run on it.
 #
 # A dropped connection to GitHub does not end it: read-only gh and git calls,
 # and the release gate's polling, are retried a bounded number of times
@@ -72,6 +83,12 @@ repo_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo_root"
 . scripts/retry.sh
 . scripts/versions.sh
+# The names that are the owner's own installation, refused by the precondition
+# below and by scripts/release-rehearsal.sh's own guard.
+. scripts/belong.sh
+# The one reading of "this is a coding agent's session", refused by the
+# precondition below.
+. scripts/agent-session.sh
 # The rule scripts/verify-release.sh holds a patch tag's own commits to, run in
 # run_hotfix while the branch is still a branch (scripts/hotfix-commits.sh).
 . scripts/hotfix-commits.sh
@@ -81,6 +98,11 @@ dry_run=0
 timeout_minutes=45
 version=""
 hotfix=0
+# skip_rehearsal is the owner's explicit word, ruling of 2026-11-21, that this one
+# release is cut without the pre-tag rehearsal: the sandbox it builds in was not
+# set up yet. It is a flag a person types, never a default, and the release
+# summary says in so many words that the rehearsal is owed.
+skip_rehearsal=0
 # fixes is the `--fix` commits, space-separated by design: this runs under bash
 # 3.2 on macOS, where "${#arr[@]}" on an empty array under set -u is an error.
 fixes=""
@@ -89,6 +111,7 @@ while [ $# -gt 0 ]; do
     --yes) yes=1 ;;
     --dry-run) dry_run=1 ;;
     --hotfix) hotfix=1 ;;
+    --skip-rehearsal) skip_rehearsal=1 ;;
     --fix)
       if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         echo "--fix needs a commit (a sha on origin/main): the fix the hotfix carries, cherry-picked onto the maintenance branch (docs/release.md, \"Hotfix releases\")" >&2
@@ -120,7 +143,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -z "$version" ]; then
-  echo "usage: $0 X.Y.Z [--yes] [--dry-run] [--timeout-minutes N]
+  echo "usage: $0 X.Y.Z [--yes] [--dry-run] [--skip-rehearsal] [--timeout-minutes N]
        $0 X.Y.Z --hotfix [--fix SHA]... [--dry-run] [--timeout-minutes N]" >&2
   exit 2
 fi
@@ -176,6 +199,9 @@ if [ "$hotfix" = 1 ]; then
   fi
 else
   rerun="scripts/release.sh $version"
+  if [ "$skip_rehearsal" = 1 ]; then
+    rerun="$rerun --skip-rehearsal"
+  fi
 fi
 on_signal() {
   echo "
@@ -217,7 +243,7 @@ latest_released_version() {
 # behind -- and `write` rewrites it to X.Y.Z, byte for byte the same when it
 # already says X.Y.Z.
 released_version_docs_list=(
-  "docs/design/project-named-oauth-tokens.md" "(released; the released CLI is " ")"
+  "docs/project-named-oauth-tokens/spec.md" "(released; the released CLI is " ")"
   "docs/project-claude-accounts.md" "The released Fugaro is " ","
 )
 released_version_docs() {
@@ -297,6 +323,165 @@ streams_cmd=${RELEASE_SH_STREAMS_CMD:-go run ./internal/streams/cmd/streams}
 plugin_version_at() {
   git show "$1:plugin/.claude-plugin/plugin.json" 2>/dev/null \
     | sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1
+}
+
+# ci_run_rows SHA prints one tab-separated line per run of the `ci` workflow
+# file on SHA -- the run number, its check suite id and its display title -- the
+# shape scripts/release-gate.sh reads a commit's runs with. `.path` is what makes
+# a run a `ci` run, and the title is what says whether it was full (R1).
+ci_run_rows() {
+  retry_read gh api "repos/$repo/actions/runs?head_sha=$1&per_page=100" \
+    --jq '.workflow_runs[] | select(.path == ".github/workflows/ci.yml") | [.run_number, .check_suite_id, .display_title] | @tsv'
+}
+
+# full_ci_run_on SHA prints the run number of the newest full `ci` run on SHA,
+# and nothing when the commit has no full run. A run is full when its title says
+# so -- `ci (full)`, which run-name: gives a ci.yml that has one, or a bare `ci`,
+# which is what every run of a ci.yml without run-name: is titled -- the rule
+# scripts/release-gate.sh holds a tag's commit to. Newest is the highest run
+# number, whatever order the API listed the runs in.
+full_ci_run_on() {
+  local rows number title
+  rows=$(ci_run_rows "$1") || return 1
+  [ -n "$rows" ] || return 0
+  while IFS=$'\t' read -r number _suite title; do
+    case "$title" in
+      "ci (full)" | ci) printf '%s' "$number"; return 0 ;;
+    esac
+  done <<<"$(printf '%s\n' "$rows" | sort -rn -k1,1)"
+}
+
+# latest_ci_run prints "<head sha><TAB><run number>" for the newest run of the
+# `ci` workflow file, whatever commit it is on, and nothing when the workflow has
+# no run at all. The run a dispatch starts is the newest one: GitHub creates it
+# at the ref's tip and numbers runs upward, so a run number above the one read
+# before the dispatch is the run that dispatch just started.
+latest_ci_run() {
+  retry_read gh api "repos/$repo/actions/workflows/ci.yml/runs?per_page=1" \
+    --jq '.workflow_runs[0] // empty | [.head_sha, .run_number] | @tsv'
+}
+
+# run_number_of ROW prints the run number in a latest_ci_run row, and 0 for an
+# empty row, which is a workflow with no run at all.
+run_number_of() {
+  local number
+  number=${1#*$'\t'}
+  printf '%s' "${number:-0}"
+}
+
+# wait_for_ci_full_run SHA BEFORE returns once the newest run of the `ci`
+# workflow is newer than run number BEFORE and its head is SHA: the run a
+# dispatch started, on the commit the release is verifying. A dispatch runs a
+# workflow at its ref's tip, so when that is not SHA -- main moved on between the
+# merge and the dispatch -- the run is on another commit, and the release is
+# refused here, naming the commit and the one command that would put a full run
+# on it, rather than at the gate, whose commit no full run will ever reach. That
+# command names a ref a person makes: this creates none.
+wait_for_ci_full_run() {
+  local sha=$1 before=$2 row number head deadline
+  deadline=$(($(date +%s) + timeout_seconds))
+  while :; do
+    row=$(latest_ci_run) || return 1
+    number=$(run_number_of "$row")
+    if [ "$number" -gt "$before" ]; then
+      break
+    fi
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "no run of the ci workflow started within ${timeout_minutes}m of the dispatch; read https://github.com/$repo/actions/workflows/ci.yml, dispatch the full run by hand, then re-run \"$rerun\"" >&2
+      return 1
+    fi
+    sleep "$poll_seconds"
+  done
+  head=${row%%$'\t'*}
+  if [ "$head" != "$sha" ]; then
+    echo "the ci run the dispatch started (#$number) is on $head, not the commit this release is verifying ($sha): a workflow_dispatch runs a workflow at the ref's tip, so main had moved past the release's merge commit by the time of the dispatch. Put a full run on the commit itself with a ref that points at it -- gh workflow run ci --ref <a branch that points at $sha> -f full=true -- then re-run \"$rerun\"" >&2
+    return 1
+  fi
+}
+
+# ensure_full_ci_run SHA puts the full `ci` run the release gate needs on SHA
+# itself when the commit has none (R12): CI runs on no commit by itself (the
+# owner's ruling of 2026-11-07: dispatch by hand, in batches), so the release
+# dispatches its own. A commit that already has one -- a person's dispatch, or the
+# dispatch of a re-run of this release -- gets no second: the gate reads the
+# newest full run, so a second would only cost a runner.
+#
+# What the dispatch may pass is what the ci.yml it runs declares, and a dispatch
+# with no --ref runs the file on the default branch, which is origin/main here:
+# `-f full=true` wherever main has the selector (CS6), so the run the gate reads is
+# the full variant, and `-f live_scripts=always` wherever main still has #3301's
+# input, because `auto` -- that input's default -- may skip the live-script
+# runners, and a run that skipped them is not a gate a tag can be cut on (R9).
+# Before either lands the dispatch passes nothing, exactly as it always did, and
+# the bare `ci` title of a ci.yml without run-name: is one the gate reads as full
+# (R1) all the same.
+ensure_full_ci_run() {
+  local sha=$1 existing row before ci_inputs dispatch_err
+  existing=$(full_ci_run_on "$sha") || return 1
+  if [ -n "$existing" ]; then
+    echo "ci run #$existing on $sha is a full one; the release gate reads it"
+    return 0
+  fi
+  ci_inputs=$(git show "origin/main:.github/workflows/ci.yml" 2>/dev/null | workflow_dispatch_inputs | ci_dispatch_flags)
+  row=$(latest_ci_run) || return 1
+  before=$(run_number_of "$row")
+  # shellcheck disable=SC2086 # word splitting is the point: $ci_inputs is the flags
+  if ! dispatch_err=$(gh workflow run ci $ci_inputs 2>&1); then
+    printf '%s\n' "$dispatch_err" >&2
+    echo "could not dispatch a full ci run on main (\"gh workflow run ci$ci_inputs\"), and the release gate reads only a full run's checks. Nothing has been tagged: dispatch it by hand from https://github.com/$repo/actions/workflows/ci.yml, then re-run \"$rerun\"" >&2
+    return 1
+  fi
+  echo "dispatched a full ci run on main (\"gh workflow run ci$ci_inputs\"); waiting for it to appear..."
+  wait_for_ci_full_run "$sha" "$before"
+}
+
+# workflow_dispatch_inputs prints the input names the ci.yml on stdin declares
+# under `on: workflow_dispatch: inputs:`, one per line, and nothing when it
+# declares none. A dispatch may pass an input only when the workflow it runs
+# declares it -- GitHub refuses an unknown one with a 422 -- and the ci.yml a
+# dispatch on a ref runs is the one on that ref, so a maintenance branch's own
+# file is what its dispatch may pass.
+workflow_dispatch_inputs() {
+  awk '
+    BEGIN { wd = -1; inputs = -1; keyindent = -1 }
+    {
+      sub(/[[:space:]]*#.*$/, "", $0)
+      if ($0 ~ /^[[:space:]]*$/) next
+      indent = match($0, /[^[:space:]]/) - 1
+      if ($0 ~ /^[[:space:]]*workflow_dispatch:[[:space:]]*$/) { wd = indent; inputs = -1; keyindent = -1; next }
+      if (wd >= 0 && indent <= wd) { wd = -1; inputs = -1; keyindent = -1; next }
+      if (wd >= 0 && $0 ~ /^[[:space:]]*inputs:[[:space:]]*$/) { inputs = indent; keyindent = -1; next }
+      if (inputs >= 0) {
+        if (indent <= inputs) { inputs = -1; keyindent = -1; next }
+        if (keyindent < 0) keyindent = indent
+        if (indent != keyindent) next
+        key = $0
+        sub(/^[[:space:]]*/, "", key)
+        sub(/:.*$/, "", key)
+        print key
+      }
+    }'
+}
+
+# ci_dispatch_flags prints the `-f name=value` flags a `gh workflow run ci` may
+# pass, given the input names of the ci.yml it runs on stdin: `-f full=true` for
+# the selector's `full` (CS6) and `-f live_scripts=always` for #3301's
+# `live_scripts`, each only when that file declares it -- GitHub refuses an input
+# a workflow does not declare with a 422 -- and nothing at all for a ci.yml that
+# declares neither, which is a tree older than both. `live_scripts=always` is what
+# R9 asks for: `auto`, that input's default, may skip the live-script runners,
+# which is not a gate a release can be cut on.
+ci_dispatch_flags() {
+  local declared flags
+  declared=$(cat)
+  flags=""
+  if printf '%s\n' "$declared" | grep -qx full; then
+    flags="$flags -f full=true"
+  fi
+  if printf '%s\n' "$declared" | grep -qx live_scripts; then
+    flags="$flags -f live_scripts=always"
+  fi
+  printf '%s' "$flags"
 }
 
 # hotfix_scratch is the scratch worktree --hotfix builds the maintenance branch
@@ -561,6 +746,15 @@ $missing_text"
     echo "no tag was created: a commit the tag would carry cannot be vouched for, and scripts/verify-release.sh refuses the same commit on the pushed tag, where it can no longer be fixed. Land the change on main as a PR and name it with --fix, or rebuild the branch from the line's last tag (git push origin --delete $branch) and re-run \"$rerun\" (docs/release.md, \"Hotfix releases\")" >&2
     return 1
   fi
+  # What a dispatch on $branch may pass is what the branch's own ci.yml declares:
+  # a workflow_dispatch runs the workflow file on the ref it names, and a
+  # maintenance branch is cut from the line's last tag, so its ci.yml may predate
+  # main's -- `full` may be absent where main has it (CS6) and `live_scripts`
+  # present where main has already dropped it. ci_dispatch_flags passes each only
+  # when this branch declares it, and nothing to a branch older than both, which is
+  # dispatched exactly as it always was.
+  ci_inputs=$(git -C "$hotfix_scratch/tree" show "HEAD:.github/workflows/ci.yml" 2>/dev/null | workflow_dispatch_inputs | ci_dispatch_flags)
+
   if [ "$dry_run" = 1 ]; then
     cat <<EOF
 
@@ -571,8 +765,8 @@ tagged or changed anywhere.
      tip: $tip
   3. the release's own text would be required on it, and this script writes
      none of it: $text_state
-  4. the branch would be pushed (a plain push, never a force) and CI dispatched
-     on it: gh workflow run ci --ref $branch
+  4. the branch would be pushed (a plain push, never a force) and a full CI run
+     dispatched on it: gh workflow run ci --ref $branch$ci_inputs
   5. the test, terraform and rules checks would be waited for on
      the branch tip (up to ${timeout_minutes}m, scripts/release-gate.sh), then
      $tag would be tagged there and pushed
@@ -600,12 +794,16 @@ $missing_text
 Commit them on $branch (git fetch origin $branch && git switch -c $branch origin/$branch), push, then re-run \"$rerun\": it resumes from the pushed branch and picks up from here. The tag is not created until they are there, because the tag's own workflows refuse without them." >&2
     return 1
   fi
-  if ! dispatch_err=$(gh workflow run ci --ref "$branch" 2>&1); then
+  dispatch_row=$(latest_ci_run) || return 1
+  before=$(run_number_of "$dispatch_row")
+  # shellcheck disable=SC2086 # word splitting is the point: $ci_inputs is the flags
+  if ! dispatch_err=$(gh workflow run ci --ref "$branch" $ci_inputs 2>&1); then
     printf '%s\n' "$dispatch_err" >&2
-    echo "could not dispatch CI on $branch (\"gh workflow run ci --ref $branch\"). The branch is pushed and carries the release's text; dispatch it by hand, then re-run \"$rerun\"" >&2
+    echo "could not dispatch CI on $branch (\"gh workflow run ci --ref $branch$ci_inputs\"). The branch is pushed and carries the release's text; dispatch it by hand, then re-run \"$rerun\"" >&2
     return 1
   fi
   echo "dispatched CI on $branch; waiting up to ${timeout_minutes}m for the required checks..."
+  wait_for_ci_full_run "$tip" "$before"
   GITHUB_SHA="$tip" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
 
   git tag -a "$tag" -m "Fugaro $tag" "$tip"
@@ -649,6 +847,31 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+# A coding agent's session cuts no release, on either path: it is checked here
+# with the other preconditions, ahead of the --hotfix branch below as well as of
+# the ordinary steps, so the refusal lands before the bump PR is opened, before
+# anything is pushed and before the tag: a refusal that landed after those would
+# leave the version bump merged to main with no tag on it, which is the half of
+# a release nobody can undo. --hotfix is the same release by another door
+# (release/X.Y, then a permanent tag), so a refusal that covered only the
+# ordinary path would leave the skill's own "the same command with --hotfix" a
+# way around it. The reading is scripts/agent-session.sh's
+# (internal/agentenv's markers). The pre-tag rehearsal at step 4 is not what
+# this fence is for, and holds no fence of its own: it builds in the sandbox
+# project only and tags nothing, so an agent's session may run it by hand
+# (scripts/release-rehearsal.sh, the owner's ruling of 2026-11-19) while the
+# release that would call it stays the person's. --dry-run is not refused: it
+# creates nothing outside its own scratch worktree and removes that however it
+# ends, which is exactly what the skill has an agent run, and --hotfix --dry-run
+# is covered by the same exemption.
+if [ "$dry_run" = 0 ]; then
+  agent_marker=$(agent_session_marker)
+  if [ -n "$agent_marker" ]; then
+    echo "$agent_marker says this is a coding agent's session, and a release is the person's to make: the pull request it opens merges the version bump to main and the tag it cuts is permanent, so an agent's session does neither. Nothing has been pushed, opened or merged. Run it at your own terminal — \"$rerun\" — or hand that command to the person. (The markers are internal/agentenv's: a courtesy against accidents, not a barrier — D1590.)" >&2
+    exit 1
+  fi
+fi
+
 # --hotfix is the other path from here: it owns every step from the branch on,
 # and it never moves the user's checkout (restore_main is not installed for it:
 # the branch is built in a scratch worktree), so it ends on whatever branch it
@@ -666,6 +889,32 @@ if [ "$current_branch" != main ]; then
   echo "the current branch is '$current_branch', not main; switch to main first" >&2
   exit 1
 fi
+
+# The pre-tag rehearsal needs the sandbox project named, and it is checked here
+# with the other preconditions rather than at step 4, where the release PR has
+# already merged: a run that gets that far and only then has nothing to
+# rehearse in has spent the whole merge on a release it cannot cut. The name is
+# the one the owner-run checks use (docs/gcp-live-checklist.md), and the names
+# that are the owner's own -- `belong`, `edge-devel-dimi` and `edgeappinc` --
+# are scripts/belong.sh's rule, which a rehearsal never builds in
+# (scripts/release-rehearsal.sh refuses them too: this line is early, that one
+# is the guard). The CLI is not that guard: its own NeverBelong is `fugaro
+# orchestrator serve`'s, so `fugaro image build --gcp-project edge-devel-dimi`
+# is admitted and really builds in the owner's project, which is exactly what
+# this refusal is here to prevent.
+if [ "$skip_rehearsal" = 1 ]; then
+  echo "--skip-rehearsal: this release is cut WITHOUT the pre-tag rehearsal, on the owner's explicit word of 2026-11-21 (the sandbox project it builds in is not set up yet). The rehearsal is owed: run scripts/release-rehearsal.sh run <sha> once the sandbox exists, and read its record before the next release." >&2
+else
+  if [ -z "${FUGARO_LIVE_GCP_PROJECT:-}" ]; then
+    echo "FUGARO_LIVE_GCP_PROJECT is not set, and the release's pre-tag rehearsal builds this repository's own go catalog entry in the sandbox project only (step 4, scripts/release-rehearsal.sh): export FUGARO_LIVE_GCP_PROJECT=<the sandbox GCP project>, the one docs/gcp-live-checklist.md's Preconditions set for the owner-run checks, then re-run \"$rerun\"" >&2
+    exit 1
+  fi
+  if names_the_owners_installation "$FUGARO_LIVE_GCP_PROJECT"; then
+    echo "FUGARO_LIVE_GCP_PROJECT names '$FUGARO_LIVE_GCP_PROJECT', the owner's own installation or a name built around one (never belong, edge-devel-dimi or edgeappinc): the release's rehearsal builds in the sandbox, never in the owner's project. Point it at the sandbox's GCP project and re-run \"$rerun\"" >&2
+    exit 1
+  fi
+fi
+
 trap 'cleanup_plugin_scratch; restore_main' EXIT
 trap on_signal INT TERM HUP
 
@@ -867,13 +1116,22 @@ Nothing else was changed.
 Without --dry-run this would:
   2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), record $version as the cli stream's current in docs/release-streams.yaml (moving its next name when the release opens a new minor), rewrite the two doc lines that name the released version, commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
   3. wait up to ${timeout_minutes}m for that PR to merge
-  4. wait up to ${timeout_minutes}m for the merge commit's test, terraform and rules checks, and require them to pass (the release gate)
+  4. dispatch a full ci run on the merge commit when it has none (gh workflow run ci, with -f full=true and -f live_scripts=always where main's ci.yml declares them), then wait up to ${timeout_minutes}m for its test, terraform and rules checks, and require them to pass (the release gate)
+EOF
+  if [ "$skip_rehearsal" = 1 ]; then
+    echo "  4b. SKIPPED: --skip-rehearsal, the owner's explicit word of 2026-11-21: no sandbox build is run and no record is read before the tag; the rehearsal is owed (scripts/release-rehearsal.sh run <sha>, once the sandbox exists)"
+  else
+    cat <<EOF
+  4b. build this repository's own go catalog entry for real in the sandbox project (FUGARO_LIVE_GCP_PROJECT), with the CLI built from the merge commit (scripts/release-rehearsal.sh run: ONE billable Cloud Build, judged against the project's caps before it is submitted), and refuse the tag unless the record it writes is green for that commit (scripts/release-rehearsal.sh check): the build 0.26.0 left to the owner's next "fugaro update", and the last thing this run does before the tag
+EOF
+  fi
+  cat <<EOF
   5. create and push the tag $tag (no prompt: the green release gate on the verified merge commit is the safeguard)
 EOF
   exit 0
 fi
 
-commit_body="Bump the plugin version and every skill header to $version (scripts/bump-plugin-version.sh) so the release gate's version check passes once this merges to main, and record $version as the cli stream's current in docs/release-streams.yaml so the file the console's dependency graph draws describes what has shipped. Name $version as the released version in docs/design/project-named-oauth-tokens.md and docs/project-claude-accounts.md, whose status lines a docs test pins to the tree's version.
+commit_body="Bump the plugin version and every skill header to $version (scripts/bump-plugin-version.sh) so the release gate's version check passes once this merges to main, and record $version as the cli stream's current in docs/release-streams.yaml so the file the console's dependency graph draws describes what has shipped. Name $version as the released version in docs/project-named-oauth-tokens/spec.md and docs/project-claude-accounts.md, whose status lines a docs test pins to the tree's version.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 pr_body="Bumps plugin/.claude-plugin/plugin.json and every skill header to $version (scripts/bump-plugin-version.sh), per docs/release.md, and records $version as the cli stream's current in docs/release-streams.yaml and as the released version in the two docs that name it. Opened by scripts/release.sh; auto-merge (squash) is enabled."
@@ -1073,16 +1331,61 @@ if [ "$(git rev-parse HEAD)" != "$head_sha" ]; then
   git checkout --quiet --detach "$head_sha"
 fi
 scripts/bump-plugin-version.sh --check "$version"
-# CI starts on the merge commit only now, so its checks are usually missing
-# or still running: the gate waits for them (up to --timeout-minutes), naming
-# what is pending, and fails at once on a conclusive failure. It does not wait
-# for CI on a squash-merge commit whose tree equals the green PR head's: it
-# uses the head's checks and says so.
+# The gate reads the checks of a full `ci` run and of nothing else, and CI starts
+# on no commit by itself, so the release puts that run on the merge commit here
+# (R12). It usually has none: nothing dispatches CI for a merge, and the gate
+# would wait out --timeout-minutes on checks that will never appear.
+ensure_full_ci_run "$head_sha"
+# Whether that run was dispatched above or was already on the commit, its checks
+# are missing or still running: the gate waits for them (up to
+# --timeout-minutes), naming what is pending, and fails at once on a conclusive
+# failure. It does not wait for CI on a squash-merge commit whose tree equals the
+# green PR head's: it uses the head's checks and says so.
 echo "waiting for test, terraform and rules to pass on $head_sha (up to ${timeout_minutes}m)..."
 GITHUB_SHA="$head_sha" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
 
+# The pre-tag rehearsal, still inside step 4 because it is the last thing that
+# verifies the merged commit before the tag goes on it. 0.26.0's catalog build
+# failed for the owner on three things no hermetic test sees -- a stale pinned
+# branch, the leak scan's false positives on a real image, a layer-count
+# refusal -- and the tag was pushed by then, so the build that found them was
+# `fugaro update`'s on the owner's own installation. So the tag waits for a real
+# build of this repository's own `go` catalog entry, in the sandbox project
+# only, with the CLI built from the very commit being tagged.
+#
+# `run` is the billable half, and it refuses no session of its own: it builds in
+# the sandbox project only and tags nothing, so a coding agent may run it by hand
+# (the owner's ruling of 2026-11-19). What keeps this step the person's is the
+# release around it — the preconditions above refuse a coding agent's session,
+# before the branch, the pull request and the merge — and the CLI is not a fence
+# either: its gate admits an agent's session whose plan it admitted. `check` is
+# the gate: the record on disk --
+# commit, Cloud Build id, verdict -- is what the tag is cut on, never this run's
+# own memory of it, so a missing, red, or other-commit record refuses the tag
+# and names the Cloud Build to read. The record is a local convention and no
+# proof: nothing reads the build id back from Cloud Build, and a session that
+# can write the file can pass the gate (docs/release.md says so). `run` reuses a
+# green record for the same commit, so a release resumed after an interruption
+# rebuilds nothing.
+#
+# This is the CLI path's step alone. The hotfix path above does not run it: its
+# branch tip exists only inside its own run, in a scratch worktree removed on
+# exit, so there is no commit anyone could have rehearsed beforehand, and a
+# billable build is not what a patch release is for.
+if [ "$skip_rehearsal" = 1 ]; then
+  echo "--skip-rehearsal: no rehearsal was run for $head_sha, on the owner's explicit word of 2026-11-21; it is owed." >&2
+else
+  scripts/release-rehearsal.sh run "$head_sha" || exit 1
+  scripts/release-rehearsal.sh check "$head_sha" || exit 1
+fi
+
 # 5. Summary and confirmation.
 subject=$(git log -1 --format=%s "$head_sha")
+if [ "$skip_rehearsal" = 1 ]; then
+  rehearsal_summary="rehearsal: SKIPPED on the owner's explicit word of 2026-11-21 (--skip-rehearsal); it is owed"
+else
+  rehearsal_summary="rehearsal: this repository's own go catalog entry built for real in $FUGARO_LIVE_GCP_PROJECT (scripts/release-rehearsal.sh's record, above)"
+fi
 cat <<EOF
 
 Release summary
@@ -1090,6 +1393,7 @@ Release summary
   name:    $stream_name
   commit:  $head_sha ($subject)
   checks:  test, terraform and rules all succeeded, on $head_sha or on the identical-tree head of the merged PR (scripts/release-gate.sh says which, above)
+  $rehearsal_summary
 
 A pushed tag is permanent: the Go module proxy and the public ghcr.io images
 cache vX.Y.Z forever, so it is never moved or re-cut (docs/release.md#rolling-back).

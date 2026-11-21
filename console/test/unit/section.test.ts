@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The section helper: the busy mark a control change puts up in the same frame,
-// the sequence token that keeps the latest change's answer, and the session
-// cache of what a read answered (`src/renderer/section.ts`).
+// the sequence token that keeps the latest change's answer, the session cache of
+// what a read answered, the Retry control and the empty sentence a read that
+// failed or answered with nothing leaves behind, and the invalidator a write
+// names the scopes it touched through (`src/renderer/section.ts`,
+// `src/renderer/cache-invalidate.ts`; R1 and R2 of
+// `docs/console-improvements/reconciliation.md`).
 //
 // **Why this file is apart from `spend.test.ts`.** The helper is the owner's
 // rule of 2026-10-31 written once for every tab, and Spend is only its first
@@ -31,19 +35,27 @@ import {
   BUSY_SLOT_CLASS,
   CACHE_FRESH_MS,
   CACHE_LIMIT,
+  EMPTY_CLASS,
+  EMPTY_RUNS,
   NODE_TIMERS,
+  RETRY_CLASS,
+  RETRY_LABEL,
   STAMP_AT_CLASS,
   STAMP_CLASS,
   STAMP_REFRESH_CLASS,
   STAMP_REFRESH_LABEL,
   cacheKey,
   renderBusy,
+  renderEmpty,
+  renderRetry,
   renderStamp,
   resultCache,
   sectionRead,
   stampOf,
 } from '../../src/renderer/section'
 import type { SectionElement } from '../../src/renderer/section'
+import { cacheInvalidator } from '../../src/renderer/cache-invalidate'
+import type { ScopeRead } from '../../src/renderer/cache-invalidate'
 import { READING_STILL, READING_STILL_MS } from '../../src/renderer/screens/reading'
 import { SKELETON_BLOCK_CLASS, SKELETON_CLASS, SPEND_REPORT_SHAPE } from '../../src/renderer/skeleton'
 
@@ -245,6 +257,28 @@ describe('one section’s read', () => {
     expect(host.getAttribute(BUSY_BUSY_ATTRIBUTE)).toBeNull()
   })
 
+  it('answers whose token is newest without settling it, for a read that draws in parts', () => {
+    // The question a stream asks between its chunks (RS2): `current` is the same
+    // fact `settle` decides on, but it takes nothing down -- a read still
+    // arriving is the section's, and its mark has to stay up while it does.
+    const read = sectionRead({ factory, theme: 'light' })
+    const { host, slot } = drawnSection()
+    const first = read.start()
+    read.mark(first, host, slot, 'Reading the runs…')
+    expect(read.current(first), 'the newest read was not its own section’s').toBe(true)
+    // Asking changes nothing: the mark is still up, and asking again still
+    // answers the same thing.
+    expect(host.getAttribute(BUSY_ATTRIBUTE)).toBe('true')
+    expect(read.current(first)).toBe(true)
+
+    const second = read.start()
+    expect(read.current(first), 'a superseded read still claimed the section').toBe(false)
+    expect(read.current(second)).toBe(true)
+    // And a superseded token still settles `false`, so the two agree.
+    expect(read.settle(first)).toBe(false)
+    expect(classed(slot, BUSY_CLASS)).toHaveLength(1)
+  })
+
   it('draws nothing for a token a later change has already superseded', () => {
     const read = sectionRead({ factory, theme: 'light' })
     const { host, slot } = drawnSection()
@@ -296,6 +330,123 @@ describe('one section’s read', () => {
     // The default clock is the host's own, which is what a fake-timer suite
     // replaces -- and it is the same fifteen seconds the placeholder's line uses.
     expect(typeof NODE_TIMERS.setTimeout).toBe('function')
+  })
+})
+
+describe('the control a refused section offers (R1)', () => {
+  it('draws a button with the console’s own word and no listener of its own', () => {
+    const control = renderRetry(factory) as FakeSection
+    expect(control.tag).toBe('button')
+    expect(control.attributes.get('class')).toBe(RETRY_CLASS)
+    // `type` is written rather than left to the document's default, for the
+    // reason the stamp's refresh gives: a `button` inside a form without it is a
+    // submit, and this one is a read.
+    expect(control.attributes.get('type')).toBe('button')
+    expect(control.textContent).toBe(RETRY_LABEL)
+    // Nothing else: the action is drawn here and wired by the caller, which is
+    // the only place that knows which read the section is waiting for. This fake
+    // has no `addEventListener` at all, so a helper that reached for one would
+    // not compile -- and a caller that wired nothing would answer a click with
+    // silence, which is why the entry draws this only where it names a read.
+    expect(control.children).toEqual([])
+    expect(control.attributes.size).toBe(2)
+  })
+
+  it('hands back the factory’s own element, so a screen can append it', () => {
+    // The element is the surface's (`ScreenElement` in a screen, the entry's own)
+    // and not this file's narrower `SectionElement`: the caller appends it to a
+    // host of its own type, and a widened return would need narrowing again at
+    // exactly that call site.
+    const mine: { create(tag: string): FakeSection } = { create: (tag) => new FakeSection(tag) }
+    const control: FakeSection = renderRetry(mine)
+    expect(control.tag).toBe('button')
+  })
+})
+
+describe('the sentence an empty section says (R1)', () => {
+  it('draws the console’s own words for a read that answered with nothing', () => {
+    const line = renderEmpty(factory, EMPTY_RUNS) as FakeSection
+    expect(line.tag).toBe('p')
+    expect(line.attributes.get('class')).toBe(EMPTY_CLASS)
+    expect(line.textContent).toBe(EMPTY_RUNS)
+    expect(EMPTY_RUNS).toBe('No jobs running')
+  })
+})
+
+describe('the write invalidator (R2)', () => {
+  /** aScope is one registered scope: what it was asked, in order. */
+  function aScope(): { readonly read: ScopeRead; readonly asked: string[] } {
+    const asked: string[] = []
+    return {
+      asked,
+      read: {
+        clear: () => asked.push('clear'),
+        reread: () => asked.push('reread'),
+      },
+    }
+  }
+
+  it('clears a named scope and reads it again at once, clearing before reading', () => {
+    const invalidator = cacheInvalidator()
+    const projects = aScope()
+    invalidator.remember('projects', projects.read)
+    invalidator.invalidate(['projects'])
+    // The order is the whole point of `ScopeRead`'s two halves: a read that
+    // answered late must not find the pre-write view still in the cache and roll
+    // it forward as fresh.
+    expect(projects.asked).toEqual(['clear', 'reread'])
+  })
+
+  it('touches no scope the write did not name', () => {
+    const invalidator = cacheInvalidator()
+    const graph = aScope()
+    const live = aScope()
+    invalidator.remember('graph', graph.read)
+    invalidator.remember('live', live.read)
+    invalidator.invalidate(['graph'])
+    expect(graph.asked).toEqual(['clear', 'reread'])
+    expect(live.asked).toEqual([])
+  })
+
+  it('clears and reads a scope once when a caller names it twice', () => {
+    const invalidator = cacheInvalidator()
+    const live = aScope()
+    invalidator.remember('live', live.read)
+    invalidator.invalidate(['live', 'live'])
+    expect(live.asked).toEqual(['clear', 'reread'])
+  })
+
+  it('is silent about a scope nobody registered, rather than an error', () => {
+    // A console whose version hides a tab has no screen to register it, and the
+    // write that names it is still the truth about what it changed.
+    const invalidator = cacheInvalidator()
+    expect(() => invalidator.invalidate(['coordinator', 'spend'])).not.toThrow()
+    expect(() => invalidator.invalidate([])).not.toThrow()
+  })
+
+  it('registers a tab again on every visit, so the read is the visit’s own', () => {
+    const invalidator = cacheInvalidator()
+    const first = aScope()
+    const second = aScope()
+    invalidator.remember('spend', first.read)
+    invalidator.remember('spend', second.read)
+    invalidator.invalidate(['spend'])
+    expect(first.asked).toEqual([])
+    expect(second.asked).toEqual(['clear', 'reread'])
+  })
+
+  it('forgets every scope on the installation switch, and reads none of them', () => {
+    // `forget` is `forgetLive`: the console is about to close every read it
+    // holds, and the first visit to a tab reads it. Reading here would spawn a
+    // child for the installation that is now gone.
+    const invalidator = cacheInvalidator()
+    const spent = aScope()
+    const coordinator = aScope()
+    invalidator.remember('spend', spent.read)
+    invalidator.remember('coordinator', coordinator.read)
+    invalidator.forget()
+    expect(spent.asked).toEqual(['clear'])
+    expect(coordinator.asked).toEqual(['clear'])
   })
 })
 

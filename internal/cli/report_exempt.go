@@ -292,6 +292,7 @@ var exemptAnswers = map[string]string{
 	"settings set":               "writes one setting into one of the three documents, and prints the row it wrote",
 	"settings unset":             "removes one setting from one of the three documents, and prints the row it dropped",
 	"stats runs":                 "publishes per-recipe percentiles over a window, and prints the numbers it published",
+	"tell":                       "sends one message into the run's own prefix and prints the number it took, which is the whole answer: what became of the message is the run's own record",
 	"update-skills":              "pins the Fugaro plugin in the checkout's .claude/settings.json, and prints the pin",
 	"user add":                   "adds one person to the installation's launchers or operators, and prints the entry",
 	"user offboard":              "takes one member off the installation — their roster grants and the secrets they stored — and prints what it dropped",
@@ -308,6 +309,8 @@ var exemptAnswers = map[string]string{
 	"workspace cap set":          "records the workspace's own cap in the local config, and prints the row it wrote",
 	"workspace member add":       "declares one member and prints the entry it wrote into the workspace's table",
 	"workspace member rm":        "stops declaring one member and prints the entry it dropped from the table",
+	"workspace share":            "writes one credential into the workspace owner's shared list, and prints the entry it wrote",
+	"workspace unshare":          "drops one credential from the workspace owner's shared list, and prints the entry it dropped",
 	"workspace rm":               "leaves a workspace, and prints the membership key and pin it dropped",
 	"accounts craft":             "prints its own help: the work is in the set and rm subcommands beside it",
 	"accounts craft rm":          "drops one craft from this machine's project config, records the removal and prints what it dropped",
@@ -316,4 +319,6 @@ var exemptAnswers = map[string]string{
 	"accounts grade set":         "points one escalation grade at one of this installation's credentials, and prints the grant it wrote",
 	"accounts repo":              "prints its own help: the work is in the add subcommand beside it",
 	"accounts repo add":          "admits one repository's own runs to a named Claude account, and prints the list it wrote",
+	"accounts cascade":           "prints its own help: the work is in the set subcommand beside it",
+	"accounts cascade set":       "writes the credentials cascade's members into this installation's own config, and prints what it wrote",
 }
