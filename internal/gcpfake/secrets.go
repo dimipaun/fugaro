@@ -454,17 +454,30 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		servePolicy(w, r.URL.Query(), s.policy)
-	case r.Method == http.MethodGet && secretPermissionsRE.MatchString(p):
+	case (r.Method == http.MethodGet || r.Method == http.MethodPost) && secretPermissionsRE.MatchString(p):
 		m := secretPermissionsRE.FindStringSubmatch(p)
 		s := f.secrets[m[2]]
 		if s == nil {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Secret ["+m[2]+"] not found.")
 			return
 		}
+		// The generated client sends the permissions in the POST body
+		// (projects.secrets.testIamPermissions takes its request there), while a
+		// hand-made GET carries them in the query; both are served, so a test
+		// can drive the probe either way.
+		asked := r.URL.Query()["permissions"]
+		if r.Method == http.MethodPost && len(body) != 0 {
+			var req struct {
+				Permissions []string `json:"permissions"`
+			}
+			if err := json.Unmarshal(body, &req); err == nil && len(req.Permissions) != 0 {
+				asked = req.Permissions
+			}
+		}
+
 		// An unset held (nil) holds everything asked: the fake models no IAM, and
 		// the answer every existing test's write already relies on is the one that
 		// keeps this probe from refusing writes those tests are not about.
-		asked := r.URL.Query()["permissions"]
 		if f.held == nil {
 			writeJSON(w, http.StatusOK, map[string]any{"permissions": asked})
 			return

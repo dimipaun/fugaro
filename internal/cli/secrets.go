@@ -969,7 +969,16 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string, hasName bool)
 		// left is the repository-level secret this ruling is about.
 		return repoSecretsDisabled(cmd.OutOrStdout())
 	}
-	if repo != "" && projectScopeName(env.lc, name, "") {
+	// Both notes below are about the precedence between a project copy and a
+	// repository's own copy of ONE name, and a provider key has neither since
+	// KS2: it is entered in the credentials service's bundle once per
+	// repository (R2, D3008), so the value a person stores here reaches this
+	// repository's entry and no copy of this name exists to override anything
+	// — the note would describe a container the command no longer writes, and
+	// the line that does answer for this store is the list of entries it left
+	// (providerKeyWrittenLine, below).
+	providerKey := providerKeyName(env.lc, name)
+	if !providerKey && repo != "" && projectScopeName(env.lc, name, "") {
 		// The name has a project-wide meaning that does not reach this
 		// repository, and the person typed no flag: the copy they are about to
 		// store is this repository's own, and saying which entry left them out
@@ -986,7 +995,7 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string, hasName bool)
 			"note: %s is stored project-wide in this project, but not for %s: this value goes to %s's own copy, which overrides the project copy for it. %s\n",
 			pluginwire.Printable(name), pluginwire.Printable(repo), pluginwire.Printable(repo), projectWideHint(env.lc, name))
 	}
-	if repoMayUseProject(env.lc, name, r.repo) {
+	if !providerKey && repoMayUseProject(env.lc, name, r.repo) {
 		// §5's precedence has no override-the-override: a --repo copy of a
 		// name this repository may already read project-wide takes over from
 		// now on, and only disabling the copy's last enabled version gives

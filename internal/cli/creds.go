@@ -2362,6 +2362,25 @@ func providerKeyCredentialRepos(lc *localcfg.Config, credential string) []string
 	return slices.Clone(lc.ClaudeAccounts[credential].AllowDataTo)
 }
 
+// providerKeyName reports whether name is a provider key's own spelling in
+// this project: the provider's own secret (providers.<p>.secret, whatever it is
+// called) or a runner-path key credential's derived name
+// (credential-<name>-key). Those two are the names whose store writes C1's
+// family and no container (KS2), which is what a caller needs to know before it
+// describes the store in the words of the project-copy/repository-copy
+// precedence — a precedence a provider key does not have.
+//
+// The provider's CONVENTIONAL name (config.ReservedProviderSecret) is not one:
+// it is no provider's .secret, it has no entry to be written under, and every
+// door that could write it refuses it.
+func providerKeyName(lc *localcfg.Config, name string) bool {
+	if _, isProvider := config.ProviderBySecret(lc.Providers, name); isProvider {
+		return true
+	}
+	_, isCredential := providerKeySecretCredential(lc, name)
+	return isCredential
+}
+
 // providerKeySecretCredential is the credential a name is a RUNNER-path key
 // credential's own derived secret for (`credential-<name>-key`), which is the
 // second spelling a provider key reaches `fugaro secrets set` under. The

@@ -32,7 +32,16 @@ var (
 func secretsFixture(t *testing.T) *gcpfake.Secrets {
 	t.Helper()
 	sm := gcpfake.NewSecrets(t)
-	newCloudFixture(t, "secret_manager: "+sm.URL+"/")
+	f := newCloudFixture(t, "secret_manager: "+sm.URL+"/")
+	// A provider key's write is guarded against the credentials service's
+	// release (KS2), and the guard reads the SERVICE where a converge reads
+	// the jobs: a fixture whose one Cloud Run endpoint serves only the jobs
+	// fake answers that read with the fake's own "unhandled path" failure and
+	// no write is ever reached. The service here is the nothing-deployed one
+	// (Cloud Run's 404), which is the case every isolateProjects fixture is in:
+	// with no service and no installation pin the guard judges this tree's own
+	// version and lets the write through.
+	providerKeyEndpoint(t, f.run, newRunServiceSkew(t))
 	return sm
 }
 
