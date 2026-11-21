@@ -31,8 +31,8 @@
 // README.md`'s rule: the suite runs in a fresh clone with no `node_modules`, so
 // every module a test loads must reach no package -- and `write-path.test.js`'s
 // rule 5 keeps `@react-native-firebase/*` to `mobile/index.js`, the entry. What
-// the entry hands in is the **two** namespaces the pinned package really
-// exports, because the registry is not the messaging module's: `app` is
+// the entry hands in is the **two** namespaces the pinned packages really
+// export, because the registry is not the messaging module's: `app` is
 // `@react-native-firebase/app`'s modular namespace (`getApps()`), and
 // `messaging` is `@react-native-firebase/messaging`'s (`getMessaging(app)`,
 // `getToken(messaging)`). The three methods named in the constructor's checks
