@@ -364,6 +364,10 @@ gives it a command — with the converge flag that changes it when the two doors
 | `layer_generation` | — |
 | `local.gcp_project` | `--gcp-project` |
 | `local.version` | — |
+| `locations.firestore` | — |
+| `locations.log_bucket` | — |
+| `locations.rtdb` | — |
+| `locations.secrets` | — |
 | `log_view` | — |
 | `name` | `--name` |
 | `policy_generation` | — |

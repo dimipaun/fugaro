@@ -37,6 +37,11 @@ import (
 // call, as real Secret Manager refuses it, so the retirement is observable
 // and not only recorded.
 //
+// A create carries a replication policy, which the fake checks as the API
+// checks it — automatic, or user-managed with a location for every replica —
+// stores with the container, and answers back on every read of it, so a test
+// can assert where the container a call created lives (Replication).
+//
 // Known differences from real Secret Manager: the list filter supports only
 // the one shape Fugaro sends, and pages are never split.
 type Secrets struct {
@@ -125,6 +130,11 @@ type fakeSecret struct {
 	created  time.Time
 	versions [][]byte
 	policy   []Binding
+	// regions is the container's user-managed replication as the create that
+	// made it named it; empty is automatic, the zero value, which is what a
+	// container the fake did not create itself (Seed) carries: the policy
+	// every Fugaro container had before LP5a wrote one in the region.
+	regions []string
 	// disabled says every version of this secret is DISABLED, the state an
 	// operator's disable leaves: the container exists, no enabled version
 	// does. Set by DisableVersions.
@@ -298,6 +308,20 @@ func (f *Secrets) Enabled() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.enables...)
+}
+
+// Replication answers the replica locations of secret id's user-managed
+// replication, or nil when the container is automatic or does not exist. It
+// reads what the create stored rather than the create request: a run creates
+// several containers, and the policy of ONE of them is the question.
+func (f *Secrets) Replication(id string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := f.secrets[id]
+	if s == nil {
+		return nil
+	}
+	return append([]string(nil), s.regions...)
 }
 
 // AddVersion appends a version to secret id, as another writer of the same
@@ -491,19 +515,22 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		id := r.URL.Query().Get("secretId")
 		var req struct {
 			Labels      map[string]string `json:"labels"`
-			Replication struct {
-				Automatic *struct{} `json:"automatic"`
-			} `json:"replication"`
+			Replication createReplication `json:"replication"`
 		}
-		if err := json.Unmarshal(body, &req); err != nil || id == "" || req.Replication.Automatic == nil {
-			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "want a secretId and automatic replication")
+		if err := json.Unmarshal(body, &req); err != nil || id == "" {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "want a secretId and a replication policy")
+			return
+		}
+		regions, ok := req.Replication.regions()
+		if !ok {
+			writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "want automatic, or user-managed with a location for every replica")
 			return
 		}
 		if f.secrets[id] != nil {
 			writeError(w, http.StatusConflict, "ALREADY_EXISTS", "Secret ["+id+"] already exists.")
 			return
 		}
-		s := &fakeSecret{labels: req.Labels, created: time.Now()}
+		s := &fakeSecret{labels: req.Labels, created: time.Now(), regions: regions}
 		f.secrets[id] = s
 		writeJSON(w, http.StatusOK, s.json(m[1], id))
 	case r.Method == http.MethodGet && secretsPathRE.MatchString(p):
@@ -607,8 +634,57 @@ func (s *fakeSecret) json(project, id string) map[string]any {
 		"name":        "projects/" + project + "/secrets/" + id,
 		"createTime":  s.created.UTC().Format(time.RFC3339Nano),
 		"labels":      s.labels,
-		"replication": map[string]any{"automatic": map[string]any{}},
+		"replication": replicationJSON(s.regions),
 	}
+}
+
+// replicationJSON is a replication policy as the API answers it: automatic,
+// or user-managed with the replica locations it holds (empty locations are
+// automatic, which is the zero value every seeded container has).
+func replicationJSON(regions []string) map[string]any {
+	if len(regions) == 0 {
+		return map[string]any{"automatic": map[string]any{}}
+	}
+	replicas := make([]any, 0, len(regions))
+	for _, r := range regions {
+		replicas = append(replicas, map[string]any{"location": r})
+	}
+	return map[string]any{"userManaged": map[string]any{"replicas": replicas}}
+}
+
+// createReplication is the replication policy a create request carries. The
+// API takes exactly one of automatic and userManaged, and a user-managed
+// policy names a location for every replica: a request that names the policy
+// any other way is refused, as real Secret Manager refuses it.
+type createReplication struct {
+	Automatic   *struct{} `json:"automatic"`
+	UserManaged *struct {
+		Replicas []struct {
+			Location string `json:"location"`
+		} `json:"replicas"`
+	} `json:"userManaged"`
+}
+
+// regions is the policy's replica locations, nil for automatic; ok is false
+// for a policy the API refuses: both, neither, a user-managed one with no
+// replica, or a replica with no location.
+func (r createReplication) regions() (regions []string, ok bool) {
+	switch {
+	case r.Automatic != nil && r.UserManaged != nil, r.Automatic == nil && r.UserManaged == nil:
+		return nil, false
+	case r.Automatic != nil:
+		return nil, true
+	}
+	if len(r.UserManaged.Replicas) == 0 {
+		return nil, false
+	}
+	for _, rep := range r.UserManaged.Replicas {
+		if rep.Location == "" {
+			return nil, false
+		}
+		regions = append(regions, rep.Location)
+	}
+	return regions, true
 }
 
 // version is version n of s, or nil when the secret has no such version.

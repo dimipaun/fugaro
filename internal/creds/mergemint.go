@@ -313,11 +313,22 @@ func printableValue(s string) bool {
 // nothing else of the body: the code is the service's closed vocabulary and the
 // sentence beside it is written for an operator's log.
 func refusalCode(data []byte) string {
+	if code := refusalError(data); code != "" {
+		return ": " + code
+	}
+	return ""
+}
+
+// refusalError is that same code on its own, for the one caller that acts on
+// which refusal it is rather than only reporting it (the label client's
+// missing read consumer). An answer that is not JSON, or one whose body carries
+// no code, is the empty string and no refusal this code reads.
+func refusalError(data []byte) string {
 	var e struct {
 		Error string `json:"error"`
 	}
-	if err := json.Unmarshal(data, &e); err != nil || e.Error == "" {
+	if err := json.Unmarshal(data, &e); err != nil {
 		return ""
 	}
-	return ": " + e.Error
+	return e.Error
 }

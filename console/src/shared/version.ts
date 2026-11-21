@@ -460,6 +460,52 @@ export function noApplySupported(
 }
 
 /**
+ * WHOAMI_CLI_FLOOR is the oldest CLI that has **`user ls --me --json`**, the
+ * caller's own role (WH1 of the console-improvements plan; D2907). It is the
+ * read role gating is built on: `renderer/gating.ts` asks it once at startup so
+ * a control the caller's role cannot use is drawn disabled with the role it
+ * needs, rather than refused after the click.
+ *
+ * **No release carries the flag yet, so the constant is `null` and this console
+ * asks no CLI for its role at all.** `user ls --me` is on `main` and in no tag;
+ * a floor is a claim about a release that exists, and a version this console
+ * guessed at would be a `--me` handed to a CLI that answers `unknown flag:
+ * --me` and fails the whole read. Unset is the safe direction and the only
+ * honest one: with no answer, `can` allows every action, every write control
+ * keeps the sentence it has always drawn, and the CLI's own refusal is what the
+ * operator reads after the click (`gating.ts`, D2907's "no answer" case).
+ *
+ * It is a floor and not a switch, so the release that ships `--me` names itself
+ * here and every older CLI keeps being asked nothing -- the same patch-level
+ * comparison the eight floors above use. The allow-list row `whoami` (AL of the
+ * same plan) names the same release, and this constant is what the renderer
+ * reads before that row is ever reached.
+ */
+export const WHOAMI_CLI_FLOOR: string | null = null
+
+/**
+ * whoamiSupported answers whether one version line may be asked for the
+ * caller's own role, by comparing it against `WHOAMI_CLI_FLOOR` at the patch
+ * level.
+ *
+ * **Its caller is `readGate`** (`src/renderer/gating.ts`), the one place the
+ * role read is planned, and it asks the version the startup handshake already
+ * read rather than spawning a probe of its own -- so the read is one child at
+ * most, and only for a CLI whose own row can answer it.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested: with the constant unset, every version is
+ * refused (`gating.test.ts` drives both).
+ */
+export function whoamiSupported(
+  version: string,
+  floor: string | null = WHOAMI_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
  * meetsCliFloor is the one patch-level comparison every floor above is asked
  * by, so a rule learned on one of them cannot be missing from the others. It is
  * exported for the readers of the desktop-console improvements plan's six new

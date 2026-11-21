@@ -26,6 +26,22 @@ bash scripts/test-time-report.sh tree.jsonl cliU.jsonl cliRest.jsonl
 - The container peaked at **7663 MiB of its 8192 MiB** and the cgroup's OOM killer fired (`oom_kill 2`), killing two `compile` processes. In the concurrent pass both `internal/cli` invocations came back non-zero for that reason. `resources.memory: 8Gi` is what the step is sized by, and the step's own comment already says the disk is memory on Cloud Run.
 - 6 cores are visible to the container and `resources.cpu: 4` is the job's cap; `go test` defaults to `-p` = the number of cores, so the tree invocation runs up to six packages at once.
 
+### 2026-11-20: the second half is past its cap, and only its bound moved
+
+A run of this repository on that date ended its verify step red on one test, and the record
+(`reports/cli-rest.xml`, JUnit) says what happened: `go test -run '^Test[^U]' ./internal/cli/`
+**hit its own `-timeout 15m` cap at 900.7 s**, with
+`TestWriterConformanceTheOwnerWritesTheKey` — the package's second-to-last test file — 33 s
+into its run and `writers_labels_test.go` never reached. 7220 top-level tests and 864.3 s of
+test time were in when the alarm fired, and two of the largest had grown since the table
+above (`TestReleaseGateRequiresTheConsoleCheck` 13.7 s → 42.5 s,
+`TestLiveInitCensusMatchesTheFrozenList` 7.1 s → 19.6 s).
+
+The half therefore carries **`-timeout 20m`** in `fugaro.yaml` from then on: the bound moves
+and the selection does not, so the tests that run are the same ones and the step still lands
+inside the 20 minutes it targets. Nothing in the tables above changed, and the options below
+are still the owner's to pick.
+
 ## The two packages that are the step
 
 | package | tests | test seconds | share of the step's test time |
