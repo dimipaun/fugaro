@@ -225,7 +225,16 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 		// of the run's budget, so it sits where the workflow's timeouts do and
 		// the project layer — the layer that knows them — may set it.
 		"agent.review_stop_fraction": InProject | InRepo,
-		"agent.recipe":               InProject | InRepo | InOverride,
+		// The keep-warm beat's switch (R10 of docs/workspace-service/, D2985):
+		// both scopes for the stop fraction's reason — a run's own behaviour,
+		// configured where the run's other behaviour is. A launcher-writable
+		// layer is not the sharper concern here that it is for agent.triage:
+		// a beat nobody sends costs a cold start at a call and never a
+		// credential, so the narrowest layer deciding it is not a widening.
+		// The row is printed in docs/project-layer.md, which
+		// TestScopeTableMatchesDocs keeps equal to config.Scopes.
+		"agent.workspace_beat": InProject | InRepo,
+		"agent.recipe":         InProject | InRepo | InOverride,
 		// Named oauth tokens plan Task 6 (docs/design/named-oauth-tokens.md §3
 		// T2): added after agent.recipe, in config.Scopes already; the design
 		// doc's own §5 table (which this golden map otherwise mirrors) gains
