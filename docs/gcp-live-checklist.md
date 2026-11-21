@@ -1163,6 +1163,10 @@ probe account carries predefined grants only).
 | 735 | The live sequence after `fugaro update` ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 735** and task **UP1**; the reconciliation's **U11** and **U12**, and the consumer half of **J6**): after `fugaro update` converges an installation that was paired the old way, pair, **refresh** after an hour, revoke a device, revoke a person's roster grant, restore from the synced list, the strict mode that requires a QR for a new device, and an outage of the identity project — with two phones, an old-way-paired phone still working through its MAC and offered identity pairing; the consumer's replies verify with its own KMS consumer key; **U11**, that Firebase refuses a custom token signed by a service account outside the Firebase project (the reason the signer is created there), and **U12**, whether the project owner's own role can sign with the consumer KMS key or needs a grant of its own | See "Check 735" below; **one command** for the consumer-key half (U12), run by **you**, on a **sandbox installation** with your own credential (**never `belong`**), after `fugaro update`; the sequence itself is yours, phone by phone, and the section writes out each step and what it must read; **no agent runs any step of it** | Every step has a reading rather than a verdict: the pairing that ends paired, the refresh that answers with a new token after the hour, the revoke that ends the device's access on its next request, the roster revoke that ends the person's mobile access, the restore that brings the synced list back, the strict mode that refuses a device without a QR, and the outage that leaves the old-way phone working rather than locked out. The U12 read is the sign attempt: the owner's own login **cannot sign** with the consumer key, or the grant the plan asks for is the reading and is recorded as the step U12 says it is. **OWNER-RUN, NOT RUN.** |
 | 736 | The Firebase Auth, KMS and Cloud Run **quotas** at the stated scale ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 736**; the reconciliation's **U6**): the identity project's Identity Platform sign-in quota, the KMS signing operations per second it can want and the Cloud Run request and instance quotas beside them, read against the scale the plan states — every phone refreshing its token on the hour and pairing and revoking as the spec describes — so a limit that would stop pairing at the planned fleet size is found before the fleet is that size | See "Check 736" below; **one command**, run by **you**, on the **identity project** (**never `belong`**), with your own credentials; **no agent runs any step of it** | Each quota the command prints is compared with the plan's stated scale, and the reading names the ones with no headroom. A quota that answers with a limit below the stated scale is a **FAIL with the limit and the scale named**; a quota the read cannot reach is written as **not measured** rather than as headroom. The section records the figures it read, because a quota rises and the sentence here is only as good as its date. **OWNER-RUN, NOT RUN.** |
 | 737 | **The root key project** and the first signed key set ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 737** and task **A4**; the owner's **O7** and **O15**, and **A2**'s and **P8**'s pinned half): the separate owner-only project exists with its root KMS key, the root key is non-exportable and **no service account can sign with it** — signing is granted to exactly one member, a separate owner identity given as a variable, and the laptop's default login **cannot sign** either; the **key-set** signing command has signed the first set and A2 serves it; and a rotation rehearsal has run, so the new KMS key version and the signing command are known before the first real rotation needs them | See "Check 737" below; **one command** for the refusal that matters (your own login against the root key), run by **you**, at your own terminal with your own credential on the **root key project** (**never `belong`**); the applies and the ceremony are yours, and **no agent applies, signs or holds the key**; **no agent runs any step of it** | The root key's purpose is `ASYMMETRIC_SIGN`, its algorithm is Ed25519, and the sign attempt with the owner's own login is **refused** — a sign that succeeds is the **worst finding this check can produce**, because a key anyone holding the default login can sign with is a key that signs key sets no client should trust (O7). The signed set A2 serves verifies against the root public key, its `seq` is above every set before it and its not-after date is the one the envelope carries; the rotation rehearsal's reading is the new key version's `kid` and the command that signed it, recorded in the section. **USER-RUN, NOT RUN.** |
+| 770 | **The load** — 100 concurrent runs across at least two members, on the workspace's credentials service ([`docs/workspace-service/`](workspace-service/implementation-plan.md), its **Check 770** and task **WS20**; the reconciliation's **O1** and **D2986**): R9's first values — a maximum of 10 instances and a concurrency of 40 per instance — are a guess until the platform is read under a load of 100 concurrent runs, and git pushes and clones ride the same service from the first release (D2984), so forge traffic is measured beside the model calls. What a fixture can never show: what the deployed revision's limits actually are, how many distinct instances answered, whether the platform refused a call for want of capacity, and whether the load left a reservation unsettled | See "Check 770" below; **one command**, `bash scripts/live-checks/check770.sh`, run by **you**, on the workspace's own installation (**never `belong`**), after the load you launched; **no agent runs any step of it** | The row reads the platform, not a plan: `max_instance_count` and the container concurrency as Cloud Run holds them are compared with R9's 10 and 40, and values that differ are a **FAIL that corrects R9** (O1) rather than a pass. The load's own log must hold at least the number of **requests** the load implies — an entry with no `httpRequest` is the service's own line and not a call — over distinct instances no greater than the maximum the service states, read at a limit that did not truncate it (a read that came back at its own limit is **not measured**); a status the platform uses to say it had no room (a 429 or a 503) **fails the row** — that is the correction the values ask for. A reservation past `budget.WorkspaceReservationTTL` **fails** the leak row; a window with no request in it is **not measured** rather than a pass, and a database or log the read cannot reach is **not measured** with the read named. **OWNER-RUN, NOT RUN.** |
+| 771 | **A member's job account, on a real deployment** ([`docs/workspace-service/`](workspace-service/implementation-plan.md), its **Check 771** and task **WS20**; the reconciliation's **U3**, and the workspaces design's **U1**): whether `firebasedatabase.instances.get` **alone** — the `fugaroWorkspaceRead` custom role — is enough for the workspace's credentials service to read a member's policy and run state on a real deployment; that a member's job account is admitted; that a call at the workspace's ceiling is refused; and that a member removed is refused within a minute (R13's re-read) | See "Check 771" below; **one command**, `bash scripts/live-checks/check771.sh`, run by **you**, on the member's own installation, reading the **workspace's own project** for the service and its log (`CHECK771_WORKSPACE_PROJECT`, no default) and the **member's** for the role and its binding (**never `belong`**), after the three calls it reads; **no agent runs any step of it** | The role carries exactly `firebasedatabase.instances.get` and is bound to the account the service revision runs as — a second permission, an absent role or a binding on another account **fails**. A member's call appears as an admission (`credsvc: audit`) naming a job account, and a refusal whose read label is the member's policy or state is **U3 answered NO** and **fails the row**. A call at the ceiling must leave a refusal whose own words **name the ceiling** — every refusal looks alike, so one for another reason is **not measured** there — and a removed member must be refused with a 4xx inside the grace minute (R13) that is **not** the ceiling's own refusal, which the ceiling would have made whether the member was removed or not; a moment nobody named, a served call or a refusal outside the minute is **not measured**, never a pass. **OWNER-RUN, NOT RUN.** |
+| 772 | **The workspace's service cold, and a run across a forced outage** ([`docs/workspace-service/`](workspace-service/implementation-plan.md), its **Check 772** and task **WS20**; the reconciliation's **U4** and **D2983**, and the owner's own doubt in **D2985** — *"I'm not sure we actually need it"*): the real cold-start time of the service with the beat on and off (so U4's figure is a measurement rather than an estimate, and the beat's worth is read against it), and a run's behaviour across an outage **shorter** than the retry bound — it rides it out — and **longer** — it halts naming the workspace's service | See "Check 772" below; **one command**, `bash scripts/live-checks/check772.sh`, run by **you**, on the workspace's own installation (**never `belong`**), after the two outage runs; **no agent runs any step of it** | The beat is read as the resolved config holds it (`agent.workspace_beat`, absent means ON, R10) and compared with the deployment's warm floor: the beat ON with a floor of zero **fails** as a warm claim the deployment does not hold, and the beat ON with a cold start still in the log **fails** as a beat not holding it. With the beat OFF, the log must hold a silence of at least `CHECK772_IDLE_GAP_SECONDS` for the cold start to be timed at all — no silence is **not measured** — and the row reports the cold-start latency beside the steady median, which is U4's figure. The short-outage run must be terminal with no halt (a halt there is the bound being shorter than its name, **FAIL**); the long-outage run must halt with **no** workspace refusal marker, because a marker is a refusal the service **answered** rather than an outage. **OWNER-RUN, NOT RUN.** |
+| 773 | **`fugaro update` on a workspace and on a member, with a run in flight on each** ([`docs/workspace-service/`](workspace-service/implementation-plan.md), its **Check 773** and task **WS20**; the reconciliation's **R11** and the HARD RULE it comes from): both sides converge with **no other step**, the update says the one line about the runs in flight rather than denying them, and each run finishes — because the update is safe while runs are in flight, always | See "Check 773" below; **one command**, `bash scripts/live-checks/check773.sh`, run by **you**, on a sandbox installation with your own credential (**never `belong`**), after the two updates; the two updates and the two runs are yours and are written out in the section; **no agent runs any step of it** | `fugaro doctor --all --json` on each side must report **no warning** afterwards: an update that leaves one is an update with another step behind it, which the HARD RULE forbids. Both update logs must carry the sentence `in flight: update waits for none and changes nothing they hold` and no line naming a step that did not land — an update that prints a failed step is an operator step the release ships. Each run must be **terminal**, and a halt whose moment falls inside the update's own window is a run the update stopped and **fails**; a log path, a run id or the workspace's project that was not given is **not measured** rather than a pass. **OWNER-RUN, NOT RUN.** |
 | 640 | The status labels on a real pull request ([`docs/forge-labels/`](forge-labels/implementation-plan.md), its task **CK** and the block it reserves — **640–649**, 640 used; **U1** and **U3** are the two questions nothing offline can answer, and **D2437**'s table with **D2439**'s token and **D2440**'s create-on-first-use are what the labels' colours and the route's behaviour rest on): with the installation's orchestrator daemon running and **one approved task** launched, the pull request the run opens carries **`fugaro:running`** while the run is in flight and, once it has ended, **no** status label (a run that ended `succeeded` or `cancelled`) or **`fugaro:failed`** — plus the **`spec:<name>`** label its item's own spec asks for, in D2437's grey. **U1** — whether the dogfood installation's GitHub App really holds `pull_requests: write` — is read from the **credentials service's own audit lines** (`gcloud logging read`, purpose `label`), which are the service's record of the act and never the run's word; **U3** — what GitHub does with a label name that carries a **colon** — is read from the repository's own label table (`gh label list`). Run by **you**, on the **dogfood installation `fugaro`** (GCP project `fugaro-dev`, region `us-east5`, never `belong`), at your own terminal, as **one command**: `bash scripts/live-checks/check640.sh --installation fugaro`, with the test that drives it against fakes, `scripts/live-checks/check640_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It reads and writes nothing anywhere, launches no run and costs nothing billable; the one conditional owner step is the plan's: if the check shows the App lacks `pull_requests: write`, you raise it on the App's settings page, which an agent cannot. **OWNER-RUN, NOT RUN.** |
 | 780 | **One project owner's `fugaro update` across a run in flight** ([`docs/keys-through-service/`](keys-through-service/implementation-plan.md), its **Check 780** and task **KS17**; the reconciliation's **R4**, **R7**, **U3**, **D3001**, **D3005** and **D3006**): on an installation that was still at the release before **Release A**, one project owner's `fugaro update` of a sandbox repository copies the model keys into the installation's one credentials bundle, drops that repository's model mounts and deletes the old secret containers — **with a run already in flight, which finishes and succeeds** — while an operator's update of the same repository copies nothing, deletes nothing and says who must run it | See "Check 780" below; **the script is how you run it**: `bash scripts/live-checks/check780.sh --sandbox <a sandbox repository checkout>`, with the test that drives every step of it against fakes, `scripts/live-checks/check780_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, authenticated as a **project owner** of the installation, on a **sandbox installation, project and repository only** (**never `belong`**), and **no agent runs any step of it** | The premise is read first, and ends the check as one that could not measure when it does not hold: the repository's jobs still MOUNT a model credential and the containers behind those mounts are still there — an installation no project owner has updated since Release A is not in the state this check is about. Then: the bundle gained a version written **inside the update's own window**; no job of the repository is fed from a model credential of any kind afterwards; every model container **no job of the installation mounts any more** is gone (one another job still mounts is **kept**, KS15's own rule, and recorded as kept); each deletion is **named** in the update's transcript and no value of it is printed; the run launched before the update is terminal, succeeded, and started **before** the repository's jobs were last updated. The operator's half is a transcript you hand the check (`--operator-transcript <file>`) from an update made by an account that is **not** a project owner **before** you run it; with none handed, that row is one the check could **not measure** and its text is the instruction for making one. **OWNER-RUN, NOT RUN.** |
 | 781 | **A non-Claude provider model served through the credentials service, end to end** ([`docs/keys-through-service/`](keys-through-service/implementation-plan.md), its **Check 781** and task **KS17**; the reconciliation's **R6**, **F13** and **D3005**): after Release A, a real run of a sandbox repository whose job mounts **no** model key at all — the job carries the credentials service's address instead — whose provider call was served **from the installation's one bundle**, and which was charged the **provider's own reported cost** | See "Check 781" below; **the script is how you run it**: `bash scripts/live-checks/check781.sh --sandbox <a sandbox repository checkout>`, with the test that drives every step of it against fakes, `scripts/live-checks/check781_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on a **sandbox installation, project and repository only** (**never `belong`**), and **no agent runs any step of it** | One sandbox run, followed to a terminal state, then read four ways and never for a value: the job the run's execution names is **fed from no model credential** — no `credential-<name>-key` container, no `anthropic-api-key`, no `claude-oauth-token*`, no `FUGARO_PROVIDER_KEY_*` variable with a value — while the service's own address **is** in its environment; the gateway's `model call` lines for that execution carry `route`, which only a call that went to a provider ever emits, with their `serving_model`, `priced_as` and the provider's `reported_micros`; `result.json`'s `cost.reported_usd`, `cost.route_by` and `cost.model_usd` agree with them; and the service's own `credsvc: audit` line for the run names the credential it served, its tier and its purpose `forward` with status `ok`, which is the service saying the key came from the bundle. A bundle that is missing, a job that still mounts a provider key, a job with no service address, calls that all went direct, a routed call nobody reported, a denied forward, a run that never ends and a record that is another run's are each a row of their own. **OWNER-RUN, NOT RUN.** |
@@ -22367,6 +22371,265 @@ second signing grant: the reading's own criterion is that exactly one member can
 granted anyone else must have that grant removed before the section is written.
 
 **USER-RUN, NOT RUN: no agent runs any step of it.**
+
+## Check 770: the load — 100 concurrent runs across at least two members, on the workspace's credentials service (the workspace's own installation only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **WS20** of
+[docs/workspace-service/implementation-plan.md](workspace-service/implementation-plan.md) — its row for
+**770** — and owed to the release that carries the workspace's credentials service. It settles **O1** and
+**D2986** of [docs/workspace-service/reconciliation.md](workspace-service/reconciliation.md): R9's first
+values (a maximum of **10 instances** and a **concurrency of 40** per instance) are a guess until a real
+load is read against the platform, and a value the load corrects is a change to R9 rather than a release
+note. **No agent runs any step of it**, and the load itself is yours: 100 concurrent runs is a billable act
+no script may start.
+
+**What it settles.**
+
+- **R9's values, as the platform holds them.** The deployed revision's `max_instance_count` and its
+  container concurrency are read from Cloud Run and compared with R9's 10 and 40. A different value is the
+  reading O1 asks for — either the Terraform moved them and R9's sentence is stale, or this is another
+  service — and the row says which.
+- **What the load left.** The service's own request log over the window holds at least the number of
+  requests the load implies, over **distinct instances** no greater than the maximum the service states,
+  with the statuses the platform answered: a **429** or a **503** is the platform having no capacity for the
+  call, which is what the load exists to find, and it fails the row. The read is filtered to the log's
+  **request entries**, and only an entry carrying an `httpRequest` counts: the service writes its own lines
+  into the same revision log, and an application line read as a call would make a window with no load in it
+  pass this row. A read that comes back at its own `CHECK770_LOG_LIMIT` is **truncated** — whatever the
+  service logged older than the newest entries was never read, and a refusal there is what a pass would be
+  hiding — so it is **not measured** rather than a pass.
+- **What the load left behind.** The workspace's own meter node — `meter/workspace/<name>/<month>`
+  (`budget.PathWorkspaceSpend`) — holds the reservations the load's calls took. A reservation older than
+  `budget.WorkspaceReservationTTL` (6h) is room no settle will ever find, and it fails the row.
+- **Git traffic rides the same service.** Pushes and clones go through the workspace's service from the
+  first release (D2984), so the load is model calls **and** forge traffic on one deployment.
+
+**What has to exist before it runs.** The workspace's credentials service deployed in the workspace's own
+installation, at least two members declared with their job accounts, and the load itself launched by you:
+`CHECK770_RUNS` concurrent `fugaro run`s (100 by default) across `CHECK770_MEMBERS` members (2 by default),
+each on a repository whose kind the route sends to the workspace (`fugaro workspace show <workspace>` names
+the members and their repositories).
+
+**The command.**
+
+```sh
+bash scripts/live-checks/check770.sh
+```
+
+`--dry-run` prints the plan and measures nothing, and `--help` prints the whole definition. The knobs are
+`CHECK770_*`: `SERVICE`, `INSTALLATION`, `WINDOW_MINUTES` (60), `LOG_LIMIT` (1000, the most request entries
+the window is read at), `RUNS` (100), `MEMBERS` (2), `MAX_INSTANCES` (10), `CONCURRENCY` (40),
+`DATABASE_URL` and `WORKSPACE` (unset, the reservations row is not measured), `KEEP_SCRATCH`.
+
+**What it reads.** `gcloud run services describe <service> --format=json` for the revision and its limits,
+`gcloud logging read` for the last `CHECK770_WINDOW_MINUTES` of requests, `fugaro config show` for the
+workspace's database address, and a Realtime Database GET of the meter node with a token from
+`gcloud auth print-access-token`. The check **makes no call to the service at all** — the load's own traffic
+is the reading — and it creates and deletes nothing.
+
+**What waits on it.** O1's ruling on R9's values (the reconciliation's own sentence is written from this
+reading), and any later load the owner runs at 200 or 500 runs: the instance quota the project holds is
+where a bigger load meets its first wall, and the row says so as an INFO line rather than a check.
+
+**Restore.** Nothing to restore: the check creates nothing and deletes nothing. The load's runs, their
+branches and their pull requests are yours and are cleaned up the way any of your runs is.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.**
+
+## Check 771: a member's job account on a real deployment — admitted, reading with `fugaroWorkspaceRead` alone, refused at the ceiling, and refused within a minute of removal (the member's own installation, reading the workspace's own project for the service and its log, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **WS20** of
+[docs/workspace-service/implementation-plan.md](workspace-service/implementation-plan.md) — its row for
+**771** — and owed to the release that carries the workspace's credentials service. It settles **U3** of
+[docs/workspace-service/reconciliation.md](workspace-service/reconciliation.md) — whether
+`firebasedatabase.instances.get` **alone** is enough for the service to read a member's policy and its run
+state on a real deployment, which is the workspaces design's own **U1** — and R13's one minute: the service
+re-reads its own node when it is older than 60 seconds, so a member removed is refused inside that minute.
+**No agent runs any step of it**: the three calls it reads are yours.
+
+**What it settles.**
+
+- **The role is the narrow one, and somebody holds it.** `fugaroWorkspaceRead` carries exactly
+  `firebasedatabase.instances.get` and nothing else
+  (`deploy/terraform/gcp/modules/firebase/workspace_access.tf` creates it), and it is bound to the account
+  the service **revision runs as** — not to another account in the project.
+- **A member's call is admitted.** The service's log holds an admission (`credsvc: audit`) naming a member's
+  job account, with the repository and the tier beside it.
+- **U3 is answered.** A refusal whose read label is the member's policy or state (`read=policy_shared`) is
+  the get-only role **not** being enough to read what the service reads: U3 answered **NO**, and the row
+  says which read failed.
+- **The ceiling refuses, and a removal takes effect inside the minute.** A call made at the workspace's own
+  ceiling leaves a refusal whose own words **name the ceiling** (`budget.ErrWorkspaceCeilingReached`): every
+  refusal the service writes looks alike, so a refusal for any other reason — an unverified identity, a
+  removed member, a read the role did not carry — is **not measured** at this row rather than read as the
+  ceiling having been checked. A call from a member removed `CHECK771_REMOVED_AT` leaves a 4xx inside
+  `CHECK771_GRACE_SECONDS` (60 by default) that is **not** the ceiling's own refusal — the ceiling would
+  refuse the call whether the member was still on the workspace or not, so its status is excluded by its
+  moment — which is R13 read live.
+
+**Two projects, one check.** This is the only check of the four that reads two GCP projects, because the
+feature is two-sided: the Cloud Run service and its log are the **workspace's own** project's (the one its
+own root deploys, `deploy/terraform/gcp/roots/workspace/main.tf`), and the `fugaroWorkspaceRead` role and
+the binding that holds it are the **member's** (`fugaro-dev` for the dogfood installation, created by
+`deploy/terraform/gcp/modules/firebase/workspace_access.tf`). The workspace's project has **no default** —
+the member's project carries no such service, so reading the service there would describe a deployment that
+is not this check's subject — and a run without it refuses at once, naming the knob.
+
+**What has to exist before it runs.** The workspace's credentials service deployed, a member declared whose
+job account has run a repository the route sends to the workspace, the workspace's cap set at its own
+ceiling for the one call, and the member removed for the last one. Three acts, all yours: the member's run,
+the call at the ceiling, and the call after the removal — each with the moment you made it.
+
+**The command.**
+
+```sh
+CHECK771_WORKSPACE_PROJECT=<the workspace's GCP project> \
+  CHECK771_CEILING_AT=<epoch or RFC 3339> CHECK771_REMOVED_AT=<epoch or RFC 3339> \
+  bash scripts/live-checks/check771.sh
+```
+
+`--dry-run` prints the plan and measures nothing, and `--help` prints the whole definition. The knobs are
+`CHECK771_*`: `WORKSPACE_PROJECT` (the workspace's own project, **required**, no default),
+`MEMBER_PROJECT` (`fugaro-dev`), `SERVICE`, `INSTALLATION`, `WINDOW_MINUTES` (60), `ROLE`
+(`fugaroWorkspaceRead`), `JOB_ACCOUNT` (unset, any job account will do), `CEILING_AT`, `REMOVED_AT`,
+`GRACE_SECONDS` (60), `KEEP_SCRATCH`.
+
+**What it reads.** `gcloud iam roles describe` and `gcloud projects get-iam-policy` for the binding, in the
+**member's** project; `gcloud run services describe` for the account the revision runs as and
+`gcloud logging read` for the service's own `credsvc:` lines and the httpRequest statuses beside them, in
+the **workspace's** project. It creates and deletes nothing.
+
+**What waits on it.** The workspaces design's **U1** (whether the narrow role the design chose is
+sufficient), and through it any plan that would widen it; R13's minute is read here rather than assumed
+in R13's own sentence.
+
+**Restore.** The check creates nothing and deletes nothing. Put the workspace's cap back where it was, and
+re-declare the member you removed, before you write the section.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.**
+
+## Check 772: the workspace's service cold — the beat on and off — and a run across a forced outage shorter and longer than the bound (the workspace's own installation only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **WS20** of
+[docs/workspace-service/implementation-plan.md](workspace-service/implementation-plan.md) — its row for
+**772** — and owed to the release that carries the workspace's credentials service. It settles **U4** of
+[docs/workspace-service/reconciliation.md](workspace-service/reconciliation.md) — the service's real
+cold-start time, and with it the owner's own doubt in **D2985** (*"I'm not sure we actually need it"* about
+the keep-warm beat) — and **D2983**: a client that cannot reach the workspace's service waits and retries
+for a bounded time and then halts with a reason that names that service, which is why an outage **shorter**
+than the bound must end no run and one **longer** must end one. **No agent runs any step of it**: forcing
+the outage, running the two runs and turning the beat are yours.
+
+**What it settles.**
+
+- **The beat's setting, and what it is worth.** `agent.workspace_beat` (the key C2 reserves) is read from
+  the project's resolved config — absent means ON, which is R10's default — and read against the
+  deployment's warm floor, its minimum instance count: the beat ON with a floor of zero is a beat that
+  keeps nothing warm (**FAIL**), and the beat ON with a cold start still in the log is a beat not holding
+  what it claims (**FAIL**).
+- **The cold start, in the configuration U4 has to be taken in.** With the beat OFF and a floor of zero,
+  the request log must hold a request that followed an idle gap of at least `CHECK772_IDLE_GAP_SECONDS`
+  (600 by default): its latency beside the steady median is U4's figure. A window with no such silence is
+  **not measured** rather than a pass, and the row says how to produce the reading.
+- **The bound, from both sides.** The run that met the outage **shorter** than the retry bound must be
+  terminal with **no halt** — a halt there means the bound is shorter than its name, and the row says so.
+  The run that met the outage **longer** must halt with **no workspace refusal marker**: a marker is
+  written from the header the service puts on a refusal it **answered** (`workspace_refusal.go`: stop, cap
+  or settle), and an outage is the service not answering at all. The wait from the moment the second
+  outage began (`CHECK772_OUTAGE_AT`) to the halt is the bound this check records.
+
+**What has to exist before it runs.** The workspace's credentials service deployed, the beat turned the way
+the reading needs it (`fugaro config` / the project layer), a window long enough to hold an idle gap, and
+two runs the owner forced an outage across — one shorter than the bound, one longer — with the moment the
+second began written down.
+
+**The command.**
+
+```sh
+CHECK772_SHORT_RUN=<run id or its last 4> CHECK772_LONG_RUN=<run id or its last 4> \
+CHECK772_OUTAGE_AT=<epoch or RFC 3339> bash scripts/live-checks/check772.sh
+```
+
+`--dry-run` prints the plan and measures nothing, and `--help` prints the whole definition. The knobs are
+`CHECK772_*`: `SERVICE`, `INSTALLATION`, `WINDOW_MINUTES` (180 — a cold start needs an idle gap, and a
+window shorter than the gap holds none), `BEAT_SETTING` (`agent.workspace_beat`), `IDLE_GAP_SECONDS` (600),
+`PROJECT` (`fugaro`), `SHORT_RUN`, `LONG_RUN`, `OUTAGE_AT`, `KEEP_SCRATCH`.
+
+**What it reads.** `gcloud run services describe` for the revision and the warm floor, `gcloud logging read`
+for the requests and the gaps between them, `fugaro config show --json` for the beat, and
+`fugaro runs ls --json` for the two runs. The check forces no outage, scales nothing, starts nothing and
+stops nothing, and it creates and deletes nothing.
+
+**What waits on it.** U4's answer — whether the real cold start is small enough that the beat is not needed
+(and the beat is switched off, or its value stated) or large enough that it is — and D2983's bound, which
+is read from the wait the second run measured rather than from the design's estimate.
+
+**Restore.** Put the beat back where the installation wants it (`fugaro update` applies the config), and
+leave the service's revision as you found it. The check itself restores nothing, because it changed
+nothing.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.**
+
+## Check 773: `fugaro update` on a workspace and on a member at the previous release, with a run in flight on each (a sandbox installation with your own credential, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **WS20** of
+[docs/workspace-service/implementation-plan.md](workspace-service/implementation-plan.md) — its row for
+**773** — and owed to the release that carries the workspace's credentials service. It settles **R11** of
+[docs/workspace-service/reconciliation.md](workspace-service/reconciliation.md), and through it the HARD
+RULE in [CLAUDE.md](../CLAUDE.md): `fugaro update` is the whole upgrade and it works perfectly, and it is
+safe while runs are in flight, always. **No agent runs any step of it**, and no agent runs an update here:
+the two updates and the two runs are yours, and the check reads what they left.
+
+**What it settles.**
+
+- **Both sides converge with no other step.** `fugaro doctor --all --json` on the workspace and on the
+  member reports **no warning** afterwards. An update that leaves a warning is an update with another step
+  behind it — a `fugaro update-skills`, a manual repair, a `policy publish --delete` — which is exactly what
+  the HARD RULE forbids; the fix belongs in the same release's update.
+- **The update says the one line, and lands every step.** Both logs must carry the HARD RULE's own sentence
+  (`internal/cli/update_in_flight.go`: `<N> in flight: update waits for none and changes nothing they hold`)
+  and **no** line naming a step that did not land (`refused`, `failed`, `could not`, `not applied`,
+  `permission denied`).
+- **The run finishes.** Each run in flight is **terminal** in `fugaro runs ls --json`, and no halt of it
+  falls inside the update's own window (`CHECK773_WORKSPACE_UPDATE_AT` plus
+  `CHECK773_UPDATE_WINDOW_SECONDS`, one hour by default): a run whose halt falls there is a run the update
+  stopped, which R11 forbids. Two things may still reach a run, and the update names each in one short line
+  rather than denying it: a membership or an entry that changed, which the service refuses from its next
+  read of the node (R13), and a new revision of the service, which drains the old one.
+
+**What has to exist before it runs.** A sandbox installation with its own repository, at the **previous
+release** — a checkout at the previous tag, or the older installed CLI — with the workspace's service on
+one side and a member on the other; one run launched on each, before the update, with its run id kept; the
+two updates run with their output saved; and the moment the update began written down.
+
+**The command.**
+
+```sh
+CHECK773_WORKSPACE_PROJECT=<workspace's Fugaro project> \
+CHECK773_WORKSPACE_UPDATE_LOG=/tmp/ws-update.log CHECK773_MEMBER_UPDATE_LOG=/tmp/member-update.log \
+CHECK773_WORKSPACE_RUN=<run id or its last 4> CHECK773_MEMBER_RUN=<run id or its last 4> \
+CHECK773_WORKSPACE_UPDATE_AT=<epoch or RFC 3339> bash scripts/live-checks/check773.sh
+```
+
+`--dry-run` prints the plan and measures nothing, and `--help` prints the whole definition. The knobs are
+`CHECK773_*`: `WORKSPACE_PROJECT`, `MEMBER_PROJECT` (`fugaro`), `INSTALLATION` (`fugaro`),
+`WORKSPACE_UPDATE_LOG`, `MEMBER_UPDATE_LOG`, `WORKSPACE_RUN`, `MEMBER_RUN`, `WORKSPACE_UPDATE_AT`,
+`UPDATE_WINDOW_SECONDS` (3600), `KEEP_SCRATCH`.
+
+**What it reads.** `fugaro doctor --project <p> --all --json` on each side, the two update logs you saved,
+and `fugaro runs ls --json` for the two runs. It runs no update, writes nothing anywhere and creates and
+deletes nothing; the copies it reads sit in a scratch directory (mode 0700) it removes.
+
+**What waits on it.** R11's own sentence, and the release notes of the first release that ships the
+service: this is the check that says the release converged a previous installation with runs in flight —
+which is the promise the `### For operators` section of that release ("run `fugaro update`") is read
+against.
+
+**Restore.** Nothing to restore: the two runs, their branches and their pull requests are yours, and the
+check changed nothing. Bring the sandbox back to the current release when you are done, and delete the two
+logs if you kept them only for this reading.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.**
 
 ## Check 780: one project owner's `fugaro update` across a run in flight (a sandbox installation, project and repository, your own credential, never `belong`; run by you; NOT RUN)
 
