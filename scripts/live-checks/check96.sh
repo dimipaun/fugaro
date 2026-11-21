@@ -874,8 +874,8 @@ step_app_key() {
   if ! run_capture "$SCRATCH/secrets.json" gcloud secrets list --project "$P" --format=json; then
     stop "gcloud secrets list did not answer for $P: the check needs an account that may read Secret Manager there"
   fi
-  answer=$(reader secrets <"$SCRATCH/secrets.json") \
-    || stop "the project's secret list is not the shape this check reads, or it holds no single container labelled fugaro_secret=github-app-key and no single bundle container (fugaro_project and no fugaro_secret). Q6: the App key's container and the bundle are one each"
+  answer=$(reader secrets "$SLUG" <"$SCRATCH/secrets.json") \
+    || stop "the project's secret list is not the shape this check reads, or it holds no single container labelled fugaro_secret=github-app-key for the sandbox repository (fugaro_repo is its slug) and no single bundle container (fugaro_project and no fugaro_secret). Q6: the App key's container and the bundle are one each"
   APPKEY_SECRET=$(field_of appkey "$answer")
   BUNDLE_SECRET=$(field_of bundle "$answer")
   if ! run_capture "$SCRATCH/policy-bundle.json" gcloud secrets get-iam-policy "$BUNDLE_SECRET" --project "$P" --format=json; then
@@ -1842,14 +1842,16 @@ def cmd_job():
     print("url=%s" % ("present" if env.get("FUGARO_CREDENTIALS_SERVICE_URL") else "absent"))
 
 
-def cmd_secrets():
+def cmd_secrets(slug):
     """The App key's container (fugaro_secret=github-app-key) and the bundle
     (fugaro_project and deliberately NO fugaro_secret, credentials.tf). The App
     key's container may be absent -- a release that drops it is one of the two
     readings this row is written for -- while the bundle cannot be, because the
     service that reads it exists (that is what step_service established)."""
     secrets = load()
-    key = [s for s in secrets if (s.get("labels") or {}).get("fugaro_secret") == "github-app-key"]
+    key = [s for s in secrets if (s.get("labels") or {}).get("fugaro_secret") == "github-app-key"
+           and (not slug or not (s.get("labels") or {}).get("fugaro_repo")
+                or (s.get("labels") or {}).get("fugaro_repo") == slug)]
     if len(key) > 1:
         fail("expected at most one container labelled fugaro_secret=github-app-key, found %d" % len(key))
     bundle = [s for s in secrets if (s.get("labels") or {}).get("fugaro_project")
@@ -2038,7 +2040,7 @@ def main(argv):
     elif cmd == "job":
         cmd_job()
     elif cmd == "secrets":
-        cmd_secrets()
+        cmd_secrets(rest[0] if rest else "")
     elif cmd == "policy":
         cmd_policy(rest[0], rest[1])
     elif cmd == "switch":

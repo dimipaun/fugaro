@@ -146,6 +146,14 @@ var planTaskReaders = map[string]string{
 	// item is written unapproved by construction, and the ladder will not
 	// enter the rung that merges one (D2702).
 	"internal/orchestrator/adopt.go": "files the record of a run in flight under the plan node its launch named, and names that plan in one fact (D2702, D2721, D2746)",
+	// Adoption's reader of the runs bucket (R4, D2702): the plan task a run's
+	// own launch record carries is read out here and into RunInFlight, which is
+	// the record adoption files -- so the id decides exactly what it decides
+	// inside internal/orchestrator/adopt.go and nothing more: which plan's node
+	// one in-flight run is filed under, under the same fold and bound
+	// (specName, PathPlan), leaving the item unapproved by construction. It
+	// admits no run, budgets nothing, grants nothing and launches nothing.
+	"internal/cli/orchestrator_runlister.go": "reads the plan task a run's own launch record carries into RunInFlight, which is what adoption files under the plan node the id names (D2702)",
 	// The item's id on its way to the launch (B7): the declaration the state
 	// digests carries it into the spec the launcher is handed, and the daemon's
 	// launcher passes it through the command's own resolution, which is what

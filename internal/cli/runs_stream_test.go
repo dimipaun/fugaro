@@ -432,30 +432,11 @@ func TestRunsLsStreamRefusesWhatItCannotWrite(t *testing.T) {
 }
 
 // compileRunsStreamSchema compiles schemas/runs-stream.schema.json, the
-// contract the console's decoder is written against.
+// contract the console's decoder is written against. The budget feed's schema
+// is compiled the same way (compileStreamSchema, budget_stream_test.go).
 func compileRunsStreamSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "runs-stream.schema.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
-	id, _ := doc.(map[string]any)["$id"].(string)
-	if id == "" {
-		t.Fatal("schemas/runs-stream.schema.json has no $id")
-	}
-	c := jsonschema.NewCompiler()
-	if err := c.AddResource(id, doc); err != nil {
-		t.Fatal(err)
-	}
-	sch, err := c.Compile(id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return sch
+	return compileStreamSchema(t, "runs-stream.schema.json")
 }
 
 // TestRunsStreamSchema validates every line of the recorded feed against

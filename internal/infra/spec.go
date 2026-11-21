@@ -832,6 +832,23 @@ type repoCtx struct {
 	// from Inputs.Policy: the switch's fourth condition for an `api-key` or
 	// `oauth` repository (D2071). It is "" where the caller read no node.
 	budgetMode string
+	// providerKeysServed and stageAccountServed are R12's two facts as this
+	// repository's entry in the local config records them, read once by
+	// resolve: the owner's own `fugaro update` judged each of them and wrote
+	// the answer there, and this root's plan hands the fact to the job from
+	// that record (KS19, F31). They are the RECORD's values and not a second
+	// judgement — the bundle, the deployed service's release and the published
+	// allow-list are not readable here (internal/infra reads no cloud), which
+	// is exactly why the record exists.
+	//
+	// Neither is honoured unless the switch is on, and that is a condition
+	// rather than the record's own: a fact that says the service serves this
+	// repository's provider keys is only usable where the job was planned to
+	// reach the service at all (an address, an invoker grant), so a config
+	// hand-edited to state the fact with the switch off — no run writes that
+	// state, but a file is a file — plans no fact and the job keeps the key it
+	// mounts, which is the direction every reader of these records fails in.
+	providerKeysServed, stageAccountServed bool
 }
 
 var appIDRE = regexp.MustCompile(`^[0-9]{1,20}$`)
@@ -921,6 +938,8 @@ func resolve(in Inputs) (*repoCtx, error) {
 		c.budgetMode = in.Policy.Budget.Mode
 	}
 	c.credentialsServiceOn = CredentialsServiceServes(c.inst.CredentialsService != nil, local.CredentialsServiceOn(), in.Cfg.Agent.Auth, c.budgetMode)
+	c.providerKeysServed = local.ProviderKeysServedOn()
+	c.stageAccountServed = local.StageAccountServedOn()
 	return c, nil
 }
 
@@ -1772,6 +1791,39 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// credential at all — which is the whole of what this gate is for
 	// (CredentialsServiceServes).
 	ws.StageAccount = mixedStageAccountJob(c.in.Cfg, c.lc, c.in.Repo, token)
+	// R12's two facts, from the record the owner's own `fugaro update` wrote
+	// for this repository (KS19, F31, C1's names): this job's provider calls
+	// may be sent through the service rather than on the key it mounts, and
+	// the mixed variant's second account is one the service selects like any
+	// named account, so the runner holds no token for it. They are planned and
+	// never left to the run to guess, because the two things they are about —
+	// the bundle's entries, the deployed service's release and the published
+	// allow-list — are the owner's own read and are not in this process.
+	//
+	// A false fact is not planned at all and not planned as "0": a run reads a
+	// fact by the entry's presence and its value together (config.ServedValue),
+	// so an absent entry is the one way "not served" is said, and a job planned
+	// by an installation that never wrote the record reads exactly as it does
+	// today (an absent entry, R12's "any other run uses its mounted key as
+	// today").
+	//
+	// Both are hung off the switch, which is the state they were judged in: a
+	// fact is reported to a run by the job it is launched on, and a job with no
+	// switch has no service address and no invoker grant, so a fact planned over
+	// it would send a provider call to a service that refuses the caller.
+	//
+	// Whether the FACTS are true is what a released `fugaro update` decided
+	// (R12's three conditions and, for the second, the release the service must
+	// be at), and release A's `ready` is deliberately not widened by them
+	// (F30): the mounts this spec drops below are the switch's answer alone.
+	if c.credentialsServiceOn {
+		if c.providerKeysServed {
+			ws.Env[config.ProviderKeysServedEnv] = config.ServedValue
+		}
+		if c.stageAccountServed {
+			ws.Env[config.StageAccountServedEnv] = config.ServedValue
+		}
+	}
 	if served := ModelSecretsServed(c.credentialsServiceOn, c.in.Cfg.Agent.Auth); served != config.ModelSecretServedNone {
 		dropModelMounts(&ws, served)
 	}
@@ -2760,6 +2812,16 @@ func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 		out = append(out, def)
 	}
 	return out
+}
+
+// MixedStageAccounts is mixedStageAccounts for the readers outside this
+// package that have to ask whether a repository mixes a stage account at all:
+// internal/cli's recordCredentialsServiceReady decides R12's second fact with
+// it — "the record names a stage account" — and it must read the same set the
+// job set is built from, or a record could say the fact true for an account no
+// job of the repository exists for, and withhold it where one does (KS9, KS19).
+func MixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
+	return mixedStageAccounts(cfg, lc, repo)
 }
 
 // mixedStageAccountJob is whether token is one of the repository's mixed stage

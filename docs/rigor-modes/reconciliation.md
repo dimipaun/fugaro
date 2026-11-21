@@ -975,19 +975,35 @@ file's word `level`, with the released `mode:` still read — added `rigorSpelli
 `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 57 to 58. The
 row is named here for the reason above: a reader who finds the figure stale should find who moved it.)
 
+(Amended 2026-11-20: the rigor-modes plan's LV6.1 — the recipe's one conditional, the `by_level` block that
+gives each rigor level its own `roles` mapping (LD9) — added `levelRolesSince` to
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 59 to 60. Same
+row, same reason for naming it.)
+
+(Amended 2026-11-20: the same plan's LV3.1 — a project area's `members` and the project's per-repo
+`defaults.rigor.repos` map — added the `rigor.repos` row to `internal/config/scope.go`, which moved
+the *Config scope rows* row from 117 to 118. The row is not an accident of the shape: the layer's
+scope walker asks that table about every `defaults.*` key and refuses the ones it does not carry, so
+a project layer stating a per-repo level needs the row whatever the key's reader is. The same task
+added `rigorMembersSince` to `internal/cli/recipes_skew.go` — the two keys are the layer's alone and
+are decoded with `KnownFields`, so a job image older than the release that knows them dies at
+bootstrap on every repository of the project — which moved the *Image-skew `Since` constants* row
+from 60 to 61. The two keys ship in one release and one constant, one judge and one gate serve both,
+which is why the row moved by one and not by two.)
+
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 117 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 118 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 5 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 59 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 61 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 153 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
@@ -1335,7 +1351,9 @@ items.**
 Why: one answer to "may this pull request be ready" is the property the owner
 relies on, and a tolerated finding has to land where a reader can close it.
 
-**Recommended: Critical *mode* is byte-identical to today — and only Critical,
+**Recommended, restated 2026-10-22 (levels-reconciliation.md §3b item 1):
+Critical's finding thresholds are unchanged; its prompts, its PR body's hand-back
+sections and two presence checks are new — and that is true of Critical alone,
 because D19's answer makes Pro the mode a repository gets for configuring
 nothing.** Every other mode keeps the
 reviewer, keeps the one required `review` step, keeps the verify stage, and
@@ -1847,8 +1865,8 @@ tolerated and filed. Two things bound it. **First, the security-sensitive tier
 stays Critical**: D18's floors are outside every layer, so a credential path, an
 IAM path or `.github/workflows/` runs at Critical whatever the default says.
 **Second, a repository may pin itself back**: `rigor.default: critical` in that
-repository's `fugaro.yaml` restores today's behaviour exactly, and it is one line
-that a repository can merge on its own.
+repository's `fugaro.yaml` restores Critical's finding thresholds, and it is one
+line that a repository can merge on its own.
 
 **The migration note, stated where a reader will meet it** (the plan's T8.3, and
 the release note it writes): *the rigor modes change what "ready" means for a
@@ -1869,12 +1887,15 @@ self-consistent, and `fugaro diagnose` printing the mode of the run it read.
 
 **What follows from the answer, and is the plan's problem rather than this
 decision's:** every claim in this folder and in the plan that the first cut
-"relaxes nothing", that an unconfigured repository "behaves exactly as it does
-today", or that a run is "byte-identical to today" is **true of Critical mode
-only** — of a run whose resolved mode is Critical, which after this answer is a
-run that configured it or sits under a floor. The plan scopes them (T3.1's table,
-T8.3's note) and §7's review focus gives Pro's threshold table the attention it
-now owes: **Pro's table is the behaviour of every unconfigured repository**, so
+leaves a run unchanged is **true of less than it says**, and the owner's answer
+of 2026-10-22 restated them all
+([levels-reconciliation.md](levels-reconciliation.md) §3b item 1): *Critical's
+finding thresholds are unchanged; its prompts, its PR body's hand-back sections
+and two presence checks are new* — true of a run whose resolved mode is Critical,
+which after this answer is a run that configured it or sits under a floor. The
+plan scopes them (T3.1's table, T8.3's note) and §7's review focus gives Pro's
+threshold table the attention it now owes: **Pro's table is the behaviour of
+every unconfigured repository**, so
 it is the one table whose review cannot be deferred.
 
 **Alternative (this folder's earlier recommendation, displaced by the answer):
@@ -1905,7 +1926,8 @@ project like `defaults.git` and `defaults.agent`.
 `fugaro.yaml`: `rigor.default` for this repository's mode and `rigor.areas` for
 its areas, scope `InRepo` — five edits (F7), the schema entry included.
 (c) An **area** is one entry of `rigor.areas`, a list of
-`{name: <short label>, match: <doublestar glob>, mode: <name>}`. The `name` is
+`{name: <short label>, match: <doublestar glob>, level: <name>}` — the leaf LD2
+renamed from `mode:`, which both loaders still read as the fallback. The `name` is
 not decoration: it is what the run, the PR and `fugaro watch` print when they say
 which rule decided (D24), and a rule that cannot be named cannot be explained to
 the person reading the PR. `match` is a path glob, matched with the same
@@ -2050,7 +2072,9 @@ the third is priced because it costs a deploy rather than a line of code.
 **Recommended: one resolved value with three parts — the mode, the layer that
 won, and the areas that matched — shown in three places.** The value is computed
 once per resolution (D22) and carried, not recomputed per surface, from the same
-source as the record's `Mode` (F18's one-value rule, §6's item 5).
+source as the record's level — `runstore.RigorRecord`, whose `LevelOf` reads the
+`level` key LD2 writes and falls back to the released `mode` one (F18's one-value
+rule, §6's item 5).
 
 - **The run.** `runstore.Record` gains the rigor block (mode, `from`, areas with
   the moment each was applied), so `fugaro runs ls --json`, `fugaro diagnose` and

@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -292,6 +293,73 @@ func localLayerFileCheck(lc *localcfg.Config, rf resolvedFile) []doctorCheck {
 	}
 	return []doctorCheck{{ID: "local-layer-file", Severity: "info",
 		Problem: fmt.Sprintf("the local layer file %s (sha256 %s) is the published project layer (generation %d)", st.Path, shortSHA(st.SHA256), st.Generation)}}
+}
+
+// layerRigorRepoAdmissionCheck judges the repository names the project layer's
+// rigor block states — an area's members and the keys of the per-repo map (LD4)
+// — against the published policy's allow-list: a name no allow_repos entry
+// admits is a name no run of it is admitted for, and the run is refused before
+// it mints a git token, so the area that carries it and the level it sets for
+// it decide nothing. A name nothing admits is a stale entry (a repository the
+// project dropped, or a misspelling of one it kept), and this is the first
+// command an operator runs when a level they wrote failed to take effect.
+//
+// A layer spells a repository the way a person does, owner/name: which provider
+// qualifies it is the repository's own git.provider, and this machine records
+// that provider for the repositories it onboarded (localcfg.Repo.Provider,
+// which is the one their runs carry — doctorAllowListUncovered's fact, read
+// here for the same reason). So a name this machine's config knows is judged as
+// the canonical repository its runs are, and a name it does not know is judged
+// by whether any entry could admit it at all, dropping each entry's provider
+// segment. That second reading is the quiet direction on purpose: it warns only
+// about a name no provider could be admitted under, never about the provider a
+// run of it will actually carry, which is a repository's own file and not this
+// node's question.
+func layerRigorRepoAdmissionCheck(lc *localcfg.Config, names []string, p *projectpolicy.Policy) *doctorCheck {
+	var refused []string
+	for _, name := range names {
+		if !layerRigorRepoAdmitted(lc, p.AllowRepos, name) {
+			refused = append(refused, name)
+		}
+	}
+	if len(refused) == 0 {
+		return nil
+	}
+	return &doctorCheck{ID: "layer-rigor-repo-unadmitted", Severity: "warning",
+		Problem: fmt.Sprintf("the project layer's rigor names %s, which the policy published at %s does not admit (allow_repos is %q): a run of such a repository is refused before it mints a git token, so the area that names it and the level it sets decide nothing", oneLine(strings.Join(refused, ", ")), projectpolicy.PathShared(), p.AllowRepos),
+		Fix:     fmt.Sprintf("fugaro project repos add %s enrolls the repository if the project wants its runs; a name that is a misspelling is corrected where the layer is written ('fugaro project show' prints it), and one for a repository this project does not run is dropped from defaults.rigor", refused[0])}
+}
+
+// layerRigorRepoAdmitted reports whether the allow-list admits the repository a
+// project layer's rigor block names, by the reading
+// layerRigorRepoAdmissionCheck sets out.
+func layerRigorRepoAdmitted(lc *localcfg.Config, allow []string, name string) bool {
+	c, err := task.CanonicalRepo(name)
+	if err != nil {
+		// Not a repository name at all, so no entry can admit it: the layer's
+		// own validation refuses it first, and a hand-built layer that reached
+		// here must not be reported as admitted.
+		return false
+	}
+	if lc != nil {
+		if r, ok := lc.Repos[repoConfigKey(lc, c)]; ok && r.Provider != "" {
+			if q, err := projectpolicy.Canonical(r.Provider, c); err == nil {
+				return projectpolicy.AdmitRepo(allow, q)
+			}
+		}
+	}
+	for _, pat := range allow {
+		if pat == "*" {
+			// The design's explicit every-repository entry; a pattern that is
+			// not one is provider-qualified (ValidPattern), so what follows its
+			// first segment is the repository the name spells.
+			return true
+		}
+		if i := strings.Index(pat, "/"); i >= 0 && projectpolicy.MatchRepo(pat[i+1:], c) {
+			return true
+		}
+	}
+	return false
 }
 
 // layerDrift compares the repository's last run with the published layer.

@@ -360,7 +360,15 @@ type SharedAnchor struct {
 // node, so a launcher who could write it into the shared file would be having
 // every teammate's pull requests reviewed against nothing. localcfg.Config.Shared
 // nils it.
-var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "mobile_allow", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "review_against_task", "rigor_pending", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap", "workspace_shared", "binaries", "reports_commit", "credential_cascade", "model_grades", "node_removals"}
+//
+// locations is the one key here refused for a reason that is not about who may
+// write the runs bucket (LP0 of docs/location-preference/, D3087 as amended):
+// it is one machine's record of where the installation's data already is, read
+// from the cloud and never an input to anything, so no other machine has a use
+// for it — and a published copy of it would stop every teammate whose Fugaro is
+// older than the release that wrote the key, whose strict decoder refuses a
+// field it does not know. localcfg.Config.Shared nils it.
+var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "mobile_allow", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "review_against_task", "rigor_pending", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap", "workspace_shared", "binaries", "reports_commit", "credential_cascade", "model_grades", "node_removals", "locations"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -497,10 +505,15 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	// not be able to point another machine's Batch runs at resources of their
 	// choosing: an image they built, which would run as the installation's own
 	// service account, VMs placed on their network, a job running as their
-	// account, or a job reading a secret out of their project. The values are
-	// the ones the compute root the Batch stage applies creates in the
-	// installation's project (design compute-backend.md §4.4, plan
-	// 2026-10-19-compute-backend.md Task 8 step 2).
+	// account, or a job reading a secret out of their project. The key fact's
+	// version is held here the same way, and its case is the sharpest of them
+	// (R13, D3101): it names the Cloud KMS key a launcher wraps the seal key to,
+	// so a version of the writer's project is every seal key of this
+	// installation wrapped to a key the installation holds no half of. The
+	// values are the ones the
+	// compute root the Batch stage applies creates in the installation's project
+	// (design compute-backend.md §4.4, plan 2026-10-19-compute-backend.md Task 8
+	// step 2).
 	//
 	// What this refuses beyond a foreign image, account and secret: an image
 	// served through the project's own fugaro-ghcr repository, which the
@@ -585,6 +598,21 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 			}
 			return bad(f.field, "%q is not this project's resource, %s", f.value, f.want)
 		}
+		// The key fact's version, which is the one resource name of this block
+		// that decides WHO can open a run's budget token: it names the Cloud
+		// KMS key version a launcher wraps the seal key to, so a published
+		// version in another project is every seal key of this installation
+		// wrapped to a key the installation holds no half of (R13, D3101).
+		// The public key beside it is held to its SHAPE by localcfg and to
+		// nothing more here: whether that version exists in that project, and
+		// whether the public key is that version's, are cloud facts, read by
+		// `fugaro doctor` on the machine whose block it is (BR7) and by the
+		// service at release, never by a parse of a name.
+		if b.SealKey != nil {
+			if m := batchResourceProjectRE.FindStringSubmatch(b.SealKey.Version); m == nil || m[1] != a.GCPProject {
+				return bad("batch.seal_key.version", "%q is not this project's key version, projects/%s/locations/<location>/keyRings/<ring>/cryptoKeys/<key>/cryptoKeyVersions/<version>", b.SealKey.Version, a.GCPProject)
+			}
+		}
 		if b.ServiceAccount != "" && !strings.HasSuffix(b.ServiceAccount, "@"+a.GCPProject+".iam.gserviceaccount.com") {
 			return bad("batch.service_account", "%q is not this project's service account, <name>@%s.iam.gserviceaccount.com", b.ServiceAccount, a.GCPProject)
 		}
@@ -623,7 +651,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 // arrived some other way (a merge, a decoder that mapped a key onto a field of
 // its own), and the check a test can hold each field of without a file.
 func sharedNeverPublished(c *localcfg.Config) bool {
-	return c.BackendName != "" || c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.BitbucketTokens != nil || c.CloneURLs != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.Triage != nil || c.ReviewAgainstTask != nil || c.RigorPending != "" || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.ClaudeAccountAliases != nil || c.Credentials != nil || c.Pools != nil || c.SubscriptionSpread != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil || c.WorkspaceShared != nil || c.Binaries != nil || c.ReportsCommit != nil || c.CredentialCascade != nil || c.ModelGrades != nil || c.NodeRemovals != nil
+	return c.Locations != nil || c.BackendName != "" || c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.BitbucketTokens != nil || c.CloneURLs != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.Triage != nil || c.ReviewAgainstTask != nil || c.RigorPending != "" || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.ClaudeAccountAliases != nil || c.Credentials != nil || c.Pools != nil || c.SubscriptionSpread != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil || c.WorkspaceShared != nil || c.Binaries != nil || c.ReportsCommit != nil || c.CredentialCascade != nil || c.ModelGrades != nil || c.NodeRemovals != nil
 }
 
 // dropLegacyBaseImages removes a base_images entry of exactly a kind

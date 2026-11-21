@@ -126,7 +126,7 @@ func TestSystemPromptIsUnchangedWithAnImageRate(t *testing.T) {
 		r.cfg.Agent.Auth = auth
 		r.cfg.Agent.Models.Coder = model
 		pd := r.systemPromptData()
-		return pd, SystemPrompt(pd, "")
+		return pd, SystemPrompt(pd, "", "")
 	}
 	for _, c := range []struct {
 		name  string
@@ -147,7 +147,7 @@ func TestSystemPromptIsUnchangedWithAnImageRate(t *testing.T) {
 		if c.want {
 			continue
 		}
-		base := SystemPrompt(PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}, "")
+		base := SystemPrompt(PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}, "", "")
 		if got != base {
 			t.Errorf("%s: the brief is not the one every run had before the image rule:\n%s", c.name, got)
 		}

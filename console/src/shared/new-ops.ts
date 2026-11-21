@@ -855,6 +855,23 @@ function streamEndAt(line: Record<string, unknown>, field: string, where: string
   }
 }
 
+/** rowOf is the row one `row` line carries. A feed has no document of its own,
+ * so the CLI writes an element of a document's own array **under the feed's own
+ * key** rather than as the line itself (`streamRowLine`,
+ * `internal/cli/runs_stream.go`: `{"type":"row","row":{...}}`, the shape
+ * `internal/cli/testdata/runs_stream.golden.ndjson` pins). The line is therefore
+ * a wrapper, and what a screen draws is the member inside it: a reader that
+ * pushed the line would hand `decodeRunsList` a "row" whose members are `type`
+ * and `row`, which is a document no CLI wrote and one that reader refuses.
+ *
+ * A `row` line whose `row` is missing, or is not an object, is refused by name
+ * for the CLI's own reason (it refuses `{"type":"row"}` and `{"type":"row","row":1}`
+ * alike): a line that carries no row is not a row with nothing in it, it is a
+ * line this build cannot read. */
+function rowOf(line: Record<string, unknown>, field: string, where: string): Record<string, unknown> {
+  return objectAt(memberAt(line, 'row', field, where), `${field}.row`, where)
+}
+
 /** streamAt reads a feed's lines into rows, its `end` line and its failure. The
  * last `end` line wins, which is what a stream that wrote two means; an `end`
  * line no `row` followed is an empty feed and not a refusal.
@@ -875,7 +892,7 @@ function streamAt(
   for (const [index, line] of linesOf(document, where).entries()) {
     const field = lineField(index)
     const type = typeOf(line, field, where)
-    if (type === 'row') rows.push(line)
+    if (type === 'row') rows.push(rowOf(line, field, where))
     else if (type === 'end') end = streamEndAt(line, field, where)
     else if (type === 'error') failure = sentenceOf(line, field, where)
     else refuse('unknown-value', `${field}.type`, where)

@@ -13,6 +13,12 @@ const (
 	DelimiterRemoved = delimiterRemoved
 )
 
+// ConsumerNotCarried is the sentence the cloud consumer answers a phone with
+// (P5.1f), before the acting half lands. It is exposed so a test asserts the
+// reply the phone reads against the one sentence the code writes, rather than
+// against a copy that would go on passing after the sentence moved.
+const ConsumerNotCarried = consumerNotCarried
+
 // MergeReadEvery is how often one repository's pull requests are read (D2742).
 // It is exposed so a test advances a clock past a cadence rather than to an
 // offset beside it: a cadence that moved would move the tests with it.

@@ -1,5 +1,14 @@
 # Fugaro settings audit: what can be set by command, and what still needs a hand edit
 
+> **Stale, and kept that way: the live audit is [docs/config-ownership/audit.md](../config-ownership/audit.md).**
+> This page was read against `origin/main` at `1c9be2a2c` on 2026-10-31 and records what the tree held
+> then. The config-ownership package (2026-11-15) re-read every row against the tree it works on, and its
+> `audit.md` with the decisions in its `reconciliation.md` is the one to trust wherever the two disagree:
+> `fugaro update` publishes the policy node and the project layer now, `clone_urls` has a writer, and the
+> `agent.*`/`git.*` `--layer project` spelling this page calls broken is fixed in the one resolver, which
+> maps it to `layer.defaults.<key>`. Nothing here is rewritten — the page is the record of what the owner
+> asked for and what the audit found at that commit.
+
 **Asked by:** the owner, 2026-10-31: "for project level and repo level settings, in fact for ALL the settings, you should not expect people to edit the text file directly, but have Fugaro commands that manage those settings: reports it, updates it, etc." Two later additions the same day: one command that lists every setting with its name, the level that wins and the value; and that every row also shows the default value.
 
 **Read against:** `origin/main` at `1c9be2a2c`, a detached worktree. Command shapes were checked with the installed `fugaro` 0.14.0 (`--help` only). Open PR #1463 (`docs/rigor-command`) was read with `git show`. Every claim below cites `file:line` on that commit. Read-only: no command wrote anything.

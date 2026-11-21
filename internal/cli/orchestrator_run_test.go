@@ -413,15 +413,17 @@ func TestWaitPassesOverTheSnapshotAReconnectOpensWith(t *testing.T) {
 		ended <- time.Since(start)
 	}()
 	// The connections are up and their opening puts have been passed over: the
-	// wait holds two here — the state node's, and the day's outcomes node,
-	// because this state names no repository (E1).
-	waitForStream(t, f, 2)
+	// wait holds four here — the daemon's own nodes, which are the state node and
+	// the two beside it that a plan's items and the standing backlog live in
+	// (D2735), and the day's outcomes node — and none for a repository, because
+	// this state names none (E1).
+	waitForStream(t, f, 4)
 	time.Sleep(200 * time.Millisecond)
 	// The connections go away without a word. Each stream reconnects after its
 	// own backoff and opens with the node again: that put is not news, and the
 	// wait has to sit it out.
 	f.db.DropStreams()
-	waitForStream(t, f, 2)
+	waitForStream(t, f, 4)
 	select {
 	case took := <-ended:
 		t.Fatalf("the wait ended %s in, on the put the reconnected stream opened with and not at its interval (%s): the daemon then runs a cycle per reconnect", took, d.interval)
@@ -544,9 +546,10 @@ func TestWaitWakesOnTheNodesARunWrites(t *testing.T) {
 			_ = d.wait(ctx)
 			ended <- time.Since(start)
 		}()
-		// The daemon's own node, the registry of the repository the state's
-		// item names, and today's outcomes node.
-		waitForStream(t, f, 3)
+		// The daemon's own nodes — the state node and the two beside it, where a
+		// plan's items and the standing backlog live (D2735) — the registry of
+		// the repository the state's item names, and today's outcomes node.
+		waitForStream(t, f, 5)
 		// Long enough for every stream's opening snapshot to be read: what the
 		// snapshot holds is not news, and a wait that had not read it yet would
 		// read the writes below as part of it.
@@ -647,7 +650,9 @@ func TestWaitWakesOnAVanishedEntryAndTheCycleChecksIt(t *testing.T) {
 		_ = d.wait(ctx)
 		ended <- time.Since(start)
 	}()
-	waitForStream(t, f, 3)
+	// The daemon's own nodes (the state node and the plans and backlog nodes
+	// beside it, D2735), the repository's registry, and today's outcomes.
+	waitForStream(t, f, 5)
 	time.Sleep(200 * time.Millisecond)
 
 	// The container died: the entry goes with no outcome beside it.

@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"slices"
@@ -10,8 +11,10 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // TestPickPromptPairsNumbersWithTheirOwnDirectory: PickPrompt writes one
@@ -26,7 +29,7 @@ import (
 // this test fails, finding PR #9 paired with "/review/7" and PR #7 paired
 // with "/review/9".
 func TestPickPromptPairsNumbersWithTheirOwnDirectory(t *testing.T) {
-	got := runner.PickPrompt("", "", []int{9, 7}, []string{"/review/9", "/review/7"})
+	got := runner.PickPrompt("", "", []int{9, 7}, []string{"/review/9", "/review/7"}, "")
 	if !strings.Contains(got, "- PR #9: /review/9\n") {
 		t.Fatalf("PR #9 not paired with its own directory: %q", got)
 	}
@@ -192,7 +195,7 @@ var runCommandRE = regexp.MustCompile("`(?:fugaro )?(?:cancel|run --retry|--revi
 // `agent.models.vision` and `model_prices`' `image_tokens` in the remedy
 // again): the remedy assertion fails, as the config would refuse that file.
 func TestTextOnlyCoderBriefNamesImageFilesAndTheFix(t *testing.T) {
-	got := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true}, "")
+	got := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true}, "", "")
 	for _, ext := range agent.ImageBlockExtensions() {
 		if kind := "*." + ext; !strings.Contains(got, kind) {
 			t.Errorf("the brief does not name %s:\n%s", kind, got)
@@ -227,7 +230,7 @@ func TestTextOnlyCoderBriefNamesImageFilesAndTheFix(t *testing.T) {
 	// prompt already sends its account to: a follow-up's, not the pull
 	// request description a first run writes.
 	followUp := runner.SystemPrompt(runner.PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s", NoImageReads: true,
-		FollowUp: []string{"- follow-up rule"}}, "")
+		FollowUp: []string{"- follow-up rule"}}, "", "")
 	if !strings.Contains(followUp, "say so in /s/followup.md") {
 		t.Errorf("a follow-up's brief does not name the follow-up file:\n%s", followUp)
 	}
@@ -238,7 +241,7 @@ func TestPromptsCarryShortIDRule(t *testing.T) {
 		{Branch: "fugaro/x", Base: "main", StateDir: "/s"},
 		{Branch: "fugaro/x", Base: "main", StateDir: "/s", FollowUp: []string{"- follow-up rule"}},
 	} {
-		got := runner.SystemPrompt(d, "")
+		got := runner.SystemPrompt(d, "", "")
 		for _, want := range []string{
 			"In anything you write for a person, refer to a run by its short ID — the last 4 characters of the run ID, and one character more for as long as another run you name shares them",
 			"and to a plan task by its plan name",
@@ -268,7 +271,7 @@ func TestFixPromptListsOnlyBlockingFindings(t *testing.T) {
 		{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"},
 		{Summary: "the retry loop never stops"},
 		{Summary: "the licence text needs counsel's clearance", NeedsOwner: true},
-	}, "")
+	}, "", "")
 	if !strings.Contains(got, "- [blocker] internal/api/handler.go: the handler ignores the decode error\n") {
 		t.Errorf("the brief does not list the first finding with its severity and file:\n%s", got)
 	}
@@ -294,7 +297,7 @@ func TestFixPromptListsOnlyBlockingFindings(t *testing.T) {
 // behaviour, and a sentence that forbade all of it would forbid the fix round
 // an `unmet` finding asks for.
 func TestFixPromptSaysTouchNothingElse(t *testing.T) {
-	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, "")
+	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, "", "")
 	if !strings.Contains(got, "Touch nothing else") {
 		t.Errorf("the brief does not say to touch nothing else:\n%s", got)
 	}
@@ -324,7 +327,7 @@ func TestFixPromptDiffersSaysReplace(t *testing.T) {
 			Summary:  "the task asks for a name filter and this sorts the whole list instead",
 		},
 		{Severity: "nit", File: "internal/store/list_test.go", Summary: "the new case is not covered"},
-	}, "")
+	}, "", "")
 	if !strings.Contains(got, "- [major] [differs] internal/store/list.go: the task asks for a name filter and this sorts the whole list instead\n") {
 		t.Errorf("the brief does not print the finding's scope beside its severity:\n%s", got)
 	}
@@ -400,7 +403,7 @@ func TestFixPromptBeyondNotRemoved(t *testing.T) {
 		Scope:    "beyond",
 		File:     "internal/api/admin.go",
 		Summary:  "the change adds an admin endpoint the task never asked for",
-	}}, "")
+	}}, "", "")
 	if !strings.Contains(got, "- [blocker] [beyond] internal/api/admin.go: the change adds an admin endpoint the task never asked for\n") {
 		t.Errorf("the brief does not print the finding's scope beside its severity:\n%s", got)
 	}
@@ -408,7 +411,7 @@ func TestFixPromptBeyondNotRemoved(t *testing.T) {
 		t.Errorf("the brief does not say a beyond finding is fixed for its own risk:\n%s", got)
 	}
 
-	plain := runner.FixPrompt([]runner.Finding{{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"}}, "")
+	plain := runner.FixPrompt([]runner.Finding{{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"}}, "", "")
 	for _, absent := range []string{"[beyond]", "the task did not ask for"} {
 		if strings.Contains(plain, absent) {
 			t.Errorf("a round whose findings carry no scope says %q about beyond work:\n%s", absent, plain)
@@ -423,7 +426,7 @@ func TestFixPromptBeyondNotRemoved(t *testing.T) {
 // something else is told to refuse the message.
 func TestFixPromptWidensWithMessage(t *testing.T) {
 	const block = "<<<fugaro-messages-0123456789abcdef>>>\n    [1] dimi, 2026-11-19T05:30Z\n    rename the helper\n<<<end-fugaro-messages-0123456789abcdef>>>\n"
-	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, block)
+	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, block, "")
 	if strings.Contains(got, "Touch nothing else") {
 		t.Errorf("the brief still says to touch nothing else beside a message:\n%s", got)
 	}
@@ -621,4 +624,62 @@ func binariesPart(t *testing.T, body string) string {
 		part = part[:end+1]
 	}
 	return part
+}
+
+// TestPromptsFollowTheLevelARoundRaises: a prompt is built at the level the run
+// is at when it is built, never at the one the run started at. This run starts
+// at Startup and its own fix puts feature.txt under the area the repository
+// calls Critical, so D22's round moment raises it between round 1 and round 2:
+// the second senior round has to judge the change by Critical's reviewer
+// stance, and the fix that follows it has to carry Critical's coder stance in
+// both halves of its request — the system prompt it appends and the prompt
+// itself. A review prompt resolved once before the loop, or a system prompt
+// carried in from the implement stage, leaves round 2 and fix 2 at Startup
+// (findings 1 and 2).
+//
+// Red step: with the review prompt built once and the implement-time system
+// prompt reused by every fix, the second review round and the second fix carry
+// Startup's text.
+func TestPromptsFollowTheLevelARoundRaises(t *testing.T) {
+	base := testutil.FixtureFiles(t)["fugaro.yaml"]
+	cfg := strings.Replace(base, "  review_rounds: 2\n", "", 1)
+	if cfg == base {
+		t.Fatal("the fixture has no review_rounds: 2 to drop, so the level would not be the one supplying the number")
+	}
+	cfg = strings.Replace(cfg, "agent:\n",
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", level: critical }\nagent:\n", 1)
+	h := newHarness(t, cfg, nil)
+	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, implement("feature"), review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1), fix, review("changes", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Rigor == nil || rec.Rigor.LevelOf() != rigor.Critical {
+		t.Fatalf("the record's level = %+v; want critical, or the case proves nothing", rec.Rigor)
+	}
+	if len(h.agent.calls) < 5 {
+		t.Fatalf("the run made %d agent calls; want implement, two review rounds and two fixes at the least", len(h.agent.calls))
+	}
+	startupRev, criticalRev := rigor.Persona(rigor.Startup, rigor.Reviewer), rigor.Persona(rigor.Critical, rigor.Reviewer)
+	startupCoder, criticalCoder := rigor.Persona(rigor.Startup, rigor.Coder), rigor.Persona(rigor.Critical, rigor.Coder)
+	// The calls are the run's stages in order: 0 implement, 1 the first senior
+	// round, 2 the fix that raises the level, 3 the round after the rise, 4 the
+	// fix it buys, and so on.
+	if first := h.agent.calls[1].Prompt; !strings.Contains(first, startupRev) {
+		t.Errorf("the first review round does not carry Startup's reviewer persona:\n%s", first)
+	}
+	if second := h.agent.calls[3].Prompt; !strings.Contains(second, criticalRev) || strings.Contains(second, startupRev) {
+		t.Errorf("the review round after the rise does not carry Critical's reviewer persona alone:\n%s", second)
+	}
+	f := h.agent.calls[4]
+	if !strings.Contains(f.AppendSystemPrompt, criticalCoder) || strings.Contains(f.AppendSystemPrompt, startupCoder) {
+		t.Errorf("the fix after the rise carries the wrong coder stance in the system prompt it appends:\n%s", f.AppendSystemPrompt)
+	}
+	if !strings.Contains(f.Prompt, criticalCoder) {
+		t.Errorf("the fix after the rise does not carry Critical's coder persona in its prompt:\n%s", f.Prompt)
+	}
 }
