@@ -245,10 +245,19 @@ cleanup() {
 # in a directory the trap is about to remove. Guarded, because this runs from the
 # exit trap, where a failing `rm` under `set -e` would end the shell before the
 # block is printed.
+#
+# The whole list is skipped when SCRATCH is empty, which it is until scratch_up
+# runs: `die` from parse_args or need_tools exits before that, and "$SCRATCH/x"
+# with SCRATCH empty is "/x" — a usage error would otherwise aim the rm at the
+# root of the filesystem. The curl-written files are in the list too: signjwt.json
+# carries the minted custom token and signin.N.json the ID tokens Firebase
+# answers with, and they are the check's own files like the rest.
 CREDENTIALS_REMOVED=yes
 remove_credentials() {
   local f
-  for f in "$AUTH_CONF" "$SCRATCH/u3.conf" "$SCRATCH/custom.jwt" "$SCRATCH/signin-body.json"; do
+  [ -n "$SCRATCH" ] || return 0
+  for f in "$AUTH_CONF" "$SCRATCH/u3.conf" "$SCRATCH/custom.jwt" \
+    "$SCRATCH/signin-body.json" "$SCRATCH/signjwt.json" "$SCRATCH"/signin.*.json; do
     [ -n "$f" ] || continue
     rm -f "$f" 2>/dev/null || true
     [ -e "$f" ] && CREDENTIALS_REMOVED=no
@@ -773,9 +782,9 @@ length = ""
 # ONE execution's lines, and only its own. A run of this check within the
 # freshness window leaves its own lines behind, and the read is by job name, so
 # the output can carry two executions' blocks: the probe prints `exec=` first,
-# the read is newest first, and the block is taken as the lines between this
-# execution's `exec=` line and the next one -- and only when that name is the
-# execution this run launched.
+# the read is asked for in ascending order, and the block is taken as the lines
+# between this execution's `exec=` line and the next one -- and only when that
+# name is the execution this run launched.
 mine = False
 for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
     line = line.strip()
@@ -834,8 +843,16 @@ judge_u1() {
   iss=$(claim_value iss)
   sub=$(claim_value sub)
   fact claims PASS "the identity token carries $count claim(s) for the audience $PROBE_AUDIENCE ($len bytes of token): aud=$aud, email=$email, iss=$iss, sub=$sub. The token itself is never printed, and neither is the rest of the claim set"
+  # The override's echo inside the container has a key and a verdict row of its
+  # own. It is a reading in its own right -- the launch put the marker on the
+  # execution and the container either saw it or did not -- and the block prints
+  # one line per key: a second `claims` row would be swallowed by the PASS above
+  # and the verdict below judges the keys named in it, so a FAIL recorded here
+  # would leave the block saying the assumption held.
   if [ "$marker" != "$MARKER_VALUE" ]; then
-    fact claims FAIL "the execution's own environment did not carry the marker this run overrode ($MARKER_ENV is '$marker' in the log, not the value that was set): the echo of the override inside the container is not what this run asked for, which is itself a reading"
+    fact override-echo FAIL "the execution's own environment did not carry the marker this run overrode ($MARKER_ENV is '$marker' in the log, not the value that was set): the override the launch put on the execution did not reach the container, so the u2 row is not a read of an override that took effect. F9's launcher path, and the reconciliation's U2, have to be read against that"
+  else
+    fact override-echo PASS "the execution's own environment carried the marker this run overrode ($MARKER_ENV) with the value the launch set, so the override really reached the container and the u2 row is a read of an override that took effect"
   fi
 
   # U1's question: does anything in this token belong to THIS execution? The
@@ -1042,7 +1059,7 @@ PY
 # The list is read back out of the run's own fact file rather than remembered.
 step_verdict() {
   local failed=() key list
-  for key in u1 u2 launcher-perm u3; do
+  for key in u1 u2 launcher-perm u3 override-echo; do
     if [ "$(row_verdict "$key")" = FAIL ]; then failed+=("$key"); fi
   done
   if [ ${#failed[@]} -eq 0 ]; then
@@ -1113,8 +1130,8 @@ print_plan() {
 # — not reached, and any other recorded key follows, in the order the run
 # recorded it. That is what makes the block safe to diff between two runs.
 BLOCK_KEYS=(project region job probe belong xtrace token job-account probe-run
-  probe-exec claims u1 launcher-perm u2 mint u3-first u3-second u3 verdict
-  restore scratch-removed)
+  probe-exec claims override-echo u1 launcher-perm u2 mint u3-first u3-second u3
+  verdict restore scratch-removed)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2
@@ -1238,6 +1255,15 @@ parse_args() {
 }
 
 main() {
+  # Every file this check writes is the owner's alone. curl's `-o` writes the
+  # body it answered with at this PROCESS's umask, not at any mode a config file
+  # could set, so without this line the file holding the minted custom token
+  # (signjwt.json) and the files holding the ID tokens Firebase answers with
+  # (signin.N.json) land 0644: the scratch directory's 0700 is what keeps another
+  # user out of them, and this is what makes the file itself owner-only, which is
+  # what the header above promises. Set before anything is written, so it holds
+  # for every file of the run.
+  umask 077
   # The arguments first, so that `--help` and a missing flag answer on a machine
   # that has none of the tools: a usage line is not a run.
   parse_args "$@"

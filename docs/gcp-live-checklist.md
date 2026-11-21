@@ -22324,9 +22324,12 @@ names which: **U1** moves the reconciliation's **U1** and **R15** (**R-C1-execut
 to the claim that names the execution, and R5's residual closes for Cloud Run); **U2** moves its **U2** and
 **F9** (the launcher's read of a peer's override is not the way it is described); a launcher role without
 `run.executions.get` moves **F9** and the role's own permission list; **U3** moves its **U3** and **F9** (the
-copy was never a race). Exit 0 is all three as assumed, **1** is an answer against one of them, and **2** is
-**not measured** — a guard stopped it, a read did not answer, a credential minted nothing, or the job name
-was already taken — with the block's rows saying which.
+copy was never a race). The `override-echo` row is U2's control: the launch's marker either reached the
+container or did not, and a row that carries some other value is a **FAIL** too, because the execution's own
+document is then not a read of an override that took effect. Exit 0 is all three as assumed, **1** is an
+answer against one of them (or that control failing), and **2** is **not measured** — a guard stopped it, a
+read did not answer, a credential minted nothing, or the job name was already taken — with the block's rows
+saying which.
 
 **Restore.** The check creates **one** Cloud Run job (`fugaro-chk840-probe`) and **one** execution of it,
 both its own, and deletes the job at the end — including on a Ctrl-C — then reads the deletion back with a

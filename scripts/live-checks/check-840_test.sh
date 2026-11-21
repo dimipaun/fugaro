@@ -16,6 +16,12 @@
 #
 # Usage: bash scripts/live-checks/check-840_test.sh
 set -euo pipefail
+# A umask of the ordinary kind, so that the mode a case MEASURES on the files
+# curl writes is the check's own doing: the fake curl below opens its `-o` file
+# 0666 through this process's umask, exactly as the real one does, and with an
+# ambient 077 the assertion that those files are 0600 would hold whatever the
+# check did.
+umask 022
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 script=$here/check-840.sh
@@ -79,8 +85,8 @@ CUSTOM_SENTINEL='SENTINEL-840-custom-token-not-a-credential'
 
 # Every fact key the run's block must carry, whatever it measured.
 BLOCK_KEYS=(project region job probe belong xtrace token job-account probe-run
-  probe-exec claims u1 launcher-perm u2 mint u3-first u3-second u3 verdict
-  restore scratch-removed)
+  probe-exec claims override-echo u1 launcher-perm u2 mint u3-first u3-second u3
+  verdict restore scratch-removed)
 
 # --------------------------------------------------------------------- fakes
 write_fakes() { # dir
@@ -270,7 +276,27 @@ case "$url" in
   exit 64
   ;;
 esac
-if [ -n "$out" ] && [ -f "$body" ]; then cp "$body" "$out"; fi
+if [ -n "$out" ] && [ -f "$body" ]; then
+  # Written the way the real curl writes it: `-o` opens the file 0666 through
+  # this process's umask, so a case can say the files that carry the minted
+  # custom token and the ID tokens are 0600 rather than merely inside a 0700
+  # directory. The mode is recorded here because the check removes the files
+  # again. `install -m` would defeat the point: it sets a mode of its own.
+  python3 - "$body" "$out" <<'PY'
+import os
+import sys
+
+src, dst = sys.argv[1], sys.argv[2]
+umask = os.umask(0)
+os.umask(umask)
+fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o666 & ~umask)
+with os.fdopen(fd, "wb") as w, open(src, "rb") as r:
+    w.write(r.read())
+PY
+  printf '%s %s\n' "$out" \
+    "$(python3 -c 'import os, sys; print("%o" % (os.stat(sys.argv[1]).st_mode & 0o777))' "$out")" \
+    >>"$FAKE840_DIR/modes"
+fi
 printf '%s' "$code"
 CURL_EOF
 
@@ -541,10 +567,17 @@ test_the_three_readings_hold() {
   run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
   expect_status "$status" 0 "the installation's answers"
   expect_block_keys "the installation's answers"
-  for key in project region job probe belong xtrace token job-account probe-run probe-exec claims u1 launcher-perm u2 mint u3-first u3-second u3 verdict restore scratch-removed; do
+  for key in project region job probe belong xtrace token job-account probe-run probe-exec claims override-echo u1 launcher-perm u2 mint u3-first u3-second u3 verdict restore scratch-removed; do
     expect_contains "$out" "FACT $key: PASS" "the installation's answers: the $key row"
   done
   expect_contains "$out" "FACT claims: PASS — the identity token carries" "the claims row prints what the token carries"
+  # The files curl wrote carry the minted custom token and the ID tokens, and
+  # their MODE is the check's own: `-o` writes at the caller's umask, so 0600
+  # here is the check setting it rather than the scratch directory's 0700 being
+  # asked to do the work.
+  expect_contains "$(cat "$dir/state/modes" 2>/dev/null || true)" "signjwt.json 600" "the file the minted custom token was written to is 0600"
+  expect_contains "$(cat "$dir/state/modes" 2>/dev/null || true)" "signin.1.json 600" "the file the first ID token was written to is 0600"
+  expect_contains "$(cat "$dir/state/modes" 2>/dev/null || true)" "signin.2.json 600" "the file the second ID token was written to is 0600"
   expect_contains "$out" "aud=https://chk840-check.invalid/" "the claims row names the audience the probe minted for"
   expect_contains "$out" "email=$SA" "the claims row names the account the execution ran as"
   expect_contains "$(cat "$dir/state/calls")" "url https://run.googleapis.com/v2/projects/$PROJECT/locations/$REGION/jobs/$PROBE:run" "the override went through the API's jobs.run, which is the one call gcloud has no flag for"
@@ -589,6 +622,34 @@ test_overrides_that_do_not_come_back_fail_u2() {
   expect_contains "$out" "FACT u2: FAIL" "an execution whose override does not come back"
   expect_contains "$out" "FACT u1: PASS" "the other readings are still taken"
   expect_contains "$out" "$MARKER_ENV" "the row names the variable the launcher set"
+}
+
+# U2's control: the launch puts the marker on the execution as an override, and
+# the container either saw it or did not. A container that did not see it is a
+# reading of its own, and it must not be swallowed: a FAIL recorded under a key
+# that already carries a PASS is what the block prints only its first line of,
+# and a key the verdict does not judge leaves the run exiting 0 and the block
+# saying the design's assumption held.
+test_a_marker_the_container_did_not_see_fails_the_verdict() {
+  setup_case override-echo
+  write_log plain ""
+  python3 - "$dir/state/log.txt" <<'PY'
+import sys
+
+path = sys.argv[1]
+lines = [("CHK840 marker=some-other-runs-marker" if l.startswith("CHK840 marker=") else l)
+         for l in open(path).read().splitlines()]
+open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+PY
+  run840 --project "$PROJECT" --region "$REGION" --job "$JOB"
+  expect_status "$status" 1 "a container that did not see the override's marker"
+  expect_contains "$out" "FACT override-echo: FAIL" "a container that did not see the override's marker"
+  expect_absent "$out" "FACT override-echo: PASS" "the row is not the PASS the claims row beside it carries"
+  expect_contains "$out" "FACT claims: PASS" "the claim set is still read and is still what it is"
+  expect_contains "$out" "FACT u2: PASS" "the document still carries the override"
+  expect_contains "$out" "FACT verdict: FAIL" "the verdict reads the row"
+  expect_absent "$out" "all three readings came back the way the design assumes" "nothing says the assumption held while a row came back the other way"
+  expect_contains "$out" "FACT restore: PASS" "a FAIL is no reason to leave the job this run created behind"
 }
 
 test_a_launcher_role_without_the_permission_fails_it() {
@@ -810,6 +871,35 @@ test_usage() {
   expect_absent "$(cat "$dir/state/calls")" "gcloud" "--help calls nothing"
 }
 
+# A usage error exits before the scratch directory is made, and the credential
+# removal runs from the exit trap whatever ended the run: with no scratch
+# directory the paths it holds are "$SCRATCH/x" with SCRATCH empty, which is
+# "/x" -- a removal aimed at the root of the filesystem rather than at this
+# run's own files. This case puts a recording `rm` in front of the real one,
+# runs the check with no arguments at all, and reads the paths it named.
+test_a_usage_error_removes_nothing_outside_the_scratch_directory() {
+  setup_case usage-rm
+  local real_rm
+  real_rm=$(command -v rm)
+  mkdir -p "$dir/rmbin"
+  sed "s|__REAL_RM__|$real_rm|" >"$dir/rmbin/rm" <<'RM_EOF'
+#!/usr/bin/env bash
+printf 'rm %s\n' "$*" >>"$FAKE840_DIR/rm.calls"
+exec __REAL_RM__ "$@"
+RM_EOF
+  chmod +x "$dir/rmbin/rm"
+  RUN840_ENV=(PATH="$dir/rmbin:$dir/bin:$PATH")
+  run840
+  expect_status "$status" 2 "a run with no arguments"
+  expect_contains "$out" "--project is required" "the block says which argument is missing"
+  local named
+  named=$(cat "$dir/state/rm.calls" 2>/dev/null || true)
+  expect_absent "$named" "/u3.conf" "nothing outside the scratch directory is named for removal"
+  expect_absent "$named" "/custom.jwt" "nothing outside the scratch directory is named for removal"
+  expect_absent "$named" "/signin-body.json" "nothing outside the scratch directory is named for removal"
+  expect_absent "$named" "/signjwt.json" "nothing outside the scratch directory is named for removal"
+}
+
 # The block is what the owner pastes back, so the assertion that no credential
 # reaches it has to be one that would CATCH one: a check whose own block carried
 # a live token is the leak this whole part of the script exists to prevent. This
@@ -876,6 +966,7 @@ t() {
 t test_the_three_readings_hold
 t test_a_claim_naming_the_execution_fails_u1
 t test_overrides_that_do_not_come_back_fail_u2
+t test_a_marker_the_container_did_not_see_fails_the_verdict
 t test_a_launcher_role_without_the_permission_fails_it
 t test_a_second_exchange_that_is_refused_fails_u3
 t test_a_first_exchange_that_is_refused_stops
@@ -891,6 +982,7 @@ t test_an_id_that_is_not_a_project_or_a_region_is_refused
 t test_a_dry_run_makes_no_call
 t test_xtrace_is_refused
 t test_usage
+t test_a_usage_error_removes_nothing_outside_the_scratch_directory
 t test_the_credential_assertions_catch_an_echoing_script
 
 if [ "$failures" -ne 0 ]; then
