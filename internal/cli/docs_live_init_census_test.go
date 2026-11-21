@@ -149,6 +149,40 @@ var datedRecords = []string{
 	// plan's own docs task wrote the folder -- which is why it is stated here
 	// rather than folded into that ruling.
 	"docs/spend-accuracy/",
+	// The pre-layout specs and plans, folded out of docs/design/ and
+	// docs/plans/ into one folder each: the same dated records, now under
+	// their own names.
+	"docs/adopt-firebase-root/",
+	"docs/agent-env/",
+	"docs/base-image/",
+	"docs/bucket-iam/",
+	"docs/checkpoint-pushes/",
+	"docs/compute-backend/",
+	"docs/config-transitions/",
+	"docs/desktop-console-v2/",
+	"docs/desktop-console/",
+	"docs/generic-tool/",
+	"docs/headroom-compression/",
+	"docs/image-refresh/",
+	"docs/key-signing-service/",
+	"docs/layered-config/",
+	"docs/m10-multi-model/",
+	"docs/m11-setup-and-skills/",
+	"docs/m9-budget-and-dashboard/",
+	"docs/managed-deployer-fence/",
+	"docs/managed-projects/",
+	"docs/mixed-credentials/",
+	"docs/named-oauth-tokens/",
+	"docs/project-centric/",
+	"docs/project-named-oauth-tokens/",
+	"docs/project-secrets/",
+	"docs/provider-price-catalog/",
+	"docs/recipes/",
+	"docs/registry-remote-repository/",
+	"docs/retire-image-mirror/",
+	"docs/shared-config/",
+	"docs/upgrade/",
+	"docs/voice/",
 }
 
 // retirementText is the second exemption class, and it is not a judgement
