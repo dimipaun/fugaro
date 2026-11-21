@@ -45,8 +45,8 @@ The plan takes **check 69 and up** (written as 69a–69c) for the site's live ch
 
 - [preview-promote.md](preview-promote.md) — the site's two deploy workflows (a manual preview and an owner-only promote), staged under `docs/pending-workflows/` for the owner to copy in, and the owner-only one-time setup they need (the Workload Identity Federation pool and provider, the deployer service account, the `website-live` environment, the repository variables). **Nothing in it has been run.**
 - [docs/release.md](../release.md) — what a tag publishes, and how a user verifies it (the site's install text is pinned to this file, W0.1)
-- [docs/design/desktop-console.md](../design/desktop-console.md) — D2, D4, D10 and D11, which the console section reads and does not reopen
+- [docs/desktop-console/spec.md](../desktop-console/spec.md) — D2, D4, D10 and D11, which the console section reads and does not reopen
 - [docs/gcp-setup.md](../gcp-setup.md) — `## Adoption`, where the one-Firebase-per-installation rule is stated
 - [docs/dogfooding.md](../dogfooding.md) and [docs/pending-workflows/README.md](../pending-workflows/README.md) — why the deploy workflow is staged rather than written
-- [docs/plans/2026-10-16-managed-projects.md](../plans/2026-10-16-managed-projects.md) — the sibling plan this one takes its shape from, and the holder of D55–D78 and checks 67–68
+- [docs/managed-projects/implementation-plan.md](../managed-projects/implementation-plan.md) — the sibling plan this one takes its shape from, and the holder of D55–D78 and checks 67–68
 - [docs/gcp-live-checklist.md](../gcp-live-checklist.md) — the check register this plan takes 69 from

@@ -49,7 +49,7 @@
 #     (ZF17): managed projects are gated off. What is true is the narrow sentence ZF16 states
 #     -- a managed project is a new project that holds only Fugaro's resources.
 #   - "free and disposable" is the brief's own suggested framing's word and the repository
-#     rejects it (ZF15, ZF22; `docs/design/managed-projects.md:18,211`), so this file does not
+#     rejects it (ZF15, ZF22; `docs/managed-projects/spec.md:18,211`), so this file does not
 #     carry it: the row that answers the brief's "Safety" point says what is in the project
 #     instead, and the "free" half is its own row (D248: a managed project is **new** and
 #     holds only Fugaro's resources).
@@ -95,7 +95,7 @@ points:
       A project created for Fugaro is a new project that holds only Fugaro's resources. The
       Terraform state it plans with, the spend history and the kill switch all live there
       rather than in your application's project.
-    source: docs/design/managed-projects.md
+    source: docs/managed-projects/spec.md
     date: 2026-10-22
 
 closing:
@@ -103,7 +103,7 @@ closing:
     text: >-
       A new project costs nothing by itself. What bills is the resources Fugaro creates in
       it.
-    source: docs/design/m9-budget-and-dashboard.md
+    source: docs/m9-budget-and-dashboard/spec.md
     date: 2026-10-22
 
   - id: nothing-moves

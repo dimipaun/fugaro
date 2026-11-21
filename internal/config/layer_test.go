@@ -180,7 +180,7 @@ func TestProfileCheckout(t *testing.T) {
 // Profile rather than failing the strict decode as unknown fields. Without
 // the field a profile carrying inputs: was refused with yaml.v3's raw
 // KnownFields error, while the scope table, docs/project-layer.md and
-// docs/design/layered-config.md all say a profile may set it.
+// docs/layered-config/spec.md all say a profile may set it.
 func TestProfileArtifactKeys(t *testing.T) {
 	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
 	body := `profiles:
@@ -201,7 +201,7 @@ func TestProfileArtifactKeys(t *testing.T) {
 		t.Errorf("Profiles[p].Inputs = %+v, want 4 files / 1 MiB / 4 MiB", pr.Inputs)
 	}
 	// And the profile's values reach the workflow that starts from it: the
-	// key-by-key merge (docs/design/layered-config.md §4) is what makes
+	// key-by-key merge (docs/layered-config/spec.md §4) is what makes
 	// InProfile mean anything, and it is the merged workflow the launcher
 	// and the runner read the caps and the render command from.
 	c, res, ps := Resolve([]byte(minimalRepo), mustLayer(t, head+"defaults:\n  git: { provider: github }\ndefault_profile: p\n"+body))
@@ -323,7 +323,7 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"workflow keys are not defaults", head + "defaults:\n  workflows:\n    web:\n      commands: { test: x }\n", "may only be set in: profile, repo"},
 		{"unknown key", head + "defaults:\n  agent:\n    colour: red\n", "defaults.agent.colour: is not a fugaro.yaml key"},
 		// claude_accounts is a local-config-only key (design
-		// docs/design/named-oauth-tokens.md §3, decision T1): the project
+		// docs/named-oauth-tokens/spec.md §3, decision T1): the project
 		// layer, published to the runs bucket and writable by anyone with
 		// objectAdmin on it, must never be able to carry or widen the
 		// named-account allow-list, at the top level, under defaults:, or
@@ -833,7 +833,7 @@ func TestProjectLayerCorpus(t *testing.T) {
 // and read from there, and this package gains no key for it. The project layer
 // is written by the launcher and published to the runs bucket, so a floor in
 // it could be dropped by the very launcher the floor is meant to bind
-// (docs/design/bucket-iam.md §10 L1, L2) — the key must stay unreadable here.
+// (docs/bucket-iam/spec.md §10 L1, L2) — the key must stay unreadable here.
 // The layer is decoded with KnownFields, so the key alone is what refuses it,
 // at the top level and under defaults: alike.
 func TestReviewFloorNotInLayer(t *testing.T) {
@@ -1135,7 +1135,7 @@ func TestLayerResolvesAWrittenHotfix(t *testing.T) {
 
 // TestLayerLevelsOverlay: defaults.agent.levels and agent.adversarial_rounds
 // are settable in both layers (L1.3, D722), and the merge between them is the
-// per-key deep merge of docs/design/layered-config.md §4 — not a whole-block
+// per-key deep merge of docs/layered-config/spec.md §4 — not a whole-block
 // replacement. A project that pins level 1's model and turns level 3 off
 // keeps both while a repository adds level 1's focus and level 2's model; a
 // repository writing one key of a level cannot drop the project's other keys

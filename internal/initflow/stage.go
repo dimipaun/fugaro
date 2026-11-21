@@ -213,7 +213,7 @@ const (
 	// terminal and with nothing asked.
 	Unit = "unit"
 	// Compute is the Batch backend's installation-level provisioning
-	// (design docs/design/compute-backend.md §8.1 task 6). It is last
+	// (design docs/compute-backend/spec.md §8.1 task 6). It is last
 	// because it is the only stage that may not run before everything else
 	// is done: what it provisions is for a backend no run can select yet.
 	Compute = "compute"

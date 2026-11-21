@@ -519,7 +519,7 @@ not exist yet.
 
 - **P9.1 Amend licence key v2.**
   - Files: `docs/licence-key-v2/implementation-plan.md`, `docs/licence-key-v2/reconciliation.md` and
-    `docs/design/key-signing-service.md` (dated notes only): the list in the reconciliation's "What this
+    `docs/key-signing-service/spec.md` (dated notes only): the list in the reconciliation's "What this
     changes in licence key v2", plus design §3.4 and T13 with §9.1 row 5 (superseded by D2194), §5.2 (the
     timestamp window, if P4.2 adds it), §6 (replaced by P5.1), and the open D454, D455 and D459 recorded
     as decided by D2187 and D2194.
@@ -628,7 +628,7 @@ Files written by more than one task. Every other file has one writer.
 | `ee/portal/test/types.test.ts` | P1.4 (1), then the area task that adds its area's fixtures (1 or later) |
 | `ee/coordinator/mcpauth/firebase.go` | P1.3 (0) |
 | `ee/keyservice/admin.go`, `admin_test.go`, root `firebase.json`, website key files | P9.3 (7) |
-| `docs/licence-key-v2/*`, `docs/design/key-signing-service.md` | P9.1 (0) |
+| `docs/licence-key-v2/*`, `docs/key-signing-service/spec.md` | P9.1 (0) |
 | `docs/gcp-live-checklist.md` | P9.4 (10) |
 
 No level holds two writers of one file — which is what put P1.6 at level 2 rather than beside P2.1: both write

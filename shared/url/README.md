@@ -9,7 +9,7 @@ module is complete and the list it checks against is **not** — see below.
 
 ## The rule
 
-The console's rule is [desktop-console.md](../../docs/design/desktop-console.md)
+The console's rule is [desktop-console.md](../../docs/desktop-console/spec.md)
 §5.1 rule 2, in prose, and finding **F27** records that it exists nowhere in
 code: "no `validateExternalUrl` anywhere". D124 answers that it must be written
 once, in this package, before either artifact opens a link. It is four checks:
@@ -139,5 +139,5 @@ and the 2048 → 4096 mutant is killed by it.
 
 Where the reasoning lives: [implementation-plan.md](../../docs/mobile/implementation-plan.md)
 (P0.3), [reconciliation.md](../../docs/mobile/reconciliation.md) (F27, D124, U3),
-[desktop-console.md](../../docs/design/desktop-console.md) (§5.1 rule 2, §4.3
+[desktop-console.md](../../docs/desktop-console/spec.md) (§5.1 rule 2, §4.3
 gaps 6 and 7).

@@ -26,7 +26,7 @@
 // refusal door.** They are what a person acts on, and one of the CLI's fixes
 // names `roles/run.invoker` -- which the free-text `sentence` class draws as
 // `[redacted]`, taking the remedy away. So they go through `sanitizeRefusal`,
-// the door the design keeps for a CLI sentence (`docs/design/desktop-console.md`
+// the door the design keeps for a CLI sentence (`docs/desktop-console/spec.md`
 // section 6.3), exactly as `degraded.ts`, `managed.ts`, `projects.ts` and
 // `accountkeys.ts` draw theirs: a role name, a project and a `fugaro creds set
 // NAME` are left as the CLI printed them, and a credential a child echoed is

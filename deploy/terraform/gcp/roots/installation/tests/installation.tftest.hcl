@@ -528,7 +528,7 @@ run "launcher_condition_must_be_this_buckets_runs" {
 
 # The pre-seal condition, runs/ alone under its old title, fails the plan: the
 # launcher writes the sealed budget token under tokens/
-# (docs/design/budget-token-channel.md section 7.2), and the precondition is
+# (docs/budget-token-channel/spec.md section 7.2), and the precondition is
 # where the Terraform and gcp.LauncherBucketCondition must agree.
 run "launcher_condition_must_cover_tokens" {
   command = plan
@@ -838,7 +838,7 @@ run "log_isolation_on" {
   # entry with that resource type, so it moves nothing. What must NOT change
   # is the Cloud Run arm every existing sink and exclusion already filters
   # on, so it is pinned byte-for-byte inside both filters (design
-  # docs/design/compute-backend.md §1.5, §8.1 task 4).
+  # docs/compute-backend/spec.md §1.5, §8.1 task 4).
   assert {
     condition     = strcontains(google_logging_project_sink.fugaro[0].filter, "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\"") && strcontains(google_logging_project_exclusion.fugaro_from_default[0].filter, "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\"")
     error_message = "the Cloud Run arm must stay byte-for-byte what it was: every installation's sink and exclusion already filter on it"
@@ -2195,7 +2195,7 @@ run "same_project_resolved_iam" {
   }
 }
 
-# The project-wide secret containers (design docs/design/project-secrets.md
+# The project-wide secret containers (design docs/project-secrets/spec.md
 # §4). What this run pins is the shape a config edit must not quietly change:
 # the labels discovery adopts one by, the ID the plan creates or imports it
 # at, replication in the installation's own region (D3082: a container created

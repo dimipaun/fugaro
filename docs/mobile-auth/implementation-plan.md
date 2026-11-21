@@ -112,7 +112,7 @@ Named, so that a reader does not look for it and a later writer does not re-add 
 - **The app's per-project Firebase instance** (D234): no Firebase SDK in `mobile/package.json`, no
   third secure-store item, no per-project session or listener.
 - **The console's allowlist screen** (D235): the spec's *"later from the console"* needs the
-  console's project-wide view, which is unbuilt (`docs/design/desktop-console-v2.md`).
+  console's project-wide view, which is unbuilt (`docs/desktop-console-v2/spec.md`).
 - **Custom tokens minted by the credentials service** (D235, and reconciliation §0.2): the spec's
   own deferral, dependent on `docs/credentials-service/`'s first slice existing.
 - **The domain rule in the rules** (D223): the domain is resolved at administration, and no part

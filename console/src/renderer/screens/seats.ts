@@ -94,7 +94,7 @@ export const SEATS_WHY_CLASS = 'projects-seats-why'
 
 /** SEATS_OPERATION is the read behind this section, in the surface's own
  * spelling (`src/main/ipc.ts`, S4.2). It is a read: a lapse never refuses it
- * (`docs/design/lapse-read-only.md` wraps the writes only), and this section
+ * (`docs/lapse-read-only/spec.md` wraps the writes only), and this section
  * draws no control that a lapse would have to gate. */
 export const SEATS_OPERATION = 'seats.read'
 

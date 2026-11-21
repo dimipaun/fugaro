@@ -138,7 +138,7 @@ export const SUPPORTED_CLI_MINORS: readonly string[] = Object.freeze(['0.7', '0.
  * **`planTaskSince = "0.11.2"`** (a title's `titlesSince` is `0.8.5`, and
  * `--run-id` and `--task-file` are older still), so the operation is offered
  * only to an installation whose CLI is at least that
- * (`docs/design/desktop-console.md` §5.1 rule 11, "a CLI too old for a flag of
+ * (`docs/desktop-console/spec.md` §5.1 rule 11, "a CLI too old for a flag of
  * the row").
  *
  * It is a **patch-level** floor, and it is deliberately not a member of

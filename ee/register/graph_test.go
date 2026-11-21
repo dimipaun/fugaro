@@ -4,7 +4,7 @@
 package register
 
 // The graph command's seam, at the one point that sets it (design
-// docs/design/ee-boundary-moves.md §5.5): the name the tagged tree answers to,
+// docs/ee-reorg/boundary-moves.md §5.5): the name the tagged tree answers to,
 // and the set-once rule that keeps a second registration from replacing it.
 // The command's own tests live beside it in ee/graph/cli; what is here is the
 // wiring no package below can see — ee/graph/cli may not register itself (only

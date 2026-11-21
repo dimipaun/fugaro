@@ -41,7 +41,7 @@ func planGraphFixture(t *testing.T, graph string) (dir, planPath string) {
 
 const planGraphDoc = `{
   "schema_version": 2,
-  "plan": "docs/plans/2026-10-15-desktop-console-v2.md",
+  "plan": "docs/desktop-console-v2/implementation-plan.md",
   "nodes": [
     {"id": "V2.2.1", "title": "the graph document and the read that prints it",
      "run": "console-graph-1", "version": "0.9.0",
@@ -282,7 +282,7 @@ func TestPlanGraphV2OutputIsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `plan docs/plans/2026-10-15-desktop-console-v2.md (schema version 2, 2 levels)
+	const want = `plan docs/desktop-console-v2/implementation-plan.md (schema version 2, 2 levels)
 ID      TITLE                                           LEVEL  STATE    VERSION  RUN              NEEDS   FOOTPRINT
 V2.2.1  the graph document and the read that prints it  0      ready    0.9.0    console-graph-1  -       predicted: internal/plan/** internal/cli/plan.go
 V2.2.2  the footprint                                   1      blocked  0.9.0    -                V2.2.1  predicted: none
@@ -301,7 +301,7 @@ bottleneck: V2.2.1
 func TestPlanGraphPrintsTheStream(t *testing.T) {
 	const streamed = `{
 	  "schema_version": 2,
-	  "plan": "docs/plans/2026-10-15-desktop-console-v2.md",
+	  "plan": "docs/desktop-console-v2/implementation-plan.md",
 	  "stream": "console",
 	  "nodes": [
 	    {"id": "a", "title": "one", "run": null, "version": "0.11",

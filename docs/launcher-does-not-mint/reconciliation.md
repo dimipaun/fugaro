@@ -42,7 +42,7 @@ role" is `google_project_iam_custom_role.token_minter` (`fugaroTokenMinter`, one
 | "the launcher roster" | Two lists from one source: the IAM members `var.launchers` and `var.operators` (Firebase root), and the bare addresses `var.launcher_accounts` (installation root, `internal/infra/launchers.go`), which holds the `user:` entries only |
 | "the coordinator [has a] signer grant of its own" | Nothing. See F2 |
 | "pairing tokens, device tokens, the mobile account's" | `token.MintPairing` and `token.MintDevice`, both called from `internal/cli/pair.go` with the runs' signer; and a second, device-only signer for the public mobile service (`google_service_account.device_signer`, `mobile_token_minter`) |
-| "the job's platform" as an issuer | Rejected already as alternative C4 of `docs/design/budget-token-channel.md` |
+| "the job's platform" as an issuer | Rejected already as alternative C4 of `docs/budget-token-channel/spec.md` |
 
 ## The census
 
@@ -164,7 +164,7 @@ sealed token is an object in the runs bucket every launcher reads (`runs_reader`
 value of `runner.BudgetTokenEnv` in the execution's override, and the launcher role
 (`google_project_iam_custom_role.launcher`, `modules/installation/iam.tf`) carries
 `run.executions.get`. `token.Lifetime` is one hour, and a custom token can be exchanged more than
-once inside it (U3). `docs/design/budget-token-channel.md` says the seal is "a capability, not a
+once inside it (U3). `docs/budget-token-channel/spec.md` says the seal is "a capability, not a
 boundary" and keeps a launcher out of scope because "a launcher can already mint". Once a
 launcher cannot mint, that exemption is gone and the copy is the remaining way to ask 3's
 "obtain". Consequence: D3122.
@@ -252,11 +252,11 @@ version 10 (`internal/projectpolicy/version.go`, `docs/design/update-in-flight.m
 **F21 (Rule). The security documents state today's reach as an accepted limit.** SECURITY.md:
 "**Any launcher can mint a budget identity for any repository.**" It is mirrored byte for byte in
 `website/content/security.md` (`internal/cli/docs_website_security_test.go`), and repeated in
-`docs/design/roles.md`, `docs/design/budget-token-channel.md` and
+`docs/roles/spec.md`, `docs/budget-token-channel/spec.md` and
 `docs/mobile/design/always-on-orchestrator.md` (section 4.5, E4). Consequence: the plan's
 documents task rewrites each; "may mint" becomes "may launch".
 
-**F22 (Exists). This is a ruling already on record.** `docs/design/roles.md` gives D628 as the
+**F22 (Exists). This is a ruling already on record.** `docs/roles/spec.md` gives D628 as the
 reason a minter is needed that the people being ranked cannot call, and its D686 asks where that
 minter lives, noting that narrowing the role takes it away from `fugaro pair` and the run's
 budget token. This spec carries both out.

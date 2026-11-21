@@ -239,7 +239,7 @@ on.
   rows name `setup` (`internal/settings/registry.go:595`). Its real state is worse and more interesting:
   it is a **local-config map with its own validation** (`internal/localcfg/localcfg.go:119`, the region
   and price checks at `:1687`) whose only editor is a hand edit, and the published-config design treats
-  it as a mergeable map ([docs/design/shared-config.md](../design/shared-config.md)). D1179 decides it
+  it as a mergeable map ([docs/shared-config/spec.md](../shared-config/spec.md)). D1179 decides it
   on that fact rather than on a missing owner string.
 - **C6 — the managed marker's next version is 3, not a "V4", and this design writes no marker at all.**
   The brief asks this design for a new mark version. The version beside `MarkerVersion = 1` and

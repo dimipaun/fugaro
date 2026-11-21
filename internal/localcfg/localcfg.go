@@ -170,11 +170,11 @@ type Config struct {
 	// runs bucket's shared file is written by any launcher, and the checks
 	// that hold a `batch:` block -- or the choice itself -- to the
 	// installation's own provisioning are `fugaro doctor`'s, which a launch
-	// does not consult (docs/design/shared-config.md §4).
+	// does not consult (docs/shared-config/spec.md §4).
 	BackendName string `yaml:"backend,omitempty"`
 	// Batch is what the Cloud Batch backend reads: the installation facts a
 	// run's VM is built and placed from (design
-	// docs/design/compute-backend.md §4.4, plan
+	// docs/compute-backend/spec.md §4.4, plan
 	// 2026-10-19-compute-backend.md Task 8 step 2). The Batch opener reads it
 	// (internal/cli/cloud.go's cloudOpeners), and the block is only read by
 	// the backend that was selected: an installation that carries it without
@@ -214,7 +214,7 @@ type Config struct {
 	// (design m10-multi-model.md §3), by name. Only the owner sets them.
 	Providers map[string]config.ModelProvider `yaml:"providers,omitempty"`
 	// Routing is the routing switch: which route the Claude IDs it names take
-	// (design docs/design/project-centric.md §6.2, D1a/D1b). Only the owner sets
+	// (design docs/project-centric/spec.md §6.2, D1a/D1b). Only the owner sets
 	// it, and this file is its only definition site in this release: a
 	// repository's fugaro.yaml has no routing key, and D1a's second site, the
 	// project layer, does not take it yet (the layer's decode is strict, so a
@@ -236,7 +236,7 @@ type Config struct {
 	// purpose (the review of PR #414).
 	Routing *config.Routing `yaml:"routing,omitempty"`
 	// ClaudeAccounts are named Claude OAuth credentials a repository may
-	// choose among by name (design docs/design/named-oauth-tokens.md).
+	// choose among by name (design docs/named-oauth-tokens/spec.md).
 	// Only the owner sets them, here, never in fugaro.yaml.
 	ClaudeAccounts map[string]config.ClaudeAccount `yaml:"claude_accounts,omitempty"`
 	// ClaudeAccountAliases are the names the choice keys may hold instead of an
@@ -375,7 +375,7 @@ type Config struct {
 	ClaudeAccountAuto bool `yaml:"claude_account_auto,omitempty"`
 	// ProjectSecrets are the reserved secret names (config.ReservedSecrets)
 	// the owner has opted into project-wide storage for, by allow-listed
-	// repository (design docs/design/project-secrets.md §3). Only the owner
+	// repository (design docs/project-secrets/spec.md §3). Only the owner
 	// sets them, here, never in fugaro.yaml. A provider's or a named Claude
 	// account's own allow_data_to governs its own secret instead; neither
 	// can collide with a ReservedSecrets key in the first place, so
@@ -602,7 +602,7 @@ type Config struct {
 	// from here, because a guardrail is not the writer's to remove.
 	Orchestrator *policy.Orchestrator `yaml:"orchestrator,omitempty"`
 	// Profiles are the project's job profiles (design
-	// docs/design/project-centric.md §4.1), by name: what a Cloud Run job is
+	// docs/project-centric/spec.md §4.1), by name: what a Cloud Run job is
 	// deployed as, and what a repository's workflow selects with job_profile.
 	// They are the owner's to write, here, never in fugaro.yaml, and
 	// `fugaro project policy publish` copies them into the policy node, where
@@ -743,7 +743,7 @@ type Config struct {
 	// the value itself never enters the shared config a launcher can write
 	// (Shared drops it, and the publisher refuses the key). A floor a
 	// launcher could write — in the published shared config, in the project
-	// layer or in the task (docs/design/bucket-iam.md §10 L1, L2) — would be
+	// layer or in the task (docs/bucket-iam/spec.md §10 L1, L2) — would be
 	// that launcher deciding how much review it gets, which is the one thing
 	// the floor exists to prevent.
 	//
@@ -1809,7 +1809,7 @@ const SecretExpiryLayout = "2006-01-02"
 
 // Batch is the Cloud Batch backend's installation configuration: the facts a
 // run's VM and job are built and placed from (design
-// docs/design/compute-backend.md §4.4, plan 2026-10-19-compute-backend.md
+// docs/compute-backend/spec.md §4.4, plan 2026-10-19-compute-backend.md
 // Task 8 step 2). It is read in one place — internal/cli/cloud.go's Batch
 // opener, which builds internal/backend/batch.Options from it — and the
 // backend name is what selects that opener: since the enable task (plan
@@ -2543,7 +2543,7 @@ func legacyBaseImageKey(kind string) string {
 
 // oldProjectKey is the refusal of a local config of before project
 // configs, whose project: was the GCP project.
-const oldProjectKey = "local config: `project:` is now `gcp_project:`, and the file lives at projects/<name>.yaml with name: <name>; see docs/design/m9-budget-and-dashboard.md §13.1"
+const oldProjectKey = "local config: `project:` is now `gcp_project:`, and the file lives at projects/<name>.yaml with name: <name>; see docs/m9-budget-and-dashboard/spec.md §13.1"
 
 // oldMailboxKeychainItem refuses the shape decision 9 replaced: one item name
 // for the project, where the block now holds one per pairing. It is read off

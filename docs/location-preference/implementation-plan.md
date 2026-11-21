@@ -452,12 +452,12 @@ LP5c, LP6. **Slice 4, what a person sees:** LP4, LP9, LP10, LP12. **Slice 5, joi
   choosing US or EU places where, the exceptions D3082 names, that model calls are outside it
   (D3083), what an installation made before this work has, and what a workspace across places
   means (D3084), and the two cases in which run output is not in the run log bucket at all
-  (log isolation turned off, and the build and system logs Fugaro leaves in `_Default`); `docs/gcp-setup.md` describes the question; `docs/design/m9-budget-and-dashboard.md`
+  (log isolation turned off, and the build and system logs Fugaro leaves in `_Default`); `docs/gcp-setup.md` describes the question; `docs/m9-budget-and-dashboard/spec.md`
   D4 gets a note that it holds for installations made before this work; the release notes'
   `### For operators` says run `fugaro update` and that it moves nothing (R8). A docs test pins the
   section in both files to the mapping.
 - Files: `SECURITY.md`, `website/content/security.md`, `docs/gcp-setup.md`,
-  `docs/design/m9-budget-and-dashboard.md`, `internal/cli/docs_location_test.go` (new), and the
+  `docs/m9-budget-and-dashboard/spec.md`, `internal/cli/docs_location_test.go` (new), and the
   release's notes file under `docs/releases/`.
 - Interfaces: consumes `place.For` in the test.
 - Tests: `TestDocsSayWhereTheDataLives`.

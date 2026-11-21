@@ -1,5 +1,5 @@
 // Package batch implements the CLI's backend seam on Google Cloud Batch
-// (design docs/design/compute-backend.md): one Batch job per run, on Compute
+// (design docs/compute-backend/spec.md): one Batch job per run, on Compute
 // Engine VMs, for the workflows that need a real Docker daemon.
 //
 // An installation reaches it by writing `backend: cloud-batch`, which config

@@ -50,7 +50,7 @@ decision (what a key is a key to) and not a defect P3.5 could repair.
 | Verifiers elsewhere | console: `console/src/main/licence.ts`, `licence-store.ts`, `licence-state.ts`, `spawn.ts` (`LICENCE_KEY_VAR`). App: none |
 | Signing in KMS (§5) | `ee/licence/mint/kms.go` (the owner's hand-minting tool, signs only through a KMS signer); `ee/keyservice/terraform/keyring` |
 | Licence server (§12) | `ee/keyservice` (`service.go` intake, `minter.go`, `merchant.go`): routes `/free-seat`, `/open-source`, `/request`, `/verify`, `/webhook`; Paddle webhook, idempotent, test-mode pair; email verification, one per domain, free-mail list, manual queue. **Not deployed; no accounts, no sign-in, no renewal or status endpoint, no revocation list, no admin handler** |
-| Grace and expiry (§6, §9) | `Grace` = 30 days (B17); `docs/design/lapse-read-only.md`; `ee/register/lapse.go` (`access.SetSubscriptionLimit`): after grace the console and app go **read-only** (read and cancel kept) |
+| Grace and expiry (§6, §9) | `Grace` = 30 days (B17); `docs/lapse-read-only/spec.md`; `ee/register/lapse.go` (`access.SetSubscriptionLimit`): after grace the console and app go **read-only** (read and cancel kept) |
 | Seats (§10) | `claims.seats` compared and shown, **never enforced** (D439); `internal/cli/seats.go` is the advisory estimate; roles `viewer`/`operator`/`admin` in `internal/access/access.go` |
 | Scheduler jobs in the customer's project (§7) | Terraform `google_cloud_scheduler_job`: `preload_rebuild`, `reaper_sweep` (`modules/compute`), `catalog_check`, `coordinator_sweep`, `history_sweep`, `history_rollover` (`modules/installation`); the deployer's IAM names `cloudscheduler.jobs.*` |
 | Paddle (§2, §12) | `ee/keyservice/merchant.go` (Team checkout, D442); Enterprise is invoiced directly |
@@ -147,7 +147,7 @@ sign-in where an action needs one — and the account, authorize and device page
 (P3.5); TN3's `fugaro-prod` is also where the API, the minter and the ring live (D2194).
 
 **F15 (Gap): the admin page and the manual queue.** §13 (reseller, comped, revoke, reissue, override
-policy) and the design's §6 exist as a design (`docs/design/key-signing-service.md` §6) but `ee/keyservice`
+policy) and the design's §6 exist as a design (`docs/key-signing-service/spec.md` §6) but `ee/keyservice`
 has no admin route. A comped key is `kind: comped`, expiring, never in revenue reporting; the owner-only
 access rule of the design (`TestAdminRefusesAnyoneButTheOwner`) carries over. **Amended 2026-11-13 by
 the portal (P9.1):** the admin page and the manual queue are the portal's operations API and screens

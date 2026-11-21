@@ -1,6 +1,6 @@
 package pricing
 
-// The canonical-to-route map (design docs/design/project-centric.md §6.2, plan
+// The canonical-to-route map (design docs/project-centric/spec.md §6.2, plan
 // Task 1b.2). A Claude model has a different ID per route: the canonical ID a
 // pin carries and the price table keys (claude-sonnet-5-5), and the route's own
 // spelling of the same model (anthropic/claude-sonnet-5.5). The gateway never
@@ -37,7 +37,7 @@ type claudeRoute struct {
 
 // noMeasuredRoute is the reason every unmapped row carries. The three route
 // IDs this build knows are the measured Claude rows the price catalog's D8
-// names (docs/design/provider-price-catalog.md D8: anthropic/claude-sonnet-5.5,
+// names (docs/provider-price-catalog/spec.md D8: anthropic/claude-sonnet-5.5,
 // anthropic/claude-opus-5.5, anthropic/claude-fable-5.1); no other Claude model
 // has one, and a spelling invented here would be a route nobody measured.
 const noMeasuredRoute = "no route's own ID has been measured for it: this build knows the three the price catalog's D8 names (anthropic/claude-sonnet-5.5, anthropic/claude-opus-5.5, anthropic/claude-fable-5.1). The switch never guesses a route ID, so routing.claude.models may not name this model until a row for it is added here with the route's ID measured"

@@ -194,7 +194,7 @@ func Validate(c *Config) []Problem {
 	// that tries the key gets this message and not a strict-parse unknown-field
 	// error. Nothing reads the field, so no value may reach a run. The lift
 	// replaces this branch with the closed-set shape check and leaves the auth
-	// rule below standing (docs/design/headroom-compression.md §4).
+	// rule below standing (docs/headroom-compression/spec.md §4).
 	if c.Agent.Compression != "" {
 		add("agent.compression", "is not yet implemented: this Fugaro accepts only the empty value (off), and the context-compression proxy the key will name is refused until it ships")
 	}
@@ -202,7 +202,7 @@ func Validate(c *Config) []Problem {
 	// route their own way and are refused outright rather than run without the
 	// compression the repository asked for (design §4).
 	if c.Agent.Compression != "" && (c.Agent.Auth == "oauth" || c.Agent.Auth == "vertex") {
-		add("agent.compression", "cannot be combined with agent.auth: %s: the proxy is refused for that auth (docs/design/headroom-compression.md §4)", c.Agent.Auth)
+		add("agent.compression", "cannot be combined with agent.auth: %s: the proxy is refused for that auth (docs/headroom-compression/spec.md §4)", c.Agent.Auth)
 	}
 	ps = append(ps, validateAgentModels(c.Agent)...)
 	if c.ModelGrades != nil {
@@ -311,7 +311,7 @@ func Validate(c *Config) []Problem {
 			} else if strings.HasPrefix(s.Name, ClaudeOAuthTokenPrefix) {
 				// The whole claude-oauth-token-<name> namespace is a named
 				// Claude account's derived secret ID (ClaudeAccountSecret,
-				// design docs/design/named-oauth-tokens.md §5), never a
+				// design docs/named-oauth-tokens/spec.md §5), never a
 				// workflow's own: a name that merely looks like one would
 				// let fugaro.yaml steer where the owner's pasted token
 				// value goes (claude setup-token's prompt in init matches

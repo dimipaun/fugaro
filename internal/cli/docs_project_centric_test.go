@@ -133,10 +133,10 @@ func TestChecklistHasCheck52(t *testing.T) {
 	// same answer: it is one of the places the review found saying the check
 	// had never run. The two phrases are asserted separately because the
 	// design wraps the line between them.
-	if design, err := os.ReadFile("../../docs/design/managed-deployer-fence.md"); err == nil {
+	if design, err := os.ReadFile("../../docs/managed-deployer-fence/spec.md"); err == nil {
 		for _, want := range []string{"RUN 2026-10-16 and answered yes", "the condition is honoured"} {
 			if !strings.Contains(string(design), want) {
-				t.Errorf("docs/design/managed-deployer-fence.md no longer records Check 52's U3 as %q: the design's Secret Manager half rests on that answer, and the review found this file saying the check had never run", want)
+				t.Errorf("docs/managed-deployer-fence/spec.md no longer records Check 52's U3 as %q: the design's Secret Manager half rests on that answer, and the review found this file saying the check had never run", want)
 			}
 		}
 	} else {

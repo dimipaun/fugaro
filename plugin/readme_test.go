@@ -63,8 +63,9 @@ func TestReadmeNamesNoRetiredSkill(t *testing.T) {
 	retired := regexp.MustCompile("(?i)(fugaro:(onboard|launch|logs|diagnose|followup)\\b|fugaro:status\\b|\\b(onboard|launch|status|logs|diagnose|followup) skill\\b|skills/(onboard|launch|status|logs|diagnose|followup)\\b|six per-command)")
 	// fugaro:status is also the pull request body's status marker.
 	marker := regexp.MustCompile(`\[//\]|<!--|fugaro:status (begin|end)|fugaro:status["')]|rendered description|StripMarkers|fugaro:status\\n`)
-	// docs/plans and the M11 design and brief describe the change itself.
-	skip := regexp.MustCompile(`^(docs/plans/|docs/design/m11-|docs/design/setup-and-skills-spec-source\.md|plugin/.*_test\.go)`)
+	// docs/plans, the M11 folder (its design, brief and plan) and the M9
+	// milestone plans that once sat in docs/plans describe the change itself.
+	skip := regexp.MustCompile(`^(docs/plans/|docs/m11-setup-and-skills/|docs/m9-budget-and-dashboard/implementation-plan-|plugin/.*_test\.go)`)
 	var roots = []string{"README.md", "CONTRIBUTING.md", "docs", "schemas", "scripts", "internal", ".claude-plugin", "plugin/.claude-plugin", "plugin/skills"}
 	n := 0
 	for _, root := range roots {

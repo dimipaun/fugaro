@@ -34,4 +34,4 @@ The repository's registry has `prevent_destroy`, so this needs the module edited
 
 ## A managed project
 
-Removing the `fugaro_managed` label takes the project out of managed mode, but it does not take the managed deployer's fence out of the installation, and `fugaro update --forget` is refused for a fenced installation. [design/managed-projects.md](../design/managed-projects.md) §10.1 and §10.2 say what removing the label and rolling back do and do not undo.
+Removing the `fugaro_managed` label takes the project out of managed mode, but it does not take the managed deployer's fence out of the installation, and `fugaro update --forget` is refused for a fenced installation. [managed-projects/spec.md](../managed-projects/spec.md) §10.1 and §10.2 say what removing the label and rolling back do and do not undo.

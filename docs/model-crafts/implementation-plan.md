@@ -73,7 +73,7 @@ External dependencies (other plans, not built here): composite-commands (#1907: 
 - **Depends on:** MC6; **D1625 answered**. **Red step:** three selections must not all pick member 1. **Tier:** opus + independent review; level 3. **Commit:** `credsvc: round-robin selection over a pool (MC7)`.
 
 ### MC8 — the effective-craft command, the record field and the console read
-- **Files:** `internal/cli/craft.go` (new: `fugaro craft ls [--json]`), `internal/cli/project.go` (`consoleReadPaths` row) and `docs/design/desktop-console.md` §5.1's allow-list table (the Go test holds the two equal; not `spawn.ts`), `internal/runstore/` (additive `craft_credentials`), `schemas/`.
+- **Files:** `internal/cli/craft.go` (new: `fugaro craft ls [--json]`), `internal/cli/project.go` (`consoleReadPaths` row) and `docs/desktop-console/spec.md` §5.1's allow-list table (the Go test holds the two equal; not `spawn.ts`), `internal/runstore/` (additive `craft_credentials`), `schemas/`.
 - **Interfaces:** consumes MC2 and MC5/MC6 (what served).
 - **Tests:** golden `craft ls --json` (versioned, no secret value), the §5.1 table equality test, `TestRunRecordNamesCraftCredentials`. **Command:** `GOFLAGS=-p=1 go test ./internal/cli ./internal/runstore -run 'Craft|ConsoleRead|DesktopConsole' -count=1`.
 - **Depends on:** MC2 (the read ships before the keys are writable: D1633, which **must be answered**); the record part also on MC6. **Red step:** the §5.1 equality test fails when the row is added to `consoleReadPaths` only. **Tier:** opus + independent review (console spawn/IPC allow-list); level 3. **Commit:** `craft: fugaro craft ls and the record's craft_credentials (MC8)`.

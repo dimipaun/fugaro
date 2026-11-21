@@ -2093,7 +2093,7 @@ const claudeAccountsLC = `claude_accounts:
 // the workflow keys fugaro.yaml names, unchanged: gcp.WorkflowVariant is the
 // identity function for the repository's default account, so
 // BuildRepoSpec's loop produces exactly the one WorkflowSpec per workflow it
-// produced before this task (design docs/design/named-oauth-tokens.md §5).
+// produced before this task (design docs/named-oauth-tokens/spec.md §5).
 // TestGoldenTfvars is the byte-for-byte proof of this over the fixture
 // corpus; this test pins the one fact that proof depends on, directly.
 func TestBuildRepoSpecUnchangedWithNoClaudeAccounts(t *testing.T) {
@@ -2343,7 +2343,7 @@ func TestProjectSecretContainerIsDerivedFromTheEntry(t *testing.T) {
 	}
 }
 
-// --- RepoSpec.Addresses (plan docs/plans/2026-10-14-config-transitions.md Task 1)
+// --- RepoSpec.Addresses (plan docs/config-transitions/implementation-plan.md Task 1)
 
 // The golden fixtures' agent blocks. oauth with one named account and
 // vertex exclude one another (Repo builds named variants only under oauth),
@@ -2408,7 +2408,7 @@ const repoRootAPIKeyLC = repoRootLC + `providers:
 `
 
 // repoRootMixedLC is repoRootAPIKeyLC with the one stage key the owner's B0
-// ruling admits (docs/design/mixed-credentials.md §11): the review stage's
+// ruling admits (docs/mixed-credentials/spec.md §11): the review stage's
 // Claude account, whose allow_data_to admits this repository. The coder's own
 // stages are untouched, so they keep the provider key the gateway holds.
 const repoRootMixedLC = repoRootAPIKeyLC + `stages:
@@ -2669,7 +2669,7 @@ var repoRootFixtures = map[string]repoRootFixture{
 	// repo_root_mixed is B2's fixture: an api-key spec whose local config
 	// names the one stage account the owner's B0 ruling admits, so a real plan
 	// holds the job variant that account gets, the token it mounts and the
-	// accessor beside them (docs/design/mixed-credentials.md §11). No other
+	// accessor beside them (docs/mixed-credentials/spec.md §11). No other
 	// fixture has an api-key job at all.
 	"repo_root_mixed": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC},
 	// repo_root_mixed_served is the mixed fixture SWITCHED: the same api-key
@@ -2685,7 +2685,7 @@ var repoRootFixtures = map[string]repoRootFixture{
 	// two Claude mounts and their accessors go, and the stage account's own
 	// job keeps the account's token and the accessor beside it, because that
 	// token is the stage's and its stages go straight to Anthropic (B0's
-	// ruling, docs/design/mixed-credentials.md §11; C1.20).
+	// ruling, docs/mixed-credentials/spec.md §11; C1.20).
 	"repo_root_mixed_served": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC + credentialsServiceLCBlock, credentialsService: true, credentialsReady: true, mode: config.BudgetEnforce},
 }
 
@@ -2823,7 +2823,7 @@ func TestRepoAddressesMatchTheCredentialsGolden(t *testing.T) {
 // the variant whose name carries the account's own token — is the only one
 // that reaches a Claude credential. That is the whole shape of the ruling:
 // the run's review and adversarial stages are on the account, and no stage
-// of the coder's own job is (docs/design/mixed-credentials.md §11).
+// of the coder's own job is (docs/mixed-credentials/spec.md §11).
 func TestRepoAddressesMatchTheMixedGolden(t *testing.T) {
 	const (
 		account = "bmb"
@@ -2906,7 +2906,7 @@ func TestRepoAddressesMatchTheMixedServedGolden(t *testing.T) {
 
 // TestSwitchedMixedRepositoryKeepsItsStageAccountToken is B2.7's flip on the
 // one repository that mixes credentials (B0's ruling of 2026-11-04,
-// docs/design/mixed-credentials.md §11): switched ON, an api-key repository
+// docs/mixed-credentials/spec.md §11): switched ON, an api-key repository
 // with a stage account gives up the two Claude mounts of its CODER job, and
 // the account's own variant job gives up its Anthropic key while keeping the
 // account's OAuth token.
@@ -3797,7 +3797,7 @@ func TestFilledServiceServedAuthsKeepsProviderKeys(t *testing.T) {
 // producing are admitted, one per variant, INCLUDING the named account's (a rule
 // keyed on the names of the two default mounts would leave that repository's
 // update owed a flag for half of its flip — design
-// docs/design/named-oauth-tokens.md §4 T3). A name the job still mounts is not,
+// docs/named-oauth-tokens/spec.md §4 T3). A name the job still mounts is not,
 // and neither is the name the fetched class's drop took instead (that accessor
 // is the OTHER flip's delete, and its own list admits it): the two lists
 // partition the plan's deletes rather than overlapping. A variant the
@@ -3834,7 +3834,7 @@ func TestModelAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
 	}
 	for _, variant := range []string{"web", "web_bmb"} {
 		if _, deployed := oauth.Workflows[variant]; !deployed {
-			t.Fatalf("the fixture deploys no %s variant, so the named account's row below would be about a job this root never makes (design docs/design/named-oauth-tokens.md §4 T3)", variant)
+			t.Fatalf("the fixture deploys no %s variant, so the named account's row below would be about a job this root never makes (design docs/named-oauth-tokens/spec.md §4 T3)", variant)
 		}
 	}
 	var gone []string
@@ -3887,7 +3887,7 @@ func TestModelAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
 		}
 	}
 	// The mixed stage account is the arm's one exception (B0,
-	// docs/design/mixed-credentials.md §11): its own job keeps the account's
+	// docs/mixed-credentials/spec.md §11): its own job keeps the account's
 	// token — and its accessor, which sa.tf exempts by the same field — so a
 	// plan deleting that address is not the flip's and stops the run.
 	mixed := repoRootServed(t, `agent: { auth: api-key }`, repoRootMixedLC, config.BudgetEnforce)

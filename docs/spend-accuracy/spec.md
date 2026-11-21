@@ -25,10 +25,10 @@ This matters for three reasons:
 - Rates come from `internal/pricing/catalog/catalog.json` through `pricing.ApplyCatalog`. A `model_prices` entry
   replaces the catalog row (`internal/pricing/overrides.go`).
 - The default `price_policy` is `cheapest`: each dimension takes its minimum across endpoints, and the minimums can
-  come from different providers. `docs/multi-model.md` §2 and `docs/design/provider-price-catalog.md` (D6) already
+  come from different providers. `docs/multi-model.md` §2 and `docs/provider-price-catalog/spec.md` (D6) already
   say this undercharges.
 - OpenRouter's own reported cost is parsed (`usageAcc.reported`), stored as `Cost.ReportedUSD`
-  (`internal/runstore/cost.go`, `reported_usd`) and **never used for the charge**. `docs/design/m10-multi-model.md`
+  (`internal/runstore/cost.go`, `reported_usd`) and **never used for the charge**. `docs/m10-multi-model/spec.md`
   ("Real vs notional dollars") defers adopting it to "Phase 3 … where proven". The comparison it promised in
   `diagnose` does not show up anywhere in reporting.
 - `fugaro report --by model` shows 0 tokens for gateway models. The budget path writes only micros for them; token

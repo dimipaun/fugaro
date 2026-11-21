@@ -27,7 +27,7 @@ import (
 const (
 	licenceKeyV2Plan  = "docs/licence-key-v2/implementation-plan.md"
 	licenceKeyV2Recon = "docs/licence-key-v2/reconciliation.md"
-	keySigningDesign  = "docs/design/key-signing-service.md"
+	keySigningDesign  = "docs/key-signing-service/spec.md"
 )
 
 // licenceKeyV2Amendment is the dated line the amendment opens with in each

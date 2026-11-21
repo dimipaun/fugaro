@@ -36,7 +36,7 @@ import (
 )
 
 // The `fugaro project` command group: the project's policy, its allow-list
-// and what is enrolled (docs/plans/2026-10-14-project-centric.md, phase 1
+// and what is enrolled (docs/project-centric/implementation-plan.md, phase 1
 // task 1.6). It is not internal/cli/project.go, which is project *selection*
 // (checkoutProject); the group gets its own command files, of which this is
 // the first (tasks 4.1 and 6.1 add project_enroll.go and project_export.go

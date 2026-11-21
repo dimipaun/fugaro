@@ -449,7 +449,7 @@ func signingRunner(f *fakeSigner) Runner {
 // answers is a key K1.1's verifier accepts, read at the instant it was minted,
 // carrying the claim set the tool was given, field for field -- so an interim
 // hand-minted key and the service's are one format to every verifier (design
-// docs/design/key-signing-service.md §1).
+// docs/key-signing-service/spec.md §1).
 func TestMintedKeyVerifies(t *testing.T) {
 	claims := teamClaims()
 	key, signer, ring := minted(t, claims)

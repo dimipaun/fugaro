@@ -24,7 +24,7 @@ import (
 	"testing"
 )
 
-const rolesDesignPath = "docs/design/roles.md"
+const rolesDesignPath = "docs/roles/spec.md"
 
 // rolesDecisionRow is one row of the "Decisions for the owner" table: a row
 // whose first cell is a decision number. The design holds a block of numbers
@@ -59,7 +59,7 @@ var rolesSeatFigure = regexp.MustCompile(`(?i)(\b[0-9]+\s+(per\s+)?seats?\b)|(\b
 // rolesDollarFigure is a currency amount.
 var rolesDollarFigure = regexp.MustCompile(`\$[0-9]`)
 
-// TestDocsRolesDesign: `docs/design/roles.md` is the S5.1/E0 design. It has to
+// TestDocsRolesDesign: `docs/roles/spec.md` is the S5.1/E0 design. It has to
 // record the owner's answer to each decision row and nothing it decided itself;
 // it has to mark the two rows the roles-scopes work's D1580 answer supersedes,
 // with D446's narrowing beside them (F26); it has to name the rulings it is

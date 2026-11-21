@@ -19,7 +19,7 @@ import (
 // repository a project enrolls.
 //
 // It is a machine-local convenience for the desktop console's first run
-// (docs/design/desktop-console.md D13 and §3.4 rule 7): `fugaro config list
+// (docs/desktop-console/spec.md D13 and §3.4 rule 7): `fugaro config list
 // --json` reads it and the console, which never reads ~/.config/fugaro
 // itself, gets each installation's repositories and where they are checked
 // out from that command's document. A path is therefore local state and
@@ -175,7 +175,7 @@ func (c *Config) Enrolls(provider, repo string) bool {
 // lookup a launch resolves repos.<r>.base_branch through: `fugaro run`'s own
 // cloudEnv.localRepo is this function, and `fugaro config list --json` reads
 // its base_branch column through it as well, because the branch that document
-// shows has to be the branch the run is cut from (docs/design/desktop-console.md
+// shows has to be the branch the run is cut from (docs/desktop-console/spec.md
 // §5.1 rule 11).
 //
 // Two entries can name one repository — "acme/app" and "acme/app.git", or two
