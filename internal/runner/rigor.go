@@ -90,10 +90,11 @@ func (r *run) recordRigor(at string, paths []string) {
 	req := rigor.Request{Level: r.spec.Rigor, Paths: paths, Reached: before}
 	res := rigor.Resolve(r.rigorCfg, req)
 	// The floor the run is held to is read off the level it is at, so a request
-	// that takes it off the axis (hotfix) has to leave the level the layers
-	// resolved in view: that level's floor still holds (LayersRigor, D8, LF5).
-	// It is folded the way the record's own level is, so a later moment's paths
-	// never take it down.
+	// that took the run below the layers has to leave the level they resolved
+	// in view: that level's floor still holds (LayersRigor, D8, LF5). A request
+	// for hotfix leaves none, since a hotfix run reads its own floor row alone
+	// (the owner's ruling of 2026-11-20). The value is folded the way the
+	// record's own level is, so a later moment's paths never take it down.
 	if layers := rigor.LayersRigor(r.rigorCfg, req, r.layersRigor); layers != "" {
 		r.layersRigor = layers
 	}

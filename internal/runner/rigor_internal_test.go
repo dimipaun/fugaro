@@ -310,17 +310,18 @@ func TestBootstrapRigorForAFollowUpReadsNoBranch(t *testing.T) {
 	}
 }
 
-// TestBootstrapRigorTakesTheRunsOwnRequestOnlyUpward: the run's own request —
-// `fugaro run --mode`, carried in the task (T1.6) — is D6's raise-only input.
-// Above the layers' answer it decides and the block says so; below it, it
-// decides nothing and the layer that already set the mode keeps its name, which
-// is the fail-closed direction a launcher must not be able to outvote.
+// TestBootstrapRigorTakesTheRunsOwnRequest: the run's own request —
+// `fugaro run --mode`, carried in the task (T1.6) — is the narrowest rank of
+// the order (LD3), so it decides whether it asks for more or for less than the
+// layers set, and the block names the request as the layer that did. Asking
+// for the mode the layers already resolved leaves their own name standing,
+// since that is the narrower reason for the same answer.
 //
-// Hotfix is the one mode the request takes whole (rigor.Rigor.PerRun): the owner
-// ruled on 2026-11-13 that `--mode hotfix` needs no opt-in
-// (docs/rigor-command/implementation-plan.md R7), so it decides even from below
-// every on-axis mode, and the block names the request as the layer that did.
-func TestBootstrapRigorTakesTheRunsOwnRequestOnlyUpward(t *testing.T) {
+// Hotfix is the mode the request takes whole rather than by rank
+// (rigor.Rigor.PerRun): the owner ruled on 2026-11-13 that `--mode hotfix`
+// needs no opt-in (docs/rigor-command/implementation-plan.md R7), so it decides
+// even from below every on-axis mode.
+func TestBootstrapRigorTakesTheRunsOwnRequest(t *testing.T) {
 	base := `version: 1
 project: aurora
 git: { provider: github }
@@ -336,7 +337,8 @@ rigor:
 		from rigor.Layer
 	}{
 		{"a request above the repository's default", "critical", rigor.Critical, rigor.FromRequest},
-		{"a request below it", "poc", rigor.Startup, rigor.FromRepo},
+		{"a request below it", "poc", rigor.POC, rigor.FromRequest},
+		{"a request for the mode the layers set", "startup", rigor.Startup, rigor.FromRepo},
 		{"hotfix, which the request takes whole", "hotfix", rigor.Hotfix, rigor.FromRequest},
 		{"no request at all", "", rigor.Startup, rigor.FromRepo},
 	} {
@@ -356,15 +358,15 @@ rigor:
 	}
 }
 
-// TestRigorFloorHoldsWhenTheRequestTakesTheRunToHotfix: a request may raise a
-// mode and never lower a floor (D8, LF5). The owner's floor is read off the
-// mode the run is at, so a run the request takes off the axis to hotfix would
-// read hotfix's row — usually empty — and leave the row the layers resolved
-// behind: one flag dropping a floor the owner set, with nothing in the run
-// saying the floor was read against another mode. The mode the layers resolved
-// is kept beside it (layersRigor, LayersMode) and both rows hold, which is
-// what ReviewFloorFor reads.
-func TestRigorFloorHoldsWhenTheRequestTakesTheRunToHotfix(t *testing.T) {
+// TestRigorFloorHoldsTheRowAHotfixRequestReads: a request lowers a mode and
+// never a floor (D8, LF5), and the owner's ruling of 2026-11-20 says which row
+// that leaves a run the flag took off the axis. The floor is read off the mode
+// the run is at, and the mode the layers resolved is kept beside it only when
+// the request took the run *below* them (layersRigor, rigor.LayersRigor): a
+// hotfix run reads hotfix's own row alone, so a floor the owner wrote for pro
+// does not reach it, and the lever for a floored hotfix run is the row written
+// for hotfix.
+func TestRigorFloorHoldsTheRowAHotfixRequestReads(t *testing.T) {
 	base := `version: 1
 project: aurora
 git: { provider: github }
@@ -377,8 +379,8 @@ rigor: { default: pro }
 	if got := r.reachedRigor(); got != rigor.Hotfix {
 		t.Fatalf("the run resolved to %q; want hotfix from the request", got)
 	}
-	if got := r.layersRigor; got != rigor.Pro {
-		t.Fatalf("the mode the layers resolved beside the request = %q; want pro, the repository's own mode", got)
+	if got := r.layersRigor; got != "" {
+		t.Fatalf("the mode the layers resolved beside the request = %q; want none: a hotfix run reads its own floor row alone", got)
 	}
 	r.policy = policy.Effective{Layer: policy.Layer{
 		ReviewFloor: map[rigor.Rigor][]policy.Level{rigor.Pro: {policy.LevelL2, policy.LevelL3}},
@@ -388,31 +390,56 @@ rigor: { default: pro }
 	if err := r.resolveLevels(); err != nil {
 		t.Fatalf("resolving the levels of a hotfix run under a floor of l2,l3 on pro: %v", err)
 	}
+	if r.levels.L3.On {
+		t.Error("l3 is on for a hotfix run under the owner's floor of l2,l3 on pro; want it off: a floor written for pro does not hold a hotfix run (the owner's ruling of 2026-11-20)")
+	}
+
+	// The owner's lever: the same run, with the floor written for hotfix.
+	r.policy = policy.Effective{Layer: policy.Layer{
+		ReviewFloor: map[rigor.Rigor][]policy.Level{rigor.Hotfix: {policy.LevelL2, policy.LevelL3}},
+	}}
+	if err := r.resolveLevels(); err != nil {
+		t.Fatalf("resolving the levels of a hotfix run under a floor of l2,l3 on hotfix: %v", err)
+	}
 	if !r.levels.L3.On {
-		t.Error("l3 is off for a hotfix run under the owner's floor of l2,l3 on pro; want it on: a request raises a mode and never lowers a floor (D8, LF5)")
+		t.Error("l3 is off for a hotfix run under a floor of l2,l3 written for hotfix; want it on: hotfix's own row is the owner's lever")
 	}
 }
 
-// TestLayersRigorIsKeptOnlyForARequestThatTakesTheRunWhole is the other half:
-// a request for an on-axis mode leaves the mode the layers resolved as the
-// mode the run is at — it may only raise it — so there is no second row to
-// read and layersRigor stays empty, which is what makes ReviewFloorFor's
-// answer the one ReviewFloor would have given.
-func TestLayersRigorIsKeptOnlyForARequestThatTakesTheRunWhole(t *testing.T) {
+// TestLayersRigorIsKeptOnlyForARequestBelowThem is the other half: the mode
+// the layers resolved is kept beside the request exactly when the request took
+// the run below them, which is where a floor could otherwise be left behind. A
+// request that raised the run, or that asked for the mode the layers set,
+// leaves that mode in force and layersRigor empty, which is what makes
+// ReviewFloorFor's answer the one ReviewFloor would have given.
+func TestLayersRigorIsKeptOnlyForARequestBelowThem(t *testing.T) {
 	base := `version: 1
 project: aurora
 git: { provider: github }
 rigor: { default: pro }
 ` + workflowsYAML
-	r, _ := rigorRun(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base}, nil, &task.Spec{Rigor: rigor.Critical})
+	for _, tc := range []struct {
+		name   string
+		req    rigor.Rigor
+		want   rigor.Rigor
+		layers rigor.Rigor
+	}{
+		{"a request below the layers", rigor.POC, rigor.POC, rigor.Pro},
+		{"a request for the mode they set", rigor.Pro, rigor.Pro, ""},
+		{"a request above them", rigor.Critical, rigor.Critical, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := rigorRun(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base}, nil, &task.Spec{Rigor: tc.req})
 
-	r.bootstrapRigor(context.Background())
+			r.bootstrapRigor(context.Background())
 
-	if got := r.reachedRigor(); got != rigor.Critical {
-		t.Fatalf("the run resolved to %q; want critical, the request raising the repository's pro", got)
-	}
-	if got := r.layersRigor; got != "" {
-		t.Errorf("the mode kept beside the request = %q; want none: a request for an on-axis mode raises the run and leaves the mode the layers resolved in force", got)
+			if got := r.reachedRigor(); got != tc.want {
+				t.Fatalf("the run resolved to %q; want %q from the request", got, tc.want)
+			}
+			if got := r.layersRigor; got != tc.layers {
+				t.Errorf("the mode kept beside the request = %q; want %q", got, tc.layers)
+			}
+		})
 	}
 }
 
