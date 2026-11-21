@@ -374,4 +374,12 @@ excluded:
     reason: "Not a spec: no plan, and nothing to build."
   - spec: ci-affected-tests
     reason: "Internal: which tests the project's own build runs on a change, not something a user of Fugaro runs."
+  - spec: batch-run-identity
+    reason: "Plumbing for the Cloud Batch backend, which is not offered to a user yet: no capability to read until it is."
+  - spec: launcher-does-not-mint
+    reason: "Internal hardening of how a run's identity is issued, with nothing a user configures or sees."
+  - spec: location-preference
+    reason: "Not mapped yet: its first user-facing step, choosing where an installation's data lives, has not shipped."
+  - spec: credentials-belong-to-models
+    reason: "Not mapped yet: a plan with no task merged, so no capability to read; the model access feature takes it when the first step ships."
 retired: []
