@@ -5417,6 +5417,36 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 			req.SessionID, req.Resume = agent.NewSessionID(), false
 			continue
 		}
+		var un *unreachableError
+		if errors.As(err, &un) {
+			// The credentials service could not be reached at all (D2983):
+			// the stage in flight ended -- it did not fail -- and the run waits
+			// for the service until the instant the gateway's own bound names,
+			// then resumes the stage's session. The attempt that ended spent
+			// what it spent, for the reason the exhausted branch below counts
+			// its own (countTokens, halt.go).
+			//
+			// No cap of its own, unlike the exhausted branch: the bound is the
+			// gateway's and it halts the run, naming the service, on the first
+			// call that meets the spent bound -- so the wait below ends at the
+			// bound, and the call the resumed stage makes either reaches the
+			// service or ends the run. maxCredentialResumes is not it: an
+			// outage is not a credential the run could switch to, and a run
+			// stopped with a credential's reason would send its operator to
+			// 'fugaro accounts ls'.
+			r.countTokens(res)
+			session := res.SessionID
+			if !agent.ValidSessionID(session) {
+				session = req.SessionID
+			}
+			if werr := r.waitForService(ctx, name, un.Service, un.Until); werr != nil {
+				return res, false, werr
+			}
+			r.d.Log.Info("the wait for the credentials service is over; resuming the stage",
+				"stage", name, "service", un.Service, "session", session)
+			req.SessionID, req.Resume = session, true
+			continue
+		}
 		var ex *exhaustedError
 		if !errors.As(err, &ex) {
 			return res, ok, err

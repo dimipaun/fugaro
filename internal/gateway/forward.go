@@ -807,11 +807,13 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	}, p.model, rt.provider != nil && !rt.provider.Served)
 	if err != nil {
 		if s.serviceCall(rt) && s.serviceUnreachable(w, s.base, r.Context()) {
-			// C1.15 (service.go), D143: an unreachable credentials service
-			// halts the run -- it never falls back to a credential of the
-			// job's own, which this upstream has none of. Nothing reached
-			// the upstream: nothing to charge. Anything did: the service may
-			// have been generating, so the whole reservation.
+			// C1.15 (service.go), D2983: the call could not reach the
+			// credentials service. The run waits for it -- the answer written
+			// above ends the stage in flight -- and halts only once the bound
+			// is spent, and it never falls back to a credential of the job's
+			// own, which this upstream has none of. Nothing reached the
+			// upstream: nothing to charge. An attempt that may have reached
+			// the service may have been generating, so the whole reservation.
 			if !sent.Load() {
 				return zeroOutcome(p.model, false), lost
 			}
@@ -1011,8 +1013,11 @@ var upstreamRetryDelay = 250 * time.Millisecond
 //
 // A call a service upstream answers (C1.15, KindService) is not retried here:
 // the service retries its own calls across the credentials it holds, inside
-// the one answer it gives this gateway, and D143 makes an unreachable service
-// a halt rather than a call this gateway sends again. That is the service's
+// the one answer it gives this gateway, and a service that cannot be reached at
+// all is the run's wait rather than a call this gateway sends again (D2983,
+// service.go's serviceUnreachable: the stage in flight ends, the runner waits
+// for the bound and resumes it, and a call that meets the spent bound halts the
+// run). That is the service's
 // calls and not the upstream's kind: a route the job holds the key for sits
 // beside the same service upstream (R6, D1634), such a call is the provider's
 // own and no one else's, and it is retried here exactly as it is beside the
@@ -1941,10 +1946,12 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	resp, err := s.client.Do(up)
 	if err != nil {
 		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
-			// C1.15 (service.go), D143: as a Messages call's, an unreachable
-			// service halts the run rather than being retried or fallen back
-			// from. A count holds no reservation, so there is nothing to
-			// settle either way.
+			// C1.15 (service.go), D2983: as a Messages call's, a count that
+			// could not reach the service is what ends the stage in flight and
+			// starts the run's wait, and the halt comes when the bound is
+			// spent. It is never retried here and never fallen back from. A
+			// count holds no reservation, so there is nothing to settle either
+			// way.
 			return
 		}
 		if r.Context().Err() == nil {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -83,6 +84,58 @@ func (r *run) noteExhausted(e credsvc.ExhaustedUntil) {
 	stop(&exhaustedError{Until: e.ResetAt.UTC()})
 }
 
+// unreachableError ends the stage that was running when a call could not reach
+// the credentials service at all (D2983). Like an exhausted answer it is not a
+// failure: stage waits for Until and resumes the stage's session.
+//
+// What bounds it is not this file. An exhausted answer's wait is the runner's
+// to bound (maxCredentialResumes) because the service's answer can name an
+// instant that has already passed; an unreachable one cannot loop the same way,
+// because the gateway answers a call that meets the spent bound by halting the
+// run, naming the service: the wait below ends at Until, the resumed stage
+// makes its call, and that call either reaches the service or ends the run
+// (internal/gateway's serviceUnreachable, serviceUnreachableBound).
+type unreachableError struct {
+	// Until is when the wait ends: the bound, measured by the gateway from
+	// the first call that could not reach the service, in UTC.
+	Until time.Time
+	// Service is which credentials service could not be reached, as the
+	// gateway names it ("project's" or "workspace's"): the run's log line and
+	// the halt's detail name the same one.
+	Service string
+}
+
+func (e *unreachableError) Error() string {
+	return "the " + e.Service + " could not be reached before " + e.Until.UTC().Format(time.RFC3339)
+}
+
+// noteUnreachable is where a call that could not reach the credentials service
+// arrives (D2983), the way noteExhausted is where the service's typed answer
+// arrives: C1.15's upstream hands the gateway's Unreachable answer to it, and a
+// test drives it through RunHandle.NoteUnreachable. It ends the stage in
+// flight, which is the whole of the runner's reaction; stage waits for the
+// instant the answer names and resumes the stage's session, which is the retry.
+//
+// The two guards are noteExhausted's, for its reasons: a zero instant is a
+// caller's bug rather than a reason to end a stage, and an answer that arrives
+// with no stage in flight is dropped rather than kept — the stage that meets
+// the same outage next gets its own answer, and the gateway's bound is measured
+// from the outage and not from the answer.
+func (r *run) noteUnreachable(u gateway.Unreachable) {
+	if u.RetryAt.IsZero() {
+		r.d.Log.Warn("a call could not reach the credentials service with no instant to wait for; ignoring it")
+		return
+	}
+	r.mu.Lock()
+	stop := r.haltStage
+	r.mu.Unlock()
+	if stop == nil {
+		r.d.Log.Warn("a call could not reach the credentials service between stages; ignoring it")
+		return
+	}
+	stop(&unreachableError{Until: u.RetryAt.UTC(), Service: u.Service})
+}
+
 // waitingUntil records on the run's registry entry the instant it expects to
 // resume at, or clears it (a zero instant), for the dashboard's "waiting for
 // a credential, expected resume T" view (C1.3, D152). Nothing here fails the
@@ -147,6 +200,50 @@ func (r *run) waitForCredential(ctx context.Context, name string, until time.Tim
 	// the sleep nor the run's context hears a halt: a kill switch, a cap or
 	// the backend's grace recorded while the run idles must end the wait at
 	// once, not when the reset arrives.
+	done, stopSleep := credsSleep(ctx, d)
+	defer stopSleep()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-r.haltCh():
+		return &HaltError{*r.haltValue()}
+	}
+}
+
+// waitForService waits out the instant an unreachable answer named and reports
+// the error to end the run with, exactly as waitForCredential does for a reset:
+// nil once the wait is over and the stage may be resumed, the run's own context
+// error when the execution was cancelled or stopped, and a HaltError when
+// something halted the run while it waited.
+//
+// Nothing is written to the run's registry entry for it (setWaitingUntil):
+// nothing here is waiting for a credential, and the dashboard's "waiting for a
+// credential, expected resume T" would say the run was short of one when the
+// service it waits for is a service that is down.
+//
+// The one halt of its own is the job's clock, the same one waitForCredential
+// reads: a wait that would end after this job must already be over resumes
+// nothing, and idling into the job's own end would spend the timeout that the
+// bound exists to be shorter than. It is the halt a service that could not be
+// reached gets, the same reason and the same words the gateway's own halt uses
+// (ReasonBudgetUnavailable, stateDetailUnreachable): the run names the service
+// either way.
+func (r *run) waitForService(ctx context.Context, name, service string, until time.Time) error {
+	if final := r.budget.finalizeAt(); !until.Before(final) {
+		h := runstore.Halt{Reason: runstore.HaltBudgetUnavailable, Scope: "run", At: r.d.Now().UTC(),
+			Detail: fmt.Sprintf("the %s could not be reached: this run waits for it until %s, which is after this job's own timeout %s, so nothing would be resumed inside the job (check the service in that project: its revision, its invoker grants and its own log)",
+				service, until.UTC().Format(time.RFC3339), final.UTC().Format(time.RFC3339))}
+		r.haltNow(h)
+		return &HaltError{h}
+	}
+	if h := r.haltValue(); h != nil {
+		return &HaltError{*h}
+	}
+	d := until.Sub(r.d.Now())
+	r.d.Log.Info("waiting for the credentials service", "stage", name, "service", service,
+		"resume_at", until.UTC().Format(time.RFC3339), "wait", d.String())
 	done, stopSleep := credsSleep(ctx, d)
 	defer stopSleep()
 	select {
