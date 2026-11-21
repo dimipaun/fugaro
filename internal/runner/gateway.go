@@ -812,6 +812,12 @@ func (r *run) routeGateway(ctx context.Context, o *gateway.Options) error {
 	}
 	o.Workspace = ws
 	o.ModelFromWorkspace = route.Holder(creds.KindModel) == creds.HolderWorkspace
+	// And the beat that keeps the service this upstream calls warm (WS13, R10,
+	// D2985). It is started here because here is where the run learns it has a
+	// kind served there, and it is given the upstream rather than the address,
+	// so the beat cannot call an address or present an identity the run's own
+	// calls do not (contract-wire.md's "on Holder and not on Address").
+	r.startWorkspaceBeat(ctx, ws)
 	return nil
 }
 
