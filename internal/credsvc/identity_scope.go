@@ -190,13 +190,23 @@ func (sc launchScope) Check(ctx context.Context, caller IdentityCaller, ask iden
 	// that cannot be held whole refuses everybody, and a service account that
 	// skipped the read would be served through a roster the installation cannot
 	// read.
-	member := ""
+	member, judged := "", false
 	if caller.Class == identitywire.ClassPerson {
 		member, err = accesslib.Member(caller.Address)
 		if err != nil {
 			return fmt.Errorf("%w: the caller's own address cannot be a grant's member, so no record can place it: %v", ErrNoLaunchScope, err)
 		}
-		if placed && !accesslib.Allowed(in, member, accesslib.ActionLaunch, canonical) {
+		// judged is the gate's own `placed` for a person, and false for a
+		// service account however full the roster is: the resolver is asked
+		// about a member, a service account's address is not one a grant can
+		// carry, and a service account judged with the empty member would be
+		// refused every repository a context list names - while the gate
+		// (accessRunJudge) answers the same credential placed=false and lets
+		// the launch through (D3137). The allow-list below still judges it,
+		// which is the gate's own arm for it (accessRunJudge returns before
+		// requireAccess, and allowListRefusal is asked after).
+		judged = placed
+		if judged && !accesslib.Allowed(in, member, accesslib.ActionLaunch, canonical) {
 			// Which sentence a refusal carries is the gate's own choice
 			// (internal/cli's accessRunRefusal): a repository the published
 			// policy does not admit is answered with the policy's sentence,
@@ -241,7 +251,7 @@ func (sc launchScope) Check(ctx context.Context, caller IdentityCaller, ask iden
 		if err != nil {
 			return fmt.Errorf("%w: the context repository %q cannot be named in the project's allow-list: %v", ErrNoLaunchScope, safetext.Field(repo), err)
 		}
-		if placed && !accesslib.Allowed(in, member, accesslib.ActionViewRepo, context) {
+		if judged && !accesslib.Allowed(in, member, accesslib.ActionViewRepo, context) {
 			if !projectpolicy.AdmitRepo(allow, context) {
 				return notAdmitted(allow, context)
 			}
