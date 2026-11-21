@@ -346,6 +346,40 @@ func TestPairRoutesRefuseServiceAccounts(t *testing.T) {
 	}
 }
 
+// TestPairRoutesTakeNoRunIdentity: the two routes' door, and the sibling of
+// TestGrantTakesNoRunIdentity (slip_test.go) one class along. A pairing and a
+// device token are asked for by a PERSON, before any run of theirs exists, so a
+// caller presenting a run identity — or naming a job — is a call of a shape
+// these routes do not have. It is refused before the body is read and before a
+// caller is verified, so nothing is minted by it and no audit line is written.
+// Both headers on BOTH routes, because the shape is each route's own and a
+// half-guarded pair would leave one of them a way in for a run.
+func TestPairRoutesTakeNoRunIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		extra func(*http.Request)
+	}{
+		{"a run identity", func(r *http.Request) { r.Header.Set(HeaderRunIdentity, "a-run-identity-token") }},
+		{"a job name", func(r *http.Request) { r.Header.Set(HeaderRunJob, "fugaro-a-job") }},
+	} {
+		for _, path := range []string{identitywire.PairingPath, identitywire.DevicePath} {
+			t.Run(tc.name+" at "+path, func(t *testing.T) {
+				p := newPairRoutes(t, testLauncherAccount)
+				rec, answer := p.pairCall(t, path, "{}", p.personBearer(), tc.extra)
+				if rec.Code != StatusUnverified {
+					t.Fatalf("a call presenting %s is answered %s, want %d", tc.name, answerSummary(rec), StatusUnverified)
+				}
+				if e := refusal(t, rec.Code, answer); e.Error != ErrorUnverifiedRunIdentity {
+					t.Errorf("the refusal is %q, want %q: it is the shape of the call and not the caller's class", e.Error, ErrorUnverifiedRunIdentity)
+				}
+				if got := p.logs.String(); strings.Contains(got, "token was issued") {
+					t.Fatalf("a refused call minted a token: %s", got)
+				}
+			})
+		}
+	}
+}
+
 // TestPairRoutesAnswerNotServedWithNoIssuer is the route's own half of R7: an
 // installation whose issuer is not configured is answered the contract's "not
 // served" — the code the CLI bridges on and signs a run's identity locally
