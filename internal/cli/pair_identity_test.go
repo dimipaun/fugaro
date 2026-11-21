@@ -300,9 +300,16 @@ func TestPairRefusalNamesTheFix(t *testing.T) {
 		// minter refuses every signJwt with IAM's own 403, which is the bridge's
 		// own failure.
 		minter bool
-		code   string
-		exit   int
-		wants  []string
+		// seed is the uid the phone's request node is written at, for a row whose
+		// pairing ask succeeds: the command reads the phone's half at the uid the
+		// service answered with, so a row that means to reach its wait names that
+		// uid here. Empty means the fixture's own draw, which is the uid the
+		// bridged local mint produces and which the rows that refuse before the
+		// wait never read.
+		seed  string
+		code  string
+		exit  int
+		wants []string
 	}{
 		{
 			name:    "the service does not admit this caller",
@@ -326,6 +333,33 @@ func TestPairRefusalNamesTheFix(t *testing.T) {
 			code:  pairRefusedIssuerAnswer,
 			exit:  ExitRemoteError,
 			wants: []string{"fugaro update", "pairing id"},
+		},
+		{
+			// The pairing ask is answered, so the run reaches the phone's key and
+			// the device ask: what must not survive it is the id, which becomes the
+			// device node's key (db.Patch(rules.PathDevices), where a '/' inside a
+			// key is another path of the write) and the keychain item's name.
+			name: "the service answers a device id this command will not write under",
+			answers: map[string]pairAnswer{
+				identitywire.PairingPath: {Body: `{"token":"` + pairIssuerToken + `","pairing":"` + pairServicePairingUID + `","expires_at":"` + pairServiceExpiry.Format(time.RFC3339) + `"}`},
+				identitywire.DevicePath:  {Body: `{"token":"` + pairDeviceToken + `","device":"m~abc/role","expires_at":"` + pairServiceExpiry.Format(time.RFC3339) + `"}`},
+			},
+			seed:  pairServicePairingUID,
+			code:  pairRefusedIssuerAnswer,
+			exit:  ExitRemoteError,
+			wants: []string{"fugaro update", "device id"},
+		},
+		{
+			// The token half of the same check: a QR code carries this straight to
+			// a phone, which can only answer "invalid token", so the ask's other
+			// answer field is refused here rather than there.
+			name: "the service answers a token that is not a pairing token",
+			answers: map[string]pairAnswer{identitywire.PairingPath: {
+				Body: `{"token":"not-a-firebase-custom-token","pairing":"` + pairServicePairingUID + `","expires_at":"` + pairServiceExpiry.Format(time.RFC3339) + `"}`,
+			}},
+			code:  pairRefusedIssuerAnswer,
+			exit:  ExitRemoteError,
+			wants: []string{"fugaro update", "not a Firebase custom token"},
 		},
 		{
 			name:   "the local mint has no minter role",
@@ -360,6 +394,9 @@ func TestPairRefusalNamesTheFix(t *testing.T) {
 			}
 			t.Cleanup(func() { pairIdentity = prevIdentity })
 			uid := pairFixedRand(t)
+			if tc.seed != "" {
+				uid = tc.seed
+			}
 			f := newPairFixture(t, pairMe, edits...)
 			if tc.minter {
 				f.iam.Refuse(403, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "Permission 'iam.serviceAccounts.signJwt' denied")
