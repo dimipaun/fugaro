@@ -4720,7 +4720,7 @@ func TestProjectPolicyPublishKeepsTheMobileBlock(t *testing.T) {
 	if !p.MobileStrictNewDevice() || !p.MobileBiometricOnCostly() {
 		t.Errorf("MobileStrictNewDevice() = %v and MobileBiometricOnCostly() = %v, want both true", p.MobileStrictNewDevice(), p.MobileBiometricOnCostly())
 	}
-	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Mode{rigor.Critical}) {
+	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Critical}) {
 		t.Errorf("MobileCostlyModes() = %v, want [critical]", got)
 	}
 	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"mobile"`) {

@@ -45,7 +45,7 @@ func TestProjectPolicyMobileDefaults(t *testing.T) {
 	if m.StrictNewDevice == nil || *m.StrictNewDevice {
 		t.Errorf("DefaultMobile().StrictNewDevice = %v, want a written false (D2784: restore is silent unless the project asks otherwise)", m.StrictNewDevice)
 	}
-	if want := []rigor.Mode{rigor.Pro, rigor.Critical}; !slices.Equal(m.CostlyModes, want) {
+	if want := []rigor.Rigor{rigor.Pro, rigor.Critical}; !slices.Equal(m.CostlyModes, want) {
 		t.Errorf("DefaultMobile().CostlyModes = %v, want %v (D2786)", m.CostlyModes, want)
 	}
 	if m.BiometricOnCostly == nil || *m.BiometricOnCostly {
@@ -98,7 +98,7 @@ func TestProjectPolicyMobileDefaultsRoundTrip(t *testing.T) {
 	if p.MobileStrictNewDevice() || p.MobileBiometricOnCostly() {
 		t.Errorf("the published default reads back strict=%v biometric=%v, want both false", p.MobileStrictNewDevice(), p.MobileBiometricOnCostly())
 	}
-	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Mode{rigor.Pro, rigor.Critical}) {
+	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Pro, rigor.Critical}) {
 		t.Errorf("MobileCostlyModes() = %v", got)
 	}
 }
@@ -172,7 +172,7 @@ func TestProjectPolicyMobileReadsTheSwitches(t *testing.T) {
 	if got := p.MobileAcceptedProviders(); !slices.Equal(got, []string{ProviderGoogle, ProviderMicrosoft}) {
 		t.Errorf("MobileAcceptedProviders() = %v, want the two the node names", got)
 	}
-	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Mode{rigor.Critical}) {
+	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Critical}) {
 		t.Errorf("MobileCostlyModes() = %v, want [critical]", got)
 	}
 	// The list a reader matches a name against is the node's own, never a copy
@@ -208,7 +208,7 @@ func TestProjectPolicyMobileAbsentMembersTakeTheDefaults(t *testing.T) {
 	if got := p.MobileMaxAuthAge(); got != 24*time.Hour {
 		t.Errorf("MobileMaxAuthAge() = %s, want 24h", got)
 	}
-	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Mode{rigor.Pro, rigor.Critical}) {
+	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Pro, rigor.Critical}) {
 		t.Errorf("MobileCostlyModes() = %v, want [pro critical]", got)
 	}
 	// A written false is a decision and never the absent member, which is what
@@ -334,7 +334,7 @@ func TestProjectPolicyMobileRefusesAnEntryItCannotResolve(t *testing.T) {
 	if err != nil || p == nil {
 		t.Fatalf("Decode = (%v, %v), want a project that names hotfix to be read", p, err)
 	}
-	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Mode{rigor.Hotfix}) {
+	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Hotfix}) {
 		t.Errorf("MobileCostlyModes() = %v, want [hotfix]", got)
 	}
 }

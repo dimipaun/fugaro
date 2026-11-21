@@ -60,7 +60,7 @@ const DefaultMobileMaxAuthAgeText = "24h"
 
 // DefaultMobileCostlyModes is the set of rigor modes whose start costs enough
 // to ask the person for a spoken read-back (D2786): `pro` and `critical`.
-func DefaultMobileCostlyModes() []rigor.Mode { return []rigor.Mode{rigor.Pro, rigor.Critical} }
+func DefaultMobileCostlyModes() []rigor.Rigor { return []rigor.Rigor{rigor.Pro, rigor.Critical} }
 
 // Mobile is the project policy's mobile block: the switches and the lists the
 // pairing route, the app's session and the phone's own decisions are read from.
@@ -137,7 +137,7 @@ type Mobile struct {
 	// read-back (D2786): the default is `pro` and `critical`. An entry is a
 	// mode internal/rigor knows, so a project may name `hotfix` too — the
 	// read-back is the project's cost decision and not this reader's.
-	CostlyModes []rigor.Mode `json:"costly_modes,omitempty"`
+	CostlyModes []rigor.Rigor `json:"costly_modes,omitempty"`
 
 	// BiometricOnCostly is whether a start in a costly mode additionally
 	// requires biometric re-authentication (D2786). Off is the default: the
@@ -264,7 +264,7 @@ func (p *Policy) MobileMaxAuthAge() time.Duration {
 
 // MobileCostlyModes are the rigor modes whose start asks for a spoken read-back
 // (D2786), `pro` and `critical` when the member or the block is absent.
-func (p *Policy) MobileCostlyModes() []rigor.Mode {
+func (p *Policy) MobileCostlyModes() []rigor.Rigor {
 	if p == nil || p.Mobile == nil || len(p.Mobile.CostlyModes) == 0 {
 		return DefaultMobileCostlyModes()
 	}
@@ -340,7 +340,7 @@ func validMobileProviders(providers []string) error {
 // named once. The comparison is rigor.Parse's — the one way a written value
 // becomes a Mode — so a near miss ("PRO", "prod") is refused here rather than
 // becoming a rule that silently never fires.
-func validMobileCostlyModes(modes []rigor.Mode) error {
+func validMobileCostlyModes(modes []rigor.Rigor) error {
 	for i, m := range modes {
 		at := fmt.Sprintf("mobile.costly_modes[%d]", i)
 		if _, ok := rigor.Parse(string(m)); !ok {
@@ -356,8 +356,8 @@ func validMobileCostlyModes(modes []rigor.Mode) error {
 
 // modeNames is the rigor vocabulary as one string, for the refusals above.
 func modeNames() []string {
-	out := make([]string, 0, len(rigor.Modes))
-	for _, m := range rigor.Modes {
+	out := make([]string, 0, len(rigor.Rigors))
+	for _, m := range rigor.Rigors {
 		out = append(out, string(m))
 	}
 	return out
