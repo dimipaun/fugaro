@@ -641,7 +641,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 258 items on one runner (86 scripts, three shards each) and under
+// The suite is 261 items on one runner (87 scripts, three shards each) and under
 // a minute each -- Check 632's three shards are the slowest, at about four
 // minutes each, because each case waits out the run and the update it is about;
 // a split that dropped one, ran one twice or fell back to
