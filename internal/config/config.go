@@ -732,14 +732,14 @@ type Agent struct {
 	// image on (internal/cli's reviewSpecSince).
 	ReviewAgainstTask *bool `yaml:"review_against_task,omitempty" json:"ReviewAgainstTask,omitempty"`
 	// Recipe names the task loop that follows implement
-	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,
+	// (docs/recipes/spec.md): a recipe in .fugaro/recipes/, the project's,
 	// or the catalog's. "" is default. fugaro run --recipe wins over it.
 	// Binaries before 0.5.0 refuse the key.
 	Recipe string `yaml:"recipe"`
 	// OAuthToken names the Claude account (claude_accounts in the local
 	// config, ClaudeAccountNameRE) this workflow's agent.auth: oauth uses;
 	// "" is the repository's default account, the existing claude-oauth-token
-	// secret (docs/design/named-oauth-tokens.md). fugaro run --token wins
+	// secret (docs/named-oauth-tokens/spec.md). fugaro run --token wins
 	// over it. A name must still be allowed for this repository
 	// (AllowedClaudeAccounts), checked at launch, not here: Validate checks
 	// the name's shape, and refuses the reserved name. Repo and override scope
@@ -748,7 +748,7 @@ type Agent struct {
 	OAuthToken string `yaml:"oauth_token,omitempty" json:"OAuthToken,omitempty"`
 	// Compression names the context-compression proxy this workflow's model
 	// calls route through: "" (off, the default) or "headroom"
-	// (docs/design/headroom-compression.md). Reserved and refused (the plan's
+	// (docs/headroom-compression/spec.md). Reserved and refused (the plan's
 	// P11): Validate knows the key and refuses every value with "not yet
 	// implemented" rather than leaving a repository that tries it with a
 	// strict-parse unknown-field error, so no run ever has the key set and
@@ -1232,7 +1232,7 @@ type Secret struct {
 // AnthropicSecret is the logical secret that holds the Anthropic API key. It
 // is the one secret a job may go without: it is mounted whenever the secret
 // has a version, and a run whose models all route through providers needs
-// none (design docs/design/project-centric.md §6.1).
+// none (design docs/project-centric/spec.md §6.1).
 const AnthropicSecret = "anthropic-api-key"
 
 // MissingAnthropicKey is what a call that needs Anthropic gets when no key is
@@ -1617,7 +1617,7 @@ func Parse(data []byte) (*Config, []Problem) {
 // whether the file could be read at all.
 //
 // It is the repository's own block: both keys it carries are repository-scope
-// (docs/design/named-oauth-tokens.md T2 for agent.oauth_token, which no project
+// (docs/named-oauth-tokens/spec.md T2 for agent.oauth_token, which no project
 // layer may name, and layered-config.md for agent.auth, whose layer a caller
 // merges itself), so the file's bytes are the whole answer here and a file that
 // needs a layer for something else still says what it says — which is why this

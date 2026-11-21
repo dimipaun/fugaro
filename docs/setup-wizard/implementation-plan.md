@@ -35,8 +35,8 @@ flag), `internal/cli/testdata/init_review.golden` (`TestReviewScreenGolden`,
 — C1–C3, F1–F24, D1–D12, O1–O5, the UNVERIFIED table. **Index.** [README.md](README.md).
 
 **Related.** [gcp-setup.md](../gcp-setup.md) · [gcp-live-checklist.md](../gcp-live-checklist.md)
-(Checks 27 and 111) · [m11-setup-and-skills.md](../design/m11-setup-and-skills.md) ·
-[2026-10-04-m11-setup-and-skills.md](../plans/2026-10-04-m11-setup-and-skills.md)
+(Checks 27 and 111) · [m11-setup-and-skills.md](../m11-setup-and-skills/spec.md) ·
+[2026-10-04-m11-setup-and-skills.md](../m11-setup-and-skills/implementation-plan.md)
 (the converge-loop design this builds on) · [v1.md](../design/v1.md) ·
 [credentials-service/](../credentials-service/) (the shape this folder follows)
 
@@ -823,7 +823,7 @@ config_publish}.go`, `internal/backend/backend.go`,
 `internal/cli/{launch_budget,secrets}_test.go`,
 `internal/infra/{statebucket,workdir}_test.go`,
 `internal/runner/{policy,provider_policy,providers}_test.go` — **fourteen** live
-files — and `docs/design/layered-config.md`, which is a dated root and is
+files — and `docs/layered-config/spec.md`, which is a dated root and is
 exempt (note that the `fugaro init` pattern does not count it in the 85, so it
 is the one file in the dated set that the *other* pattern put there). Without
 this the walk and the rename's task list do **not** cover the same set: those

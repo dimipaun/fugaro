@@ -90,7 +90,7 @@
 // top, which is before the await and therefore not "at the write").
 //
 // **The lapse** (S6.3; D436, T12; the design is
-// `docs/design/lapse-read-only.md` §4) is the third thing this file owns and
+// `docs/lapse-read-only/spec.md` §4) is the third thing this file owns and
 // the only refusal that is not about the network. `licence/state.js` owns the
 // table -- which of the app's five states it is in, and which writes a lapsed
 // one keeps -- and this file is its only caller, and the app's only write path

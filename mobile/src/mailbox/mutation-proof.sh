@@ -451,7 +451,7 @@ run "the SDK's queue is real, which is what the client's claim rests on (store.j
     }" \
   mobile/src/mailbox/store.js src/mailbox/client.test.js
 
-# 11. The lapse (S6.3; D436, T12; the design is docs/design/lapse-read-only.md
+# 11. The lapse (S6.3; D436, T12; the design is docs/lapse-read-only/spec.md
 #     §4). Seven guards in client.js -- the refuser this client gained, the
 #     QUESTION it answers (§5.7's second door, which classifies the write it is
 #     asked about as `send` does) and the five beside them -- three in state.js,

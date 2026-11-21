@@ -98,7 +98,7 @@ const REQUIRED_SEMANTIC_TOKENS = [
 //
 // The readers and the arithmetic are `website/test/lib/colour.mjs`: `website/test/how-it-works.mjs`
 // holds the run drawing's own labels to the surface they are drawn on, and the two gates
-// compute a ratio the same way (`docs/design/console-styling.md` §3.4's rule, one
+// compute a ratio the same way (`docs/console-styling/spec.md` §3.4's rule, one
 // implementation rather than two). They are re-exported here, where the cases below and the
 // console's design read them from.
 

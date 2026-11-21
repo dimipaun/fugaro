@@ -274,7 +274,7 @@ func TestBinariesCapTightensOnly(t *testing.T) {
 // TestReviewFloorMergesTightenOnly is D722's G1: the owner's review-level
 // floor is a union over the layers, so a layer below it can only ever add a
 // level to a rigor mode. The layers under the floor are the ones a launcher
-// writes — the project layer and the task (docs/design/bucket-iam.md §10 L1,
+// writes — the project layer and the task (docs/bucket-iam/spec.md §10 L1,
 // L2) — and the whole point of the floor is that neither can take a level
 // away: a merge that let a lower layer's shorter list replace the owner's
 // would be the launcher choosing how much review it gets.

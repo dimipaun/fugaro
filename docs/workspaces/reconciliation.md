@@ -780,7 +780,7 @@ number. So
 `grep -rhoE 'D[0-9]{3,4}' docs` is not enough on its own, for the two reasons the MCP design records
 and this reading confirms: it returns `D1000`, which is not a decision at all but the test name
 `TestSelftestManagedSettingsDirUID1000` in
-`docs/plans/2026-09-30-m9a-gateway-and-project-identity.md`:229, `:949` and `:1181`; and a concurrent
+`docs/m9-budget-and-dashboard/implementation-plan-m9a.md`:229, `:949` and `:1181`; and a concurrent
 work's block may be written only in its own README, in its own diff — #1676's and #1678's are, and
 #1487's is on `main` now. Read with a boundary on both sides
 (`[^A-Za-z0-9]D[0-9]{3,4}[^0-9]`), the highest number written on `main` is **D1189**.

@@ -272,7 +272,7 @@ type run struct {
 	env    []string
 	// mixedStages are the stages of this run that run on a stage-scoped
 	// Claude OAuth account of its own instead of the run's own credential,
-	// keyed by stage (docs/design/mixed-credentials.md §11, the owner's B0
+	// keyed by stage (docs/mixed-credentials/spec.md §11, the owner's B0
 	// ruling). It holds at most the senior review and the adversarial review,
 	// and it is empty for every run that does not mix credentials. It is read
 	// once at bootstrap (resolveMixedStages, agentenv.go) and never changes: a
@@ -423,7 +423,7 @@ type run struct {
 	gwNotional     pricing.Micros
 	// direct is the model spend of the stages a stage-scoped Claude OAuth
 	// account served -- a mixed run's review and adversarial stages
-	// (docs/design/mixed-credentials.md §11). The gateway saw none of their
+	// (docs/mixed-credentials/spec.md §11). The gateway saw none of their
 	// calls, so nothing settles them: their figure is Claude Code's own result
 	// event, recorded here by recordAccountStageCost, and it is in
 	// record.CostUSD and cost.model_usd beside the ledger's two (P11, P12).
@@ -1688,7 +1688,7 @@ func (r *run) stampTrailers(model string) []gitops.Trailer {
 //
 // The stage's credential is the part of it that is not the run's own: a stage
 // the run's stage-scoped Claude OAuth account serves gets that account's
-// environment instead (stageAgentEnv, docs/design/mixed-credentials.md §11),
+// environment instead (stageAgentEnv, docs/mixed-credentials/spec.md §11),
 // and the error here is the refusal of a stage whose account token the runner
 // does not hold.
 func (r *run) stageEnv(stage string, pins map[string]string) ([]string, error) {
@@ -3265,7 +3265,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// else here knows it -- the launch gate runs in the launcher, on the other
 	// side of the job.
 	if r.artifact && r.jobEnv(backend.BackendEnv) == backend.CloudBatch {
-		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket, and this run's job is on the cloud-batch backend: an artifact-producing run is never launched on it, because a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/design/artifact-runs.md §8.5 and D11, plan 2026-10-19-compute-backend.md Global Constraint 13). Launch an artifact recipe on backend: cloud-run", rrec.Name)
+		return fmt.Errorf("recipe %s is mode: artifact, which renders a deliverable into the run's bucket, and this run's job is on the cloud-batch backend: an artifact-producing run is never launched on it, because a Batch run's account is not per-repository -- the same run's inputs, artifacts and record would be readable and overwritable by every run on the profile (docs/artifact-runs/spec.md §8.5 and D11, plan 2026-10-19-compute-backend.md Global Constraint 13). Launch an artifact recipe on backend: cloud-run", rrec.Name)
 	}
 	// A task that attached files under a resolved recipe of another mode
 	// fails the run before its first step (design §8.2): the launcher
@@ -3810,7 +3810,7 @@ type ConfigResolution struct {
 
 // ResolveConfig resolves fugaro.yaml (data) over pl, the task's embedded
 // project layer (nil for none), anchored to the job's own project
-// (project, r.d.Project — docs/design/layered-config.md §8). The layer
+// (project, r.d.Project — docs/layered-config/spec.md §8). The layer
 // applies only to a file whose project: and gcp_project: are the layer's;
 // a launch from outside a checkout may carry one for a file that is not,
 // and Applied says so. Exported so a consumer that must prove it resolves
@@ -3858,7 +3858,7 @@ func ResolveConfig(data []byte, pl *task.ProjectLayer, project, base string) Con
 }
 
 // resolveConfig resolves fugaro.yaml (data) over the task's project layer
-// (docs/design/layered-config.md §8) and records which layer and which
+// (docs/layered-config/spec.md §8) and records which layer and which
 // resolved config the run uses. The layer applies only to a file whose
 // project: and gcp_project: are the layer's; a launch from outside a
 // checkout may carry one for a file that is not, and the record says the
@@ -5763,7 +5763,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// A stage the run's stage-scoped Claude OAuth account serves opens no stage
 	// in the gateway and takes no figure of its own from it: its calls go
 	// straight to Anthropic, so the gateway has nothing to admit, nothing to
-	// refuse and nothing to report for it (docs/design/mixed-credentials.md
+	// refuse and nothing to report for it (docs/mixed-credentials/spec.md
 	// §11, P11). Its account stage is cleared of the previous stage's report
 	// for the same reason: nothing of this stage may be read from r.lastStage.
 	direct := r.stageDirect(name)
@@ -6275,7 +6275,7 @@ var transientStagePhrases = []string{"stream closed before completion"}
 // ends before any text arrives may report an error with no words in it at
 // all, and the only thing left to read is the exit that killed its process.
 // It is asked only for a stage the gateway served: a stage the run's
-// stage-scoped Claude OAuth account serves (docs/design/mixed-credentials.md)
+// stage-scoped Claude OAuth account serves (docs/mixed-credentials/spec.md)
 // forwards its calls itself, so there is no gateway to witness anything for
 // it, and such a stage is retried on its text alone -- or not at all. That is
 // the whole of the mixed-credential case here: no report of its own, no

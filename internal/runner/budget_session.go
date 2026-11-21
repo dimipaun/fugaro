@@ -370,7 +370,7 @@ func (r *run) haltExternal(h runstore.Halt) bool {
 //   - 403 (blobx.ErrForbidden): the run goes on. The job account's grant on
 //     tokens/ is a conditioned objectViewer with no storage.objects.list, so
 //     GCS answers its read of a missing object with 403
-//     (docs/design/bucket-iam.md §2.3, live check 7): that is what every run
+//     (docs/bucket-iam/spec.md §2.3, live check 7): that is what every run
 //     of an installation without Firebase meets, since no launcher minted
 //     for it. A job with no tokens/ grant gets the same 403 for a present
 //     object, and no answer of the bucket tells the two apart, so the
@@ -667,7 +667,7 @@ func (r *run) noteVerify() {
 // stage the run's stage-scoped Claude OAuth account serves is outside the
 // gateway by construction — nobody else can report it, and its figure reaches
 // the repository's and the project's notional counters here alone
-// (docs/design/mixed-credentials.md §5, §11). Asked about the run instead
+// (docs/mixed-credentials/spec.md §5, §11). Asked about the run instead
 // (r.gatewayOn(), true for every mixed run) the account stage's dollars are
 // dropped in silence.
 //

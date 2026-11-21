@@ -54,7 +54,7 @@ var (
 	// ErrForbidden means GCS refused a read, a write or a delete for lack
 	// of permission (HTTP 403). gocloud reports a 403 as NotFound, so
 	// without it a refused write would read as a missing object
-	// (docs/design/bucket-iam.md §2.3). On GCS it is produced by every
+	// (docs/bucket-iam/spec.md §2.3). On GCS it is produced by every
 	// write, by every delete and by every STRICT read (ReadStrict,
 	// ReadMaxStrict, GetFile with strict true); a non-strict read never
 	// produces it, folding a 403 into ErrNotExist on purpose (see Read and
@@ -615,7 +615,7 @@ func (b *Bucket) PutFileOpened(ctx context.Context, key string, src *os.File, st
 //     answer: the sentinel is made from a 403 alone, so a non-GCS driver
 //     keeps its own refusal (fs.ErrPermission) and a caller that wants both
 //     checks both. This caller holds unconditional objectAdmin, which
-//     includes storage.objects.list (docs/design/bucket-iam.md:88,126-128),
+//     includes storage.objects.list (docs/bucket-iam/spec.md:88,126-128),
 //     so for it a 403 really is an access problem and "no such artifact"
 //     would be a lie.
 //   - non-strict (the runner's input download): a 403 folds into

@@ -276,7 +276,7 @@ func SecretVersions(ctx context.Context, c *Clients, spec RepoSpec) (map[string]
 //
 // spec.Workflows may hold several keys per fugaro.yaml workflow, one per
 // Claude account the repository may choose (gcp.WorkflowVariant, design
-// docs/design/named-oauth-tokens.md §4): they share one image, built once,
+// docs/named-oauth-tokens/spec.md §4): they share one image, built once,
 // not once per account, so only the default account's entry (the one whose
 // key equals its own Name, the identity case of WorkflowVariant) is looked
 // at here; the names this returns are always fugaro.yaml workflow names,
@@ -334,7 +334,7 @@ type SecretStep struct {
 // this repository use one (spec.ProjectSecretCandidates, ProjectSecretCandidate's
 // own answer), because a repository copy would then win over it forever --
 // the silent precedence flip project-wide secrets exist to avoid (design
-// docs/design/project-secrets.md §5) -- and the repository's own copy
+// docs/project-secrets/spec.md §5) -- and the repository's own copy
 // otherwise. Readiness prints it as a Missing's fix; SecretCommands prints it
 // as the command to type, and the two must not be able to disagree about the
 // same name. bin names the binary and quote makes one shell word of a name,

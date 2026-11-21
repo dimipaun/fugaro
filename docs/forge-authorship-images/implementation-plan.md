@@ -277,7 +277,7 @@ the stage runs (Constraint 1). Commits are now born stamped.
   `internal/gitprov/kinds_test.go` (`TestKindsListedOnce`, `TestEveryKindSwitchIsInventoried`). It
   landed after the census was read, in `9af1fd50` (#2332), whose subject is `gitprov: one list of
   forge kinds (B1)` and whose body's first bullet is the **Commit** line below;
-  [b1-already-landed.md](../forge-authorship-images-b1-already-landed.md) is the evidence. Nothing in
+  [b1-already-landed.md](b1-already-landed.md) is the evidence. Nothing in
   the image setup plan creates or moves a forge kind.
 
 - **Decisions:** D610, D611.
@@ -686,7 +686,7 @@ tagged CLI refuses it until D3 has shipped, so no change set can be stuck in dra
 #### E0. The roles design (D446)
 
 - **State:** Closed as superseded — by [docs/roles-scopes](../roles-scopes/) (spec 2026-11-07,
-  D1580–D1593, tasks RS1–RS10), which extends the roles design E0 names (`docs/design/roles.md`) and
+  D1580–D1593, tasks RS1–RS10), which extends the roles design E0 names (`docs/roles/spec.md`) and
   answers reconciliation §6's O5 ("nobody owns it yet"). Its one shipped output, `fugaro user`, is
   E1's. See [reconciliation-image-setup.md](reconciliation-image-setup.md) §2.
 

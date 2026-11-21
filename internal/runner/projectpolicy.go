@@ -16,7 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
-// The run's read of the project's own policy (docs/design/project-centric.md
+// The run's read of the project's own policy (docs/project-centric/spec.md
 // D11, plan task 1.3). Three things are true at once and the code below is
 // shaped by them:
 //

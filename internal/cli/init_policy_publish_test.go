@@ -1300,7 +1300,7 @@ func typedRig(t *testing.T, f *projectFixture) *migrationRig {
 
 // accountChoiceConfigYAML is the account-choice keys as this machine's own file
 // writes them: one account, named for the project and for the review stage
-// (docs/design/mixed-credentials.md §11, rungs 2 and 4). The account is defined
+// (docs/mixed-credentials/spec.md §11, rungs 2 and 4). The account is defined
 // here because a key that names an account this file does not define is refused
 // at load, and no profile names it because the keys are what the runner reads
 // it off and not a profile's list.

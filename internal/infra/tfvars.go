@@ -93,7 +93,7 @@ type InstallOptions struct {
 	// read from the project's creation fact (init's installRoot) — so the
 	// key follows the installation and not the run. What it does not settle
 	// is whether the fence works: Check 68 has not been run
-	// (deployer.tf's header, docs/design/managed-deployer-fence.md).
+	// (deployer.tf's header, docs/managed-deployer-fence/spec.md).
 	ManagedDeployerScoped bool
 	// Coordinator is the owner's opt-in to the coordinator's aggregation job
 	// (P5, D194): with BudgetBackend, the installation declares the
@@ -222,7 +222,7 @@ type InstallationSpec struct {
 	// ProjectSecrets are the installation module's project-wide secret
 	// containers (logical name -> gcp.ProjectSecretID), which fugaro update
 	// creates or adopts; their values are never set by Terraform (design
-	// docs/design/project-secrets.md §4). Installation() fills it from the
+	// docs/project-secrets/spec.md §4). Installation() fills it from the
 	// local config's eligibility; DiscoverInstallation then unions in every
 	// correctly-labelled container that already exists, so a config edit
 	// can never shrink the module's for_each (N3).
@@ -2256,7 +2256,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 }
 
 // projectSecretContainers are the project-wide secret containers the local
-// config makes eligible (design docs/design/project-secrets.md §4): every
+// config makes eligible (design docs/project-secrets/spec.md §4): every
 // project_secrets entry with a non-empty allow_data_to, every provider's own
 // key unconditionally (§3a: a provider's key is eligible for project storage
 // whether or not its allow_data_to list exists, and an absent list is a

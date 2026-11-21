@@ -184,7 +184,7 @@ var datedRecords = []string{
 // pattern is. Two more pin dated records that D9 keeps: internal/cli/docs_release_notes_test.go
 // is built around the 0.9.0 notes' own spelling (its comment: "the notes' own
 // spelling, which is frozen with them"), and internal/cli/docs_compute_backend_test.go
-// quotes the 0.8.6 notes and design/compute-backend.md in the same way. A
+// quotes the 0.8.6 notes and docs/compute-backend/spec.md in the same way. A
 // rename cannot reach their mentions -- the record keeps the name, so the pin
 // that reads it must -- and a test that spelled the command around the census
 // (`"fugaro " + "init"`) would be hiding the mention rather than retiring the

@@ -2,7 +2,7 @@
 // See ee/LICENSE for the terms.
 
 // Command mint is the owner's hand-minting tool (licence-key-v2 plan K1.3,
-// subscriptions plan S2.10, design docs/design/key-signing-service.md §11 step
+// subscriptions plan S2.10, design docs/key-signing-service/spec.md §11 step
 // 2): it turns one claim set into one licence key, signing through a KMS key's
 // signing API, for the interim in which the issuing service does not exist yet
 // (T13).

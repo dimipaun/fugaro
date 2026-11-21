@@ -5575,7 +5575,7 @@ What it does not remove is the deployer fence. The seven scoped roles and their
 conditioned bindings stay in the project and in the installation, and fugaro
 update --forget stays refused for a fenced installation. This command makes no
 IAM call at all; undoing the fence is not revocation and is not offered here
-(docs/design/managed-projects.md §10.2).
+(docs/managed-projects/spec.md §10.2).
 
 Run it in your own terminal, as an operator, with your own credentials. The
 permission you give is the PROJECT_ID argument itself: it names the one project
@@ -7659,7 +7659,7 @@ This command has no subcommands.
 
 Sweep the Batch jobs and VMs a run has leaked
 
-One pass of the reaper (docs/design/compute-backend.md §3.4): delete the Batch jobs
+One pass of the reaper (docs/compute-backend/spec.md §3.4): delete the Batch jobs
 that are stuck or queued past their deadline, and the Compute Engine instances of runs
 no Batch job accounts for, in this project and region.
 
@@ -10431,7 +10431,7 @@ Flags:
 | `--plan-only` | bool | `false` | no | stop after showing the plan (it creates nothing) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--provision-batch` | bool | `false` | no | after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/design/compute-backend.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so it takes a person at a real terminal; nothing runs it by default, and an installation reaches the backend only after this has run and `doctor` passes its gate. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
+| `--provision-batch` | bool | `false` | no | after the installation's ordinary steps, provision the Batch compute backend into a state of its own (design docs/compute-backend/spec.md §8.1 task 6): the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router, and a preloaded boot image rebuilt on a schedule. It is money (a billable build, a NAT's hours) and permanent, so it takes a person at a real terminal; nothing runs it by default, and an installation reaches the backend only after this has run and `doctor` passes its gate. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (setup does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
@@ -10658,7 +10658,7 @@ seven scoped roles and their seven conditioned bindings live in the project and
 accounted for by nothing. The fence is the installation's and not a mode of the
 project — every run that rewrites the installation's settings carries the key
 forward — so taking a project out of managed mode does not remove it and does
-not lift the refusal (docs/design/managed-projects.md §10.2, "Rolling back").
+not lift the refusal (docs/managed-projects/spec.md §10.2, "Rolling back").
 
 Everything else is setup's help word for word, because it is the same
 converge: the review screen and the one typed project name in a project Fugaro
@@ -10711,7 +10711,7 @@ Flags:
 | `--events` | bool | `false` | no | write the run to stdout as newline-delimited events instead of the one --json document: one `step` line as the run reaches a stage, one `stage` line as a stage settles (its name, state, detail and the stage it waited for), one `left_for_you` line for each thing only you can do — with the one line to run — and one last line that ends the feed: `done` with the run's exit code, or `error` naming the stage the run stopped at. A run that ends with steps left for you ends `done` with exit code 1 — it did not fail, and the steps are the left_for_you lines above it — which is the hand-off a surface draws rather than an error. It needs --json: the feed takes the document's place on stdout, and the run's own progress stays on stderr where --json already puts it. Nothing here confirms a step: --json confirms none, so every step that needs a confirmation arrives as left_for_you for you to run in your own terminal window |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it update trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
 | `--firebase-project` | string | "" | no | turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config |
-| `--forget` | bool | `false` | no | roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. An installation that holds the managed deployer's fence has no rollback and this is refused there: the state removal would leave the seven scoped roles and their seven conditioned bindings live in the project, accounted for by nothing, and taking the project out of managed mode does not remove them (docs/design/managed-projects.md §10.2, "Rolling back") |
+| `--forget` | bool | `false` | no | roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state. An installation that holds the managed deployer's fence has no rollback and this is refused there: the state removal would leave the seven scoped roles and their seven conditioned bindings live in the project, accounted for by nothing, and taking the project out of managed mode does not remove them (docs/managed-projects/spec.md §10.2, "Rolling back") |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--github-app-id` | string | "" | no | the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; update asks once at a terminal) |
 | `-h`, `--help` | bool | `false` | no | help for update |

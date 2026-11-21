@@ -24,7 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
-// The project layer (docs/design/layered-config.md): one object per project
+// The project layer (docs/layered-config/spec.md): one object per project
 // in the runs bucket, published by fugaro config publish, holding the
 // defaults and the workflow profiles of every repository of the project.
 const (
@@ -129,7 +129,7 @@ type ProjectLayer struct {
 // are the same two a LayerAnchor is built from. Nothing but a file that
 // names both of the layer's own applies: a file that writes neither, or
 // one of them, keeps the layer's rows out of what a run resolves
-// (docs/design/layered-config.md §8).
+// (docs/layered-config/spec.md §8).
 //
 // It is the one spelling of the rule, so that no reader can report a
 // layer's rows in force on a file a run would resolve without them: the
@@ -647,7 +647,7 @@ var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "pr
 // layerReserved are keys a later release defines; this one refuses them
 // with a message saying so.
 var layerReserved = map[string]string{
-	"environments": "the image catalog (named environments) arrives with the single base image (docs/design/layered-config.md, Phase 2); this release refuses it",
+	"environments": "the image catalog (named environments) arrives with the single base image (docs/layered-config/spec.md, Phase 2); this release refuses it",
 	"extends":      "profiles do not extend each other in this release",
 }
 

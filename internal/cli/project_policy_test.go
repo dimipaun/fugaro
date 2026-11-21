@@ -63,7 +63,7 @@ func newProjectFixture(t *testing.T, extra string) *projectFixture {
 
 // claudeRouteProvidersYAML is the operator's providers block with a route entry
 // that claims one Claude ID — the shape the routing switch resolves through
-// (docs/design/mixed-credentials.md §4: one explicit "anthropic/<id>", never a
+// (docs/mixed-credentials/spec.md §4: one explicit "anthropic/<id>", never a
 // pattern). The claim is a second provider entry, so the rest of the fixture's
 // providers are unchanged.
 const claudeRouteProvidersYAML = projectProvidersYAML +
@@ -4191,7 +4191,7 @@ func TestPolicyShowPrintsReviewFloor(t *testing.T) {
 // TestReviewFloorNotInShared: the floor is the owner's, and the shared config
 // is the file any launcher with objectAdmin on the runs bucket can write. A
 // floor published there would be the launcher the floor exists to bind,
-// setting it (D722, G1, docs/design/bucket-iam.md §10 L1, L2), so the reader
+// setting it (D722, G1, docs/bucket-iam/spec.md §10 L1, L2), so the reader
 // refuses the key — the way it refuses bitbucket_api_roots — and the publisher
 // never writes it (localcfg.Config.Shared drops it).
 func TestReviewFloorNotInShared(t *testing.T) {

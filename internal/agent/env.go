@@ -82,7 +82,7 @@ type EnvSpec struct {
 // (OAuthStageEnv), which is what keeps the coder's own environment an
 // allow-list: the account's token is in no environment this function returns,
 // whatever the runner's own environment holds
-// (docs/design/mixed-credentials.md §11).
+// (docs/mixed-credentials/spec.md §11).
 func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err error) {
 	p := map[string]string{}
 	for _, kv := range parent {
@@ -273,7 +273,7 @@ var gatewayRouteVars = []string{"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"}
 
 // OAuthStageEnv returns the environment of a stage that runs on a Claude
 // OAuth credential of its own rather than on the run's gateway
-// (docs/design/mixed-credentials.md §11, the owner's B0 ruling): runEnv, the
+// (docs/mixed-credentials/spec.md §11, the owner's B0 ruling): runEnv, the
 // environment BuildEnv built for the run's own stages, with the gateway's
 // routing dropped, any credential under the token's own name dropped with it,
 // and the account's token set. What is left is the stage's

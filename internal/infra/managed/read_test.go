@@ -183,8 +183,8 @@ func TestIsManagedReadsTheCreationFact(t *testing.T) {
 	}
 }
 
-// The label can only narrow, never widen (Task 3.0; docs/plans/2026-10-18-
-// managed-projects-task-3.0-decisions.md §4). A project that carries
+// The label can only narrow, never widen (Task 3.0; docs/managed-projects/
+// task-3.0-decisions.md §4). A project that carries
 // fugaro_managed and has no creation fact is not managed, and the reason is
 // about the fact: a label is a thing anything holding
 // resourcemanager.projects.update can put on a project, which is a
@@ -374,7 +374,7 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 		// there and perfect, and nothing has ever written the label. It is
 		// the regression the change carries (decisions §5) and it is the
 		// fail-closed direction, so it is a row rather than a note: the
-		// owner-run backfill of docs/design/managed-projects.md is what turns it back into
+		// owner-run backfill of docs/managed-projects/spec.md is what turns it back into
 		// a managed project, and this is the reason a person reads first.
 		"a project with no fugaro_managed label": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
@@ -387,12 +387,12 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 				return s, c
 			},
 			// The condition, whole: both marks, this one missing, and the
-			// guidance left to docs/design/managed-projects.md — no command is named here
+			// guidance left to docs/managed-projects/spec.md — no command is named here
 			// (decisions §5, and TestTheNoLabelReasonNamesNoCommand pins
 			// that half). It attributes the label to neither writer alone,
 			// which is what the round-2 review found in the sentence this
 			// replaced.
-			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/design/managed-projects.md)",
+			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/managed-projects/spec.md)",
 		},
 		// The label is missing AND the object read fails: the label alone
 		// decides this project (read.go's last return), and the read's error
@@ -410,7 +410,7 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 				c, _ := labelledCRM(t, map[string]string{"environment": "prod"})
 				return s, c
 			},
-			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/design/managed-projects.md)",
+			reason: "carries no fugaro_managed label, so " + testFugaroProject + " is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/managed-projects/spec.md)",
 		},
 		"a project whose fugaro_managed label says something else": {
 			world: func(t *testing.T) (*storage.Service, *crm.Service) {
@@ -954,12 +954,12 @@ func TestIsManagedRefusesEveryMismatch(t *testing.T) {
 
 // The no-label reason states the CONDITION and not a command, which is this
 // PR's own settled decision (§5 of
-// docs/plans/2026-10-18-managed-projects-task-3.0-decisions.md) and the one
+// docs/managed-projects/task-3.0-decisions.md) and the one
 // point in it the owner may veto: the reason is the one piece of the label
 // that reaches a coding agent's session, and a sentence naming the write
 // (gcloud projects update, or the owner's flag) invites the boundary write
 // from the side that must never make it. The guidance stays in
-// docs/design/managed-projects.md, which the reason names — so this test asserts both
+// docs/managed-projects/spec.md, which the reason names — so this test asserts both
 // halves: the condition is stated, and no command is.
 func TestTheNoLabelReasonNamesNoCommand(t *testing.T) {
 	s, f := newStorage(t)
@@ -971,7 +971,7 @@ func TestTheNoLabelReasonNamesNoCommand(t *testing.T) {
 	if err != nil || ok {
 		t.Fatalf("IsManaged = %v, %q, %v; want false, a reason, and no failure", ok, reason, err)
 	}
-	if !strings.Contains(reason, ProjectLabelKey) || !strings.Contains(reason, "docs/design/managed-projects.md") {
+	if !strings.Contains(reason, ProjectLabelKey) || !strings.Contains(reason, "docs/managed-projects/spec.md") {
 		t.Errorf("reason = %q, want the condition (the missing %s label) and where a person reads the guidance", reason, ProjectLabelKey)
 	}
 	// The commands that write the label, and the one that removes it, by the
@@ -1179,8 +1179,8 @@ func TestManagedMarkerVersionThreeCountRangeIsChecked(t *testing.T) {
 // purpose, and this pins both so Task 4.4 cannot forget it: the apply gate
 // and `fugaro managed apply` must ask ReadBudget, not IsManaged, or a v1
 // project — managed without a budget — reaches an apply with no line to
-// compare a spend against (docs/plans/2026-10-16-managed-projects.md, Task
-// 4.4; docs/design/managed-projects.md).
+// compare a spend against (docs/managed-projects/implementation-plan.md, Task
+// 4.4; docs/managed-projects/spec.md).
 func TestVersion1IsManagedWithoutABudget(t *testing.T) {
 	ctx := context.Background()
 	s, f, c, _ := managedWorld(t)
@@ -1268,7 +1268,7 @@ func TestReadBudgetAnswerInvalidAndProjectFirst(t *testing.T) {
 // FIGURE — Invalid, with the refused figure handed back — and not for the
 // missing label. Both halves hold, and the figure's reason is the more
 // specific one, which is the one to win: the label's sentence sends the owner
-// to the backfill in docs/design/managed-projects.md, and a backfill would leave them with a
+// to the backfill in docs/managed-projects/spec.md, and a backfill would leave them with a
 // managed project whose recorded amount nothing can be compared against.
 //
 // Every other state of the object keeps the label's reason. It is the verdict

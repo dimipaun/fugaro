@@ -8,7 +8,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
-// The values routing.claude.via accepts (docs/design/project-centric.md §6.2,
+// The values routing.claude.via accepts (docs/project-centric/spec.md §6.2,
 // D1a/D1b). They are the config's spelling of projectpolicy's Route* constants,
 // which is what a policy node carries, so the two cannot drift.
 const (
@@ -41,7 +41,7 @@ const (
 )
 
 // Routing is the routing switch of the operator's config and of the policy
-// (docs/design/project-centric.md §6.2). Its definition site in this release is
+// (docs/project-centric/spec.md §6.2). Its definition site in this release is
 // the operator's local config alone — written there, and only *delivered* to a
 // run through the policy: a repository's fugaro.yaml has no routing key, exactly
 // as it has no providers key.
@@ -64,7 +64,7 @@ type Routing struct {
 //
 // Models is an explicit list of canonical Claude IDs — the IDs a pin may carry
 // (`claude-sonnet-5-5`, the price table's key) — and never a pattern: the
-// merged ruling (docs/design/mixed-credentials.md §4, §8) requires one explicit
+// merged ruling (docs/mixed-credentials/spec.md §4, §8) requires one explicit
 // ID per route entry, never a pattern, and the switch is only a second place
 // the same rule is written.
 type RoutingClaude struct {
@@ -96,7 +96,7 @@ func (c *RoutingClaude) Names(model string) bool {
 // AllowDataToWritten reports whether a provider's allow_data_to was written
 // with the repositories it may send code to: a list, or the explicit ["*"]. An
 // absent key means every repository under the owner's ruling
-// (docs/design/project-secrets.md §3a), which is exactly why the routing
+// (docs/project-secrets/spec.md §3a), which is exactly why the routing
 // safeguard requires it to be *written* rather than merely permitted (D1b) —
 // "not decided yet" and "every repository" must not be the same state on the
 // one path that sends a Claude prompt to a third party. An empty list counts as
@@ -281,7 +281,7 @@ func CheckRoutingShape(r *Routing, path string) []Problem {
 		return []Problem{{Path: path + ".claude.models", Message: fmt.Sprintf("names %d model(s), and via: %s takes no list: the cascade is turned on for the whole run by the via alone — it decides which credential carries a call, never which route one takes, and while tier C for Claude is off every cascaded call still goes to Anthropic under the ID the pin already names (D133, D150, C3.6). Remove the list, or write the provider route the switch takes (via: %s with an explicit list of the IDs it carries)", len(c.Models), RouteCascade, RouteOpenRouter)}}
 	}
 	if (via == RouteOpenRouter || via == RouteAuto) && len(c.Models) == 0 {
-		ps = append(ps, Problem{Path: path + ".claude.models", Message: fmt.Sprintf("is empty, and an empty list with via: %s would opt every Claude model in: name the IDs this switch carries, one explicit Claude ID per entry, never a pattern (D1a, docs/design/mixed-credentials.md §4)", via)})
+		ps = append(ps, Problem{Path: path + ".claude.models", Message: fmt.Sprintf("is empty, and an empty list with via: %s would opt every Claude model in: name the IDs this switch carries, one explicit Claude ID per entry, never a pattern (D1a, docs/mixed-credentials/spec.md §4)", via)})
 	}
 	for i, m := range c.Models {
 		if msg := CheckRoutingModel(m); msg != "" {
@@ -457,7 +457,7 @@ func CheckRoutingModel(m string) string {
 	case m == "":
 		return "is empty: name a Claude ID such as claude-sonnet-5-5"
 	case strings.Contains(m, "*"):
-		return fmt.Sprintf("%q is a pattern: routing.claude.models is an explicit list of Claude IDs, one ID per entry, never a pattern (D1a, docs/design/mixed-credentials.md §4, §8)", m)
+		return fmt.Sprintf("%q is a pattern: routing.claude.models is an explicit list of Claude IDs, one ID per entry, never a pattern (D1a, docs/mixed-credentials/spec.md §4, §8)", m)
 	case strings.Contains(m, "/"):
 		return fmt.Sprintf("%q is a route ID, not the canonical one: name the Claude ID a pin carries (claude-sonnet-5-5); the route entry is what names anthropic/claude-sonnet-5.5", m)
 	case strings.Contains(m, ":"):

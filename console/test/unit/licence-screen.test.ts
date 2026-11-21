@@ -2,7 +2,7 @@
 // See console/LICENSE.md for the terms.
 // The licence key's section (subscriptions plan S2.7; the design is
 // `docs/licensing/licence-key.md`, "Storage and hand-off (F41)", and the state
-// the console draws a lapse in is `docs/design/lapse-read-only.md`).
+// the console draws a lapse in is `docs/lapse-read-only/spec.md`).
 //
 // **The four things this file holds.**
 //

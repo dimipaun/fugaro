@@ -403,7 +403,7 @@ func TestDisplayNamesAndConditions(t *testing.T) {
 // LauncherBucketCondition embeds bucket in a CEL string literal unescaped: a
 // name outside [a-z0-9._-] (a quote, in particular) could otherwise break out
 // of it and widen the condition the installation module, the install guard
-// and doctor all compare against byte for byte (docs/design/bucket-iam.md
+// and doctor all compare against byte for byte (docs/bucket-iam/spec.md
 // H5-H6). A caller passing such a name is a bug, so this panics rather than
 // returning a condition that looks plausible but is not what it claims to be.
 func TestLauncherBucketConditionRejectsBadBucketNames(t *testing.T) {
@@ -545,7 +545,7 @@ var workflowVariantTrickyPairs = [][2][2]string{
 // layer down in JobName, ServiceAccountID or SecretID either (the finding
 // this test was added for: a "--" join let two unrelated pairs share a job,
 // a service account and a secret, defeating the one-secretAccessor-grant-
-// per-named-account design, docs/design/named-oauth-tokens.md §4 option B).
+// per-named-account design, docs/named-oauth-tokens/spec.md §4 option B).
 func TestWorkflowVariantIsInjective(t *testing.T) {
 	labelRE := readTerraformNameVariableRegex(t)
 	for _, p := range workflowVariantTrickyPairs {
@@ -1178,7 +1178,7 @@ func TestJobPrefixesExcludeIssues(t *testing.T) {
 // TestTheTokenPrefixIsTheTokenPackages: the grants name the prefix the token
 // objects live under (token.ObjectKey), and the job's prefixes never include
 // it: the job's objectUser on tokens/ would let a peer run delete a queued
-// run's token (docs/design/budget-token-channel.md §7.2, D16). The prefix is
+// run's token (docs/budget-token-channel/spec.md §7.2, D16). The prefix is
 // one constant on both sides, so a move of the object without the grants (or
 // the reverse) fails here.
 func TestTheTokenPrefixIsTheTokenPackages(t *testing.T) {
@@ -1242,7 +1242,7 @@ func reportsGrantedPrefixes(t *testing.T, expr string) (objects []string, listin
 // the runs bucket is one binding with two halves and neither of them is
 // optional. The object half is what lets the job read a run record — a
 // condition on resource.name grants no listing at all, because a List request
-// names no object (docs/design/bucket-iam.md §2.3, live check 7's 403). The
+// names no object (docs/bucket-iam/spec.md §2.3, live check 7's 403). The
 // listing half is what lets it find one: the job lists runs/<slug>/ to collect
 // a repository's records.
 //
@@ -1377,7 +1377,7 @@ func TestReportsConditionTitlesAreBuiltFromTheAccount(t *testing.T) {
 // listing of one prefix and the object half an object path, so the root
 // listing, tokens/, cache/, locks/ and the issue store are all outside both —
 // the token objects especially, where a listing or a read would hand one run's
-// budget lease to the reports job (docs/design/budget-token-channel.md §7.2).
+// budget lease to the reports job (docs/budget-token-channel/spec.md §7.2).
 //
 // Mutation (run, restore): widen either condition to the bucket — drop the
 // prefix from the object clause, or the trailing slash from the listing one —

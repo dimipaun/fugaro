@@ -79,7 +79,7 @@ import (
 // expectedAgentMarkers is the oracle for which environment variables mean a
 // coding agent's session: written here by hand, so a marker dropped from
 // agentMarkers is a failure rather than a smaller test
-// (docs/design/managed-projects.md §3 finding 2 names these six).
+// (docs/managed-projects/spec.md §3 finding 2 names these six).
 var expectedAgentMarkers = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"}
 
 // agentEnvState is one state of the environment a run can be in: no marker

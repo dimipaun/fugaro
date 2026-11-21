@@ -133,7 +133,7 @@ for pair in installation:installation installation-accounts:installation install
 done
 
 # repo-scope-move.plan.json is the one golden that needs a PRIOR state. It is
-# design docs/design/project-secrets.md §6 step 4: a secret name that stops
+# design docs/project-secrets/spec.md §6 step 4: a secret name that stops
 # being repo-only and becomes project-shared (the repo copy has no version,
 # the project copy is resolved), so its grants move to the project's container
 # while the repository's own container is kept. Only a plan with a state to

@@ -1506,7 +1506,7 @@ type StageTiming struct {
 	// the run's own: CredentialOAuth for a stage a stage-scoped Claude OAuth
 	// account served, which is the one stage of a mixed run whose calls went
 	// straight to Anthropic instead of through the gateway
-	// (docs/design/mixed-credentials.md §5, §11). It is what makes this
+	// (docs/mixed-credentials/spec.md §5, §11). It is what makes this
 	// stage's ModelUSD readable: the figure is Claude Code's own, not the
 	// gateway's ledger, which is why the stage has no Calls either, and why
 	// ModelNotionalUSD equals ModelUSD for it. Empty for every stage the
@@ -1567,7 +1567,7 @@ type StageTiming struct {
 
 // CredentialOAuth is the word for a Claude OAuth credential in this record:
 // StageTiming.Credential for a stage the run's stage-scoped Claude OAuth
-// account served (docs/design/mixed-credentials.md §5), and
+// account served (docs/mixed-credentials/spec.md §5), and
 // StageTiming.ServedBy for any stage one served -- the account's token or the
 // run's own.
 const CredentialOAuth = "oauth"
@@ -1628,7 +1628,7 @@ type Record struct {
 	Workflow string `json:"workflow,omitempty"`
 	// OAuthAccount is the named Claude OAuth account this run's agent.auth:
 	// oauth workflow used ("" meaning the repository's default account,
-	// docs/design/named-oauth-tokens.md); informational only, never read by
+	// docs/named-oauth-tokens/spec.md); informational only, never read by
 	// anything that makes a security decision. Absent in records from
 	// before this field existed.
 	OAuthAccount string `json:"oauth_account,omitempty"`
@@ -1656,7 +1656,7 @@ type Record struct {
 	Outcome       Outcome           `json:"outcome"`
 	Reason        string            `json:"reason,omitempty"`
 	// FailureClass is why the run did not end succeeded, in the closed
-	// vocabulary of internal/failure (docs/design/failure-classes.md §3). It
+	// vocabulary of internal/failure (docs/failure-classes/design.md §3). It
 	// is additive beside Reason, which keeps its text and its meaning: the
 	// class is what a report groups and counts, and the reason is what a
 	// person reads. Absent on a run that succeeded, on a mode: review run that
@@ -1744,11 +1744,11 @@ type Record struct {
 	// root run's stored task. Absent — never an empty list — for a chain
 	// nobody raised, which is every record written before this field existed.
 	ChainRaises []ChainRaise `json:"chain_raises,omitempty"`
-	// Recipe is the recipe the run's loop came from (docs/design/recipes.md
+	// Recipe is the recipe the run's loop came from (docs/recipes/spec.md
 	// §8); absent in records from before 0.5.0.
 	Recipe *RecipeRecord `json:"recipe,omitempty"`
 	// ProjectLayer is the project layer the run's task carried
-	// (docs/design/layered-config.md §8); absent when it carried none, and
+	// (docs/layered-config/spec.md §8); absent when it carried none, and
 	// in records from before 0.6.0.
 	ProjectLayer *ProjectLayerRecord `json:"project_layer,omitempty"`
 	// ConfigSHA256 is the sha256 of the resolved fugaro.yaml, before the
@@ -2317,7 +2317,7 @@ func (s *Store) Prefix() string { return s.prefix }
 
 // PutFile writes a file under the run's prefix. Routed through blobx.Put so
 // a GCS 403 is blobx.ErrForbidden, not gocloud's unclassified NotFound
-// (docs/design/bucket-iam.md §2.3).
+// (docs/bucket-iam/spec.md §2.3).
 func (s *Store) PutFile(ctx context.Context, name string, data []byte, contentType string) error {
 	key := s.prefix + strings.TrimPrefix(name, "/")
 	if err := blobx.Wrap(s.bucket).Put(ctx, key, data, contentType); err != nil {

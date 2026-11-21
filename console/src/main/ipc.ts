@@ -570,7 +570,7 @@ export interface ConsoleOperation {
   /**
    * `refusedAfterLapse` is the field that makes an operation part of the
    * **refused class** of the design's lapse state (subscriptions plan S6.2;
-   * `docs/design/lapse-read-only.md` §3.2, D436, T12): after the key's grace
+   * `docs/lapse-read-only/spec.md` §3.2, D436, T12): after the key's grace
    * period this console does not launch a run, does not change a setting and
    * does not move a task of a record, and `lapseHandlers`
    * (`src/main/licence-state.ts`) refuses exactly the rows that carry this
@@ -1897,7 +1897,7 @@ export const CONSOLE_OPERATIONS = [
   // for nor read the key of an installation other than that one.
   //
   // **The screen that draws them is never gated**
-  // (`docs/design/lapse-read-only.md`): a lapsed installation is the one state
+  // (`docs/lapse-read-only/spec.md`): a lapsed installation is the one state
   // in which the operator has to be able to reach the box that takes a renewal,
   // so these two are not on a reduced view and answer in every mode.
   {
@@ -1937,7 +1937,7 @@ export const CONSOLE_OPERATIONS = [
   // the estimate the CLI publishes is a count of people. It is not gated by a
   // lapse either, and for the same reason a read is never gated: only the three
   // writes that walk an installation out of a lapse carry
-  // `refusedAfterLapse` (`docs/design/lapse-read-only.md`).
+  // `refusedAfterLapse` (`docs/lapse-read-only/spec.md`).
   //
   // **No argument at all**, the strongest form of this rule's closed schema:
   // the command takes no positional word, `--json` is a fixed word of the spawn
@@ -2032,7 +2032,7 @@ export const CONSOLE_OPERATIONS = [
   // console answers it -- which is what a reduced console's operator needs,
   // since the steps a management command saved are precisely what a lapsed
   // installation has not applied yet. **No lapse refuses it either**
-  // (`docs/design/lapse-read-only.md`): the read writes nothing on this machine
+  // (`docs/lapse-read-only/spec.md`): the read writes nothing on this machine
   // and reaches no cloud object.
   {
     name: 'apply.pending',
@@ -2951,25 +2951,25 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     shape: 'command',
     value: 'project policy publish',
     why: 'a write: it publishes the fleet’s policy',
-    where: 'docs/plans/2026-10-14-project-centric.md Task 1.6 (PR #390): this tree has no `fugaro project` command at all',
+    where: 'docs/project-centric/implementation-plan.md Task 1.6 (PR #390): this tree has no `fugaro project` command at all',
   },
   {
     shape: 'command',
     value: 'project repos add',
     why: 'a write: it enrolls a repository in the allow-list',
-    where: 'docs/plans/2026-10-14-project-centric.md Task 1.6 (PR #390); not on main 2026-10-16',
+    where: 'docs/project-centric/implementation-plan.md Task 1.6 (PR #390); not on main 2026-10-16',
   },
   {
     shape: 'command',
     value: 'project repos rm',
     why: 'a write: it un-enrolls a repository. Un-enrollment is a security-relevant act, which is why it stays a typed command in a terminal',
-    where: 'docs/plans/2026-10-14-project-centric.md Task 1.6 (PR #390); not on main 2026-10-16',
+    where: 'docs/project-centric/implementation-plan.md Task 1.6 (PR #390); not on main 2026-10-16',
   },
   {
     shape: 'command',
     value: 'project sync',
     why: 'a write: it adds the missing repositories to the allow-list',
-    where: 'docs/plans/2026-10-14-project-centric.md Task 4.1; not on main 2026-10-16',
+    where: 'docs/project-centric/implementation-plan.md Task 4.1; not on main 2026-10-16',
   },
   {
     shape: 'command',

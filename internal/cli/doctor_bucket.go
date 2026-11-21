@@ -12,7 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
-// doctorRunsBucketIAM is the runs-bucket-iam check (docs/design/bucket-iam.md
+// doctorRunsBucketIAM is the runs-bucket-iam check (docs/bucket-iam/spec.md
 // H9): who can write the runs bucket. Read-only; every failure to read is a
 // warning, never an error. A test configuration (no_auth with no storage
 // endpoint) is skipped, so no real bucket is ever read from one.

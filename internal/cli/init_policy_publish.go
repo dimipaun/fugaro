@@ -355,7 +355,7 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	// The account-choice keys are compared too — the project's
 	// default_claude_account and each stage's own claude_account — because
 	// this file is their only store and the publish is what carries them
-	// (docs/design/mixed-credentials.md §11): the runner reads them off the
+	// (docs/mixed-credentials/spec.md §11): the runner reads them off the
 	// published node alone (resolveMixedStages, mixedDefaultAccount), so a
 	// config that names an account while the node does not carry it is a
 	// launch that admits the mix and a job that mounts the token beside a
@@ -876,7 +876,7 @@ func policyLoosening(old, new *projectpolicy.Policy) []policyCeiling {
 // It is a widening in the sense the typed name is asked for, and it is measured
 // member by member against the node it replaces for that reason. The account is
 // the credential a mixed run's review goes out on
-// (docs/design/mixed-credentials.md §11), so a node that starts naming one hands
+// (docs/mixed-credentials/spec.md §11), so a node that starts naming one hands
 // a stage a credential it did not hold — and, to an api-key run, the mix the
 // ruling admits, which the launch resolver reads off this node and nothing else,
 // while the credential itself is mounted into the job's environment from this

@@ -63,7 +63,7 @@ func claudeAccountModels(reviewer string) config.Agent {
 
 // TestResolveMixedStagesOnlyUnderTheRunsOwnKey: the mix exists to give an
 // api-key run a Claude review credential it otherwise has none of, and it is
-// that run's alone (docs/design/mixed-credentials.md §11). Under every other
+// that run's alone (docs/mixed-credentials/spec.md §11). Under every other
 // auth — an unknown one included, which the run judges with the auth it
 // resolved — a node naming a stage account resolves to no stage at all: the
 // keys keep whatever meaning that auth gives them and no stage of the run
@@ -104,7 +104,7 @@ func TestResolveMixedStagesOnlyUnderTheRunsOwnKey(t *testing.T) {
 // model a provider route claims would be handed to Anthropic under a model
 // Anthropic does not serve — an unknown model at best, and at worst another
 // provider's own model ID. It is refused before any model call, the way a
-// stage account the launch refuses is (docs/design/mixed-credentials.md §11,
+// stage account the launch refuses is (docs/mixed-credentials/spec.md §11,
 // "A review stage that fails"): never silently sent, and never quietly run on
 // the gateway's credential instead.
 func TestResolveMixedStagesRefusesAProviderServedStageModel(t *testing.T) {
@@ -158,7 +158,7 @@ func pinnedAgent(coder, l2, l3 string) config.Agent {
 }
 
 // TestResolveMixedStagesFollowsRungFour is the runner's half of the owner's
-// ruling of 2026-11-05 (docs/design/mixed-credentials.md §11): the project's
+// ruling of 2026-11-05 (docs/mixed-credentials/spec.md §11): the project's
 // default_claude_account opts an api-key run into the mix for the stages of
 // the allow-list, under the conditions the launch's mixedStageAccount applies —
 // an Anthropic model on that stage, a coder a provider route this repository

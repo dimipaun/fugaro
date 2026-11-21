@@ -9,7 +9,7 @@ written to the owner's answers
 take no decision number and move the reports out of the repositories and into the project's runs
 bucket. **On 2026-11-07 the owner put this work in 0.22.0 "Sloth"**, and the release plan for that
 slot — this folder's work together with the failures report's own design
-(`docs/design/failure-classes.md`) — is **Part II of
+(`docs/failure-classes/design.md`) — is **Part II of
 [implementation-plan.md](implementation-plan.md)**, reconciled in
 [reconciliation.md](reconciliation.md) **§6** (findings F25–F34 and the decisions **D1430–D1449**,
 each answered as recommended on 2026-11-07). **On 2026-11-17 the owner answered E6, the designated
@@ -90,7 +90,7 @@ claim of the request against the tree and settles those.
 | --- | --- |
 | [spec.md](spec.md) | The recorded request (§1), what the periodic review is (§2–§7), what this design adds (§8–§9). The commands are written to the owner's answers of 2026-11-04, **and this run does not rewrite it**: §3, §5 and §6 keep their 2026-11-04 text and are read through [reconciliation.md](reconciliation.md) §5 |
 | [reconciliation.md](reconciliation.md) | Each spec claim against the code on `main`: what exists (F1–F13), what is missing or conflicts (F14–F24), the decisions **D960–D971** with the owner's answers (§3), what the 2026-11-04 refresh found (§4), **the owner's rulings of 2026-11-05 (§5, E1–E8)**, which amend D321, D322 and G2, and **the 2026-11-07 reconciliation (§6)**, which reads the folder against the failures report's design and holds F25–F34 and the decisions **D1430–D1449**, and **the 2026-11-17 reconciliation (§7)**, which answers E6 (Open item 1) and holds the decisions **D2750–D2754**: the designated repository, the `reports_commit` key, policy version 10, the answer on public repositories and the launcher handing the stored bytes in. **Where it disagrees with `spec.md`, it wins** |
-| [implementation-plan.md](implementation-plan.md) | **Part I** — tasks R0–R16 (the reports job's module and grants, its paused setting, the plan and the command, the aggregate, the opt-in commit and the `runs digest` default among them, and the 2026-11-17 designation's own R14–R16) with the shared-files table, the levels, **Open items** and the release slot. **Part II** — the 0.22.0 release plan over Part I's reports job and `docs/design/failure-classes.md`'s FC1–FC8: the two works' one leveling, the shared-files table over the union, every task with its commit and reviewer tier, the critical path, the release slot with its `### For operators` text, and the owner-run checks **340–343**. **Plan only when this was written; not now** — every task in both parts is approved (2026-11-07, and the 2026-11-17 designation's three with them), and what has landed since is Part I's R0–R4, R6 and R13, named with their commits in the status line above, and Part II's FC3 |
+| [implementation-plan.md](implementation-plan.md) | **Part I** — tasks R0–R16 (the reports job's module and grants, its paused setting, the plan and the command, the aggregate, the opt-in commit and the `runs digest` default among them, and the 2026-11-17 designation's own R14–R16) with the shared-files table, the levels, **Open items** and the release slot. **Part II** — the 0.22.0 release plan over Part I's reports job and `docs/failure-classes/design.md`'s FC1–FC8: the two works' one leveling, the shared-files table over the union, every task with its commit and reviewer tier, the critical path, the release slot with its `### For operators` text, and the owner-run checks **340–343**. **Plan only when this was written; not now** — every task in both parts is approved (2026-11-07, and the 2026-11-17 designation's three with them), and what has landed since is Part I's R0–R4, R6 and R13, named with their commits in the status line above, and Part II's FC3 |
 
 ## The owner's answers, 2026-11-04
 
@@ -178,7 +178,7 @@ as a docs-only change. `docs/release-streams.yaml` has the CLI stream's `current
 
 - **The reports job** is this folder's own cut — Part I's **R12, R13, R7, R11, R8, R10, R9**, with
   R9's designation design's own **R14, R15, R16** (2026-11-17) and R0–R4, R6 as its prerequisites.
-- **The failures report** is `docs/design/failure-classes.md`'s own cut — its **FC1–FC8**, with its
+- **The failures report** is `docs/failure-classes/design.md`'s own cut — its **FC1–FC8**, with its
   D1–D9, its O1–O6 and its own levels and shared-files table. **That document is not edited.**
 - **What Part II adds is what neither can state alone:** the union's leveling (Part II §P3), the
   twenty-six files the two meet in (§P4) — twenty-seven with the table's one conditional row — every
@@ -230,7 +230,7 @@ about R12's grants that is listed under Open items rather than decided.
 **The 2026-11-07 plan adds a fourth of the same kind, and it is the failures report's own.**
 `internal/runner/runner.go` and the package's other FC2–FC4 files, `internal/runstore/runstore.go`,
 `internal/runview/runview.go`, `schemas/result.schema.json` and the two documents that describe the
-record are `docs/design/failure-classes.md`'s to change — **not the whole package:
+record are `docs/failure-classes/design.md`'s to change — **not the whole package:
 `internal/runner/digest.go` and `internal/runner/digest_test.go` are this folder's own R0, which
 moves the due computation out of them** — and this folder's plan cites its **FC1–FC8** rather than
 restating them ([implementation-plan.md](implementation-plan.md) Part II §P1). **The two plans meet

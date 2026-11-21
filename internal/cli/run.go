@@ -313,7 +313,7 @@ type runOptions struct {
 	// its own, takes the title of the pull request it continues
 	// (newFollowUpSpec, followUpPRTitle).
 	title string
-	// token is the named Claude account (docs/design/named-oauth-tokens.md)
+	// token is the named Claude account (docs/named-oauth-tokens/spec.md)
 	// this run uses: fugaro run --token. A follow-up (--pr) inherits its
 	// previous run's account when this is empty; an explicit value overrides
 	// it instead (owner ruling, 2026-10-12, task 9b review), through the
@@ -3733,7 +3733,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // and not a stage's. A non-default name is refused (claudeAccountAllowed)
 // unless config.AllowedClaudeAccounts (the local config's claude_accounts)
 // lists it for repo, before any launch (design
-// docs/design/named-oauth-tokens.md §3 T7) — checked whether or not a checkout
+// docs/named-oauth-tokens/spec.md §3 T7) — checked whether or not a checkout
 // is available here, so --repo X --token N outside any checkout is held to the
 // same rule a checkout's own resolution would be.
 //
@@ -3752,7 +3752,7 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // The mix rule is judged first, for every call and whatever stage was asked
 // for (config.CheckStageAccountMix): an api-key run may name one Claude
 // account, for the senior review and the adversarial review and no other stage
-// (docs/design/mixed-credentials.md §11, the owner's B0 ruling), and a run
+// (docs/mixed-credentials/spec.md §11, the owner's B0 ruling), and a run
 // under vertex or cascade may name none at all. That refusal belongs to the
 // launch rather than to the stage it was asked about: a config that declares a
 // mix the ruling does not admit is refused before anything is read or started,
@@ -3789,14 +3789,14 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // Both halves are the run's, and neither is the working tree's. The account is
 // read at the ref the run checks out, out of this checkout's git objects
 // (agentAtRef/checkoutFugaroYAMLAtRef), because the committed fugaro.yaml is
-// the only place that may name an account (docs/design/named-oauth-tokens.md
+// the only place that may name an account (docs/named-oauth-tokens/spec.md
 // T2) — a working tree left on another branch, or carrying an uncommitted
 // edit, would otherwise select the account the launch runs as: the job it
 // lands on holds that account's token, and that account's allow_repos is what
 // decides whether this repository may use it. The auth is the *run's* too, and
 // that means the ref's bytes resolved over the project layer (agentAtRef's
 // second answer), not the ref's bytes alone: agent.auth is a project-scope,
-// layerable key (docs/design/layered-config.md's scopes table), so the run
+// layerable key (docs/layered-config/spec.md's scopes table), so the run
 // resolves it layer-applied (projectJobAgentAuth) — a launcher that read the
 // raw file would answer Fugaro's own default (applyDefaults' vertex) for the
 // shape projects adopt accounts with, a layer whose defaults say
@@ -4074,7 +4074,7 @@ func claudeAccountChoice(ctx context.Context, env *cloudEnv, repo, flag, stage, 
 
 // mixedRunAccount is the account a mixed run's launch lands on: the one Claude
 // OAuth account this run's review stages are served by, and "" when the run is
-// no mix at all (docs/design/mixed-credentials.md §11).
+// no mix at all (docs/mixed-credentials/spec.md §11).
 //
 // It is the launch's own account for a mixed run and not the stages' alone,
 // because the account is what picks the job: spec.OAuthToken names the job
@@ -4211,7 +4211,7 @@ func mixMode(ctx context.Context, env *cloudEnv, repo string, co *config.Config)
 
 // mixedStageAccount is the account rung 4 puts on one of the mix's two stages
 // of an api-key run, its whole rule, and "" when the mix is not admitted for
-// that stage (docs/design/mixed-credentials.md §11, the owner's ruling of
+// that stage (docs/mixed-credentials/spec.md §11, the owner's ruling of
 // 2026-11-05: "IF default_claude_account is set AND we have an Anthropic model
 // for senior review and/or security review, then we get mixed runs"). rung 2 is
 // read before this call and wins, so the stage's own key is not consulted here.
@@ -4287,7 +4287,7 @@ func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth str
 	if mixMode(ctx, env, repo, co) != policy.ModeEnforce {
 		return "", "", nil
 	}
-	// The run holds one Claude account (docs/design/mixed-credentials.md §11,
+	// The run holds one Claude account (docs/mixed-credentials/spec.md §11,
 	// "never a second provider's key"): the other mixed stage's own key names
 	// the mix's account when it names one, and a project default that names a
 	// *different* one would be a second credential this run may not hold. It is
@@ -4343,9 +4343,9 @@ func mixedStageModel(a config.Agent, stage string) string {
 // never the working tree), and the two facts are read differently because the
 // two keys have different scopes. agent.oauth_token is repository-scope — the
 // committed fugaro.yaml is the only place that may name an account
-// (docs/design/named-oauth-tokens.md T2) and no project layer may name one —
+// (docs/named-oauth-tokens/spec.md T2) and no project layer may name one —
 // so the file's own value is the run's, via the strict config.AgentOf. And
-// agent.auth is project-scope and layerable (docs/design/layered-config.md's
+// agent.auth is project-scope and layerable (docs/layered-config/spec.md's
 // scopes table): the run composes it from the ref's bytes and the project
 // layer its task carries, through runner.ResolveConfig, exactly as
 // projectJobAgentAuth does, and a launcher that answered from the raw file
@@ -4559,7 +4559,7 @@ func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 // claudeAccountMembership is the allow-list half of claudeAccountAllowed, and
 // the whole check for a *stage* account: every name is held to the account's own
 // allow_data_to for the repository, whatever permitted rung it came from
-// (docs/design/mixed-credentials.md §11, "every name is still held to
+// (docs/mixed-credentials/spec.md §11, "every name is still held to
 // claude_accounts's allow-list"). It is one function rather than two copies so
 // that the run's own rungs and the stage's cannot drift: a name one admits for
 // this repository is a name the other admits, and a name one refuses the other

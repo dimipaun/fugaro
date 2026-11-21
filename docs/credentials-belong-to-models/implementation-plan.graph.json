@@ -538,9 +538,9 @@
         "prediction": true,
         "paths": [
           "docs/project-claude-accounts.md",
-          "docs/design/mixed-credentials.md",
-          "docs/design/agent-env.md",
-          "docs/design/project-secrets.md",
+          "docs/mixed-credentials/spec.md",
+          "docs/agent-env/spec.md",
+          "docs/project-secrets/spec.md",
           "docs/design/v1.md",
           "docs/release.md",
           "docs/project-layer.md",

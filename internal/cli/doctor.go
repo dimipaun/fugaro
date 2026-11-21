@@ -1773,7 +1773,7 @@ func doctorAccountsAdd(lc *localcfg.Config, account, profile string) string {
 }
 
 // claudeAccountsStoredCheck is doctor's "claude-accounts-stored" check
-// (design docs/design/named-oauth-tokens.md §6f, plan Task 8): every named
+// (design docs/named-oauth-tokens/spec.md §6f, plan Task 8): every named
 // Claude account repo may choose (config.AllowedClaudeAccounts, "default"
 // excluded, since that is the repository's existing, unconditionally
 // required secret and already covered by doctor's other checks) should have
@@ -2101,7 +2101,7 @@ func projectAccountStoredCheck(lc *localcfg.Config, project []gcp.SecretInfo, pr
 }
 
 // oauthTokenAllowedCheck is doctor's "oauth-token-allowed" check (design
-// docs/design/named-oauth-tokens.md §6f, plan Task 8): the checkout's
+// docs/named-oauth-tokens/spec.md §6f, plan Task 8): the checkout's
 // agent.oauth_token, if set, must name an account config.AllowedClaudeAccounts
 // says repo may actually use, for a workflow whose agent.auth is oauth — a
 // name the local config does not know, one whose allow_data_to omits repo,

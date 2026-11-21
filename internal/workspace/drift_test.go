@@ -398,7 +398,7 @@ func TestDriftExtraAndMissing(t *testing.T) {
 
 // TestDriftNamesAnImplicitAdminOnAStatedPrincipal is D689 and R13 on the side
 // presence alone cannot see. `roles/owner`, `roles/editor` and the budget
-// admin's role are an ADMIN's roles -- docs/design/roles.md §2 gives an admin
+// admin's role are an ADMIN's roles -- docs/roles/spec.md §2 gives an admin
 // `roles/owner` and `roles/editor` and the budget admin's write over /config, and
 // gives a viewer or an operator none of them -- so a principal the record states
 // as a viewer who holds roles/owner besides is an admin of the member that the

@@ -211,8 +211,8 @@ release, so what it measures is the only evidence the claim stands on (R4 as re-
   LM6 merges**, §7), `internal/cli/launch_batch.go` (new), `internal/cli/launch_batch_test.go`
   (new), `internal/backend/batch/seal.go`, `internal/backend/batch/seal_test.go` (new),
   `internal/backend/batch/register.go` (new: the id call), `internal/backend/batch/register_test.go`
-  (new), `internal/cli/docs_budget_token_channel_test.go`, `docs/design/budget-token-channel.md`,
-  `docs/design/compute-backend.md`. Past five; the last three are one sentence each.
+  (new), `internal/cli/docs_budget_token_channel_test.go`, `docs/budget-token-channel/spec.md`,
+  `docs/compute-backend/spec.md`. Past five; the last three are one sentence each.
 - Interfaces: consumes C1 (the ticket's job field, the registration's route) and BRS (`seal.go`);
   produces the ticket BR4 claims and the registration BR17 answers.
 - Tests: `TestABatchLaunchCarriesTheTicketAndNothingElse`, `TestTheTicketNamesTheJob`,
@@ -223,7 +223,7 @@ release, so what it measures is the only evidence the claim stands on (R4 as re-
 - Red step: the plain marker appears among the job's variables, or the ticket is set without the
   job's name.
 - Depends on: C1 (the ticket's job field and the registration's route); BRS (kept: one file,
-  `seal.go`). `docs/design/budget-token-channel.md` is also AB9's file in always-a-budget: BR1
+  `seal.go`). `docs/budget-token-channel/spec.md` is also AB9's file in always-a-budget: BR1
   starts after AB9 merges if AB9 has an open pull request.
 - Commit: `batch: a Batch launch carries the ticket that names its job, or is refused (BR1, D3101 as amended, D3108)`.
 - Reviewer tier: opus, mandatory independent review.
@@ -889,7 +889,7 @@ meanwhile.
 | `docs/secrets-brokering/secret-readers.md` | BR11 (2), BR15 (3) |
 | `internal/cli/docs_security_test.go` | BR12 (2), BR15 (3) |
 | `deploy/terraform/terraform_test.go` | BR5 (2) |
-| `docs/design/budget-token-channel.md`, `docs/design/compute-backend.md` | BR1 (1) |
+| `docs/budget-token-channel/spec.md`, `docs/compute-backend/spec.md` | BR1 (1) |
 | `.claude/rules/credentials-service.md` | BR5 (2), BR22 (3) |
 | `internal/credsvc/batchclaim_register.go` | BR17 (2), BR22 (3) |
 | `internal/cli/credentials_serve.go` | BR22 (3), I1 (5) |
@@ -934,7 +934,7 @@ meanwhile.
 of BR1, BR2, BR4, BR6, BR12, BR15, BR22 and I1 starts after the task that owns the file it edits
 has merged, or rebases on it — **the waits the graph cannot draw, listed in section 7.** Also AB9's
 in always-a-budget, which is approved: `internal/backend/batch/run.go`, `internal/cli/doctor_batch.go`,
-`internal/cli/validate_batch.go`, `docs/backends.md` and `docs/design/budget-token-channel.md`. A
+`internal/cli/validate_batch.go`, `docs/backends.md` and `docs/budget-token-channel/spec.md`. A
 launcher checks for an open pull request on each before starting BRS, BR1, BR7 and BR12.
 
 ## 6. The estimate

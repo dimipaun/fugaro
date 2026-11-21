@@ -4,7 +4,7 @@
 // Package plugincheck holds the checks that read the tagged command tree: the
 // tree a released binary builds, the core's commands plus the ones the owner
 // moved out of the core registered back into it (design
-// docs/design/ee-boundary-moves.md §9, D536). The core's own skill checks
+// docs/ee-reorg/boundary-moves.md §9, D536). The core's own skill checks
 // (plugin/*_test.go) accept a paid command by name alone, because the core tree
 // answers to it with the stub a build without that code shows, and the stub
 // parses no flags; the flags those commands carry are checked here, against the

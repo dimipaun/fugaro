@@ -316,7 +316,7 @@ func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
 func (e *initEngine) selfFlagLabel(ctx context.Context, bucket string, budget managed.Budget, what string) error {
 	r := e.r
 	if err := managed.WriteManagedLabelForFlag(ctx, e.c.CRM, r.gcpProject); err != nil {
-		r.warn(fmt.Sprintf("this run wrote gs://%s/%s but not the %s=%s label on %s (%v): the read requires both marks, so the installation is not managed yet and nothing is skipped for it. The fact in the runs bucket records the amount %d %s, so running `fugaro update --budget %d --budget-currency %s --billing-account <account>` again finishes the flag in that same run — it finds the fact recording that amount and writes the label this run could not; the label's own line, for the owner at their own terminal, is in docs/design/managed-projects.md",
+		r.warn(fmt.Sprintf("this run wrote gs://%s/%s but not the %s=%s label on %s (%v): the read requires both marks, so the installation is not managed yet and nothing is skipped for it. The fact in the runs bucket records the amount %d %s, so running `fugaro update --budget %d --budget-currency %s --billing-account <account>` again finishes the flag in that same run — it finds the fact recording that amount and writes the label this run could not; the label's own line, for the owner at their own terminal, is in docs/managed-projects/spec.md",
 			bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, r.gcpProject, safetext.FieldErr(err), budget.Amount, safetext.Field(budget.Currency), budget.Amount, safetext.Field(budget.Currency)))
 		return nil
 	}

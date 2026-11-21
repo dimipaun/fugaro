@@ -37,7 +37,7 @@ func runsBucketName(gcpProject string) string { return "fugaro-runs-" + gcpProje
 // IsManaged reports whether project — the Fugaro project of the installation
 // whose GCP project is gcpProject — was created by a Fugaro run, and so is
 // managed: the state in which typed confirmations are skipped
-// (docs/design/managed-projects.md, D55). It reads the creation fact
+// (docs/managed-projects/spec.md, D55). It reads the creation fact
 // (MarkerObject) from the installation's runs bucket, and believes it only
 // after proving the bucket is that project's own.
 //
@@ -281,11 +281,11 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 		// the label that reaches a coding agent's session, and a sentence
 		// naming the write would invite it from the side that must never make
 		// it. That is the settled, VETOABLE decision §5 of
-		// docs/plans/2026-10-18-managed-projects-task-3.0-decisions.md, and
+		// docs/managed-projects/task-3.0-decisions.md, and
 		// TestTheNoLabelReasonNamesNoCommand pins it. The line a person runs
 		// is in the setup document, which the reason names, and neither
 		// writer of the label is this string's to name.
-		labelWhy = fmt.Sprintf("GCP project %s carries no %s label, so %s is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/design/managed-projects.md)", gcpProject, ProjectLabelKey, project)
+		labelWhy = fmt.Sprintf("GCP project %s carries no %s label, so %s is not managed: a managed project carries both marks, the creation fact in its runs bucket and the label on the project itself, and a project that has the fact without the label is marked again by hand, on the account that owns it (docs/managed-projects/spec.md)", gcpProject, ProjectLabelKey, project)
 	} else if v != ProjectLabelValue {
 		labelWhy = fmt.Sprintf("GCP project %s carries %s=%s, not %s, so %s is not managed", gcpProject, ProjectLabelKey, v, ProjectLabelValue, project)
 	}
@@ -296,7 +296,7 @@ func readFact(ctx context.Context, s *storage.Service, c *crm.Service, project, 
 	// Budget.Check refuses is reported as that figure, and not as the missing
 	// label: "a managed creation could not have chosen this amount" is the
 	// more specific of the two sentences, and the label's sends the owner to
-	// the backfill in docs/design/managed-projects.md, which would leave them with a managed
+	// the backfill in docs/managed-projects/spec.md, which would leave them with a managed
 	// project whose recorded amount nothing can be compared against. The cost
 	// is a bucket and an object read for a project that has no label — the
 	// state every project marked before Task 3.0 is in (decisions §5) — and it

@@ -5321,7 +5321,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // above them: they reach no child at all (`command: null`), so there is no
     // document of theirs for the mode to withhold a figure from -- and the key
     // screen has to stay reachable in every state, which is the design's own
-    // rule for it (`docs/design/lapse-read-only.md`: "the key screen in
+    // rule for it (`docs/lapse-read-only/spec.md`: "the key screen in
     // particular is never gated", because a lapse is exactly when the operator
     // has to reach the box that takes a renewal). **`graph.watch` (CG9b) is the
     // thirtieth**, for `graph.read`'s reason exactly: the document it streams is
