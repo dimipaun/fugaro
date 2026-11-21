@@ -4886,6 +4886,7 @@ Subcommands:
 - `fugaro licence login` -- Sign in to the licence site and install the key it issues (Subscription Edition)
 - `fugaro licence refresh` -- Ask the licence server for the next key now (Subscription Edition)
 - `fugaro licence renew` -- Run the installation's licence check and renewal, as its job does (Subscription Edition)
+- `fugaro licence seats` -- Show who holds a seat of the licence's count (Subscription Edition)
 - `fugaro licence set` -- Install the installation's licence key (Subscription Edition)
 - `fugaro licence status` -- Show the installation's licence: tier, seats, expiry, state and last check
 
@@ -5026,6 +5027,72 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for renew |
 | `--job` | bool | `false` | no | run as the installation's renewal job, which is the only way this verb runs |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro licence seats`
+
+Show who holds a seat of the licence's count (Subscription Edition)
+
+Show who holds a seat of this installation's licence.
+
+A seat is an operator or an admin, and viewers are free. Who holds one is not
+assigned anywhere: the grants node's order is the assignment — the admins first,
+because admins always keep a seat, and then the operators in the order they were
+granted, so the first ones keep their seat when a key buys fewer.
+
+  fugaro licence seats ls    list the holders a key's count reaches
+
+Changing a seat is changing a role: `fugaro user grant` and `fugaro user revoke` write the
+grants node, and the order a grant was written in is the order the seats are
+handed out.
+
+Usage: `fugaro licence seats`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for seats |
+
+Subcommands:
+
+- `fugaro licence seats ls` -- List the seat holders the licence's count reaches
+
+## `fugaro licence seats ls`
+
+List the seat holders the licence's count reaches
+
+List the members the grants node places, in the order the seats are handed out,
+with the role each holds and whether the key's count reaches them.
+
+The admins come first and always hold a seat, so someone can always install a
+bigger key; the operators follow in the order they were granted, and the ones
+past the count act as viewers on the Subscription surfaces until a seat frees up
+or more are bought. An installation with no key applies no count at all, and the
+list says so.
+
+--json prints {project, state, source, seats, applies, holders}, where holders
+is [{member, role, seated}] in the rule's own order: seated is whether that
+member's role stands on the Subscription surfaces, which is true for everyone
+while no key applies.
+
+This is a read: it is not refused inside a coding agent's session.
+
+Usage: `fugaro licence seats ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
