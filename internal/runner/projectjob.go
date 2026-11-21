@@ -353,20 +353,23 @@ func (r *run) checkJobClass(id jobTriple) error {
 // header for it (auth.go's verifyJob, C3.9), and whose container the platform
 // mounts before the run starts.
 //
-// The two are told apart by the shape of the platform's own report first, and
-// by FUGARO_BACKEND — the installation's record of which backend a job was
-// launched on (backend.BackendEnv, written by internal/infra into every job) —
-// only where that report is not a Cloud Run execution. The order is the
-// security property and not a convenience: FUGARO_BACKEND is a job env var, so
-// a launcher can write it into a Cloud Run job's definition beside a
-// deployed-job name of its choosing, and a branch that read it first would let
-// that launcher choose a run's identity — its provider, its admission and its
-// clone URL — where the platform had already reported a job name no launcher
-// can write (finding 4, 12a item 1). Deps.Execution is that report, filled by
-// internal/cli from backend.ExecutionFromEnv, so its shape is what "this
-// process is a Cloud Run execution" means here; a process whose report is not
-// one is not a Cloud Run run, and on it the variable is the only thing left
-// that can name the backend.
+// The backend is the one the platform's own signal claims, asked through
+// backend.DetectPlatform: Cloud Run's CLOUD_RUN_EXECUTION first, Batch's
+// BATCH_TASK_INDEX and BATCH_TASK_COUNT second, and neither for a process no
+// platform claims. It is never a FUGARO_* variable, and never the shape of the
+// name the run was handed. Both of those are the launcher's: FUGARO_BACKEND is
+// written into the job definition, and Deps.Execution is composed by the codec
+// out of FUGARO_GCP_PROJECT and FUGARO_REGION beside the platform's own
+// CLOUD_RUN_JOB and CLOUD_RUN_EXECUTION, so a launcher that wrote a slash into
+// the project or the region leaves a name that does not parse as a Cloud Run
+// execution at all. A branch that read either of those would let that launcher
+// take the Batch path on Cloud Run and choose the run's identity — its
+// provider, its admission, its clone URL (finding 4, 12a item 1). Asking Cloud
+// Run first is what closes it:
+// a Cloud Run job whose definition also carries the Batch pair is placed by the
+// job the platform put it in, and a Batch task whose launcher wrote
+// CLOUD_RUN_EXECUTION into it stops on its own job id (cannotPlaceJob) rather
+// than adopting an identity.
 func (r *run) jobName() (string, error) {
 	if r.d.Execution == "" {
 		if r.d.Local {
@@ -374,14 +377,13 @@ func (r *run) jobName() (string, error) {
 		}
 		return "", fmt.Errorf("this run reports no Cloud Run execution and is not a local invocation (fugaro exec --task-file): a process no backend claims is in the cloud, and with no job name it cannot be placed in the job it is in, so it adopts no identity and is not admitted. The run stops before any git credential is requested; check that the job's environment carries the platform's own variables (CLOUD_RUN_JOB, CLOUD_RUN_EXECUTION)")
 	}
-	// The Batch branch is taken only when the platform's own report is not a
-	// Cloud Run execution: there the platform's name is the run's own job id,
-	// which is not an identity (batchDeployedJob). The report is asked first
-	// because FUGARO_BACKEND is a job env var a launcher writes, while the
-	// execution name is the one thing about a Cloud Run job it cannot (finding
-	// 4, 12a item 1): a Cloud Run job whose environment also carries the Batch
-	// pair is placed by its own CLOUD_RUN_JOB whatever that variable says.
-	if _, onCloudRun := backend.CloudRunCodec().Parse(r.d.Execution); !onCloudRun && r.jobEnv(backend.BackendEnv) == backend.CloudBatch {
+	// The Batch branch is taken on the platform's own signal alone — the pair
+	// Batch injects into every task — and Cloud Run's is asked first, so a Cloud
+	// Run job whose definition also carries that pair is still placed by the job
+	// the platform put it in (the paragraph above). On Batch the name the
+	// platform reports is the run's own job id, which is not an identity
+	// (batchDeployedJob).
+	if backend.DetectPlatform(r.jobEnv).Backend() == backend.CloudBatch {
 		return r.batchDeployedJob()
 	}
 	job, err := backend.JobOf(r.d.Execution)

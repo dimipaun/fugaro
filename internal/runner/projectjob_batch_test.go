@@ -31,9 +31,10 @@ import (
 //
 // The last test stands the same decision the other way round, which is why it
 // is here rather than in the Cloud Run half: a Cloud Run execution whose
-// environment carries this file's two variables is placed by its own execution
-// name, because the platform's report is what tells the two backends apart and
-// FUGARO_BACKEND is read only where that report is not a Cloud Run execution.
+// environment carries every variable a launcher could write into it — the Batch
+// pair included — is placed by the job the platform put it in, because the
+// platform's own signals tell the two backends apart and neither a FUGARO_*
+// variable nor the shape of the name the run was handed does.
 
 // batchExecution is the platform's own report of a run's execution on Cloud
 // Batch: the job's own resource name, which is the whole identity there — one
@@ -48,6 +49,15 @@ func batchExecution(jobID string) string {
 // no deployer and no policy ever computed (design compute-backend.md §2.4).
 const batchJobID = "fugaro-acme-app-app-0123456789abcdef"
 
+// batchTaskVars is the environment of a Batch task: BATCH_TASK_INDEX and
+// BATCH_TASK_COUNT, which Batch injects into every task and nowhere else and
+// which are therefore the platform's own claim that this process is one of its
+// runs (the codec's On), beside FUGARO_BACKEND, which is the installation's
+// record of the backend the job was launched on and is the launcher's to write.
+func batchTaskVars() []string {
+	return []string{"BATCH_TASK_INDEX=0", "BATCH_TASK_COUNT=1", backend.BackendEnv + "=" + backend.CloudBatch}
+}
+
 // batchRun is identityRun for a Batch job: the platform reports the Batch job's
 // own name rather than an execution of a deployed job, the environment is the
 // job's, and deployedJob is what the launch wrote into it as the job the run
@@ -58,7 +68,7 @@ func batchRun(t *testing.T, deployedJob, slug string, p *projectpolicy.Policy, f
 		Workflow: identityWorkflow, Task: "Add a feature"}
 	r := identityRun(t, "", slug, spec, p, found)
 	r.d.Execution = batchExecution(batchJobID)
-	env := []string{backend.BackendEnv + "=" + backend.CloudBatch}
+	env := batchTaskVars()
 	if deployedJob != "" {
 		env = append(env, backend.DeployedJobEnv+"="+deployedJob)
 	}
@@ -128,11 +138,8 @@ func TestABatchRunIsPlacedByItsDeployedJob(t *testing.T) {
 	t.Run("the name goes to the credentials service", func(t *testing.T) {
 		r := svcRun(t, config.AuthCascade, func(r *run) {
 			r.d.Execution = batchExecution(batchJobID)
-			r.d.Env = []string{
-				backend.BackendEnv + "=" + backend.CloudBatch,
-				backend.DeployedJobEnv + "=" + shared,
-				credentialsServiceURLEnv + "=https://creds.example",
-			}
+			r.d.Env = append(append(batchTaskVars(), backend.DeployedJobEnv+"="+shared),
+				credentialsServiceURLEnv+"=https://creds.example")
 		})
 		r.sess = svcSession(t)
 		up, err := r.gatewayUpstream(context.Background())
@@ -201,20 +208,38 @@ func TestABatchRunWithNoDeployedJobStops(t *testing.T) {
 	}
 }
 
-// TestACloudRunIsPlacedByItsOwnExecution is the reason jobName asks the
-// platform's own report before it reads any environment variable, and it is a
-// test of a refusal rather than of a fallback: a Cloud Run job whose
-// environment carries the Batch pair — FUGARO_BACKEND=cloud-batch beside a
-// deployed-job name of the launcher's choosing, which is a hand-edited job, an
-// environment copied from a Batch launch or exactly what a launcher reaching
-// for the identity of a run it did not launch would write — is still placed by
-// the job the platform reported, which no launcher can write (finding 4, 12a
-// item 1). Both halves of the placement are here for the same reason the Batch
-// test asks for both: the triple the run adopts (nothing, on the
-// per-repository path) and the name it reports to the credentials service.
+// cloudRunExecutionEnv is the variable Cloud Run injects into every task it
+// runs, and the codec's own claim that a process is one of its runs
+// (cloudRunCodec.On). It cannot be written into a job's definition, which is
+// what makes it the one thing here a launcher cannot forge.
+const cloudRunExecutionEnv = "CLOUD_RUN_EXECUTION"
+
+// cloudRunForgedVars is everything a launcher CAN write into a Cloud Run job's
+// definition, and would, reaching for the identity of a run it did not launch:
+// the pair Batch injects into its own tasks, FUGARO_BACKEND, and a
+// deployed-job name of its choosing. Cloud Run's own signal is in the same list
+// because it is in the same environment on a real run.
+func cloudRunForgedVars(deployedJob string) []string {
+	return append([]string{cloudRunExecutionEnv + "=" + svcJob + "-aaaaa"},
+		append(batchTaskVars(), backend.DeployedJobEnv+"="+deployedJob)...)
+}
+
+// TestACloudRunIsPlacedByItsOwnExecution is why jobName reads the platform's
+// own signals and nothing else, and it is a test of a halt rather than of a
+// fallback. Two ways a launcher reaching for the identity of a run it did not
+// launch gets neither: the Batch pair it wrote into the Cloud Run job's
+// definition does not move the run onto the Batch path, because Cloud Run's own
+// CLOUD_RUN_EXECUTION is asked first (finding 4, 12a item 1); and a slash it
+// wrote into FUGARO_GCP_PROJECT or FUGARO_REGION — which is what makes the name
+// the run was handed stop parsing as a Cloud Run execution — does not either,
+// because the shape of that name is the launcher's too: the run then stops on
+// the name it cannot read back, exactly as it did before there was a Batch
+// path. Both halves of the placement are here, for the same reason the Batch
+// test asks for both: the triple the run adopts (nothing) and the name it
+// reports to the credentials service.
 //
-// Mutation (run, restored): read FUGARO_BACKEND before the report's shape, as
-// the first cut of this branch did. The run is then placed by
+// Mutation (run, restored): read FUGARO_BACKEND, or the shape of the name the
+// run was handed, instead of the platform's signals. The run is then placed by
 // FUGARO_DEPLOYED_JOB, adopts the shared project job's (profile, provider)
 // triple and reports that name to the service, while the container it was
 // handed is the per-repository job's: its provider, its admission list, its
@@ -224,14 +249,10 @@ func TestACloudRunIsPlacedByItsOwnExecution(t *testing.T) {
 	p := policyOf(map[string]config.JobProfile{projectpolicy.DefaultProfileName: profileOf("github")})
 	shared := gcp.ProjectJobName(projectpolicy.DefaultProfileName, "github", "")
 	perRepo := gcp.JobName(slug, gcp.WorkflowVariant(identityWorkflow, ""))
-	batchVars := []string{
-		backend.BackendEnv + "=" + backend.CloudBatch,
-		backend.DeployedJobEnv + "=" + shared,
-	}
 
 	t.Run("the run stays in the job the platform reported", func(t *testing.T) {
 		r := identityRun(t, perRepo, slug, nil, p, true)
-		r.d.Env = batchVars
+		r.d.Env = cloudRunForgedVars(shared)
 		profile, provider, account, err := r.jobIdentity(context.Background())
 		if err != nil {
 			t.Fatalf("jobIdentity: %v", err)
@@ -251,9 +272,33 @@ func TestACloudRunIsPlacedByItsOwnExecution(t *testing.T) {
 		}
 	})
 
+	t.Run("a name the launcher broke is not read as a Batch job", func(t *testing.T) {
+		r := identityRun(t, perRepo, slug, nil, p, true)
+		// FUGARO_GCP_PROJECT as a launcher can write it, and the codec composes
+		// the name the run is handed out of it: the result is no Cloud Run
+		// execution at all, which is the shape the Batch branch must not be
+		// reached by.
+		r.d.Execution = "projects/a/locations/b/jobs/c/executions/d" + strings.TrimPrefix(r.d.Execution, "projects/aurora-fp")
+		r.d.Env = cloudRunForgedVars(shared)
+		_, _, _, err := r.jobIdentity(context.Background())
+		if err == nil {
+			t.Fatal("a Cloud Run run whose name the launcher broke was placed anyway")
+		}
+		if !strings.Contains(err.Error(), "cannot be read back into a job name") {
+			t.Errorf("the refusal %q is not the one for a name that is no execution: the run went somewhere else with it", err)
+		}
+		if _, project := r.projectJob(); project {
+			t.Error("the run adopted a project job identity from a name the platform did not report")
+		}
+		job, nameErr := r.jobName()
+		if nameErr == nil {
+			t.Errorf("jobName = %q, want the halt on the broken name", job)
+		}
+	})
+
 	t.Run("the name goes to the credentials service", func(t *testing.T) {
 		r := svcRun(t, config.AuthCascade, func(r *run) {
-			r.d.Env = append(append([]string{}, batchVars...), credentialsServiceURLEnv+"=https://creds.example")
+			r.d.Env = append(cloudRunForgedVars(shared), credentialsServiceURLEnv+"=https://creds.example")
 		})
 		r.sess = svcSession(t)
 		up, err := r.gatewayUpstream(context.Background())
