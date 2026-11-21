@@ -170,13 +170,14 @@ answers (D2962), and **spend the slip it takes**: the claim is held to the run's
 job account, so a grant naming a second member's job account is spent by *that* member's admins. A
 grant taken in that time lasts up to 24 hours more, so the window is about **25 hours** — and where
 the replayer administers that second member too, or its admins collude, the subscription is spent in
-a member the person never launched in. §10's third residual risk states it, and it is the second the
-owner accepts in words (O2). What narrows it as the design stands: the identity token is short-lived,
-and the member's route record carries an address and no key, so the replay and not the route is what
-has to be caught; the address a person stores a token at is read out of the **workspace's** project
-config on that person's own machine and out of nothing a member holds or publishes, so the intake leg
-is not one a member can
-aim (F23, R13, `intakeURLOf`); and `fugaro doctor` calls neither the workspace's service nor its
+a member the person never launched in. §10's third residual risk states it: the window in the member
+the person launched in is the second the owner accepts in words (O2), and the cross-member reach is
+not in that record, so it is put to the owner in §11. What narrows it as the design stands: the
+identity token is short-lived, and the member's route record carries an address and no key, so the
+replay and not the route is what has to be caught; the address a person stores a token at is read out
+of the **workspace's** project config on that person's own machine and out of nothing a member holds
+or publishes, so the intake leg is not one a member can aim (F23, R13, `intakeURLOf`); and
+`fugaro doctor` calls neither the workspace's service nor its
 intake, so it sends a person's identity nowhere (WC11, declined in the plan's §10).
 
 ## 5. What each actor can do
@@ -328,12 +329,14 @@ sentence, the test that pins it and `website/content/security.md` in the same ch
 **It becomes:** the workspace's service admits a member's **person** on two routes of its own — the
 grant route and the calls that present a slip it granted (R3, R4) — and it does so on a list it *can*
 check, which is why this is an amendment and not a reversal of the sentence's reason: the workspace's
-own roster — a node of the workspace's own database, written only by the workspace's own commands and
-re-read by the service every 60 seconds (R3) — whose people the workspace owner's `fugaro update`
-renders into the installation's own admission (R5, D2971, §7). The rest of §4 stands: the workspace's
-person class is still the workspace owner's people, and the roster's people are admitted as a class
-of their own beside it. What does not change is the reach: a person admitted there is served **their own**
-run's token and nothing of another's (D2962, D2976). WC4 and WC2 change the sentence, its test
+own roster — a node of the workspace's own database, written by several parties, which
+`internal/workspace/rosterstore.go` names as the workspace's own service, its admins and the workspace
+project's owners, and re-read by the service every 60 seconds (R3) — whose people the workspace
+owner's `fugaro update` renders into the installation's own admission (R5, D2971, §7). The rest of §4
+stands: the workspace's person class is still the workspace owner's people, and the roster's people
+are admitted as a class of their own beside it. What does not change is the reach: a person admitted
+there is served **their own** run's token and nothing of another's (D2962, D2976). WC4 and WC2 change
+the sentence, its test
 (`TestSecurityMdStatesTheWorkspaceThreatModel`) and `website/content/security.md` together.
 
 **2. R18 of workspace-service, that a call to the workspace's service carries no slip**
@@ -427,11 +430,17 @@ accepts it.
    replay can do, and what it cannot, are §4's: ask for grants as the person, naming any member's job
    account; replace or delete the person's own secrets at any intake that admits them, and a project's
    shared ones where the person is an admin there; never read a token; never spend the slip itself,
-   which that member's own admins claim (F24). **Accepted by the owner in words** (reconciliation O2),
-   which is where the owner may instead ask for a narrower token — or for the narrower grant, one
-   bound to the member the person actually launched in and checked against that member's own list,
-   which is a design decision and not a wording one: the workspace's service holds no grant to read a
-   member's own list (§8, workspaces spec §4).
+   which that member's own admins claim (F24).
+
+   **The window in the member the person launched in is accepted by the owner in words**
+   (reconciliation O2). **The cross-member reach is not in that record** — F24 and O2 both state the
+   narrower one ("grants as that person for jobs of that member"; "cannot run a job in another
+   member") — so it is not read here as accepted: it is put to the owner, and §11 is where that word
+   goes (O1, which is the owner's page and not O2's). What the owner can answer with is the reach as
+   stated, a narrower token, or the narrower grant: one bound to the member the person actually
+   launched in and checked against that member's own list, which is a design decision and not a
+   wording one, because the workspace's service holds no grant to read a member's own list (§8,
+   workspaces spec §4).
 
 4. **A person's runs draw on their own subscription by default.** With D3142 the person stored the
    token to use it, and every run they launch in a member whose admins turned the switch on draws on
