@@ -54,6 +54,7 @@ import { FeedTracker, GraphStreamGate, keyedArguments } from '../main/spawn'
 import type { Notice, SettingsEditPhase, SpawnOperationName, Timers } from '../main/spawn'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { stringifyDeep } from '../shared/stringify'
+import type { NewReadDocumentName, NewReadFeedName, NewReadName, NewReadSource } from './new-reads'
 import { MAX_REDACTABLE_LINE_LENGTH, REDACTOR_VERSION, RedactionRefusal, assertRedacted } from './redact'
 import { SourceRefusal, refusalFrom } from './source'
 import type {
@@ -444,13 +445,23 @@ function checkFixtureOrder(records: readonly FixtureRecord[], where: string): vo
 export const MAX_REPLAY_FEEDS = 4
 
 /** FixtureSourceOptions is everything a replaying source is built from. */
+/**
+ * FixtureDocumentName is every read a fixture may hold a document for: the
+ * operations of `FugaroSource` (`budget.show`, `runs.list`, ...) and the six
+ * reads of the desktop-console improvements plan that this source also answers
+ * (`newReads()`, below). The six are keyed by the contract's own name, and a
+ * feed's entry is the document the contract gives a feed -- `{lines: [...]}` --
+ * because that is what the console's decoder reads back (`new-ops.ts`).
+ */
+export type FixtureDocumentName = OperationName | NewReadName
+
 export interface FixtureSourceOptions {
   readonly fixture: LoadedFixture
   /** `documents` answers the one-shot reads (`budget.show`, `runs.list`, ...)
    * by operation name. A fixture that holds no document for a read refuses it by
    * name rather than answering with the live feed's last document, which would
    * be a screen showing a different command's answer. */
-  readonly documents?: Partial<Record<OperationName, JSONDoc>> | undefined
+  readonly documents?: Partial<Record<FixtureDocumentName, JSONDoc>> | undefined
   /** `texts` answers the two reads whose answer is a sentence (`cli.version`,
    * `run.logLink`). */
   readonly texts?: Partial<Record<OperationName, string>> | undefined
@@ -478,7 +489,7 @@ export class FixtureSource implements FugaroSource {
   readonly installation: InstallationRef
 
   readonly #fixture: LoadedFixture
-  readonly #documents: Partial<Record<OperationName, JSONDoc>>
+  readonly #documents: Partial<Record<FixtureDocumentName, JSONDoc>>
   readonly #texts: Partial<Record<OperationName, string>>
   readonly #timers: Timers
   readonly #budget: number
@@ -701,6 +712,42 @@ export class FixtureSource implements FugaroSource {
     const feeds = [...this.#feeds.values()]
     this.#feeds.clear()
     await Promise.all(feeds.map((feed) => feed.stop()))
+  }
+
+  /**
+   * newReads answers the six reads of the desktop-console improvements plan that
+   * are not members of `FugaroSource` (`src/source/new-reads.ts`, task SRC; task
+   * AL adds their rows to the allow-list). A fixture holds them exactly as it
+   * holds every other document -- one entry per read under `documents` -- so an
+   * e2e spec drives a screen of the new set with no child, no installation and
+   * no network behind it.
+   *
+   * **The bounds are the caller's and this source holds to none of them.** A
+   * fixture is a committed file whose header counts its own records, not a pipe a
+   * child is still writing to: a replay that stopped at a cap would be a screen
+   * showing fewer rows than the recording it claims to be, which is the one thing
+   * a fixture must not do.
+   */
+  newReads(): NewReadSource {
+    return {
+      readDocument: (name, args) => this.#newRead(name, args),
+      readFeed: (name, args) => this.#newRead(name, args),
+    }
+  }
+
+  /** #newRead is the six reads' one lookup, and it refuses a read the fixture
+   * holds no document for by name, for `#document`'s reason: a fixture answers
+   * only the reads it recorded. */
+  #newRead(name: NewReadDocumentName | NewReadFeedName, args: ValidatedArguments): Promise<JSONDoc> {
+    const document = this.#documents[name]
+    if (document === undefined) {
+      return Promise.reject(
+        new SourceRefusal(
+          `${this.#fixture.where} holds no ${name} document (${argsNote(args)}); a fixture answers only the reads it recorded`,
+        ),
+      )
+    }
+    return Promise.resolve(document)
   }
 
   #document(operation: OperationName, args: ValidatedArguments): Promise<Snapshot> {
