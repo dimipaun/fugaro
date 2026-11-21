@@ -93,8 +93,8 @@
 // dated when. The merge into `ios.infoPlist` is a merge and not an assignment:
 // see `declaring`.
 //
-// **The Firebase wiring (mobile plan, Task P7.1a).** The app carries Firebase
-// through three `@react-native-firebase` packages, and this file is where their
+// **The Firebase wiring (mobile plan, Tasks P7.1a and P5.2.8).** The app carries
+// Firebase through four `@react-native-firebase` packages -- and this file is where their
 // config plugins are registered and where the two **native config files** are
 // pointed at. The files themselves are the owner's: the console writes
 // `google-services.json` (Android) and `GoogleService-Info.plist` (iOS), they
@@ -318,11 +318,26 @@ function declaring(section) {
   };
 }
 
-/** The three packages the app's Firebase wiring is made of (P7.1a). */
+/**
+ * The four packages the app's Firebase wiring is made of: P7.1a's three, and
+ * P5.2.8's `messaging`, which is the one that mints the push token the phone
+ * registers with. It is the same family and the same pinned version, so the
+ * native SDK stays one SDK with one set of pods.
+ *
+ * **`messaging` is not the telemetry wiring, and the difference matters here.**
+ * D259 builds the native config into the app for `fugaro-prod`, so the app's
+ * DEFAULT Firebase app belongs to the telemetry project -- and an installation's
+ * push token has to be minted on an app instance that belongs to the
+ * installation's own Firebase project (FCM HTTP v1 delivers only to tokens of
+ * the sending project). This file registers the SDK; **which project the token
+ * is minted for is question 10's answer and is named at runtime**, in
+ * `src/push/messaging.js`'s `appName` -- never defaulted here and never guessed.
+ */
 export const FIREBASE_PACKAGES = Object.freeze([
   '@react-native-firebase/app',
   '@react-native-firebase/analytics',
   '@react-native-firebase/crashlytics',
+  '@react-native-firebase/messaging',
 ]);
 
 /**
@@ -357,6 +372,15 @@ const AD_ID_PERMISSION = 'com.google.android.gms.permission.AD_ID';
  * frameworks (`ios.useFrameworks: 'dynamic'`), which is that plugin's option.
  * The pods it applies to are declared by the entries after it.
  *
+ * The messaging entry (P5.2.8) takes **no options**, and that is a decision
+ * rather than an omission: its two Android options name a drawable and a colour
+ * the app does not ship (`android.notificationIcon`/`notificationColor`, which
+ * need `assets/` files of their own and belong with the notification channel
+ * P5.2.9 builds), and its iOS option (`installationIdEnabled`) is a different
+ * product's identifier. What registering the plugin does here is what the
+ * library needs from a build: the manifest mod and the platform's own messaging
+ * setup, with the notification's appearance configured where it is drawn.
+ *
  * The Analytics entry names the variant with **no advertising-id support**:
  * `ios.withoutAdIdSupport` writes `$RNFirebaseAnalyticsWithoutAdIdSupport =
  * true` into the Podfile, and the podspec then links `FirebaseAnalyticsCore`
@@ -369,6 +393,7 @@ const PLUGIN_ENTRIES = Object.freeze([
   FIREBASE_PACKAGES[0],
   [FIREBASE_PACKAGES[1], { ios: { withoutAdIdSupport: true } }],
   FIREBASE_PACKAGES[2],
+  FIREBASE_PACKAGES[3],
 ]);
 
 /** A plugin entry's name, whether it is a bare string or a `[name, options]` pair. */
