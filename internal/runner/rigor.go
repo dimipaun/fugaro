@@ -76,10 +76,13 @@ func (r *run) roundRigor(ctx context.Context) {
 // moment resolves the same level.
 //
 // The run's own request (rigor.Request.Level, the spec's Rigor: fugaro run
-// --mode) is part of every moment, not only the first: the resolver's
-// raise-only rule is what keeps a request from being outvoted by a later,
-// weaker read, and giving it to all three moments is what makes a requested
-// level hold for the whole run rather than for the moment it arrived at.
+// --mode) is part of every moment, not only the first: it is the narrowest
+// rank of the mode's order (LD3), so it is what a later, different read is
+// settled against, and giving it to all three moments is what makes a
+// requested level hold for the whole run rather than for the moment it arrived
+// at. Request.Reached is the other half of that: the level the run has already
+// reached is folded in as well, so a moment whose own read comes out weaker
+// never takes the run down (D22).
 //
 // It is also where a raise is read (noteRigorRaise): the level the run had
 // reached before this moment and the resolver's answer for it are both in hand

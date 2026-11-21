@@ -325,12 +325,15 @@ type Spec struct {
 	// rejected after the fact.
 	ReviewClass bool `json:"review_class,omitempty"`
 	// Rigor is the mode the run's own launcher asked for (fugaro run
-	// --mode, docs/rigor-modes implementation-plan T1.6): the one input
-	// that may raise the mode the run's layers resolve and never lower it
-	// (D6, F14). "" asks for none: every spec written before this release,
-	// every first run that passes no flag, and every follow-up whose pull
-	// request recorded no mode the reader may trust. The resolution then
-	// falls to the layers alone, exactly as it did before the flag existed.
+	// --mode, docs/rigor-modes implementation-plan T1.6): the narrowest rank
+	// of the mode's order, so it settles the level the run's layers resolve
+	// whether it asks for more or for less (LD3). What holds a lowering back
+	// is a review floor, which sits outside every layer and is a review level
+	// rather than a mode (LF5); the request's own rank no longer does. "" asks
+	// for none: every spec written before this release, every first run that
+	// passes no flag, and every follow-up whose pull request recorded no mode
+	// the reader may trust. The resolution then falls to the layers alone,
+	// exactly as it did before the flag existed.
 	//
 	// A --pr follow-up is the one launch that writes this field without a
 	// flag: it keeps the mode the runs on its pull request recorded and may
