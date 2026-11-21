@@ -150,8 +150,9 @@ token without a flag: the switch that exposes a person's subscription is one key
 published policy, off when absent, set by the member's admin and published by the member's
 `fugaro update` (R9, D2972). The party that turns the exposure on is therefore the party that can then
 spend the token (F14). `fugaro run` says in one line that it draws on the person's token, and
-`--no-personal-token` skips it for one run (D3142, R8). A member the person never launched in holds no
-grant, so the switch there exposes nothing of theirs.
+`--no-personal-token` skips it for one run (D3142, R8). The person's own runs in a member they never
+launched in carry no slip, so that member's switch exposes nothing of theirs *through their own
+runs*; it is no fence against the replay below, whose grant names any member's job account.
 
 **The replay, and about 25 hours.** The grant of R3 is asked at the workspace service's address, which
 a run and a launcher read from the member's own published route (workspace-service R3, R4). A member
@@ -160,15 +161,21 @@ replay it while it lives: the services accept gcloud's own audience (`GcloudAudi
 `internal/credsvc/launchers.go`), so the replay is not limited to the workspace and works at **every
 Fugaro service that admits that person**, the intakes of their other projects included (F24, corrected
 after review round 3; D1939 and D1944 accepted the replayability of such a token). What the replay can
-do, in the hour the token lives: **ask for grants as the person** for that member's jobs; and
-**replace or delete the person's own secrets** at any intake that admits them, and a project's shared
-ones where the person is an admin of that project. What it cannot do: **read a token**, and **run a
-job in another member**. A grant taken in that time lasts up to 24 hours more, so the window is about
-**25 hours**. §10's third residual risk states it, and it is the second the owner accepts in words
-(O2). What narrows it as the design stands: the identity token is short-lived, and the member's route
-record carries an address and no key, so the replay and not the route is what has to be caught; the
-address a person stores a token at is read out of the **workspace's** project config on that person's
-own machine and out of nothing a member holds or publishes, so the intake leg is not one a member can
+do, in the hour the token lives: **ask for grants as the person**, naming **any member's job account**
+— R3 holds the account to a member row of the node and the repository to that account's list, and
+nothing on the route ties the grant to the member the person launched in (F24) — and **replace or
+delete the person's own secrets** at any intake that admits them, and a project's shared ones where
+the person is an admin of that project. What it cannot do: **read a token**, which a grant never
+answers (D2962), and **spend the slip it takes**: the claim is held to the run's verified identity and
+job account, so a grant naming a second member's job account is spent by *that* member's admins. A
+grant taken in that time lasts up to 24 hours more, so the window is about **25 hours** — and where
+the replayer administers that second member too, or its admins collude, the subscription is spent in
+a member the person never launched in. §10's third residual risk states it, and it is the second the
+owner accepts in words (O2). What narrows it as the design stands: the identity token is short-lived,
+and the member's route record carries an address and no key, so the replay and not the route is what
+has to be caught; the address a person stores a token at is read out of the **workspace's** project
+config on that person's own machine and out of nothing a member holds or publishes, so the intake leg
+is not one a member can
 aim (F23, R13, `intakeURLOf`); and `fugaro doctor` calls neither the workspace's service nor its
 intake, so it sends a person's identity nowhere (WC11, declined in the plan's §10).
 
@@ -183,15 +190,20 @@ from a run they control, so they spend any slip granted in that member for its l
 publish a false service address and replay the identity token of whoever launches there at every
 Fugaro service that admits that person (F24, §4); and replace or delete the person's own secrets at
 any intake that admits them, and a project's shared ones where the person is an admin there (F24).
+And, with the replayed identity, ask for a grant of the person's token **naming any member's job
+account**: R3 holds that account to a member row of the node and nothing on the route ties the grant to
+the member the person launched in, so where they administer a second member — or its admins collude —
+the person's subscription is spent in a member the person never launched in (F24, §4, §10 risk 3).
 
-What they **cannot** do: read a token's value (§2); use a person's token in another member, or in a
-job of a member the person never launched a run in — a grant names the member's job account and the
-repository, is held to the node, and only exists where the person launched (R3); obtain a grant for
-someone else's token, because a grant names only the caller's own personal names (`checkGrantedNames`,
-D2962); or make the workspace's service write anything into the member's database (§9). Everything
-this actor reaches, they reach inside their own member and to the person's identity while it lives —
-that is what §10's second and third residual risks state, and it is not a new authority: the member's
-admin could already run anything they like on the member's jobs.
+What they **cannot** do: read a token's value (§2); spend a slip held to a job account of a member
+they do not administer — the claim is held to that run's own identity and job account, so the reach
+above is not theirs alone; obtain a grant for someone else's token, because a grant names only the
+caller's own personal names (`checkGrantedNames`, D2962); or make the workspace's service write
+anything into the member's database (§9). Everything
+this actor reaches needs their own member, a second member whose jobs they or someone colluding with
+them control, and the person's identity while it lives — that is what §10's second and third residual
+risks state, and it is not a new authority: the member's admin could already run anything they like on
+the member's jobs.
 
 ### A hostile roster person
 
@@ -214,10 +226,12 @@ person's token** — the container is a Secret Manager secret of that project �
 replace any of them (§2, §3). A value read out of Secret Manager is a bearer credential at Anthropic's
 own service, so whoever holds it spends that person's subscription from anywhere, outside Fugaro, and
 nothing in Fugaro revokes it: what ends it is the person rotating the token, and, for Fugaro's own
-use, that the workspace's service would then serve a version the person wrote. The credential does
-**not** by itself get a person's runs served: a grant admits a verified person whose address is a
-roster `human` and names only their own token (R3, D2962), so spending a token *through Fugaro's
-service* needs the person's own identity as well. **Nothing here detects the theft or fences it.** It
+use, that the workspace's service would then serve a version the person wrote. **This reach already
+covers the service and its own database**, so nothing of this half fences it: `roles/owner` on the
+project is owner over the workspace's own database — where this design keeps the roster and the slips
+(R3, §7) — and over the service's deployment, so a stolen credential does not need the person's
+identity to have a token served: it writes what it likes there, or redeploys the service as its own
+account. **Nothing here detects the theft or fences it.** It
 is a Google account, whose protection is the owner's, and no check this design builds reads a Secret
 Manager payload access: as the model this file sits beside says of a minted key and of a copied value,
 the gap is stated here as the acceptance it is rather than built into a check. §10's first residual
@@ -405,13 +419,19 @@ accepts it.
    can then spend it.
 
 3. **A member admin who publishes a false address can act as a person who launched there while that
-   person's identity token lives, about an hour, at every Fugaro service that admits the person; a
-   grant taken in that hour lasts up to 24 hours more, so the window is about 25 hours.** What the
-   replay can do, and what it cannot, are §4's: ask for grants as the person for that member's jobs;
-   replace or delete the person's own secrets at any intake that admits them, and a project's shared
-   ones where the person is an admin there; never read a token; never run a job in another member
-   (F24, D1939, D1944). **Accepted by the owner in words** (reconciliation O2), which is where the
-   owner may instead ask for a narrower token.
+   person's identity token lives, about an hour, at every Fugaro service that admits the person, and a
+   grant taken in that hour reaches a member the person never launched in: the grant names a job
+   account R3 holds only to a member row of the node, and nothing binds it to the route it came
+   through, so a second member whose jobs the replayer administers, or whose admins collude, spends
+   the person's subscription for up to 24 hours more — about 25 hours (F24, D1939, D1944).** What the
+   replay can do, and what it cannot, are §4's: ask for grants as the person, naming any member's job
+   account; replace or delete the person's own secrets at any intake that admits them, and a project's
+   shared ones where the person is an admin there; never read a token; never spend the slip itself,
+   which that member's own admins claim (F24). **Accepted by the owner in words** (reconciliation O2),
+   which is where the owner may instead ask for a narrower token — or for the narrower grant, one
+   bound to the member the person actually launched in and checked against that member's own list,
+   which is a design decision and not a wording one: the workspace's service holds no grant to read a
+   member's own list (§8, workspaces spec §4).
 
 4. **A person's runs draw on their own subscription by default.** With D3142 the person stored the
    token to use it, and every run they launch in a member whose admins turned the switch on draws on
