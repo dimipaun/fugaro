@@ -991,6 +991,13 @@ bootstrap on every repository of the project — which moved the *Image-skew `Si
 from 60 to 61. The two keys ship in one release and one constant, one judge and one gate serve both,
 which is why the row moved by one and not by two.)
 
+(Amended 2026-11-21: the keys-through-service plan's KS2 — a provider key goes into the credentials
+service's bundle under the name its readers give it, rather than into a container of its own — added
+`repoCredentialSince` to `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since`
+constants* row from 61 to 62. That task's own commit left the row at 61, so the figure is corrected
+here by a change that found the row's own command printing 62; same row, same reason for naming it,
+and this paragraph is the record the row's rule asks for.)
+
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
