@@ -317,8 +317,14 @@ const (
 // three `mobile_allow.*` leaf rows and no row for the block, so the block is
 // admitted by its own name and the row an entry write is about is built from its
 // leaves rather than counted here.
+// LP0 of docs/location-preference/ is the last mover, by four rows and by none:
+// the local project config gains the `locations` block, the record of where this
+// machine read the installation's Firestore database, its Realtime Database, the
+// replication of its secret containers and its run-log bucket to be (D3087), and
+// it is one machine's own — never published, never an input — so no name and no
+// prefix in the allowlist reaches any of its four rows.
 const (
-	cfmRegistryRows   = 513
+	cfmRegistryRows   = 517
 	cfmAllowlistNamed = 121
 )
 

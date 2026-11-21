@@ -34,6 +34,10 @@ var ErrNoAccess = errors.New("not allowed to read secret values")
 type Secrets struct {
 	svc     *secretmanager.Service
 	project string
+	// region is the installation's own region, where a container this
+	// creates is replicated. For a secret the mapping's answer is the region
+	// itself, so nothing here asks internal/place (D3082, D3092).
+	region string
 }
 
 // SecretInfo describes a secret without its value.
@@ -51,7 +55,7 @@ func NewSecrets(ctx context.Context, o Options) (*Secrets, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Secret Manager: %w", err)
 	}
-	return &Secrets{svc: svc, project: o.GCPProject}, nil
+	return &Secrets{svc: svc, project: o.GCPProject, region: o.Region}, nil
 }
 
 // NewSecretManager connects to Secret Manager and returns the client
@@ -97,9 +101,10 @@ func (s *Secrets) Access(ctx context.Context, id string) ([]byte, error) {
 }
 
 // Set stores value as a new version of secret id, creating the secret with
-// labels and automatic replication if it does not exist. An existing secret
-// must carry every one of labels, or Set refuses with ErrForeignSecret. It
-// returns the new version's ID ("1", "2", …).
+// labels and user-managed replication in the installation's region if it does
+// not exist. A container that already exists keeps the replication it has —
+// only a create carries a policy — and must carry every one of labels, or Set
+// refuses with ErrForeignSecret. It returns the new version's ID ("1", "2", …).
 //
 // Errors can carry what the server sent back; the caller redacts value from
 // them before showing them.
@@ -108,7 +113,7 @@ func (s *Secrets) Set(ctx context.Context, id string, value []byte, labels map[s
 	sec, err := s.svc.Projects.Secrets.Get(name).Context(ctx).Do()
 	switch {
 	case isStatus(err, http.StatusNotFound):
-		create := &secretmanager.Secret{Labels: labels, Replication: &secretmanager.Replication{Automatic: &secretmanager.Automatic{}}}
+		create := &secretmanager.Secret{Labels: labels, Replication: replicationIn(s.region)}
 		_, err = s.svc.Projects.Secrets.Create("projects/"+s.project, create).SecretId(id).Context(ctx).Do()
 		switch {
 		case isStatus(err, http.StatusConflict):
@@ -152,6 +157,16 @@ func checkLabels(id string, sec *secretmanager.Secret, labels map[string]string)
 		}
 	}
 	return nil
+}
+
+// replicationIn is the policy a container this creates carries: user-managed,
+// with one replica in the installation's own region. Not automatic, which
+// Google documents as global, and not internal/place's answer either: for a
+// secret that answer is the region itself (D3082, D3092).
+func replicationIn(region string) *secretmanager.Replication {
+	return &secretmanager.Replication{UserManaged: &secretmanager.UserManaged{
+		Replicas: []*secretmanager.Replica{{Location: region}},
+	}}
 }
 
 // List lists the secrets carrying all of labels, with their version counts

@@ -122,65 +122,6 @@
       }
     },
     {
-      "id": "KS6",
-      "title": "no auth mode ties a provider key to a repository",
-      "run": null,
-      "version": null,
-      "tier": "small",
-      "size": 1,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/config/providers.go",
-          "internal/config/providers_auth_test.go",
-          "internal/runner/routing.go",
-          "internal/cli/validate.go",
-          "internal/cli/models_use.go",
-          "ee/ab/admit.go",
-          "internal/cli/docs_credentials_auth_list_test.go",
-          "internal/cli/docs_mixed_credentials_test.go",
-          "docs/design/mixed-credentials.md",
-          "docs/design/agent-env.md"
-        ]
-      }
-    },
-    {
-      "id": "KS9",
-      "title": "the service serves a stage's account",
-      "run": null,
-      "version": null,
-      "tier": "medium",
-      "size": 2,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/credsvc/cascade.go",
-          "internal/credsvc/cascade_stage_test.go"
-        ]
-      }
-    },
-    {
-      "id": "KS10",
-      "title": "the runner holds no stage token",
-      "run": null,
-      "version": null,
-      "tier": "medium",
-      "size": 2,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/gateway/gateway.go",
-          "internal/agent/env.go",
-          "internal/cli/run.go",
-          "internal/runner/stage_account_test.go",
-          "SECURITY.md",
-          "website/content/security.md",
-          "internal/runner/agentenv.go",
-          "internal/cli/docs_mixed_credentials_test.go"
-        ]
-      }
-    },
-    {
       "id": "KS11",
       "title": "the serving path of a provider credential flips (release B)",
       "run": null,
@@ -462,31 +403,6 @@
       "reason": "KS4 calls the selection KS3 changes"
     },
     {
-      "task": "KS6",
-      "needs": "KS4",
-      "reason": "the pin may be admitted only once the service can serve it"
-    },
-    {
-      "task": "KS6",
-      "needs": "KS5",
-      "reason": "the pin may be admitted only once the gateway takes the route through the service"
-    },
-    {
-      "task": "KS9",
-      "needs": "KS3",
-      "reason": "both edit cascade.go"
-    },
-    {
-      "task": "KS10",
-      "needs": "KS9",
-      "reason": "the service must admit the account first"
-    },
-    {
-      "task": "KS10",
-      "needs": "KS4",
-      "reason": "both edit SECURITY.md"
-    },
-    {
       "task": "KS11",
       "needs": "KS2",
       "reason": "both edit creds.go and accounts_add.go"
@@ -503,18 +419,8 @@
     },
     {
       "task": "KS13",
-      "needs": "KS6",
-      "reason": "a mount may go only once no check ties the key to an auth mode"
-    },
-    {
-      "task": "KS13",
-      "needs": "KS10",
-      "reason": "a mount may go only once the stage account is served"
-    },
-    {
-      "task": "KS13",
       "needs": "KS12",
-      "reason": "a mount may go only once its value is in the bundle; it also waits for release A to be cut"
+      "reason": "a mount may go only once its value is in the bundle; it also waits for release A to be cut and for credentials-belong-to-models' I1"
     },
     {
       "task": "KS13",
@@ -587,11 +493,6 @@
       "reason": "amends a file C1 creates"
     },
     {
-      "task": "KS6",
-      "needs": "KS19",
-      "reason": "the refusal reads the record KS19 writes"
-    },
-    {
       "task": "KS11",
       "needs": "KS13",
       "reason": "the path may say service only once no mount is computed from it, and both edit infra/spec.go"
@@ -620,16 +521,6 @@
       "task": "I1",
       "needs": "KS19",
       "reason": "it is a side of an edge the contract broke, re-joined here"
-    },
-    {
-      "task": "KS10",
-      "needs": "KS19",
-      "reason": "it reads the record KS19 writes"
-    },
-    {
-      "task": "KS10",
-      "needs": "KS6",
-      "reason": "both edit docs_mixed_credentials_test.go"
     },
     {
       "task": "KS20",

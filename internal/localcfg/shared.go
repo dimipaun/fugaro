@@ -152,6 +152,17 @@ func (c *Config) Shared() *Config {
 	// and budget session name. ParseShared refuses the key besides, because a
 	// shared config carrying it was not written by the converge.
 	s.CloneURLs = nil
+	// Locations is local-only, and it is the one key here dropped for a
+	// reason that is not about who may write the runs bucket: the published
+	// copy decodes strictly, so a `locations:` key in it stops every teammate
+	// whose Fugaro is older than the release that wrote it with "field
+	// locations not found in type localcfg.Config" (F17, D3087 as amended).
+	// The record is one machine's reading of the cloud and is never an input,
+	// so there is nothing in it for another machine to read anyway — every
+	// machine writes its own on its next `fugaro update` — and ParseShared
+	// refuses the key besides, because a shared config carrying it was not
+	// written by the converge.
+	s.Locations = nil
 	// Profiles are the owner's policy, published through `fugaro project
 	// policy publish` into the policy node — not through the shared config a
 	// launcher can write (the node is what the runner reads and fails closed

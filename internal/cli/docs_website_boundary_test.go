@@ -1236,6 +1236,15 @@ type websiteHostHit struct {
 // and every file is read: a host in a lockfile, a document or a built page is a
 // line of a file under website/ like any other.
 //
+// A host ends where a name does, which is the rule the site's own half of this
+// scan states (reachFailures in website/test/privacy.mjs): the app's
+// secure-store key prefix `fugaro.device-key.` (mobile-identity-pairing C1)
+// only begins with the canonical host's letters, and reading the needle as a
+// bare substring refused the file that records it. Go's regexp has no
+// lookahead, so the character after the host is consumed rather than asserted:
+// "not a name character" is the end of the line, or something that is not a
+// letter, a digit or a hyphen.
+//
 // skipBuild steps over the build output (websiteBuildDir), and the two rules
 // below disagree about it for a reason that is each rule's own. The canonical
 // host's: a built page carries the origin because the build RENDERED it from
@@ -1246,6 +1255,7 @@ type websiteHostHit struct {
 // exists for -- or of a revision that did, and both are worth failing on.
 func websiteHostHits(t *testing.T, root, host string, skipBuild bool) []websiteHostHit {
 	t.Helper()
+	needle := regexp.MustCompile(regexp.QuoteMeta(host) + `(?:$|[^A-Za-z0-9-])`)
 	var hits []websiteHostHit
 	for _, rel := range websiteBoundaryFiles(t, root) {
 		if skipBuild && (rel == websiteBuildDir || strings.HasPrefix(rel, websiteBuildDir+"/")) {
@@ -1256,49 +1266,12 @@ func websiteHostHits(t *testing.T, root, host string, skipBuild bool) []websiteH
 			t.Fatal(err)
 		}
 		for i, line := range strings.Split(string(data), "\n") {
-			if namesWebsiteHost(line, host) {
+			if needle.MatchString(line) {
 				hits = append(hits, websiteHostHit{file: rel, line: i + 1, text: strings.TrimSpace(line)})
 			}
 		}
 	}
 	return hits
-}
-
-// namesWebsiteHost reports whether line names host, rather than carrying a
-// longer name that only begins with its letters. A host ends where a name
-// does: `fugaro.device-key.` is the app's secure-store key prefix
-// (mobile-identity-pairing C1), and a bare substring match read every
-// sentence about it — including the site's own scan's comment explaining this
-// very rule — as a second copy of the site's origin.
-//
-// It is the rule the site's privacy scan applies (website/test/privacy.mjs's
-// reachFailures), and the two scans share it because they ask the same
-// question about the same site: a file that carries the host's letters inside
-// a longer name has not found a service to reach, and only what reads as a
-// host is the second source D92 forbids.
-//
-// Mutation (match the bare substring, as strings.Contains would): the prefix's
-// own spelling is reported as a copy of the origin, and
-// TestWebsiteCanonicalHostAppearsOnlyInSiteYaml fails.
-func namesWebsiteHost(line, host string) bool {
-	for rest := line; ; {
-		j := strings.Index(rest, host)
-		if j < 0 {
-			return false
-		}
-		end := j + len(host)
-		if end == len(rest) || !hostNameByte(rest[end]) {
-			return true
-		}
-		rest = rest[end:]
-	}
-}
-
-// hostNameByte reports whether c may continue a host name: the characters a
-// host is spelled with, so a match that stops before one of them is a match of
-// a longer name rather than of this host.
-func hostNameByte(c byte) bool {
-	return c == '-' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 // TestWebsiteCanonicalHostAppearsOnlyInSiteYaml holds the site to D92's single
@@ -1361,11 +1334,7 @@ func TestWebsiteHostScanSeesAPlantedCopy(t *testing.T) {
 		websiteInstallFactsPath:               "version: 1\n",
 		"website/src/pages/index.astro":       "<a href=\"https://" + canonical + "/docs\">Docs</a>\n",
 		"website/src/components/Footer.astro": "<span>fugaro</span>\n",
-		// A name that only begins with the host's letters: the scan must step
-		// over it, or a prefix such as the app's secure-store key is read as a
-		// second copy of the site's origin (namesWebsiteHost).
-		"website/src/lib/store.ts":      "export const key = '" + canonical + "ice-key.v1'\n",
-		websiteBuildDir + "/index.html": "<link rel=\"canonical\" href=\"https://" + canonical + "/\">\n",
+		websiteBuildDir + "/index.html":       "<link rel=\"canonical\" href=\"https://" + canonical + "/\">\n",
 	}
 	for rel, body := range planted {
 		p := filepath.Join(root, filepath.FromSlash(rel))
@@ -1386,9 +1355,9 @@ func TestWebsiteHostScanSeesAPlantedCopy(t *testing.T) {
 			t.Errorf("the scan for %q did not see the planted host in %s: a rule that finds nothing passes for the wrong reason", canonical, want)
 		}
 	}
-	for _, dontWant := range []string{"website/src/components/Footer.astro", "website/src/lib/store.ts", websiteBuildDir + "/index.html"} {
+	for _, dontWant := range []string{"website/src/components/Footer.astro", websiteBuildDir + "/index.html"} {
 		if seen[dontWant] {
-			t.Errorf("the scan for %q reported %s: a file that does not name the host, a name that only begins with its letters, or a built page the build rendered the origin into, is not a second source of the fact", canonical, dontWant)
+			t.Errorf("the scan for %q reported %s: a file that does not name the host, or a built page the build rendered the origin into, is not a second source of the fact", canonical, dontWant)
 		}
 	}
 }

@@ -53,6 +53,8 @@ printf 'fugaro %s\n' "$*" >>"$FAKE_LOG_DIR/fugaro.calls"
 case "${1:-}" in
 version) echo "fugaro 0.9.6 (test)" ;;
 doctor)
+  # The project: line is printed by --all only (internal/cli/doctor.go, view.all).
+  case " $* " in *" --all "*) ;; *) exit 0 ;; esac
   # Faithful to internal/cli/doctor.go's emitDoctor: the checks first, then the
   # project: line, then secrets: — all on stdout — and exit 1 (ExitUserError) as
   # soon as any check of its own failed, whatever the project: line said. A

@@ -52,6 +52,7 @@ func TestIntakeServeHidden(t *testing.T) {
 // with the GCP project the golden fixtures use.
 var intakeServeEnv = map[string]string{
 	envGCPProject:       "proj-1234",
+	envRegion:           "us-east5",
 	envIntakeURL:        "https://fugaro-intake-abcde-uc.a.run.app",
 	envLauncherAccounts: `["person-1@example.com"]`,
 	envRunsBucket:       "fugaro-runs-proj-1234",
@@ -84,7 +85,7 @@ func (stubIntakeStore) Delete(context.Context, string) error { return nil }
 func fakeIntake(t *testing.T, dir string) {
 	t.Helper()
 	intakeTest = &intakeWiring{
-		secrets: func(context.Context, string) (intake.SecretStore, error) { return stubIntakeStore{}, nil },
+		secrets: func(context.Context, string, string) (intake.SecretStore, error) { return stubIntakeStore{}, nil },
 		bucket:  func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+dir) },
 	}
 	t.Cleanup(func() { intakeTest = nil })
@@ -97,7 +98,7 @@ func fakeIntake(t *testing.T, dir string) {
 func refuseIntakeWiring(t *testing.T) {
 	t.Helper()
 	intakeTest = &intakeWiring{
-		secrets: func(context.Context, string) (intake.SecretStore, error) {
+		secrets: func(context.Context, string, string) (intake.SecretStore, error) {
 			t.Error("the builder reached Secret Manager for an environment it must refuse first")
 			return nil, errors.New("reached Secret Manager")
 		},
@@ -109,7 +110,7 @@ func refuseIntakeWiring(t *testing.T) {
 	t.Cleanup(func() { intakeTest = nil })
 }
 
-// TestIntakeServeConfigBuildsFromAFullEnvironment: the four names build a
+// TestIntakeServeConfigBuildsFromAFullEnvironment: the five names build a
 // configuration the intake accepts, and each piece reaches where it is meant
 // to. The admin list is the one check that is more than non-nil: it is read
 // out of the bucket FUGARO_RUNS_BUCKET names, so a builder that opened the
@@ -158,6 +159,52 @@ func TestIntakeServeConfigBuildsFromAFullEnvironment(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Email != want[0].Email || got[0].Sub != want[0].Sub {
 		t.Fatalf("the admin list read as %+v, want %+v", got, want)
+	}
+}
+
+// TestIntakeServeTellsTheStoreItsRegion: FUGARO_REGION is the region a
+// container this process creates is replicated in (D3082), and it reaches the
+// store the deployment names. An environment that names none reaches it as
+// none -- the deployment of a service from before that variable existed -- and
+// is not refused: what "none" means for a container is the store's own rule
+// (intake.NewSecretManager: automatic, which is what such a service always
+// created).
+func TestIntakeServeTellsTheStoreItsRegion(t *testing.T) {
+	for _, tc := range []struct {
+		what string
+		drop string
+		want string
+	}{
+		{"the region the module sets", "", "us-east5"},
+		{"a deployment from before the variable", envRegion, ""},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			dir := t.TempDir()
+			var gotProject, gotRegion string
+			intakeTest = &intakeWiring{
+				secrets: func(_ context.Context, project, region string) (intake.SecretStore, error) {
+					gotProject, gotRegion = project, region
+					return stubIntakeStore{}, nil
+				},
+				bucket: func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+dir) },
+			}
+			t.Cleanup(func() { intakeTest = nil })
+			env := map[string]string{}
+			for n, v := range intakeServeEnv {
+				env[n] = v
+			}
+			delete(env, tc.drop)
+
+			if _, err := intakeServiceConfig(context.Background(), envFrom(env), io.Discard); err != nil {
+				t.Fatalf("intakeServiceConfig: %v", err)
+			}
+			if gotProject != intakeServeEnv[envGCPProject] {
+				t.Errorf("the store was built for the project %q, want %q", gotProject, intakeServeEnv[envGCPProject])
+			}
+			if gotRegion != tc.want {
+				t.Errorf("the store was built for the region %q, want %q", gotRegion, tc.want)
+			}
+		})
 	}
 }
 
@@ -265,7 +312,7 @@ func TestIntakeServeRefusesAMalformedVariable(t *testing.T) {
 // TestIntakeServeRefusalsNeverCarryAValue: this process's log is Cloud
 // Logging, and the environment is the deployment's. A refusal names the
 // variable and the shape it must have and never what it held -- which is
-// credentialsServiceConfig's own rule, held here for the intake's four names.
+// credentialsServiceConfig's own rule, held here for the intake's five names.
 func TestIntakeServeRefusalsNeverCarryAValue(t *testing.T) {
 	value := func(n string) string { return "s3cr3t-" + strings.ToLower(strings.TrimPrefix(n, "FUGARO_")) }
 	values := map[string]string{
@@ -357,7 +404,7 @@ func TestIntakeServeRefusesHTTP2DebugStill(t *testing.T) {
 // must be, and nothing the deployment held.
 func TestIntakeServeDoesNotEchoTheBucketWhenItCannotOpenIt(t *testing.T) {
 	intakeTest = &intakeWiring{
-		secrets: func(context.Context, string) (intake.SecretStore, error) { return stubIntakeStore{}, nil },
+		secrets: func(context.Context, string, string) (intake.SecretStore, error) { return stubIntakeStore{}, nil },
 		bucket: func(context.Context, string) (*blobx.Bucket, error) {
 			return nil, errors.New("opening bucket gs://s3cr3t-bucket-name: the account cannot read it")
 		},

@@ -319,4 +319,6 @@ var exemptAnswers = map[string]string{
 	"accounts grade set":         "points one escalation grade at one of this installation's credentials, and prints the grant it wrote",
 	"accounts repo":              "prints its own help: the work is in the add subcommand beside it",
 	"accounts repo add":          "admits one repository's own runs to a named Claude account, and prints the list it wrote",
+	"accounts cascade":           "prints its own help: the work is in the set subcommand beside it",
+	"accounts cascade set":       "writes the credentials cascade's members into this installation's own config, and prints what it wrote",
 }

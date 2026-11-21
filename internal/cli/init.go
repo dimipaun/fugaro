@@ -103,6 +103,16 @@ type initOptions struct {
 	// `fugaro upgrade` that was not a converge at all.
 	checkOnly bool
 
+	// planning is whether this run plans an installation, which is what makes a
+	// --region that is not the installation's own a refusal (LP8, D3088 as
+	// amended). Only the runs that plan set it: repoEngine, which is
+	// `fugaro update --repo` and the converge's repository stage both. The
+	// loaders are shared with commands that read a checkout's config without
+	// planning anything — `update --check` (through resolveCloudRepo) and
+	// `image refresh` — and those keep --region as the per-invocation override
+	// it is.
+	planning bool
+
 	publishConfig       bool // --publish-config: publish the shared config to the runs bucket and stop
 	anchor              bool // --anchor: write the checkout's gcp_project line, after its checks, and stop
 	forget, yes, asJSON bool
@@ -2005,8 +2015,14 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		return nil, "", nil, err
 	}
 	if lc != nil {
-		// A config to be created is announced once it exists, below.
+		// A config to be created is announced once it exists, below. The
+		// installation's own region is read before the announcement, which
+		// applies the typed one: it is what the typed one is refused against.
+		own := lc.Region
 		if err := announce(o.cloud, sel, lc); err != nil {
+			return nil, "", nil, err
+		}
+		if err := refuseAnotherRegion(o, own); err != nil {
 			return nil, "", nil, err
 		}
 	}
@@ -2018,6 +2034,7 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		}
 		return nil, "", nil, userErr("%s selects project %s; --name says %s (renaming a project isn't supported)", sel.From, name, o.name)
 	}
+	created := false // this run starts the config, so its region is not written anywhere yet
 	if lc != nil {
 		path = sel.Path
 		if old, err = os.ReadFile(path); err != nil {
@@ -2039,8 +2056,9 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 			if o.runsBucket != "" {
 				lc.RunsBucket = o.runsBucket
 			}
-			return lc, "", nil, nil
+			return lc, "", nil, checkNewRegion(ctx, o, lc)
 		}
+		created = true
 		switch {
 		case name == "":
 			return nil, "", nil, userErr("there is no project config yet: pass --name <name> (the project's name), --gcp-project and --region to create one")
@@ -2066,6 +2084,12 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		lc.RunsBucket = o.runsBucket
 		if lc.Bucket != "" && lc.Bucket != "gs://"+o.runsBucket {
 			return nil, "", nil, userErr("--runs-bucket %s is not the local config's bucket_url %s", o.runsBucket, lc.Bucket)
+		}
+	}
+	if created {
+		// After --runs-bucket, which says which bucket this installation's is.
+		if err := checkNewRegion(ctx, o, lc); err != nil {
+			return nil, "", nil, err
 		}
 	}
 	return lc, path, old, nil
@@ -4605,6 +4629,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err != nil {
 		return err
 	}
+	// This run plans the repository's resources, so the loader below refuses a
+	// --region that is not the installation's own (LP8, D3088 as amended): the
+	// commands that read a checkout's config without planning do not set this
+	// and keep the flag as the per-invocation override it is.
+	o.planning = true
 	lc, path, old, err := loadRepoConfig(ctx, o, dir)
 	if err != nil {
 		return err
@@ -4688,6 +4717,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// repository's own file alone: the key is InRepo, so no layer can carry
 	// it.
 	if err := r.gateTriage(o, repo, lc, cfg); err != nil {
+		return err
+	}
+	// agent.review_against_task is the same kind of break on
+	// reviewSpecSince, in the repository's own file alone, for gateTriage's
+	// reason: the key is InRepo, so no layer can carry it.
+	if err := r.gateReviewAgainstTask(o, repo, lc, cfg); err != nil {
 		return err
 	}
 	// The security: block, in either file, is the same kind of break, on
@@ -5369,6 +5404,29 @@ func (r *initRun) gateTriage(o *initOptions, repo string, lc *localcfg.Config, c
 	return refuseTriageSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
 }
 
+// gateReviewAgainstTask is fugaro update --repo's gate for reviewSpecSince:
+// refuseReviewAgainstTaskSkew, with gateTriage's escapes and for its reason. One
+// file can write the key and not two — agent.review_against_task is repo-scope
+// alone (config.Scopes), so there is no layer half here the way
+// gateStopFraction has one, and the layer's own loader refuses the key before
+// any image is judged.
+//
+// The half it asks is the key being written rather than the value it holds
+// (gateSecurity's own reading): RepoReviewAgainstTaskSet, because a runner
+// older than reviewSpecSince is refused by the key whatever it says. The
+// configuration goes along because the value is what words the way out the
+// refusal offers (refuseReviewAgainstTaskSkew's own reading of it).
+func (r *initRun) gateReviewAgainstTask(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseReviewAgainstTaskSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
+}
+
 // gateSecurity is fugaro update --repo's gate for securitySince:
 // refuseSecuritySkew, with gateRigor's escapes and for its reason. Each half is
 // the key being written rather than the rows it holds: a runner older than
@@ -5483,8 +5541,19 @@ func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localc
 	if err := refuseSharedWrite(sel); err != nil {
 		return nil, "", nil, err
 	}
+	// The installation's own region, read before the announcement applies the
+	// typed one: a run that plans converges a repository of an installation
+	// that exists, so the config's region is what the typed one is refused
+	// against (o.planning); a run that only reads the config keeps --region as
+	// the per-invocation override it is (LP8, D3088 as amended).
+	own := lc.Region
 	if err := announce(o.cloud, sel, lc); err != nil {
 		return nil, "", nil, err
+	}
+	if o.planning {
+		if err := refuseAnotherRegion(o, own); err != nil {
+			return nil, "", nil, err
+		}
 	}
 	if o.name != "" && o.name != lc.Name {
 		return nil, "", nil, userErr("--name %s is not the selected project %s", o.name, lc.Name)

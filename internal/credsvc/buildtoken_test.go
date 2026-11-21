@@ -989,6 +989,65 @@ func TestBitbucketBuildGrantRecordsThePairing(t *testing.T) {
 	}
 }
 
+// TestBuildProxyPairingReadsTheScopesTable is the installation's half of the
+// table a build's pairing is resolved through (WS16, D2992): the route reads
+// the table the SCOPE answers and not the configuration field behind it, so an
+// installation whose deployer set no table — the service derives it from the
+// job rows instead — still serves a build paired to one of its repositories.
+//
+// The mutation this test is written against is the one that reads Config.Repos
+// at the pairing: with no configured table every pairing would resolve to no
+// slug and the build's own fetch would be refused as another repository, on a
+// deployment whose scope had just answered the table that holds it.
+//
+// The pairing is written by hand rather than by asking for a grant, because the
+// GRANT's own narrowing reads Config.Repos (buildtoken.go's buildEntryRepos, a
+// read WS16 deliberately did not move) and would refuse before the proxy half
+// was reached — which is a statement about this installation answering no
+// grant, and not the question here.
+func TestBuildProxyPairingReadsTheScopesTable(t *testing.T) {
+	s, up, token := buildProxySvc(t, func(_ *svc, cfg *Config) {
+		// An installation that configured no table: the same rows, and the
+		// scope derives the table from them (installationRepos,
+		// scope_installation.go) — the derivation the configured table itself
+		// comes from, and so not a second answer to the same question.
+		cfg.JobAccounts = append(cfg.JobAccounts, JobAccount{
+			Email: testBuildSA, Slug: bitbucketSlug(t, testBitbucketRepo), Repo: testCanonical(t, testBitbucketRepo),
+		})
+		cfg.Repos = nil
+	})
+	if err := s.pairs.PutBuildPair(context.Background(), creds.BuildPair{
+		Identity:     testBuildSA,
+		BuildID:      buildBuildID,
+		Entry:        buildStoreEntry,
+		Repositories: []string{testBitbucketRepo},
+		Expires:      s.now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("the pairing could not be recorded: %v", err)
+	}
+
+	up.answerWith(http.StatusOK, "001e# service=git-upload-pack\n0000")
+	resp, body := s.buildProxyCall(t, http.MethodGet, proxyPath(proxyGitPath("info/refs")+"?service=git-upload-pack"), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a build's fetch under its own pairing answered %d, want 200: %s", resp.StatusCode, body)
+	}
+	if string(body) != "001e# service=git-upload-pack\n0000" {
+		t.Errorf("the answer = %q, and the upstream's bytes must be relayed unchanged", body)
+	}
+	got := up.only(t)
+	wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(bitbucket.GitUsername+":"+token))
+	if got.auth != wantAuth {
+		t.Errorf("the upstream was shown %q as its credential, want the bundle's token as git's own x-token-auth Basic", got.auth)
+	}
+	// The slug the pairing resolved is the derived table's own key, which is
+	// what the line records and what every other line of this log is grepped
+	// by: a pairing read off a nil configuration would resolve none.
+	line := s.onlyAuditLine(t)
+	if line["status"] != StatusOK || auditField(line, "repository") != bitbucketSlug(t, testBitbucketRepo) {
+		t.Errorf("the audit line = %v, want the served call recorded under the installation's own key for the repository the pairing covers", line)
+	}
+}
+
 // TestBuildProxyServesOnlyThePairing is the fence around the build's data
 // plane: a build's git is served the repositories the grant recorded, read
 // only, for as long as the pairing lives, and nothing else.
