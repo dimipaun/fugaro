@@ -223,19 +223,46 @@ func TestSweepDeletesNoUser(t *testing.T) {
 			t.Errorf("%s was refused (%v), and it is this machine's own state", path, findings)
 		}
 	}
+	// And so is a ledger id, which is the shape this sweep builds out of the
+	// device uid: `<sender>/<id>`. It is not a Firebase user — the separator is
+	// what tells the two apart — and a fence that read the prefix alone would
+	// refuse this sweep's own set.
+	for _, key := range []string{
+		"m~AAAAAAAAAAAAAAAAAAAAAA/m-0001",
+		"r~fugaro~20261018-125859-d3c8/m-0002",
+	} {
+		if findings := SweepRefusals([]string{key}); len(findings) != 0 {
+			t.Errorf("%s was refused (%v), and it is a ledger id rather than a user root", key, findings)
+		}
+	}
 	// And the set the sweep itself builds names none of the refused keys: that
 	// is the half which makes the fence about this command and not about the
-	// reader alone.
+	// reader alone. Its ledger half is seeded the way production seeds one — a
+	// sender that is the paired device's `m~…` uid — because a set built from a
+	// sender production never writes would prove nothing about the real one.
 	dir := t.TempDir()
 	l := openLedger(t, dir)
+	const deviceUID = "m~AAAAAAAAAAAAAAAAAAAAAA"
+	if err := l.commit(ledgerState{now: testNow, seen: []LedgerEntry{
+		{Sender: deviceUID, ID: "m-acked", At: testNow - PromptRetentionMs(60_000) - 1, Kind: KindCommand, Status: StatusAcked},
+	}}); err != nil {
+		t.Fatalf("writing a ledger state: %v", err)
+	}
+	l, err := OpenLedger(ledgerOptions(l.Path()))
+	if err != nil {
+		t.Fatalf("reopening the ledger this test wrote: %v", err)
+	}
 	m := openMemoryAt(t, dir, PromptRetentionMs(60_000))
-	settleExpiredPrompt(t, m, "p-old", "m~AAAAAAAAAAAAAAAAAAAAAA")
+	settleExpiredPrompt(t, m, "p-old", deviceUID)
 	sweep, err := SweepLocal(l, m, testNow)
 	if err != nil {
 		t.Fatalf("sweeping: %v", err)
 	}
 	if len(sweep.PromptIDs) != 1 || sweep.PromptIDs[0] != "p-old" {
 		t.Fatalf("the sweep let go of %v, want the one settled prompt, so this test is not reading an empty set", sweep.PromptIDs)
+	}
+	if !sameStrings(sweep.LedgerIDs, []string{deviceUID + "/m-acked"}) {
+		t.Fatalf("the sweep's ledger half is %v, want the acked record past the horizon: the case this guard exists for is the ledger id, and an empty one would leave it unchecked", sweep.LedgerIDs)
 	}
 	keys := append(append([]string{}, sweep.Paths()...), sweep.LedgerIDs...)
 	keys = append(keys, sweep.PromptIDs...)
@@ -266,10 +293,13 @@ func TestSweepLocalDropsOnlyWhatTheWindowAllows(t *testing.T) {
 	dir := t.TempDir()
 	l := openLedger(t, dir)
 	// Two records past the horizon: one the phone has spoken for (acked, the
-	// only status an eviction may take) and one it has not.
+	// only status an eviction may take) and one it has not. The sender is the
+	// paired device's own `m~…` uid, which is the sender production writes: an
+	// id built from it is `<uid>/<id>`, and the fence must admit that shape.
+	const deviceUID = "m~AAAAAAAAAAAAAAAAAAAAAA"
 	if err := l.commit(ledgerState{now: now, seen: []LedgerEntry{
-		{Sender: "mb-a", ID: "m-acked", At: past, Kind: KindCommand, Status: StatusAcked},
-		{Sender: "mb-a", ID: "m-acted", At: past, Kind: KindCommand, Status: StatusActed},
+		{Sender: deviceUID, ID: "m-acked", At: past, Kind: KindCommand, Status: StatusAcked},
+		{Sender: deviceUID, ID: "m-acted", At: past, Kind: KindCommand, Status: StatusActed},
 	}}); err != nil {
 		t.Fatalf("writing a ledger state: %v", err)
 	}
@@ -279,8 +309,8 @@ func TestSweepLocalDropsOnlyWhatTheWindowAllows(t *testing.T) {
 	}
 
 	m := openMemoryAt(t, dir, retention)
-	settleExpiredPrompt(t, m, "p-settled", "mb-a")
-	if _, _, err := m.NotePrompt(ConfirmPrompt{ID: "p-waiting", At: past, Mailbox: "mb-a", Safe: "carry on"}, past); err != nil {
+	settleExpiredPrompt(t, m, "p-settled", deviceUID)
+	if _, _, err := m.NotePrompt(ConfirmPrompt{ID: "p-waiting", At: past, Mailbox: deviceUID, Safe: "carry on"}, past); err != nil {
 		t.Fatalf("holding a prompt: %v", err)
 	}
 	spendAt(t, m, "u-old", past)
@@ -290,8 +320,14 @@ func TestSweepLocalDropsOnlyWhatTheWindowAllows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sweeping: %v", err)
 	}
-	if !sameStrings(sweep.LedgerIDs, []string{"mb-a/m-acked"}) {
+	if !sameStrings(sweep.LedgerIDs, []string{deviceUID + "/m-acked"}) {
 		t.Errorf("the ledger let go of %v, want only the acked record past the horizon", sweep.LedgerIDs)
+	}
+	// The set the sweep built is one its own fence admits: a ledger id is
+	// `<sender>/<id>`, and the sender is the device uid, so a prefix test that
+	// read the whole key would refuse the sweep's own set and never sweep.
+	if findings := SweepRefusals(append([]string{}, sweep.LedgerIDs...)); len(findings) != 0 {
+		t.Errorf("the sweep's own ledger ids were refused: %v (%v)", findings, sweep.LedgerIDs)
 	}
 	for _, id := range []string{"p-settled", "u-old"} {
 		if !hasString(sweep.PromptIDs, id) {
@@ -320,10 +356,10 @@ func TestSweepLocalDropsOnlyWhatTheWindowAllows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopening the memory: %v", err)
 	}
-	if _, waiting, held := back.Prompt("mb-a", "p-waiting"); !held || !waiting {
+	if _, waiting, held := back.Prompt(deviceUID, "p-waiting"); !held || !waiting {
 		t.Errorf("the waiting prompt did not survive the sweep: %+v", back.Prompts())
 	}
-	if _, _, held := back.Prompt("mb-a", "p-settled"); held {
+	if _, _, held := back.Prompt(deviceUID, "p-settled"); held {
 		t.Errorf("the settled prompt survived the sweep")
 	}
 

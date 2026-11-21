@@ -224,10 +224,15 @@ var userKeyPrefixes = []string{"m~", "r~", "p~"}
 //
 // Three things are refused, and the list is deliberately short:
 //
-//   - a **Firebase user** (`m~…`, `r~…`, `p~…`). The `m~` rule is P6.6's and
-//     lives in the history sweeper; a mailbox sweep that found itself about to
-//     delete one must **refuse and report** it, never perform it (§6's last
-//     row, M8).
+//   - a **Firebase user** (`m~…`, `r~…`, `p~…`), read as a **bare user root**.
+//     The `m~` rule is P6.6's and lives in the history sweeper; a mailbox sweep
+//     that found itself about to delete one must **refuse and report** it, never
+//     perform it (§6's last row, M8). The bare root is the whole of it: this
+//     sweep's own ledger ids are spelled `<sender>/<id>` and every sender in a
+//     mailbox ledger is the paired device's `m~…` uid, so a prefix test that
+//     ignored the separator would put this command's own delete set in front of
+//     its own fence and refuse every sweep that had a ledger row to let go of.
+//     That is the fail-closed direction, and it is still a sweep that never runs.
 //   - a **store node**, recognised by the store's own namespace: a path whose
 //     first segment is `mailbox` and that is not one of the two local state
 //     files this sweep owns. The owner-run sweeper's local half deletes this
@@ -257,7 +262,16 @@ func SweepRefusals(keys []string) []string {
 	return out
 }
 
+// hasUserKeyPrefix reports whether a key is a **bare** Firebase user id: one of
+// the three prefixes and no separator anywhere in it. The separator is what
+// makes the difference, and it is a fact about this tree rather than a
+// convenience: a user id is a node's root (`m~…`), while a ledger id this sweep
+// builds is `<sender>/<id>` (`m~…/m-0001`) — and the sender of a mailbox ledger
+// row is always the paired device's `m~…` uid.
 func hasUserKeyPrefix(key string) bool {
+	if strings.Contains(key, "/") {
+		return false
+	}
 	for _, prefix := range userKeyPrefixes {
 		if strings.HasPrefix(key, prefix) {
 			return true
