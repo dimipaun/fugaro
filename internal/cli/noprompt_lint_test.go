@@ -734,6 +734,7 @@ var dataReadSites = map[string]string{
 // prompt does not belong here: it belongs nowhere.
 var notADecisionSites = map[string]string{
 	"pair.go:pairReadCode": "the --json caller's own line: a console asks the operator for the code and hands the command the answer on stdin (§4.1, \"the typed code is read as one stdin line\"), so what arrives is data a caller delivered rather than a question the CLI put to a person; the interactive half reads the same value through readValue and is not this shape",
+	"workspace_project_status.go:readRoster": "the workspace's own roster node (`workspace.Store.Read`, which takes a context and no key and is this shape only because a one-argument Read is), read so `workspace project status` and `ls` can answer their rows: it is a document the workspace admin's own credentials fetch from the database, and a read that is refused fails at once rather than waiting for anyone (D2809: both commands write nothing on any path, so no confirmation stands here to be asked)",
 }
 
 // pendingSites is every decision read the package still makes and the task of
