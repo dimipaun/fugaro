@@ -442,7 +442,15 @@ the call, so a run of calls that all settle at the reservation size is the worst
 is a number the operator can read rather than an adjective. **A settle that fails refuses**: if the
 usage cannot be written back, the call is refused rather than served, because a call whose cost the
 service cannot record is spending against a cap it cannot see (the fail-closed rule below, applied to
-the meter).
+the meter). **Except where the answer is already the run's**: the rule holds for a whole-body answer
+and for the probe, which are read for their usage before any byte of them leaves, and it does not hold
+for a streamed call, whose usage is known only when the stream ends — by then the answer has been
+written to the run, so there is nothing left to refuse. There the failed settle is the service's log
+line and nothing else: the
+reservation stands until it ages out (`budget.WorkspaceReservationTTL`) and is then released with its
+amount never reaching the settled figure, so the call is charged nowhere and the month is short by
+its whole worst case with no figure saying so. The rule above is a rule about the answers the service
+still holds, and this is the bound it does not cover.
 
 **The advisory headroom comes from the service, and the service holds no write on a member**
 (finding 1's consequence for the cap, and the owner's answer of 2026-11-04, **O1 adopted**). Each

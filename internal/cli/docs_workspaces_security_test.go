@@ -129,6 +129,15 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"refusing the call when that settle cannot be written",
 		"serving a call on a subscription token unmetered because it spends none of the workspace's money",
 		"a scope with no meter, which reserves nothing, settles nothing, writes no header and is unchanged in every one of its behaviors",
+		// And the one path where the fail-closed rule above does not hold. A
+		// streamed answer has already reached the run when its usage is known,
+		// so a settle that cannot be written there is a log line and the
+		// reservation ages out unrecorded. Without this the pin above --
+		// "refusing the call when that settle cannot be written" -- reads as a
+		// rule about every path, while the path most calls take is the one it
+		// does not cover.
+		"**A streamed answer is the one path where a failed settle does not refuse the call, and it is stated rather than hidden**",
+		"released with its amount never reaching the month's settled spend",
 		// And the limits this release does not hide. The meter binds on the
 		// one path that reaches it and the deployment that answers a
 		// workspace's calls is WS2's and is not built here, so the cap is

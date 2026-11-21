@@ -293,20 +293,32 @@ func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 // R15): the room for a call's worst case is reserved out of the workspace's
 // month BEFORE the request goes out, the answer settles it on the usage the
 // response reported, and a call whose cost cannot be recorded is refused rather
-// than served. The transaction itself is internal/budget/workspace.go's and the
-// meter over it is workspace_cap.go's; what is here is the bracket around one
-// upstream call, which is the only place a call can be priced and the only
-// place its usage is readable.
+// than served — on every path whose answer is still in hand, which is every path
+// but a streamed one (the second rule below). The transaction itself is
+// internal/budget/workspace.go's and the meter over it is workspace_cap.go's;
+// what is here is the bracket around one upstream call, which is the only place
+// a call can be priced and the only place its usage is readable.
 //
-// Three rules of the shape are worth stating where the code is:
+// Four rules of the shape are worth stating where the code is:
 //
 //   - the worst case is what is reserved, always. What a call will cost is not
 //     known until its answer reports usage, so the amount held is the table's
 //     own bound for the request (pricing.Model.WorstCase) — the same figure the
 //     gateway reserves before its own calls, from the same table. A call that
-//     settles for less returns the difference at the settle; a call that never
-//     settles (a stream cut in half, a settle that could not be written) stays
-//     charged at the bound, which is the direction a cap must fail in.
+//     settles for less returns the difference at the settle, and a call whose
+//     answer never reported usage — a stream cut in half — settles at the
+//     bound, which is the direction a cap must fail in.
+//   - a settle that cannot be WRITTEN is a different case from either, and only
+//     the whole-body path can refuse a call on it: a whole body and a probe are
+//     read for their usage before any byte of them leaves, so the refusal
+//     withholds an answer the run never got. A streamed answer has already left
+//     by the time its usage is known, so a settle that cannot be written there
+//     is the service's log line and nothing else: the reservation is not
+//     charged, it stands until it ages out, and the release then leaves the
+//     call recorded as nothing at all — a month short by its whole worst case
+//     with no figure saying so. SECURITY.md states the exception beside the
+//     fail-closed rule it limits, and
+//     TestAStreamedSettleThatFailsIsServedAndUncharged pins it here.
 //   - a reservation is taken for every attempt, a probe included: a probe is a
 //     call the workspace's credential pays for (C1.16), and a workspace whose
 //     cap cannot see its probes has a cap that leaks a call per probe.

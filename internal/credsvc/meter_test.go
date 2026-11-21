@@ -353,6 +353,75 @@ func TestACallAtTheCeilingIsRefused(t *testing.T) {
 	}
 }
 
+// A streamed answer is the one path where a settle that cannot be written does
+// NOT refuse the call, and this test pins the exception SECURITY.md states
+// rather than leaving it to be discovered. Claude Code streams by default: a
+// stream's usage is known only when the stream ends, and by then the answer has
+// already been written to the run, so there is nothing left to withhold. The
+// failure is the service's own log line, the reservation is not charged, and
+// when it ages out the call is left recorded as nothing — a month short by its
+// whole worst case, with no figure saying so.
+//
+// The whole-body twin of this test (TestAFailedSettleRefuses) is the same write
+// denied at the same point; the two together are what the difference between
+// the paths costs.
+func TestAStreamedSettleThatFailsIsServedAndUncharged(t *testing.T) {
+	// The reservation is the first write of a metered call and the settle the
+	// second, so this fails the settle alone.
+	f := newWSMeterSvc(t, wsCapUSD, func(db budget.WorkspaceSpendDB) budget.WorkspaceSpendDB {
+		return &wsDenyNthDB{WorkspaceSpendDB: db, n: 2}
+	}, wsPaidOnly)
+	f.up.Script = []anthropicfake.Reply{anthropicfake.StreamOK(testModel, testUsage)}
+
+	streamBody := `{"model":"` + testModel + `","max_tokens":16,"stream":true,"messages":[{"role":"user","content":"ws8-stream-settle"}]}`
+	resp := f.post(t, MessagesPath, streamBody)
+	defer resp.Body.Close()
+	// The stream has to reach its end for the settle to be attempted at all,
+	// and reading it is what makes that happen.
+	n, _ := io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the streamed call answered %d, want it served: this is the path whose answer has already left", resp.StatusCode)
+	}
+	if n == 0 {
+		t.Error("the answer carried no bytes, so the run was not served the stream this test is about")
+	}
+	// The synchronization point is the service's own line: the settle runs after
+	// the last byte, and the line is the only trace this path leaves.
+	waitFor(t, "the stream's failed settle", func() bool {
+		return strings.Contains(f.logs.String(), "could not be recorded")
+	})
+	room := f.wsRoom(t)
+	if room.Settled != 0 {
+		t.Errorf("the month holds %v settled, want nothing: a settle that was never written records no usage", room.Settled.USD())
+	}
+	if room.Reserved == 0 {
+		t.Error("the reservation was released at the failed settle, want it standing until it ages out")
+	}
+	// Past the reservation's TTL the hold can no longer belong to a call in
+	// flight and the workspace's own read releases it — and the call is still
+	// charged nothing, which is the whole of the harm: the call was made,
+	// served and paid for at the provider, and no figure of the workspace's
+	// accounts for it.
+	late, err := NewWorkspaceMeter(WorkspaceMeterConfig{
+		Name: wsWorkspace,
+		DB:   f.fenced,
+		Now:  func() time.Time { return testNow().Add(budget.WorkspaceReservationTTL + time.Hour) },
+	})
+	if err != nil {
+		t.Fatalf("building the meter that reads the month past the reservation's TTL: %v", err)
+	}
+	after, err := late.Room(context.Background())
+	if err != nil {
+		t.Fatalf("reading the month past the reservation's TTL: %v", err)
+	}
+	if after.Settled != 0 {
+		t.Errorf("the month settled at %v once the hold aged out, want nothing: the call this test served is charged nowhere", after.Settled.USD())
+	}
+	if after.Reserved != 0 {
+		t.Errorf("the month still holds %v of room past the reservation's TTL, want the hold released", after.Reserved.USD())
+	}
+}
+
 // A probe the workspace cannot pay for is the RUN's refusal and not the
 // credential's: the service owes a backed-off credential a probe (C1.12), the
 // meter refuses that probe before it is made, and the run waiting on the call
