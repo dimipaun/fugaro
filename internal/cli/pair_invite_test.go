@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"rsc.io/qr"
 
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
@@ -210,8 +211,14 @@ func TestPairInviteWritesTheInviteAndTheMember(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an invitation: %v", err)
 	}
-	if errOut != "" {
-		t.Fatalf("an invitation wrote to stderr: %q", errOut)
+	// An invitation asks nothing and waits for nothing. The one line stderr
+	// carries is the project header every cloud command writes (the pairing's
+	// stream carries the same line), and there is no question after it: this
+	// ran with no terminal, so a command that wanted to ask would have
+	// refused rather than read a line.
+	stderr := strings.Split(strings.TrimSuffix(errOut, "\n"), "\n")
+	if len(stderr) != 1 || !strings.HasPrefix(stderr[0], "project: ") {
+		t.Fatalf("an invitation wrote %q to stderr, want only the project header", errOut)
 	}
 	events := pairLines(t, out)
 	if len(events) != 1 || events[0].Event != pairEventInvited {
@@ -279,8 +286,8 @@ func TestPairInviteWritesTheInviteAndTheMember(t *testing.T) {
 		t.Fatalf("the invitation expires at %v / %v, want %s (O4's ten minutes)", node["expires_at"], invited.ExpiresAt, expires)
 	}
 	providers, _ := node["accepted_providers"].([]any)
-	if len(providers) != len(pairInviteProviders) {
-		t.Fatalf("the invite node's accepted_providers = %v, want %v", node["accepted_providers"], pairInviteProviders)
+	if len(providers) != len(pairInviteProviders()) {
+		t.Fatalf("the invite node's accepted_providers = %v, want %v", node["accepted_providers"], pairInviteProviders())
 	}
 
 	// The member record: the address and nothing else. No role copy (the role
@@ -340,8 +347,8 @@ func TestPairInviteWritesTheInviteAndTheMember(t *testing.T) {
 	if !slices.Equal(doc.Wrote, []string{pairMemberRoot + "/" + memberKey, pairInviteRoot + "/" + inviteKey}) {
 		t.Fatalf("the document's wrote = %v, want the member record and the invite node", doc.Wrote)
 	}
-	if !slices.Equal(doc.AcceptedProviders, pairInviteProviders) {
-		t.Fatalf("the document's accepted_providers = %v, want %v", doc.AcceptedProviders, pairInviteProviders)
+	if !slices.Equal(doc.AcceptedProviders, pairInviteProviders()) {
+		t.Fatalf("the document's accepted_providers = %v, want %v", doc.AcceptedProviders, pairInviteProviders())
 	}
 
 	sch := pairSchema(t)
@@ -391,5 +398,76 @@ func TestPairInviteLeavesTheOwnAddressAlone(t *testing.T) {
 	}
 	if v := f.db.Value(pairMemberRoot); v != nil {
 		t.Fatalf("a pairing of the operator's own address wrote a member record: %v", v)
+	}
+}
+
+// TestPairInviteDrawsTheCodeAndNoCredential: without --json the invitation is
+// the code itself, drawn for the invited person to scan, and the sentence that
+// says who it is for and where they pair. The drawing is the encoder's code for
+// the invitation's own payload — the same string the invited event carries
+// under --json, since the nonce comes from the same fixed source — and that
+// payload carries no credential: the app gets the database URL and the API key
+// from the service on success (F4).
+func TestPairInviteDrawsTheCodeAndNoCredential(t *testing.T) {
+	f := newPairFixture(t, pairMe, pairInviteEndpoint)
+	key, fingerprint := f.pairSeedConsumerKey(t)
+	pairFixedRand(t)
+
+	out, _, err := pairRun(t, "--email", pairLauncher, "--role", "operator")
+	if err != nil {
+		t.Fatalf("an invitation: %v", err)
+	}
+	if !strings.Contains(out, "invited "+pairLauncher) || !strings.Contains(out, "role operator") {
+		t.Fatalf("the invitation does not name the address and the role:\n%s", out)
+	}
+	if !strings.Contains(out, pairInviteEndpointURL) {
+		t.Fatalf("the invitation does not name the endpoint the invited person pairs at:\n%s", out)
+	}
+
+	// The same invitation under --json carries the payload the drawing encodes,
+	// which is what makes the two runs one invitation and the drawing checkable
+	// against the encoder's own grid rather than against a description of it.
+	jsonOut, _, err := pairRun(t, "--email", pairLauncher, "--role", "operator", "--json")
+	if err != nil {
+		t.Fatalf("the same invitation under --json: %v", err)
+	}
+	events := pairLines(t, jsonOut)
+	if len(events) != 1 || events[0].Event != pairEventInvited {
+		t.Fatalf("events = %v, want one invited event", events)
+	}
+	payload := events[0].Payload
+	if !strings.Contains(payload, fingerprint) {
+		t.Fatalf("the payload does not carry the consumer key's fingerprint: %s", payload)
+	}
+	code, err := qr.Encode(payload, qr.L)
+	if err != nil {
+		t.Fatal(err)
+	}
+	width := code.Size + 2*pairQRQuiet
+	var rows []string
+	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
+		if len([]rune(line)) == width {
+			rows = append(rows, line)
+		}
+	}
+	if len(rows) == 0 {
+		t.Fatalf("a terminal %d columns wide got no drawing of the %d-column code:\n%s", pairQRMaxColumns, width, out)
+	}
+	grid, err := pairReadQR(strings.Join(rows, "\n"), pairQRQuiet, code.Size)
+	if err != nil {
+		t.Fatalf("the drawing is not a code: %v\n%s", err, out)
+	}
+	for y := range code.Size {
+		for x := range code.Size {
+			if grid.Black(x, y) != code.Black(x, y) {
+				t.Fatalf("module (%d,%d) is drawn %v, the encoder's code has %v", x, y, grid.Black(x, y), code.Black(x, y))
+			}
+		}
+	}
+
+	for _, absent := range []string{`"api_key"`, `"database_url"`, `"token"`, `"key"`, base64.RawURLEncoding.EncodeToString(key)} {
+		if strings.Contains(out, absent) {
+			t.Fatalf("the invitation's output carries %q:\n%s", absent, out)
+		}
 	}
 }

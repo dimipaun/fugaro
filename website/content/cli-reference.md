@@ -6200,6 +6200,17 @@ The typed code is the binding: nothing is written to the project before the
 code the operator types matches the key the phone wrote, so a refused
 pairing leaves the project exactly as it was.
 
+--email naming somebody other than you is an INVITATION rather than a
+pairing. An admin may name another member's email with a --role at or
+below the role the roster grants them, and the command writes an invite
+that person's phone presents when it pairs, creates the member record, and
+draws a code carrying the project's mobile endpoint, that address, a
+one-time nonce and the fingerprint of the consumer key the phone pins. An
+invitation carries no credential and writes no device node: it waits for
+nothing, asks nothing and ignores --timeout, and the person it names pairs
+when they sign in. --name is a device's, so an invitation refuses a value
+for it.
+
 The code is drawn in a terminal wide enough for it. The payload is over a
 kilobyte, so its code is over a hundred columns wide, and a narrower
 terminal gets the payload line instead of a drawing that would wrap and
@@ -6218,14 +6229,14 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--email` | string | "" | no | the administered email for the device (default, and normally the value: your own verified address, which is the only address this command may administer) |
+| `--email` | string | "" | no | the administered email for the device (default, and normally the value: your own verified address); naming somebody else's address is an invitation for that member, which an admin sends with --role and which pairs no device now |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for pair |
 | `--json` | bool | `false` | no | stream the pairing as newline-delimited JSON events on stdout |
-| `--name` | string | "" | no | the device's name, for pair ls and the device node's own field |
+| `--name` | string | "" | no | the device's name, for pair ls and the device node's own field (refused when --email invites somebody else: the phone's node is written when it pairs) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--role` | string | "" | no | the device's role: viewer, operator or admin (default: the role the allowlist resolves for your address, or your own when it names none; --role may only lower it, and never below the entry an address that already has one resolves to) |
+| `--role` | string | "" | no | the device's role: viewer, operator or admin (default for your own address: the role the allowlist resolves, or your own when it names none; required for an invitation, where it must be at or below the role the roster grants that address; --role may only lower it) |
 | `--timeout` | duration | `2m0s` | no | how long to wait for the phone's key and the typed code (refused above 4m30s) |
 
 Subcommands:
