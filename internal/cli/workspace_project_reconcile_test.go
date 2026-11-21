@@ -36,6 +36,13 @@ var wu13Member = workspace.MemberTarget{Project: "member-project", Firebase: "me
 // test reads the network or the wall clock.
 func wu13Deps(t *testing.T, report workspace.DriftReport, ops *wu13FakeOps, audit *wu13FakeAudit) workspaceReconcileDeps {
 	t.Helper()
+	return wu13DepsWithAdmins(t, report, ops, audit, &wu13FakeAuthority{})
+}
+
+// wu13DepsWithAdmins is the same wiring with the live admin bindings the test
+// names (D2823), for the cases the authority's answer is what the run turns on.
+func wu13DepsWithAdmins(t *testing.T, report workspace.DriftReport, ops *wu13FakeOps, audit *wu13FakeAudit, auth *wu13FakeAuthority) workspaceReconcileDeps {
+	t.Helper()
 	oldActor, oldNow := workspaceReconcileActor, workspaceReconcileNow
 	workspaceReconcileActor = func(context.Context) (string, error) { return "owner@example.com", nil }
 	workspaceReconcileNow = func() time.Time { return time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC) }
@@ -54,9 +61,27 @@ func wu13Deps(t *testing.T, report workspace.DriftReport, ops *wu13FakeOps, audi
 			}
 			return report, nil
 		},
-		Ops:   ops,
-		Audit: audit,
+		Ops:    ops,
+		Admins: auth.Bindings,
+		Audit:  audit,
 	}
+}
+
+// wu13FakeAuthority is C2's `Authority` as this command reads it: the one
+// method it consumes -- the live admin bindings (D2823) -- and the number of
+// reads, so a test can hold that a report with no admin grant is asked nothing.
+type wu13FakeAuthority struct {
+	live  []string
+	err   error
+	reads int
+}
+
+func (a *wu13FakeAuthority) Bindings(context.Context) ([]string, error) {
+	a.reads++
+	if a.err != nil {
+		return nil, a.err
+	}
+	return a.live, nil
 }
 
 // wu13Run runs the command itself, with the flags the test names: the family it
@@ -369,9 +394,11 @@ func TestReconcileAddsMissingGrant(t *testing.T) {
 		etag:  "wu13-etag-1",
 		found: true}
 	audit := &wu13FakeAudit{t: t}
-	d := wu13Deps(t, workspace.DriftReport{
+	// The row is an admin's, so the live binding is what the write turns on
+	// (D2823): carol holds one, and the grant lands.
+	d := wu13DepsWithAdmins(t, workspace.DriftReport{
 		Missing: []workspace.DriftBinding{wu13Missing("carol@example.com", "admin", workspace.PrincipalPerson)},
-	}, ops, audit)
+	}, ops, audit, &wu13FakeAuthority{live: []string{"user:carol@example.com"}})
 
 	if _, err := wu13Run(t, d, wu13Member.Project); err != nil {
 		t.Fatalf("workspace project reconcile: %v", err)
@@ -394,6 +421,106 @@ func TestReconcileAddsMissingGrant(t *testing.T) {
 	if want := "20261121T090000Z-"; !strings.HasPrefix(audit.events[0].ID, want) {
 		t.Errorf("the event id %q does not open with %q", audit.events[0].ID, want)
 	}
+}
+
+// TestReconcileAddsAdminOnlyForABoundAdmin: an admin grant is the one
+// difference the drift report's own authority is not enough for (D2823). The
+// accounts that can rewrite the workspace node -- and so put a name in its
+// `Admins` -- hold no permission to set a folder-owner or token-creator
+// binding, so the live binding is what an admin grant is written on: a person
+// who holds one is written, and a person who holds none is reported instead.
+func TestReconcileAddsAdminOnlyForABoundAdmin(t *testing.T) {
+	t.Run("an admin who holds the live binding is written", func(t *testing.T) {
+		ops := &wu13FakeOps{t: t,
+			raw:   wu13Grants(t, wu13Grant("alice@example.com", "operator")),
+			etag:  "wu13-etag-1",
+			found: true}
+		audit := &wu13FakeAudit{t: t}
+		live := &wu13FakeAuthority{live: []string{"user:carol@example.com"}}
+		d := wu13DepsWithAdmins(t, workspace.DriftReport{
+			Missing: []workspace.DriftBinding{wu13Missing("carol@example.com", "admin", workspace.PrincipalPerson)},
+		}, ops, audit, live)
+
+		if _, err := wu13Run(t, d, wu13Member.Project); err != nil {
+			t.Fatalf("workspace project reconcile: %v", err)
+		}
+		if len(ops.writes) != 1 {
+			t.Fatalf("the member's roster was written %d times, want the admin grant of a bound admin", len(ops.writes))
+		}
+		got := wu13Decode(t, ops.writes[0])
+		if len(got) != 2 || got[1].User != "user:carol@example.com" || got[1].Role != accesslib.RoleAdmin {
+			t.Errorf("the roster holds %v, want carol's admin row added", wu13Rows(got))
+		}
+		if len(audit.events) != 1 || audit.events[0].Action != workspace.ActionGrantWrite || audit.events[0].Subject != "carol@example.com" {
+			t.Errorf("the trail holds %+v, want one grant.write for carol", audit.events)
+		}
+		if live.reads != 1 {
+			t.Errorf("the live bindings were read %d times, want the one read the grant was judged on", live.reads)
+		}
+	})
+
+	// A group or a domain is what the mechanism lists where a person holds the
+	// role through one, and nothing here reads through it (F25): the same
+	// fail-closed answer as holding nothing, which is why the two are one case.
+	for _, c := range []struct {
+		name string
+		live []string
+	}{
+		{"none at all", nil},
+		{"only through a group", []string{"group:admins@example.com"}},
+		{"only through a domain", []string{"domain:example.com"}},
+	} {
+		t.Run("an admin who holds "+c.name+" is reported, not written", func(t *testing.T) {
+			before := wu13Grants(t, wu13Grant("alice@example.com", "operator"))
+			ops := &wu13FakeOps{t: t, raw: before, etag: "wu13-etag-1", found: true}
+			audit := &wu13FakeAudit{t: t}
+			authority := &wu13FakeAuthority{live: c.live}
+			d := wu13DepsWithAdmins(t, workspace.DriftReport{
+				Missing: []workspace.DriftBinding{wu13Missing("mallory@example.com", "admin", workspace.PrincipalPerson)},
+			}, ops, audit, authority)
+
+			out, err := wu13Run(t, d, wu13Member.Project)
+			if err != nil {
+				t.Fatalf("workspace project reconcile: %v", err)
+			}
+			if len(ops.writes) != 0 || len(audit.ids) != 0 {
+				t.Errorf("an admin grant was written for an admin who holds %s: %s", c.name, ops.writes)
+			}
+			if !bytes.Equal(ops.raw, before) {
+				t.Errorf("the roster changed under a reported admin grant:\n%s", ops.raw)
+			}
+			for _, want := range []string{"D2823", "mallory@example.com", "holds none", "reported and not written"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("the report does not print %q:\n%s", want, out)
+				}
+			}
+			if authority.reads != 1 {
+				t.Errorf("the live bindings were read %d times, want the one read the grant was judged on", authority.reads)
+			}
+		})
+	}
+
+	t.Run("a difference that is no admin grant asks the authority nothing", func(t *testing.T) {
+		ops := &wu13FakeOps{t: t,
+			raw:   wu13Grants(t, wu13Grant("alice@example.com", "operator")),
+			etag:  "wu13-etag-1",
+			found: true}
+		audit := &wu13FakeAudit{t: t}
+		authority := &wu13FakeAuthority{}
+		d := wu13DepsWithAdmins(t, workspace.DriftReport{
+			Missing: []workspace.DriftBinding{wu13Missing("carol@example.com", "operator", workspace.PrincipalPerson)},
+		}, ops, audit, authority)
+
+		if _, err := wu13Run(t, d, wu13Member.Project); err != nil {
+			t.Fatalf("workspace project reconcile: %v", err)
+		}
+		if len(ops.writes) != 1 {
+			t.Errorf("the operator grant was not written: %s", ops.writes)
+		}
+		if authority.reads != 0 {
+			t.Errorf("the workspace's live admin bindings were read %d times for a report that states no admin grant", authority.reads)
+		}
+	})
 }
 
 // TestReconcileReadsTheRowsScope: the row a binding comes from is a

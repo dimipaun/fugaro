@@ -29,12 +29,15 @@ package cli
 //     while its real IAM stays in the member's own Terraform or where a person
 //     put it, and a machine gets no member roster, no grant and no audit node
 //     of its own.
-//   - Only the admins the report trusted (D2823). The intersection lives where
-//     the report is computed: WU12's drift compares the workspace node's
-//     `Admins` with the live folder-owner or token-creator bindings, and a
-//     grant for an admin who holds no binding is not a difference it reports.
-//     So this command writes exactly what the report states and never a grant
-//     of its own invention.
+//   - Only an admin who holds the live binding (D2823, D2818). An admin grant
+//     is authority over the member, and the workspace node cannot be the
+//     evidence for it: the five accounts that hold the workspace's database can
+//     rewrite that node (threat-model.md §3) while none of them can set a
+//     folder-owner or token-creator binding. So this command reads the live
+//     bindings itself -- C2's `Authority.AdminBindings` -- and reports, rather
+//     than writes, an admin grant for a person who holds none. The report is
+//     consumed for what it is: a difference to write, where writing means
+//     rows in a member's roster and never a binding.
 //   - One event per change, created and never updated (D2811), in the
 //     WORKSPACE's own trail. The member's trail (C2's PathMemberAudit) is where
 //     a writer files a change it cannot file in the workspace's project at all
@@ -127,6 +130,11 @@ type workspaceReconcileDeps struct {
 	// Ops is C2's member seam. Only ReadGrants and WriteGrants are called, and
 	// the write is always conditional on the revision the read answered.
 	Ops workspace.MemberOps
+	// Admins is C2's `Authority.AdminBindings`: the members the LIVE bindings
+	// name -- the workspace folder's owners, or the workspace IAM account's
+	// token creators -- which is the only thing D2823 trusts an admin by. It is
+	// read once, and only when the report states an admin grant to write.
+	Admins func(ctx context.Context) ([]string, error)
 	// Audit is C1's sink: the workspace's own trail, one document per change,
 	// created and never updated (D2811).
 	Audit workspace.AuditSink
@@ -195,6 +203,23 @@ func workspaceProjectReconcile(cmd *cobra.Command, o *workspaceReconcileOptions,
 	if err != nil {
 		return err
 	}
+	// The live bindings are read only when the report states an admin grant to
+	// write, so a run that has none asks the authority nothing -- and the read
+	// that fails is a refusal rather than a run that writes an admin grant on
+	// evidence it could not get. The answer a run that never asks is left with
+	// is the fail-closed one: an admin grant is written for an admin whose
+	// binding was really read.
+	boundAdmin := func(string, string) bool { return false }
+	if wu13StatesAnAdminGrant(report) {
+		if d.Admins == nil {
+			return userErr("nothing was written: the workspace's live admin bindings are not wired into this command, and an admin grant is written only for an admin who holds one (D2823)")
+		}
+		live, err := d.Admins(ctx)
+		if err != nil {
+			return userErr("nothing was written: the workspace's live admin bindings could not be read, and an admin grant is written only for an admin who holds one (D2823): %v", err)
+		}
+		boundAdmin = wu13BoundAdmin(live)
+	}
 
 	// The report is computed once; what a write does to the roster is judged
 	// against the bytes really there, which is why a pass that lost the ETag
@@ -208,7 +233,7 @@ func workspaceProjectReconcile(cmd *cobra.Command, o *workspaceReconcileOptions,
 		if err != nil {
 			return userErr("nothing was written: the roster of project %s could not be read, and a roster nobody could read is not an empty one: %v", safetext.Field(member.Project), err)
 		}
-		plan, err := wu13Judge(report, member, doc)
+		plan, err := wu13Judge(report, member, doc, boundAdmin)
 		if err != nil {
 			return err
 		}
@@ -282,7 +307,12 @@ type wu13Plan struct {
 // derives no binding at all -- so both directions read the scope as part of the
 // pair they judge, and only a project-scope row is ever dropped from the
 // document a write stores.
-func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc workspace.MemberDoc) (wu13Plan, error) {
+//
+// boundAdmin answers whether a person holds a live admin binding (D2823), and
+// it is asked once per admin grant the report states. Everything else the
+// report names is written on the report's own authority; this one is not,
+// because it is the one that hands out authority.
+func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc workspace.MemberDoc, boundAdmin func(form, address string) bool) (wu13Plan, error) {
 	var p wu13Plan
 	var rows []accesslib.Grant
 	if doc.Found {
@@ -326,6 +356,15 @@ func wu13Judge(report workspace.DriftReport, member workspace.MemberTarget, doc 
 			continue
 		}
 		seen[key] = true
+		if role == string(accesslib.RoleAdmin) && !boundAdmin(form, address) {
+			// An admin grant is written for an admin the mechanism really binds,
+			// which is the live binding and never the workspace node: the five
+			// accounts holding the workspace's database can rewrite that node and
+			// none of them can set a folder-owner or token-creator binding
+			// (D2823, D2818, threat-model.md §3).
+			p.named = append(p.named, wu13Named{what, "an admin grant is written only for an admin who holds the live binding (D2823): the workspace's folder owners, or its IAM account's token creators. " + safetext.Field(address) + " holds none, and a person bound through a group or a domain is not read through here, so this grant is reported and not written"})
+			continue
+		}
 		if onRoster(form, role) {
 			p.named = append(p.named, wu13Named{what, "the member's roster already grants this pair at the project scope: the member's own fugaro update is what applies it"})
 			continue
@@ -437,6 +476,35 @@ func wu13RowOf(b workspace.DriftBinding) (form, address, role string, err error)
 	}
 	address, _ = strings.CutPrefix(form, "user:")
 	return form, address, role, nil
+}
+
+// wu13StatesAnAdminGrant reports whether the report holds an admin grant of a
+// person, which is the one difference the live bindings have to be read for.
+// The kinds are not asked here: a machine's difference is written by nobody, so
+// an admin row about one must not send this command to the authority for a
+// question it will not act on.
+func wu13StatesAnAdminGrant(report workspace.DriftReport) bool {
+	return slices.ContainsFunc(report.Missing, func(b workspace.DriftBinding) bool {
+		return b.Kind == workspace.PrincipalPerson && b.Role == string(accesslib.RoleAdmin)
+	})
+}
+
+// wu13BoundAdmin is the live bindings as one question: does this person hold
+// one? The mechanism answers in the spelling its own policy holds: a person is
+// "user:<address>", and a person who holds the role through a group or a domain
+// is listed as that group or domain (D2823, F25: nothing here reads through
+// one). The spellings a person's row carries are the member form and the bare
+// address, so both are keys -- and a group or a domain is neither, which is the
+// fail-closed half: an admin nobody can place is reported, not written.
+func wu13BoundAdmin(live []string) func(form, address string) bool {
+	bound := make(map[string]bool, len(live)*2)
+	for _, b := range live {
+		bound[b] = true
+		if addr, ok := strings.CutPrefix(b, "user:"); ok {
+			bound[addr] = true
+		}
+	}
+	return func(form, address string) bool { return bound[form] || bound[address] }
 }
 
 // wu13KindWhy says why a difference of one principal kind is reported and not
