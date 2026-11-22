@@ -3275,6 +3275,14 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// own eligible names unioned with every one discovery found live, so a
 	// config edit can never shrink the module's for_each (N3).
 	spec.ProjectSecrets = im.ProjectSecrets
+	// Where the installation's log bucket already is, when it has one: a
+	// bucket's location is permanent, so the plan of an installation whose
+	// bucket is `global` must name `global` even though the mapping points
+	// elsewhere (R5, F11). Empty means discovery found no bucket, and the
+	// spec's own value — place.For's answer — is what the plan creates one in.
+	if im.LogBucketLocation != "" {
+		spec.LogBucketLocation = im.LogBucketLocation
+	}
 	// The catalog check's git credentials name a project container only when
 	// the plan holds it, which is known only now.
 	if spec.OwnGitSecrets, err = infra.LiveGitSecrets(ctx, c, lc); err != nil {
@@ -4549,6 +4557,15 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 	if err != nil {
 		return remote(err)
 	}
+	// The undelete command this rollback prints names the bucket's own
+	// location, and an installation made before this mapping has its bucket in
+	// `global` while the spec's own value is place.For's answer for the region
+	// (R5, F10). So the location is read off the bucket before the apply
+	// deletes it, with discovery's own listing and nothing else: this path
+	// runs no discovery, and a read that fails — the Logging API is disabled,
+	// say — leaves the spec's value rather than failing a rollback over a
+	// message.
+	bucketLoc := spec.LogBucketLocation
 	if changed {
 		plan, err := t.Show(ctx, infra.PlanFile)
 		if err != nil {
@@ -4557,6 +4574,11 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		r.planBlock(plan)
 		if err := infra.CheckForgetPlan(plan); err != nil {
 			return initErr(err)
+		}
+		if forgetDeletesLogBucket(plan) {
+			if loc, err := infra.LogBucketWhere(ctx, c, spec.Project, spec.Names.Log.Bucket); err == nil && loc != "" {
+				bucketLoc = loc
+			}
 		}
 		if err := r.guard(ctx, c, plan, infra.ForgetAllowDelete(plan)); err != nil {
 			return err
@@ -4589,11 +4611,23 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 	r.res.Forgotten = true
 	fmt.Fprintln(r.w, "Terraform no longer manages the installation; nothing else was destroyed. Restore the backed-up local config and redeploy each job with the M4 binary.")
 	if slices.Contains(r.res.Deleted, infra.LogBucketAddress) {
-		r.res.Undelete = infra.LogBucketUndelete(spec.Project)
+		r.res.Undelete = infra.LogBucketUndelete(spec.Project, bucketLoc)
 		r.warn(fmt.Sprintf("the log bucket %s is now pending deletion for 7 days, and its ID can't be reused meanwhile; a migration retried within the week runs this first: %s",
 			infra.LogBucket, r.res.Undelete))
 	}
 	return nil
+}
+
+// forgetDeletesLogBucket reports whether the rollback's plan deletes the
+// installation's log bucket: the location its undelete command must name is
+// read before the apply, so only a plan that deletes one is read for.
+func forgetDeletesLogBucket(p *tf.Plan) bool {
+	for _, rc := range p.ResourceChanges {
+		if rc.Address == infra.LogBucketAddress && slices.Contains(rc.Change.Actions, "delete") {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *initRun) printResult() error {

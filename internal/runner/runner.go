@@ -1063,16 +1063,37 @@ func (r *run) createRecord(ctx context.Context) error {
 
 // recordCredential is the cascade's own record (C1.19, D140): the name -- never
 // the value, which never leaves the service -- of the credential the run's
-// cascade answered a call with. It is written in two places, each the one its
-// reader has: the record the run ends with (runstore.Record.OAuthAccount,
-// which `fugaro runs` reads when a record exists) and the registry entry the
-// dashboard reads while the run is running (budget.AgentEntry.Credential).
+// cascade answered a call with, and the owner of that credential's token (F16
+// of docs/secrets-brokering/dynamic-delivery, runstore.Record.CredentialOwner,
+// the account id of the person it belongs to, which the service states on the
+// same answer -- gateway.ServiceAnswer.CredentialOwner, read from
+// credsvc.HeaderCredentialOwner -- and only for a credential the launcher
+// OWNS). It is written in two places,
+// each the one its reader has: the record the run ends with
+// (runstore.Record.OAuthAccount, which `fugaro runs` reads when a record
+// exists) and the registry entry the dashboard reads while the run is running
+// (budget.AgentEntry.Credential).
 //
-// The name is whatever the service answered, so it is written as one word: a
+// The name and the owner are ONE answer's pair, and they are written by ONE
+// writer under ONE lock for that reason: the stages of a cascade call at the
+// same time, so two answers reach serviceAnswer together, and a second writer
+// of either field would let the two interleave -- the record would end pairing
+// one answer's credential with another answer's owner, which is the
+// misattribution F16 exists to prevent. owner is therefore a value of this
+// call and never a field read back beside it.
+//
+// An empty owner is a write and not a no-op: a credential the launcher does not
+// own -- a pool's, a bundle entry, a per-user name of another person -- is
+// answered no owner (credsvc.credentialOwnedBy), so an answer that names a
+// credential and no owner CLEARS the field. Keeping the owner an earlier answer
+// gave would name the launcher beside a credential that is not theirs.
+//
+// Both are whatever the service answered, so they are written as one word: a
 // name carrying a control or bidi character would have the whole PATCH denied
 // and freeze the run's registry, which clipEntry's clipString already strips
 // (internal/budget) -- this is the second bound, for the record, which no
-// clipEntry sees.
+// clipEntry sees. No credential's VALUE is ever in play: the owner is an
+// account id, and no value ever leaves the service.
 //
 // A cascade run is the only run whose agent.auth makes a credential that is not
 // its own visible to it, and the gateway only ever forwards to the credentials
@@ -1083,14 +1104,20 @@ func (r *run) createRecord(ctx context.Context) error {
 // Its one caller is serviceAnswer (internal/runner/gateway.go), the callback
 // startGateway hands the gateway: the write is here, with the run's other
 // record writers, and the answer that decides it arrives there.
-func (r *run) recordCredential(name string) {
+func (r *run) recordCredential(name, owner string) {
 	name = safetext.Field(name)
 	if name == "" {
 		return
 	}
+	owner = safetext.Field(owner)
 	r.mu.Lock()
-	if r.rec != nil && r.rec.OAuthAccount != name {
-		r.rec.OAuthAccount = name
+	if r.rec != nil {
+		if r.rec.OAuthAccount != name {
+			r.rec.OAuthAccount = name
+		}
+		if r.rec.CredentialOwner != owner {
+			r.rec.CredentialOwner = owner
+		}
 	}
 	r.mu.Unlock()
 	r.noteRegistry(func(e *budget.AgentEntry) { e.Credential = name })
