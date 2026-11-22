@@ -50,6 +50,17 @@ variable "members" {
   }
 }
 
+variable "people" {
+  description = "The workspace roster's people: the addresses of the workspace roster's `human` entries, one invoke grant on the workspace's own credentials service per address (R6, D2971). fugaro update renders them from the workspace's own roster node (workspaceRosters/<name>). An empty list (the default) makes no person's invoke grant, and a person the roster no longer names is a grant deleted and nothing else."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for p in var.people : can(regex("^[^@[:space:]]+@[^@[:space:]]+$", p))])
+    error_message = "people must be the roster's own addresses (a person's email address): the invoke grant is bound to the address itself, so an entry that is not one would grant roles/run.invoker on the workspace's own service to whatever was written there."
+  }
+}
+
 variable "credentials_service" {
   description = "The workspace's own credentials service (D2980): the same image an installation's service runs, in the workspace's own project, told what it is by its environment. Null — the default — creates no service, no bundle accessor and no invoke grant, which is the state of a workspace whose owner has not deployed it yet. The image's host, project and repository are checked against region, project and the remote repository below."
   type = object({
