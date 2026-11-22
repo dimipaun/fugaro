@@ -167,7 +167,18 @@ type SlipGrantRequest struct {
 	// What a grant does NOT carry is the table's provider, model and spelling:
 	// those are read again at each call (CS1), because a source the project
 	// moves between providers must serve every run already in flight.
-	Sources []creds.GrantSource `json:"sources"`
+	//
+	// It is omitempty, and so is NamedPool below, because the launcher and the
+	// service are routinely a release apart: the CLI is the piece a person
+	// upgrades first and the service is deployed by the installation's own
+	// `fugaro update` (CLAUDE.md's HARD RULE), so a launch of this release meets
+	// a service whose reader is decodeStrict — and a member that reader does not
+	// know refuses the WHOLE body, which is the grant refused, the run starting
+	// with no slip, and the next call that needs a grammar-named credential
+	// refused at the call (slipRequiresSlip). A launch that covers no source and
+	// names no pool therefore sends neither member, and the older service reads
+	// exactly the body it read before this route grew them.
+	Sources []creds.GrantSource `json:"sources,omitempty"`
 	// NamedPool is the pool the launch asked for with `--pool` (C2's
 	// `named_pool`, D3176, CS12), empty when it named none. It is not Pool on
 	// the record either: this is what the flag named, and the slip's Pool is the
@@ -179,7 +190,11 @@ type SlipGrantRequest struct {
 	// lookup that resolves "the launcher's pool" for the run checks the
 	// entitlement again (PL4), and a record that carried a name its own grant
 	// had refused would be a name that lookup could not tell from a checked one.
-	NamedPool string `json:"named_pool"`
+	//
+	// It is omitempty for the reason Sources states: a launch that named no pool
+	// sends no member, and a service deployed behind this release reads the body
+	// it always did.
+	NamedPool string `json:"named_pool,omitempty"`
 	// MaxRuntimeSeconds is how long the launcher asks the run to be served for.
 	// It is CLAMPED to maxSlipRuntime and never refused for being large: a
 	// launcher asking for more than the platform allows is asking for the most

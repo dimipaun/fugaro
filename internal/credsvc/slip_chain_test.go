@@ -550,3 +550,47 @@ func TestAnOlderGrantRequestIsServedAsToday(t *testing.T) {
 		wantOneGrantRefusal(t, s, resp, answer, testSecondLauncherAccount, shared, testPoolCredential, slipTestPoolName)
 	})
 }
+
+// TestAnOlderServiceReadsTheGrantThisLaunchBuilds: the body a launch of THIS
+// release sends is read by a service of the release before CS14.
+//
+// It is the other half of the skew the two members introduce, and the half that
+// costs a run. `fugaro update` deploys the service and a person upgrades the CLI
+// first (CLAUDE.md's HARD RULE), so a launch routinely meets a reader that knows
+// neither `sources` nor `named_pool` — and that reader is decodeStrict, where a
+// member it does not know refuses the WHOLE body. The launch would then start
+// with no slip and every call that needs a grammar-named credential would be
+// refused at the call (slipRequiresSlip), which is the failure the two members
+// being omitempty is what prevents.
+//
+// The request here is the one internal/cli's launch builds, member for member:
+// runSlipEnv sets the five below and neither of the new members, because nothing
+// there names a source or a pool yet (CS12). The reader below is the strict
+// decoder with the member set this route had BEFORE CS14 — the same decoder and
+// the same fields an older service runs — so the test fails the moment a new
+// member is written unconditionally, and the assertions on what it read keep
+// "readable" from being satisfied by a body that decodes into nothing.
+func TestAnOlderServiceReadsTheGrantThisLaunchBuilds(t *testing.T) {
+	s := slipChainSvc(t)
+	body := mustBody(t, SlipGrantRequest{
+		Slug:              s.slug,
+		Run:               s.run,
+		Account:           testJobSA,
+		Credentials:       []string{testPoolCredential},
+		MaxRuntimeSeconds: 3600,
+	})
+	var older struct {
+		Slug              string   `json:"slug"`
+		Run               string   `json:"run"`
+		Account           string   `json:"account"`
+		Credentials       []string `json:"credentials"`
+		MaxRuntimeSeconds int64    `json:"max_runtime_seconds"`
+	}
+	if err := decodeStrict([]byte(body), &older); err != nil {
+		t.Fatalf("a service of the release before CS14 refuses the grant body this release's launch builds, %s: %v", body, err)
+	}
+	if older.Slug != s.slug || older.Run != s.run || older.Account != testJobSA ||
+		!slices.Equal(older.Credentials, []string{testPoolCredential}) || older.MaxRuntimeSeconds != 3600 {
+		t.Errorf("the older reader read %+v from %s: want the five members the launch set, unchanged", older, body)
+	}
+}
