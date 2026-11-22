@@ -67,9 +67,9 @@ the one file of the two C2 adds there that survives I1.
 - **`round-robin`** steps through the usable members in the listed order, one run at a time, skipping
   the ones a mark or a cap holds. It keeps its meaning and is what `internal/creds`' selection
   already does within a tier.
-- **`failover`** is the member used least recently — the one exhausted longest ago — with the listed
-  order breaking an exact tie. It keeps its meaning, and it is what a pool that names no rule is
-  served by: `rule` is a NEW member (R21), so a pool published before it existed keeps behaving
+- **`failover`** is the member used least recently — the one exhausted longest ago — with the
+  round-robin counter breaking an exact tie. It keeps its meaning, and it is what a pool that names no
+  rule is served by: `rule` is a NEW member (R21), so a pool published before it existed keeps behaving
   exactly as it does today, which is what `strategy`'s own default is. No pool moves because a rule
   arrived, and a value that is not one of the three is refused rather than read as one of them.
 

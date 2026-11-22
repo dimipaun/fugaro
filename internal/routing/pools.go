@@ -81,8 +81,9 @@ const (
 	// run at a time, and skips the ones a mark or the cap holds.
 	RuleRoundRobin Rule = "round-robin"
 	// RuleFailover takes the member used least recently — the one exhausted
-	// longest ago — with the listed order breaking an exact tie. It is what a
-	// pool with no rule does, and what every pool did before rules existed.
+	// longest ago — with the round-robin counter breaking an exact tie, which is
+	// what internal/creds' leastRecentlyExhausted already does. It is what a pool
+	// with no rule does, and what every pool did before rules existed.
 	RuleFailover Rule = "failover"
 )
 
