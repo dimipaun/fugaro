@@ -103,6 +103,32 @@ import (
 // no text of the message it answers.
 const consumerNotCarried = "nothing was performed: the resident orchestrator read the message and carried nothing out"
 
+// consumerStopRequest is what the phone is told about a **stop request** — the
+// schema's `stop` kind, which the app writes when the human says to stop what
+// they are looking at (mobile plan task P5.1g; the owner's answer Q10(c), the
+// design's section 4.8).
+//
+// It is a sentence of its own rather than consumerNotCarried because a stop
+// request is the one record whose answer the human is waiting for: Q10's answer
+// (c) is a request rather than a phone-writable kill switch, so the honest
+// answer says both halves — the request was read, and nothing was stopped from
+// here, because there is nothing here to stop it with (the enforcement side is
+// `config/kill/**` and `config/caps/**`, which no client writes and this pass
+// has no grant for). What it does not do is pretend: it names where the stop
+// can be made, the console or the laptop, where a human can act on the request,
+// and it names the one thing the phone can always do by itself, which is to
+// revoke its own pairing.
+//
+// It is deliberately not a prompt in the outbox. A prompt is a question with
+// options the phone reads aloud and answers, and the consumer would then be
+// asking the human to confirm a stop it cannot perform — D168's own rule is
+// that the resident orchestrator never treats its own prompt as answered and
+// never synthesises an owner confirmation, and a prompt here would be exactly
+// that. Nothing raises a prompt for a stop record — no console or laptop code
+// does — so the request travels to the human as the outbox answer they will
+// hear and nothing else.
+const consumerStopRequest = "nothing was stopped: the resident orchestrator read your stop request, and this installation has no phone-writable kill switch. Stop the run from the console or the laptop, or revoke this device's pairing; the phone cannot stop a run by itself."
+
 // ConsumerReader is every read one consumer pass makes, and it is the
 // deployment's own database client — the service-account one, `rtdb.Auth{Source:
 // ...}`, which is the client the resident service already reads its node
@@ -430,7 +456,7 @@ func consumeMailbox(ctx context.Context, reader ConsumerReader, m ConsumerMailbo
 		answer, err := mailbox.WriteReply(ctx, st, signer, mailbox.Reply{
 			ID:      mailbox.ReplyID(message.ID),
 			Sender:  m.Mailbox,
-			Text:    consumerNotCarried,
+			Text:    consumerAnswerText(message.Kind),
 			At:      at.UnixMilli(),
 			Kind:    "answer",
 			ReplyTo: message.ID,
@@ -457,9 +483,9 @@ func consumeMailbox(ctx context.Context, reader ConsumerReader, m ConsumerMailbo
 	return run, nil
 }
 
-// The three kinds the module's closed vocabulary names and does not export a
-// constant for: `mailbox.Kinds` is the list a schema reader checks against, and
-// it spells these four as `message`, `answer`, `action` and `registration`
+// The kinds the module's closed vocabulary names and does not export a constant
+// for: `mailbox.Kinds` is the list a schema reader checks against, and it spells
+// these as `message`, `answer`, `action`, `registration` and `stop`
 // (`KindMessage` is the one it exports, because a message with no `kind` field
 // is one). The phase-1 command spells the same words as its `mailboxKindAnswer`
 // and its neighbours, and a third spelling here is the module's list read out
@@ -468,19 +494,41 @@ const (
 	consumerKindAnswer       = "answer"
 	consumerKindAction       = "action"
 	consumerKindRegistration = "registration"
+	// consumerKindStop is the phone's stop request (mobile plan task P5.1g, the
+	// owner's answer Q10(c)): the app asking a human to stop what they are
+	// looking at. It is a kind a phone sends, so this pass carries it — see
+	// consumerCarries — and it is answered with consumerStopRequest.
+	consumerKindStop = "stop"
 )
 
 // consumerCarries reports whether this pass' acting half carries a record of
 // this kind. It is false for every kind in this release (the header), and the
-// four it names are exactly the kinds a phone sends: `message`, `answer`,
-// `action` and `registration`. A `prompt` is deliberately not one of them — it
-// travels host to phone, and a pass that answered one out of its own inbox
-// would be answering its own question — and neither is a kind this build does
-// not know, which the schema has refused by the time this is asked.
+// five it names are exactly the kinds a phone sends: `message`, `answer`,
+// `action`, `registration` and `stop`. A `prompt` is deliberately not one of
+// them — it travels host to phone, and a pass that answered one out of its own
+// inbox would be answering its own question — and neither is a kind this build
+// does not know, which the schema has refused by the time this is asked.
+//
+// A `stop` is carried although nothing here acts on it, and that is the point
+// rather than an oversight: a record this pass refused outright would never be
+// answered, and an unanswered record is one the phone's own at-least-once rule
+// keeps owing (M2) — so the human's stop request would sit in the app as a
+// pending utterance with nothing to say about it. What the answer says is
+// consumerStopRequest: it was read, and nothing was stopped from here.
 func consumerCarries(kind string) bool {
 	switch kind {
-	case mailbox.KindMessage, consumerKindAnswer, consumerKindAction, consumerKindRegistration:
+	case mailbox.KindMessage, consumerKindAnswer, consumerKindAction, consumerKindRegistration, consumerKindStop:
 		return true
 	}
 	return false
+}
+
+// consumerAnswerText is what the outbox says about a record of this kind: the
+// stop request's own sentence, and consumerNotCarried for every other kind this
+// pass carries (the header's paragraph on why nothing is carried out).
+func consumerAnswerText(kind string) string {
+	if kind == consumerKindStop {
+		return consumerStopRequest
+	}
+	return consumerNotCarried
 }

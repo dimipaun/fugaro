@@ -31,9 +31,8 @@ import (
 // "<item>:<attempt>", so an item whose id carried one would name two attempts
 // at once.
 var (
-	idRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
-	agentRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
-	roleRE  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+	idRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+	roleRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 )
 
 // headRE is a head as the ladder records one in its ledger: a git object name
@@ -182,8 +181,9 @@ func ValidateState(s State) error {
 	if s.Rev < 0 {
 		return fmt.Errorf("%w: the revision is %d", ErrInvalid, s.Rev)
 	}
-	if !agentRE.MatchString(s.AgentID) {
-		return fmt.Errorf("%w: the agent id %q is not a name", ErrInvalid, safetext.OneLine(s.AgentID))
+	if !ValidOrchestratorID(s.AgentID) {
+		return fmt.Errorf("%w: the agent id %q is not an orchestrator id: an id is a project's name, or a project's name, a %s and a slug (naming.go)",
+			ErrInvalid, safetext.OneLine(s.AgentID), NameSeparator)
 	}
 	if !roleRE.MatchString(s.Role) {
 		return fmt.Errorf("%w: the role %q is not a loop's name", ErrInvalid, safetext.OneLine(s.Role))
