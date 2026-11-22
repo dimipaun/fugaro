@@ -9,10 +9,10 @@
 // screens read the answers. Written in that order, each of them would invent its
 // own spelling of a name or a field and the console would discover the
 // disagreement at runtime, in a window, in front of an operator. So the names,
-// the payloads and the answer shapes are frozen here first, the stub bridge
-// (`src/renderer/stubs/bridge-stub.ts`) answers each of them with a fixture that
-// decodes against them, and I-OPS holds those fixtures to the goldens the CLI
-// tasks record. The allow-list task implements the operations **beside** this
+// the payloads and the answer shapes are frozen here first, the fixture bridge
+// the consumers build against (`console/test/support/newOpAnswers.ts`) answers
+// each of them with a value that decodes against them, and I-OPS holds those
+// fixtures to the goldens the CLI tasks record. The allow-list task implements the operations **beside** this
 // module and imports nothing from it: what it must agree with is the wire, and
 // the wire is the CLI's.
 //

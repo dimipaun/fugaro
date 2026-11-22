@@ -25,8 +25,8 @@
 //     existed: one answer, one drawing, and no stream at all.
 //
 // The fake bridge is built here from `new-ops.ts`'s types, the way every consumer
-// of C-OPS does (`contract-ops.md`: no consumer imports the stub, which is what
-// lets I-OPS delete it whole).
+// of C-OPS does (`contract-ops.md`: no consumer imports a fixture bridge, which
+// is what let I-OPS delete the stub one whole).
 
 import { describe, expect, it } from 'vitest'
 

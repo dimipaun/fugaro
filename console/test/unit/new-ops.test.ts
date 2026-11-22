@@ -19,9 +19,10 @@
 //      an answers object and never a path: these are the three the plan names,
 //      and the ones a renderer could otherwise use to name a file or a project
 //      the owner never saw;
-//   3. **a fixture per operation that decodes against its type** -- the stub the
-//      consumers build against, held to the contract in the one place both are
-//      readable;
+//   3. **a fixture per operation that decodes against its type** -- the answers
+//      the consumers build against (`test/support/newOpAnswers.ts`, which is
+//      where C-OPS's stub fixtures went when I-OPS deleted the stub bridge),
+//      held to the contract in the one place both are readable;
 //   4. **the three things each side may rely on**, each as its own case: an
 //      unknown role reads as `none`, a stream without an `end` is interrupted,
 //      and an answers object never names a file;
@@ -48,7 +49,7 @@ import {
 } from '../../src/shared/new-ops'
 import type { NewOperationName } from '../../src/shared/new-ops'
 import { newOpsFrom } from '../../src/renderer/new-bridge'
-import { STUB_FIXTURES, stubBridge } from '../../src/renderer/stubs/bridge-stub'
+import { NEW_OP_ANSWERS, newOpAnswersBridge } from '../support/newOpAnswers'
 
 /** THE_NINE is the plan's own list, in its own order: the names this contract
  * exists for, spelled as the CLI's operations are. */
@@ -66,7 +67,7 @@ const THE_NINE: readonly NewOperationName[] = Object.freeze([
 
 /** clone is one fixture with one field taken out of it, or put back: every case
  * below that mutates an answer does it on a copy, so the fixture the next case
- * reads is the fixture the stub answers with. */
+ * reads is the fixture the bridge answers with. */
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
 }
@@ -108,34 +109,34 @@ describe('the payloads the renderer may fill in', () => {
   })
 })
 
-describe('the stub bridge answers every operation with a fixture that decodes', () => {
+describe('the fixtures answer every operation with a value that decodes', () => {
   it('has a fixture for every one of the nine, and no fixture for anything else', () => {
-    expect(Object.keys(STUB_FIXTURES).sort()).toEqual([...THE_NINE].sort())
+    expect(Object.keys(NEW_OP_ANSWERS).sort()).toEqual([...THE_NINE].sort())
   })
 
   it('decodes each of the nine against its own type', () => {
     for (const name of THE_NINE) {
-      const decoded = decodeNewOperationAnswer(name, STUB_FIXTURES[name])
-      expect(decoded.ok, `${name}: ${refusalOf(name, STUB_FIXTURES[name])}`).toBe(true)
+      const decoded = decodeNewOperationAnswer(name, NEW_OP_ANSWERS[name])
+      expect(decoded.ok, `${name}: ${refusalOf(name, NEW_OP_ANSWERS[name])}`).toBe(true)
     }
   })
 
-  it('refuses a stub answer with a missing field, by the field’s own name', () => {
+  it('refuses a fixture answer with a missing field, by the field’s own name', () => {
     // The plan's red step, run first: the decode is what tells a fixture that
     // has stopped carrying what a consumer reads from one that has not.
-    const whoami = clone(STUB_FIXTURES['whoami']) as Record<string, unknown>
+    const whoami = clone(NEW_OP_ANSWERS['whoami']) as Record<string, unknown>
     const document = whoami['document'] as Record<string, unknown>
     delete document['role']
     expect(refusalOf('whoami', whoami)).toBe('role: missing')
   })
 
-  it('refuses a stub answer whose document is not there at all', () => {
+  it('refuses a fixture answer whose document is not there at all', () => {
     expect(refusalOf('recipes.ls', {})).toBe('document: missing')
     expect(refusalOf('budget.stream', { document: [] })).toBe('the document: not-an-object')
   })
 
   it('reads a role the console does not know as none', () => {
-    const whoami = clone(STUB_FIXTURES['whoami']) as Record<string, unknown>
+    const whoami = clone(NEW_OP_ANSWERS['whoami']) as Record<string, unknown>
     ;(whoami['document'] as Record<string, unknown>)['role'] = 'auditor'
     const decoded = decodeNewOperationAnswer('whoami', whoami)
     expect(decoded.ok).toBe(true)
@@ -143,7 +144,7 @@ describe('the stub bridge answers every operation with a fixture that decodes', 
   })
 
   it('reads a stream with no end line as interrupted, and never as complete', () => {
-    const runs = clone(STUB_FIXTURES['runs.stream']) as Record<string, unknown>
+    const runs = clone(NEW_OP_ANSWERS['runs.stream']) as Record<string, unknown>
     const lines = (runs['document'] as { lines: readonly unknown[] }).lines
     ;(runs['document'] as { lines: readonly unknown[] }).lines = lines.filter(
       (line) => (line as { type?: string }).type !== 'end',
@@ -159,7 +160,7 @@ describe('the stub bridge answers every operation with a fixture that decodes', 
   })
 
   it('reads a stream’s error line as the failure, with the CLI’s own sentence', () => {
-    const budget = clone(STUB_FIXTURES['budget.stream']) as Record<string, unknown>
+    const budget = clone(NEW_OP_ANSWERS['budget.stream']) as Record<string, unknown>
     const document = budget['document'] as { lines: readonly unknown[] }
     document.lines = [
       ...document.lines,
@@ -175,7 +176,7 @@ describe('the stub bridge answers every operation with a fixture that decodes', 
   })
 
   it('ends the setup feed on its done line, and never on a line it does not know', () => {
-    const plan = clone(STUB_FIXTURES['setup.plan']) as Record<string, unknown>
+    const plan = clone(NEW_OP_ANSWERS['setup.plan']) as Record<string, unknown>
     const document = plan['document'] as { lines: readonly unknown[] }
     const decoded = decodeNewOperationAnswer('setup.plan', plan)
     expect(decoded.ok).toBe(true)
@@ -217,8 +218,8 @@ describe('an answers object never names a file', () => {
 })
 
 describe('the typed read over the structural bridge', () => {
-  it('answers a value for each of the nine, from the stub bridge', async () => {
-    const ops = newOpsFrom(stubBridge())
+  it('answers a value for each of the nine, from the fixture bridge', async () => {
+    const ops = newOpsFrom(newOpAnswersBridge())
     const runs = await ops.streamRuns({ since: '7d' })
     expect(runs.ok).toBe(true)
     if (runs.ok) expect(runs.value.end).not.toBeNull()
@@ -230,14 +231,17 @@ describe('the typed read over the structural bridge', () => {
     if (budget.ok) expect(budget.value.failure).toBeNull()
     const whoami = await ops.whoAmI({})
     expect(whoami.ok).toBe(true)
-    if (whoami.ok) expect(whoami.value.role).toBe('admin')
+    // The recorded answer, not an invented one: WH1's golden is an operator
+    // reaching every repository of one host (`ops-contract.test.ts` holds the
+    // fixture to those bytes).
+    if (whoami.ok) expect(whoami.value.role).toBe('operator')
     const images = await ops.listImageCatalog({})
     expect(images.ok).toBe(true)
     if (images.ok) expect(images.value.entries.length).toBeGreaterThan(0)
     const recipes = await ops.listRecipes({})
     expect(recipes.ok).toBe(true)
     if (recipes.ok) expect(recipes.value.recipes.length).toBeGreaterThan(0)
-    const plan = await ops.planSetup({ answers: STUB_ANSWERS })
+    const plan = await ops.planSetup({ answers: SETUP_ANSWERS })
     expect(plan.ok).toBe(true)
     if (plan.ok) expect(plan.value.done).toBe(true)
     const apply = await ops.applySetup({})
@@ -309,9 +313,9 @@ describe('the text classes the contract names', () => {
   })
 })
 
-/** STUB_ANSWERS is the answers object the stub bridge's `setup.plan` fixture
+/** SETUP_ANSWERS is the answers object the fixture bridge's `setup.plan` answer
  * stands for: the five questions, filled in. */
-const STUB_ANSWERS = Object.freeze({
+const SETUP_ANSWERS = Object.freeze({
   gcp_project: 'fugaro-dev',
   region: 'europe-west1',
   name: 'fugaro',

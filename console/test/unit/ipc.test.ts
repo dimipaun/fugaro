@@ -4065,11 +4065,12 @@ describe('the spend read’s arguments', () => {
  *     write: the dry run and the write behind the window are that row's children.
  *   - **Every one of them is inert until the CLI release that carries its
  *     flags**: each floor in `src/shared/version.ts` is `null` today, and the
- *     handler behind each answers 'not available in this build' until I-OPS
- *     registers the real one -- **except `settings.editor.open`, whose handler
- *     the console improvements plan's SU2b registered** (`settingsEditorRunner`
- *     in `src/main/index.ts`), because the pencil that presses it is on screen
- *     and a stub behind it would make the Project tab's only write dead. The
+ *     handler behind each refuses in its own flow's words, naming that floor
+ *     (`src/main/handlers.ts`, I-OPS) -- **except `settings.editor.open`, whose
+ *     handler the console improvements plan's SU2b registered**
+ *     (`settingsEditorRunner` in `src/main/index.ts`), because the pencil that
+ *     presses it is on screen and a stub behind it would make the Project tab's
+ *     only write dead. The
  *     rows are here rather than in a later task because the allow-list is the
  *     thing the whole console spawns through.
  */

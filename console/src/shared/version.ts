@@ -670,8 +670,9 @@ export const BUDGET_STREAM_CLI_FLOOR: string | null = null
  * binary's two argvs -- and no CLI answers either word before it.
  *
  * `null` until that release names itself, which is where the wizard stands
- * today: the two rows exist in the allow-list and the handlers behind them
- * answer 'not available in this build'.
+ * today: the two rows exist in the allow-list and the handler behind each
+ * refuses in the wizard's own words (`SETUP_FLOOR_UNSET`), so no child is
+ * spawned for either.
  */
 export const SETUP_CLI_FLOOR: string | null = null
 
