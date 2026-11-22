@@ -553,3 +553,37 @@ func str(v any) string {
 	s, _ := v.(string)
 	return s
 }
+
+// TestOrchestratorOperatorsMayActAsTheDaemonsAccount is the grant that lets the
+// daemon run on an operator's machine: with the block on, each operator holds
+// roles/iam.serviceAccountTokenCreator on fugaro-orch (and on that account
+// alone), and with it off nobody does. It is the plan-level half of
+// iam.serviceAccountTokenCreator's one new site (orchestrator.tf).
+func TestOrchestratorOperatorsMayActAsTheDaemonsAccount(t *testing.T) {
+	lc := credentialsLC(t)
+	spec, err := Installation(lc, InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Operators = []string{"user:ops@example.com"}
+	const prefix = "module.installation.google_service_account_iam_member.fugaro_orchestrator_token_creator"
+
+	_, off := installationPlan(t, spec)
+	for addr := range off {
+		if strings.HasPrefix(addr, prefix) {
+			t.Errorf("%s is in the plan of an installation with no orchestrator block", addr)
+		}
+	}
+
+	_, on := installationPlanWith(t, spec, map[string]any{"orchestrator": orchestratorBlock(t, spec, credentialsFP)})
+	row, ok := on[prefix+`["user:ops@example.com"]`]
+	if !ok {
+		t.Fatalf("the plan with the orchestrator on grants the operator no token creation on the daemon's account")
+	}
+	account := "projects/" + spec.Project + "/serviceAccounts/" + OrchestratorAccountID + "@" + spec.Project + ".iam.gserviceaccount.com"
+	for key, want := range map[string]string{"role": "roles/iam.serviceAccountTokenCreator", "member": "user:ops@example.com", "service_account_id": account} {
+		if got := str(row.After[key]); got != want {
+			t.Errorf("%s is %q, want %q", key, got, want)
+		}
+	}
+}

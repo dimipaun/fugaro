@@ -182,9 +182,11 @@ func TestCoverNotCovered(t *testing.T) {
 		// person the review listed — the grant that lets the owner assume the
 		// deployer account. To a stranger, or on the project, is still refused
 		// (the two rows below), and it stays refused on every other type.
-		"tokenCreator to a listed member": {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", deployerAccountName("proj-1"))}, true},
-		"tokenCreator to a stranger":      {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:eve@example.com", "roles/iam.serviceAccountTokenCreator", deployerAccountName("proj-1"))}, false},
-		"tokenCreator on the project":     {[]ResourceChange{grant("google_project_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator")}, false},
+		"tokenCreator to a listed member":                        {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", deployerAccountName("proj-1"))}, true},
+		"tokenCreator on the orchestrator account":               {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", "projects/proj-1/serviceAccounts/"+OrchestratorAccountID+"@proj-1.iam.gserviceaccount.com")}, true},
+		"tokenCreator on another project's orchestrator account": {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator", "projects/proj-1/serviceAccounts/"+OrchestratorAccountID+"@other.iam.gserviceaccount.com")}, false},
+		"tokenCreator to a stranger":                             {[]ResourceChange{grantOnAccount("google_service_account_iam_member", "user:eve@example.com", "roles/iam.serviceAccountTokenCreator", deployerAccountName("proj-1"))}, false},
+		"tokenCreator on the project":                            {[]ResourceChange{grant("google_project_iam_member", "user:me@example.com", "roles/iam.serviceAccountTokenCreator")}, false},
 		// The account is the half grantRules cannot see: this role on a
 		// person's behalf is covered only on the deployer account of this run
 		// (deployerGrant), so the scheduler's account, a stranger's, another

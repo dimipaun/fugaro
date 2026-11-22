@@ -3232,9 +3232,11 @@ func (c Cover) onDeployer(ch Change, createsDeployer bool) string {
 
 // deployerTokenCreator says why a token-creator grant is not the operators'
 // one-time impersonation setup (Task 1.5 step 2), "" when it is and "" for
-// every other grant on that type. The role is granted on the deployer account
-// and, since CSR14, on the installation's own verifier account, and on nothing
-// else; grantRules has already checked that the member is a person on the
+// every other grant on that type. The role is granted on the deployer account,
+// since CSR14 on the installation's own verifier account, and on the resident
+// orchestrator's account (orchestrator.tf: the daemon on an operator's machine
+// mints its ID token as that account, and the grant lets an operator act as an
+// account holding signJwt on the budget signer), and on nothing else; grantRules has already checked that the member is a person on the
 // review screen, so what is left is which account.
 //
 // The account has to be named, and named as one of those two, in this run's
@@ -3265,14 +3267,14 @@ func (c Cover) deployerTokenCreator(ch Change) string {
 	}
 	m := saName.FindStringSubmatch(id)
 	dp := c.deployerProject()
-	if m != nil && dp != "" && m[1] == dp && m[3] == dp && (m[2] == DeployerAccountID || m[2] == VerifierAccountID) {
+	if m != nil && dp != "" && m[1] == dp && m[3] == dp && (m[2] == DeployerAccountID || m[2] == VerifierAccountID || m[2] == OrchestratorAccountID) {
 		return ""
 	}
 	want := "the deployer account of this run"
 	if dp != "" {
-		want = DeployerAccount(dp) + " or the verifier account " + VerifierAccountID + "@" + dp + ".iam.gserviceaccount.com"
+		want = DeployerAccount(dp) + ", the verifier account " + VerifierAccountID + "@" + dp + ".iam.gserviceaccount.com or the resident orchestrator's account " + OrchestratorAccountID + "@" + dp + ".iam.gserviceaccount.com"
 	}
-	return fmt.Sprintf("grants %s on %s, which is not %s: the operators' impersonation is on those two accounts alone", DeployerTokenCreatorRole, id, want)
+	return fmt.Sprintf("grants %s on %s, which is not %s: the operators' impersonation is on those three accounts alone", DeployerTokenCreatorRole, id, want)
 }
 
 // orchestratorMinterGrant says why a token-minter grant to the resident
