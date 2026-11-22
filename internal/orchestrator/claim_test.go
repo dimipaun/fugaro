@@ -3,6 +3,7 @@ package orchestrator_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -76,9 +77,18 @@ func cg4Path(t *testing.T, agentID string) string {
 	return path
 }
 
+// Keys is the shallow listing the claims are refreshed through: a claim is read
+// and written through a CAS and listed through a Keys — orchestrator.ClaimStore
+// is both — and this double is what a test counts a claim's writes on, so it
+// needs both halves. The listing itself is not counted here: what a refresh is
+// held to is the node it wrote and the ones it left alone.
+func (c *countingCAS) Keys(ctx context.Context, path string) ([]string, error) {
+	return c.inner.Keys(ctx, path)
+}
+
 // cg4Claim is one orchestrator's claims over the fake, with the clock the test
 // set: nothing here reads a real one.
-func cg4Claim(t *testing.T, db orchestrator.CAS, agentID string, now orchestrator.ServerNow) *orchestrator.Claim {
+func cg4Claim(t *testing.T, db orchestrator.ClaimStore, agentID string, now orchestrator.ServerNow) *orchestrator.Claim {
 	t.Helper()
 	claim, err := orchestrator.NewClaim(db, agentID, now)
 	if err != nil {
@@ -330,34 +340,56 @@ func cg4PlanItem(id string, approvedAt time.Time) orchestrator.WorkItem {
 // laptop lid closed does not keep an item from the project for ever.
 //
 // Each case is one beat on the holder's lease node, read against the same
-// server clock; the absent lease is an orchestrator that exited, which releases
-// its lease on the way out (Lease.Release) and so has nothing left to wait for.
+// server clock. The cases with no lease node are the clean exit: a daemon
+// releases its lease on the way out (Lease.Release) while the runs it started
+// are still going, so what the grace is measured from there is the claim's own
+// stamp — the last time the holder was known to be driving, which its beat
+// re-writes for as long as it drives (Refresh). Reading that node as "gone at
+// once" is what hands a restarted daemon's in-flight item to a rival.
 //
 // Mutation: read every claim that is not this daemon's as free (drop the
 // holder-live read) and the first two cases take a holder that is still
-// driving; read a claim with no lease node as held and the last one never comes
-// free.
+// driving; read a claim whose holder is inside the grace as free — the absent
+// lease node measured from nothing, or from the day the item was taken — and a
+// rival starts a second run of a task whose run is still going.
 func TestClaimReleasedOnLapse(t *testing.T) {
 	ctx := context.Background()
 	now := o6Now()
 
+	// cg4StaleClaim is a claim taken long before the reading, which is what a
+	// claim whose holder went away for good looks like.
+	cg4StaleClaim := now.Add(-time.Hour)
+
 	for _, tc := range []struct {
-		name  string
-		beat  time.Time
-		lease bool
-		live  bool
+		name string
+		// beat is the holder's last beat, on a lease node the case has.
+		beat time.Time
+		// claimedAt is the claim's own stamp, which is what the absent-lease
+		// cases are measured against.
+		claimedAt time.Time
+		lease     bool
+		live      bool
 	}{
-		{name: "a beat inside the ttl", beat: now.Add(-orchestrator.LeaseTTL / 2), lease: true, live: true},
-		{name: "a beat lapsed inside the grace", beat: now.Add(-orchestrator.LeaseTTL - orchestrator.ClaimGrace/2), lease: true, live: true},
-		{name: "a beat lapsed by exactly a lease and a grace", beat: now.Add(-orchestrator.LeaseTTL - orchestrator.ClaimGrace), lease: true, live: false},
-		{name: "a beat lapsed past the grace", beat: now.Add(-orchestrator.LeaseTTL - orchestrator.ClaimGrace - time.Second), lease: true, live: false},
-		{name: "a beat the server could not have written yet", beat: now.Add(orchestrator.LeaseSkew + time.Second), lease: true, live: false},
-		{name: "no lease node at all", lease: false, live: false},
+		{name: "a beat inside the ttl", beat: now.Add(-orchestrator.LeaseTTL / 2), claimedAt: cg4StaleClaim, lease: true, live: true},
+		{name: "a beat lapsed inside the grace", beat: now.Add(-orchestrator.LeaseTTL - orchestrator.ClaimGrace/2), claimedAt: cg4StaleClaim, lease: true, live: true},
+		{name: "a beat lapsed by exactly a lease and a grace", beat: now.Add(-orchestrator.LeaseTTL - orchestrator.ClaimGrace), claimedAt: now, lease: true, live: false},
+		{name: "a beat lapsed past the grace", beat: now.Add(-orchestrator.LeaseTTL - orchestrator.ClaimGrace - time.Second), claimedAt: now, lease: true, live: false},
+		{name: "a beat the server could not have written yet", beat: now.Add(orchestrator.LeaseSkew + time.Second), claimedAt: now, lease: true, live: false},
+		// The clean exit: no lease node, and the claim's own stamp decides. A
+		// claim stamped a moment ago is a daemon that has just stopped driving —
+		// an upgrade restart or a stop while its runs are in flight — and the
+		// item stays its own until the grace has passed.
+		{name: "no lease node, a claim stamped a moment ago", claimedAt: now.Add(-2 * time.Second), live: true},
+		{name: "no lease node, a claim stamped inside the grace", claimedAt: now.Add(-orchestrator.ClaimGrace / 2), live: true},
+		{name: "no lease node, a claim stamped by exactly the grace", claimedAt: now.Add(-orchestrator.ClaimGrace), live: false},
+		{name: "no lease node, a claim stamped past the grace", claimedAt: now.Add(-orchestrator.ClaimGrace - time.Second), live: false},
+		{name: "no lease node, a claim stamped before the holder went", claimedAt: cg4StaleClaim, live: false},
+		{name: "no lease node, a claim the server could not have written yet", claimedAt: now.Add(orchestrator.LeaseSkew + time.Second), live: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := gcpfake.NewRTDB(t)
 			path := cg4Path(t, cg4First)
-			f.Set(path, map[string]any{"holder": cg4Rival, "at": now.Add(-time.Minute).UTC().Format(time.RFC3339)})
+			f.Set(path, map[string]any{"holder": cg4Rival, "at": tc.claimedAt.UTC().Format(time.RFC3339)})
 			if tc.lease {
 				cg4Lease(t, f, cg4Rival, tc.beat)
 			}
@@ -408,6 +440,134 @@ func TestClaimReleasedOnLapse(t *testing.T) {
 			}
 		})
 	}
+}
+
+// cg4NoStrayKeys refuses the listing of any subtree but the claims root and
+// this orchestrator's own items: what a refresh lists is exactly what it may
+// hold (Refresh), so a walk into a rival's own items fails here rather than
+// reading them.
+type cg4NoStrayKeys struct {
+	*countingCAS
+	own string
+}
+
+func (k cg4NoStrayKeys) Keys(ctx context.Context, path string) ([]string, error) {
+	if path != orchestrator.ClaimsRoot && path != orchestrator.ClaimsRoot+"/"+k.own {
+		return nil, fmt.Errorf("the refresh listed %q, which is not this orchestrator's subtree", path)
+	}
+	return k.countingCAS.Keys(ctx, path)
+}
+
+// TestClaimRefresh is the other half of the lapse above: the stamp a rival
+// measures a missing lease node against is the claim's own, and the holder is
+// what re-writes it — on the beat, so that a daemon that is driving keeps its
+// items through the clean exit that deletes its lease node.
+//
+// What it re-stamps is only its own. A claim a rival holds is left alone (a
+// refresh is not a takeover), a claim node this release cannot read is left for
+// Take to refuse rather than repaired by a beat, and another orchestrator's own
+// items are not even listed.
+//
+// Mutation: re-stamp whatever the listing turns up and the rival's claim below
+// comes back naming this orchestrator — an item taken by a daemon that only
+// meant to keep its own — and walk every key of the claims node and the
+// listing of the rival's subtree is refused here.
+func TestClaimRefresh(t *testing.T) {
+	ctx := context.Background()
+	f := gcpfake.NewRTDB(t)
+	now := o6Now()
+	later := now.Add(time.Minute)
+
+	mine := cg4PlanItem("wi-1", now.Add(-time.Hour))
+	myItem := workItemOf("wi-2")
+	rivalPlan := cg4PlanItem("wi-3", now.Add(-time.Hour))
+	rivalPlan.PlanTask = "demo/B"
+	rivalItem := workItemOf("wi-2")
+	unreadable := cg4PlanItem("wi-4", now.Add(-time.Hour))
+	unreadable.PlanTask = "demo/C"
+
+	rival := cg4Claim(t, rtdbClient(t, f), cg4Rival, clockAt(now))
+	for _, ref := range []orchestrator.ItemRef{
+		orchestrator.ClaimRef(cg4Rival, rivalPlan),
+		orchestrator.ClaimRef(cg4Rival, rivalItem),
+	} {
+		if took, err := rival.Take(ctx, ref); err != nil || !took {
+			t.Fatalf("the rival's take of %q: took=%v, err=%v", ref.Item, took, err)
+		}
+	}
+
+	db := &cg4NoStrayKeys{countingCAS: &countingCAS{inner: rtdbClient(t, f)}, own: cg4First}
+	claims := cg4Claim(t, db, cg4First, clockAt(now))
+	for _, ref := range []orchestrator.ItemRef{
+		orchestrator.ClaimRef(cg4First, mine),
+		orchestrator.ClaimRef(cg4First, myItem),
+	} {
+		if took, err := claims.Take(ctx, ref); err != nil || !took {
+			t.Fatalf("the take of %q: took=%v, err=%v", ref.Item, took, err)
+		}
+	}
+
+	// A claim node this release cannot read: the refresh passes over it, and
+	// Take is what refuses it.
+	brokenPath := cg4PathOf(t, orchestrator.ClaimRef(cg4First, unreadable))
+	f.Set(brokenPath, "not a claim")
+	broken := f.Value(brokenPath)
+	rivalPlanPath := cg4PathOf(t, orchestrator.ClaimRef(cg4Rival, rivalPlan))
+	rivalItemPath := cg4PathOf(t, orchestrator.ClaimRef(cg4Rival, rivalItem))
+
+	// The refresh runs on a daemon whose clock has moved on: what it writes is
+	// the server time of the beat, which is what the next rival reads.
+	beat := cg4Claim(t, db, cg4First, clockAt(later))
+	writes := db.puts
+	if err := beat.Refresh(ctx); err != nil {
+		t.Fatalf("the refresh of the claims this daemon holds: %v", err)
+	}
+	if got := db.puts - writes; got != 2 {
+		t.Errorf("the refresh wrote %d claim node(s), and it holds two", got)
+	}
+	for _, tc := range []struct {
+		what string
+		ref  orchestrator.ItemRef
+		by   string
+	}{
+		{"the plan task it claimed", orchestrator.ClaimRef(cg4First, mine), cg4First},
+		{"its own backlog item", orchestrator.ClaimRef(cg4First, myItem), cg4First},
+	} {
+		path := cg4PathOf(t, tc.ref)
+		holder, at := cg4Held(t, f, path)
+		if holder != tc.by {
+			t.Errorf("%s is claimed by %q after the refresh, not %q", tc.what, holder, tc.by)
+		}
+		if at != later.UTC().Format(time.RFC3339) {
+			t.Errorf("%s is stamped %q after the refresh, not the beat's own server time (%s): a rival measures a missing lease node from this", tc.what, at, later.UTC().Format(time.RFC3339))
+		}
+	}
+	for _, tc := range []struct {
+		what string
+		path string
+	}{
+		{"the plan task a rival claimed", rivalPlanPath},
+		{"the backlog item a rival claimed", rivalItemPath},
+	} {
+		holder, at := cg4Held(t, f, tc.path)
+		if holder != cg4Rival || at != now.UTC().Format(time.RFC3339) {
+			t.Errorf("%s now names %q at %q, and a refresh re-stamps only its own", tc.what, holder, at)
+		}
+	}
+	if got := f.Value(brokenPath); !reflect.DeepEqual(got, broken) {
+		t.Errorf("the unreadable claim node now carries %#v, and a refresh neither reads past it nor repairs it", got)
+	}
+}
+
+// cg4PathOf is one item's claim node, through the package's own ClaimPath: a
+// path a test spelled itself would pass on a node the package never reads.
+func cg4PathOf(t *testing.T, ref orchestrator.ItemRef) string {
+	t.Helper()
+	path, err := orchestrator.ClaimPath(ref)
+	if err != nil {
+		t.Fatalf("building the claim path of %q: %v", ref.Item, err)
+	}
+	return path
 }
 
 // TestClaimReleasedWhenTheItemSettles is the claim coming off the item that is

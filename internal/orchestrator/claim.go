@@ -20,13 +20,22 @@
 // in a state write.
 //
 // **The claim's liveness is its holder's lease.** The node names the holder and
-// the server time it claimed at, and a claim is held while that holder is
-// driving: an orchestrator whose lease node still carries a recent beat (the
-// lease's own freshness rule) holds its claims, one whose beat lapsed less than
-// ClaimGrace ago still holds them, and one whose beat lapsed further back has
-// gone — its claims are any orchestrator's to take. Nothing here reads a clock
-// of its own: the stamp is rtdb.ServerNow's, and a claim with no server time
-// behind it is not made at all (D1230).
+// the server time it claimed at or last re-stamped that claim at, and a claim
+// is held while that holder is driving: an orchestrator whose lease node still
+// carries a recent beat (the lease's own freshness rule) holds its claims, one
+// whose beat lapsed less than ClaimGrace ago still holds them, and one whose
+// beat lapsed further back has gone — its claims are any orchestrator's to
+// take. Nothing here reads a clock of its own: the stamp is rtdb.ServerNow's,
+// and a claim with no server time behind it is not made at all (D1230).
+//
+// A lease node that is **not there at all** is not a holder that has gone: a
+// daemon deletes its lease on every clean exit (Lease.Release — an upgrade
+// restart, `--once`, a stop) while the runs it started are still in flight, so
+// the grace then runs from the claim's own stamp, which the holder re-writes on
+// every beat for as long as it is driving (Refresh). That is what keeps a
+// restarted daemon's items its own: without it a rival that retried in the gap
+// between the old daemon's exit and the new daemon's Acquire would take an item
+// whose run is still going and start a second run of it.
 //
 // **A node this release cannot read is not a free item.** A claim node carrying
 // a document the decode refuses, or one naming no orchestrator id, is a refusal
@@ -102,11 +111,20 @@ type ClaimGuard interface {
 	Release(ctx context.Context, ref ItemRef) (bool, error)
 }
 
+// ClaimStore is the store a claim is read, written and re-stamped through: the
+// one-node conditional read and write every fence in this package uses (CAS),
+// and the shallow listing Refresh finds this orchestrator's own claims with
+// (Keys). *rtdb.Client is one.
+type ClaimStore interface {
+	CAS
+	Keys
+}
+
 // Claim is one orchestrator's claims, read and written through one store.
 // agentID is the orchestrator that takes them — the id whose state node the
 // items belong to and whose lease decides whether its claims outlive it.
 type Claim struct {
-	db      CAS
+	db      ClaimStore
 	agentID string
 	now     ServerNow
 }
@@ -117,7 +135,7 @@ var _ ClaimGuard = (*Claim)(nil)
 // NewClaim builds the claims of one orchestrator. The id is held to C-ORCH's
 // rule and not to agentRE, which refuses the `~` of a named orchestrator: a
 // claim is keyed by, and read back through, an orchestrator id.
-func NewClaim(db CAS, agentID string, now ServerNow) (*Claim, error) {
+func NewClaim(db ClaimStore, agentID string, now ServerNow) (*Claim, error) {
 	switch {
 	case db == nil:
 		return nil, errors.New("orchestrator: a claim needs a store to be read and written through")
@@ -134,11 +152,12 @@ func NewClaim(db CAS, agentID string, now ServerNow) (*Claim, error) {
 // holds it.
 //
 // A claim that is already this orchestrator's is answered true without a write:
-// a claim is kept alive by its holder's lease and not by rewriting its node, so
-// an id that claims an item every cycle moves no ETag a reader of this subtree
-// would have to re-read. A claim whose holder is still driving is answered
-// false and nothing is written (Held, by the one caller that matters), and one
-// whose holder has gone — no lease node, or a beat lapsed past the grace — is
+// taking is not what keeps a claim alive — the holder's own beat re-stamps the
+// claims it holds (Refresh) — so an id that asks for an item it already has
+// moves no ETag a reader of this subtree would have to re-read. A claim whose
+// holder is still driving is answered false and nothing is written (Held, by
+// the one caller that matters), and one whose holder has gone — a beat lapsed
+// past the grace, or no lease node and a claim stamped past the grace — is
 // taken over under the ETag this read carries.
 func (c *Claim) Take(ctx context.Context, ref ItemRef) (bool, error) {
 	path, err := ClaimPath(ref)
@@ -155,7 +174,7 @@ func (c *Claim) Take(ctx context.Context, ref ItemRef) (bool, error) {
 			if doc.Holder == c.agentID {
 				return true, nil
 			}
-			live, err := c.holderLive(ctx, doc.Holder)
+			live, err := c.holderLive(ctx, doc)
 			if err != nil {
 				return false, err
 			}
@@ -211,6 +230,79 @@ func (c *Claim) Release(ctx context.Context, ref ItemRef) (bool, error) {
 	return false, fmt.Errorf("%w: %d releases, each refused by a moved ETag: %w", ErrClaimContention, claimAttempts, last)
 }
 
+// Refresh re-stamps the claims this orchestrator holds with the server's
+// current time, and is what makes a claim's own At the stamp a rival measures a
+// missing lease node against (holderLive): a daemon that is driving keeps the
+// stamp of every claim it holds inside the beat's own cadence, so the grace
+// runs from when its holder last drove rather than from the day it took the
+// item.
+//
+// It is the beat and not the take, because an item's run outlives its take: a
+// daemon takes a claim once, when it starts the run, and a run of hours is a
+// claim whose take is hours old — while the state this exists for is exactly
+// the gap Lease.Release leaves, where the lease node is gone and the runs that
+// daemon started are not. A beat that is missed by one slow cycle is inside the
+// grace, which is what the grace is for.
+//
+// A node that has moved is not taken back: one naming another orchestrator is
+// left alone (a rival that took an item this daemon went away from holds it
+// now), one this release cannot read is left for Take to refuse rather than
+// repaired by a beat, and one that is not there is nothing to re-stamp. A
+// conditional write refused because the node moved under the read is the same
+// answer, so a beat never fails over a claim that has become somebody else's.
+func (c *Claim) Refresh(ctx context.Context) error {
+	keys, err := c.db.Keys(ctx, ClaimsRoot)
+	if err != nil {
+		return err
+	}
+	for _, key := range keys {
+		path := ClaimsRoot + "/" + key
+		if key == budget.Key(c.agentID) {
+			// This orchestrator's own work items, one node each (ClaimPath).
+			items, err := c.db.Keys(ctx, path)
+			if err != nil {
+				return err
+			}
+			for _, item := range items {
+				if err := c.restamp(ctx, path+"/"+item); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		if ValidOrchestratorID(key) {
+			// Another orchestrator's own items: not this daemon's to walk.
+			continue
+		}
+		// A plan task's claim, which is one node for the whole project: a plan
+		// task's key always carries an escaped `/` and an id never does, so the
+		// two shapes cannot be taken for each other (ClaimPath).
+		if err := c.restamp(ctx, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// restamp rewrites one claim node with this orchestrator's own holder and the
+// server's current time, and changes nothing unless the node names this
+// orchestrator: a refresh is not a takeover.
+func (c *Claim) restamp(ctx context.Context, path string) error {
+	etag, doc, found, err := c.read(ctx, path)
+	if err != nil || !found || doc.Holder != c.agentID {
+		return nil
+	}
+	at, err := c.stamped()
+	if err != nil {
+		return err
+	}
+	err = c.db.PutIfMatch(ctx, path, etag, claimDoc{Holder: c.agentID, At: at})
+	if errors.Is(err, rtdb.ErrPrecondition) {
+		return nil
+	}
+	return err
+}
+
 // read is one conditional read of a claim node: the ETag a take or a release
 // would carry and the claim the node holds. A node this release cannot read is
 // a refusal (NewClaim's header), never a claim of nobody.
@@ -237,14 +329,22 @@ func (c *Claim) read(ctx context.Context, path string) (string, claimDoc, bool, 
 // the project: it reads that orchestrator's lease node and applies the lease's
 // own freshness rule, with ClaimGrace after it.
 //
-// An absent lease node is a lapsed claim and not a holder inside its grace: an
-// orchestrator that has gone releases its lease on the way out (Lease.Release
-// deletes the node) and starts no run afterwards, so there is nothing to wait
-// for. A lease node this release does not model is the opposite reading — a
-// live holder — because a holder that cannot be read must not be taken for a
-// dead one.
-func (c *Claim) holderLive(ctx context.Context, holder string) (bool, error) {
-	path, err := claimLeasePath(holder)
+// An absent lease node is measured from the claim's own stamp instead, and it
+// is not a holder that has gone: a daemon deletes its lease node on every clean
+// exit (Lease.Release) while the runs it started are still in flight, and it
+// re-stamps every claim it holds on each beat until it stops (Refresh), so that
+// stamp is when that holder was last known to be driving. The grace runs from
+// there — a daemon that restarts takes its lease back inside it and keeps its
+// items, and one that is gone for good loses them a grace after it stopped.
+// Reading the absent node as "gone at once" is what would let a rival that
+// retried every tick take an item out of the gap between an exit and the next
+// Acquire, and start a second run of a task whose run is still going.
+//
+// A lease node this release does not model is the opposite reading — a live
+// holder — because a holder that cannot be read must not be taken for a dead
+// one.
+func (c *Claim) holderLive(ctx context.Context, claimed claimDoc) (bool, error) {
+	path, err := claimLeasePath(claimed.Holder)
 	if err != nil {
 		return false, err
 	}
@@ -253,21 +353,25 @@ func (c *Claim) holderLive(ctx context.Context, holder string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !found {
-		return false, nil
-	}
-	doc, err := decodeStrict[leaseDoc](raw)
-	if err != nil {
-		return true, nil
-	}
-	if !idRE.MatchString(doc.Holder) {
-		return true, nil
+	// at is the stamp the freshness is measured from and grace how long past it
+	// the holder is still taken to be driving: the holder's own last beat, with
+	// the lease's TTL and grace after it, while its lease node stands, and the
+	// claim's own stamp with ClaimGrace after it when the node does not.
+	at, grace := stamp(claimed.At), ClaimGrace
+	if found {
+		lease, err := decodeStrict[leaseDoc](raw)
+		if err != nil {
+			return true, nil
+		}
+		if !idRE.MatchString(lease.Holder) {
+			return true, nil
+		}
+		at, grace = stamp(lease.At), LeaseTTL+ClaimGrace
 	}
 	now, ok := c.now()
 	if !ok {
 		return false, ErrNoServerTime
 	}
-	at := stamp(doc.At)
 	switch {
 	case at.Sub(now) > LeaseSkew:
 		// A stamp further ahead than LeaseSkew is not a reading of the server's
@@ -277,7 +381,7 @@ func (c *Claim) holderLive(ctx context.Context, holder string) (bool, error) {
 	case now.Sub(at) < LeaseTTL:
 		return true, nil
 	default:
-		return now.Sub(at) < LeaseTTL+ClaimGrace, nil
+		return now.Sub(at) < grace, nil
 	}
 }
 

@@ -179,10 +179,17 @@ type orchestratorDaemon struct {
 	beat time.Duration
 	// once is --once: one cycle, then the clean exit, and decide is --decide:
 	// whether the tick this daemon builds reaches the decision agent at all.
-	once     bool
-	decide   bool
-	tick     *orchestrator.Tick
-	cache    *orchestrator.BriefCacheWriter
+	once   bool
+	decide bool
+	tick   *orchestrator.Tick
+	cache  *orchestrator.BriefCacheWriter
+	// claims is the guard the tick takes and releases this daemon's claims
+	// through (D3209), kept here as well because the beat re-stamps them beside
+	// the lease (orchestrator.Claim.Refresh): a claim's liveness is its holder's
+	// lease, and the stamp a rival measures a missing lease node against is
+	// refreshed on the beat's own cadence, so a clean exit does not free an item
+	// whose run is still going.
+	claims   *orchestrator.Claim
 	launched *launchInFlight
 	// launcher is the launcher the tick starts runs through, kept here because
 	// the list of nodes it finds an item in moves with the plans (nodes,
@@ -669,6 +676,9 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 	if err != nil {
 		return nil, userErr("%v", err)
 	}
+	// The same guard goes on the daemon: the beat re-stamps the claims it holds
+	// along with the lease it holds (beatAndRefresh).
+	d.claims = claims
 	return &orchestrator.Tick{
 		Store: d.node,
 		// The nodes beside the state node: the standing backlog's and one per
@@ -1033,7 +1043,7 @@ func (d *orchestratorDaemon) refreshCaps(ctx context.Context) {
 // somebody else's.
 func (d *orchestratorDaemon) loop(ctx context.Context) error {
 	for {
-		if err := d.lease.Beat(ctx); err != nil {
+		if err := d.beatAndRefresh(ctx); err != nil {
 			if ctx.Err() != nil {
 				return d.cancelled(ctx)
 			}
@@ -1094,6 +1104,38 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 			return err
 		}
 	}
+}
+
+// beatAndRefresh is the daemon's beat: the lease it holds, and the claims it
+// holds beside it.
+//
+// The two lapse together and are refreshed together. A claim is held while its
+// holder's lease beats and for ClaimGrace past the last time its holder was
+// known to be driving, and the stamp a rival measures a missing lease node
+// against is the claim's own (orchestrator.Claim.Refresh, holderLive) — so a
+// daemon that beats only its lease would let every claim it holds go stale, and
+// lose the items whose runs are in flight to a rival the moment its lease node
+// went away (a clean exit: an upgrade restart, --once, a stop).
+//
+// A refresh that failed is not the lease's failure, and this does not answer it
+// the way the loop answers a beat that failed: a lease failure has one answer
+// (the loop's own comment), while a claim whose stamp could not be written is a
+// stamp that goes stale — a rival may take the item a grace after this
+// daemon's last refresh — and stopping the daemon over it would cost the
+// project every other item it drives. It is said instead, once per failed beat,
+// and the beat goes on.
+func (d *orchestratorDaemon) beatAndRefresh(ctx context.Context) error {
+	if err := d.lease.Beat(ctx); err != nil {
+		return err
+	}
+	if d.claims == nil {
+		return nil
+	}
+	if err := d.claims.Refresh(ctx); err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the claims this daemon holds could not be re-stamped, so another orchestrator may take an item it is still working on once the grace is past: %s\n",
+			safetext.Field(d.id), safetext.OneLine(err.Error()))
+	}
+	return nil
 }
 
 // handOver reports whether the binary the unit names has moved on from this
@@ -1265,7 +1307,7 @@ func (d *orchestratorDaemon) report(rep orchestrator.Report, err error) {
 // and not a reconnect's — because it is the node as it already stands and not a
 // change; the waker passes over each one it reads.
 //
-// The wait beats the claim while it runs, on the lease's own cadence. The
+// The wait beats the id while it runs, on the lease's own cadence. The
 // interval is a person's value and the claim expires at LeaseTTL, so a wait
 // that honoured the flag alone would leave the id un-beaten for a whole
 // interval: an interval a little under the TTL is a claim that lapses under the
@@ -1306,7 +1348,7 @@ func (d *orchestratorDaemon) wait(ctx context.Context) error {
 			d.noteWake(w)
 			return nil
 		case <-beats:
-			if err := d.lease.Beat(ctx); err != nil {
+			if err := d.beatAndRefresh(ctx); err != nil {
 				return nil
 			}
 		case <-timer.C:
