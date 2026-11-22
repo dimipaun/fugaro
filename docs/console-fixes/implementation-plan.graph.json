@@ -112,6 +112,21 @@
       }
     },
     {
+      "id": "RI6",
+      "title": "doctor says when the index is incomplete",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor_runindex.go",
+          "internal/cli/doctor_runindex_test.go"
+        ]
+      }
+    },
+    {
       "id": "IR1",
       "title": "runs ls reads the index",
       "run": null,
@@ -123,14 +138,13 @@
         "paths": [
           "internal/cli/runs.go",
           "internal/cli/runs_pr.go",
-          "internal/cli/runs_watch.go",
           "internal/cli/runs_index_test.go"
         ]
       }
     },
     {
       "id": "IR2",
-      "title": "plan status reads the index; merges behind --merges",
+      "title": "plan status reads the index; --no-merges for the first paint",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -162,7 +176,7 @@
     },
     {
       "id": "IR4",
-      "title": "the console's merges section",
+      "title": "the Graph canvas before merge state",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -244,7 +258,8 @@
         "prediction": true,
         "paths": [
           "console/src/renderer/screens/live.ts",
-          "console/test/unit/live.test.ts"
+          "console/test/unit/live.test.ts",
+          "console/src/main/spawn.ts"
         ]
       }
     },
@@ -277,10 +292,10 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "scripts/live-checks/check870.sh",
-          "scripts/live-checks/check871.sh",
-          "scripts/live-checks/check870_test.sh",
-          "scripts/live-checks/check871_test.sh",
+          "scripts/check-870-run-index-timings.sh",
+          "scripts/check-871-run-index-100x.sh",
+          "scripts/check-870-run-index-timings_test.sh",
+          "scripts/check-871-run-index-100x_test.sh",
           "docs/gcp-live-checklist.md"
         ]
       }
@@ -362,7 +377,7 @@
     },
     {
       "id": "CG2",
-      "title": "update migrates the default orchestrator in place",
+      "title": "a previous release reads every node this one writes",
       "run": null,
       "version": null,
       "tier": "small",
@@ -405,8 +420,7 @@
         "paths": [
           "internal/orchestrator/claim.go",
           "internal/orchestrator/claim_test.go",
-          "internal/orchestrator/launch.go",
-          "internal/orchestrator/list.go"
+          "internal/orchestrator/launch.go"
         ]
       }
     },
@@ -481,6 +495,21 @@
           "console/src/renderer/entry.ts",
           "console/test/unit/coordinator.test.ts",
           "docs/console-coordinator-v2/README.md"
+        ]
+      }
+    },
+    {
+      "id": "CG8",
+      "title": "the graph scope accepts named orchestrators",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/graph/key.go",
+          "ee/graph/key_test.go"
         ]
       }
     },
@@ -835,7 +864,7 @@
     {
       "task": "I-ORCH",
       "needs": "CG2",
-      "reason": "migrated default"
+      "reason": "re-runs its compatibility test on wired nodes"
     },
     {
       "task": "I-ORCH",
@@ -876,6 +905,61 @@
       "task": "IR7",
       "needs": "ID1",
       "reason": "one file: console/test/unit/live.test.ts"
+    },
+    {
+      "task": "IR7",
+      "needs": "I-INDEX",
+      "reason": "--after past the window needs the index read"
+    },
+    {
+      "task": "IR7",
+      "needs": "I-ORCH",
+      "reason": "one file: console/src/main/spawn.ts"
+    },
+    {
+      "task": "ID6",
+      "needs": "ID1",
+      "reason": "the renderer must catch a token in a rooted path before this mask goes"
+    },
+    {
+      "task": "ID6",
+      "needs": "CG7a",
+      "reason": "one file: console/src/main/ipc.ts and its test"
+    },
+    {
+      "task": "IR4",
+      "needs": "ID6",
+      "reason": "one file: console/src/main/ipc.ts and its test"
+    },
+    {
+      "task": "CG7a",
+      "needs": "ID1",
+      "reason": "one file: console/test/unit/schema.test.ts"
+    },
+    {
+      "task": "RI6",
+      "needs": "C-INDEX",
+      "reason": "the summary's shape"
+    },
+    {
+      "task": "I-INDEX",
+      "needs": "RI6",
+      "reason": "the integration covers every edge C-INDEX broke"
+    },
+    {
+      "task": "CG8",
+      "needs": "C-ORCH",
+      "reason": "the id rule"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG8",
+      "reason": "the integration covers every edge C-ORCH broke"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "I-INDEX",
+      "reason": "one file: console/docs/json-contract.md"
     },
     {
       "task": "ID3",
@@ -968,6 +1052,24 @@
       },
       "integration": "I-INDEX",
       "reason": "runs stats needs the Reader's shape, not a live index"
+    },
+    {
+      "contract": "C-INDEX",
+      "was": {
+        "task": "RI6",
+        "needs": "RI4"
+      },
+      "integration": "I-INDEX",
+      "reason": "doctor needs the summary's fields, not the fold"
+    },
+    {
+      "contract": "C-ORCH",
+      "was": {
+        "task": "CG8",
+        "needs": "CG1a"
+      },
+      "integration": "I-ORCH",
+      "reason": "the scope grammar needs the id rule, not the store"
     },
     {
       "contract": "C-ORCH",

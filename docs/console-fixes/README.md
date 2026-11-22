@@ -1,14 +1,14 @@
 # Console fixes: performance, the coordinator tab, redaction
 
-**Status (2026-11-21): plan only; nothing is implemented; no task approved.** Every decision is answered by the owner (D3200–D3214) or stated as a resolution: D3215–D3222 were approved at the gate, and D3223–D3224 were added after the round-1 review. D3223 and the amendments to D3215, D3217 and D3218 wait on the owner's confirmation (O3, O4). Each task still needs the owner's explicit go. The current state is in [docs/status.md](../status.md).
+**Status (2026-11-21): plan only; nothing is implemented; no task approved.** Every decision is answered by the owner (D3200–D3214) or stated as a resolution: D3215–D3222 were approved at the gate, and D3223–D3224 were added after the round-1 review. D3223, D3224, the amendments to D3215, D3217, D3218 and D3220, tension T1 and the reindex IAM question wait on the owner (O3, O4, O6, O7). Each task still needs the owner's explicit go. The current state is in [docs/status.md](../status.md).
 
 **Spec owner: the owner (Dimi Paun). Date: 2026-11-21.** Checked against `origin/main` at `dfe066618`.
 
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received |
-| [reconciliation.md](reconciliation.md) | The capability map, assumptions A1–A7, findings F1–F39, decisions D3200–D3224 with the answers (D3215, D3217, D3218 and D3220 amended after review), open items O1–O5, UNVERIFIED U1–U5. Wins where it disagrees with the spec |
-| [implementation-plan.md](implementation-plan.md) | 35 tasks in four modules and six levels, two anticipated contract changes, owner Checks 870 and 871. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | The capability map, assumptions A1–A7, findings F1–F40, decisions D3200–D3224 with the answers (D3215, D3217, D3218 and D3220 amended after review), open tension T1, open items O1–O7, UNVERIFIED U1–U5. Wins where it disagrees with the spec |
+| [implementation-plan.md](implementation-plan.md) | 37 tasks in four modules and six levels, two anticipated contract changes, owner Checks 870 and 871. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it |
 
 ## In one paragraph

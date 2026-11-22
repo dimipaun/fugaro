@@ -1,6 +1,6 @@
 # Console fixes: implementation plan
 
-**Status: plan only. Nothing is implemented, and no task is approved.** Amended after the round-1 and round-2 reviews (2026-11-21). Each task needs the owner's explicit go before a run starts. The plan builds `spec.md` as amended by `reconciliation.md`, which wins where the two differ. It rests on the owner's answers D3200–D3214 and the resolutions D3215–D3224 (2026-11-21). D3215, D3217 and D3218 were amended after review and wait on the owner's confirmation (O4). The plan graph is `implementation-plan.graph.json`, beside this file.
+**Status: plan only. Nothing is implemented, and no task is approved.** Amended after the three review rounds (2026-11-21). Each task needs the owner's explicit go before a run starts. The plan builds `spec.md` as amended by `reconciliation.md`, which wins where the two differ. It rests on the owner's answers D3200–D3214 and the resolutions D3215–D3224 (2026-11-21). D3224 and the amendments to D3215, D3217, D3218 and D3220 wait on the owner's confirmation (O4), and open tension T1 waits on the owner (O6). The plan graph is `implementation-plan.graph.json`, beside this file.
 
 Four answers shape the plan most:
 
@@ -52,8 +52,8 @@ Four answers shape the plan most:
 ## Slices
 
 1. **run-index**: inert until read. It holds C-INDEX, RI1–RI5, and the Terraform indexes.
-2. **indexed-reads**: useful alone once I-INDEX lands. IR1–IR4, IR5a, IR5b, IR6, IR7, I-INDEX, T-CHK.
-3. **coordinator-graph**: named orchestrators are useful alone (CG1a–CG1c, CG2–CG4); the tab arrives with CG5, CG6, CG7a, CG7b and I-ORCH.
+2. **indexed-reads**: useful alone once I-INDEX lands. IR1–IR4, IR5a, IR5b, IR6, IR7, I-INDEX, T-CHK (RI6, doctor's line, is in run-index).
+3. **coordinator-graph**: named orchestrators are useful alone (CG1a–CG1c, CG2–CG4, CG8); the tab arrives with CG5, CG6, CG7a, CG7b and I-ORCH.
 4. **identity-display**: useful alone. ID1–ID6.
 
 ## Tasks
@@ -63,7 +63,7 @@ Four answers shape the plan most:
 #### C-INDEX: the index contract
 - Acceptance: `internal/runindex` declares `Entry`, `Summary`, `Filter`, `Cursor`, `Page` and the `Reader` interface (`List`, `Summary`). `docs/console-fixes/contract-index.md` fixes:
   - the collections (`runIndex`, one document per run id; `runIndexMeta/summary`);
-  - each field and its Firestore type, the sort key (`updated_at` desc, then run id) and the composite indexes;
+  - each field and its Firestore type, including the per-run cost and compute figures `runs stats` and the estimate table read; the sort key (`updated_at` desc, then run id); and the composite indexes;
   - the overlay rule (D3202) and the `index_complete`/`folded_through` JSON fields;
   - `plan status --no-merges` and its `merges_read: false` (D3217 as amended);
   - the lease document's reindex cursor (F39).
@@ -116,7 +116,7 @@ Four answers shape the plan most:
   - Each history sweep takes the index writer lease in the RTDB.
   - It folds the runs that changed since `folded_through` into `runIndex` documents. It finds them through `outcomes/` and `agents/`, then reads each changed run's objects, and every field comes from those records.
   - It applies state changes as deltas to `runIndexMeta/summary`, with its counts and estimate table (F13, F15), and advances `folded_through`. A failed fold leaves the stamp where it was.
-  - The rollover, a separate daily execution, reads `folded_through` and never prunes a day after it. A stamp older than `PruneAfter` sets `complete: false`, and `fugaro doctor` names `fugaro runs reindex` as the fix. The job starts no execution: its role cannot (F9).
+  - The rollover, a separate daily execution, reads `folded_through` and never prunes a day after it. A stamp older than `PruneAfter` sets `complete: false`, and the next sweep restarts the walk (RI5). RI6's `doctor` line names it. The job starts no execution: its role cannot (F9).
   - No run object is written.
 - Files: `internal/runindex/fold.go` (new), `internal/runindex/lease.go` (new), `internal/runindex/fold_test.go` (new), `internal/cli/history.go`, `internal/cli/history_fold_test.go` (new), `internal/budget/rollover.go`.
 - Interfaces: consumes C-INDEX and RI1; produces the writer RI5 extends.
@@ -132,18 +132,31 @@ Four answers shape the plan most:
   - The history job's `--reindex` mode walks every run in the bucket, upserts by run id under the writer lease, recomputes the summary from the index, then sets `complete: true` (D3215). Run twice, it leaves identical documents.
   - The reindex sets `folded_through` to the walk's **start**, so the next fold picks up every run that changed during a long walk.
   - While a reindex holds the index lease, a regular sweep still does its crash sweep (D12) and skips only the fold. The rollover is its own execution and is unaffected.
-  - The walk keeps a cursor with the lease, so an execution that hits its timeout leaves the next one to resume. `update` and `runs reindex` start the execution with a task-timeout override. `index_complete` stays false until a walk reaches the end (F39).
+  - The walk keeps a cursor with the lease. Every sweep that finds an unfinished cursor walks it further within its own timeout, so the walk resumes with no execution started by the job and no timeout override.
+  - The lease carries an expiry of twice the job's timeout, so a dead execution's lease lapses.
+  - `update` (as the operator) and `runs reindex` reset the cursor and may start one execution with no override, where the caller may run the job (O7).
+  - `index_complete` stays false until a walk reaches the end (F39).
   - `fugaro update` starts that execution after its apply and prints one line.
   - `fugaro runs reindex` starts it again, under the fence `update`'s job-starting steps use (U3).
   - Neither waits on a run in flight.
 - Files: `internal/runindex/reindex.go` (new), `internal/runindex/reindex_test.go` (new), `internal/cli/runs_reindex.go` (new), `internal/cli/update_runindex.go` (new), `internal/cli/update_runindex_test.go` (new), `internal/cli/init_stages.go` (registers the step).
 - Interfaces: consumes RI4's fold and lease.
-- Tests: `TestReindexIdempotent`, `TestReindexRecomputesCounts`, `TestReindexStampsWalkStart`, `TestReindexResumesFromCursor`, `TestSweepDuringReindexStillSweeps`, `TestUpdateStartsReindexWithRunInFlight`, `TestRunsReindexStartsJob`.
+- Tests: `TestReindexIdempotent`, `TestReindexRecomputesCounts`, `TestReindexStampsWalkStart`, `TestReindexResumesFromCursor`, `TestSweepContinuesWalk`, `TestDeadLeaseLapses`, `TestSweepDuringReindexStillSweeps`, `TestUpdateStartsReindexWithRunInFlight`, `TestRunsReindexStartsJob`.
 - Command: `go test ./internal/runindex/ ./internal/cli/ -run 'Reindex|SweepDuringReindex' -count=1`
 - Red step: `TestReindexIdempotent` fails: no reindex mode.
 - Depends on: RI4 (behaviour: it reuses the fold and the lease).
 - Commit: `runindex: reindex from update and runs reindex (RI5, D3215)`
 - Reviewer tier: standard. Its PR carries the `### For operators` line and the CLI reference entry for `runs reindex`.
+
+#### RI6: `doctor` says when the index is incomplete
+- Acceptance: `fugaro doctor` reads the summary document. When it carries `complete: false`, or a `folded_through` older than `PruneAfter`, doctor prints one line naming `fugaro runs reindex` (F9).
+- Files: `internal/cli/doctor_runindex.go` (new), `internal/cli/doctor_runindex_test.go` (new).
+- Tests: `TestDoctorNamesReindexWhenIncomplete`.
+- Command: `go test ./internal/cli/ -run TestDoctorNamesReindexWhenIncomplete -count=1`
+- Red step: doctor says nothing about the index.
+- Depends on: C-INDEX (the summary's shape; broken edge, re-joined at I-INDEX).
+- Commit: `doctor: name the reindex when the index is incomplete (RI6, F9)`
+- Reviewer tier: standard.
 
 ### indexed-reads
 
@@ -152,15 +165,16 @@ Four answers shape the plan most:
   - The default lists the newest 50 by time plus every active run (D3203).
   - `--since` filters: with it, every run in the window is listed, bounded by the window and not by history (the console's `--since 24h` reads stay as they are).
   - `--after` stays a run id, as the console's allow-list checks it: IR1 resolves that run's sort key from its index document and starts after it.
-  - The Live tab's `runs ls --stream --json` (`runs_watch.go`) reads the same way.
+  - The Live tab's `runs ls --stream --json` (the `--stream` flag, in `runs.go`) reads the same way.
+  - When the `--after` run has no index document yet (an overlay row), its sort key comes from the overlay.
   - `--pr` reads the index (D3204).
   - The totals come from the summary document.
   - `--json` gains `index_complete` and `folded_through`, and the text listing prints one line while the index builds.
   - No GCS listing on the default path.
-- Files: `internal/cli/runs.go`, `internal/cli/runs_pr.go`, `internal/cli/runs_watch.go`, `internal/cli/runs_index_test.go` (new).
+- Files: `internal/cli/runs.go`, `internal/cli/runs_pr.go`, `internal/cli/runs_index_test.go` (new).
 - Interfaces: consumes the C-INDEX `Reader` (the stub until I-INDEX).
-- Tests: `TestRunsLsDefaultNewestPlusActive`, `TestRunsLsAfterRunID`, `TestRunsLsSinceWholeWindow`, `TestRunsLsPRFromIndex`, `TestRunsLsSaysIndexBuilding`, `TestRunsLsStreamFromIndex`.
-- Command: `go test ./internal/cli/ -run 'TestRunsLs(Default|AfterRunID|SinceWhole|PRFromIndex|SaysIndex|StreamFromIndex)' -count=1`
+- Tests: `TestRunsLsDefaultNewestPlusActive`, `TestRunsLsAfterRunID`, `TestRunsLsAfterOverlayRow`, `TestRunsLsSinceWholeWindow`, `TestRunsLsPRFromIndex`, `TestRunsLsSaysIndexBuilding`, `TestRunsLsStreamFromIndex`.
+- Command: `go test ./internal/cli/ -run 'TestRunsLs(Default|AfterRunID|AfterOverlayRow|SinceWhole|PRFromIndex|SaysIndex|StreamFromIndex)' -count=1`
 - Red step: `TestRunsLsDefaultNewestPlusActive` fails: today's default is a 7-day window.
 - Depends on: C-INDEX.
 - Commit: `runs ls: read the index, newest 50 plus active (IR1, D3203)`
@@ -202,7 +216,7 @@ Four answers shape the plan most:
 - Tests: `graph-read.test.ts` (canvas before merges; the single read under the floor), plus the pinning tests for the new row.
 - Command: `cd console && npx jest test/unit/graph-read.test.ts test/unit/spawn.test.ts test/unit/ipc.test.ts --maxWorkers=2 && cd .. && go test ./internal/cli/ -run Docs -count=1`
 - Red step: `graph-read.test.ts` fails: there is one read, not two.
-- Depends on: IR2 (kept: IR4 waits on CG7b at a later level anyway, so breaking it gains nothing); CG7a and CG7b (the same files: the allow-lists, `version.ts` and `entry.ts`).
+- Depends on: IR2 (kept: IR4 waits on CG7b at a later level anyway, so breaking it gains nothing); CG7a, CG7b and ID6 (the same files: the allow-lists, `version.ts` and `entry.ts`).
 - Commit: `console: the Graph canvas before merge state (IR4, D3217)`
 - Reviewer tier: opus, with an independent review (allow-list).
 
@@ -240,12 +254,16 @@ Four answers shape the plan most:
 - Reviewer tier: standard.
 
 #### IR7: older history on demand in the Live list
-- Acceptance: under the Live list's newest rows, a "Load older" control pages past the 24-hour window with `runs ls --json --limit 50 --after <last run id>`. That is the argv shape the allow-list already pins for the coordinator job page. Each page is a section read with its own busy state (F4).
-- Files: `console/src/renderer/screens/live.ts`, `console/test/unit/live.test.ts`.
+- Acceptance:
+  - Under the Live list's newest rows, a "Load older" control pages past the 24-hour window through the `runs.list` operation's existing argv, `runs ls --json --limit=50 --after=<last run id>` (capped at `RUNS_LIST_MAX_LIMIT`).
+  - It is gated on a CLI version floor at or above the release that carries IR1. Older CLIs refuse an `--after` outside the window, and below the floor the control is not drawn.
+  - The operation's `why` strings, which name the Coordinator job list CG7b removes, are reworded for the Live list.
+  - Each page is a section read with its own busy state (F4).
+- Files: `console/src/renderer/screens/live.ts`, `console/test/unit/live.test.ts`, `console/src/main/spawn.ts` (the `why` text only).
 - Tests: `live.test.ts` (a second page arrives after the first; the cursor is the last run id).
 - Command: `cd console && npx jest test/unit/live.test.ts --maxWorkers=2`
 - Red step: the list stops at the window.
-- Depends on: ID1 (the same file, `live.test.ts`).
+- Depends on: ID1 (the same file, `live.test.ts`); I-INDEX (behaviour: `--after` past the window needs IR1's index read); I-ORCH (the same file, `spawn.ts`).
 - Commit: `console: load older runs on demand (IR7, F4)`
 - Reviewer tier: standard.
 
@@ -256,23 +274,23 @@ Four answers shape the plan most:
 - Tests: `TestIndexedReadsConstantRequests`, `TestFixedInvocationCost`.
 - Command: `go test ./internal/cli/ -run 'TestIndexedReadsConstantRequests|TestFixedInvocationCost|Docs' -count=1`
 - Red step: with the stub still wired, the 100x run reads no fake index at all.
-- Depends on: RI2, RI3, RI4, RI5, IR1, IR2, IR3, IR6 (every side of every edge C-INDEX broke re-joins here). It deletes C-INDEX's stub.
+- Depends on: RI2, RI3, RI4, RI5, RI6, IR1, IR2, IR3, IR6 (every side of every edge C-INDEX broke re-joins here). It deletes C-INDEX's stub.
 - Commit: `runindex: wire the index into runs ls, plan status and graph (I-INDEX, D3205)`
 - Reviewer tier: standard.
 
 #### T-CHK: the scripts of Checks 870 and 871
 - Acceptance:
-  - `scripts/live-checks/check870.sh` times `runs ls --json`, `plan status --json --all` and `graph --json` on the owner's project, warm, and passes under 1 s each.
-  - `scripts/live-checks/check871.sh` seeds a scratch project's index with 350,000 synthetic entries through the history job's reindex path, times the same reads, and cleans up.
+  - `scripts/check-870-run-index-timings.sh` times `runs ls --json`, `plan status --json --all` and `graph --json` on the owner's project, warm, and passes under 1 s each.
+  - `scripts/check-871-run-index-100x.sh` seeds a scratch project's index with 350,000 synthetic entries through the history job's reindex path, times the same reads, and cleans up.
   - Both are registered in `docs/gcp-live-checklist.md`.
-- Files: `scripts/live-checks/check870.sh` (new), `scripts/live-checks/check871.sh` (new), `scripts/live-checks/check870_test.sh` (new), `scripts/live-checks/check871_test.sh` (new), `docs/gcp-live-checklist.md`.
-- Tests: the two `_test.sh` dry runs against fakes, the way `check96_test.sh` runs.
-- Command: `bash scripts/live-checks/check870_test.sh && bash scripts/live-checks/check871_test.sh && go test ./scripts/ -run TestLiveCheckScripts -count=1`
+- Files: `scripts/check-870-run-index-timings.sh` (new), `scripts/check-871-run-index-100x.sh` (new), `scripts/check-870-run-index-timings_test.sh` (new), `scripts/check-871-run-index-100x_test.sh` (new), `docs/gcp-live-checklist.md`.
+- Tests: the two `_test.sh` dry runs against fakes, the way `check-760-runs-ls-speed_test.sh` runs.
+- Command: `bash scripts/check-870-run-index-timings_test.sh && bash scripts/check-871-run-index-100x_test.sh`
 - Red step: the scripts do not exist.
 - Depends on: I-INDEX (behaviour: what is timed).
 - Commit: `checks: scripts for 870 and 871 (T-CHK, D3205)`
 - Reviewer tier: standard.
-- Owner-run: `scripts/live-checks/check870.sh` on the owner's project, then `scripts/live-checks/check871.sh --scratch <project>`. No agent runs either.
+- Owner-run: `scripts/check-870-run-index-timings.sh` on the owner's project, then `scripts/check-871-run-index-100x.sh --scratch <project>`. No agent runs either.
 
 ### coordinator-graph
 
@@ -282,6 +300,7 @@ Four answers shape the plan most:
     - the orchestrator id rule, separate from `agentRE` (default `<project>`, named `<project>~<name>`, name `^[a-z0-9][a-z0-9-]{0,39}$`, a maximum id length that fits both, no cap) (D3207, D3218, F36);
     - `Driver` and the path of its sibling node, `orchestrator/<id>/driver`;
     - `ParseItemRef` for `<orchestrator>/<item>` (D3208);
+    - the graph scope grammar for an orchestrator id (`orchestrator:<id>`), which today's `scopeIDPattern` refuses for named ids (F40);
     - `ClaimPath` (D3209).
   - `internal/orchestrator/mapdoc.go` defines the `orchestrator map --json` document: nodes, edges (`dependency` | `overlap`) and `health` (D3221).
   - `docs/console-fixes/contract-orchestrators.md` names the bridge method `orchestratorMap` and what each side may rely on.
@@ -296,12 +315,12 @@ Four answers shape the plan most:
 
 #### CG1a: state, lease and store accept named orchestrators
 - Acceptance:
-  - `checkAgentID` and `NodeIDs` use C-ORCH's orchestrator id rule, so `<project>~<name>` is accepted. Work-item ids keep `agentRE` (F36).
+  - `checkAgentID` and `NodeIDs` use C-ORCH's orchestrator id rule, so `<project>~<name>` is accepted. Work-item ids keep `agentRE` (F36). `NodeIDs` skips the claim key `~claims` that C-ORCH's `ClaimPath` reserves.
   - The lease holder writes `driver` (the principal of the credential that holds the lease) to the sibling node `orchestrator/<id>/driver`.
   - Neither the state nor the lease document gains a field (F35, D3218 as amended). `project` and `name` are derived from the id.
 - Files: `internal/orchestrator/lease.go`, `internal/orchestrator/store.go`, `internal/orchestrator/list.go`, `internal/orchestrator/named_test.go` (new).
-- Tests: `TestNamedIDAccepted`, `TestLeaseWritesDriverSibling`, `TestStateAndLeaseUnchanged`, `TestStoreRefusesBadName`.
-- Command: `go test ./internal/orchestrator/ -run 'TestNamedIDAccepted|TestLeaseWritesDriverSibling|TestStateAndLeaseUnchanged|TestStoreRefusesBadName' -count=1`
+- Tests: `TestNamedIDAccepted`, `TestLeaseWritesDriverSibling`, `TestStateAndLeaseUnchanged`, `TestStoreRefusesBadName`, `TestNodeIDsSkipsClaims`.
+- Command: `go test ./internal/orchestrator/ -run 'TestNamedIDAccepted|TestLeaseWritesDriverSibling|TestStateAndLeaseUnchanged|TestStoreRefusesBadName|TestNodeIDsSkipsClaims' -count=1`
 - Red step: `TestNamedIDAccepted` is refused by `agentRE`.
 - Depends on: none in the graph. As the provider C-ORCH describes, it implements the contract's id rules and `Driver`, and is launched once C-ORCH has merged.
 - Commit: `orchestrator: named ids and the driver node (CG1a, D3207, D3218)`
@@ -335,7 +354,7 @@ Four answers shape the plan most:
 - Files: `internal/orchestrator/compat_test.go` (new), `internal/orchestrator/testdata/prev-release/` (new), `internal/cli/update_orchestrator_named_test.go` (new).
 - Tests: `TestPreviousReleaseReadsNewNodes`, `TestUpdateNamedMigrationWithRunInFlight`.
 - Command: `go test ./internal/orchestrator/ ./internal/cli/ -run 'TestPreviousReleaseReadsNewNodes|TestUpdateNamedMigrationWithRunInFlight' -count=1`
-- Red step: a node with a new field in its state fails the previous decoder (the test pins that none is written).
+- Red step: a fixture node carrying an added state field must fail the previous decoder. That proves the test can fail, though on main it passes. I-ORCH re-runs it against the nodes CG1a really writes.
 - Depends on: C-ORCH (the id rule and the driver node's path).
 - Commit: `orchestrator: a previous release reads every node this one writes (CG2, D3218)`
 - Reviewer tier: standard. The PR carries the `### For operators` line: no action, and named orchestrators are invisible to members still on the previous release (F36).
@@ -355,12 +374,12 @@ Four answers shape the plan most:
 
 #### CG4: a claim per plan task
 - Acceptance:
-  - Before launching a plan task or a backlog item, an orchestrator claims it with an ETag-conditioned RTDB write at `ClaimPath`. The path is under `orchestrator/` at a key no orchestrator id can take (`~claims`), and `NodeIDs` skips that key.
+  - Before launching a plan task or a backlog item, an orchestrator claims it with an ETag-conditioned RTDB write at `ClaimPath`. The path is under `orchestrator/` at a key no orchestrator id can take (`~claims`); CG1a makes `NodeIDs` skip it.
   - A held claim makes the others skip the item. The claim is released when the item is done or cancelled, or when its holder's lease has lapsed past the grace period.
   - The node keeps `orchestrator/`'s `.write: false` for every token the rules evaluate. IAM is the fence, as for the state itself (F33). No rules change.
-- Files: `internal/orchestrator/claim.go` (new), `internal/orchestrator/claim_test.go` (new), `internal/orchestrator/launch.go`, `internal/orchestrator/list.go`.
-- Tests: `TestClaimFirstWins`, `TestLaunchSkipsClaimed`, `TestClaimReleasedOnLapse`, `TestNodeIDsSkipsClaims` (against `gcpfake`'s RTDB, which honours ETags).
-- Command: `go test ./internal/orchestrator/ -run 'TestClaim|TestLaunchSkipsClaimed|TestNodeIDsSkipsClaims' -count=1`
+- Files: `internal/orchestrator/claim.go` (new), `internal/orchestrator/claim_test.go` (new), `internal/orchestrator/launch.go`.
+- Tests: `TestClaimFirstWins`, `TestLaunchSkipsClaimed`, `TestClaimReleasedOnLapse` (against `gcpfake`'s RTDB, which honours ETags).
+- Command: `go test ./internal/orchestrator/ -run 'TestClaim|TestLaunchSkipsClaimed' -count=1`
 - Red step: two orchestrators both launch the task.
 - Depends on: C-ORCH (`ClaimPath`).
 - Commit: `orchestrator: one claim per plan task (CG4, D3209)`
@@ -394,12 +413,12 @@ Four answers shape the plan most:
 - Reviewer tier: standard.
 
 #### CG7a: the console reads the map
-- Acceptance: a spawn row for `orchestrator map --json`, an IPC operation, the `orchestratorMap` bridge method in `console/src/source/cli.ts` and a strict decoder in `console/src/shared/schema.ts`. The read sits behind a CLI version floor in `console/src/shared/version.ts`; below it, the tab says which CLI version it needs. Pinned, with the §5.1 table updated.
+- Acceptance: a spawn row for `orchestrator map --json`, an IPC operation, the `orchestratorMap` bridge method in `console/src/source/cli.ts` and a strict decoder in `console/src/shared/schema.ts`. The read sits behind a CLI version floor in `console/src/shared/version.ts`; below it, the tab says which CLI version it needs. `GRAPH_SCOPE_RE` and `MAX_GRAPH_SCOPE_LENGTH` accept a named orchestrator id behind the same floor (F40). Pinned, with the §5.1 table updated.
 - Files: `console/src/main/spawn.ts`, `console/src/main/ipc.ts`, `console/src/source/cli.ts`, `console/src/shared/schema.ts`, `console/src/shared/version.ts`, `docs/desktop-console/spec.md`; tests `spawn.test.ts`, `ipc.test.ts`, `schema.test.ts`.
 - Tests: the pinning tests in `spawn.test.ts` and `ipc.test.ts`, plus `schema.test.ts` for the decoder.
 - Command: `cd console && npx jest test/unit/spawn.test.ts test/unit/ipc.test.ts test/unit/schema.test.ts --maxWorkers=2 && cd .. && go test ./internal/cli/ -run Docs -count=1`
 - Red step: the row is missing from the allow-list.
-- Depends on: C-ORCH (the document's shape).
+- Depends on: C-ORCH (the document's shape); ID1 (the same file, `schema.test.ts`).
 - Commit: `console: the orchestrator map read (CG7a, D3221)`
 - Reviewer tier: opus, with an independent review (allow-list).
 
@@ -420,6 +439,16 @@ Four answers shape the plan most:
 - Reviewer tier: standard.
 - Owner-run: re-record the Coordinator goldens on the owner's Mac (`npx playwright test <coordinator spec> --update-snapshots`).
 
+#### CG8: the graph scope accepts named orchestrators
+- Acceptance: `graph.ParseScope` accepts `orchestrator:<project>~<name>` under C-ORCH's id rule, so `fugaro graph --source orchestrator:<id>` reads a named orchestrator (F40).
+- Files: `ee/graph/key.go`, `ee/graph/key_test.go`.
+- Tests: `TestParseScopeNamedOrchestrator`.
+- Command: `go test ./ee/graph/ -run TestParseScopeNamedOrchestrator -count=1 && go test ./internal/eeboundary/ -count=1`
+- Red step: `orchestrator:fugaro~night` is refused.
+- Depends on: C-ORCH (the id rule; broken edge, re-joined at I-ORCH).
+- Commit: `graph: scopes for named orchestrators (CG8, F40)`
+- Reviewer tier: standard.
+
 #### CG-DOCS: the orchestrator skill and the documents that said one per project
 - Acceptance: `plugin/skills/orchestrator/SKILL.md` describes named orchestrators and `--name`. orchestrator-graph-estimates' reconciliation gets a dated amendment to F2 citing D3206. The plugin tests pass.
 - Files: `plugin/skills/orchestrator/SKILL.md`, `docs/orchestrator-graph-estimates/reconciliation.md`.
@@ -436,11 +465,12 @@ Four answers shape the plan most:
   - An end-to-end test runs two named orchestrators in one project, with a cross dependency and an overlapping collision, and gets one solid and one dashed edge in the document the console decodes.
   - The v2 operations no screen uses any more are removed from the allow-lists.
   - `console/docs/json-contract.md` gains the map's section, and its §6.22 is amended: an edge may join two orchestrators (F17).
+  - CG2's `TestPreviousReleaseReadsNewNodes` passes against nodes the wired code writes.
 - Files: `internal/orchestrator/map_stub.go` (deleted), `ee/orchestrator/cli/map.go`, `ee/orchestrator/map_e2e_test.go` (new), `console/src/main/spawn.ts`, `console/src/main/ipc.ts`, `console/docs/json-contract.md`, `docs/desktop-console/spec.md`.
 - Tests: `TestOrchestratorMapEndToEnd`, plus the allow-list pinning tests.
 - Command: `go test ./ee/orchestrator/... -run TestOrchestratorMapEndToEnd -count=1 && go test ./internal/eeboundary/ -count=1 && cd console && npx jest test/unit/spawn.test.ts test/unit/ipc.test.ts --maxWorkers=2 && cd .. && go test ./internal/cli/ -run Docs -count=1`
 - Red step: the stub returns an empty map.
-- Depends on: CG1a, CG1b, CG1c, CG2, CG3, CG4, CG5, CG6, CG7a, CG7b (every side of every edge C-ORCH broke, plus the rest of the module); IR4 (the allow-list files). It deletes C-ORCH's stub.
+- Depends on: CG1a, CG1b, CG1c, CG2, CG3, CG4, CG5, CG6, CG7a, CG7b, CG8 (every side of every edge C-ORCH broke, plus the rest of the module); IR4 (the allow-list files). It deletes C-ORCH's stub.
 - Commit: `orchestrator: wire the map end to end (I-ORCH)`
 - Reviewer tier: opus, with an independent review (allow-list).
 
@@ -451,9 +481,9 @@ Four answers shape the plan most:
   - `sanitize.ts` drops the `address-marker` rule from `FREE_TEXT_RULES` and `REFUSAL_RULES`.
   - The `person` class draws any value that is not a secret, cleaned of markup and control characters, at the class's length limit.
   - `REPO_TOKEN_RE` and the branch, path, GCP-name and IP/host rules go, and the `host` and `path` classes stop replacing.
-  - The `replaced-url` rule, which today replaces every URL with `[redacted-url]`, is narrowed to the credential parts. It drops userinfo (as the typed `applyUrl` does), and it masks the values of credential query and fragment parameters: `token`, `access_token`, `id_token`, `refresh_token`, `key`, `api_key`, `apikey`, `secret`, `password`, `sig`, `signature`, `X-Goog-Signature`, `X-Goog-Credential`, `X-Amz-Signature`, `X-Amz-Credential`, `X-Amz-Security-Token`, `code`. It also keeps masking any high-entropy URL path segment (webhook and bot-token URLs). The rule stays in `CREDENTIAL_RULES`, so the validating classes keep it.
+  - The `replaced-url` rule, which today replaces every URL with `[redacted-url]`, is narrowed to the credential parts. It reuses the typed `applyUrl`'s own predicates rather than a new list: `carriesCredential` for the query and the fragment, `isWebhook` (`WEBHOOK_URLS`), `hostCarriesCredential`, and dropping userinfo. A URL any of them flags is still replaced whole. The rule stays in `CREDENTIAL_RULES`, so the validating classes keep it.
   - The credential, token, entropy and credential-block rules stay, and `CREDENTIAL_RULES` (the positional slice `FREE_TEXT_RULES.slice(0, 2)`) still names exactly the credential rules after the reorder.
-  - The entropy net no longer declines path runs once the path rule that caught them is gone (today `!isPathRun` and `isPathShapedSecret` skip a rooted run). A token inside a rooted path is still masked.
+  - The entropy net no longer declines path runs once the path rule that caught them is gone (today `!isPathRun` and `isPathShapedSecret` skip a rooted run). A token inside a rooted path is still masked, but an ordinary long path is not: the guard exists because of the owner's report of 2026-10-21, when the net marked the operator's own binary path as a credential (the docstring above `FREE_TEXT_RULES`).
   - The tests that assert a display marker for a non-secret value now assert the value. `sanitize-agreement.test.ts` keeps its one-way direction (the display may redact less than the recorder). The recorder's tests are untouched (D3219).
 - Files:
   - Source: `console/src/shared/sanitize.ts`.
@@ -468,8 +498,10 @@ Four answers shape the plan most:
   - a fragment `#access_token=<token>` and a signed-URL `X-Goog-Signature=<value>`;
   - a high-entropy URL path segment (`https://hooks.example/services/<token>`);
   - each of the URL cases under both rule sets: free text and the validating classes;
-  - one case per removed rule, proving a secret inside that shape is still masked.
-- Command: `cd console && npx jest test/unit --maxWorkers=2 && npm run typecheck`
+  - one case per removed rule, proving a secret inside that shape is still masked;
+  - a long binary path (`/opt/homebrew/Cellar/fugaro/<version>/bin/fugaro`) in a refusal, drawn as is;
+  - a token in a rooted path inside a refusal (`sanitizeRefusal`), masked: today `boundReason`'s path mask hides it, and ID6 removes that mask.
+- Command: `cd console && npx jest test/unit --maxWorkers=2 && npm run typecheck && npx playwright test test/e2e/spend.spec.ts`
 - Red step: an email drawn as itself fails today's expectation of `redacted@example.invalid`.
 - Depends on: none.
 - Commit: `console: mask only secrets (ID1, D3213)`
@@ -516,77 +548,71 @@ Four answers shape the plan most:
 - Reviewer tier: standard.
 
 #### ID6: the main process's refusal text keeps paths
-- Acceptance: `boundReason` (`console/src/main/ipc.ts`) stops replacing absolute paths with `<path>`. It keeps its credential handling and its bound on length (F38, D3213).
+- Acceptance: `boundReason` (`console/src/main/ipc.ts`) stops replacing absolute paths with `<path>`. It keeps its handling of control, invisible and surrogate characters and its bound on length; it has no credential handling of its own. Secrets in a refusal are masked by the renderer's `sanitizeRefusal`, which ID1 makes catch a token in a rooted path (F38, D3213).
 - Files: `console/src/main/ipc.ts`, `console/test/unit/ipc.test.ts`.
-- Tests: `ipc.test.ts` (a refusal naming `/Users/ana/repo` keeps the path; a token in a refusal is still masked).
+- Tests: `ipc.test.ts` (a refusal naming `/Users/ana/repo` keeps the path).
 - Command: `cd console && npx jest test/unit/ipc.test.ts --maxWorkers=2`
 - Red step: the path reads `<path>`.
-- Depends on: none.
+- Depends on: ID1 (behaviour: the renderer must catch a token in a rooted path before this mask goes); CG7a (the same files, `ipc.ts` and `ipc.test.ts`).
 - Commit: `console: refusals keep their paths (ID6, D3213)`
 - Reviewer tier: opus, with an independent review (`ipc.ts` is an allow-list file).
 
 ## Launch order
 
-`fugaro plan graph` refuses an edge from a provider to the contract it implements, so three providers show no edge to their contract (O5). The order is therefore:
+`fugaro plan graph` refuses an edge from a provider to the contract it implements, so three providers show no edge to their contract (O5). Every other task launches by the graph's edges, and three are held back by hand:
 
-1. Launch C-INDEX and C-ORCH alone.
-2. Once both have merged, launch every other task by the graph's edges.
+- CG1a waits for C-ORCH to merge.
+- RI3 and RI4 wait for C-INDEX to merge. They are behind RI1 anyway.
 
-The tasks this holds back (RI1, CG1a, CG5, ID1, ID6) lose a contract's run time at most.
+The writers of a shared file are ordered by edges, not only by levels. A task at a later level whose edges do not reach an earlier writer could otherwise run beside it. The shared-files table below lists each pair and the edge that orders it.
 
 ## Parallel execution
 
 ### Levels
 
-As `fugaro plan graph` reads them. R-index-fields and R-map-shape run only if their trigger happens.
+As `fugaro plan graph` reads them; Launch order (above) holds CG1a, RI3 and RI4 behind their contracts. R-index-fields and R-map-shape run only if raised.
 
-| Level | Tasks (run at once) |
+| Level | Tasks |
 | --- | --- |
-| 0 | C-INDEX, C-ORCH, then (see Launch order) RI1, CG1a, CG5, ID1, ID6 |
-| 1 | RI2, RI3, RI4, IR1, IR2, IR3, IR6, IR7, CG1b, CG2, CG3, CG4, CG6, CG7a, ID2, ID3, R-index-fields, R-map-shape |
-| 2 | RI5, CG1c, CG7b, CG-DOCS, ID5 |
+| 0 | C-INDEX, C-ORCH, CG1a, CG5, ID1, RI1 |
+| 1 | CG1b, CG2, CG3, CG4, CG6, CG7a, CG8, ID2, ID3, IR1, IR2, IR3, IR6, R-index-fields, R-map-shape, RI2, RI3, RI4, RI6 |
+| 2 | CG-DOCS, CG1c, CG7b, ID5, ID6, RI5 |
 | 3 | I-INDEX, IR4 |
-| 4 | IR5a, IR5b, T-CHK, I-ORCH |
-| 5 | ID4 |
+| 4 | I-ORCH, IR5a, IR5b, T-CHK |
+| 5 | ID4, IR7 |
 
-What must stay sequential, and why:
-
-- RI4 → RI5: the reindex reuses the fold and the lease.
-- CG1b → CG1c: the flag and its resolver.
-- CG7a → CG7b: the bridge method.
-- CG7a/CG7b → IR4: the allow-list files and `entry.ts`.
-- IR4 → I-ORCH: the allow-list files.
-- I-ORCH → ID4: `docs/desktop-console/spec.md`.
-- ID1 → ID3 and ID1 → IR7: `spend.test.ts` and `live.test.ts`.
-- I-INDEX → IR5a/IR5b: `--pr` must read the live index before the old writers stop.
+What must stay sequential is every kept edge, listed with its reason under "Dependencies broken and kept".
 
 ### Critical path
 
 As the read reports it: C-ORCH → CG7a → CG7b → IR4 → I-ORCH → ID4, six tasks; the bottleneck is C-ORCH. Every link after the contract is a shared file or a bridge import, not a computed dependency. The run-index path, RI1 → RI4 → RI5 → I-INDEX → IR5a, is five.
 
-### Shared files (no level has two writers of one file)
+### Shared files
 
-Checked from the graph's footprints: no level holds two writers of one file.
+Checked from the graph's footprints: every pair of writers of one file is ordered by an edge path, not only by level.
 
-| File | Writers (level) |
+| File | Writers (level), each ordered after the one before it by an edge path |
 | --- | --- |
 | `console/docs/json-contract.md` | I-INDEX (3), I-ORCH (4) |
-| `docs/desktop-console/spec.md` | CG7a (1), IR4 (3), I-ORCH (4), ID4 (5) |
-| `console/src/main/ipc.ts`, `console/test/unit/ipc.test.ts` | ID6 (0), CG7a (1), IR4 (3), I-ORCH (4) |
-| `console/src/main/spawn.ts`, `console/test/unit/spawn.test.ts` | CG7a (1), IR4 (3), I-ORCH (4) |
-| `console/src/shared/version.ts` | CG7a (1), IR4 (3) |
+| `console/src/main/ipc.ts` | CG7a (1), ID6 (2), IR4 (3), I-ORCH (4) |
+| `console/src/main/spawn.ts` | CG7a (1), IR4 (3), I-ORCH (4), IR7 (5) |
 | `console/src/renderer/entry.ts` | CG7b (2), IR4 (3) |
-| `console/test/unit/spend.test.ts` | ID1 (0), ID3 (1) |
-| `console/test/unit/live.test.ts` | ID1 (0), IR7 (1) |
+| `console/src/shared/version.ts` | CG7a (1), IR4 (3) |
+| `console/test/unit/ipc.test.ts` | CG7a (1), ID6 (2), IR4 (3), I-ORCH (4) |
+| `console/test/unit/live.test.ts` | ID1 (0), IR7 (5) |
 | `console/test/unit/schema.test.ts` | ID1 (0), CG7a (1) |
-| `internal/orchestrator/list.go` | CG1a (0), CG4 (1) |
-| `internal/cli/init_stages.go` | RI5 (2), IR5b (4) |
+| `console/test/unit/spawn.test.ts` | CG7a (1), IR4 (3), I-ORCH (4) |
+| `console/test/unit/spend.test.ts` | ID1 (0), ID3 (1) |
+| `docs/console-fixes/contract-index.md` | C-INDEX (0), R-index-fields (1) |
+| `docs/console-fixes/contract-orchestrators.md` | C-ORCH (0), R-map-shape (1) |
+| `docs/desktop-console/spec.md` | CG7a (1), IR4 (3), I-ORCH (4), ID4 (5) |
 | `ee/graph/cli/graph.go` | IR3 (1), I-INDEX (3) |
 | `ee/orchestrator/cli/map.go` | CG6 (1), I-ORCH (4) |
-| `internal/runindex/contract.go`, `docs/console-fixes/contract-index.md` | C-INDEX (0), R-index-fields (1, if raised) |
-| `internal/orchestrator/mapdoc.go`, `docs/console-fixes/contract-orchestrators.md` | C-ORCH (0), R-map-shape (1, if raised) |
-| `internal/runindex/stub.go` | C-INDEX (0), I-INDEX (3, deletes it) |
-| `internal/orchestrator/map_stub.go` | C-ORCH (0), I-ORCH (4, deletes it) |
+| `internal/cli/init_stages.go` | RI5 (2), IR5b (4) |
+| `internal/orchestrator/map_stub.go` | C-ORCH (0), I-ORCH (4) |
+| `internal/orchestrator/mapdoc.go` | C-ORCH (0), R-map-shape (1) |
+| `internal/runindex/contract.go` | C-INDEX (0), R-index-fields (1) |
+| `internal/runindex/stub.go` | C-INDEX (0), I-INDEX (3) |
 
 ## Dependencies broken and kept
 
@@ -594,30 +620,48 @@ Broken by contract (the dependent needs only the interface):
 
 | Was | Contract | Integration | Reason |
 | --- | --- | --- | --- |
-| IR1 needs RI3 | C-INDEX | I-INDEX | `runs ls` needs the `Reader`'s shape, not a live index |
-| IR2 needs RI3 | C-INDEX | I-INDEX | `plan status` needs the query shape and the summary's fields |
-| IR3 needs RI3 | C-INDEX | I-INDEX | the graph fallback needs only `List` |
-| IR6 needs RI3 | C-INDEX | I-INDEX | `runs stats` needs the `Reader`'s shape, not a live index |
+| IR1 needs RI3 | C-INDEX | I-INDEX | runs ls needs the Reader's shape, not a live index |
+| IR2 needs RI3 | C-INDEX | I-INDEX | plan status needs the query shape and the summary's fields |
+| IR3 needs RI3 | C-INDEX | I-INDEX | the graph fallback needs only List |
+| RI2 needs RI4 | C-INDEX | I-INDEX | the Terraform indexes need the field list, not the writer |
+| IR6 needs RI3 | C-INDEX | I-INDEX | runs stats needs the Reader's shape, not a live index |
+| RI6 needs RI4 | C-INDEX | I-INDEX | doctor needs the summary's fields, not the fold |
+| CG8 needs CG1a | C-ORCH | I-ORCH | the scope grammar needs the id rule, not the store |
 | CG1b needs CG1a | C-ORCH | I-ORCH | the commands need the id rules and the driver type, not the store's code |
 | CG2 needs CG1a | C-ORCH | I-ORCH | the migration needs the field names, not the readers |
-| RI2 needs RI4 | C-INDEX | I-INDEX | the Terraform indexes need the field list, not the writer |
 | CG3 needs CG1a | C-ORCH | I-ORCH | cross references need the id rules, not the stored fields |
-| CG4 needs CG1a | C-ORCH | I-ORCH | claims need `ClaimPath`, not the named state |
+| CG4 needs CG1a | C-ORCH | I-ORCH | claims need ClaimPath, not the named state |
 | CG6 needs CG3 | C-ORCH | I-ORCH | the builder needs the edge vocabulary, not the tick |
 | CG7a needs CG6 | C-ORCH | I-ORCH | the console needs the document's shape, not the builder |
 
-Kept, each with its reason:
+Kept, each with its reason (the integration tasks' own edges, which re-join what a contract broke, are not repeated):
 
-- RI3 and RI4 need RI1: they call the client's new query.
-- RI5 needs RI4: it reuses the fold.
+- RI3 needs RI1: it calls the client's new query.
+- RI4 needs RI1: it writes through the client's query and patch.
+- RI5 needs RI4: the reindex reuses the fold and the writer lease.
+- IR4 needs IR2: IR4 waits on CG7b at a later level anyway, so breaking this edge gains nothing.
+- IR4 needs CG7a: one file: the allow-lists and the 5.1 table.
+- IR4 needs CG7b: one file: console/src/renderer/entry.ts.
+- IR5a needs I-INDEX: --pr must read the live index before the old writers stop.
+- IR5b needs I-INDEX: --pr must read the live index before the old writers stop.
+- T-CHK needs I-INDEX: what the checks time.
 - CG1c needs CG1b: it uses the flag and resolver CG1b adds; a contract for one function would be nearly the task.
-- CG7b needs CG7a: the bridge import.
-- IR4 needs IR2: kept, because IR4 waits on CG7b at a later level anyway, so breaking it gains nothing. IR4 also needs CG7a and CG7b for shared files.
-- CG-DOCS needs CG1b: the plugin tests check flags.
-- ID2 and ID5 need ID1: the `person` class's behaviour.
-- ID3 and IR7 need ID1: one file each.
-- ID4 needs ID1, ID3 and I-ORCH: it describes ID1, records ID3's default, and shares a file with I-ORCH.
-- IR5a, IR5b and T-CHK need I-INDEX: the live index.
+- CG7b needs CG7a: the bridge method and decoder it imports.
+- CG-DOCS needs CG1b: the plugin tests check every flag a skill names.
+- IR7 needs ID1: one file: console/test/unit/live.test.ts.
+- IR7 needs I-INDEX: --after past the window needs the index read.
+- IR7 needs I-ORCH: one file: console/src/main/spawn.ts.
+- ID6 needs ID1: the renderer must catch a token in a rooted path before this mask goes.
+- ID6 needs CG7a: one file: console/src/main/ipc.ts and its test.
+- IR4 needs ID6: one file: console/src/main/ipc.ts and its test.
+- CG7a needs ID1: one file: console/test/unit/schema.test.ts.
+- ID3 needs ID1: one file: console/test/unit/spend.test.ts.
+- ID2 needs ID1: the person class must accept the value.
+- ID5 needs ID1: the n/a causes after the masks go.
+- ID5 needs ID2: whole identities drawn.
+- ID4 needs ID1: it describes ID1's behaviour.
+- ID4 needs ID3: it records ID3's default in D15's amendment.
+- ID4 needs I-ORCH: one file: docs/desktop-console/spec.md.
 
 The read refuses an edge from a provider to its contract (RI3, RI4, CG1a) unless a decoupling record names it. The order is therefore written in those tasks ("launched once the contract has merged"), not drawn in the graph.
 
@@ -626,13 +670,13 @@ Contract changes anticipated:
 - **R-index-fields**, raised by IR2 if the summary needs a per-plan count to join without a query. It would reach RI2, RI3, RI4 and IR1.
 - **R-map-shape**, raised by CG7b if the drill-down needs per-task fields the node lacks. It would reach CG6 and CG7a.
 
-The gain, as `fugaro plan graph` reports it: `gain: 11 broken, 16 kept, 6 added; before 7 tasks, weight 13.5; after 6 tasks, weight 10; improves`. The decoupling pass is on for this repository (`planning.decoupling` true), and the rigor default is `startup`, so the plan decouples aggressively.
+The gain, as `fugaro plan graph` reports it: `gain: 13 broken, 20 kept, 6 added; before 7 tasks, weight 14; after 6 tasks, weight 12; improves`. The decoupling pass is on for this repository (`planning.decoupling` true), and the rigor default is `startup`, so the plan decouples aggressively.
 
 ## Estimate
 
 The estimate line `fugaro plan graph` printed, quoted as printed:
 
-`ready in 301–1239 min, no history yet for 21 tasks (37 tasks; tiers for 16, seeds for 21; from the cached history of 2026-11-21 18:33 UTC)`
+`ready in 341–1418 min, no history yet for 23 tasks (39 tasks; tiers for 16, seeds for 23; from the cached history of 2026-11-21 18:33 UTC)`
 
 It is informational and reserves no budget. It is what the tasks' tiers and this machine's history predict, and it moves as runs finish and the graph changes.
 
@@ -640,8 +684,8 @@ It is informational and reserves no budget. It is what the tasks' tiers and this
 
 | Check | Measures | Who |
 | --- | --- | --- |
-| 870 | The owner's project, warm: `runs ls --json`, `plan status --json --all`, `graph --json` each under 1 s | Owner, `scripts/live-checks/check870.sh` (T-CHK) |
-| 871 | A scratch project seeded with 350,000 synthetic runs: the same reads under 1 s | Owner, `scripts/live-checks/check871.sh --scratch <project>` (T-CHK) |
+| 870 | The owner's project, warm: `runs ls --json`, `plan status --json --all`, `graph --json` each under 1 s | Owner, `scripts/check-870-run-index-timings.sh` (T-CHK) |
+| 871 | A scratch project seeded with 350,000 synthetic runs: the same reads under 1 s | Owner, `scripts/check-871-run-index-100x.sh --scratch <project>` (T-CHK) |
 | 872–879 | Reserved, unused | — |
 
 Check 760 (runs-ls-speed) runs before IR1 merges, as the "before" reading (O1, D3204).
