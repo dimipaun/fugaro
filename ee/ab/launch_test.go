@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -163,6 +164,12 @@ func newABLaunchBase(t *testing.T, layer, base, recordBase string) *abLaunchFixt
 		"repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
 	f.writeConfigDir(t, cfg)
 	run.AddJob(gcp.JobName(slug, "web"), "4", "8Gi")
+	// The database the job reaches through its own environment: every launch of
+	// an installation whose config names one mints the run's identity (AB4,
+	// F7), and a job deployed before the database existed — no address in its
+	// environment — is refused with `fugaro update --repo`'s own fix (R6, U6),
+	// so the fixture's job is one an update onto this installation deployed.
+	run.SetJobEnv(gcp.JobName(slug, "web"), map[string]string{runner.RTDBURLEnv: db.URL})
 	f.writeMarker(t)
 	// The database a real installation runs against carries Fugaro's own mark,
 	// which every writer into it asks for before it writes (init wrote it).
