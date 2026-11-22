@@ -420,7 +420,6 @@ func curVersion(ref, host, kind, owner string) string {
 // items are the images this run mirrors, and the notes of kinds it leaves
 // alone. Nothing is read from the network.
 func (s *imagesStage) items(ctx context.Context) (items []imageItem, notes []string, err error) {
-	r := s.e.r
 	lc := s.e.lc
 	host, err := infra.RegistryHost(lc)
 	if err != nil {
@@ -443,7 +442,15 @@ func (s *imagesStage) items(ctx context.Context) (items []imageItem, notes []str
 		items = append(items, imageItem{label: label, kind: kind, src: src, dst: dst})
 		return nil
 	}
-	if r.o.firebase != "" && s.e.spec.History != nil {
+	// F29: the history image is mirrored where this run deploys the history job,
+	// and that is having the Firebase root's outputs and not the flag that used
+	// to be the only way to get them — a no-flag update that has just adopted or
+	// created the database (AB7) reaches the second installation stage with
+	// them. An installation whose config already records the database mirrors
+	// nothing here, as it always did: its history job is composed by the first
+	// apply from the recorded backend, whose image the run that made the
+	// database pushed.
+	if s.e.historyJobOfThisRun() {
 		if err := mk("history", "", "fugaro-history", ver, infra.HistoryImagePackage, "latest"); err != nil {
 			return nil, nil, err
 		}
@@ -543,7 +550,7 @@ func (s *imagesStage) Check(ctx context.Context) (initflow.Status, error) {
 		// image-refresh.md's step 2); the notes say which kind and why.
 		return initflow.Status{State: initflow.Skipped, Detail: "No changes: " + strings.Join(notes, "; ")}, nil
 	case len(items) == 0 && !set.any():
-		return initflow.Status{State: initflow.Skipped, Detail: "no image to pin or copy: the history image goes with --firebase-project, and a base image with --base KIND, with a checkout whose fugaro.yaml names it, or with a project image catalog whose entries this installation builds"}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: "no image to pin or copy: the history image goes with the history job (which this run deploys where it has just created or adopted the budget database, or where --firebase-project names it), and a base image with --base KIND, with a checkout whose fugaro.yaml names it, or with a project image catalog whose entries this installation builds"}, nil
 	case releaseVersion() == "":
 		return initflow.Status{State: initflow.Skipped, Detail: "development build, no published images to pin or copy: build one from a checkout (sh images/build-base.sh <kind> <tag> and docker push <tag>), then fugaro update --base-image KIND=<tag>"}, nil
 	}

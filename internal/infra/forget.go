@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -91,7 +92,28 @@ func CheckForgetPlan(p *tf.Plan) error {
 }
 
 // LogBucketUndelete is the command that restores the log bucket while it
-// is pending deletion (7 days), which a retried migration runs first.
-func LogBucketUndelete(project string) string {
-	return "gcloud logging buckets undelete " + LogBucket + " --location=global --project " + project
+// is pending deletion (7 days), at the location the bucket is in (R5: it is
+// permanent, so the command names the bucket's own and nothing derives it).
+func LogBucketUndelete(project, location string) string {
+	return "gcloud logging buckets undelete " + LogBucket + " --location=" + location + " --project " + project
+}
+
+// LogBucketWhere is where an installation's log bucket is, read by the same
+// listing discovery reads it with — the project's buckets in every location,
+// ours by ID — so a command that must name the bucket's location has one read
+// to make and no second lookup (F10). It is what `fugaro update --forget`
+// prints its undelete command with: it runs no discovery, and an installation
+// made before this mapping has its bucket in `global` while a new one is where
+// place.For says.
+//
+// An empty location, with no error, means the project holds no such bucket.
+// The caller is a message printed after a rollback, so a read that fails is
+// theirs to fall back on, not a reason to fail the rollback.
+func LogBucketWhere(ctx context.Context, c *Clients, project, id string) (string, error) {
+	b, err := logBucketNamed(ctx, c, project, id)
+	if err != nil || b == nil {
+		return "", err
+	}
+	loc, _ := logBucketLocationID(b.Name)
+	return loc, nil
 }

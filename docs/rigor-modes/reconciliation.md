@@ -1005,6 +1005,14 @@ service too old to read the entry, so the row moved with the release that starts
 entries above do. Nothing in this folder changed; the row is named here for the reason the ones
 above are: a reader who finds the figure stale should find who moved it.)
 
+(Amended 2026-11-21: the launcher-does-not-mint plan's LM8 — a launch that holds a ticket for its
+run's identity is refused on a job image whose runner cannot claim it — added `identitySince` to
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 63 to 64. The
+constant names the release whose runner claims the ticket the run's execution carries, so the row
+moved with the release that starts writing one, as the entries above do. Nothing in this folder
+changed; the row is named here for the reason the ones above are: a reader who finds the figure stale
+should find who moved it.)
+
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
@@ -1017,7 +1025,7 @@ above are: a reader who finds the figure stale should find who moved it.)
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 63 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 64 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 155 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
@@ -1837,12 +1845,17 @@ the pattern is validated the way config validates patterns today (F9). **A task 
 a follow-up comment cannot lower a mode below a floor, ever** (D6, D8). *(Amended
 2026-11-13: the floor holds a request that moves the mode as well. The only floor
 that exists is `review_floor`, a mode→levels map, and a run reads the row of the
-mode it is at — so a request that takes a run off the axis to `hotfix` is held to
-hotfix's row **and** to the row of the mode the layers resolved for it, both read
-(`policy.Effective.ReviewFloorFor`, D8/LF5's own rule): moving the mode moves no
-floor, and an owner floor of `pro l2,l3` keeps the adversarial step on for that run.
-`fugaro run --mode hotfix` needs no opt-in, task R7 of
-`docs/rigor-command/implementation-plan.md`.)* **The mode
+mode it is at. `fugaro run --mode hotfix` needs no opt-in, task R7 of
+`docs/rigor-command/implementation-plan.md`. **Superseded 2026-11-20 (the
+owner's ruling):** a run the request took off the axis to `hotfix` reads
+**hotfix's own row alone**, and the row of the mode the layers resolved no longer
+reaches it (`policy.Effective.ReviewFloorFor`) — an owner floor of `pro l2,l3`
+does **not** keep the adversarial step on for a `fugaro run --mode hotfix` run,
+and the lever over one is a floor written for `hotfix` itself, unset by default.
+An **on-axis** request that went below the layers is still held to the row the
+layers resolved it at (`rigor.LayersRigor`), which is D8/LF5's own rule, and the
+security-sensitive diff keeps its own escalation: such a run goes ahead at the
+mode it is at, hotfix included, with the adversarial pass forced on.)* **The mode
 used is recorded in the PR body and in the run record**, in the same words, so the
 two can be diffed. Reason: the repository's security posture for this tier is
 already written (`docs/credentials-service/implementation-plan.md` Global
@@ -2461,12 +2474,15 @@ not be reconstructed by a reader from the decisions:
 2. **A mode never bypasses an independent-review requirement.** SECURITY-SENSITIVE
    → opus plus mandatory independent review is `docs/credentials-service/implementation-plan.md`
    Global Constraint 10 (F31); the modes cite it and cannot waive it.
-3. **Floors win.** The mode resolves as `area > repo > project` (D6, D20), with
-   the task's request able to raise and never lower, and the built-in and declared
-   floors outside every layer, only tightening — no repository value, no area
-   rule, no task flag and no comment reaches under one (D8, D21). A follow-up
-   keeps its PR's recorded mode and `--mode` may only raise it (D6, F14); a
-   comment never participates in the resolution (D8, D12).
+3. **Floors win.** The mode resolves as the seven ranks of D6's order (LD3), the
+   task's request the narrowest of them, and the built-in and declared floors
+   outside every layer, only tightening — no repository value, no area rule, no
+   task flag and no comment reaches under one (D8, D21). A request below a floor
+   resolves to the floor. A run the request took to `hotfix` reads hotfix's own
+   floor row alone (the owner's ruling of 2026-11-20, superseding the
+   both-rows reading of 2026-11-13). A follow-up keeps its PR's recorded mode and
+   `--mode` may only raise it (D6, F14); a comment never participates in the
+   resolution (D8, D12).
 4. **Critical is the default for the security-sensitive tier**, with a built-in
    set (`.github/workflows/`, credential and IAM paths) plus the repository's
    declared globs (D18).

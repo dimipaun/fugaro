@@ -1173,6 +1173,11 @@ probe account carries predefined grants only).
 | 640 | The status labels on a real pull request ([`docs/forge-labels/`](forge-labels/implementation-plan.md), its task **CK** and the block it reserves — **640–649**, 640 used; **U1** and **U3** are the two questions nothing offline can answer, and **D2437**'s table with **D2439**'s token and **D2440**'s create-on-first-use are what the labels' colours and the route's behaviour rest on): with the installation's orchestrator daemon running and **one approved task** launched, the pull request the run opens carries **`fugaro:running`** while the run is in flight and, once it has ended, **no** status label (a run that ended `succeeded` or `cancelled`) or **`fugaro:failed`** — plus the **`spec:<name>`** label its item's own spec asks for, in D2437's grey. **U1** — whether the dogfood installation's GitHub App really holds `pull_requests: write` — is read from the **credentials service's own audit lines** (`gcloud logging read`, purpose `label`), which are the service's record of the act and never the run's word; **U3** — what GitHub does with a label name that carries a **colon** — is read from the repository's own label table (`gh label list`). Run by **you**, on the **dogfood installation `fugaro`** (GCP project `fugaro-dev`, region `us-east5`, never `belong`), at your own terminal, as **one command**: `bash scripts/live-checks/check640.sh --installation fugaro`, with the test that drives it against fakes, `scripts/live-checks/check640_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It reads and writes nothing anywhere, launches no run and costs nothing billable; the one conditional owner step is the plan's: if the check shows the App lacks `pull_requests: write`, you raise it on the App's settings page, which an agent cannot. **OWNER-RUN, NOT RUN.** |
 | 780 | **One project owner's `fugaro update` across a run in flight** ([`docs/keys-through-service/`](keys-through-service/implementation-plan.md), its **Check 780** and task **KS17**; the reconciliation's **R4**, **R7**, **U3**, **D3001**, **D3005** and **D3006**): on an installation that was still at the release before **Release A**, one project owner's `fugaro update` of a sandbox repository copies the model keys into the installation's one credentials bundle, drops that repository's model mounts and deletes the old secret containers — **with a run already in flight, which finishes and succeeds** — while an operator's update of the same repository copies nothing, deletes nothing and says who must run it | See "Check 780" below; **the script is how you run it**: `bash scripts/live-checks/check780.sh --sandbox <a sandbox repository checkout>`, with the test that drives every step of it against fakes, `scripts/live-checks/check780_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, authenticated as a **project owner** of the installation, on a **sandbox installation, project and repository only** (**never `belong`**), and **no agent runs any step of it** | The premise is read first, and ends the check as one that could not measure when it does not hold: the repository's jobs still MOUNT a model credential and the containers behind those mounts are still there — an installation no project owner has updated since Release A is not in the state this check is about. Then: the bundle gained a version written **inside the update's own window**; no job of the repository is fed from a model credential of any kind afterwards; every model container **no job of the installation mounts any more** is gone (one another job still mounts is **kept**, KS15's own rule, and recorded as kept); each deletion is **named** in the update's transcript and no value of it is printed; the run launched before the update is terminal, succeeded, and started **before** the repository's jobs were last updated. The operator's half is a transcript you hand the check (`--operator-transcript <file>`) from an update made by an account that is **not** a project owner **before** you run it; with none handed, that row is one the check could **not measure** and its text is the instruction for making one. **OWNER-RUN, NOT RUN.** |
 | 781 | **A non-Claude provider model served through the credentials service, end to end** ([`docs/keys-through-service/`](keys-through-service/implementation-plan.md), its **Check 781** and task **KS17**; the reconciliation's **R6**, **F13** and **D3005**): after Release A, a real run of a sandbox repository whose job mounts **no** model key at all — the job carries the credentials service's address instead — whose provider call was served **from the installation's one bundle**, and which was charged the **provider's own reported cost** | See "Check 781" below; **the script is how you run it**: `bash scripts/live-checks/check781.sh --sandbox <a sandbox repository checkout>`, with the test that drives every step of it against fakes, `scripts/live-checks/check781_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on a **sandbox installation, project and repository only** (**never `belong`**), and **no agent runs any step of it** | One sandbox run, followed to a terminal state, then read four ways and never for a value: the job the run's execution names is **fed from no model credential** — no `credential-<name>-key` container, no `anthropic-api-key`, no `claude-oauth-token*`, no `FUGARO_PROVIDER_KEY_*` variable with a value — while the service's own address **is** in its environment; the gateway's `model call` lines for that execution carry `route`, which only a call that went to a provider ever emits, with their `serving_model`, `priced_as` and the provider's `reported_micros`; `result.json`'s `cost.reported_usd`, `cost.route_by` and `cost.model_usd` agree with them; and the service's own `credsvc: audit` line for the run names the credential it served, its tier and its purpose `forward` with status `ok`, which is the service saying the key came from the bundle. A bundle that is missing, a job that still mounts a provider key, a job with no service address, calls that all went direct, a routed call nobody reported, a denied forward, a run that never ends and a record that is another run's are each a row of their own. **OWNER-RUN, NOT RUN.** |
+| 560 | **The installation renews its key by itself** — one real fire of the deployed Scheduler job renews a short-lived `renewal_mode: auto` key and `fugaro licence status` reads the successor's term ([`docs/licence-key-v2/`](licence-key-v2/implementation-plan.md), its **Check 560** and task **K7.4**; the design's **K4.2**, **K2.3** and **K2.4**): the tick Terraform applies is the one that renews a key nobody is watching, the key it renews is an auto one, and the installation ends up holding the successor beside the key it replaces | See "Check 560" below; **the script is how you run it**: `bash scripts/live-checks/check560.sh --sandbox <a checkout>`, with the test that drives every step of it against fakes, `scripts/live-checks/check560_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on a **sandbox** installation holding a short-lived auto key (**never `belong`**), and **no agent runs any step of it** | The Scheduler job `fugaro-licence-renew` is **ENABLED** and targets Scheduler's own POST to the Cloud Run job's `:run` endpoint, authorised as the installation's scheduler account; the Cloud Run job `fugarolicence` is this installation's licence job (the two `fugaro` labels, argv `licence renew --job`, 600s, no retries, and the two names K4.2's preconditions pin); the premise is the **project's own** key with `renewal_mode: auto` and a state of active/grace; the one fire starts exactly one execution and it ends `Completed True`; the job's own line reads `renewed: key <successor> is installed in project <name> beside the key it replaces`; and the term read afterwards is **strictly later** than the premise's, with the source still the project's. A renewal window that is not open is the job's own `nothing to do: …`, a row that could **not be measured** naming the short-lived key the check needs. **OWNER-RUN, NOT RUN.** |
+| 561 | **A revocation recorded at the next check, and a server that cannot be reached revoking nothing** — `--part revoke`: the owner revokes a test key on the **portal's operations screens** and the next tick records it; `--part unreachable`: the licence job's route to the licence server is taken away and the key is **kept** ([`docs/licence-key-v2/`](licence-key-v2/implementation-plan.md), its **Check 561** and task **K7.4**; **K2.6**, **K4.1** and **D2140**, and the page is the portal's operations screens, **P5.3**) | See "Check 561" below; **the script is how you run it**: `bash scripts/live-checks/check561.sh --sandbox <a checkout> [--part revoke\|unreachable]`, with the test that drives every step of it against fakes, `scripts/live-checks/check561_test.sh` (run by `go test ./scripts`); **you** make the one change each part needs **before** the command and then **you** run it, at your own terminal, on a **sandbox** installation whose key has `renewal_mode: auto` (**never `belong`**), and **no agent runs any step of it** | **revoke**: the premise reads `revoked: false`; the job's own line is `the licence server answered that key <id> is revoked: project <name> runs on Free from now on, …`, naming **the key this installation holds** (a revocation about another key is a **FAIL**); after the tick the installation reads `revoked: true` with state **expired**, the key's own claims still readable (D436's read-only) and the check record's status `revoked` about the same key. **unreachable**: the job's own line is `note: the check of key <id> did not complete, … (only an explicit answer revokes, D2140)`, and after it the state is the one read before, `revoked` is still false, the failure count is **up**, the last-ok time has **not moved** and the record's status is `unreachable` — a `revoked: true` there is the failure D2140 exists for. A tick that reached the server with the key still good is a row that could **not be measured**, naming the step to make first. **OWNER-RUN, NOT RUN.** |
+| 562 | **The browser sign-in, and the callback whose `state` is not the flow's own** — `fugaro licence login` against the licence site, and a made-up callback the CLI's own loopback listener must refuse with 400 without ending the flow ([`docs/licence-key-v2/`](licence-key-v2/implementation-plan.md), its **Check 562** and task **K7.4**; **K3.3** and **K2.4**, the refusal being RFC 8252 §7.3) | See "Check 562" below; **the script is how you run it**: `bash scripts/live-checks/check562.sh --sandbox <a checkout>`, with the test that drives every step of it against fakes, `scripts/live-checks/check562_test.sh` (run by `go test ./scripts`); **you** sign in at the licence site when the one `MANUAL:` line asks, at your own terminal, signed in as the account that holds the licence (**never `belong`**), and **no agent runs any step of it** | `GET <site>/cli/authorize` with no query answers **403** with the site's own refusal sentence, which is what says the origin is the licence site; the address the CLI prints is `<site>/cli/authorize` over https carrying the flow's own `state` and a PKCE `code_challenge`, with a callback of `http://127.0.0.1:<port>/callback` (the literal loopback, the port the kernel gave); the wrong-`state` callback — the check's **own** made-up values, so nothing of a person's sign-in travels — answers **400** with the page headed "This is not the sign-in's own callback" and the login command is **still running**; and the finished sign-in reads `source: project` with a non-empty tier and `renewal_mode` and a state of active/grace. A **200** at the callback, or an exited login after it, is the **FAIL**; no line of the command's output may carry a key-shaped string. **OWNER-RUN, NOT RUN.** |
+| 563 | **The device code, from a machine with no browser** — the address and short code the CLI prints, approved on any machine that has a browser, and a code that runs out stopping the poll ([`docs/licence-key-v2/`](licence-key-v2/implementation-plan.md), its **Check 563** and task **K7.4**; **K3.3**, its device half) | See "Check 563" below; **the script is how you run it**: `bash scripts/live-checks/check563.sh --sandbox <a checkout> [--approve\|--expiry]`, with the test that drives every step of it against fakes, `scripts/live-checks/check563_test.sh` (run by `go test ./scripts`); **you** approve the code from a browser on another machine when the one `MANUAL:` line asks (**never `belong`**), and **no agent runs any step of it** | The address is the site's own approve page (`<site>/cli/device`, https) and the block says no browser was opened on the machine that ran it; the code is **eight** characters of K2.4's alphabet — no `I`, no `O`, no `0`, no `1` — in two groups of four with one `-`, and the command's own line names its ten-minute life. `--approve` (the default): the login ends **0** and `fugaro licence status --json` then reads `source: project` with a non-empty tier and a state of active/grace. `--expiry`: nothing is approved, the code runs out, the login ends with the client's own `the sign-in was not finished before its code expired`, and the installation's licence is **unchanged** from the read taken before the flow started. The other half's row reads `INFO — not this run's half`: an approved code is not an expired one, so it is one command either way. **OWNER-RUN, NOT RUN.** |
+| 564 | **A Paddle sandbox purchase, its renewal and its refund, end to end** — the licence is granted, the term renews, and a refund withdraws the **whole** licence rather than the key the event named ([`docs/licence-key-v2/`](licence-key-v2/implementation-plan.md), its **Check 564** and task **K7.4**; **K2.5**, **D2147** for the whole-licence withdrawal — the row the check exists for — and **D436**; the sandbox account is **subscriptions S8.5**, owner-run, which must exist first) | See "Check 564" below; **the script is how you run it**: `bash scripts/live-checks/check564.sh --sandbox <dir> --workspace-id <id> --token-file <file> --paddle-key-file <file>`, with the test that drives every step of it against fakes, `scripts/live-checks/check564_test.sh` (run by `go test ./scripts`); **you** do the buying and the refunding in the Paddle **sandbox** when the `MANUAL:` lines ask, at your own terminal, on a **throwaway** installation and a staging deployment (**never `belong`**), and **no agent runs any step of it** | `GET /api/workspaces` with no sign-in answers **401 `unauthenticated`**, so the origin is the portal's API; the Paddle **SANDBOX** account answers with its active prices (a 401/403 is a row that could **not be measured**, naming S8.5); the purchase answers **201** with a `transaction_id` the **SANDBOX** also holds; the entitlement appears with source `purchase` and status `active` and its workspace names Paddle's subscription; after the renewal the term has **moved** and Paddle's own period end agrees with the entitlement's (a sandbox that did not bill is a row that could **not be measured**); after the refund the entitlement reads **`revoked`** — every key it ever minted, not only the key the event named (**D2147**) — and the installation reads `revoked: true` with `last_check.status` `revoked` while the tier, the seats and the key are **still there** (**D436**). A key still serving after the refund, or a transaction the sandbox does not hold, is the **FAIL**. The **LIVE** Paddle host is refused by name. **OWNER-RUN, NOT RUN.** |
 | 570 | **Pay before setup** — a sandbox purchase that leaves an **unbound** entitlement, the binding of that entitlement to a project that holds no Fugaro installation and the refusal it gets, `fugaro setup` on a test installation, `fugaro licence login` binding and minting, and a seat purchase that reaches the installation through `fugaro licence refresh` with nothing pasted ([`docs/portal/`](portal/implementation-plan.md), its **Check 570** and task **P9.4**; the reconciliation's **F25/D2197**, **D2205**, **D2196** and **D2200/K3.4**): the state a customer who pays before their project exists is in, and the one act that gets them a licence | See "Check 570" below; **the script is how you run it**: `bash scripts/live-checks/check570.sh --sandbox <a checkout> --project fugaro-staging --token-file <file> --no-installation-project <a project with no installation>`, with the test that drives every step of it against fakes, `scripts/live-checks/check570_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on the **staging** project and the staging portal first (**never `belong`**), and **no agent runs any step of it** | The purchase reads **unbound** — `source` `purchase`, `status` `active`, `bound_at` null and no key — because F25 is that a purchase creates an entitlement and never a key; the binding to a project with no installation is **refused** `422 no_installation` with `fugaro setup` in its sentence, and the entitlement is re-read and is **still unbound**; after `fugaro licence login` it is bound to the installation's own Firebase project id and the installation holds a key; and after `fugaro licence refresh` the installation's own seats are the entitlement's, with nothing pasted. A purchase that already holds a key, a binding that bound, and a refusal for another reason are each a **FAIL**; an organisation with no unbound purchase is a row that could **not be measured**, naming what to do first. **OWNER-RUN, NOT RUN.** |
 | 571 | **The identity census** — every identity that reaches signing in the portal's one project, printed as a list ([`docs/portal/`](portal/implementation-plan.md), its **Check 571** and task **P9.4**; the reconciliation's **F18/D2194**, whose accepted risk this row is): the signer role on the signing ring, the minter's invokers, `run.services.update` on the minter, `datastore.user`, the Hosting deployers, `run.services.update` and `iam.serviceAccounts.actAs` on the API's service and account, the sealer role on the handover ring, and any project-level role carrying `useToSign` — the list the owner reads rather than the risk they were told about once | See "Check 571" below; **the script is how you run it**: `bash scripts/live-checks/check571.sh --project fugaro-staging`, with the test that drives every step of it against fakes, `scripts/live-checks/check571_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, authenticated to an account that can read IAM policies in the project, on the **staging** project first (**never `belong`**), and **no agent runs any step of it** | The census is printed, one line per binding whose role carries a permission that reaches signing, above the block — and **nothing in it is a FAIL**: it is D2194's accepted exposure, and printing it is the point. The rows held to a figure are the fences: the minter has exactly **one** invoker and it is the API's account, never `allUsers`; the signing ring's signer role holds exactly the minter's account and no other member on a role that can sign; the handover ring's sealer role holds exactly the API's account and no other member; and the two accounts' own policies are empty. A second invoker, a second member where the plan states one, or a non-empty account policy is a **FAIL**, named. It writes nothing anywhere. **OWNER-RUN, NOT RUN.** |
 | 572 | **An email-link account is refused** by the operations and the reseller API, and sees the portal's SSO dialog — on a phone-width window too ([`docs/portal/`](portal/implementation-plan.md), its **Check 572** and task **P9.4**; the reconciliation's **D2207/F10**): a sign-in that verified and is not an SSO one reaches the ordinary routes and is refused `403 sso_required` at the operations and at the reseller screens, each with its own sentence — the rule following the membership and never the route | See "Check 572" below; **the script is how you run it**: `bash scripts/live-checks/check572.sh --project fugaro-staging --token-file <file>`, with the test that drives every step of it against fakes, `scripts/live-checks/check572_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, with an **email-link** account's ID token, on the **staging** deployment first (**never `belong`**), and **no agent runs any step of it** | The token decodes locally as an email-link sign-in of `--project`'s own `aud`, unexpired, and the **control** row is that it verifies: `GET /api/entitlements` answers **200** — which is what makes the two refusals the memberships' own rule rather than a sign-in the API rejected. `GET /api/ops/organisations` and `GET /api/resellers/customers` then each answer `403 sso_required` with the sentence the section quotes. A **200** at either is the finding this check exists for; a `not_operations` is a row that could **not be measured**. The dialog is printed as one `MANUAL:` line of browser steps, and its row is only that the line was printed: no script sees a dialog, so the section writes the steps out. **OWNER-RUN, NOT RUN.** |
@@ -1187,6 +1192,7 @@ probe account carries predefined grants only).
 | 810 | **The auth retirement's first release, watched across four repositories and a run in flight** ([`docs/credentials-belong-to-models/`](credentials-belong-to-models/implementation-plan.md), its task **CM22** and its "Check 810, after release 1"; the reconciliation's **U5** and the owner's **O1**): on a real installation **at the previous release** — the **premise** that stops the check on one release 1 has already reached — with a repository on a **subscription**, one on an **Anthropic key**, one on the **cascade** and one on **Vertex**, and a run of the subscription repository **already in flight**: a project owner's `fugaro update` **migrates all four** (once for the installation and once with `--repo` in each checkout, all five exiting 0), each repository's **new record out of the database's `creds` node** names the credential its old `agent.auth` meant, names `vertex` for the Vertex repository and **never** for the other three, and names no version other than 1, and the update's **own output names each repository and the credential its crafts resolve to**; the run that was **in flight across the migration finishes** (**U5**); a **new run of each of the four** is launched **together**, ends, has a **served line** in the service's own log (it went through its gateway) and carries the **same `model_basis`** in its own record out of the runs bucket that it carried before the update (the subscription for the subscription repository, the API list for the other three, **F25**); and a call the check builds **BY HAND** — carrying a live run's own identity, minted the way the launcher mints it, and declaring a craft that repository's record does not name — is **refused**, with **exactly one** audit line for it in the service's log (**U5**, **O1**, **C1.13**) | See "Check 810" below; `bash scripts/live-checks/check810.sh --installation <name> --oauth <checkout> --api-key <checkout> --cascade <checkout> --vertex <checkout> --job <the subscription repository's Cloud Run job> --gcp-project <project> --region <region>` is the whole of it, its sibling test `scripts/live-checks/check810_test.sh` drives it against fake `gcloud`, `fugaro` and `curl` on PATH with four **real local git repositories** in a temp directory (no network, no cloud, nothing spent), and **you** run it, at your own terminal, on an installation you may upgrade and on repositories you may spend on, **never `belong`** (a coding agent's session is refused outright, as is a traced shell); **no agent runs any step of it** | **FIVE billable runs** — the one in flight across the update and the four launched after it — on the four repositories' own budgets, plus a project owner's `fugaro update`. Everything else is a read: the four checkouts' committed `fugaro.yaml`, the database's `creds` node before and after, the job and service descriptions, the update's own output, `fugaro runs ls`, the five runs' records out of the runs bucket and the service's own log lines. The premise row **stops the check (exit 2)** on an installation release 1 has already reached, **before any run is launched**. The identity the audit row mints is signed in as the run the check launched, whose Auth user that run's own launch already made, so the exchange creates no user and none is deleted. Its scratch directory is removed from the exit trap and the `restore` row says whether it really went; the five runs are left to end on their own and nothing else was created. **OWNER-RUN, NOT RUN.** |
 | 811 | **The auth retirement's second release: the token out of the agent's environment, the image gate, the retired key and the old record** ([`docs/credentials-belong-to-models/`](credentials-belong-to-models/implementation-plan.md), its task **CM22** and its "Check 811, after release 2"; **CM9**, **CM28**, **CM29** and **CM31** read together): a run of the subscription repository comes out of a **job whose container environment carries no `CLAUDE_CODE_OAUTH_TOKEN`**, whose calls the **credentials service's own log** shows served through its gateway, and whose **own record names no subscription credential for any of its stages** (**CM9**, **CM28**, **D3067**); a launch on an image **older than release 1** is **refused** with the command that rebuilds it (`fugaro update`, or `fugaro image build`) and the release it needs (**CM28**); a file that still writes a **retired key** (`agent.auth`, `agent.oauth_token`, a craft's `access`, a grade's `access`) is **rejected by `fugaro validate` naming the key and the fix** (**CM29**); and the repository's **old record** (`creds/repoauth/<slug>`) is **kept while its run is in flight** and **gone** once none is going, with release 2's update **never writing one** where the installation had none (**CM31**, **D3063**) | See "Check 811" below; `bash scripts/live-checks/check811.sh --installation <name> --subscription <checkout> --job <the subscription repository's Cloud Run job> --gcp-project <project> --region <region> [--retired-key <checkout>] [--old-image <checkout>]` is the whole of it, its sibling test `scripts/live-checks/check811_test.sh` drives it against fake `gcloud`, `fugaro` and `curl` on PATH with three **real local git checkouts** in a temp directory (no network, no cloud, nothing spent), and **you** run it, at your own terminal, on an installation release 1 reached and release 2 is reaching, on a subscription repository you may spend on, **never `belong`** (a coding agent's session is refused outright, as is a traced shell); **no agent runs any step of it** | **ONE billable run** (the subscription repository's own model spend, bounded by its cap), plus a second launch that costs **nothing** when the refusals row is right — an image older than release 1 is refused before anything is built or run — and **two** `fugaro update --repo` calls in the subscription checkout. **No secret is read at all**: every document is a name, a status or a record, and the job's own document is read for the **names** of its container's environment and the **ids** of the secrets it mounts, never a value. A premise that does not hold — a committed or working file that still writes a retired key, a database that cannot be read, a repository with no access record, a subscription this check cannot read off the records — **stops the check (exit 2)** before anything is launched. Its scratch directory is removed from the exit trap and the `restore` row says whether it really went; the run is left to end on its own and nothing else was created. **OWNER-RUN, NOT RUN.** |
 | 740 | **Messaging a run that is going**, live ([`docs/run-messages/`](run-messages/implementation-plan.md), its **Check 740** and task **RM8**; the reconciliation's **U2**, **U3** and **U4**, and **D2941**'s read-only prefix): one real run of a repository you name, sent a plain message and a `--now` message while its implement stage is going, and read four ways — the plain message **`delivered`** at the next coder stage; the `--now` message delivered into that same stage carrying **no reason** on its fate, which is the runner finding a quiet point **and** going on in the same session, so `no quiet point in 10m` and `session lost at forced stop` are exactly what **U2** and **U3** answer with when the answer is no; the **IAM Policy Troubleshooter** asked whether the **real** job account of the run's execution — and, where the installation has one, the account of a shared project job — holds `storage.objects.create` on a `tokens/<slug>/<run>/messages/<seq>.msg.json` object, which must be **denied** (**D2941**), a throwaway account given only `objectViewer` proving nothing because the role cannot write by definition; and the runs bucket's **lifecycle configuration**, where the `.msg.json` rule must select the messages and leave the sealed `budget-token` beside them alone (**U4**) | See "Check 740" below; **the script is how you run it**: `bash scripts/live-checks/check-740-run-messages.sh --installation <name> --repo <owner/name>`, with the test that drives every step of it against fakes, `scripts/live-checks/check-740-run-messages_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on a **scratch installation you own** (**never `belong`**), after the release and `fugaro update`, and **no agent runs any step of it** | It launches **one real run** of the repository you name: that run's own model spend, one branch and one pull request, plus the two small objects `fugaro tell` writes under `tokens/`, which expire by the bucket's own rule. Everything else is a read (`fugaro doctor`, `fugaro version`, `fugaro runs ls`, `gcloud run jobs describe`/`list`, `gcloud storage cat`/`buckets describe`, the troubleshooter). It changes nothing anywhere else: the run it launched stays, the `restore` row says the scratch directory went, and no credential value is read. **OWNER-RUN, NOT RUN.** |
+| 680 | **The cloud tier of `fugaro troubleshoot`, end to end** ([`docs/troubleshoot-cloud/`](troubleshoot-cloud/implementation-plan.md), its task **T-TC10** and its **D2408**, read under **D2401**, **D2403**, **D2404**, **D2405**, **D2407**, **D2409** and **D2411**; the owner renumbered this check from 620 on 2026-11-21, because 620 is mobile-auth's and 670 is repos-management's RE6): **the launch path being broken is what the cloud tier exists for** (**spec acceptance 3**, **F8**), so part **(a)** rolls the installation's **own base image** back — in the installation's own project config, the ONE file this check writes — to a release older than the one the checkout's workflow's job has to know, and reads `fugaro troubleshoot <run>` declining the **cloud tier** in the **gate's own sentence**, quoting the release the job needs, the workflow and the command that fixes it (`fugaro update`), from tier 4 with **no execution created**; the deliberately refused `fugaro run` is made **only after** that decline has read the LOCAL CONFIG as the image's judge (a repository whose image is judged from the runs bucket's build record is left alone and the part reads NOT MEASURED), and it must be refused by **the same gate the decline quoted** and create no execution either. Part **(b)** puts that roll-back back **first** and points the config's `gcp_project` (with the budget block's own project and database) at a project `gcloud projects describe` confirms is **not there**, and reads tier 4 with the pre-flight's own sentence naming the read the tier could not make in its project — the credentials service's own switch is the other lever **T-TC10(b)** names, and the row says which one answered. Part **(c)** restores the config and diagnoses the deliberately failed command's own log with **no local login** — the only state the cloud tier answers in (**D2400**) — and reads a **cloud answer**, the cost it printed held against the run record's own `cost_usd` (**D2407**), the record itself, the answer read back out of the run's **own artifacts** (**D2404**), the bundle **deleted** (**D2405**), **exactly one** execution, and the task's own `review_class: true` marker — which is also the only reading that shows **T-TC12**'s marker admitting a diagnosis to the review-only variant end to end, since a run without it is halted at bootstrap | See "Check 680" below; **one command**, run by **you** at your own terminal, from the **sandbox checkout** (the `checkout: clone` repository the diagnosis is scoped to), on the **sandbox installation** and **never `belong`** (a value naming belong is refused before the first call, as is an installation whose project is `fugaro-prod` and a coding agent's session, and a traced shell): `bash scripts/live-checks/check680.sh [--dry-run]`, whose sibling test `scripts/live-checks/check680_test.sh` drives every step against fake `fugaro`, `gcloud` and `git` on PATH (no cloud, no installation, no run) and is run by `go test ./scripts`; **no agent runs any step of it** | **ONE job**, in part (c): the diagnosis, on the project's own account, bounded by the recipe's own fifteen minutes and its USD 0.25 cap (**D2407**) plus one container start's storage. Parts (a) and (b) launch **nothing** — (a)'s launch is refused by the gate before the backend is reached and (b) never gets past the tier's pre-flight — and no `gcloud` call here is billable. The check writes **one file**: the installation's project config, a copy of which it takes to `<config>.check680-backup` (mode 0600) before the first write and puts back from the exit trap — on a failure and on a Ctrl-C as well — so its **Restore** is one command (`cp <config>.check680-backup <config>`) if it is killed outright. What is left behind is what a diagnosis leaves anywhere: the run's record and its two answer artifacts in the runs bucket, which `fugaro diagnose <ref>` explains and the bucket's lifecycle expires. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -22806,6 +22812,381 @@ assertion or a Ctrl-C. It costs one sandbox run and the provider credit that cal
 `scripts/live-checks/check781_test.sh`, which drives every step of it against fake tools — a fake `gcloud`
 and a fake `fugaro`, no cloud, no installation and no run — and is run by `go test ./scripts`.
 
+## Check 560: the installation renews its key by itself — one fire of the deployed Scheduler job (a sandbox installation holding a short-lived auto key, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **K7.4** of
+[docs/licence-key-v2/implementation-plan.md](licence-key-v2/implementation-plan.md) — its row for **560**,
+out of that plan's "Checks this plan takes (560–569)", on the owner's instruction of 2026-11-21 — and run on a
+**sandbox** installation first. It answers **K4.2** with **K2.3** and **K2.4**, read end to end on a real
+installation and from the outside only: the tick Terraform applies is the one that renews a key nobody is
+watching, the key it renews is an auto one whose successor the licence server issues, and the installation ends
+up holding that successor **beside** the key it replaces. It is the opposite half of `fugaro licence refresh`:
+that command renews the key a person is watching, and this check measures the path where nobody is. **No agent
+runs any step of it**, and none can: the fire writes the installation's own key, and `fugaro licence renew
+--job` refuses an agent's session for that reason.
+
+**What it settles.**
+
+- **The tick is the one Terraform applies.** The Scheduler job `fugaro-licence-renew`, in the installation's
+  Scheduler region, is there, is **ENABLED** (K4.2's module says it ships RUNNING, because a paused schedule is
+  a licence that quietly stops renewing), and its target is Scheduler's own POST to the Cloud Run job's `:run`
+  endpoint, authorised with an OAuth token of the installation's scheduler account. Its cron and time zone are
+  printed and are **not** a FAIL: `23 4 * * *` UTC is the module's own pin, and a difference is drift the row
+  shows rather than a licence the check calls broken.
+- **The job is this installation's licence job.** `fugarolicence` in the installation's region carries the two
+  `fugaro` labels, argv `licence renew --job`, the 600s timeout, no retries, the licence service account, and
+  the two names K4.2's own preconditions pin (`FUGARO_PROJECT` is the Fugaro project doctor read,
+  `FUGARO_GCP_PROJECT` the GCP project).
+- **The premise of a renewal.** `fugaro licence status --json` in the sandbox reads the **project's** own key
+  (source `project`, never a machine's: the job renews the project's and only the project's, D2137) with
+  `renewal_mode: auto` — a manual key is checked and never renewed — and a state of active or grace. A
+  **short-lived** auto key is what makes the renewal window open now; the window itself is not in that document,
+  so a window that is not open is read where the job says it.
+- **The fire, and the execution it starts.** One `gcloud scheduler jobs run` of that Scheduler job — the same
+  call the daily tick makes — and then the newest execution of `fugarolicence` created at or after it, with its
+  terminal condition. Nothing else in this check starts a Cloud Run execution, so an execution created after the
+  call is that call's.
+- **The renewal itself.** The job's own lines for that execution, read back with `gcloud logging read`
+  filtered by the execution's own `run.googleapis.com/execution_name` (a line an earlier execution wrote is
+  not this fire's answer):
+  `checked: the licence server answered that key … is good` where a check was due, and `renewed: key
+  <successor> is installed in project <name> beside the key it replaces (fugaro/licence.json)`. The successor's
+  key **ID** is the support handle the specification says is not a secret, and it is the one thing about the
+  key the block carries. A window that is not open is that same read: `nothing to do: key … is paid through …,
+  its renewal window opens …` is a row that could **not be measured**, naming the short-lived key the check
+  needs.
+- **The state after.** `fugaro licence status --json` again: the term is **strictly later** than the premise's,
+  the source is still the project's, the renewal mode still `auto`, the state still active or grace. The check
+  record is reported and is not required to have moved — a window that opens between two checks renews without
+  asking one, K4.1's order being the check first and the renewal after.
+
+**The command.** It is **one command**, run at your own terminal:
+
+```sh
+bash scripts/live-checks/check560.sh --sandbox <the checkout>
+```
+
+`--dry-run` makes every guard and prints every command it would run, calling nothing; `--help` prints the header
+above. `--project`, `--region` and `--scheduler-region` default to what `fugaro doctor --json` and K4.2's module
+name, so an unset shell runs it as written. `--project fugaro-prod` is refused unless `--production` is given, a
+value naming `belong` is refused **by name**, and a coding agent's session is refused too. The check prints ONE
+block on **stdout** headed `CHECK 560 RESULT`, ending `CHECK 560 RESULT END (exit N)`: exit **0** when every
+criterion held, **1** when one did not, **2** when it could not measure — no `gcloud`, no `fugaro`, a key whose
+`renewal_mode` is not auto, a renewal window that is not open. Paste the block back for the row; a key the run
+never reached reads `FAIL — not reached`. The block's keys are `xtrace`, `agent-session`, `belong`, `sandbox`,
+`project`, `scheduler`, `job`, `premise`, `execution`, `renewed`, `status`, `restore` and `scratch`.
+
+**What it creates, and what it leaves behind.** ONE Cloud Run execution of the installation's own licence job —
+one container run at the job's 600s ceiling, 1 vCPU and 512 MiB — which writes what the licence server issues:
+the successor key and its secret version, in the installation's own project. **That write is the
+installation's licence and is kept on purpose**; the `restore` row says so, and says the check wrote no object
+of the runs bucket itself, read the licence object's bytes nowhere and deleted nothing at all. The scratch
+directory is removed from the exit trap even on a failed assertion or a Ctrl-C.
+
+**What it reads, and what it never prints.** No licence key and no renewal secret: names, IDs, states and terms
+only. The licence bucket's object is not read at all — `licence status --json` carries no key — and the only
+thing about the key in the block is its **ID**, which the specification calls a support handle.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check560_test.sh`, which drives every step of it against fake tools — a fake `gcloud`
+serving the Scheduler job, the licence job, the fire, the execution and the job's own log lines — with no cloud
+and no installation, and is run by `go test ./scripts`.
+
+## Check 561: a revocation recorded at the next check, and an unreachable server revoking nothing (a sandbox installation whose key is auto, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **K7.4** of
+[docs/licence-key-v2/implementation-plan.md](licence-key-v2/implementation-plan.md) — its row for **561** — and
+run on a **sandbox** installation first. It answers **K2.6** with **K4.1** and **D2140**, from the outside: a
+revocation the owner makes on the portal's operations screens (**P5.3**) is recorded at the next tick, and a
+licence server that cannot be reached revokes **nothing**. The revocation itself is the owner's, made on the
+page before the command; the check makes no call to the operations API and revokes nothing. **No agent runs any
+step of it.**
+
+**Two halves, one command each way.** A revoked key is not the good key the other half needs, so `--part
+revoke` (the default) and `--part unreachable` are two runs, each with the owner's own change made **before**
+it: `revoke` needs the key already revoked on the portal's operations screens, `unreachable` needs the licence
+job's route to the licence server gone (D2140's block — the job ships no network switch of its own and the
+server's address is a constant of the build, so this is a change at the network or at the server).
+
+**What it settles.**
+
+- **The premise, both halves.** `fugaro licence status --json` reads the project's own key, `revoked: false`,
+  a state of active or grace, and a check record whose `key_id` is that key — the name the job's own line is
+  held against.
+- **`--part revoke`.** The tick's own line — read from the execution **this fire** started, filtered by its own
+  `run.googleapis.com/execution_name`, so yesterday's answer cannot be read as this fire's — is `the licence
+  server answered that key <id> is revoked: project <name> runs on Free from now on, nothing has been deleted,
+  and a new key restores everything (fugaro licence set)`; a line naming a key the installation does **not**
+  hold is a **FAIL**, because a revocation is about the key it names. After the tick the installation reads
+  `revoked: true` with state **expired**, its tier, seats and `paid_through` **still readable** (D436's read-only: a revocation records an answer and deletes nothing), the
+  installation's own key still installed, and the check record's status `revoked` about the same key.
+- **`--part unreachable`.** The tick's own line is `note: the check of key <id> did not complete, so the key
+  keeps its state and nothing was renewed (only an explicit answer revokes, D2140)`. After it: the state is the
+  one read before the tick, `revoked` is still false, the **failure count is up**, the last-ok time has **not
+  moved** (last-ok is when a check last reached the server, and it is what the 30-day warning counts from), and
+  the record's status is `unreachable`. A `revoked: true` there, a state that moved, a count that did not
+  move, a moved last-ok or a record that says anything else is a **FAIL** — each one is the failure D2140
+  exists for.
+- **The step the owner has not made** is never a silent FAIL: a tick that reached the server with the key still
+  good, or a job that records no check at all, is a row that could **not be measured**, and its sentence names
+  the step to make and run the check again.
+
+**The command.** It is **one command per part**, run at your own terminal:
+
+```sh
+bash scripts/live-checks/check561.sh --sandbox <the checkout>                       # the key is revoked on the operations screens first
+bash scripts/live-checks/check561.sh --sandbox <the checkout> --part unreachable    # the route to the licence server is gone first
+```
+
+The `MANUAL:` line the block prints is the owner's own part, with the page or the change it names. `--dry-run`
+makes every guard and prints every command it would run; `--help` prints the header above. `--project`,
+`--region` and `--scheduler-region` default as Check 560's do; `--project fugaro-prod` is refused unless
+`--production` is given, a value naming `belong` is refused **by name**, and a coding agent's session is refused
+too. The block is headed `CHECK 561 RESULT`, ends `CHECK 561 RESULT END (exit N)`, and exits **0** when the
+half's criteria held, **1** when one did not, **2** when a row could not be measured (the premise holds no key
+the tick checked, the tick recorded no check, the key is manual or offline — a key that contacts no server can
+never see a revocation — or the tick reached a server that was supposed to be gone). Its keys are `xtrace`,
+`agent-session`, `belong`, `sandbox`, `project`, `scheduler`, `job`, `premise`, `manual`, `execution`, `answer`,
+`state`, `restore` and `scratch`, plus a `warning` row when the installation's own D2140 window is open.
+
+**What it creates, and what it leaves behind.** Its one write of any kind is the fire, which makes the
+installation's own check and records the licence server's answer. Under `--part revoke` the installation is
+**Free** until a key is installed again (`fugaro licence set` with the key the licence server issues in the
+revoked one's place) and the revoked key is the owner's own test key; under `--part unreachable` the key was
+never touched and the route is the owner's own change, theirs to put back. Either way the check deleted nothing,
+wrote no object of the runs bucket itself, revoked nothing and read the licence object's bytes nowhere, and its
+scratch directory goes with the exit trap.
+
+**What it reads, and what it never prints.** No licence key and no renewal secret: the key's **ID**, states,
+counts and times only. The licence bucket's object is never read — it holds every key — and a log line this
+check does not recognise is counted and **not printed**: a line it cannot name is a line it cannot vouch for,
+and the row names the `gcloud logging read` command instead.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check561_test.sh`, which drives both parts against fake tools — a fake `gcloud` for the
+Scheduler job, the fire, the execution and the job's lines, and a fake `fugaro` answering `doctor --json` and
+two `licence status --json` reads — with no cloud and no account, and is run by `go test ./scripts`.
+
+## Check 562: the browser sign-in, and the callback whose `state` is not the flow's own (the staging site first, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **K7.4** of
+[docs/licence-key-v2/implementation-plan.md](licence-key-v2/implementation-plan.md) — its row for **562** — and
+run on **staging** first. It answers **K3.3** and **K2.4**: `fugaro licence login` opens the licence site, takes
+ONE callback on a listener bound to the literal `127.0.0.1`, exchanges the code for a key and installs it; and a
+callback whose `state` is not the flow's own is refused **and does not end the flow** (RFC 8252 §7.3). **No
+agent runs any step of it**: the browser half is a person's own account.
+
+**What it settles.**
+
+- **The origin is the licence site.** One read carries no sign-in at all: `GET <site>/cli/authorize` with no
+  query answers **403** with the site's own refusal sentence ("This sign-in could not be verified. …"), which is
+  what says the host in front of the check is the licence site and not a marketing page. Anything else and every
+  row below is off-target, so it is a row the check could **not** measure.
+- **The address the CLI prints.** `<site>/cli/authorize` over **https**, carrying the flow's own `state` and a
+  PKCE S256 `code_challenge`, with a callback of `http://127.0.0.1:<port>/callback` — the literal loopback and
+  the port the kernel gave. The site the CLI talks to is a **constant** of the build
+  (`licenceServerURL = "https://keys.fugaro.dev"` in `ee/register/licence.go`), which nothing can repoint: `--site`
+  only holds that address against the origin you expect, it never moves the CLI.
+- **The wrong-`state` refusal.** `GET <callback>?state=…&code=…` with values the **check made up** — so nothing
+  a person's sign-in holds ever travels — answers **400** with the page headed "This is not the sign-in's own
+  callback", and the login command is **still running** afterwards. A **200**, or a login that ended, is a
+  **FAIL**: a local process that guessed the port must not be able to spend the person's sign-in.
+- **The sign-in itself.** One `MANUAL:` line says what to do in the browser; the command then ends, and
+  `fugaro licence status --json` in the checkout reads `source: project` with a non-empty `tier` and
+  `renewal_mode` and a state of active or grace — the key the sign-in installed is the installation's own
+  licence. No key is read: the status document carries none, and no line of the command's output may carry a
+  key-shaped string (that check is a row of its own).
+
+**The command.** It is **one command**, run at your own terminal:
+
+```sh
+bash scripts/live-checks/check562.sh --sandbox <the checkout>
+```
+
+`--site` names the origin when the deployment is not the CLI's own constant; `--dry-run` makes every guard and
+prints every command it would run, calling nothing; `--help` prints the header above. `--project fugaro-prod`
+is refused unless `--production` is given, a value naming `belong` is refused **by name**, and a coding agent's
+session is refused too. The block is headed `CHECK 562 RESULT`, ends `CHECK 562 RESULT END (exit N)`, and exits
+**0** when every criterion held, **1** when the wrong-state callback was accepted or ended the flow, **2** when
+it could not measure — the origin is not the licence site, the installation has no Firebase project, the browser
+sign-in was not finished, or `licence status` does not answer. Its keys are `xtrace`, `agent-session`, `belong`,
+`project`, `site`, `sandbox`, `address`, `wrong-state`, `signin`, `restore` and `scratch`.
+
+**What it creates, and what it leaves behind.** The key the sign-in installs — this installation's own licence —
+and nothing else: every other call is a read, plus the callback the check makes up, which is refused. **The key
+is kept on purpose**: it is the object of the whole check, and a check does not delete a person's licence. The
+scratch directory is removed from the exit trap, and the login process is killed if the check ends before it
+does.
+
+**What it reads, and what it never prints.** No licence key, no renewal secret and no authorize code, in whole
+or in part. The `state` and `code` the check sends are its own and non-secret; the CLI prints no code at all;
+and the block reads only `source`, `tier`, `state` and `renewal_mode`.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check562_test.sh`, which drives every step against fakes — a fake `curl` serving the site's
+own 403 and the loopback refusal page, and a fake `fugaro` whose `licence login` prints an authorize address and
+holds a listener — with no cloud and no site, and is run by `go test ./scripts`.
+
+## Check 563: the device code, from a machine with no browser (the staging site first, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **K7.4** of
+[docs/licence-key-v2/implementation-plan.md](licence-key-v2/implementation-plan.md) — its row for **563** — and
+run on **staging** first. It answers **K3.3**'s device half: a machine that cannot open a browser prints an
+address and a short code and waits, a person opens the address on **any** machine that has one, signs in and
+types the code, and the terminal is signed in with no browser ever opening on it. **No agent runs any step of
+it.**
+
+**Two halves, one command each way.** An approved code is not an expired one, so `--approve` (the default)
+measures the sign-in and `--expiry` measures the deadline and the poll's stop. The half a run did not take reads
+`INFO — not this run's half`.
+
+**What it settles.**
+
+- **The address.** The site's own approve page, `<site>/cli/device`, over https, printed by the command — and the
+  block says **no browser was opened on this machine**, which is the whole point of the flow.
+- **The code.** Eight characters of K2.4's alphabet — `A`–`H`, `J`–`N`, `P`–`Z` and `2`–`9`, so **no `I`, no
+  `O`, no `0` and no `1`** — grouped four and four with one `-`, and the command's own line names its life:
+  `The code is worth 10m0s.`
+- **`--approve`.** One `MANUAL:` line says to open the address on any machine with a browser, sign in, type the
+  code and pick the licence; the login then ends **0** and `fugaro licence status --json` reads `source:
+  project` with a non-empty `tier` and a state of active or grace — the sign-in installed the installation's own
+  key. The key is never read or printed.
+- **`--expiry`.** Nothing is approved: the check waits out the code's ten minutes and holds that the login ended
+  with the client's own refusal, `the sign-in was not finished before its code expired`, that the installation's
+  licence is **unchanged** from the read taken before the flow started, and that the address and code held above
+  were live while it waited. This is the half that proves the code is worth ten minutes and that the poll
+  **stops** at the expiry rather than hanging.
+
+**The command.** It is **one command per half**, run at your own terminal:
+
+```sh
+bash scripts/live-checks/check563.sh --sandbox <the checkout>            # approve the code from a browser elsewhere
+bash scripts/live-checks/check563.sh --sandbox <the checkout> --expiry   # approve nothing; wait the code out
+```
+
+`--site` names the origin when the deployment is not the CLI's own constant; `--wait` bounds the sign-in;
+`--dry-run` makes every guard and prints every command it would run, calling nothing; `--help` prints the header
+above. `--project fugaro-prod` is refused unless `--production` is given, a value naming `belong` is refused
+**by name**, and a coding agent's session is refused too. The block is headed `CHECK 563 RESULT`, ends
+`CHECK 563 RESULT END (exit N)`, and exits **0** when the half's criteria held, **1** when one did not, **2**
+when it could not measure — no approve page, an installation with no Firebase project, a sign-in not finished
+inside `--wait`. Its keys are `xtrace`, `agent-session`, `belong`, `project`, `site`, `sandbox`, `address`,
+`code`, `signin`, `expiry`, `restore` and `scratch`.
+
+**What it creates, and what it leaves behind.** Under `--approve`, the key `fugaro licence login` installs — the
+installation's own licence, written to the project's store and the renewal secret to its own container (D2137) —
+**kept on purpose**. Under `--expiry`, nothing at all: the flow writes nothing and the row says so. Either way
+the scratch directory goes from the exit trap, and the background login with it.
+
+**What it reads, and what it never prints.** No licence key, no renewal secret and no device token: the address,
+the **user code** (K2.4's own short code, which the site's page asks a person to type and is not a secret), and
+`source`, `tier`, `state` — `licence status --json` carries no key.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check563_test.sh`, which drives both halves against a fake `fugaro` whose
+`licence login --device` prints an address and a code and then ends approved or expired — no browser, no site
+and no account — and is run by `go test ./scripts`.
+
+## Check 564: a Paddle sandbox purchase, its renewal and its refund, end to end (a throwaway installation and a staging deployment, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **K7.4** of
+[docs/licence-key-v2/implementation-plan.md](licence-key-v2/implementation-plan.md) — its row for **564** — and
+run on **staging** first. It answers **K2.5**: Paddle's events reach v1 and mean what the licence says they
+mean. A card buys a licence in the Paddle **sandbox**, the licence is granted, the term renews, and a refund
+withdraws the **whole** licence rather than merely the key the event happened to name (**D2147**) — the row a
+refund stream gets wrong most often, and the reason the check exists. Two rows are about the installation as
+much as the portal: after the refund `fugaro licence status --json` must read `revoked: true` with the tier and
+the seats **still readable** and the key **still installed**, because a withdrawal deletes nothing
+(**D436**). **The Paddle sandbox account is subscriptions S8.5's**, an owner-run task: without it the check
+**refuses at once, naming it**, and builds the sandbox catalogue first. **No agent runs any step of it.**
+
+**What it settles.**
+
+- **The origin is the API's.** One read carries no sign-in: `GET /api/workspaces` answers **401
+  `unauthenticated`**, which is what says the origin in front of the check is the portal's API and not a
+  marketing page or somebody else's host.
+- **The sandbox account.** `GET /prices?status=active` against `https://sandbox-api.paddle.com` is printed as a
+  count of active prices and the first price id — **never the key**, which travels in a `0600` curl config file
+  and reaches neither a command line nor the block. A **401** or a **403** is a row that could **not be
+  measured**, and its sentence names S8.5.
+- **The purchase.** `POST /api/checkout` with your token, the workspace and the licence terms you accepted
+  answers **201** with a Paddle `transaction_id`, and that transaction is read back from the **SANDBOX**
+  (`GET /transactions/{id}`): a transaction the sandbox does not hold was minted by a **LIVE** merchant, which
+  is the finding that row exists for.
+- **The entitlement.** The purchase appears at `GET /api/entitlements` for the workspace with source `purchase`
+  and status `active`, and the workspace's own mirror (`GET /api/workspaces/{workspace}/subscription`) names
+  Paddle's subscription. A purchase whose workspace names none is a **FAIL**.
+- **The binding.** A purchase mints no key of its own (**F25**): it is a licence of the **account** you sign in
+  as. So the check asks for **ONE browser sign-in** in the middle of the run — `fugaro licence login` in the
+  sandbox, as the account that bought — and holds the installation's own read against the purchase's own tier.
+  A key of the per-machine store rather than the project's own is a **FAIL**; a sign-in for a licence whose
+  tier is not the purchase's is a row that could **not be measured** (nothing below it would be about this
+  purchase). The key is never read.
+- **The renewal.** Paddle's own period end (`GET /subscriptions/{id}`) and the entitlement's own end **agree**,
+  and after you bill the renewal the term has **moved**. A renewal that did not move the term is a row that
+  could **not be measured** rather than a finding, because it may mean the sandbox did not bill. The check
+  fires the deployed Scheduler job `fugaro-licence-renew` through `gcloud scheduler jobs run` to make the
+  installation re-read its licence, and it fires it in the job's **own** location: Scheduler is not offered in
+  every Cloud Run region (**K4.2**), so the job's location is read from the installation's project (and
+  `--scheduler-region` names it when there is nothing to read) rather than taken to be the installation's own
+  region. A job in no location the project serves, or a fire that fails, is a row that could **not be
+  measured**, and the check says so **before** anything is bought.
+- **The refund.** The entitlement reads **`revoked`** — every key it ever minted, and not only the key the event
+  named (**D2147**, **F29**) — and it is the portal's own record that says so.
+- **The tick after the refund.** The installation hears about a withdrawal only from its **own** check
+  (**K4.1**): the portal's record and the local store say nothing to it until then. So after the refund the
+  check fires `fugaro-licence-renew` **once more** and waits for a completed execution of the Cloud Run job
+  `fugarolicence` that was **created after that fire** — an execution that ran earlier is never read as this
+  fire's answer, and a tick whose fire started no execution is a row that could **not be measured**.
+- **The installation.** `fugaro licence status --json` in the sandbox reads `revoked: true` with
+  `last_check.status` `revoked` and a `last_check.at` **after** the instant the check saw the refund land at the
+  portal, while the tier, the seats and the key itself are **still there** (D436). A key still **serving** after
+  the refund is the **FAIL**; an installation that has recorded **no check since the refund** has not heard
+  about the withdrawal, which is a row that could **not be measured** — never a FAIL, however the local store
+  reads.
+
+**The command.** It is **one command**, run at your own terminal:
+
+```sh
+bash scripts/live-checks/check564.sh --sandbox <the checkout> --workspace-id <the portal workspace> \
+  --token-file <a 0600 file holding your ID token> \
+  --paddle-key-file <a 0600 file holding the Paddle SANDBOX API key S8.5 minted>
+```
+
+`--workspace-id` names the portal workspace the purchase is for (one workspace has one subscription, D2192) and is
+required; `--api` names the portal's own origin, `--terms` the licence terms **version** you accepted and
+`--scheduler-region` the location the licence renewal Scheduler job lives in (read from the installation's
+project when it is not given, since Scheduler does not serve every Cloud Run region); `--dry-run` makes every guard and prints every
+command it would run, calling nothing; `--help` prints the header above. The **LIVE** Paddle host is refused
+**by name** — no live purchase is ever made — a value naming `fugaro-prod`, and the GCP project the
+installation's own `fugaro doctor` names, are refused unless `--production` is given, a value naming `belong`
+is refused by name, and a coding agent's session is refused too. The block is headed
+`CHECK 564 RESULT`, ends `CHECK 564 RESULT END (exit N)`, and exits **0** when every criterion held, **1** when
+one did not, **2** when it could not measure — a token file that is not `0600`, the sandbox account missing or
+refusing its key, a transaction the sandbox does not hold, a renewal the sandbox did not bill, a sign-in that
+did not come back, a renewal job in no location the project serves or a fire that failed, and an installation
+that has recorded no check since the refund. Its keys are
+`xtrace`, `agent-session`, `belong`, `project`, `paddle-sandbox`, `api`, `token`, `sandbox`, `scheduler`,
+`checkout`, `entitlement`, `bind`, `renewal`, `refund`, `tick`, `install`, `restore` and `scratch`.
+
+**What it creates, and what it leaves behind.** A Paddle **SANDBOX** transaction, its subscription and its
+refund — real objects in the sandbox and nothing at all in the live merchant — plus one withdrawn entitlement in
+the portal deployment you point at, and one revoked key in the throwaway installation. The `restore` row names
+each by id rather than hiding it: the sandbox objects and the withdrawn entitlement are **left as they are**
+(they are the sandbox's), and the revoked key is replaced by the `MANUAL:` line the block prints — a fresh key
+for the installation, which is the owner's own step. The scratch directory is removed from the exit trap.
+
+**What it reads, and what it never prints.** No Paddle API key, no ID token and no licence key: ids, statuses,
+counts, amounts and dates only. The ID token travels in a `0600` curl config file and the Paddle key in a `0600`
+file of its own; neither reaches a command line or the block.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check564_test.sh`, which drives every step against fakes — a fake `curl` over the portal's
+API and the Paddle sandbox API, a fake `fugaro` (its `licence login` prints an address; its `licence status
+--json` holds a check the case places before or after the refund) and a fake `gcloud` (the Scheduler job in a
+location the installation's region is not, both fires, and the licence job's executions, the fire's own and an
+older one) — with no cloud, no purchase and no account, and is run by `go test ./scripts`.
+
 ## Check 570: pay before setup — the unbound purchase, the refused binding and the seat a refresh brings (the staging project and the staging portal first, never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **P9.4** of
@@ -24189,6 +24570,169 @@ needed to run the check as the register writes it.
 `scripts/live-checks/check-740-run-messages_test.sh`, which drives every step of it against fake tools — a
 fake `fugaro` and a fake `gcloud`, no cloud, no installation and no run — and is run by
 `go test ./scripts`.
+
+## Check 680: the cloud tier of `fugaro troubleshoot`, end to end (the sandbox installation and its `checkout: clone` checkout, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T-TC10** of
+[docs/troubleshoot-cloud/implementation-plan.md](troubleshoot-cloud/implementation-plan.md) — its "### T-TC10: Check 680,
+the live check (OWNER-RUN)" — and the owner renumbered it from Check 620 on 2026-11-21, because 620 is
+mobile-auth's and 670 is repos-management's RE6. **Run by the owner**, at their own terminal, from the
+sandbox checkout, on the sandbox installation, **never `belong`**. It is the live half of the
+troubleshoot-cloud work: **D2408**'s three parts, which no hermetic test can read, because every one of them
+is about a machine with **no local login**, a **real installation's own config** and a **real job**.
+**No agent runs any step of it**: it rolls an installation's base image back, rewrites its project config and
+launches one job on the project's own account. Its own automated proof is
+`scripts/live-checks/check680_test.sh`, which drives every step against fake tools — fake `fugaro`, `gcloud`
+and `git` on PATH, a fake installation's project config, a mini object store and an execution counter, no
+cloud and no run — and is run by `go test ./scripts`.
+
+**What it settles.** Three parts, and nothing else in this repository takes any of them:
+
+- **(a) A broken launch path declines the tier instead of launching** (spec acceptance 3, F8, D2401). The
+  check rolls the installation's **own base image** back — `base_images.base` in the installation's own
+  project config, the ONE file it writes — to a release **older than the one this release's policy requires**
+  (default `0.1.0`), and then runs `fugaro troubleshoot <run>` with **no local login**. What it requires is
+  the **gate's own sentence**: `the cloud diagnosis is not available: <repo> needs a job image whose runner
+  knows <…> (fugaro <release> or later), but the checkout: clone job image of <repo> workflow <workflow> is
+  <ref>, release <rel>. Run fugaro update --base base …`, read from **tier 4** (`evidence`, `offline: true`,
+  exit 1) — `troubleshootDeclineCloud`, produced by the **pre-flight**, which runs **before** the bundle is
+  uploaded and **before** any execution exists — and **no execution created** against the count it read
+  first.
+  The **deliberately refused launch** is a real `fugaro run`, and `fugaro run` has **no dry run**: a launch
+  that is not refused starts a billable run. So the check launches **only after** the decline has read which
+  gate judges that repository's image. The two gates are told apart by their own sentences: the one whose
+  image is judged by the **local config** says `the checkout: clone job image of …` (and its fix is `fugaro
+  update --base base`), the one judged by the **runs bucket's build record** does not. A repository whose
+  workflow is judged from the build record is left **entirely alone** — this check does not doctor the bucket
+  — and parts (b) and (c) then read **NOT MEASURED**, never a pass. When the judge **is** the local config,
+  the launch is made and must be refused by **the same gate the decline quoted**: the same required release,
+  the same workflow, the same fix, and **no execution** — a launch that exits 0 is a FAIL that names the run
+  it may have started, and the row says so.
+- **(b) The cloud tier made unavailable answers from tier 4 with the reason** (D2400's fourth tier, D2401).
+  A part is measured by making the tier's **own** reads impossible rather than by reading someone else's
+  outage. The roll-back of (a) is put back **first** — the image gate is the first question the pre-flight
+  asks, and leaving it broken would make this row read (a)'s sentence a second time — and then the config's
+  `gcp_project`, `budget.firebase_project` and `budget.rtdb_url` are pointed at a project that
+  `gcloud projects describe` confirms is **not there**. The row requires tier 4, `offline: true`, a non-zero
+  exit and the pre-flight's own sentence, and it names **which lever** answered: the **budget/database read**
+  in a project that is not there, or the **credentials service's own switch** (`checkReviewService`, which
+  refuses a review-only job's account when the installation publishes no credentials service) —
+  T-TC10(b)'s two levers. A reason that is neither is **not measured**, and a reason that is still (a)'s
+  sentence is **not measured** too: the part proved nothing about the project it moved.
+- **(c) On a healthy sandbox the cloud diagnosis answers, costs, records, reads back and cleans up** (D2403,
+  D2404, D2405, D2407, D2409, D2411). With the config **byte-identical** to what the check found, the failed
+  command's **own** log — the newest `<command>-<14 digits>-<pid>.log` whose closing line is `Failed in …` or
+  `Left for you in …`, the CLI's own rule, and never a log this check wrote — is diagnosed with **no local
+  login**, which is the only state the cloud tier answers in (`CLAUDE_CODE_OAUTH_TOKEN` and
+  `ANTHROPIC_API_KEY` unset and `claude` off PATH; D2400). The rows are: a **cloud** answer (`tier: cloud`,
+  `offline: false`, exit 0), the **cost** the answer printed held against the run record's own **`cost_usd`**
+  in `runs/<slug>/<id>/result.json` (read out of the bucket rather than taken from the answer — the figure the
+  tier itself reads back, D2407), the **record** on the run's prefix (its `outcome` and its artifact rows), the
+  answer read back out of the run's **own artifacts** (`artifacts/diagnosis.json`, `artifacts/diagnosis.md`,
+  D2404), the **bundle gone** (no object under `inputs/diagnose/` — the evidence this machine uploaded is
+  deleted once the answer is read, D2405), **exactly one** execution more than the baseline (D2407's one job
+  and no retry), and the stored **task**'s own `review_class: true` — **T-TC12**'s marker. The marker's row is
+  the one that needs an argument rather than a reading: an answer **exists at all** only if the run was
+  admitted to the review-only variant, because a task without the marker is **halted at bootstrap** before its
+  first stage, so the marker is read from the task the launch stored and the answer is what proves it took
+  effect.
+
+**The command.** It is **one command**, run at your own terminal **from the sandbox checkout** — the checkout
+whose `origin` is the repository the diagnosis is scoped to:
+
+```sh
+bash scripts/live-checks/check680.sh
+```
+
+It prompts for nothing and needs no flag on a machine with one installation: the installation (its name, its
+GCP project, its region and the checkouts it remembers) is read with `fugaro config list --json`, which is
+read-only, offline and needs no credential, and so is the repository, from the checkout's own `origin`.
+Every flag overrides a value the installation supplies: `--name` the installation (project config) name,
+`--config` its config file, `--checkout` a directory inside the checkout (default: this directory), `--repo`
+the repository as `owner/name`, `--project`, `--region`, `--bucket`, `--subject` the failed log to diagnose,
+`--bad-release` the release the base image is rolled back to (default `0.1.0`), `--absent-project` the project
+part (b) points the tier at (it must not exist, and the check asks `gcloud` to confirm that), `--task` the text
+of the deliberately refused launch, `--executions-limit` how many executions each `gcloud` read asks for
+(default 200: a read `gcloud` fills is widened — ×2 at a time, at most 8× that — because the count parts (a)
+and (c) compare has to be the **exact** one, and a project still full at the widest read is a row that could
+not be measured rather than a pass), and `--cloud-seconds` the bound, in seconds, on the **two** calls that may
+launch something — the deliberately refused launch of (a) and the diagnosis of (c) — which is `timeout`'s own
+(default 1500: the tier's own fifteen-minute timeout and slack; `0` for no bound). `--dry-run` prints the
+plan — the one job, the one refused launch and the three parts as commands — and every row as `not reached`,
+calls nothing and writes nothing; `--help` prints the script's header.
+
+**Prerequisites.** `bash`, `python3` (every document and every rewrite is read and written with it), `git`,
+`gcloud` — authenticated: it lists the project's executions and reads the runs bucket — and `fugaro`, the
+binary of the release under test, since the gates, the tier and the recipe are its own; a missing one stops
+the run with one line naming it. `timeout` is **not** one of them: it is what the `--cloud-seconds` bound is
+made of, and on a machine without one — macOS ships none, GNU coreutils has it, which is Check 310's own caveat
+— the two calls that may launch something are unbounded and yours to interrupt, which is what they were before
+there was a bound at all. A **failed command already logged** on the machine is the premise of part
+(c) — the tier explains a failure this machine wrote, and a check that invented one would be diagnosing
+itself — so run a sandbox command that fails (a `fugaro run` whose launch the installation's gates refuse is
+the one this check is written around) before running it, or pass `--subject <run id>`. A log that already
+carries a `[fugaro-cause: …]` marker is refused as a subject: the **rules** tier answers that one from the log
+alone, with no model call, and none of D2408's three parts is about it.
+
+**Reading the `CHECK 680 RESULT` block.** Progress goes to stderr; ONE block on stdout, headed
+`CHECK 680 RESULT` and ending `CHECK 680 RESULT END (exit N)`, is what you copy back. Its keys, in the order
+it prints them, are `xtrace`, `agent-session`, `project`, `belong`, `checkout`, `config`, `login`, `subject`,
+`baseline`, `a-config`, `a-decline`, `a-launch`, `a-executions`, `b-config`, `b-tier`, `c-answer`, `c-run`,
+`c-cost`, `c-marker`, `c-artifacts`, `c-bundle`, `c-executions`, `restore`, `scratch` and `left-behind`,
+followed by `aborted` if a guard or an internal error ended the run: the guard rows first, so a refusal says
+what it refused, then (a), (b), (c) in the order they were measured. A criterion the check never reached
+prints `FAIL — not reached` with the reason, so a block is never short. The last line is the verdict and it is
+the exit status: **0** when every criterion that was measured held; **1** when a criterion was measured and
+failed — the tier launched a job over a broken launch path, the decline carried a sentence the gate did not
+write, an execution appeared where none may, the answer was not a cloud one, the record held no cost, the
+class marker was missing, the bundle survived the answer — or when a guard refused the run; **2** when a row
+could **not** be measured, for a reason that is this check's arrangement or the installation: no failed
+command is logged, the workflow's image is judged from the build record rather than the local config, the
+config file is not there or does not read as the CLI reads it, the executions could not be listed, the project
+part (b) would use exists. Exit 2 is **NOT MEASURED and never a pass**: only an all-PASS block is a PASS.
+
+**What it reads, and what it never reads.** Names, ids, stages, status words, a tier, a cost, a count and the
+gates' own sentences: the installation and its project, the checkout's `origin`, the config's own dotted keys,
+the run's reference, the record's `cost_usd` and outcome, the artifact names, the execution count and the
+class marker. **No credential, token or secret value is read at all** — the check reads none, and the one
+sentinel its own test plants in a config fixture must never reach the block — and no value of the answer is
+printed beyond its **first line**, the tier, the cost and the run's own reference. And no trace: `bash -x`
+prints every command as it runs, so the check **refuses** a shell that arrived with tracing on rather than
+printing the installation's own names.
+
+**Restore.** The check writes **one file** — the installation's own project config — and it takes a copy of it
+beside it, `<config>.check680-backup` (mode 0600), **before the first write**. Every write replaces **one
+literal value on one line** and nothing else moves: `base_images.base`'s release tag for part (a), then
+`gcp_project`, `budget.firebase_project` and `budget.rtdb_url` for part (b), with the roll-back of (a) put
+**back** before (b)'s writes. The exit trap puts the file back and removes the sidecar — on a clean end, on a
+failed assertion and on a Ctrl-C alike — and the `restore` row reads the file's own hash against the one it
+recorded first, so a check whose put-back did nothing is a FAIL and not a quiet success. A check killed
+outright (SIGKILL, a power cut) leaves the sidecar, and the restore is **one command**:
+
+```sh
+cp <config>.check680-backup <config>
+```
+
+Nothing else in the installation is written: no task, no run, no policy and no budget. What is left behind is
+what a diagnosis leaves anywhere — the run's record and its two answer artifacts in the runs bucket, which
+`fugaro diagnose <ref>` explains and the bucket's lifecycle expires — and parts (a) and (b) leave nothing at
+all: no execution, no run, and the file they arranged put back. The scratch directory (holding the task file
+and every document the check read) is removed from the exit trap, and the `scratch` row says whether it really
+went.
+
+**The knobs.** `CHECK680_NAME`, `CHECK680_CONFIG`, `CHECK680_CHECKOUT`, `CHECK680_REPO`, `CHECK680_PROJECT`,
+`CHECK680_REGION`, `CHECK680_BUCKET`, `CHECK680_SUBJECT`, `CHECK680_BAD_RELEASE`,
+`CHECK680_ABSENT_PROJECT`, `CHECK680_TASK`, `CHECK680_EXECUTIONS_LIMIT` and `CHECK680_CLOUD_SECONDS` are the
+inputs, beside `CHECK680_LOGS_DIR`, `CHECK680_DRY_RUN` and `CHECK680_KEEP_SCRATCH`. None of them can point a
+call at another project or another host — the project and the bucket come from the installation or the flags
+above — and none is needed to run the check as the register writes it. The `belong` refusal and the
+`fugaro-prod` refusal are **not** knobs: they are the reason a value this check was given is checked before
+the first call.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check680_test.sh`, which drives every step of it against fake `fugaro`, `gcloud` and
+`git` — no cloud, no installation and no run — and is run by `go test ./scripts`.
+
 
 ## Check 341: the reports job's first firing, and what it stored (an installation and its own project, never `belong`; run by you; NOT RUN)
 

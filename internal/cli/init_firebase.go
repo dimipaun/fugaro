@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/place"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -250,8 +251,59 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 //
 // Each apply has its own plan and confirmation, and so does the database
 // step. Nothing creates the Firebase project or links billing.
-func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, bin string, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte) error {
-	fp := r.o.firebaseProject()
+// specPtr is the ENGINE's spec, and every field this stage sets on it is set
+// there and not on the copy below: the switch the installation root's
+// `enable_budget` is outlives this stage (see the comment where it is set).
+func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, bin string, lc *localcfg.Config, specPtr *infra.InstallationSpec, path string, old []byte) error {
+	spec := *specPtr
+	// The project this stage works in. With the flag it is the flag's value,
+	// which checkFirebaseProject has already held to the installation's own
+	// project; with no flag (AB7, R2) it is the installation's own project,
+	// which is the only one there is: Fugaro builds the budget backend in the
+	// project `fugaro setup` created for the installation and nowhere else, so
+	// the stage that runs with no flag has one candidate and not a choice.
+	fp := cmp.Or(r.o.firebaseProject(), lc.GCPProject)
+	if fp == "" {
+		return userErr("no Firebase project: the project config names no gcp_project and no --firebase-project was given")
+	}
+	// The no-flag arm: adopt the database the installation already has, or
+	// create one, or change nothing and say in one line why (R2). It runs
+	// BEFORE this stage's first apply, so a run that may not create a database
+	// leaves the installation exactly as it found it.
+	if r.o.firebase == "" {
+		done, err := r.noFlagBudgetDatabase(ctx, c, t, wd, bin, lc, spec, path, old, fp)
+		if err != nil {
+			return err
+		}
+		// r.declined is the whole of what a run that changed nothing has to say
+		// (R2), and its spec stays the engine's own: it has no database here, so
+		// the installation root creates no history account for the Firebase
+		// root's grant to name. Every other answer means the database is this
+		// run's — the state's own, which the local config now records, or one
+		// this run is about to create — and the installation root it is about to
+		// apply is what creates the history account, its custom role and the
+		// grant that binds them (F28: the `enable_budget` variable is kept and
+		// set once the database exists). Without it the first apply would answer
+		// no history account in its outputs, and the Firebase root's grant would
+		// have no member to name.
+		if r.declined == "" {
+			h, err := infra.History(lc)
+			if err != nil {
+				return initErr(err)
+			}
+			spec.EnableBudget, spec.History = true, &h
+			// The ENGINE's spec and not this function's copy: the stages after
+			// this one plan the same root — the credentials stage's apply, and
+			// the second installation stage's, which is the history job's — and
+			// a spec without the switch rebuilds the tfvars without the key and
+			// plans the history account and its custom role away in the very run
+			// that gave the installation its database.
+			*specPtr = spec
+		}
+		if done {
+			return nil
+		}
+	}
 	mode := r.o.budgetMode
 	if mode == "enforce" && (lc.Budget == nil || lc.Budget.PerRunUSD <= 0) {
 		return userErr("--budget-mode enforce needs budget.per_run_usd in the project config (more than 0): it is the per-run cap the jobs enforce")
@@ -486,8 +538,12 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if lc.BudgetMode() == localcfg.BudgetOff && mode == "" {
 		r.warn("budget.mode is off in the project config, so jobs don't use the backend yet: fugaro update --firebase-project " + fp + " --budget-mode observe turns it on (then fugaro update --repo for each repository)")
 	}
-
-	return nil
+	// D3027: the budget database and the local config that records it are
+	// written, and only now is the run history reached. A location left for a
+	// person therefore holds back the Firestore database and nothing else: the
+	// installation has its budget database, this machine records it, and what
+	// waits is the database the history job writes into.
+	return r.deployFirestore(ctx, fsStep)
 }
 
 // discoveryClients are the clients that read the Firebase project's
@@ -563,7 +619,7 @@ func (r *initRun) firebaseHistory(ctx context.Context, c *infra.Clients, t *tf.T
 	if err != nil || stop {
 		return err
 	}
-	fmt.Fprintf(r.w, "The budget backend of project %s is in Firebase project %s. Each repository needs fugaro update --repo to pick up the jobs' environment.\n", lc.Name, r.o.firebaseProject())
+	fmt.Fprintf(r.w, "The budget backend of project %s is in Firebase project %s. Each repository needs fugaro update --repo to pick up the jobs' environment.\n", lc.Name, cmp.Or(r.o.firebaseProject(), lc.GCPProject))
 	return nil
 }
 
@@ -595,11 +651,156 @@ func (r *initRun) checkDatabase(ctx context.Context, lc *localcfg.Config, url, m
 	return initErr(db.RequireCapsForEnforce(ctx))
 }
 
+// noFlagBudgetDatabase is the Firebase stage's own decision when the run names
+// no project (AB7, R2), and it is made before this stage's first apply: the
+// installation adopts the budget database it already has, or this run may not
+// create one and says so in one line (R2), or the run goes on to create one.
+//
+// done reports that the stage is finished — the database was adopted and
+// recorded, or r.declined says in one line why this run did nothing. done is
+// false only where this run may create the database, and the `enable_budget`
+// the caller sets for the applies below is what the false means (F28: the
+// variable stays, and it is set once the database exists).
+//
+// The questions are asked in this order, and every answer but the last ends the
+// stage without changing anything anywhere, so a run that may not create a
+// database leaves the cloud exactly as it found it:
+//
+//  1. Is there a Firebase root state (F23)? A state whose outputs are this
+//     project's IS the database: the run adopts it, records it in the local
+//     config and applies nothing. (An installation whose database this machine
+//     already records never reaches this call at all: the stage is skipped,
+//     F34.)
+//  2. May this credential make the project's IAM changes? Creating the database
+//     needs the custom role, the account that wears it and the grant that binds
+//     them (R2, and U1 is the question itself).
+//  3. Can the project hold a database at all? One that does not exist, is not
+//     ACTIVE or has no billing account linked gets the line that names it.
+//
+// What is left is the creation, and it ends where the flag's own path ends: the
+// same discovery, the same two confirmed applies, the same database steps. A run
+// whose ordinary confirmation nothing would answer never gets here at all: its
+// stage is skipped at the check, with the same one line and nothing applied
+// (F4, R2 — cannotCreateTheDatabase).
+func (r *initRun) noFlagBudgetDatabase(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, bin string, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte, fp string) (done bool, err error) {
+	// F23: the probe is the Firebase STATE's and never the history account's.
+	has, err := infra.StateExists(ctx, c, spec.StateBucket, infra.StatePrefixFirebase)
+	if err != nil {
+		return false, initErr(err)
+	}
+	if has {
+		return r.adoptBudgetDatabase(ctx, c, t, wd, bin, lc, spec, path, old, fp)
+	}
+	// R2: whether the person can make the project's IAM changes.
+	if ok, err := infra.CanMakeIAMChanges(ctx, c, fp); err != nil {
+		return false, initErr(err)
+	} else if !ok {
+		r.declined = fmt.Sprintf("no budget database was created: this credential may not make project %s's IAM changes, which creating one needs (resourcemanager.projects.setIamPolicy, iam.roles.create and iam.serviceAccounts.create; roles/owner holds them); a project owner runs %s once", fp, selfCommand()+" "+r.o.doorName())
+		return true, nil
+	}
+	// R2: a project that cannot hold a database is not this run's to fix. The
+	// line names what the project needs, because the fix is a person's.
+	if err := infra.CheckFirebaseProject(ctx, c, fp); err != nil {
+		r.declined = oneLineCLI("no budget database was created: " + err.Error() + "; a project owner runs " + selfCommand() + " " + r.o.doorName() + " once the project can hold one (it needs a linked billing account, Blaze)")
+		return true, nil
+	}
+	// F32: the state can be deleted while the database stays, and a create over
+	// one that exists would be a second database. The project's databases are
+	// listed before this run creates anything; one that is there is adopted by
+	// the Firebase root's own discovery (the same apply, the same outputs), and
+	// the run says which database it found instead of creating one beside it.
+	urls, err := infra.DatabaseURLs(ctx, c, fp)
+	if err != nil {
+		return false, initErr(err)
+	}
+	if len(urls) > 0 {
+		r.warn(fmt.Sprintf("project %s already has a Realtime Database (%s) and this machine records none: the Firebase root adopts what is there rather than creating a second one", fp, strings.Join(urls, ", ")))
+	}
+	// F4/R2's run never reaches this call: its stage is skipped at the check
+	// (cannotCreateTheDatabase, newFirebaseStage's skip), which is where the
+	// answer can be given before anything is applied. What is left here is the
+	// creation, and every run that reaches it has an answer to give.
+	return false, nil
+}
+
+// cannotCreateTheDatabase is F4/R2's answer, and whether it is this run's: a
+// run whose ordinary confirmation nothing would answer — a coding agent's
+// session, --json, a pipe, --non-interactive, and a run with no terminal —
+// creates no database, and says in one line who must. The rest of the run
+// carries on, which is the whole point of the line (R2).
+//
+// The managed gate is asked first and answers for the run: on a managed project
+// this stage performs under it with no confirmation at all, a coding agent's
+// session included (D3028, R11), so a run the gate stands in for is not a run
+// that has nothing to answer with.
+//
+// It is asked at the stage's own check and not in the arm below, because a run
+// it applies to never reaches the arm: the loop leaves a stage whose steps
+// nothing can confirm to the user, which is the stop this line replaces.
+func (r *initRun) cannotCreateTheDatabase() (string, bool) {
+	if r.gateStandsIn() || r.stepConfirmation(true) != stepLeave {
+		return "", false
+	}
+	return "no budget database was created: nothing answers this run's confirmation (no terminal, --json, a pipe and a coding agent never do); a project owner runs " + selfCommand() + " " + r.o.doorName() + " once", true
+}
+
+// adoptBudgetDatabase is the no-flag stage's adoption (R2): the installation's
+// Firebase root state names a database that is this project's, so the run
+// records it in the local config and applies nothing — no plan, no apply, no
+// project read beyond the state's own outputs. It is the update door's half of
+// budgetDatabaseFromState, which a teammate's new machine reaches through its
+// own stage.
+//
+// A state that exists and whose outputs are not readable, not this project's,
+// or not valid does NOT fall through to a creation: the database the state is
+// about may be right there, and a second one is the thing this whole path
+// exists to avoid (F32). The stage says its one line instead.
+//
+// The adoption needs no confirmation — it reads the state and writes this
+// machine's config — so it is the one half of the no-flag stage a run nothing
+// can confirm for would reach. It does not reach it: such a run's stage is
+// skipped at the check (cannotCreateTheDatabase), and a plan-only run, which
+// does reach it, writes nothing here.
+func (r *initRun) adoptBudgetDatabase(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, bin string, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte, fp string) (done bool, err error) {
+	outs, err := r.readOutputs(ctx, c, t, wd, lc, spec)
+	if err != nil {
+		return false, initErr(err)
+	}
+	next := *lc
+	if ok, why := r.budgetDatabaseFromState(ctx, c, bin, spec.StateBucket, fp, &next); !ok {
+		r.declined = oneLineCLI("no budget database was recorded: " + why + "; this machine creates none over a Firebase root this installation already has, so a project owner runs " + selfCommand() + " " + r.o.doorName() + " once")
+		return true, nil
+	}
+	// --plan-only writes no config, as it writes nothing else (newMachineConfig
+	// is the same guard on the same write, one stage earlier): the reads above
+	// are read-only and the line says what the run that applies would record.
+	if r.o.planOnly {
+		fmt.Fprintf(r.w, "--plan-only: the budget database of project %s is the one this installation already has (Firebase project %s, %s); the run that applies records it in the local config and applies nothing\n", lc.Name, pluginwire.Printable(next.Budget.FirebaseProject), pluginwire.Printable(next.Budget.RTDBURL))
+		return true, nil
+	}
+	r.mutate = func(n *localcfg.Config) { n.Budget = next.Budget }
+	r.backfillCredentialsServiceReady(ctx, c, spec.StateBucket, lc, outs)
+	if err := r.writeConfig(ctx, lc, spec, outs, path, old, true); err != nil {
+		return false, err
+	}
+	r.res.Firebase, r.res.RTDBURL = next.Budget.FirebaseProject, next.Budget.RTDBURL
+	fmt.Fprintf(r.w, "the budget database of project %s is the one this installation already has (Firebase project %s, %s): the local config records it and nothing was applied\n", lc.Name, pluginwire.Printable(next.Budget.FirebaseProject), pluginwire.Printable(next.Budget.RTDBURL))
+	return true, nil
+}
+
 // deployDatabase shows what it would write into the database (the mark, the
 // project's name, the mode, the largest lease, the rules) and writes it once
 // confirmed; a database that is already as wanted is left alone, with no
 // confirmation. confirmed reports that a confirmation was given, which also
 // covers the local config's diff.
+//
+// The budget database is written BEFORE the Firestore location's note is
+// reached (D3027): the two are different databases, the note is about the
+// run history's (its location is permanent and only a person answers for it),
+// and a location left for someone used to hold back the budget database the
+// installation needs to launch anything at all. This function therefore stops
+// at the budget database: the caller writes the local config that records it
+// and only then reaches the run history (deployFirestore).
 func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, idp *idpStep, fs *infra.FirestoreStep, fsLines []string) (confirmed bool, err error) {
 	acts, warnings, err := db.Plan(ctx)
 	if err != nil {
@@ -631,13 +832,8 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 	if fs.CreatesDatabase() {
 		what += fmt.Sprintf("; this does NOT create the Firestore database: its creation in %s, whose location is permanent and can never be changed, is asked next, separately (its own confirmation, with nothing typed)", infra.FirestoreLocation)
 	}
-	if err := r.confirmOrdinary(what, "the database was not written", r.firebaseReason()); err != nil {
+	if err := r.confirmDatabase(what); err != nil {
 		return false, err
-	}
-	if fs.CreatesDatabase() {
-		if err := r.confirmLocation(); err != nil {
-			return false, err
-		}
 	}
 	if len(acts) > 0 {
 		if err := db.Apply(ctx); err != nil {
@@ -651,13 +847,27 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 		}
 		fmt.Fprintln(r.w, "initialized Identity Platform (no sign-in providers)")
 	}
-	if fs.Pending() {
-		if err := fs.Apply(ctx); err != nil {
-			return false, initErr(err)
-		}
-		fmt.Fprintln(r.w, "ensured the Firestore database, its deny-all rules and its mark (read back)")
-	}
 	return true, nil
+}
+
+// confirmDatabase is the budget database's own confirmation: the stage's
+// ordinary one, or the managed gate's sentence where the gate stands in for the
+// stage's confirmations (D3028, R11 — on a managed project the database is
+// created with nobody confirming, and from a coding agent's session too, which
+// is the owner's own choice of the two answers O6 puts side by side).
+//
+// The gate is what answers here and not the run's review: the review is not
+// asked on a managed project at all (runCovers' gateStandsIn arm), so a step
+// that waited for it would wait for a confirmation nobody is shown. What is
+// left to a person is the Firestore location, whose own confirmation is not
+// this function's and stays where it is: it is permanent, and D1026 admits no
+// plan gate's answer for a step like that.
+func (r *initRun) confirmDatabase(what string) error {
+	if r.gateStandsIn() {
+		fmt.Fprintf(r.w, "  %s\n", r.gateProceeded())
+		return nil
+	}
+	return r.confirmOrdinary(what, "the database was not written", r.firebaseReason())
 }
 
 // confirmLocation is the Firestore database's own confirmation: its location
@@ -671,11 +881,16 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 // reaches it, while `update` meets it as a step of a stage it owns, so a run
 // opened on an answer the person already gave is covered there. Where nothing
 // can confirm it the step is the user's, with the one-line route.
+//
+// It is reached by deployFirestore and not by deployDatabase, and that is
+// D3027: what the run leaves for a person is the run history's database alone,
+// with the budget database already written and already recorded in the local
+// config.
 func (r *initRun) confirmLocation() error {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
 	switch r.stepConfirmation(r.o.door == updateDoor.name) {
 	case stepLeave:
-		lf := promptLeft(initflow.Firebase, "run the command below: it prints the note about the Firestore database's permanent location and then creates the database, asking you nothing", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
+		lf := promptLeft(initflow.Firebase, "run the command below: it prints the note about the Firestore database's permanent location and then creates the database, asking you nothing", r.o.doorName(), "--firebase-project", quoteWord(cmp.Or(r.o.firebaseProject(), r.gcpProject)))
 		return &initflow.NeedsYouError{Left: lf}
 	case stepByYes:
 		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
@@ -689,6 +904,33 @@ func (r *initRun) confirmLocation() error {
 		return userErr("not confirmed (the Firestore database's location was not confirmed); the Firestore database was not created (nothing was written)")
 	}
 	r.noteIDETerminal()
+	return nil
+}
+
+// deployFirestore is the run history's own database, and it is the LAST step of
+// the stage — after the budget database has been written and the local config
+// that records it has been written too (D3027). The two are different
+// databases, and a location left for a person used to hold back the budget
+// database the installation needs to launch anything at all; now what a
+// pending location leaves is the run history and nothing else.
+//
+// The location's own confirmation comes first where there is no database at
+// all (its location is permanent), and only then is anything written: the
+// deny-all rules, the mark and — where the database was just created — the
+// read-back that proves it is there.
+func (r *initRun) deployFirestore(ctx context.Context, fs *infra.FirestoreStep) error {
+	if !fs.Pending() {
+		return nil
+	}
+	if fs.CreatesDatabase() {
+		if err := r.confirmLocation(); err != nil {
+			return err
+		}
+	}
+	if err := fs.Apply(ctx); err != nil {
+		return initErr(err)
+	}
+	fmt.Fprintln(r.w, "ensured the Firestore database, its deny-all rules and its mark (read back)")
 	return nil
 }
 

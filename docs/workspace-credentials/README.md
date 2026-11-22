@@ -17,6 +17,15 @@ Claude token stored once at the workspace and served only to the runs that perso
 | [implementation-plan.md](implementation-plan.md) | Contracts C1 and C2, tasks WC0–WC14, integration I1 (18 runs, and two contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 850 and 851 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
+**Amended 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md), and
+nothing here changes.** That plan gives a person's own token a model call, served through that person's
+personal pool in the project (its PL4, D3179), so the workspace is not the only place a personal token
+is served from — but a project with a routing table serves the call from its own service, and a person's
+token at the workspace still follows the route (D3141), which stands as written. Its D3191 amends
+**D2976** by one case in a project: a run that resumes a person's paused run draws on that person's pool,
+where a run launched by a service account is otherwise served none. No task of this plan is withdrawn,
+none is amended, and none waits on that plan.
+
 **Numbers reserved:** decisions **D3140–D3159** (D3140–D3148 used), checks **850–859** (850 and 851
 used). Read on 2026-11-21: the highest decision reserved on `main` and in the open pull requests
 was D3139, the highest check 849.

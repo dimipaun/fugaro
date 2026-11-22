@@ -33,8 +33,14 @@ variables {
     }
   }
   log_bucket_description = "Fugaro job logs (managed by fugaro)"
-  launchers              = ["user:launcher@example.com"]
-  operators              = ["user:operator@example.com"]
+  # The mapping's answer for this fixture's region (place.For): Cloud Logging
+  # offers no bucket in us-east5, so the installation's log bucket is the US
+  # multi-region. It is deliberately not `global`, which is where an
+  # installation made before the mapping has its bucket and what discovery
+  # reads back for one (LP6, R5).
+  log_bucket_location = "us"
+  launchers           = ["user:launcher@example.com"]
+  operators           = ["user:operator@example.com"]
   # A viewer is in the fixture on purpose (RS4 of docs/roles-scopes): the
   # viewer's read-only role and its two reads only exist when the list is not
   # empty, so a fixture that names none plans an installation whose viewer
@@ -819,8 +825,12 @@ run "log_isolation_on" {
   }
 
   assert {
-    condition     = google_logging_project_bucket_config.fugaro[0].bucket_id == "fugaro" && google_logging_project_bucket_config.fugaro[0].location == "global" && google_logging_project_bucket_config.fugaro[0].retention_days == 30
-    error_message = "the log bucket must be the named one, global, with 30 days of retention"
+    condition     = google_logging_project_bucket_config.fugaro[0].bucket_id == "fugaro" && google_logging_project_bucket_config.fugaro[0].location == var.log_bucket_location && google_logging_project_bucket_config.fugaro[0].retention_days == 30
+    error_message = "the log bucket must be the named one, in the location it is given, with 30 days of retention"
+  }
+  assert {
+    condition     = google_logging_project_bucket_config.fugaro[0].location == "us" && var.log_bucket_location == "us"
+    error_message = "the log bucket's location must be the variable's, and this fixture's is the mapping's answer for us-east5 (the US multi-region): a run that pins `global` would pass whatever the variable said"
   }
   assert {
     condition     = google_logging_project_bucket_config.fugaro[0].description == "Fugaro job logs (managed by fugaro)"
@@ -844,8 +854,8 @@ run "log_isolation_on" {
     error_message = "the Cloud Run arm must stay byte-for-byte what it was: every installation's sink and exclusion already filter on it"
   }
   assert {
-    condition     = google_logging_project_sink.fugaro[0].destination == "logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro"
-    error_message = "the sink must write to the project's own log bucket"
+    condition     = google_logging_project_sink.fugaro[0].destination == "logging.googleapis.com/projects/proj-1234/locations/${var.log_bucket_location}/buckets/fugaro"
+    error_message = "the sink must write to the project's own log bucket, in the bucket's own location"
   }
   assert {
     condition     = google_logging_project_exclusion.fugaro_from_default[0].name == "fugaro-jobs-from-default"
@@ -862,23 +872,23 @@ run "log_isolation_on" {
     error_message = "the exclusion must leave the alerts' log lines in _Default, and only the check jobs' decision lines"
   }
   assert {
-    condition     = google_logging_log_view.runs[0].name == "fugaro-runs" && google_logging_log_view.runs[0].bucket == "projects/proj-1234/locations/global/buckets/fugaro"
-    error_message = "the view must be the named one, on the log bucket"
+    condition     = google_logging_log_view.runs[0].name == "fugaro-runs" && google_logging_log_view.runs[0].bucket == "projects/proj-1234/locations/${var.log_bucket_location}/buckets/fugaro"
+    error_message = "the view must be the named one, on the log bucket in its own location"
   }
   assert {
     condition     = sort(keys(google_logging_log_view_iam_member.runs)) == tolist(["user:launcher@example.com", "user:operator@example.com", "user:viewer@example.com"])
     error_message = "launchers, operators and viewers must be able to read through the view (D684: a viewer reads a run's own output)"
   }
   assert {
-    condition     = alltrue([for m in google_logging_log_view_iam_member.runs : m.parent == "projects/proj-1234" && m.location == "global" && m.bucket == "fugaro" && m.name == "fugaro-runs"])
-    error_message = "the view grant must name the view by its project path, not the bare project ID"
+    condition     = alltrue([for m in google_logging_log_view_iam_member.runs : m.parent == "projects/proj-1234" && m.location == var.log_bucket_location && m.bucket == "fugaro" && m.name == "fugaro-runs"])
+    error_message = "the view grant must name the view by its project path, not the bare project ID, and carry the bucket's own location: a grant at another location reads nothing"
   }
   assert {
     condition     = alltrue([for m in google_logging_log_view_iam_member.runs : m.role == "roles/logging.viewAccessor"])
     error_message = "the view is read with roles/logging.viewAccessor"
   }
   assert {
-    condition     = output.log_view == "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs"
+    condition     = output.log_view == "projects/proj-1234/locations/${var.log_bucket_location}/buckets/fugaro/views/fugaro-runs"
     error_message = "log_view must be the view's full resource name"
   }
 }

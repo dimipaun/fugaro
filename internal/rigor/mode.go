@@ -4,9 +4,10 @@
 // D6, D19–D23).
 //
 // It is the only place that orders levels. No other package may compare two
-// of them: the precedence area > repo > project > Fugaro's own default is
-// stated once, in the resolver below, and once more for a reader in
-// docs/project-layer.md §2.
+// of them: the order — Fugaro's own default, the project layer's default, a
+// project area, the project's entry for the repository, the repository's own
+// default, one of its areas, and the run's own request — is stated once, in
+// the resolver below, and once more for a reader in docs/project-layer.md §2.
 package rigor
 
 import "slices"
@@ -98,8 +99,10 @@ func (m Rigor) Rank() int {
 // a request for it — while an operator who types `fugaro run --mode hotfix`
 // is saying production is on fire, and there is no way to predict when that
 // will be. The gate D12 named is dropped rather than built, and this method
-// is that decision in one place: the raise-only rule D6 states is unchanged
-// for every other level, which is still compared by Rank.
+// is that decision in one place: for every other level the request is the
+// strongest rank of all, and Resolve settles the level whether it raises or
+// lowers what the layers set — what holds a lowering back is a floor, which
+// sits outside every layer (LF5), not a rank comparison.
 func (m Rigor) PerRun() bool { return m == Hotfix }
 
 // Strictest is the strictest of ms: the highest Rank wins, and a tie keeps

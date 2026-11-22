@@ -1929,7 +1929,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for preview |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--mode` | string | "" | no | the rigor mode to preview: poc, startup, pro, critical, hotfix; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing — except hotfix, which is taken whole and needs no opt-in, as it is for a run. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce) |
+| `--mode` | string | "" | no | the rigor mode to preview: poc, startup, pro, critical, hotfix; it is the run's own request and settles the mode the repository resolves (its rigor: block, the project layer) whether it asks for more or for less — only a review floor holds a run above its request, and a floor is a level, not a mode. Hotfix is taken whole and needs no opt-in, as it is for a run. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--recipe` | string | "" | yes | the recipe to preview (ab-judge, commit-reports, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix, troubleshoot) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -8469,16 +8469,17 @@ on is a reviewed fugaro.yaml change. A follow-up (--pr) keeps its run's choice,
 and --retry takes none (the stored task keeps its own).
 
 --mode MODE asks for a rigor mode for this run: poc, startup, pro, critical, hotfix.
-It may raise the mode the run resolves from its own configuration
-(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)
-and never lower it, so a launch that asks for less cannot outvote a repository
-that asked for more. hotfix is the one exception: it is off the rigor axis and
-ranks below every other mode, so it is taken whole rather than compared, needs
-no opt-in anywhere — a first run, a --pr follow-up and a launch from a coding
-agent's session alike — and no fence or refusal stands in that path. A
-follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it,
-and asking for less than that is refused. --path PATH declares a path this run
-will touch, repeatable, matched against those area rules before the run starts;
+It is the narrowest rank of the mode's order, so it settles the mode the run
+resolves from its own configuration (rigor.default and rigor.areas in
+fugaro.yaml, the project layer's defaults) whether it asks for more or for
+less; only a floor, which sits outside every layer, holds it back (fugaro
+rigor floor). hotfix is the mode the request takes whole rather than by rank:
+it is off the rigor axis and ranks below every other mode, needs no opt-in
+anywhere — a first run, a --pr follow-up and a launch from a coding agent's
+session alike — and no fence or refusal stands in that path. A follow-up
+(--pr) keeps the mode the PR's runs recorded and may only raise it, and asking
+for less than that is refused. --path PATH declares a path this run will
+touch, repeatable, matched against those area rules before the run starts;
 without either flag a first run resolves from its configuration alone, and a
 follow-up from that and the mode it keeps. Both are
 recorded in the run's record and named in the pull request's status line.
@@ -8506,7 +8507,7 @@ Flags:
 | `--max-time` | string | "" | no | cap this chain's elapsed run time, as a duration such as 45m or 2h: --total-timeout keeps its own meaning and may raise this run's clock, and the two compose as the smaller of the two (the run's clock is min(--total-timeout, this)) |
 | `--max-tokens` | string | "" | no | cap this chain's token total at N tokens, such as 900000: tighten-only, like --max-usd, and recorded in the task's overrides |
 | `--max-usd` | string | "" | no | cap this chain's model spend at X dollars, such as 5 or 12.5: it may only tighten the ceiling this launch resolves (fugaro refuses a looser value and names the layer that set the lower one), and it is recorded in the task's overrides, beside the total_timeout that is there today. A chain is the run that sets it and the runs that continue it; a launch that names no such limit gets today's per-run caps and no chain at all |
-| `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps |
+| `--mode` | string | "" | no | the rigor mode to ask for: poc, startup, pro, critical, hotfix; it is the narrowest rank of the mode's order, so it settles the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) whether it asks for more or for less, and only a floor, outside every layer, holds it back; hotfix is the mode the request takes whole and needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps |
 | `--no-budget-check` | bool | `false` | no | skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts |
 | `--no-compression` | bool | `false` | no | turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change |
 | `--owner-ruled` | string | "" | no | the repository owner's ruling on the findings a run on this PR left for them (OD1): either the text itself, a file, or - for stdin. A follow-up on a pull request whose last run stopped waiting on owner decisions is refused without it, and one whose last run left no such decisions is refused with it: the ruling answers what that run left, and nothing else; it is appended to this run's brief verbatim and recorded in the run |
@@ -8521,7 +8522,7 @@ Flags:
 | `--retry` | string | "" | no | launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run that already started is refused with nothing launched, which names the way on from the run's own record — the pull request to continue, a new run once it has ended without one, or the wait while it is still going; a run an ending names is never launched, since the bucket cannot vouch for which run an ending means |
 | `--review-levels` | string | "" | no | read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
-| `--security` | bool | `false` | no | ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — as --mode raises a mode and never lowers one, and a run that says nothing resolves its levels from its configuration alone |
+| `--security` | bool | `false` | no | ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — where --mode settles a mode up or down (LD3), and a run that says nothing resolves its levels from its configuration alone |
 | `--spec` | string | "" | no | review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over 16384 bytes is refused with its size. Needs a mode: review recipe and --pr, and refused with --code-only |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
 | `--tier` | string | "" | no | the expectation tier to dispatch this run at: trivial, small, medium, large. It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all |
@@ -10184,9 +10185,10 @@ not, the build is left for you with each missing permission and its fix and
 nothing is billed. A repository the local config does not list is asked about
 first, at the start, before any plan.
 
-setup runs as a converge of stages (preflight, installation, with
---firebase-project the Firebase backend and the images, the secrets, the
-plugin wiring and the repository, and on a first run the project — the one
+setup runs as a converge of stages (preflight, installation, the Firebase
+backend — the budget database, which it adopts or creates, see
+--firebase-project — the images, the secrets, the plugin wiring and the
+repository, and on a first run the project — the one
 stage that creates the GCP project, and the one that refuses an ID that
 already exists), each with its own confirmation, in order, and stops at the
 first that fails or needs you; a rerun resumes, and one with nothing to do
@@ -10232,8 +10234,18 @@ session may run it: it edits only a local file.
 setup --firebase-project <gcp-project-id> turns the shared budget on: it
 builds the budget backend in the installation's own GCP project. The value is
 the installation's own GCP project id (the default; the flag is only needed to
-turn the shared budget on), and any other id is refused. A setup without it
-builds no backend. It creates nothing and links nothing
+turn the shared budget on), and any other id is refused. The stage runs with
+and without the flag, and setup and update run the same one: with none it
+adopts the database the installation's Firebase state names where that
+database is the installation's own project's, or creates one in the
+installation's own project where this credential may make the project's IAM
+changes and the project has billing (the new database starts in observe, with
+no mode chosen); where neither is this run's — the credential may not, the
+project has no billing, or nothing answers the confirmation creating one costs
+(a coding agent's session, --json, a pipe) — the stage changes nothing, says
+in one line who must run the command or that billing must be linked, and the
+rest of the run carries on. An installation whose database this machine
+already records keeps what it has. The stage creates nothing and links nothing
 itself (the project and its billing link are the first run's), and it refuses
 a project that has no billing, or whose database holds data and no Fugaro
 mark. It runs three applies, each
@@ -11740,8 +11752,11 @@ Write one entry into the workspace owner's own shared list.
 
 The credential is named as the workspace's bundle holds it — a model credential
 by its own name, the Bitbucket token as bitbucket-token, the GitHub App's key as
-github-app-key — and what it is for is derived from that name, so there is no
-kind to state and none to get wrong.
+github-app-key, a provider key as provider-key or as the repository's own named
+entry for it — and what it is for is derived from that name, so there is no kind
+to state and none to get wrong. A provider key is offered as a model entry, which
+is what a call spent through one is; a repository's own Anthropic key is refused,
+because the entry belongs to that one repository by construction.
 
 --projects names the members this credential may be served to, as a comma
 separated list or repeated, and each must be a member the workspace's own table

@@ -38,6 +38,16 @@ const (
 	PathRepos = PathRoot + "/repos"
 )
 
+// PathHeartbeat is the sweep's own heartbeat: when a tick last began and when
+// one last finished without failing (coordinator.Heartbeat, D3212). It is a
+// project-wide document under PathProject, named rather than keyed by
+// DocumentID — as the sweep's cursor is, and for the same reason: what it
+// describes is the sweep itself, of which a project has one, and nothing about
+// its content is known before it is read. The signed-in person reaches it
+// through the one grant on PathRoot, and the sweep is its only writer, over
+// IAM.
+const PathHeartbeat = PathProject + "/heartbeat"
+
 // PathRepo is one repository's node: the parent of every document about it.
 func PathRepo(slug string) string { return PathRepos + "/" + budget.Key(slug) }
 
