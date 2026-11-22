@@ -59,9 +59,13 @@
 #                         job of the project and region is read and every one of
 #                         their accounts is probed, which is X8's own rule.
 #             --installation, --gcp-project, --region
-#                         what `fugaro doctor --json` has to agree with; the
-#                         region defaults to us-east5 and is also the Vertex
-#                         location the probe calls.
+#                         what `fugaro doctor --json` has to agree with. The
+#                         project and the region are the checkout's OWN — read
+#                         from doctor, never defaulted — because the job list
+#                         below is the installation's and the probe's Vertex
+#                         location is the installation's too; a value given here
+#                         that disagrees with doctor's stops the check. What
+#                         doctor answers is held to the belong guard as well.
 #             --bucket    the runs bucket (default fugaro-runs-<project>).
 # Needs:      bash, mktemp, git, python3 (every document is read by one python3
 #             reader), gcloud (authenticated as the project's owner, with
@@ -69,8 +73,11 @@
 #             curl, fugaro. Nothing is installed and nothing is fetched.
 # Where:      the installation, project and region you name, and NOWHERE else:
 #             every call carries them explicitly, and a project, region or
-#             installation naming belong is refused by name. Run it on an
-#             installation you may upgrade and on a repository you may spend on.
+#             installation naming belong is refused by name — both what you
+#             typed and what the checkout's own `fugaro doctor --json` answers,
+#             since with no --gcp-project the project used is doctor's. Run it
+#             on an installation you may upgrade and on a repository you may
+#             spend on.
 # Costs:      ONE run per mapped model, each bounded by the repository's own
 #             per-run cap — with three mapped models that is three runs. The
 #             Vertex probe itself is free: a refused call never reaches a model.
@@ -253,6 +260,7 @@ finish() {
   cleanup
   local facts=$FACTS_CAPTURED
   if [ -z "$facts" ]; then facts="aborted|FAIL|the run stopped before it recorded anything"; fi
+  facts="${facts}"$'\n'"belong|${BELONG_VERDICT:-FAIL}|${BELONG_DETAIL:-the belong guard did not run}"
   facts="${facts}"$'\n'"restore|${RESTORE_VERDICT:-FAIL}|${RESTORE_NOTE:-the restore did not run}"
   if [ -z "$SCRATCH" ]; then
     facts="${facts}"$'\n'"scratch-removed|PASS|nothing was created: the run stopped before it made a scratch directory"
@@ -535,11 +543,81 @@ guard_xtrace() {
   fact xtrace PASS "this shell is not tracing, so no trace of this run can copy the tokens it mints or the commands it ran"
 }
 
-guard_belong() {
-  case "${INSTALLATION:-}${GCP_PROJECT:-}${REGION:-}" in
-  *belong*) stop "the installation, project or region this check would use names belong: this check is never run there" ;;
+# is_belong NAME: the installation named `belong` is the owner's own. A substring
+# test on purpose, so a name that merely contains it is refused too.
+is_belong() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+  *belong*) return 0 ;;
   esac
-  fact belong PASS "the installation (${INSTALLATION:-<unset>}), the project (${GCP_PROJECT:-<unset>}) and the region (${REGION:-<unset>}) name no installation this check refuses"
+  return 1
+}
+
+# guard_belong WHERE NAME...: called on what was typed AND on what the checkout's
+# own `fugaro doctor --json` answers, because the check can be pointed at the
+# owner's own installation by either — and with no --gcp-project the project this
+# check goes on to use is doctor's, so judging only what was typed judges the
+# empty string. The verdict is held in a variable rather than recorded here, so
+# the row says the LAST word: a PASS from the typed values followed by a FAIL
+# from doctor's would otherwise leave a PASS in the block.
+guard_belong() { # guard_belong WHERE NAME...
+  local where=$1 v
+  shift
+  for v in "$@"; do
+    [ -n "$v" ] || continue
+    if is_belong "$v"; then
+      BELONG_VERDICT=FAIL
+      BELONG_DETAIL="the installation this check would use names belong — '$v', from ${where} — and this check is never run there: it launches paid runs and impersonates the project's own job accounts. Run it on an installation you may spend on"
+      stop "the installation this check would use names belong (from ${where}), and this check is never run there: it launches paid runs and impersonates the project's own job accounts"
+    fi
+  done
+}
+
+step_belong() {
+  guard_belong "what you typed" "${INSTALLATION:-}" "${GCP_PROJECT:-}" "${REGION:-}"
+  BELONG_VERDICT=PASS
+  BELONG_DETAIL="what you typed (--installation ${INSTALLATION:-<unset>}, --gcp-project ${GCP_PROJECT:-<unset>}, --region ${REGION:-<unset>}) names no installation this check refuses, and neither will the checkout's own fugaro doctor --json answer: it is held to the same guard, and the project and region every call below carries are doctor's own"
+}
+
+# doctor_facts FILE prints `name|gcp_project|region` out of `fugaro doctor
+# --json`, which answers under `project` (internal/cli/doctor.go's doctorProject).
+# Exit 2 is a document with no project in it, which is a different thing from a
+# document that cannot be read.
+doctor_facts() { # doctor_facts <file>
+  python3 - "$1" <<'PY'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+p = doc.get("project") if isinstance(doc, dict) else None
+if not isinstance(p, dict):
+    sys.exit(2)
+print("%s|%s|%s" % (p.get("name") or "", p.get("gcp_project") or "", p.get("region") or ""))
+PY
+}
+
+# repo_of URL prints `owner/name` out of an origin remote, in the shapes git
+# prints them: https://github.com/owner/name.git, git@github.com:owner/name.git,
+# ssh://git@github.com/owner/name, the same on bitbucket, and the same with a
+# port. A remote that is a path on this machine names no repository, so it is a
+# refusal (exit 1) rather than a made-up owner/name.
+repo_of() { # repo_of <url>
+  python3 - "$1" <<'PY'
+import re, sys
+u = sys.argv[1].strip()
+u = re.sub(r"\.git$", "", u)
+u = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", u)
+if u.startswith(("/", "./", "../", "~")):
+    sys.exit(1)
+head = u.split("/", 1)[0]
+if "@" in head:
+    u = u.split("@", 1)[1]
+u = re.sub(r"^[^/:]+:", "", u)
+parts = [p for p in re.split(r"[/:]", u) if p]
+if len(parts) < 2:
+    sys.exit(1)
+print("%s/%s" % (parts[-2], parts[-1]))
+PY
 }
 
 # --------------------------------------------------------------------- steps
@@ -551,29 +629,58 @@ step_checkout() {
   [ -n "$top" ] || stop "--checkout names $CHECKOUT, and it is not a git work tree: this check launches runs in it, and a run goes out on a checkout"
   CHECKOUT=$(cd "$top" && pwd)
   [ -f "$CHECKOUT/fugaro.yaml" ] || stop "$CHECKOUT carries no fugaro.yaml, so it is not a repository a run goes out on: point --checkout at the checkout of the repository this check is about"
-  fact checkout PASS "$CHECKOUT is a git work tree carrying the fugaro.yaml the runs go out on"
+  # The repository this checkout belongs to is what the run is charged to and
+  # whose per-run cap the money is settled against, and its origin remote is
+  # where `fugaro run` reads it too. Without it the cap row below could read
+  # another repository's cap and call it this one's.
+  local url rc=0
+  url=$(git -C "$CHECKOUT" remote get-url origin 2>/dev/null) || rc=$?
+  [ "$rc" = 0 ] && [ -n "$url" ] ||
+    stop "$CHECKOUT has no 'origin' remote, so this check cannot name the repository whose caps the runs it launches are charged to (fugaro run resolves it from the same remote). Run it in the checkout of the repository this check is about"
+  local rc2=0
+  REPO_NAME=$(repo_of "$url") || rc2=$?
+  [ "$rc2" = 0 ] && [ -n "$REPO_NAME" ] ||
+    stop "the origin remote of $CHECKOUT ($url) does not name a repository this check can read as owner/name"
+  fact checkout PASS "$CHECKOUT is a git work tree carrying the fugaro.yaml the runs go out on, and its origin remote names ${REPO_NAME}: the runs below are charged to that repository and the cap row reads ITS per-run cap"
 }
 
 step_installation() {
-  say "reading the checkout's project: fugaro doctor --json (in $CHECKOUT)"
+  say "reading the checkout's installation: fugaro doctor --json (in $CHECKOUT)"
   local rc=0
   (cd "$CHECKOUT" && "$FUGARO_BIN" doctor --json) >"$SCRATCH/doctor.json" 2>"$SCRATCH/doctor.err" || rc=$?
-  if [ "$rc" != 0 ]; then
-    stop "fugaro doctor --json failed in $CHECKOUT (exit $rc): $(head -c 300 "$SCRATCH/doctor.err" | oneline) — every call below is scoped to the project it names, and a checkout whose project cannot be read is not one this check can measure"
+  local facts rc2=0
+  facts=$(doctor_facts "$SCRATCH/doctor.json") || rc2=$?
+  if [ "$rc" != 0 ] || [ "$rc2" = 1 ]; then
+    stop "fugaro doctor --json failed in $CHECKOUT (exit $rc): $(head -c 300 "$SCRATCH/doctor.err" | oneline) — every call below is scoped to the project and region it names, and a checkout whose installation cannot be read is not one this check can measure"
   fi
-  local got
-  got=$(jget "$SCRATCH/doctor.json" gcp_project)
-  [ -n "$got" ] || stop "fugaro doctor --json named no gcp_project for $CHECKOUT: the jobs, the policy and the runs bucket are named after the project the checkout's config carries"
-  if [ -n "$GCP_PROJECT" ] && [ "$GCP_PROJECT" != "$got" ]; then
-    stop "--gcp-project names ${GCP_PROJECT} and the checkout's own project is ${got}: this check reads the jobs and the runs bucket of the project the checkout belongs to, so the two have to be the same"
+  if [ "$rc2" = 2 ]; then
+    stop "fugaro doctor --json answered about no project for $CHECKOUT: the jobs, the runs bucket and the Vertex location this check calls are all the project's own, and a document with no project in it names none. Run it where a project config is in force"
   fi
-  GCP_PROJECT=$got
-  local reg
-  reg=$(jget "$SCRATCH/doctor.json" region)
-  if [ -z "$REGION" ]; then REGION=$reg; fi
+  local rest
+  DOCTOR_NAME=${facts%%|*}
+  rest=${facts#*|}
+  DOCTOR_GCP=${rest%%|*}
+  DOCTOR_REGION=${rest#*|}
+  # What doctor answers is guarded too, and BEFORE anything is run: with no
+  # --gcp-project the project below is doctor's own, so a checkout whose config
+  # names the owner's installation would otherwise launch its paid runs there.
+  guard_belong "the checkout's own fugaro doctor --json" "$DOCTOR_NAME" "$DOCTOR_GCP" "$DOCTOR_REGION"
+  [ -n "$DOCTOR_GCP" ] || stop "fugaro doctor --json named no gcp_project for $CHECKOUT (it answered project '${DOCTOR_NAME:-none}'): the jobs, the policy and the runs bucket are named after the project the checkout's config carries"
+  if [ -n "$GCP_PROJECT" ] && [ "$GCP_PROJECT" != "$DOCTOR_GCP" ]; then
+    stop "--gcp-project names ${GCP_PROJECT} and the checkout's own project is ${DOCTOR_GCP}: this check reads the jobs and the runs bucket of the project the checkout belongs to, so the two have to be the same"
+  fi
+  GCP_PROJECT=$DOCTOR_GCP
+  # The region is the installation's own, held to --region the way the project
+  # is: it is the Cloud Run region the jobs live in AND the Vertex location the
+  # probe calls, so a region that is not the installation's reads the wrong job
+  # list and calls the wrong Vertex.
+  if [ -n "$REGION" ] && [ -n "$DOCTOR_REGION" ] && [ "$REGION" != "$DOCTOR_REGION" ]; then
+    stop "--region names ${REGION} and the checkout's own installation is in ${DOCTOR_REGION} (fugaro doctor --json): the job list this check reads and the Vertex location it probes are the installation's own, so the two have to be the same"
+  fi
+  if [ -n "$DOCTOR_REGION" ]; then REGION=$DOCTOR_REGION; fi
   [ -n "$REGION" ] || stop "fugaro doctor --json named no region for $CHECKOUT and --region was not given: the job list and the Vertex location this check calls both need it"
   [ -n "$BUCKET" ] || BUCKET="fugaro-runs-${GCP_PROJECT}"
-  fact installation PASS "the checkout belongs to ${GCP_PROJECT} (${REGION}), its jobs are read there and its runs out of gs://${BUCKET}/runs/<slug>/<run>/"
+  fact installation PASS "the checkout belongs to ${GCP_PROJECT} (${REGION}), its jobs are read there and its runs out of gs://${BUCKET}/runs/<slug>/<run>/ — the project and region are the checkout's own fugaro doctor --json answer, not a default"
 }
 
 step_version() {
@@ -583,11 +690,11 @@ step_version() {
 }
 
 step_mode() {
-  say "reading the caps: fugaro budget show --json (in $CHECKOUT)"
+  say "reading the caps: fugaro budget show --json --repo ${REPO_NAME} (in $CHECKOUT)"
   local rc=0
-  (cd "$CHECKOUT" && "$FUGARO_BIN" budget show --json) >"$SCRATCH/budget.json" 2>"$SCRATCH/budget.err" || rc=$?
+  (cd "$CHECKOUT" && "$FUGARO_BIN" budget show --json --repo "$REPO_NAME") >"$SCRATCH/budget.json" 2>"$SCRATCH/budget.err" || rc=$?
   if [ "$rc" != 0 ]; then
-    stop "fugaro budget show --json failed in $CHECKOUT (exit $rc): $(head -c 300 "$SCRATCH/budget.err" | oneline) — the mode decides whether the refusal this check measures is the one an `enforce` project shows, and the per-run cap is what the runs' money is settled against"
+    stop "fugaro budget show --json --repo ${REPO_NAME} failed in $CHECKOUT (exit $rc): $(head -c 300 "$SCRATCH/budget.err" | oneline) — the mode decides whether the refusal this check measures is the one an `enforce` project shows, and the per-run cap is what the runs' money is settled against"
   fi
   local mode
   mode=$(jget "$SCRATCH/budget.json" mode)
@@ -595,34 +702,48 @@ step_mode() {
     fact mode FAIL "the project's budget mode is '${mode:-unset}' and this check measures the 'enforce' case: on an 'observe' project X8 keeps each job's account its Vertex permission until release 2, so a call straight to Vertex is expected to be SERVED there and the refusal this check is about cannot be read. Set the mode with 'fugaro budget mode enforce' (and accept that a release-1 run calling Vertex on its job's identity would then lose it) and run the check again"
     stop "the project's budget mode is not enforce"
   fi
-  local cap source
-  cap=$(python3 - "$SCRATCH/budget.json" "$REPO_SLUG" <<'PY'
+  # --repo narrows the listing to this checkout's own repository, so the row read
+  # here is ITS cap: without it a multi-repository installation's first capped row
+  # would be reported as this repository's and the R17 gate would pass falsely.
+  local cap rc2=0
+  cap=$(python3 - "$SCRATCH/budget.json" <<'PY'
 import json, sys
 try:
     doc = json.load(open(sys.argv[1]))
 except Exception:
-    sys.exit(0)
-for r in doc.get("repos") or []:
-    if not isinstance(r, dict):
-        continue
-    slug = r.get("slug") or ""
-    repo = r.get("repo") or ""
-    if sys.argv[2] and sys.argv[2] not in (slug, repo) and not repo.endswith("/" + sys.argv[2]):
-        continue
-    cap = r.get("per_run_cap_usd")
-    if cap is None:
-        continue
-    print("%s|%s" % (cap, r.get("per_run_cap_source") or ""))
-    break
+    sys.exit(3)
+rows = [r for r in (doc.get("repos") or []) if isinstance(r, dict)]
+if not rows:
+    print("norow")
+    raise SystemExit(0)
+r = rows[0]
+if r.get("per_run_cap_usd") is None:
+    print("nocap")
+    raise SystemExit(0)
+print("%s|%s" % (r.get("per_run_cap_usd"), r.get("per_run_cap_source") or ""))
 PY
-)
-  if [ -z "$cap" ]; then
-    fact mode FAIL "the project enforces its caps and no per-run cap is set for the repository this checkout belongs to: R17 requires one before a chain that names a paid source — Vertex included — may run, and it is the ceiling the money these runs spend is settled against. Set one with 'fugaro budget set --repo <owner/name> --run <usd>' and run the check again"
-    stop "no effective per-run cap is set for this repository"
+) || rc2=$?
+  if [ "$rc2" = 3 ]; then
+    fact mode FAIL "fugaro budget show --json --repo ${REPO_NAME} printed something this check cannot read as a caps document: $SCRATCH/budget.json"
+    stop "the caps listing could not be read"
   fi
+  case "$cap" in
+  norow)
+    fact mode FAIL "fugaro budget show --json --repo ${REPO_NAME} listed no row for ${REPO_NAME}, the repository this checkout's origin remote names: the mode and the per-run cap the runs are settled against could not be read for the repository they are charged to"
+    stop "the caps listing carries no row for ${REPO_NAME}"
+    ;;
+  nocap)
+    fact mode FAIL "the project enforces its caps and no per-run cap is in force for ${REPO_NAME} (the repository this checkout belongs to): R17 requires one before a chain that names a paid source — Vertex included — may run, and it is the ceiling the money these runs spend is settled against. Set one with 'fugaro budget set --repo ${REPO_NAME} --run <usd>' and run the check again"
+    stop "no effective per-run cap is set for ${REPO_NAME}"
+    ;;
+  "")
+    fact mode FAIL "fugaro budget show --json --repo ${REPO_NAME} answered about ${REPO_NAME} with no per-run cap figure this check can read: $SCRATCH/budget.json"
+    stop "the per-run cap of ${REPO_NAME} could not be read"
+    ;;
+  esac
   PER_RUN_CAP=${cap%%|*}
   source=${cap#*|}
-  fact mode PASS "the project enforces its caps (mode 'enforce') and this repository's effective per-run cap is \$${PER_RUN_CAP}${source:+ (from ${source})}: the refusal below is the one an enforce project shows, and the runs' money is settled against this cap"
+  fact mode PASS "the project enforces its caps (mode 'enforce') and ${REPO_NAME}'s own effective per-run cap is \$${PER_RUN_CAP}${source:+ (from ${source})}: the refusal below is the one an enforce project shows, and the runs' money is settled against this cap"
 }
 
 step_mapped() {
@@ -852,7 +973,7 @@ step_vertex_refused() {
 {"anthropic_version":"vertex-2023-10-16","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}
 JSON
   say "probing Vertex as each job's account (a refused call reaches no model)"
-  local line name sa i=0 served="" refused="" failed=""
+  local line name sa i=0 served="" refused="" nospelling="" other=""
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     name=${line%%|*}
@@ -867,18 +988,44 @@ JSON
       unmeasured vertex-refused "curl answered no status for the call made as ${sa} (job ${name}): $(head -c 300 "$SCRATCH/vertex-$i.err" | oneline). Whether that account reaches Vertex is NOT measured"
       stop "the Vertex probe answered no status"
     fi
+    # 403 is the refusal, and only 403 is: a 2xx is a model served, and every
+    # other status is its own finding — a 404 is what a mapped model with no
+    # Vertex spelling at this location looks like (U5), a 401 or a 429 says
+    # nothing either way — none of which is the account having reached Vertex.
     case "$PROBE_STATUS" in
     403)
       refused="${refused}${refused:+, }${name} (${sa})"
       ;;
-    *)
+    404)
+      nospelling="${nospelling}${nospelling:+, }${name} (${sa}): $(head -c 200 "$SCRATCH/vertex-$i.body" | oneline)"
+      ;;
+    2*)
       served="${served}${served:+, }${name} (${sa}) answered ${PROBE_STATUS}: $(head -c 200 "$SCRATCH/vertex-$i.body" | oneline)"
+      ;;
+    *)
+      other="${other}${other:+, }${name} (${sa}) answered ${PROBE_STATUS}: $(head -c 200 "$SCRATCH/vertex-$i.body" | oneline)"
       ;;
     esac
   done <<<"$JOBS"
   if [ -n "$served" ]; then
-    fact vertex-refused FAIL "a call straight to Vertex from a job's own account was served by Vertex on this enforce project, and it must be refused (D3174 as amended, X8): ${served}${refused:+; refused: }${refused}. On an enforce project no job's account may reach Vertex — the permission is the credentials service's own, through its custom role — so the call is the finding: read the grants row above for the role bound to that account. The call carried the account's own impersonated identity, the same identity a call from inside its job carries, and it reached Vertex before any model was used. The check stops here rather than spending a run on an installation whose jobs can reach Vertex themselves"
+    fact vertex-refused FAIL "a call straight to Vertex from a job's own account was served by Vertex on this enforce project, and it must be refused (D3174 as amended, X8): ${served}${refused:+; refused: }${refused}${nospelling:+; not refused (404): }${nospelling}${other:+; other statuses: }${other}. On an enforce project no job's account may reach Vertex — the permission is the credentials service's own, through its custom role — so the call is the finding: read the grants row above for the role bound to that account. The call carried the account's own impersonated identity, the same identity a call from inside its job carries, and it reached Vertex before any model was used. The check stops here rather than spending a run on an installation whose jobs can reach Vertex themselves"
     stop_finding "a job's account was served by Vertex"
+  fi
+  # One row, so the block and the exit status agree: a FAIL (a call that was not
+  # refused at all) outranks an UNVERIFIED (a status that says nothing either
+  # way), and neither stops the check — the run half below still measures U5.
+  local verdict="" detail=""
+  if [ -n "$nospelling" ]; then
+    verdict=FAIL
+    detail="a call straight to Vertex from a job's own account was answered 404 and NOT the 403 an enforce project must show: ${nospelling}. A 404 is not a refusal — IAM denies before any model is resolved — and it is what a mapped model with no Vertex spelling at ${REGION} looks like, which is U5's own finding. Read it together with the mapped row above and the served row below (the check goes on to launch the runs, so that half is still measured): settle the model's Vertex spelling, or route it somewhere Vertex serves"
+  fi
+  if [ -n "$other" ]; then
+    [ -n "$verdict" ] || verdict=UNVERIFIED
+    detail="${detail}${detail:+; }the refusal was NOT established for ${other}: 403 is the refusal this check measures, and a status that is neither 403 nor a model served (2xx) says nothing either way, so whether those accounts reach Vertex is not measured here. Read the status and the body of each probe in the scratch directory (removed on the way out — set CHECK882_KEEP_SCRATCH=1 to keep it) and settle it"
+  fi
+  if [ -n "$verdict" ]; then
+    fact vertex-refused "$verdict" "$detail"
+    return 0
   fi
   fact vertex-refused PASS "every job's account was refused by Vertex with 403 (aiplatform.endpoints.predict denied): ${refused}. The call carries each account's own impersonated identity — the same identity a call from inside its job carries — and it was refused before any model was reached, so nothing was spent measuring it"
 }
@@ -1083,14 +1230,14 @@ print("yes" if cap > 0 and total <= cap else "no")' "${total:-}" "${cap:-}")
 # --------------------------------------------------------------------- the plan
 plan() {
   say "CHECK 882 plan (dry run: nothing below is run, and no row in the block was measured)"
-  say "  [read] git -C <checkout> rev-parse --show-toplevel, and the checkout's fugaro.yaml"
-  say "  [network, read] fugaro doctor --json (in <checkout>) — the project and the region every call below is scoped to"
-  say "  [network, read] fugaro budget show --json — the mode (enforce, R17) and the repository's effective per-run cap"
+  say "  [read] git -C <checkout> rev-parse --show-toplevel, the checkout's fugaro.yaml, and its origin remote — the owner/name the runs below are charged to and whose cap is read"
+  say "  [network, read] fugaro doctor --json (in <checkout>) — the project and the region every call below is scoped to (they are the installation's own, and what it answers is held to the belong guard too)"
+  say "  [network, read] fugaro budget show --json --repo <owner/name> — the mode (enforce, R17) and THAT repository's effective per-run cap"
   say "  [network, read] fugaro routing ls --json — the models the table routes to Vertex"
   say "  [network, read] gcloud run jobs list — every job of the project and region, with the account each runs as"
   say "  [network] gcloud auth print-access-token --impersonate-service-account=<each job's account> — written to a 0600 curl config file, never printed"
   say "  [network, read] gcloud projects get-iam-policy, and gcloud iam roles describe per role bound to a job's account — whether a job's account holds aiplatform.endpoints.predict"
-  say "  [network, FREE] curl POST ${REGION}-aiplatform.googleapis.com/v1/projects/<project>/locations/<region>/publishers/anthropic/models/<model>:rawPredict — the call a job would make; on an enforce project it is refused before any model is reached"
+  say "  [network, FREE] curl POST ${REGION:-<the region the installation is in>}-aiplatform.googleapis.com/v1/projects/<project>/locations/<region>/publishers/anthropic/models/<model>:rawPredict — the call a job would make; on an enforce project it is refused with 403 before any model is reached (a 2xx is the finding, a 404 is U5's own, anything else is UNVERIFIED, and only the 2xx stops the check)"
   say "  [network, ONE PAID RUN PER MAPPED MODEL] fugaro run --task-file <a task this check writes> --model <the model> --json (in <checkout>), then fugaro runs ls --json polled until it is terminal, then gcloud storage cat gs://<bucket>/runs/<slug>/<run>/result.json — the record whose stages[].source, model_usd and policy.effective the rows below read. Each run costs its model spend, bounded by the repository's per-run cap"
   say "  [nothing created] no policy is published, no record is written and no credential is minted for anyone; the tokens are for the jobs' own accounts, live only in this run's scratch directory, and the runs it launches are left to end on their own"
   local key
@@ -1098,6 +1245,10 @@ plan() {
     vertex-refused runs served priced settled; do
     fact "$key" INFO "planned: a real run measures this row; --dry-run did not"
   done
+  # The belong row is not planned: the guard really ran on what you typed. What a
+  # real run adds is doctor's own answer, which the dry run never reads.
+  BELONG_VERDICT=INFO
+  BELONG_DETAIL="the guard ran on what you typed (--installation ${INSTALLATION:-<unset>}, --gcp-project ${GCP_PROJECT:-<unset>}, --region ${REGION:-<unset>}) and passed it; --dry-run read no fugaro doctor --json, so the checkout's own answer is the part a real run adds to this row"
   fact dry-run PASS "the plan was printed and nothing was run: no launch, no cloud call, no probe and no model call"
 }
 
@@ -1187,7 +1338,14 @@ BUCKET=${CHECK882_BUCKET:-}
 DRY_RUN=${CHECK882_DRY_RUN:-}
 WAIT_SECONDS=${CHECK882_WAIT_SECONDS:-3600}
 POLL_SECONDS=${CHECK882_POLL_SECONDS:-20}
-REPO_SLUG=${CHECK882_REPO:-}
+# REPO_NAME and DOCTOR_* are resolved from the checkout itself: the repository
+# its origin remote names, and what its own `fugaro doctor --json` answers.
+REPO_NAME=
+DOCTOR_NAME=
+DOCTOR_GCP=
+DOCTOR_REGION=
+BELONG_VERDICT=
+BELONG_DETAIL=
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -1209,7 +1367,9 @@ done
 
 FUGARO_BIN=$(command -v fugaro || true)
 [ -n "$FUGARO_BIN" ] || die "Check 882 needs 'fugaro' on PATH: it drives the build you have installed, and it is not there"
-[ -n "$REGION" ] || REGION=us-east5
+# No region default here: the region is the installation's own, read from the
+# checkout's `fugaro doctor --json` (--region only has to agree with it). A
+# default would read another region's job list and probe another Vertex.
 
 main() {
   need_tools
@@ -1217,7 +1377,7 @@ main() {
   trap on_error ERR
   guard_agent
   guard_xtrace
-  guard_belong
+  step_belong
   if [ -n "$DRY_RUN" ]; then
     plan
     return 0

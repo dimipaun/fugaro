@@ -90,7 +90,36 @@ routing)
   cat "$answers/table.json"
   ;;
 budget)
-  cat "$answers/budget.json"
+  # The real command narrows its listing to the repository `--repo` names
+  # (internal/cli/budget.go: `keys[budget.Key(wantSlug)] = true`), so the fake
+  # does too: a check that forgets --repo reads whatever row the listing happens
+  # to carry first, and a case can catch it.
+  repo_arg=""
+  prev=""
+  for a in "$@"; do
+    case "$a" in
+    --repo=*) repo_arg=${a#--repo=} ;;
+    esac
+    if [ "$prev" = "--repo" ]; then repo_arg=$a; fi
+    prev=$a
+  done
+  if [ -z "$repo_arg" ]; then
+    cat "$answers/budget.json"
+  else
+    python3 - "$answers/budget.json" "$repo_arg" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+want = sys.argv[2]
+rows = []
+for r in doc.get("repos") or []:
+    if not isinstance(r, dict):
+        continue
+    if want in (r.get("slug") or "", r.get("repo") or "") or (r.get("repo") or "").endswith("/" + want):
+        rows.append(r)
+doc["repos"] = rows
+print(json.dumps(doc))
+PY
+  fi
   ;;
 runs)
   if [ -f "$answers/runs.json" ]; then
@@ -258,7 +287,7 @@ write_answers() { # dir
   mkdir -p "$1/answers"
   local a=$1/answers
   cat >"$a/doctor.json" <<JSON
-{"project":"chk882","gcp_project":"${project}","region":"us-east5"}
+{"ok":true,"project":{"name":"chk882","gcp_project":"${project}","region":"us-east5","registry_host":"us-east5-docker.pkg.dev"}}
 JSON
   cat >"$a/table.json" <<JSON
 {"entries":[
@@ -267,10 +296,17 @@ JSON
   {"match":"claude-*","chain":[{"kind":"anthropic","name":"project-key"}]}
 ]}
 JSON
+  # Two repositories, and the OTHER one comes first with a cap of its own: the
+  # check must read the row of the repository the checkout's origin remote names
+  # (`acme/chk882`, cap $10), not the first capped row in the listing — which is
+  # what a multi-repository installation would otherwise be reported as.
   cat >"$a/budget.json" <<JSON
 {"project":"chk882","gcp_project":"${project}","mode":"enforce","day":"2026-11-22",
  "defaults":{"repo_daily_cap_usd":20,"repo_per_run_cap_usd":10},
- "repos":[{"slug":"chk882","repo":"acme/chk882","per_run_cap_usd":10,"per_run_cap_source":"default",
+ "repos":[{"slug":"chk882-other","repo":"acme/chk882-other","per_run_cap_usd":1,"per_run_cap_source":"repo",
+   "daily_cap_usd":1,"daily_cap_source":"repo","counted_usd":0,"spent_usd":0,"notional_usd":0,
+   "leased_usd":0,"headroom_usd":1,"running":[]},
+  {"slug":"chk882","repo":"acme/chk882","per_run_cap_usd":10,"per_run_cap_source":"default",
    "daily_cap_usd":20,"daily_cap_source":"default","counted_usd":0,"spent_usd":0,"notional_usd":0,
    "leased_usd":0,"headroom_usd":20,"running":[]}],
  "global":{"daily_cap_usd":100,"per_run_cap_usd":10,"counted_usd":0,"spent_usd":0,"notional_usd":0,"leased_usd":0,"headroom_usd":100},
@@ -366,6 +402,9 @@ YAML
   git -C "$dir/checkout" init -q
   git -C "$dir/checkout" add fugaro.yaml
   git -C "$dir/checkout" -c user.email=chk882@example.com -c user.name=chk882 commit -q -m init
+  # The origin remote is what names the repository the runs are charged to and
+  # whose per-run cap the mode row reads; `fugaro run` resolves it the same way.
+  git -C "$dir/checkout" remote add origin git@github.com:acme/chk882.git
 }
 
 default_args() { # dir
@@ -428,8 +467,11 @@ test_happy_path() {
   setup_case "$dir"
   run_check "$dir" -- $(default_args "$dir")
   expect_status "$status" 0 "happy path"
+  expect_contains "$out" "FACT installation: PASS" "happy path: the installation row"
+  expect_contains "$out" "$project" "happy path: the project doctor answered"
   expect_contains "$out" "FACT mode: PASS" "happy path: the mode row"
   expect_contains "$out" "enforce" "happy path: the mode it read"
+  expect_contains "$out" "acme/chk882" "happy path: the repository the origin remote names"
   expect_contains "$out" "FACT mapped: PASS" "happy path: the mapped row"
   expect_contains "$out" "$model" "happy path: a mapped model"
   expect_contains "$out" "$model2" "happy path: the other mapped model"
@@ -498,6 +540,99 @@ test_belong_is_refused_by_name() {
   assert_no_launch "$dir" "belong"
 }
 
+test_a_belong_installation_in_the_checkout_is_refused() {
+  # The project this check goes on to use is doctor's own when --gcp-project is
+  # not given, so a checkout whose installation names belong must be refused on
+  # WHAT DOCTOR ANSWERS — guarding only what was typed guards the empty string
+  # and would launch the paid runs of the owner's own installation.
+  local dir=$work/belongdoctor
+  setup_case "$dir"
+  python3 - "$dir/answers/doctor.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p))
+doc["project"]["name"] = "belong"
+doc["project"]["gcp_project"] = "fugaro-belong"
+json.dump(doc, open(p, "w"))
+PY
+  run_check "$dir" -- --checkout "$dir/checkout"
+  expect_status "$status" 2 "a checkout whose doctor names belong"
+  expect_contains "$err" "never run there" "belong in the checkout: the refusal"
+  expect_contains "$out" "FACT belong: FAIL" "belong in the checkout: the row"
+  expect_contains "$out" "fugaro doctor --json" "belong in the checkout: where the name came from"
+  assert_no_launch "$dir" "belong in the checkout"
+}
+
+test_a_region_that_disagrees_with_the_installation_stops() {
+  # The region is the Cloud Run region the jobs live in AND the Vertex location
+  # the probe calls: a region that is not the installation's reads the wrong job
+  # list and calls the wrong Vertex.
+  local dir=$work/regiondisagree
+  setup_case "$dir"
+  python3 - "$dir/answers/doctor.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p))
+doc["project"]["region"] = "us-central1"
+json.dump(doc, open(p, "w"))
+PY
+  run_check "$dir" -- --checkout "$dir/checkout" --gcp-project "$project" --region us-east5
+  expect_status "$status" 2 "a region that is not the installation's"
+  expect_contains "$err" "us-central1" "a disagreeing region: the installation's own"
+  expect_contains "$err" "us-east5" "a disagreeing region: what was typed"
+  assert_no_launch "$dir" "a disagreeing region"
+}
+
+test_the_region_is_the_installations_own() {
+  # No --region and no --gcp-project: both are the checkout's own, read out of
+  # its `fugaro doctor --json` (which answers under `project`), never defaulted.
+  local dir=$work/regionown
+  setup_case "$dir"
+  python3 - "$dir/answers/doctor.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p))
+doc["project"]["region"] = "europe-west1"
+json.dump(doc, open(p, "w"))
+PY
+  run_check "$dir" -- --checkout "$dir/checkout"
+  expect_status "$status" 0 "the installation's own region"
+  expect_contains "$out" "FACT installation: PASS" "the installation's own region: the row"
+  expect_contains "$out" "europe-west1" "the installation's own region: the region it read"
+  expect_contains "$out" "$project" "the installation's own region: the project it read"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "--region=europe-west1" "the installation's own region: the job list is read there"
+  expect_contains "$(cat "$dir/logs/curl.calls")" "https://europe-west1-aiplatform.googleapis.com/v1/projects/${project}/locations/europe-west1/" "the installation's own region: the Vertex location it probed"
+  assert_launched "$dir" 2 "the installation's own region: the runs still go out"
+}
+
+test_no_region_anywhere_stops() {
+  local dir=$work/noregion
+  setup_case "$dir"
+  python3 - "$dir/answers/doctor.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p))
+doc["project"].pop("region", None)
+json.dump(doc, open(p, "w"))
+PY
+  run_check "$dir" -- --checkout "$dir/checkout"
+  expect_status "$status" 2 "an installation that names no region"
+  expect_contains "$err" "named no region" "an installation that names no region: the refusal"
+  assert_no_launch "$dir" "an installation that names no region"
+}
+
+test_a_checkout_with_no_origin_remote_stops() {
+  # Without the origin remote there is no way to name the repository the runs
+  # are charged to, and the cap row could read another repository's cap.
+  local dir=$work/noorigin
+  setup_case "$dir"
+  git -C "$dir/checkout" remote remove origin
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 2 "a checkout with no origin remote"
+  expect_contains "$err" "origin" "a checkout with no origin remote: the refusal"
+  assert_no_launch "$dir" "a checkout with no origin remote"
+}
+
 test_a_checkout_that_is_not_a_work_tree_stops() {
   local dir=$work/notree
   setup_case "$dir"
@@ -553,6 +688,40 @@ PY
   expect_contains "$out" "FACT mode: FAIL" "a repository with no per-run cap: the row"
   expect_contains "$out" "per-run cap" "a repository with no per-run cap: what it found"
   assert_no_launch "$dir" "a repository with no per-run cap"
+}
+
+test_the_cap_read_is_the_checkouts_own() {
+  # The listing carries two capped repositories and the other one is first, so a
+  # reader that takes the first capped row reports the wrong cap; the check names
+  # the repository on the command line and says whose cap it read.
+  local dir=$work/capown
+  setup_case "$dir"
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 0 "the checkout's own cap"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "budget show --json --repo acme/chk882" "the checkout's own cap: the repository is named on the call"
+  expect_contains "$out" "acme/chk882" "the checkout's own cap: the row names it"
+  expect_contains "$out" '$10' "the checkout's own cap: its own figure, not the other repository's"
+}
+
+test_another_repositorys_cap_is_not_this_ones() {
+  # The false PASS the scoping exists to stop: this repository has no cap while
+  # another one in the listing does.
+  local dir=$work/capother
+  setup_case "$dir"
+  python3 - "$dir/answers/budget.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p))
+for r in doc["repos"]:
+    if r.get("repo") == "acme/chk882":
+        r.pop("per_run_cap_usd", None)
+json.dump(doc, open(p, "w"))
+PY
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 2 "another repository's cap"
+  expect_contains "$out" "FACT mode: FAIL" "another repository's cap: the row"
+  expect_contains "$out" "acme/chk882" "another repository's cap: the repository it named"
+  assert_no_launch "$dir" "another repository's cap"
 }
 
 test_a_table_with_no_vertex_source_stops() {
@@ -646,6 +815,49 @@ JSON
   expect_contains "$out" "FACT vertex-refused: FAIL" "an account that can reach Vertex: the row"
   expect_contains "$out" "was served" "an account that can reach Vertex: what it found"
   assert_launched "$dir" 0 "an account that can reach Vertex: no run is spent"
+}
+
+test_a_model_with_no_vertex_spelling_is_its_own_finding() {
+  # 403 is the refusal and 2xx is a model served; a 404 is neither. It is what a
+  # mapped model with no Vertex spelling at this location looks like (U5), so it
+  # is a finding of its own — and the check goes ON, so the runs below still
+  # measure the service half instead of U5 going unmeasured.
+  local dir=$work/nospelling
+  setup_case "$dir"
+  printf '404\n' >"$dir/answers/vertex.status"
+  cat >"$dir/answers/vertex.body" <<'JSON'
+{"error":{"code":404,"message":"Publisher Model projects/x/locations/us-east5/publishers/anthropic/models/y was not found"}}
+JSON
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 1 "a model Vertex does not serve"
+  expect_contains "$out" "FACT vertex-refused: FAIL" "a model Vertex does not serve: the row"
+  expect_contains "$out" "404" "a model Vertex does not serve: the status"
+  expect_contains "$out" "U5" "a model Vertex does not serve: the rule it rests on"
+  local row
+  row=$(printf '%s\n' "$out" | grep -m1 '^FACT vertex-refused:' || true)
+  expect_absent "$row" "was served" "a model Vertex does not serve: it is not called a model served"
+  assert_launched "$dir" 2 "a model Vertex does not serve: the run half is still measured"
+  expect_contains "$out" "FACT served: PASS" "a model Vertex does not serve: the served row is still read"
+}
+
+test_a_status_that_is_not_the_refusal_is_unverified() {
+  # A 401 (or a 429, or a 5xx) says nothing either way: the refusal this check
+  # measures is not established, so the row reads UNVERIFIED and the check goes
+  # on to measure the service half rather than recording the account as served.
+  local dir=$work/otherstatus
+  setup_case "$dir"
+  printf '401\n' >"$dir/answers/vertex.status"
+  cat >"$dir/answers/vertex.body" <<'JSON'
+{"error":{"code":401,"message":"Request had invalid authentication credentials"}}
+JSON
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 3 "a status that is not the refusal"
+  expect_contains "$out" "FACT vertex-refused: UNVERIFIED" "a status that is not the refusal: the row"
+  expect_contains "$out" "401" "a status that is not the refusal: the status"
+  local row
+  row=$(printf '%s\n' "$out" | grep -m1 '^FACT vertex-refused:' || true)
+  expect_absent "$row" "was served" "a status that is not the refusal: it is not called a model served"
+  assert_launched "$dir" 2 "a status that is not the refusal: the run half is still measured"
 }
 
 test_a_granted_predefined_role_is_a_finding() {
@@ -789,11 +1001,11 @@ t() { # t NAME
   case "${CHECK882_TEST_SHARD:-}" in
   "") ;;
   1) case "$1" in
-    test_help | test_dry_run | test_happy_path | test_the_block_never_carries_a_value | test_an_agent_session_is_refused | test_xtrace_refused | test_belong_is_refused_by_name | test_a_checkout_that_is_not_a_work_tree_stops | test_a_missing_checkout_is_refused) ;;
+    test_help | test_dry_run | test_happy_path | test_the_block_never_carries_a_value | test_an_agent_session_is_refused | test_xtrace_refused | test_belong_is_refused_by_name | test_a_belong_installation_in_the_checkout_is_refused | test_a_region_that_disagrees_with_the_installation_stops | test_the_region_is_the_installations_own | test_no_region_anywhere_stops | test_a_checkout_with_no_origin_remote_stops | test_a_checkout_that_is_not_a_work_tree_stops | test_a_missing_checkout_is_refused) ;;
     *) return 0 ;;
     esac ;;
   2) case "$1" in
-    test_an_observe_project_stops | test_no_per_run_cap_stops | test_a_table_with_no_vertex_source_stops | test_a_model_the_table_does_not_match_stops | test_a_model_whose_chain_names_no_vertex_stops | test_no_job_stops | test_every_job_is_probed | test_a_token_that_cannot_be_minted_is_not_measured | test_an_authorized_account_fails_the_refusal_row) ;;
+    test_an_observe_project_stops | test_no_per_run_cap_stops | test_the_cap_read_is_the_checkouts_own | test_another_repositorys_cap_is_not_this_ones | test_a_table_with_no_vertex_source_stops | test_a_model_the_table_does_not_match_stops | test_a_model_whose_chain_names_no_vertex_stops | test_no_job_stops | test_every_job_is_probed | test_a_token_that_cannot_be_minted_is_not_measured | test_an_authorized_account_fails_the_refusal_row | test_a_model_with_no_vertex_spelling_is_its_own_finding | test_a_status_that_is_not_the_refusal_is_unverified) ;;
     *) return 0 ;;
     esac ;;
   3) case "$1" in
@@ -811,10 +1023,17 @@ t test_the_block_never_carries_a_value
 t test_an_agent_session_is_refused
 t test_xtrace_refused
 t test_belong_is_refused_by_name
+t test_a_belong_installation_in_the_checkout_is_refused
+t test_a_region_that_disagrees_with_the_installation_stops
+t test_the_region_is_the_installations_own
+t test_no_region_anywhere_stops
+t test_a_checkout_with_no_origin_remote_stops
 t test_a_checkout_that_is_not_a_work_tree_stops
 t test_a_missing_checkout_is_refused
 t test_an_observe_project_stops
 t test_no_per_run_cap_stops
+t test_the_cap_read_is_the_checkouts_own
+t test_another_repositorys_cap_is_not_this_ones
 t test_a_table_with_no_vertex_source_stops
 t test_a_model_the_table_does_not_match_stops
 t test_a_model_whose_chain_names_no_vertex_stops
@@ -822,6 +1041,8 @@ t test_no_job_stops
 t test_every_job_is_probed
 t test_a_token_that_cannot_be_minted_is_not_measured
 t test_an_authorized_account_fails_the_refusal_row
+t test_a_model_with_no_vertex_spelling_is_its_own_finding
+t test_a_status_that_is_not_the_refusal_is_unverified
 t test_a_granted_predefined_role_is_a_finding
 t test_a_custom_role_with_the_permission_is_a_finding
 t test_a_refused_launch_is_not_measured
