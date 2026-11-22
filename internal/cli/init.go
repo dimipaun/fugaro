@@ -3494,7 +3494,14 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// one (a condition is ForceNew); exactly that replace is allowed, and
 		// named (bucket-iam.md H5).
 		upgrade := infra.LauncherGrantUpgrade(plan, spec.RunsBucket, spec.Launchers, spec.Operators)
-		allowed := append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...)
+		// The launcher-does-not-mint switch turns off the minter rows this
+		// binary's own update removes once the credentials service signs as the
+		// runs' signer (LM14, R8); exactly those deletes are allowed, and named
+		// (LM20). Without the list the guard would refuse the update's own plan
+		// and point at --allow-delete, the step the hard rule about `fugaro
+		// update` forbids.
+		identity := infra.IdentityAllowDelete(plan)
+		allowed := append(append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...), identity...)
 		counts := infra.CountPlan(plan)
 		// The managed gate judges the plan BEFORE the guard and the
 		// confirmation, and replaces both when it admits it (D1016,
