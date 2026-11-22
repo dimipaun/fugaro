@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1532,11 +1533,27 @@ func pairFixedRand(t *testing.T) string {
 	for i := range fixed {
 		fixed[i] = byte(i)
 	}
-	prev := rand.Reader
-	rand.Reader = pairCyclicRand{fixed}
-	t.Cleanup(func() { rand.Reader = prev })
+	prev := pairRandOverride.Swap(&pairCyclicRand{fixed})
+	t.Cleanup(func() { pairRandOverride.Store(prev) })
 	return "p~" + base64.RawURLEncoding.EncodeToString(fixed)
 }
+
+// pairRandOverride is what pairFixedRand sets and pairSwitchRand reads. The
+// package's one write to crypto/rand.Reader is the init below; a test that
+// wrote the variable itself raced with the TLS goroutines an earlier test's
+// server and client leave behind, which read it when they close.
+var pairRandOverride atomic.Pointer[pairCyclicRand]
+
+type pairSwitchRand struct{ real io.Reader }
+
+func (r pairSwitchRand) Read(p []byte) (int, error) {
+	if o := pairRandOverride.Load(); o != nil {
+		return o.Read(p)
+	}
+	return r.real.Read(p)
+}
+
+func init() { rand.Reader = pairSwitchRand{rand.Reader} }
 
 type pairCyclicRand struct{ b []byte }
 
