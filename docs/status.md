@@ -114,7 +114,7 @@ Merged since the last read (45 commits on `main` after `cf1ddd000`, #3625, among
 | ee-reorg | owner E3.4 (Checks 200 and 201, scripts on main, not yet run); E4.1 deferred |
 | failure-classes | owner Check 350 |
 | feature-matrix | T6 is done (the owner read the preview on 2026-11-17, no footnote, O1 answered) and CR1 is not raised, so it is not counted; the owner's mapping corrections merged as #3047 (mapping only); D2440–D2449 answered; no check taken; no after-deploy step |
-| forge-labels | owner Check 640 (its script is merged, #3155; the commands that queue and approve its probe task merged as #3648 and #3666), in progress on 2026-11-22: the probe pull request is #3673 (a tiny docs fix, draft) and #3671, a docs draft on the plan, is open; drafts #3649 and #3671 change the plan's documents only |
+| forge-labels | owner Check 640 passed on 2026-11-22 (U1 and U3 answered YES; its probe run left #3671, and a second probe, #3673, is still a draft) — nothing of the plan is left but closing those probe pull requests and the plan-document drafts #3649 and #3671 |
 | generic-tool | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | headroom-compression | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | how-to | not a spec |
