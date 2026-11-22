@@ -236,7 +236,14 @@ func (f *Fold) Fold(ctx context.Context) (FoldReport, error) {
 	if len(clear) > 0 {
 		opts = append(opts, firestore.Clear(clear...))
 	}
-	if _, err := f.FS.Patch(ctx, SummaryCollection, SummaryDocument, fields, opts...); err != nil {
+	// The summary's own fields go through the same encoder the entries do, so
+	// the estimate table is a map of the service's kinds and not a Go value
+	// the client cannot hold.
+	encoded, err := docFields(fields)
+	if err != nil {
+		return rep, err
+	}
+	if _, err := f.FS.Patch(ctx, SummaryCollection, SummaryDocument, encoded, opts...); err != nil {
 		return rep, err
 	}
 	rep.Through = start
@@ -357,7 +364,7 @@ func (f *Fold) read(ctx context.Context, k runKey) (*Entry, error) {
 		if !readable(err) {
 			return nil, err
 		}
-		f.warnf("%s/%s: task.json could not be read (%v): the entry carries no task", k.slug, k.run, err)
+		f.warnUnreadable(k, "task.json", err)
 		spec = nil
 	}
 	launch, err := st.ReadLaunch(ctx)
@@ -365,7 +372,7 @@ func (f *Fold) read(ctx context.Context, k runKey) (*Entry, error) {
 		if !readable(err) {
 			return nil, err
 		}
-		f.warnf("%s/%s: launch.json could not be read (%v): the entry carries no launch", k.slug, k.run, err)
+		f.warnUnreadable(k, "launch.json", err)
 		launch = nil
 	}
 	rec, err := st.ReadRecord(ctx)
@@ -373,7 +380,7 @@ func (f *Fold) read(ctx context.Context, k runKey) (*Entry, error) {
 		if !readable(err) {
 			return nil, err
 		}
-		f.warnf("%s/%s: result.json could not be read (%v): the entry carries no record", k.slug, k.run, err)
+		f.warnUnreadable(k, "result.json", err)
 		rec = nil
 	}
 	if spec == nil && launch == nil && rec == nil {
@@ -420,6 +427,18 @@ func (f *Fold) read(ctx context.Context, k runKey) (*Entry, error) {
 		e.Repo = k.slug
 	}
 	return e, nil
+}
+
+// warnUnreadable says an object the fold read is not one it can use. An object
+// that is simply not there is not a warning: a run in flight has no
+// result.json and a run just launched has no record yet, so every live run of
+// the installation would warn on every sweep. A run with no objects at all is
+// caught by the caller, and that is the one worth saying.
+func (f *Fold) warnUnreadable(k runKey, name string, err error) {
+	if errors.Is(err, runstore.ErrNotFound) {
+		return
+	}
+	f.warnf("%s/%s: %s could not be read (%v): the entry carries no %s", k.slug, k.run, name, err, strings.TrimSuffix(name, ".json"))
 }
 
 // readable reports whether a read failed because of what is in the bucket
@@ -947,15 +966,11 @@ func docFieldNames(t reflect.Type) []string {
 }
 
 // fromDoc decodes a document back into the Go shape the writer encoded it
-// from. It is the reader's own path -- the fields as the service decodes them,
-// then JSON into the struct -- and not a second decoder: a document the index
-// wrote has to read back as the record it carries, whoever reads it.
+// from. It is the reader's own path -- the fields as the client hands them
+// over, then JSON into the struct -- and not a second decoder: a document the
+// index wrote has to read back as the record it carries, whoever reads it.
 func fromDoc(doc *firestore.Doc, out any) error {
-	fields, err := firestore.DecodeFields(doc.Fields)
-	if err != nil {
-		return fmt.Errorf("runindex: %s: %w", doc.ID, err)
-	}
-	data, err := json.Marshal(fields)
+	data, err := json.Marshal(doc.Fields)
 	if err != nil {
 		return fmt.Errorf("runindex: %s: %w", doc.ID, err)
 	}

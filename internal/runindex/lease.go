@@ -103,14 +103,16 @@ func NewLease(db CAS, holder string, now ServerNow) (*Lease, error) {
 func (l *Lease) Acquire(ctx context.Context) (LeaseDoc, bool, error) {
 	var last error
 	for attempt := 0; attempt < leaseAttempts; attempt++ {
-		srv, ok := l.now()
-		if !ok {
-			return LeaseDoc{}, false, errors.New("runindex: the database's clock was not seen (no Date header), so a claim cannot be judged fresh or lapsed; nothing was folded")
-		}
+		// The read comes first: the database's clock is the Date header of a
+		// response, and before this one no response has been seen at all.
 		var cur LeaseDoc
 		etag, found, err := l.db.GetETag(ctx, PathLease, &cur)
 		if err != nil {
 			return LeaseDoc{}, false, err
+		}
+		srv, ok := l.now()
+		if !ok {
+			return LeaseDoc{}, false, errors.New("runindex: the database's clock was not seen (no Date header), so a claim cannot be judged fresh or lapsed; nothing was folded")
 		}
 		if found && cur.ExpiresAt.After(srv) {
 			return cur, false, nil
