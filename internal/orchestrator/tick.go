@@ -65,6 +65,13 @@ type Tick struct {
 	// Launcher starts one run for one attempt, under the run id the state has
 	// already recorded.
 	Launcher Launcher
+	// Claims is the project's claims (claim.go, D3209): what a cycle takes on
+	// an item before its work starts and releases once it is finished, so that
+	// two orchestrators of one project never start a run for one plan task or
+	// one backlog item. Nil is a cycle that claims nothing — a process that
+	// makes no write to this subtree — and then every item is this daemon's as
+	// it was before there were claims.
+	Claims ClaimGuard
 	// Mint mints that run id. It is the daemon's (internal/task in O8): this
 	// package knows no run ids of its own.
 	Mint MintFunc
@@ -365,6 +372,10 @@ type cycle struct {
 	// find no pause and start work into the refusal the pause was raised for
 	// (O19, D2022 (a)).
 	paused bool
+	// loaded is each node as this cycle read it, in the order of nodes: what the
+	// cycle's last step compares the node against to release the claims of the
+	// items it moved into a finished phase (SettledClaims, D3209).
+	loaded []State
 }
 
 // bind makes the node at i the one this cycle is working on.
@@ -564,12 +575,14 @@ func (c *cycle) load(ctx context.Context) error {
 	stores := make([]Store, 0, 1+len(c.tick.Nodes))
 	stores = append(append(stores, c.tick.Store), c.tick.Nodes...)
 	c.nodes = make([]node, 0, len(stores))
+	c.loaded = make([]State, 0, len(stores))
 	for _, st := range stores {
 		s, etag, err := st.Load(ctx)
 		if err != nil {
 			return err
 		}
 		c.nodes = append(c.nodes, node{store: st, state: s, etag: etag, fresh: true})
+		c.loaded = append(c.loaded, s)
 	}
 	// The state node is the one the cycle starts on, and the one a step that
 	// reads every node — the run ids and the counts — settles first.
@@ -704,7 +717,36 @@ func (c *cycle) run(ctx context.Context) error {
 		c.settle()
 	}
 
+	// The claims of the items this cycle finished come off last, once every
+	// write that finished them has landed (D3209): an item the fold's own
+	// reading of a run, the merge read or a split moved to done or cancelled is
+	// work nobody is on any more, and the project's other orchestrators may take
+	// it the next time one of them has it in front of them. It is last because
+	// it is about what landed, and only the items that moved are released: a
+	// node that finished its work in an earlier cycle released its claims then.
+	if err := c.releaseClaims(ctx); err != nil {
+		return err
+	}
 	c.rep.Outcome = c.outcome()
+	return nil
+}
+
+// releaseClaims releases this orchestrator's claim on every item a node moved
+// into a finished phase in this cycle, over the nodes as they now stand against
+// the states the cycle loaded them as. A claim that cannot be released fails
+// the cycle: the item is finished and its claim is stale, so the next cycle
+// reads the same nodes and releases it then, and a daemon that swallowed the
+// refusal would leave the item blocked for every other orchestrator of the
+// project with nothing said.
+func (c *cycle) releaseClaims(ctx context.Context) error {
+	if c.tick.Claims == nil {
+		return nil
+	}
+	for i, n := range c.nodes {
+		if _, err := SettledClaims(ctx, c.tick.Claims, c.loaded[i], n.state); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -850,12 +892,19 @@ func (c *cycle) writeFold(ctx context.Context, base State, folded int, ops []Op,
 // no question still plans nothing while one stands anywhere in the project.
 // The first action that cannot be carried out ends the cycle — what it left is
 // what the starter committed before it, and the next tick re-derives the rest.
+// An action whose item another orchestrator holds the claim on is not one of
+// those: it is skipped, because the item is that orchestrator's work and not
+// this daemon's (ErrItemClaimed, D3209), and nothing about it is this cycle's to
+// carry or to fail over.
 func (c *cycle) carry(ctx context.Context, view RunView) error {
-	starter := Starter{Launcher: c.tick.Launcher, Commit: c.commit, Mint: c.tick.Mint}
+	starter := Starter{Launcher: c.tick.Launcher, Commit: c.commit, Mint: c.tick.Mint, Claims: c.tick.Claims}
 	actions, planned := planNode(c.state, view, c.tick.Caps, c.now, c.counts, c.planned, c.paused)
 	c.planned = planned
 	for _, a := range actions {
 		next, err := starter.Start(ctx, c.state, a, c.now)
+		if errors.Is(err, ErrItemClaimed) {
+			continue
+		}
 		if err != nil {
 			return err
 		}

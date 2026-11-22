@@ -665,6 +665,10 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		nodes:  append([]orchestrator.Store{d.node}, d.nodes...),
 		now:    d.db.ServerNow,
 	}
+	claims, err := orchestrator.NewClaim(d.db, d.id, d.db.ServerNow)
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
 	return &orchestrator.Tick{
 		Store: d.node,
 		// The nodes beside the state node: the standing backlog's and one per
@@ -673,9 +677,17 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		Nodes:    d.nodes,
 		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, warn: d.warn},
 		Launcher: d.launcher,
-		Mint:     func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
-		Caps:     caps,
-		Breaker:  &orchestrator.Breaker{},
+		// The project's claims (D3209): the daemon takes the claim of a plan
+		// task or a backlog item before it starts the run for it and releases it
+		// when the item is finished, so a second orchestrator of this project
+		// skips the item rather than starting a second run for the same task.
+		// The node is one under `orchestrator/~claims`, which the daemon writes
+		// with the credential it writes the state with — over IAM, since every
+		// token is refused there (F33, and no rules change).
+		Claims:  claims,
+		Mint:    func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
+		Caps:    caps,
+		Breaker: &orchestrator.Breaker{},
 		// A tick has three things to say — a run it folded ended, it committed
 		// a question (O7), and it merged under a ceiling that tells somebody
 		// (D2030) — and the log sink is the channel slice 1 ships, one cleaned
