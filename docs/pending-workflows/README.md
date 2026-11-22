@@ -17,7 +17,7 @@ The console's Windows installer pack,
 `console-windows.yml`, was copied in on **2026-11-10** and its staged copy
 removed; it was a release-time job rather than a pull-request check (see
 `## console-windows.yml` below, which is the record of that change).
-**Six further files here are not workflows at all: `website-promote-comments.md`, `mobile-release-comments.md`, `console-release-comments.md`, `console-linux-comments.md`, `console-node-comments.md` and `ci-hygiene.yml.snippet`.** The first five are comment-only corrections: the first three were staged on **2026-11-07**, for three workflow files whose comments still say a reviewer approves a release; the fourth on **2026-11-09**, for a comment of `.github/workflows/console-linux.yml` whose count of pinned Electron hashes went stale when the `win32-x64` hash landed; the fifth on **2026-11-22**, for a comment of four console workflows that called `console/package.json`'s `engines.node` an exact pin after it became a floor and the next major as its ceiling (`#3566`). The sixth, `ci-hygiene.yml.snippet`, is the `hygiene` step for the `check` job of `.github/workflows/ci.yml`. The five are `.md` and the sixth is a `.yml.snippet` for the same reason: none of the six is a pending workflow, none is enumerated as such by the docs tests or by `website/test/readme.mjs` (both walk this directory for `.ya?ml` alone), and neither count above moves. See `## The comment-only fragments` below — which maintains the five remaining names in the list above, and only those — and `## ci-hygiene.yml.snippet` for the sixth.
+**Seven further files here are not workflows at all: `website-promote-comments.md`, `mobile-release-comments.md`, `console-release-comments.md`, `console-linux-comments.md`, `console-tests-comments.md`, `console-windows-comments.md` and `ci-hygiene.yml.snippet`.** Six of them are comment-only corrections. Three were staged on **2026-11-07**, for three workflow files whose comments still say a reviewer approves a release; `console-linux-comments.md`, staged on **2026-11-09**, corrects a comment of `.github/workflows/console-linux.yml` whose count of pinned Electron hashes went stale when the `win32-x64` hash landed; and the comment `#3566`'s Node range invalidated, on **2026-11-22**, is staged in `console-tests-comments.md` and `console-windows-comments.md`, and as a second correction inside `console-release-comments.md` and `console-linux-comments.md`. The seventh, `ci-hygiene.yml.snippet`, is the `hygiene` step for the `check` job of `.github/workflows/ci.yml`. The six are `.md` and the seventh is a `.yml.snippet` for the same reason: none of the seven is a pending workflow, none is enumerated as such by the docs tests or by `website/test/readme.mjs` (both walk this directory for `.ya?ml` alone), and neither count above moves. See `## The comment-only fragments` below — which maintains the six remaining names in the list above, and only those — and `## ci-hygiene.yml.snippet` for the seventh.
 **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508) and staged
 again on 2026-11-08 for the workspaces work's `workspace` root and the longer test timeout,
 which entered the tree after that copy; that staging was copied in on **2026-11-11** (#2350) and
@@ -3318,11 +3318,12 @@ gh workflow run core-without-ee --ref main
 
 ## The comment-only fragments
 
-Five files here are **fragments, not workflows**:
+Six files here are **fragments, not workflows**:
 `website-promote-comments.md`, `mobile-release-comments.md`,
-`console-release-comments.md`, `console-linux-comments.md` and
-`console-node-comments.md`. Each one holds comment text an applied workflow file
-needs, and nothing else: **no executable line changes in any of them.**
+`console-release-comments.md`, `console-linux-comments.md`,
+`console-tests-comments.md` and `console-windows-comments.md`. Each one holds
+comment text an applied workflow file needs, and nothing else: **no executable
+line changes in any of them.**
 
 The first three carry the text `.github/workflows/website-promote.yml`,
 `.github/workflows/mobile-release.yml` and `.github/workflows/console-release.yml`
@@ -3338,17 +3339,20 @@ Windows work landed ahead of the leg that will download it
 `console/test/unit/fuses.test.ts`, which holds the block to the lockfile-pinned
 package's own `checksums.json`).
 
-The fifth corrects one comment **four** applied files carry —
-`.github/workflows/console-tests.yml`, `console-release.yml` (twice),
-`console-linux.yml` and `console-windows.yml` — which called
+The comment `#3566` invalidated on **2026-11-22** is one comment **four** applied
+files carry — `.github/workflows/console-tests.yml`, `console-release.yml`
+(twice), `console-linux.yml` and `console-windows.yml` — and it called
 `console/package.json`'s `engines.node` an exact pin that
 `test/unit/pinning.test.ts` keeps. The field became `>=22.23.3 <23`, a floor and
-the next major as its ceiling, on **2026-11-22** (`#3566`), and the test carves
-the field out of the exact-pin rule for it. Unlike the other four it is one
-fragment for several targets, which its own header says: the stale text is one
-comment repeated, and the two of the four that have a staged twin here are the
-two whose copies must stay byte-identical. It has its own `## How to apply`,
-which includes the two `cp` commands those twins need.
+the next major as its ceiling, and the test carves the field out of the
+exact-pin rule for it. A fragment is named for the one workflow it splices into
+(`TestCommentFragmentBlocksMatchTheirWorkflowFile` reads the target out of the
+name), so the correction is staged where each target's own fragment sits:
+`console-tests-comments.md` and `console-windows-comments.md` are new for those
+two files' copies of the comment, and the third and the fourth above — the ones
+already staged for `console-release.yml` and `console-linux.yml` — carry it as a
+second replacement each. That is why those two are titled for two changes rather
+than one.
 
 They are `.md` and not `.yml` on purpose. A `.yml` file here is enumerated as a
 pending workflow by `internal/cli`'s docs tests and by `website/test/readme.mjs`
@@ -3384,14 +3388,14 @@ apply" so the two halves of the procedure cannot part:
 
 1. **The opening line's second sentence is this directory's list of the files
    that are not workflows, and a copy-in drops the name it applied.** That is the
-   one beginning *Six further files here are not workflows at all*: applying a
+   one beginning *Seven further files here are not workflows at all*: applying a
    fragment — its `git rm` and all — takes that fragment's name out of the list,
-   and once the five comment-only ones are gone the sentence keeps
+   and once the six comment-only ones are gone the sentence keeps
    `ci-hygiene.yml.snippet` and drops the rest, so the opening states the two
    pending files, the two files kept by design and that snippet, and names
    nothing that is no longer in this directory.
 2. **This whole section goes with the fragment applied last**, whichever of the
-   five it is — `## The comment-only fragments`, down to the line before
+   six it is — `## The comment-only fragments`, down to the line before
    `## Before you copy: check the action pins`.
 3. **The dated note at the top of this page loses the clause that points
    here.** Its last sentence is *Every sentence below that says a person
@@ -3401,12 +3405,16 @@ apply" so the two halves of the procedure cannot part:
    of the note stays — it is the record of the 2026-11-07 change, and
    `docs/release.md` states the same thing for the environments.
 
-**`console-linux-comments.md` is the exception to the shape above in one way.**
-It is not part of the 2026-11-07 reviewer change, and its target,
-`.github/workflows/console-linux.yml`, has **no staged twin** — so applying it is
-the edit and the `git rm`, with no `cp` step and no byte-identity clause to keep.
-Its own "How to apply" says so and repeats the one of the three reference edits
-above that its own commit owes.
+**`console-linux-comments.md`, `console-tests-comments.md` and
+`console-windows-comments.md` are the exceptions to the shape above.** They are
+not part of the 2026-11-07 reviewer change, and two of their targets have **no
+staged twin**: applying `console-linux-comments.md` or
+`console-windows-comments.md` is the edit and the `git rm`, with no `cp` step and
+no byte-identity clause to keep, while `console-tests.yml` has one, so that
+fragment carries the same `cp` step `console-release-comments.md` does. Each of
+the three says so in its own "How to apply" and repeats the one of the three
+reference edits above that its own commit owes; the exception paragraph here is
+not one of them, and it goes with the last of the three to be applied.
 
 The console's fragment is applied to **both** copies of that file. The staged
 `docs/pending-workflows/console-release.yml` and the applied
@@ -3573,7 +3581,7 @@ only `.ya?ml` files in this directory. What moves is the status line above,
 which becomes **"`ci-hygiene.yml.snippet` is applied, not pending."**, and the
 opening line's second sentence, which lists the files here that are not
 workflows: with this one gone from the directory its name goes with it, and that
-sentence becomes *Four further files here are not workflows at all* with the four
+sentence becomes *Six further files here are not workflows at all* with the six
 comment-only fragments (the procedure under `## The comment-only fragments` says
 the same from the other direction). This section stays as the record of what the
 step does.
