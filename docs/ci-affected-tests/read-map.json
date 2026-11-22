@@ -19081,6 +19081,7 @@
         "scripts/versions.sh",
         "testdata/**",
         "testdata/fixture-repo/**",
+        "website/data/compatibility.yaml",
         "website/data/release-summaries.yaml",
         "website/src/pages/community.astro"
       ],
