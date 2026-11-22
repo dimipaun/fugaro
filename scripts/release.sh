@@ -923,10 +923,9 @@ finish_the_release() {
   #
   # `run` is the billable half, and it refuses no session of its own: it builds in
   # the sandbox project only and tags nothing, so a coding agent may run it by hand
-  # (the owner's ruling of 2026-11-19). What keeps this step the person's is the
-  # release around it — the preconditions above refuse a coding agent's session,
-  # before the branch, the pull request and the merge — and the CLI is not a fence
-  # either: its gate admits an agent's session whose plan it admitted. `check` is
+  # (the owner's ruling of 2026-11-19), and since the owner's order of 2026-11-21
+  # ("Remove the guard") the release around it refuses no session either -- the
+  # preconditions, the gate and the tag are the same whoever runs them. `check` is
   # the gate: the record on disk --
   # commit, Cloud Build id, verdict -- is what the tag is cut on, never this run's
   # own memory of it, so a missing, red, or other-commit record refuses the tag
