@@ -116,6 +116,10 @@ test('the door is a mailbox read and a call, and a port it cannot use is refused
   assert.throws(() => createPushReceipt({ mailbox: null }), TypeError);
   assert.throws(() => createPushReceipt({ mailbox: {} }), TypeError, 'a port without newChange()');
   assert.throws(() => createPushReceipt({ mailbox: { newChange: 'no' } }), TypeError);
+  // The double refuses the same class of mistake: `new MemoryMailboxChange(true)`
+  // would destructure to `{fresh: []}` and be a read that is never fresh, which
+  // is a receipt that never posts for a reason no test would have chosen.
+  assert.throws(() => new MemoryMailboxChange(true), TypeError);
 });
 
 test('the category set is the schema’s five, and every one of them has a phrase', () => {
@@ -156,6 +160,45 @@ test('§3.1 and rule 10: a phrase names the app and nothing about the owner’s 
     assert.notEqual(text, ALERT_PUBLIC);
   }
   assert.equal(ALERT_VISIBILITY, 'private');
+});
+
+test('§3.1: the text is the app’s own table, never a sentence a message carries', async () => {
+  // Q6 left this choice to this task -- the sentence travels in the payload, or
+  // the phone composes it from its own bundle -- and it is the second. Said from
+  // the outside: a payload carrying a *plausible* sentence, another category's
+  // phrase or the redacted line changes nothing about what is posted.
+  const receipt = receiptOver(new MemoryMailboxChange({ fresh: true }));
+  for (const [category, text] of Object.entries(ALERT_PHRASES)) {
+    const decision = await receipt.receive(push({
+      category,
+      title: ALERT_PHRASES.kill_switch,
+      body: ALERT_PUBLIC,
+      text: 'Fugaro: everything is fine.',
+      public: 'ignored',
+      visibility: 'public',
+    }));
+    assert.equal(decision.alert.text, text, category);
+    // The redacted line and the visibility are the app's constants too: a
+    // payload that could set either would decide what a lock screen shows.
+    assert.equal(decision.alert.public, ALERT_PUBLIC, category);
+    assert.equal(decision.alert.visibility, ALERT_VISIBILITY, category);
+  }
+});
+
+test('the receipt is the same function on both platforms, and takes no platform', async () => {
+  // §4 rule 11's iOS exception is about what the SYSTEM shows before the app
+  // runs, and not about what the app does when it does: on iOS the alert has
+  // already appeared and the receipt's answer is still "nothing to do". So there
+  // is no platform here to branch on -- the door ignores one, and the answer to
+  // the same message is the same answer.
+  const message = push({ category: 'prompt' });
+  const here = await receiptOver(new MemoryMailboxChange({ fresh: ['prompt'] })).receive(message);
+  const there = await createPushReceipt({
+    mailbox: new MemoryMailboxChange({ fresh: ['prompt'] }),
+    platform: 'ios',
+  }).receive(message);
+  assert.deepEqual(there, here);
+  assert.deepEqual(Object.keys(there).sort(), ['alert', 'category', 'code', 'ok', 'post']);
 });
 
 test('the channel’s own description says the one thing that works against a forged push', () => {
@@ -217,7 +260,7 @@ test('every category of the set resolves the same way, one phrase each', async (
 });
 
 test('a category the app does not have is never asked about and never posted', async () => {
-  const mailbox = new MemoryMailboxChange(true);
+  const mailbox = new MemoryMailboxChange({ fresh: true });
   const receipt = receiptOver(mailbox);
   for (const data of [
     { category: 'finished' },      // §1's excluded pair: a category the app cannot resolve
@@ -241,7 +284,7 @@ test('a category the app does not have is never asked about and never posted', a
 });
 
 test('a message that is not one is answered, not thrown at', async () => {
-  const mailbox = new MemoryMailboxChange(true);
+  const mailbox = new MemoryMailboxChange({ fresh: true });
   const receipt = receiptOver(mailbox);
   for (const message of [
     null,
@@ -385,6 +428,7 @@ test('§3.9 rule 12: the receipt writes nothing, reaches no store and no secret'
     ['a secret', /\b(reveal|macKey|idToken|SECRET_ITEMS)\b/],
     ['the accounts module', /accounts\//],
     ['a route or a link', /\b(Linking|openURL|navigate|deepLink|click_action|fcm_options)\b/],
+    ['a platform branch', /\b(Platform|platform)\b/],
     ['a non-relative import', /(?:\bfrom|\bimport)\s*\(?\s*['"][^.'"]/],
   ];
   const offences = (text) => RULES.filter(([, pattern]) => pattern.test(code(text))).map(([name]) => name);
@@ -401,6 +445,7 @@ test('§3.9 rule 12: the receipt writes nothing, reaches no store and no secret'
     'a secret': 'secret.reveal()',
     'the accounts module': "import { SettingsStore } from '../accounts/index.js';",
     'a route or a link': 'Linking.openURL(url)',
+    'a platform branch': "if (Platform.OS === 'ios') { post(); }",
     'a non-relative import': "import assert from 'node:assert/strict';",
   };
   for (const [name, pattern] of RULES) {

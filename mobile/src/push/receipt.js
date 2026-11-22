@@ -49,6 +49,28 @@
 // alert only on a `fresh` answer, and a port that refuses, throws or answers
 // anything else produces no alert.
 //
+// **The sentence is resolved on the phone, and Q6 left that to this task.** The
+// owner's answer names the two candidates -- the sentence travels in the payload,
+// or the phone composes it from a key in its own bundle, "depends on what the
+// relay passes through (not verified)" -- and the second is the one that holds
+// whatever a relay does: `ALERT_PHRASES` is a table in this file, the sender's
+// wire format carries no title and no body to read one out of
+// (`internal/cli/push.go`), and the relay's own pass-through is unverified. So
+// **no text this app shows ever comes from a message**, which is the same claim
+// §3.1 makes about the payload, made again about the sentence.
+//
+// **The iOS exception is stated here rather than assumed.** On iOS the push is a
+// visible alert shown by the system *before* the app runs, so on iOS an alert
+// appears **before any MAC is verified** -- §4 rule 11's own exception, the price
+// the owner accepted for no NSE and no D111 amendment. What that costs is the
+// rule's subject, and not this module's: on iOS rule 11 still holds for **state**
+// (what the app's own screen shows is built from nothing but the MAC-verified
+// mailbox), and what the receipt answers on iOS is exactly what it answers on
+// Android -- nothing to do, nothing to open, nothing to write. The phrase the
+// system shows is this table's, drawn from rule 10's closed enumeration, and it
+// is no route and no input (rules 3 and 8), which is why `receive` is the same
+// function on both platforms and takes no platform at all.
+//
 // **What is deliberately NOT here.** No Notification Service Extension: Q6's
 // answer is a visible iOS alert with **no NSE and no keychain access group**,
 // so **D111 is not amended** and there is no iOS file to write -- the sentence
@@ -264,8 +286,16 @@ export class MemoryMailboxChange {
    * @param {string[]|boolean} [options.fresh] the categories that answer
    *   `fresh`, or `true` for every category
    * @param {boolean} [options.fail] throw instead of answering
+   * @throws {TypeError} for anything but an options object: `new
+   *   MemoryMailboxChange(true)` would otherwise mean `{fresh: []}` by
+   *   destructuring, and a read that is silently never fresh is a receipt that
+   *   silently never posts.
    */
-  constructor({ fresh = [], fail = false } = {}) {
+  constructor(options = {}) {
+    if (options === null || typeof options !== 'object') {
+      throw new TypeError('MemoryMailboxChange: options is an object, { fresh, fail }');
+    }
+    const { fresh = [], fail = false } = options;
     this.#fresh = fresh === true ? true : new Set(fresh);
     this.#fail = fail === true;
   }
