@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -192,6 +193,14 @@ type InstallationSpec struct {
 	AdoptLegacyRegistry     bool            `json:"adopt_legacy_registry"`
 	// LogBucketDescription is the log bucket's ownership mark.
 	LogBucketDescription string `json:"log_bucket_description"`
+	// LogBucketLocation is where the run log bucket is. Installation() writes
+	// the mapping's answer (place.For), which is what a NEW installation's
+	// bucket is created in; DiscoverInstallation gives it the location it read
+	// for a bucket that exists, because a bucket's location is permanent and
+	// nothing that exists is ever given the mapping's answer (R5, F10). The
+	// module ignores the field on a bucket it manages, so the value a plan
+	// carries can never move one.
+	LogBucketLocation string `json:"log_bucket_location"`
 	// LogIsolation is nil for the module's default, which is on; only
 	// --no-log-isolation and the rollback turn it off.
 	LogIsolation *bool `json:"log_isolation,omitempty"`
@@ -2189,7 +2198,13 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		Budget:               o.Budget,
 		AdoptLegacyRegistry:  o.AdoptLegacyRegistry,
 		LogBucketDescription: LogBucketDescription,
-		ProjectSecrets:       projectSecretContainers(lc),
+		// The mapping's answer for this region: the region itself where Cloud
+		// Logging offers a bucket there, else the place's multi-region, else
+		// global with the reason stated (D3082). It is what a log bucket
+		// CREATED from now on is in; discovery replaces it with where an
+		// installation's own bucket already is.
+		LogBucketLocation: place.For(lc.Region).LogBucket.Where,
+		ProjectSecrets:    projectSecretContainers(lc),
 	}
 	jobs, err := projectJobs(lc, bucket, s.EnableVertex, o.CarriedJobProfiles)
 	if err != nil {
