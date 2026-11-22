@@ -1046,8 +1046,12 @@ const execName = "fugaro exec"
 // the dashboard reads (C1.3). Both are written by r.recordCredential
 // (runner.go, with the run's other record writers) and decided here, where the
 // answer arrives, because a second reader of the same contract is how two
-// records come to disagree. The tier a call settled by and the switch are
-// C1.16's ledger.
+// records come to disagree. The owner of that credential's token is the same
+// answer's second fact and part of the same write (F16): the two are the
+// record's pair, one call to recordCredential hands over both, and an answer
+// that names a credential the launcher does not own clears the owner rather
+// than leaving the one an earlier answer gave. The tier a call settled by and
+// the switch are C1.16's ledger.
 //
 // The typed answer is turned back into the contract's own type
 // (credsvc.ExhaustedUntil) rather than a runner type of its own: the wire
@@ -1055,7 +1059,16 @@ const execName = "fugaro exec"
 // hands it the same shape.
 func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
 	if a.Credential != "" {
-		r.recordCredential(a.Credential)
+		// The credential that answered and the owner of its token go over
+		// together, as ONE write: the stages of a cascade call at the same
+		// time, so two answers reach this point together, and handing the two
+		// fields to two writers would let their writes interleave -- the
+		// record pairing one answer's credential with another answer's owner.
+		// recordCredential takes both under one lock for that reason, and an
+		// empty owner is a write that CLEARS it (F16). An answer that names no
+		// credential is a refusal or a call the service did not serve, and it
+		// writes neither, so the record stands as it does.
+		r.recordCredential(a.Credential, a.CredentialOwner)
 	}
 	if a.Switch != "" {
 		// The switch the answer carries (C1.16, D140): the run's log of what
@@ -1094,7 +1107,16 @@ func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
 // the token, and on failure it is the metadata server's own text about a
 // request this code made. Only the status is reported.
 func metadataIDToken(ctx context.Context, env []string, audience string) (string, error) {
-	u := metadataIdentityURL(env, audience)
+	return metadataToken(ctx, metadataIdentityURL(env, audience))
+}
+
+// metadataToken is the read both of the metadata server's identity tokens are
+// made with: this job's own, short format, and the attestation a Batch run's
+// claim carries, in the full format (batch_attest.go). They are one function
+// because the read is one — the same header, the same bound, the same refusal
+// of anything that is not one clean token — and only the URL they are asked at
+// tells them apart.
+func metadataToken(ctx context.Context, u string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return "", errors.New("the metadata request could not be built")
@@ -1113,9 +1135,12 @@ func metadataIDToken(ctx context.Context, env []string, audience string) (string
 		return "", errors.New("the metadata server's answer could not be read")
 	}
 	tok := strings.TrimSpace(string(b))
-	// One clean header value, at the bound the service reads a presented
-	// token by: a token with a newline in it, or one longer than that bound,
-	// is refused here rather than sent to be refused there.
+	// One clean token, at the bound the service reads a presented one by: a
+	// token with a newline or a space in it, or one longer than that bound, is
+	// refused here rather than sent to be refused there. The job's own token
+	// is presented as a header value and could carry neither anyway; the
+	// attestation travels in a body, and this refuses the same shapes rather
+	// than reading a second rule.
 	if len(tok) > maxIDTokenBytes || !printableToken(tok) {
 		return "", errors.New("the metadata server answered with no usable identity token")
 	}
