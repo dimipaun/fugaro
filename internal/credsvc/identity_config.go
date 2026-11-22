@@ -107,9 +107,9 @@ type ScopeCheck interface {
 
 // ErrStubIdentity is what the identity stub decides, which is nothing: every
 // answer of it is this error, so that a route built on it refuses rather than
-// serving a caller, a run or a ticket the stub invented. It is the rule the
-// scope stub already follows (errStubScope): a stub that answered a question
-// would be a decision nothing made.
+// serving a caller, a run or a ticket the stub invented. It is the rule every
+// stub of this package follows: a stub that answered a question would be a
+// decision nothing made.
 var ErrStubIdentity = errors.New("credsvc: the identity stub decides nothing")
 
 // stubIdentityStore is the issuance store of a side built before LM1 exists.
