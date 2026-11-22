@@ -31,7 +31,7 @@ import (
 // any number of named ones at once. That is also why uninstall works on a
 // machine whose local config is gone — which is the machine most likely to need
 // it — and why the unit's path is the same one the converge's steps use
-// (service.Render is the only renderer, and `~`/XDG decide where it goes).
+// (service.RenderNamed is the only renderer, and `~`/XDG decide where it goes).
 //
 // Nothing here touches a system path, needs root or asks for sudo: the unit
 // lives under the person's own home and the service manager is asked at the

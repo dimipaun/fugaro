@@ -159,8 +159,8 @@ func runOrchestratorLs(cmd *cobra.Command, o *orchestratorLsOptions) error {
 			return dbErr(lc, err, false)
 		}
 		// The driver node is read beside the lease and for the same ids: it is
-		// the sibling of the state, the lease and the audit, so an id whose node
-		// exists has one and an id only this machine's cache names does not.
+		// the state's, the lease's and the audit's sibling, so it belongs to an
+		// id the database holds and to no id only this machine's cache names.
 		driver, err := orchestrator.ReadDriverNode(ctx, db, id)
 		if err != nil {
 			return dbErr(lc, err, false)
