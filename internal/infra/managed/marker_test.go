@@ -2604,6 +2604,29 @@ var runAccountGrants = setOf(
 	// the service (G4, F36) refuses every caller that is not one of the class
 	// the roster names.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | each.value | for_each=local.credentials_service_on ? local.launcher_invoker_members : toset([]) [local.credentials_service_on=var.credentials_service != null] [local.launcher_invoker_members=toset([for m in var.launchers : m if startswith(m, "user:")])] | perms=`,
+	// ... and the roster's own SERVICE ACCOUNTS (LM12 of
+	// docs/launcher-does-not-mint, D3123): the same role on the same service,
+	// to a pipeline's identity rather than a person's, which the row above can
+	// never admit — its set is the roster's user: members, and the class lists
+	// inside the process refuse an account's address by construction. Without
+	// this row such an account is refused at IAM before the container runs, so
+	// a pipeline that launches runs reaches nothing (F4). Its for_each is a
+	// conditional over the local the module builds the account members from and
+	// this test cannot resolve to a set of people, so it is pinned whole like
+	// the four above it.
+	//
+	// Reviewed as a grant to a member that is not a run's credential and not an
+	// account this module creates: the addresses come from
+	// var.credentials_service.roster_service_accounts, which is the roster's own
+	// `serviceAccount:` entries — the machine the owner admitted — and each is
+	// also the value the service admits it by (credentials.tf's
+	// FUGARO_ROSTER_SERVICE_ACCOUNTS, D3137's unscoped class), so the identity
+	// that may knock and the identity that is served are one value read twice.
+	// roles/run.invoker carries no storage permission at all, no permission to
+	// grant a role, no iam.serviceAccounts.actAs and no token minting: what the
+	// member reaches through it is a container, and the class inside the process
+	// is what decides what it is served.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | each.value | for_each=local.credentials_service_on ? local.roster_service_account_members : toset([]) [local.credentials_service_on=var.credentials_service != null] [local.roster_service_account_members=toset([for a in try(var.credentials_service.roster_service_accounts, []) : "serviceAccount:${a}"])] | perms=`,
 
 	// Reviewed for D1931 (the dynamic secret class, DS2.2): the intake's own
 	// account and the credentials service's two new reaches. Every one of these
