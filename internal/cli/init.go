@@ -3561,7 +3561,18 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// one (a condition is ForceNew); exactly that replace is allowed, and
 		// named (bucket-iam.md H5).
 		upgrade := infra.LauncherGrantUpgrade(plan, spec.RunsBucket, spec.Launchers, spec.Operators)
-		allowed := append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...)
+		// The launcher-does-not-mint switch turns off the minter rows this
+		// binary's own update removes once the credentials service signs as the
+		// runs' signer (LM14, R8); exactly those deletes are allowed, and named
+		// (LM20). Without the list the guard would refuse the update's own plan
+		// and point at --allow-delete, the step the hard rule about `fugaro
+		// update` forbids. It is the switch-off plan's own list and no other's:
+		// with the switch on, the same delete at the same address is a member
+		// dropped from the roster or an orchestrator turned off, and the guard
+		// keeps judging it as it always did. The Firebase root is not given this
+		// list here: LM14 wires that root's guard at its level (F32).
+		identity := infra.IdentityAllowDelete(plan, infra.PeopleMinter(plan))
+		allowed := append(append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...), identity...)
 		counts := infra.CountPlan(plan)
 		// The managed gate judges the plan BEFORE the guard and the
 		// confirmation, and replaces both when it admits it (D1016,
@@ -3569,7 +3580,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// what the gate refused rather than the guard's advice, which is what
 		// a managed project's refusal is about. Everything the guard's own
 		// path prints or records stays where it was, on the path that runs it.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade)
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade, identity)
 		if err != nil {
 			return plan, err
 		}
@@ -6239,7 +6250,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		// does not admit this plan (D1016, update_managed.go). A repository root
 		// is one of Fugaro's own too, so it is judged by the same cover and the
 		// same guard the installation's roots are.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil)
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil, nil)
 		if err != nil {
 			return plan, err
 		}

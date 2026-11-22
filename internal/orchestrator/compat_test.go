@@ -268,7 +268,7 @@ func writeStateNode(t *testing.T, db *gcpfake.RTDB, s orchestrator.State, id, no
 // built.
 func writeLeaseNode(t *testing.T, db *gcpfake.RTDB, id string) {
 	t.Helper()
-	lease, err := orchestrator.NewLease(rtdbClient(t, db), id, compatHolder, func() (time.Time, bool) { return compatNow, true })
+	lease, err := orchestrator.NewLease(rtdbClient(t, db), id, compatHolder, "", func() (time.Time, bool) { return compatNow, true })
 	if err != nil {
 		t.Fatalf("building the lease of %q: %v", id, err)
 	}
