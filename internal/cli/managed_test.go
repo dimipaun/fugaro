@@ -1026,8 +1026,8 @@ var initFlagCases = map[string]string{
 	// confirmation it reaches is confirmStageWrite's, which the property
 	// already covers.
 	// answers-file (ST1 of docs/console-improvements/implementation-plan.md;
-	// D2904) is the third: the wizard's five questions as one document, whose
-	// answers are written onto those five flags' own fields, so it reaches the
+	// D2904) is the third: the wizard's questions as one document, whose
+	// answers are written onto those flags' own fields, so it reaches the
 	// confirmations they reach and none of its own. The steps that are a
 	// person's — the project's creation, the billing link, the Firestore
 	// location, every secret value — have no member in the document, which is
