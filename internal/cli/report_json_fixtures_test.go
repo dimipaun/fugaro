@@ -808,7 +808,7 @@ const consoleReadEE = "the command is the Subscription Edition's, and this packa
 // does for one no build has. There is therefore no run of it here either, and
 // the console's own floor argues the same way from the other side: the console
 // refuses the read before it spawns anything until a release carries the
-// command (`ORCHESTRATOR_MAP_CLI_FLOOR`, `console/src/shared/version.ts`).
+// command (the console's `ORCHESTRATOR_MAP_CLI_FLOOR`).
 const consoleReadEESubcommand = "the command is the Subscription Edition's, registered under the core tree's own `orchestrator` family (RegisterSubcommand, ee/orchestrator/cli), so this package's core build holds no stub for it and no run of the name exists here"
 
 // consoleReadExempt are the console reads this package has no run of, with the
