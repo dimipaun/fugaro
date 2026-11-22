@@ -1426,14 +1426,13 @@ export function buildLiveModel(
 }
 
 /**
- * LIVE_CAPS_HIDDEN_WORD is what a withheld cap figure says, and it is the
- * sentence the Coordinator's queue draws for the same withholding
- * (`COORDINATOR_QUEUE_CAPS_HIDDEN_WORD`): `caps` is one view of
- * `REDUCED_VIEWS`, and one mode withholding it in two places under two
- * different sentences would read as two different modes. It is a second copy
- * rather than an import because the screens are siblings and none owns the
- * others (the same reason `LIVE_PR_NO_LINK_REASON` is a copy of `run.ts`'s),
- * and `live.test.ts` holds the two constants equal so they cannot drift.
+ * LIVE_CAPS_HIDDEN_WORD is what a withheld cap figure says: `caps` is one view
+ * of `REDUCED_VIEWS`, and the kind that edits the caps draws the same sentence
+ * (`manage/kinds/budget.ts`'s `BUDGET_CAPS_HIDDEN_WORD`). It is a second copy
+ * rather than an import because the screens and the kinds are siblings and none
+ * owns the others (the same reason `LIVE_PR_NO_LINK_REASON` is a copy of
+ * `run.ts`'s), and `live.test.ts` holds the two constants equal so they cannot
+ * drift.
  */
 export const LIVE_CAPS_HIDDEN_WORD = 'the caps are withheld for the installation this console is driving'
 

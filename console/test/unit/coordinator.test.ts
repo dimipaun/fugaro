@@ -565,7 +565,7 @@ describe('the Coordinator tab as a graph (CG7b, D3210)', () => {
   describe('the drawing', () => {
     it('draws the heading and the command line before any read answers', () => {
       const tree = renders({ model: null, positions: null, selected: null, tasks: { kind: 'closed' }, notice: null })
-      expect(tree.classes).toContain('coordinator')
+      expect((tree as FakeScreen).classes).toContain('coordinator')
       expect(tree.getAttribute('data-theme')).toBe('dark')
       expect(textOf(tree, COORDINATOR_TITLE_CLASS)).toBe(COORDINATOR_TITLE)
       expect(textOf(tree, COORDINATOR_SOURCE_CLASS)).toBe(COORDINATOR_SOURCE_LINE)
@@ -778,7 +778,7 @@ describe('the Coordinator tab as a graph (CG7b, D3210)', () => {
 
     it('names the release the tab needs instead of drawing a map it cannot read', () => {
       const tree = renderCoordinatorFloor(coordinatorFactory, 'light', '0.9.0')
-      expect(tree.classes).toContain('coordinator')
+      expect((tree as FakeScreen).classes).toContain('coordinator')
       expect(tree.getAttribute('data-theme')).toBe('light')
       expect(textOf(tree, COORDINATOR_TITLE_CLASS)).toBe(COORDINATOR_TITLE)
       const note = one(tree, COORDINATOR_FLOOR_CLASS)

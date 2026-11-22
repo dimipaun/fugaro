@@ -217,6 +217,13 @@ export const COORDINATOR_WARNING_COUNT_CLASS = 'coordinator-overlap-warning-coun
 export const COORDINATOR_EMPTY_CLASS = 'coordinator-empty'
 export const COORDINATOR_NO_CANVAS_CLASS = 'coordinator-no-canvas'
 export const COORDINATOR_GRAPH_CLASS = 'coordinator-graph'
+// These two classes are passed to their emitter as the literal at the call
+// site and not through the name here, the way the SVG emitters of graph.ts and
+// live.ts pass theirs: the styling scan reads a class out of the call site's
+// own argument, so a constant there leaves the attribute-qualified rule
+// (`g.coordinator-node[aria-pressed]`, `span.coordinator-row-edge[data-kind]`)
+// a rule it cannot match to any element. The names remain what the entry and
+// the tests look the element up by.
 export const COORDINATOR_NODE_CLASS = 'coordinator-node'
 export const COORDINATOR_NODE_BOX_CLASS = 'coordinator-node-box'
 export const COORDINATOR_NODE_NAME_CLASS = 'coordinator-node-name'
@@ -754,7 +761,7 @@ function nodeBox(
   box: CoordinatorBox,
   selected: boolean,
 ): ScreenElement {
-  const group = makeNS(factory, 'g', COORDINATOR_NODE_CLASS)
+  const group = makeNS(factory, 'g', 'coordinator-node')
   group.setAttribute(COORDINATOR_ATTRIBUTE, box.node.id)
   group.setAttribute('role', 'button')
   group.setAttribute('tabindex', '0')
@@ -982,12 +989,26 @@ function fallbackList(factory: ScreenFactory, model: CoordinatorModel): ScreenEl
     putReading(age, leaseReading(node), 'duration')
     for (const edge of model.edges) {
       if (edge.from !== node.id && edge.to !== node.id) continue
-      const other = edge.from === node.id ? edge.to : edge.from
-      const line = cell(row, factory, 'span', COORDINATOR_ROW_EDGE_CLASS)
+      const otherId = edge.from === node.id ? edge.to : edge.from
+      const other = model.nodes.find((one) => one.id === otherId)
+      const line = cell(row, factory, 'span', 'coordinator-row-edge')
       line.setAttribute('data-kind', edge.kind)
       literal(
+        cell(line, factory, 'span'),
+        `${edge.kind === COORDINATOR_OVERLAP ? COORDINATOR_OVERLAP_WORD : COORDINATOR_DEPENDS_WORD} `,
+      )
+      // The other end is drawn under the name the canvas draws it under -- the
+      // project's own name for the default orchestrator -- and not as the
+      // document's raw id: an id is a join key, the contract says every edge
+      // joins two nodes of its own document, and the id is the fallback for a
+      // document that breaks that rule rather than a second thing to draw.
+      textCell(
         line,
-        `${edge.kind === COORDINATOR_OVERLAP ? COORDINATOR_OVERLAP_WORD : COORDINATOR_DEPENDS_WORD} ${other}`,
+        factory,
+        'span',
+        other === undefined ? otherId : nodeName(model, other),
+        'label',
+        'nodes[].name',
       )
     }
   }
