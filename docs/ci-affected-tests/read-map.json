@@ -9148,6 +9148,7 @@
     {
       "package": "./internal/diagnoseagent",
       "reads": [
+        "*",
         "cmd/fugaro/**",
         "deploy/terraform/**",
         "docs/plans/*",
@@ -9201,6 +9202,7 @@
         "internal/craft/**",
         "internal/creds/**",
         "internal/credsvc/**",
+        "internal/diagnoseagent/*",
         "internal/diagnoseagent/**",
         "internal/diagnoseagent/guide.md",
         "internal/digest/**",
