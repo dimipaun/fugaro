@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
 // candidates narrows the bundle to the credentials this call may use, and
@@ -1195,9 +1196,30 @@ func noCandidatesMessage(tried []Tried) string {
 	return noCandidatesHead + "; considered and dropped: " + triedLine(tried)
 }
 
+// credentialOwnedBy reports whether the credential a call was served is the
+// launcher's OWN per-user credential, and it is the whole of when an answer may
+// name an owner (F16).
+//
+// A slip admits a call to more than the launcher's own tokens: a grant's list
+// may name bundle entries, which are nobody's, and a pool's credential, which
+// the launcher may merely be allowed by and not own (R11, G8) — and the
+// owner-only rule holds a per-user name to its person (checkGrantedNames) while
+// saying nothing about either. So the GRAMMAR answers here and not the slip:
+// `fugaro_u_<id>_<name>` is the one shape of name that carries an owner at all,
+// and only when that id is the launcher's verified sub is the launcher the
+// person whose token paid. Every other credential — a bundle entry's own name,
+// a pool's name, a fugaro_p_ shared one, and a per-user name of somebody else —
+// is answered no owner, and the run records none: a record that cannot name the
+// token's owner must say nothing rather than name the wrong person.
+func credentialOwnedBy(name, launcher string) bool {
+	parsed, err := secretname.Parse(name)
+	return err == nil && parsed.ID != "" && parsed.ID == launcher
+}
+
 // answer writes the upstream's answer to the client, with the headers of this
-// contract on it: the tier, the credential's name, and the switch when this
-// call moved.
+// contract on it: the tier, the credential's name, the owner of the credential
+// that served it when the launcher owns it, and the switch when this call
+// moved.
 //
 // It is also where the call is recorded (C1.13): the credential answered, so
 // this is the issuance, and the line is written before a byte of the answer is
@@ -1298,6 +1320,24 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id Identity,
 		s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
 			"the answer could not carry the credential that served it")
 		return
+	}
+	if b, ok := callSlipOf(ctx); ok && credentialOwnedBy(c.Name, b.owner) {
+		// The owner of the credential that answered (F16): the verified `sub`
+		// the slip was issued to, which is what the run records beside the
+		// credential's name (runstore.Record.CredentialOwner). It is written
+		// only where the credential served IS that launcher's own per-user one
+		// (credentialOwnedBy) — a slip admits a call to credentials that are
+		// nobody's, and to a pool's, and naming the launcher over either would
+		// be a run recording a token's owner that nothing verified. Everywhere
+		// else, a slip-less call included, the answer carries none and the
+		// run's record holds no owner. The value written is the binding's own —
+		// the one the audit line reads (Auditor.Write) — so the two never
+		// disagree about which launcher they name.
+		if err := SetCredentialOwnerHeader(hdr, b.owner); err != nil {
+			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
+				"the answer could not carry the owner of the credential that served it")
+			return
+		}
 	}
 	if sw != nil {
 		if err := SetSwitchHeader(hdr, *sw); err != nil {
