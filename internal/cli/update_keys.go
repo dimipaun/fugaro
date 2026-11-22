@@ -271,10 +271,18 @@ func copyProviderKeys(lc *localcfg.Config) ([]keyCopy, error) {
 // work the operator owes anybody.
 const copyNoServiceReason = "the project's config carries no credentials_service block, and its presence is what turns the credentials service on: this installation has no credentials service, so there is no bundle for the copy to write a model key into"
 
-// copyNothingReason is the stage's skip when the installation holds nothing
-// outside the bundle. It is not the same answer as the one above: the service
-// is here, and the copy looked.
-const copyNothingReason = "this installation holds no model key outside the credentials service's bundle: nothing to copy"
+// copyNothingReason is the stage's skip when the copy was handed no pair to
+// work on. It is not the same answer as the one above: the service is here, and
+// the copy looked.
+//
+// It says what the RUN did — nothing was copied — and not what the installation
+// holds, and the difference is the half of this stage that is still to come:
+// the pairs are enumerated by copySources, which the provider-key and
+// repository-key chunks of KS12 complete, so a sentence claiming the
+// installation holds no model key outside the bundle would be a statement about
+// a read this release does not make. An owner who believed it would stop
+// looking for the key a run is no longer served.
+const copyNothingReason = "nothing was copied: this release does not enumerate this installation's model keys yet, so the copy had nothing to move into the credentials service's bundle"
 
 // copyNotOwnerReason is the skip of a run that is not a project owner (D3006).
 //
