@@ -2,7 +2,8 @@
 
 The spec ([spec.md](spec.md)) as amended against the code. **Where this document disagrees with
 the spec, this document wins.** Checked against `origin/main` at `dfe066618` on 2026-11-21. The
-owner (Dimi Paun) answered D3170–D3188 on 2026-11-21.
+owner (Dimi Paun) answered D3170–D3190 on 2026-11-21; D3174 and D3176 were amended the same
+day, the first after review round 1.
 
 Modules, approved by the owner on 2026-11-21 (the capability map): `routing-table`, `pools`,
 `chain-serving`, `pause-resume`, `visibility`, `migration`. Every finding, decision and task
@@ -159,13 +160,17 @@ names one.
 - **F23 (Gap).** Vertex cannot be a chain member as built: it is one whole-run upstream on the
   job's identity, the service is not called for it (D3066), it has no dollar cap, and it is
   refused under `budget.mode: enforce` (`VertexBudgetRefusal`, `config.PoolHasVertexMember`).
-  The spec says a Vertex fallback "counts against project spending caps". → D3174, R2.
+  The spec says a Vertex fallback "counts against project spending caps". A cap in the in-job
+  gateway cannot bind on that path: the job's own account holds the Vertex permission
+  (`roles/aiplatform.user` in `deploy/terraform/gcp/modules/workflow/sa.tf`), and the agent acts
+  as that account, so it can call Vertex without the gateway (found by review round 1).
+  → D3174, R2.
 - **F24 (Rule).** A Claude model through OpenRouter in the service is refused until Check 50
   passes (D150, D3000, D3013). The spec's complex example names it. → R3.
 - **F25 (Gap).** "The same model family and version" has no representation. A pool requires the
   identical model string from every member (D1637, `config.PoolMemberServesModel`); the only
   equivalence map is `claudeRoutes` in `internal/pricing/canonical.go` (canonical id to the
-  OpenRouter-style route id, three rows), with none for Vertex; and "the gateway never rewrites a
+  OpenRouter-style route id: six rows, three of them mapped), with none for Vertex; and "the gateway never rewrites a
   request body": the runner rewrites pins once per run. A per-call move to another provider needs
   the `model` field rewritten per call. → D3175, U5.
 - **F26 (Exists, Rule).** A paid fallback is already money against the caps (D140), and D152
@@ -180,7 +185,8 @@ names one.
 - **F28 (Exists, Rule).** A wait for the reset is built, inside the job: the service answers
   typed `exhausted_until` with the reset (`creds.ExhaustedUntil`), the gateway answers 503 and
   never holds the call, and the runner ends the stage, sleeps, sets `WaitingUntil` and resumes
-  the same session (`waitForCredential`, at most `maxCredentialResumes` times). D138 chose this
+  the same session (`waitForCredential`, at most `maxCredentialResumes` times; the gateway's
+  answer is wired to `noteExhausted` in `internal/runner/gateway.go`). D138 chose this
   and deferred "resume after job death" as C3.1. The spec replaces the mechanism and un-defers
   C3.1; "never hold a proxy call open" agrees with D138. → D3184.
 - **F29 (Wrong).** "A paused job costs nothing while waiting" is the opposite of today: the
@@ -234,15 +240,48 @@ names one.
   `creds/repoauth/<slug>` (`creds.RepoAuth`), the headers `X-Fugaro-Auth-Mode` and
   `X-Fugaro-Auth-Account`, `budget.AgentEntry.Auth`, and `runs[].auth` in `watch --json`, which
   the console's parser requires. Terraform never sees the value itself; it sees
-  `model_secrets_served` (`config.ModelSecretsServed`). Each is a format with outside readers.
+  `model_secrets_served` (`infra.ModelSecretsServed`), whose three values are defined by auth
+  mode, and the flip list `config.ServiceServedAuths`, which the rules file changes only on the
+  owner's go. Each is a format with outside readers.
 - **F43 (Rule).** `credentials.fallback`, `credentials.wait_threshold` and
   `subscription_spread` are published policy fields. Removing one is a policy change `update`
   migrates in place, never "delete and publish again".
 
+### Found by review round 1
+
+- **F46 (Gap, migration).** A grade is a second place a repository names a credential:
+  `model_grades.<grade>.access` (`internal/config/scope.go`, the `grade` command in
+  `internal/cli/accounts_craft.go`). It is retired with craft access. → MG1, MG4, X2.
+- **F47 (Gap, chain-serving).** A run calls models that are not a craft's: the pinned background,
+  vision and diagnose models (`internal/config/pins.go`) and a grade's model. Shared project
+  jobs (`internal/runner/projectjob.go`), the review job (`internal/credsvc/review.go`) and the
+  diagnose agent (`internal/diagnoseagent/creds.go`) also reach a model by account or auth mode.
+  Each needs an entry and the same path. → R22, RT3, CS10, CS13.
+- **F48 (Gap, migration).** A named account derives a job, an account and a secret of its own
+  (`WorkflowVariant` in `internal/backend/gcp/names.go`). With `--token` gone they are orphans
+  `fugaro update` must retire, named in its in-flight line. → X6.
+- **F49 (Rule, routing-table).** The policy's blocks decode strictly: a new member inside
+  `credentials` or a pool makes a release-behind reader refuse the whole policy while runs are
+  in flight; only an unknown top-level key is tolerated (the comment on the catalog entry members
+  in `internal/projectpolicy/policy.go`). → R21, R11.
+- **F50 (Rule, all).** `website/content/cli-reference.md` is pinned to every command and flag
+  (`TestCliReferenceNamesEveryCommandAndFlag`), so every task that adds one writes that file and
+  the plan orders them.
+- **F51 (Rule, pools).** Workspace-credentials D2970 chose the workspace's own grant route as the
+  launcher the workspace can trust, because a database admin can forge a project slip. A personal
+  pool therefore cannot be served on a project slip's word. → R7, R8.
+- **F52 (Rule, pause-resume).** Launcher-does-not-mint D3136 lets the issuer serve the
+  orchestrator only an attempt on its own record. A resume derived from a record a job wrote
+  would widen that. → D3189, R19.
+- **F53 (Gap, pause-resume).** Nothing bounds how often a chain pauses: each resume has a fresh
+  `timeouts.total` and a subscription call is notional. → D3190.
+- **F54 (Gap, visibility).** The console's status set is closed; what a release-behind console
+  does with `paused` is not known. → O8, PR7.
+
 ### Completeness of the spec
 
 - **F44 (Open).** No success criteria are stated as tests. The plan's acceptance lines stand in
-  for them, and the owner-run checks (870–874) prove the live behaviour.
+  for them, and the owner-run checks (870–875) prove the live behaviour.
 - **F45 (Exists).** Commands, folders, style and boundaries are the repository's own
   (`CLAUDE.md`, `.claude/rules/credentials-service.md`, `.claude/rules/terraform.md`,
   `.claude/rules/console.md`, `.claude/rules/mobile.md`).
@@ -257,7 +296,7 @@ All answered by the owner on 2026-11-21.
 | D3171 | routing-table | Keep a different credential for two crafts on one model (D3068)? | Drop it: one chain per model | **As recommended.** Per-stage accounts and the mix are retired; `update` folds them into one pool |
 | D3172 | routing-table | Precedence when several patterns match (the spec's open question) | The existing grammar; the most specific wins (exact beats prefix, longer prefix beats shorter); identical patterns refused | **As recommended** |
 | D3173 | routing-table | What becomes of `routing.claude.via` and a provider's `models` | The table replaces `via`; a provider's `models` stays as what it can serve | **As recommended** |
-| D3174 | chain-serving | A chain naming Vertex on an `enforce` project | Cap Vertex in this plan, so it is an ordinary paid source | **As recommended** |
+| D3174 | chain-serving | A chain naming Vertex on an `enforce` project | Cap Vertex in this plan, so it is an ordinary paid source | **As recommended** when first asked. **Amended after review, and confirmed by the owner on 2026-11-21:** the premise that the gateway can cap Vertex was wrong (F23: the job's account can call Vertex itself). The intent is kept and the caller changes: the credentials service calls Vertex on its own identity, as it serves a key, and the job's account loses the Vertex permission in release 2. Amends D3066 |
 | D3175 | chain-serving | May the service rewrite the `model` field when a call moves down the chain? | Yes, from a checked-in map extended to Vertex; an unmapped source is refused at validation; a written downgrade is the same rewrite | **As recommended** |
 | D3176 | pools | `fugaro run --token` (D3069) | Retire it; `update` wraps each lone account in a pool of one | **As recommended** when first asked: retire it. **Amended by the owner, 2026-11-21**, in his words: "Maybe --token should become --pool, wdyt?" So: `--token` is rejected with a fix naming `--pool`, and `fugaro run --pool <name>` makes "the launcher's pool" resolve, for that run, to the named pool the launcher owns or is allowed on. The chain is unchanged; the flag is refused where no chain of the run's models names the launcher's pool; the service checks the entitlement; a resumed run keeps the pool its launch named. Reverses D3069 |
 | D3177 | pools | The `subscription_spread` switch | Retire it | **As recommended.** The owner's to confirm as to the provider's terms; answered. Reverses D1622 and D1636 |
@@ -273,7 +312,10 @@ All answered by the owner on 2026-11-21.
 | D3187 | pause-resume | The default maximum wait | 6 hours | **As recommended** |
 | D3188 | visibility | What the console shows (the spec's open question) | The source per step, a fallback badge, the switch log with reason and cache cost, the paid amount spent on fallback, and a pools screen | **As recommended** |
 
-D3189–D3199 are reserved and unused.
+| D3189 | pause-resume | May the issuer serve the orchestrator a resume, which is not an attempt on its own record (D3136)? | Yes, for a pause the credentials service itself recorded | **As recommended** (asked after review round 1). Widens D3136 by that one case |
+| D3190 | pause-resume | What bounds repeated pauses of one chain | Three pauses per chain | **Not the recommendation: total paused time only.** A chain's paused time may not pass `pause.max_pause`; there is no count |
+
+D3191–D3199 are reserved and unused.
 
 ## Resolutions
 
@@ -283,10 +325,11 @@ One defensible answer each; stated, not asked.
   matches is refused with the fix; Vertex is reached only where a chain names it; nothing is
   implied (D3061's intent, kept). A `claude-*` entry is allowed: D1a still governs a provider's
   `models` and is not about the table.
-- **R2 (chain-serving).** The credentials service owns the table and walks the chain. The in-job
-  gateway holds no key and no table; it sends the call's model and stage, and executes the Vertex
-  leg on the job's identity when the service's answer names Vertex as the next source. This is
-  what "the LLM proxy owns the routing table" means here (D135, D143 and D3066 stand).
+- **R2 (chain-serving).** The credentials service owns the table, walks the chain and makes
+  every call that needs a credential, Vertex included (D3174 as amended). The in-job gateway
+  holds no key and no table; it sends the run's stage, and the service reads the model from the
+  request's body. This is what "the LLM proxy owns the routing table" means here (D135 and D143
+  stand; D3066 is amended).
 - **R3 (chain-serving).** A chain that reaches a Claude model through OpenRouter is refused at
   validation until Check 50 has passed (D3013 stands).
 - **R4 (chain-serving).** The chain's order is strict and replaces the fixed tier order.
@@ -298,19 +341,21 @@ One defensible answer each; stated, not asked.
   number on the pool (D3178).
 - **R6 (pause-resume).** The paused mark lives in the Realtime Database, with the durable record
   in the runs bucket. Not Firestore (D136 stands).
-- **R7 (pools).** "The launcher" is the verified principal on the run's slip: a person's Google
-  subject or a verified service account. `requested_by` and `launched_by` are display text and
-  are never an input.
-- **R8 (pause-resume).** The service records the launcher of a paused run from that run's own
-  slip, and binds the resumed run to it. The job's word about who launched it is never read.
+- **R7 (pools).** "The launcher" is a verified principal and never display text
+  (`requested_by`, `launched_by`). For a project pool it is the principal on the run's slip: a
+  person's Google subject or a verified service account. For a personal pool it is the person
+  the workspace's own grant names (D2970 stands, F51): a project slip is never enough for one.
+- **R8 (pause-resume).** The launcher of a paused run, and the pool its launch named, are the
+  service's own record of the run's grant (the workspace's, for a personal pool), and the resumed
+  run is bound to them. The job's word about who launched it is never read.
 - **R9 (pools).** Contributing a token to the shared pool is the token holder's own command,
   from their own session. Nobody contributes another person's token; an admin can remove one.
 - **R10 (pause-resume).** A hotfix run never pauses and never waits: when every source is
   exhausted it halts with `HaltNoCredential`. The rule is the runner's, which knows the mode.
-- **R11 (pause-resume).** Two new project settings, in the policy: `credentials.wait_in_job`
-  (default 5 minutes; a reset nearer than this is waited out in the job, D3184) and
-  `credentials.max_pause` (default 6 hours, D3187). A reset between the two suspends; one beyond
-  `max_pause` halts at once.
+- **R11 (pause-resume).** Two new project settings under one new top-level policy key, `pause`
+  (F49): `pause.wait_in_job` (default 5 minutes; a reset nearer than this is waited out in the
+  job, D3184) and `pause.max_pause` (default 6 hours, D3187, which also bounds a chain's total
+  paused time, D3190). A reset between the two suspends; one beyond `max_pause` halts at once.
 - **R12 (pause-resume).** Paused time counts against no timeout: each execution has its own
   `timeouts.total`. The budget carries along the chain as it does today (D1045–D1047), and the
   suspended execution releases its lease on exit.
@@ -333,6 +378,21 @@ One defensible answer each; stated, not asked.
   checkpoint before it exits (F34). A resume whose saved state the current image cannot read
   ends with a named outcome and never guesses (F36).
 
+- **R19 (pause-resume).** The service, not the job, decides between waiting, pausing and
+  halting, computes the resume time from its own knowledge of the reset, and is the only writer
+  of the paused node. The job writes only what the run that resumes it reads (F52, D3189).
+- **R20 (routing-table).** A subscription account keeps its own per-repository admission
+  (`allow_data_to`); the table's `admit:` covers a key, a provider key and Vertex. A pool member
+  a repository is not admitted to is skipped for it, so two repositories admitted to two
+  different accounts can share one pool and neither moves.
+- **R21 (routing-table, pools).** Nothing published changes shape under a release-behind
+  reader: the table, the admissions and the pools in their new shape travel under one new
+  top-level policy key; a pool's principal and rule are new members, and `owner` keeps its
+  meaning (F49).
+- **R22 (chain-serving).** "A model a run can call" means every craft's model, every pinned
+  role's and every grade's (F47). Each needs an entry; a run or a project job whose model has
+  none is refused at launch, not mid-run.
+
 ## What this changes in other plans
 
 - **credentials-belong-to-models** (D3170). Kept: what is merged (CM1, CM3, CM22, CM32, CM35),
@@ -341,15 +401,17 @@ One defensible answer each; stated, not asked.
   drafted. Reversed or amended: D3060 (access per craft), D3068 (per-stage accounts), D3069
   (`--token`, now a narrow `--pool`), D3064 (the cascade pool becomes the shared pool and the generated chain). The
   task-by-task table is in the plan; its first task amends that plan's documents.
-- **workspace-credentials** (D3179, D3180). D3141, D3142, D3144 and D2974 are amended; D2976
-  stands. A documents task of this plan amends that plan.
+- **workspace-credentials** (D3179, D3180). D3141, D3142, D3144 and D2974 are amended; D2970 and
+  D2976 stand. A documents task of this plan amends that plan.
 - **keys-through-service.** Serving every key from the service is what the chain needs and is
   unchanged. Its Check 50 gates OpenRouter for Claude (R3).
 - **credentials-service.** D138 is replaced for waits beyond the floor (D3184); C3.1 is
   un-deferred as this plan's `pause-resume`; D152 and D153 are re-keyed (R4, R17); D154 is
   amended (R16); D136 stands.
 - **model-crafts.** D1622 and D1636 are reversed (D3177); D1637 is amended (D3175).
-- **always-a-budget.** Its Vertex refusal under `enforce` is lifted by D3174's cap.
+- **always-a-budget.** Its Vertex refusal under `enforce` is lifted for a chain the service
+  serves (D3174); an unmigrated `auth: vertex` repository is still refused.
+- **launcher-does-not-mint.** D3136 is widened by one case (D3189).
 
 ## Open tensions
 
@@ -366,21 +428,25 @@ None. No two answers pull against each other.
 - **O3.** Check 50 has not run; until it does, no chain reaches Claude through OpenRouter (R3).
 - **O4.** D3184 was answered against the recommendation; the floor's default (5 minutes, R11)
   was named in the question and not asked on its own.
-- **O5.** `credentials.wait_in_job` and `credentials.max_pause` are names this document proposes.
+- **O5.** `pause.wait_in_job` and `pause.max_pause` are names this document proposes.
 - **O6.** A project without the resident orchestrator never pauses (D3186). Whether the
   orchestrator should become part of every installation is a separate question, not asked here.
+
+- **O7.** `config.ServiceServedAuths` is a flip list the rules file changes only on the owner's
+  go. CS11 leaves it; retiring it with `agent.auth` in release 2 needs that go.
+- **O8.** What a release-behind console does with the status `paused` (F54). PR7 tests it and,
+  if that parser refuses the word, bumps the version of the formats that carry a status.
+- **O9.** D3190 was answered against the recommendation: there is no count of pauses.
+- **O10.** The workspace plan's store is not built. PL9 (a personal pool as a set of tokens with
+  a rule) assumes it can hold one; if it cannot, the contract change R-designation is raised.
 
 ## UNVERIFIED
 
 - **U1.** Whether the provider's responses on a subscription token carry a utilisation figure a
   threshold rule could read. Settled by Check 870, owner-run.
-- **U2.** Whether the gateway's answer is wired to `noteExhausted` on `main`: its comment says
-  credentials-service C1.15 wires it. Settled by reading `internal/runner/gateway.go` in the task
-  that changes it.
 - **U3.** What `localcfg`'s `Me` returns under a service account. R7 does not depend on it.
-- **U4.** That the resident orchestrator's reissue fits a resume under launcher-does-not-mint's
-  D3125 and D3136 ("issued only a recorded, unstarted attempt"). Read as fitting by design;
-  settled by the contract task of `pause-resume`, reviewed against that plan.
+- **U4.** How the issuer of launcher-does-not-mint recognises a node the credentials service
+  wrote (D3189). That plan's I1 is not merged; PR4 is gated on it and settles it there.
 - **U5.** The Vertex spelling of each Claude model in the canonical map. Settled by the owner's
   run of Check 872 against the project's Vertex.
 - **U6.** The census of `agent.auth` readers (67 files in 14 packages, F1 of

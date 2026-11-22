@@ -33,7 +33,8 @@
         "paths": [
           "docs/workspace-credentials/README.md",
           "docs/workspace-credentials/reconciliation.md",
-          "docs/workspace-credentials/implementation-plan.md"
+          "docs/workspace-credentials/implementation-plan.md",
+          "docs/secrets-brokering/dynamic-delivery/reconciliation.md"
         ]
       }
     },
@@ -50,7 +51,8 @@
           "docs/credentials-service/reconciliation.md",
           "docs/credentials-service/implementation-plan.md",
           "docs/model-crafts/reconciliation.md",
-          "docs/mixed-credentials/spec.md"
+          "docs/mixed-credentials/spec.md",
+          "docs/launcher-does-not-mint/reconciliation.md"
         ]
       }
     },
@@ -67,14 +69,17 @@
           "internal/routing/table.go",
           "internal/routing/table_test.go",
           "internal/routing/resolve_stub.go",
+          "internal/pricing/spelling_stub.go",
           "internal/credsvc/chain_wire.go",
           "internal/credsvc/chain_stub.go",
+          "internal/gateway/chain_names.go",
           "docs/model-credentials-routing/contract-table.md"
         ]
       },
       "kind": "contract",
       "stubs": [
         "internal/routing/resolve_stub.go",
+        "internal/pricing/spelling_stub.go",
         "internal/credsvc/chain_stub.go"
       ]
     },
@@ -91,12 +96,14 @@
           "internal/routing/pools.go",
           "internal/routing/pools_test.go",
           "internal/credsvc/launcherpool_stub.go",
+          "internal/creds/poolrule_stub.go",
           "docs/model-credentials-routing/contract-pools.md"
         ]
       },
       "kind": "contract",
       "stubs": [
-        "internal/credsvc/launcherpool_stub.go"
+        "internal/credsvc/launcherpool_stub.go",
+        "internal/creds/poolrule_stub.go"
       ]
     },
     {
@@ -149,7 +156,9 @@
         "paths": [
           "internal/localcfg/localcfg.go",
           "internal/localcfg/routing.go",
-          "internal/localcfg/routing_test.go"
+          "internal/localcfg/routing_test.go",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json"
         ]
       }
     },
@@ -181,7 +190,6 @@
           "internal/projectpolicy/policy.go",
           "internal/projectpolicy/routing_test.go",
           "internal/cli/init_policy_publish.go",
-          "internal/settings/registry.go",
           "internal/cli/update_route_test.go"
         ]
       }
@@ -200,7 +208,8 @@
           "internal/cli/routing_test.go",
           "schemas/routing-ls.schema.json",
           "plugin/skills/setup/SKILL.md",
-          "internal/cli/root.go"
+          "internal/cli/root.go",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -252,7 +261,9 @@
           "internal/config/craft.go",
           "internal/config/pool_rules.go",
           "internal/config/pool_rules_test.go",
-          "internal/localcfg/localcfg.go"
+          "internal/localcfg/localcfg.go",
+          "internal/policy/craft.go",
+          "internal/settings/registry.go"
         ]
       }
     },
@@ -270,7 +281,8 @@
           "internal/cli/accounts_pool.go",
           "internal/cli/accounts_rm.go",
           "internal/cli/accounts_pool_rule_test.go",
-          "schemas/accounts-pool-ls.schema.json"
+          "schemas/accounts-pool-ls.schema.json",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -322,7 +334,10 @@
           "internal/cli/accounts_pool.go",
           "internal/cli/accounts_pool_designate.go",
           "internal/cli/accounts_pool_designate_test.go",
-          "plugin/skills/setup/reference/decisions.md"
+          "internal/credsvc/contribute.go",
+          "internal/credsvc/contribute_test.go",
+          "plugin/skills/setup/reference/decisions.md",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -376,6 +391,42 @@
       }
     },
     {
+      "id": "PL9",
+      "title": "a personal pool at the workspace",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/accounts_pool_personal.go",
+          "internal/cli/accounts_pool_personal_test.go",
+          "internal/credsvc/workspace_pool.go",
+          "internal/credsvc/workspace_pool_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "PL10",
+      "title": "usage and headroom per pool",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/usage.go",
+          "internal/creds/usage_test.go",
+          "internal/credsvc/forward.go",
+          "internal/cli/accounts_pool.go",
+          "internal/budget/rules/rules.json.tmpl"
+        ]
+      }
+    },
+    {
       "id": "CS1",
       "title": "the service walks the chain",
       "run": null,
@@ -395,7 +446,7 @@
     },
     {
       "id": "CS2",
-      "title": "the gateway says which model and stage a call is for",
+      "title": "the gateway says which stage a call is for",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -429,24 +480,7 @@
     },
     {
       "id": "CS4",
-      "title": "the Vertex leg",
-      "run": null,
-      "version": null,
-      "tier": "medium",
-      "size": 2,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/gateway/vertex.go",
-          "internal/gateway/vertexleg.go",
-          "internal/gateway/vertexleg_test.go",
-          "internal/gateway/service.go"
-        ]
-      }
-    },
-    {
-      "id": "CS5",
-      "title": "Vertex is held to the cap",
+      "title": "Vertex, served by the service",
       "run": null,
       "version": null,
       "tier": "large",
@@ -454,11 +488,28 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/gateway/ledger.go",
-          "internal/gateway/vertex_cap_test.go",
+          "internal/credsvc/vertex.go",
+          "internal/credsvc/vertex_test.go",
+          "internal/credsvc/forward.go"
+        ]
+      }
+    },
+    {
+      "id": "CS5",
+      "title": "Vertex is no longer refused under `enforce`",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
           "internal/runner/gateway.go",
           "internal/runner/poolchoice.go",
-          "internal/config/stage_accounts.go"
+          "internal/config/stage_accounts.go",
+          "internal/cli/init.go",
+          "internal/cli/validate.go",
+          "internal/runner/vertex_refusal_test.go"
         ]
       }
     },
@@ -546,8 +597,7 @@
           "internal/cli/run.go",
           "internal/cli/run_attach.go",
           "internal/cli/launch_budget.go",
-          "internal/cli/run_chain_test.go",
-          "plugin/skills/working/SKILL.md"
+          "internal/cli/run_chain_test.go"
         ]
       }
     },
@@ -565,7 +615,45 @@
           "internal/infra/chain_spec.go",
           "internal/infra/chain_spec_test.go",
           "internal/infra/readiness.go",
-          "internal/config/providers.go"
+          "deploy/terraform/gcp/modules/installation/credentials.tf",
+          "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl"
+        ]
+      }
+    },
+    {
+      "id": "CS12",
+      "title": "`--pool` replaces `--token`",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/run.go",
+          "internal/cli/run_pool_test.go",
+          "plugin/skills/working/SKILL.md",
+          "plugin/skills/working/reference/diagnose.md",
+          "plugin/skills/working/reference/followup.md",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "CS13",
+      "title": "the other model callers go by the table",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/projectjob.go",
+          "internal/infra/projectjobs.go",
+          "internal/credsvc/review.go",
+          "internal/diagnoseagent/creds.go",
+          "internal/runner/projectjob_chain_test.go"
         ]
       }
     },
@@ -652,7 +740,7 @@
           "schemas/settings.schema.json",
           "schemas/fugaro.schema.json",
           "schemas/project-layer.schema.json",
-          "internal/config/retired.go"
+          "internal/config/scope.go"
         ]
       }
     },
@@ -731,7 +819,7 @@
     },
     {
       "id": "PR3",
-      "title": "the service binds a paused run to its launcher",
+      "title": "the service decides the pause and records it",
       "run": null,
       "version": null,
       "tier": "large",
@@ -743,7 +831,8 @@
           "internal/credsvc/pause_test.go",
           "internal/credsvc/slip.go",
           "internal/creds/slips.go",
-          "internal/credsvc/cascade.go"
+          "internal/credsvc/cascade.go",
+          "internal/budget/rules/rules.json.tmpl"
         ]
       }
     },
@@ -761,7 +850,8 @@
           "internal/orchestrator/resume_test.go",
           "internal/orchestrator/tick.go",
           "internal/orchestrator/resident_launch.go",
-          "internal/orchestrator/intent.go"
+          "internal/orchestrator/intent.go",
+          "internal/credsvc/identity_ticket.go"
         ]
       }
     },
@@ -814,6 +904,7 @@
           "internal/watch/json.go",
           "internal/cli/runs.go",
           "internal/cli/runs_show.go",
+          "internal/cli/cancel.go",
           "internal/cli/runs_paused_test.go"
         ]
       }
@@ -1008,19 +1099,37 @@
     },
     {
       "id": "CK1",
-      "title": "Checks 871 to 875, as scripts",
+      "title": "Checks 871 and 872, as scripts",
       "run": null,
       "version": null,
-      "tier": "medium",
-      "size": 2,
+      "tier": "small",
+      "size": 1,
       "footprint": {
         "prediction": true,
         "paths": [
           "scripts/live-checks/check-871-chain-falls-through.sh",
-          "scripts/live-checks/check-872-vertex-leg.sh",
+          "scripts/live-checks/check-871-chain-falls-through_test.sh",
+          "scripts/live-checks/check-872-vertex-capped.sh",
+          "scripts/live-checks/check-872-vertex-capped_test.sh"
+        ]
+      }
+    },
+    {
+      "id": "CK2",
+      "title": "Checks 873 to 875, as scripts",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
           "scripts/live-checks/check-873-pause-resume.sh",
+          "scripts/live-checks/check-873-pause-resume_test.sh",
           "scripts/live-checks/check-874-update-migrates.sh",
-          "scripts/live-checks/check-875-retired-keys.sh"
+          "scripts/live-checks/check-874-update-migrates_test.sh",
+          "scripts/live-checks/check-875-retired-keys.sh",
+          "scripts/live-checks/check-875-retired-keys_test.sh"
         ]
       }
     },
@@ -1113,8 +1222,27 @@
       }
     },
     {
+      "id": "X6",
+      "title": "release 2: no job per account, and the job's account loses Vertex",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/gcp/names.go",
+          "internal/infra/repo.go",
+          "internal/infra/tfvars.go",
+          "internal/infra/retire.go",
+          "deploy/terraform/gcp/modules/workflow/sa.tf",
+          "internal/infra/retire_variants_test.go"
+        ]
+      }
+    },
+    {
       "id": "R-chain-answer",
-      "title": "amend contract C1: if the Vertex leg needs more in the service's answer than `next: vertex` (for example the remaining chain after Vertex)",
+      "title": "amend contract C1: if serving Vertex from the service needs more on the wire than a source kind (for example a region)",
       "run": null,
       "version": null,
       "tier": "trivial",
@@ -1124,6 +1252,7 @@
         "paths": [
           "internal/routing/table.go",
           "internal/credsvc/chain_wire.go",
+          "internal/gateway/chain_names.go",
           "docs/model-credentials-routing/contract-table.md"
         ]
       },
@@ -1174,6 +1303,11 @@
       "reason": "kept: the workspace plan must carry the amended decisions before a side is written against a contract that rests on them"
     },
     {
+      "task": "C3",
+      "needs": "A3",
+      "reason": "kept: the credentials-service and launcher plans must carry the amended D138 and D3136 before a side is written against a contract that rests on them"
+    },
+    {
       "task": "RT1",
       "needs": "C1",
       "reason": "the contract's types and the stub it replaces"
@@ -1209,6 +1343,11 @@
       "reason": "kept, behaviour: the publisher must refuse what the checks refuse"
     },
     {
+      "task": "RT4",
+      "needs": "PL1",
+      "reason": "kept, behaviour: it publishes the pools in the shape PL1 adds to the config"
+    },
+    {
       "task": "RT5",
       "needs": "RT3",
       "reason": "kept, behaviour: `set` refuses by the checks' answer"
@@ -1222,6 +1361,11 @@
       "task": "RT6",
       "needs": "RT3",
       "reason": "kept, behaviour: it prints the checks' own answer"
+    },
+    {
+      "task": "RT6",
+      "needs": "CS5",
+      "reason": "kept: one file, `validate.go`"
     },
     {
       "task": "RT7",
@@ -1242,6 +1386,11 @@
       "task": "PL2",
       "needs": "PL1",
       "reason": "kept: it writes the fields PL1 adds"
+    },
+    {
+      "task": "PL2",
+      "needs": "RT5",
+      "reason": "kept: one file, the generated `cli-reference.md`"
     },
     {
       "task": "PL3",
@@ -1269,6 +1418,11 @@
       "reason": "kept, behaviour: it writes through the store PL4 builds, whose rules decide who may write"
     },
     {
+      "task": "PL5",
+      "needs": "CS12",
+      "reason": "kept: one file, the generated `cli-reference.md`"
+    },
+    {
       "task": "PL6",
       "needs": "PL4",
       "reason": "kept: one file, `launcherpool.go`, and it extends that lookup"
@@ -1277,6 +1431,41 @@
       "task": "PL8",
       "needs": "PL3",
       "reason": "kept: one file, `poolrule.go`, and it extends that picker"
+    },
+    {
+      "task": "PL8",
+      "needs": "PL10",
+      "reason": "kept: one file, `forward.go`"
+    },
+    {
+      "task": "PL9",
+      "needs": "C2",
+      "reason": "the contract's types"
+    },
+    {
+      "task": "PL9",
+      "needs": "PL5",
+      "reason": "kept: one file, the generated `cli-reference.md`"
+    },
+    {
+      "task": "PL10",
+      "needs": "PL3",
+      "reason": "kept, behaviour: it counts on the path the picker serves"
+    },
+    {
+      "task": "PL10",
+      "needs": "PL9",
+      "reason": "kept: `accounts_pool.go` through PL5"
+    },
+    {
+      "task": "PL10",
+      "needs": "CS4",
+      "reason": "kept: one file, `forward.go`"
+    },
+    {
+      "task": "PL10",
+      "needs": "PR1",
+      "reason": "kept: one file, `rules.json.tmpl`"
     },
     {
       "task": "CS1",
@@ -1300,8 +1489,13 @@
     },
     {
       "task": "CS4",
-      "needs": "CS2",
-      "reason": "kept: one file, `service.go`"
+      "needs": "C1",
+      "reason": "the contract's source kinds"
+    },
+    {
+      "task": "CS5",
+      "needs": "CS4",
+      "reason": "kept, behaviour: the refusal may go only once the capped path exists"
     },
     {
       "task": "CS6",
@@ -1345,6 +1539,31 @@
     },
     {
       "task": "CS11",
+      "needs": "C1",
+      "reason": "the contract's names"
+    },
+    {
+      "task": "CS11",
+      "needs": "CS4",
+      "reason": "kept, behaviour: the permission it plans is for the caller CS4 builds"
+    },
+    {
+      "task": "CS12",
+      "needs": "C2",
+      "reason": "the contract's named-pool member"
+    },
+    {
+      "task": "CS12",
+      "needs": "CS10",
+      "reason": "kept: one file, `run.go`"
+    },
+    {
+      "task": "CS12",
+      "needs": "PL2",
+      "reason": "kept: one file, the generated `cli-reference.md`"
+    },
+    {
+      "task": "CS13",
       "needs": "C1",
       "reason": "the contract's names"
     },
@@ -1395,8 +1614,8 @@
     },
     {
       "task": "MG6",
-      "needs": "CS10",
-      "reason": "kept: one file, `run.go`"
+      "needs": "PL9",
+      "reason": "kept: one file, the generated `cli-reference.md`, and `run.go` through CS12"
     },
     {
       "task": "MG6",
@@ -1579,6 +1798,21 @@
       "reason": "the side it wires"
     },
     {
+      "task": "I1",
+      "needs": "PL9",
+      "reason": "the side it wires"
+    },
+    {
+      "task": "I1",
+      "needs": "CS12",
+      "reason": "the side it wires"
+    },
+    {
+      "task": "I1",
+      "needs": "CS13",
+      "reason": "the side it wires"
+    },
+    {
       "task": "PR1",
       "needs": "C3",
       "reason": "the contract's constant"
@@ -1599,6 +1833,11 @@
       "reason": "kept: one file, `rules.json.tmpl`"
     },
     {
+      "task": "PR1",
+      "needs": "PR3",
+      "reason": "kept: one file, `rules.json.tmpl`"
+    },
+    {
       "task": "PR2",
       "needs": "C3",
       "reason": "the contract's record"
@@ -1611,7 +1850,7 @@
     {
       "task": "PR3",
       "needs": "C3",
-      "reason": "the contract's node and member"
+      "reason": "the contract's node and members"
     },
     {
       "task": "PR3",
@@ -1622,6 +1861,16 @@
       "task": "PR3",
       "needs": "PL6",
       "reason": "kept, behaviour: a resumed run of a service account's launch resolves through PL6's lookup"
+    },
+    {
+      "task": "PR3",
+      "needs": "PL4",
+      "reason": "kept: one file, `rules.json.tmpl`"
+    },
+    {
+      "task": "PR3",
+      "needs": "PR9",
+      "reason": "kept, behaviour: it reads the two settings from the struct PR9 adds"
     },
     {
       "task": "PR4",
@@ -1667,6 +1916,11 @@
       "task": "PR9",
       "needs": "MG5",
       "reason": "kept: two files, `registry.go` and `settings.schema.json`"
+    },
+    {
+      "task": "I2",
+      "needs": "A3",
+      "reason": "the side it wires"
     },
     {
       "task": "I2",
@@ -1800,7 +2054,7 @@
     },
     {
       "task": "DOC4",
-      "needs": "CS10",
+      "needs": "CS12",
       "reason": "kept: one file, `working/SKILL.md`"
     },
     {
@@ -1842,6 +2096,11 @@
       "task": "X5",
       "needs": "I1",
       "reason": "kept, behaviour: nothing may still read the keys it removes"
+    },
+    {
+      "task": "X6",
+      "needs": "X1",
+      "reason": "kept, behaviour: no image that needs a per-account job may still launch"
     }
   ],
   "decoupling": [
@@ -2053,13 +2312,58 @@
       "reason": "the console needs the JSON shape, not the command"
     },
     {
+      "contract": "C1",
+      "was": {
+        "task": "CS4",
+        "needs": "CS1"
+      },
+      "integration": "I1",
+      "reason": "the Vertex source needs the walk's source interface, not the walk"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "CS13",
+        "needs": "CS1"
+      },
+      "integration": "I1",
+      "reason": "the other callers need the stage header's name, not the walk"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "CS12",
+        "needs": "PL4"
+      },
+      "integration": "I1",
+      "reason": "the launch needs the named-pool member, not the lookup"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "PL9",
+        "needs": "PL4"
+      },
+      "integration": "I1",
+      "reason": "the personal pool needs the pool's record shape, not the lookup that reads it"
+    },
+    {
+      "contract": "C3",
+      "was": {
+        "task": "PR3",
+        "needs": "A3"
+      },
+      "integration": "I2",
+      "reason": "the service's pause waited on the amended documents directly; the contract now carries that wait and the node's shape"
+    },
+    {
       "contract": "C3",
       "was": {
         "task": "PR2",
-        "needs": "PR9"
+        "needs": "PR3"
       },
       "integration": "I2",
-      "reason": "the runner needs the two settings' names in the answer, not the policy"
+      "reason": "the runner needs the answer's action member, not the service's decision"
     },
     {
       "contract": "C3",
@@ -2073,20 +2377,11 @@
     {
       "contract": "C3",
       "was": {
-        "task": "PR3",
-        "needs": "PR2"
-      },
-      "integration": "I2",
-      "reason": "the service needs the node's shape, not the run that pauses"
-    },
-    {
-      "contract": "C3",
-      "was": {
         "task": "PR4",
-        "needs": "PR2"
+        "needs": "PR3"
       },
       "integration": "I2",
-      "reason": "the orchestrator needs the paused record's shape, not the run that writes it"
+      "reason": "the orchestrator needs the node's shape, not the service that writes it"
     },
     {
       "contract": "C3",
@@ -2101,7 +2396,7 @@
       "contract": "C3",
       "was": {
         "task": "PR6",
-        "needs": "PR2"
+        "needs": "PR3"
       },
       "integration": "I2",
       "reason": "the update needs the node's name, not its writer"
@@ -2110,7 +2405,7 @@
       "contract": "C3",
       "was": {
         "task": "PR7",
-        "needs": "PR2"
+        "needs": "PR3"
       },
       "integration": "I2",
       "reason": "the views need the node's shape, not its writer"
@@ -2137,7 +2432,7 @@
       "contract": "C3",
       "was": {
         "task": "VS4",
-        "needs": "PR2"
+        "needs": "PR3"
       },
       "integration": "I2",
       "reason": "the mobile feed needs the node's shape, not its writer"
@@ -2148,7 +2443,7 @@
       "change": "R-chain-answer",
       "contract": "C1",
       "raised_by": "CS4",
-      "reason": "if the Vertex leg needs more in the service's answer than `next: vertex` (for example the remaining chain after Vertex)",
+      "reason": "if serving Vertex from the service needs more on the wire than a source kind (for example a region)",
       "affects": [
         "CS1",
         "CS2"
