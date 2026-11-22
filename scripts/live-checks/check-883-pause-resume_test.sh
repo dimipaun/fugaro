@@ -400,6 +400,31 @@ test_a_resumed_run_on_another_pool_is_a_finding() {
   expect_row "$out" pause PASS "a resumed run on another pool"
 }
 
+test_a_record_that_names_the_pool_as_name_passes() {
+  case_dir record_names_the_pool
+  # The run record carries a stage's source as "kind and name, never a value"
+  # (C1), so a record that holds the pool's name under `name` is the same
+  # reading as one that holds it under `pool`.
+  printf '{"version":1,"run_id":"%s","stages":[{"stage":"implement","source":{"kind":"launcher-pool","name":"team-a"}}]}\n' \
+    "$RESUMED" >"$answers/record-$RESUMED.json"
+  run883
+  expect_status "$status" 0 "a record that names the pool as name"
+  expect_row "$out" pool PASS "a record that names the pool as name"
+}
+
+test_a_record_whose_kind_is_not_the_launchers_leaves_the_row_unverified() {
+  case_dir record_other_kind
+  # The pool is the one the launch named, but the record calls the kind the
+  # plain `pool` word: whether that pool is the launcher's own is not something
+  # the record says, so the row reads it rather than calling it either way.
+  printf '{"version":1,"run_id":"%s","stages":[{"stage":"implement","source":{"kind":"pool","pool":"team-a"}}]}\n' \
+    "$RESUMED" >"$answers/record-$RESUMED.json"
+  run883
+  expect_status "$status" 3 "a record whose kind is not the launcher's"
+  expect_row "$out" pool UNVERIFIED "a record whose kind is not the launcher's"
+  expect_contains "$out" "calls the kind pool" "a record whose kind is not the launcher's"
+}
+
 test_a_record_that_cannot_be_read_leaves_the_row_unverified() {
   case_dir record_unreadable
   printf 1 >"$answers/record-status"
@@ -453,6 +478,8 @@ t test_a_run_that_ends_without_pausing_leaves_the_row_unverified
 t test_a_pause_nobody_resumes_leaves_the_row_unverified
 t test_a_resumed_record_without_a_source_leaves_the_row_unverified
 t test_a_resumed_run_on_another_pool_is_a_finding
+t test_a_record_that_names_the_pool_as_name_passes
+t test_a_record_whose_kind_is_not_the_launchers_leaves_the_row_unverified
 t test_a_record_that_cannot_be_read_leaves_the_row_unverified
 t test_a_pool_that_is_not_the_launchers_is_refused_before_anything_runs
 t test_an_unknown_argument_is_refused

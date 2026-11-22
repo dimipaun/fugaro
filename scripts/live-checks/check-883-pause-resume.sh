@@ -525,8 +525,16 @@ PY
 }
 
 # source_of FILE prints, for a run record, the first stage source that names a
-# pool, as `kind=<kind> pool=<pool>`. It prints `none` when the record carries
-# no stage source at all.
+# source, as `kind=<kind> pool=<pool>`. It prints `none` when the record carries
+# no stage source at all, and `no-pool` when every source it carries names a
+# kind whose source is not a pool (a key, a provider key or Vertex).
+#
+# The name is read from `pool` first and from `name` second: C1 fixes the kind
+# words (`launcher-pool`, `pool`, `anthropic`, `provider`, `vertex`), and the run
+# record carries a stage's source as "kind and name, never a value" — a reader
+# that insisted on one spelling of the name would call a record written with the
+# other an unreadable one, and this row is about which pool served the run, not
+# about which member holds its name.
 source_of() { # source_of <record file>
   python3 - "$1" <<'PY'
 import json, sys
@@ -538,10 +546,11 @@ except Exception:
 seen = False
 for st in doc.get("stages") or []:
     src = st.get("source")
-    if isinstance(src, dict):
+    if isinstance(src, dict) and src:
         seen = True
-        if src.get("pool"):
-            print("kind=%s pool=%s" % (src.get("kind", "?"), src.get("pool")))
+        named = src.get("pool") or src.get("name")
+        if named:
+            print("kind=%s pool=%s" % (src.get("kind", "?"), named))
             sys.exit(0)
 if seen:
     print("no-pool")
@@ -856,11 +865,15 @@ step_pool() {
   local kind pool
   kind=$(printf '%s' "$src" | tr ' ' '\n' | sed -n 's/^kind=//p')
   pool=$(printf '%s' "$src" | tr ' ' '\n' | sed -n 's/^pool=//p')
-  if [ "$pool" = "$POOL" ] && [ "$kind" = "launcher-pool" ]; then
-    fact pool PASS "the resumed run ${RESUMED_REF:-$RESUMED_ID} was served from the ORIGINAL launcher's pool: its own record's stage source reads kind=${kind} pool=${pool}, the pool the launch named. A resume that drew on another pool — or on the plain 'pool' kind the service uses for a service account's launch — is what D3191 refuses, and this run is not one"
+  if [ "$pool" != "$POOL" ]; then
+    fact pool FAIL "the resumed run ${RESUMED_REF:-$RESUMED_ID} was NOT served from the pool the launch named: its own record's stage source reads kind=${kind} pool=${pool}, and the launch named ${POOL} (D3176). A run that resumes a person's paused run must draw on that person's pool (D3191), and a resumed run served from ${pool} is a resume that left the launcher's pool behind. Its record is ${uri}"
     return 0
   fi
-  fact pool FAIL "the resumed run ${RESUMED_REF:-$RESUMED_ID} was NOT served from the pool the launch named: its own record's stage source reads kind=${kind} pool=${pool}, and the launch named ${POOL} (D3176). A run that resumes a person's paused run must draw on that person's pool (D3191), and a resumed run served from ${pool} (kind ${kind}) is a resume that left the launcher's pool behind. Its record is ${uri}"
+  if [ "$kind" = "launcher-pool" ]; then
+    fact pool PASS "the resumed run ${RESUMED_REF:-$RESUMED_ID} was served from the ORIGINAL launcher's pool: its own record's stage source reads kind=${kind} pool=${pool}, the pool the launch named (C1's kind word for it, D3191)"
+    return 0
+  fi
+  fact pool UNVERIFIED "the resumed run ${RESUMED_REF:-$RESUMED_ID} was served from a source NAMED ${pool}, the pool the launch named, but its record calls the kind ${kind} and not launcher-pool, so whether that pool is the launcher's own is NOT measured: C1's kind words are launcher-pool, pool, anthropic, provider and vertex, and a run served from the plain 'pool' kind is a run served from a pool the SERVICE resolved rather than the one the launcher named (D3191). Read the run's own record and say which it is: gcloud storage cat ${uri}"
 }
 
 step_premise
