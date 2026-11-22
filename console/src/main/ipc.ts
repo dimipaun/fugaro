@@ -151,6 +151,48 @@ export const MAX_PAYLOAD_WIDTH = 4096
  */
 export const MAX_REPLY_REASON_LENGTH = 2048
 
+/**
+ * MODEL_ID_RE, MODEL_ROUTE_RE and MODEL_PRICE_RE are the models write's three
+ * grammars (the console improvements plan's MW1, D2903), and every one of them
+ * is checked in main **before any child exists**.
+ *
+ * **The model ID is the shape the plan states** -- `^[a-z0-9][a-z0-9._/-]{0,127}$`,
+ * the same one an image name has -- because the ID is a word the CLI's own
+ * `models add` reads as its positional and appends to a route's list: lower-case
+ * ASCII, no whitespace, no leading dash and no `=` (so the word can never be
+ * read as a flag even before the terminator in front of it does that work), and
+ * bounded at 128 characters. It is deliberately **narrower than the CLI's own
+ * check** (`config.CheckModelID`, which refuses an alias and little else): the
+ * console may refuse a word the CLI would accept, and it must not spell one the
+ * CLI would refuse -- which is the direction the whole surface is built in.
+ *
+ * **The route is a name and not a membership.** Which routes exist is the
+ * project's own `providers` block, so main cannot check that the route is one of
+ * them -- it checks the shape the config's own shared name rule gives every
+ * provider name (lower-case letters, digits and `-`), and the CLI's own sentence
+ * names the routes to choose from when the name is not one.
+ *
+ * **The price is a plain decimal and nothing else.** The flag is a
+ * `Float64Var`, and a spelling like `1e-3`, `0x10` or `Infinity` is a value this
+ * console has no reason to hand a child; what it sends is the digits an operator
+ * typed, bounded to the range the price table carries (`internal/pricing`'s
+ * `MaxPerM`, 1000 US dollars per million tokens) so a rate no budget can count is
+ * refused here rather than written.
+ */
+export const MODEL_ID_RE = /^[a-z0-9][a-z0-9._/-]{0,127}$/
+export const MODEL_ROUTE_RE = /^[a-z][a-z0-9-]{0,63}$/
+export const MODEL_PRICE_RE = /^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$/
+/** MODEL_PRICE_MAX_LENGTH bounds a price argument in characters, checked before
+ * the grammar runs so a hostile payload cannot make a regular expression work:
+ * the longest value the range admits is `1000.000000`. */
+export const MODEL_PRICE_MAX_LENGTH = 11
+/** MAX_MODEL_PRICE is the highest rate the price table carries, in US dollars
+ * per million tokens (`internal/pricing/pricing.go`'s `MaxPerM`). It is spelled
+ * here rather than imported for `MAX_INSTALLATION_NAME_LENGTH`'s reason -- the
+ * console imports nothing from the Go tree -- and a price at or below zero is
+ * refused by the same check: a model billed at nothing is not a price. */
+export const MAX_MODEL_PRICE = 1000
+
 /** MAX_REPOSITORY_LENGTH bounds an `owner/name` argument in characters. It is
  * checked before the grammar runs, so a hostile payload cannot make a regular
  * expression work: every repository that matches the grammar is ASCII anyway,
@@ -495,6 +537,12 @@ export type ArgumentKind =
   | 'roadmapRelease'
   | 'setupAnswers'
   | 'licenceKey'
+  // The models write's three (the console improvements plan's MW1, D2903): the
+  // model ID the command reads as its positional, the route that claims it, and
+  // the two rates a model the built-in catalog does not price needs.
+  | 'modelId'
+  | 'modelRoute'
+  | 'modelPrice'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
 export interface ArgumentSpec {
@@ -2250,6 +2298,121 @@ export const CONSOLE_OPERATIONS = [
     args: [],
   },
   {
+    // The models write's plan (the console improvements plan's MW1, D2903):
+    // `models add --no-apply --dry-run --json --route=<route> --price-in=<usd>
+    // --price-out=<usd> --project <name> [--config <path>] -- <model id>`.
+    //
+    // **It is the CLI's own dry run and nothing else.** `--dry-run` is what
+    // makes this row a read: the child computes the change and prints the
+    // versioned document (`schemas/models-add-plan.schema.json`) -- the route's
+    // claim, the `budget.allowed_models` entry, the `model_prices` entry with
+    // both rates, the steps it would take and any refusal the write would print
+    // -- and writes no config file, no published node and no saved step. The
+    // window the operator confirms is drawn from that document, which is why
+    // there is no second description of the change for the console to get wrong.
+    //
+    // **The payload is four values and every one is held to a grammar before any
+    // child exists**: the model ID (`modelId`), the route (`modelRoute`) and the
+    // two rates (`modelPrice`), each checked in main against a stated grammar --
+    // and each emitted as **one word** of the argv, the rates and the route as
+    // `--flag=value` and the ID as the positional behind the row's `--`
+    // (`src/main/spawn.ts`), so no value a renderer sends can parse as a flag.
+    // A half-given pair of rates is refused by the CLI's own sentence, which
+    // names the flag that is missing: the two are one fact and main will not
+    // invent the other half.
+    //
+    // **`--no-apply` is main's**, a word of the command path rather than an
+    // argument: the steps that make the change live are saved for `fugaro apply`
+    // (D1565), so this write changes the project config and the published
+    // documents and runs nothing else.
+    name: 'models.add.plan',
+    method: 'planModelsAdd',
+    command: 'models add --no-apply --dry-run',
+    flags: ['--json'],
+    summary: 'what claiming a model on a route would change, as the CLI’s own plan document and with nothing written',
+    args: [
+      {
+        key: 'id',
+        kind: 'modelId',
+        required: true,
+        why: 'the model ID `models add` reads as its positional word — the exact ID, never a pattern, and the ID a route claims',
+      },
+      {
+        key: 'route',
+        kind: 'modelRoute',
+        required: true,
+        why: 'the route that claims the model, named by shape rather than by membership: which routes exist is the project’s own `providers` block, and a name this project does not carry is refused by the CLI’s sentence, which lists the routes to choose from',
+      },
+      {
+        key: 'priceIn',
+        kind: 'modelPrice',
+        required: false,
+        why: 'the input rate, in US dollars per million tokens, for a model the built-in price catalog does not price — optional, and paired with `priceOut`: the CLI refuses a half-given pair',
+      },
+      {
+        key: 'priceOut',
+        kind: 'modelPrice',
+        required: false,
+        why: 'the output rate, the other half of the pair above',
+      },
+    ],
+  },
+  {
+    // The models write (the same plan's MW1, D2903): the row above less
+    // `--dry-run --json`, and the console's **fifth write** — after the launch,
+    // the settings write, the record's move and the wizard's apply.
+    //
+    // **It is a widening, and that is the whole reason it is on this surface at
+    // all.** The write appends the model to a route's own list in the project
+    // config and writes a `model_prices` entry and a `budget.allowed_models`
+    // entry for it, so it changes **what every run of the project may name and
+    // spend on** — a class of change rule 12's modal exists for. The window the
+    // plan opened carries the tick, and `src/main/confirm.ts` refuses a yes on
+    // this subject without it.
+    //
+    // **It declares the plan's own four arguments and no others.** The window
+    // showed one argv; the apply runs *that* argv, held by main with the plan
+    // document's digest, and never one a renderer sends again
+    // (`src/main/modelsadd.ts`): an IPC apply with no plan, or one whose payload
+    // does not match the held one, spawns nothing.
+    //
+    // **It is one of the lapse's rows.** A write is taken away with the launch
+    // and the settings write when the licence has lapsed (`refusedAfterLapse`);
+    // the plan above is the same command as a read and keeps answering.
+    name: 'models.add',
+    method: 'addModel',
+    command: 'models add --no-apply',
+    flags: [],
+    summary: 'the write: claim the model the plan showed, priced, and save the steps that publish it for `fugaro apply`',
+    refusedAfterLapse: true,
+    args: [
+      {
+        key: 'id',
+        kind: 'modelId',
+        required: true,
+        why: 'the model ID the confirmed plan was about — the same four values the plan carried, so the argv main re-runs is the argv the window drew',
+      },
+      {
+        key: 'route',
+        kind: 'modelRoute',
+        required: true,
+        why: 'the route the confirmed plan claims the model on',
+      },
+      {
+        key: 'priceIn',
+        kind: 'modelPrice',
+        required: false,
+        why: 'the input rate the confirmed plan showed, or absent when the plan let the catalog price the model',
+      },
+      {
+        key: 'priceOut',
+        kind: 'modelPrice',
+        required: false,
+        why: 'the output rate the confirmed plan showed, or absent',
+      },
+    ],
+  },
+  {
     // The settings editor (SU1, D2902): the one operation of the nine whose
     // command is **null**, because it spawns nothing as itself. It opens the
     // main process's own window for one key of the document the settings read
@@ -2368,9 +2531,15 @@ export interface NeverReachable {
    * so `setup.plan` and `setup.apply` are that row's.
    *
    * **It is a `flag` row's field and a `command` row's alike** (the console
-   * improvements plan, AL): the two shapes need it for the same reason, and the
-   * alternative -- taking `setup` off the table and refusing its sibling
+   * improvements plan, AL), **and an `argv` row's too** (the same plan's MW1):
+   * the three shapes need it for the same reason, and the alternative -- taking
+   * `setup`, or the whole `models` group, off the table and refusing its sibling
    * commands one by one -- would be the denylist this table exists not to be.
+   * An `argv` row's exception is read as the argv row is matched: the operation
+   * must be one of the surface's, its command path must be the row's command or
+   * a longer path under it, and the word must be in that path or in the flags
+   * the operation fixes -- so `models.add` may spell `add`, and an operation
+   * that spells it anywhere else may not.
    *
    * **It is keyed by operation and never by command.** A name is the whole of
    * what this surface has: a caller that does not say which operation it is
@@ -2759,6 +2928,15 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'models add',
     why: 'a write: it appends the model to a route’s own list in the project config and writes a model_prices entry and a budget.allowed_models entry for it, so it changes what every run of the project may name and spend on',
     where: 'internal/cli/models_add.go:27',
+    // **The console's fifth write, and the only way into it** (the console
+    // improvements plan's MW1, D2903). The two rows that make the write are the
+    // CLI's own dry run and the write itself, and they are the whole of what
+    // this row grants: the write goes through the single modal rule 12
+    // describes, the operator's yes is the window's own top frame's, and main
+    // re-runs the argv it showed rather than one a renderer sends. Every other
+    // operation under `models` is refused as before, and a *third* models write
+    // -- `models rm` or `models use` -- is refused by its own rows below.
+    except: ['models.add.plan', 'models.add'],
   },
   {
     shape: 'command',
@@ -2778,6 +2956,13 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'add',
     why: 'the write above, refused as a word of this command as well: a `models` argv that spells `add` is refused before `spawn` is called, whether it spells it in the command path or in the flags it fixes',
     where: 'internal/cli/models_add.go:27',
+    // The two rows the command row above grants, and no others (MW1, D2903):
+    // an argv row's `except` is read the same way a command row's is -- the
+    // operation must be one of the surface's, its command path must be under
+    // this row's command, and its argv must carry this row's word
+    // (`assertReachableSurface` below) -- so the exception is a fact about those
+    // two argvs and not a permission for `add` on any other operation.
+    except: ['models.add.plan', 'models.add'],
   },
   {
     shape: 'argv',
@@ -3127,7 +3312,13 @@ export function isNeverReachable(operation: {
     // against.
     if (entry.shape === 'argv' && entry.value !== '' && entry.command !== null && operation.command !== null) {
       const under = entry.command === operation.command || operation.command.startsWith(`${entry.command} `)
-      if (under && [...operation.command.split(' '), ...operation.flags].includes(entry.value)) return entry
+      if (under && [...operation.command.split(' '), ...operation.flags].includes(entry.value)) {
+        // The exception is read here exactly as it is on the two shapes above
+        // (MW1): a caller that named no operation, or one the row does not
+        // except, gets the refusal -- so `models add` is refused as a word of
+        // `models` for every operation but the two the row names.
+        if (!excepted(entry)) return entry
+      }
     }
   }
   return null
@@ -3888,6 +4079,35 @@ function validateValue(
       if (value === '') return refuse(`${spec.key} must be a value: clearing a key is unset`)
       return { ok: true, value }
     }
+    case 'modelId': {
+      // The word `models add` reads as its positional (`MODEL_ID_RE` above): the
+      // exact ID and never a pattern, so what this refuses is what the CLI's own
+      // step 1 would refuse one process later -- and a value a route may not
+      // claim never reaches an argv at all.
+      if (!MODEL_ID_RE.test(value)) {
+        return refuse(`${spec.key} must be a model ID: lower-case vendor/model, at most 128 characters`)
+      }
+      return { ok: true, value }
+    }
+    case 'modelRoute': {
+      // A **shape** and not a membership: which routes a project has is its own
+      // `providers` block, so a name this project does not carry is refused by
+      // the child's own sentence, which names the routes to choose from. This is
+      // the config's shared name rule (lower-case letters, digits and `-`).
+      if (!MODEL_ROUTE_RE.test(value)) {
+        return refuse(`${spec.key} must be a route name (lower-case letters, digits and '-')`)
+      }
+      return { ok: true, value }
+    }
+    case 'modelPrice': {
+      if (!MODEL_PRICE_RE.test(value)) {
+        return refuse(`${spec.key} must be a price in US dollars per million tokens, as a plain decimal`)
+      }
+      if (!(Number(value) > 0) || Number(value) > MAX_MODEL_PRICE) {
+        return refuse(`${spec.key} must be more than 0 and at most ${MAX_MODEL_PRICE} dollars per million tokens`)
+      }
+      return { ok: true, value }
+    }
     default:
       return refuse(`${operation} does not take ${spec.key}`)
   }
@@ -3978,6 +4198,14 @@ function kindLimit(kind: ArgumentKind): number {
       // digit, so a third provider longer than these two cannot be refused by
       // the bound before its own grammar sees it.
       return MAX_PROVIDER_LENGTH
+    case 'modelId':
+      // The grammar's own bound: `MODEL_ID_RE` admits at most 128 characters, so
+      // a longer word is refused before the expression runs.
+      return 128
+    case 'modelRoute':
+      return 64
+    case 'modelPrice':
+      return MODEL_PRICE_MAX_LENGTH
     case 'installationName':
       return MAX_INSTALLATION_NAME_LENGTH
     case 'installationCheckout':
@@ -4694,6 +4922,22 @@ export function assertReachableSurface(operations: readonly ConsoleOperation[]):
       if (entry.shape === 'command' && !under) {
         throw new Error(
           `the never table's ${entry.value} row excepts ${name}, which drives ${String(named.command)}: a command row's exception names an operation of that command's own argv (the match is the row's words or a longer path under them)`,
+        )
+      }
+      // An `argv` row's exception is held to what that row is matched by
+      // (MW1): the named operation's command path must be the row's own command
+      // or a longer path under it, **and** the row's word must be in that path
+      // or in the flags the operation fixes. Anything else would be an exception
+      // nothing uses -- a name that reads as a permission for a word the row
+      // refuses everywhere else.
+      const carries =
+        entry.command !== undefined &&
+        named.command !== null &&
+        (named.command === entry.command || named.command.startsWith(`${entry.command} `)) &&
+        [...named.command.split(' '), ...named.flags].includes(entry.value)
+      if (entry.shape === 'argv' && !carries) {
+        throw new Error(
+          `the never table's ${entry.value} row (on ${String(entry.command)}) excepts ${name}, whose argv does not carry that word: an argv row's exception names an operation of that command's own argv that spells the word`,
         )
       }
     }

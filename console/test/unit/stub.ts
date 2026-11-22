@@ -285,10 +285,11 @@ main()
  * on the console's spawn table.
  *
  * **One key per operation, and the mode word is why it is not simply the
- * command path.** Six commands carry two rows each today -- `logs` (`--url`),
+ * command path.** Seven commands carry two rows each today -- `logs` (`--url`),
  * `graph` (`--watch`), `runs ls`, `report` and `budget show` (`--stream`, the
- * console improvements' three live reads) and `user ls` (`--me`, the caller's
- * own role) -- and `setup` carries the wizard's two (`--plan-only`). Two rows
+ * console improvements' three live reads), `user ls` (`--me`, the caller's own
+ * role) and `models add` (`--dry-run`, the models write's plan and its write,
+ * MW1) -- and `setup` carries the wizard's two (`--plan-only`). Two rows
  * sharing one key would make one of them unreachable and answer its scenarios
  * from `default`, which is a test passing about a fallback rather than about
  * its fixture (`stub.test.ts` holds the uniqueness).
@@ -321,7 +322,7 @@ export function commandKey(argv: readonly string[]): string {
   // beside it: the generated child is handed this function's own source
   // (`installStub`), so a constant read from outside would be a ReferenceError
   // in the child rather than a key.
-  const mode = ['--watch', '--stream', '--me', '--plan-only'].find((word) => argv.includes(word))
+  const mode = ['--watch', '--stream', '--me', '--plan-only', '--dry-run'].find((word) => argv.includes(word))
   const key = words.join(' ')
   return mode === undefined ? key : `${key} ${mode}`
 }
