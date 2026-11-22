@@ -23,11 +23,17 @@ package pricing
 //
 // A model has a third spelling, and CS3 (docs/model-credentials-routing/
 // implementation-plan.md) adds it here: Vertex's own, beside the route's ID.
-// It is the same kind of fact — data, per model, checked in — and it lives in
+// It is the same kind of fact — data, per model, checked in — and it lives with
 // this map for the same reason, because the chain walk (CS1) has to know how to
 // write a model on the source that will serve it, and one map answering "how is
 // this model written there" is what keeps the walk, the checks (RT3) and the
 // Vertex translation (CS4) from disagreeing about the id a live call carries.
+//
+// The column has since grown a second table rather than a second answer: a
+// non-Claude model on Vertex — a Gemini one (GV3) — has no route ID and no
+// Unmapped reason, so it gets no row of claudeRoutes, and vertex_gemini.go
+// holds its spelling beside its price instead. vertexIDFor is still the one
+// reader of the column, and it reads both tables.
 
 // claudeRoute is one row of the map: the canonical Claude ID (the ID a pin
 // carries, claude-sonnet-5-5), the route's own ID (what the route entry
@@ -152,18 +158,27 @@ func UnmappedReason(canonical string) (string, bool) {
 	return "", false
 }
 
-// vertexIDFor answers Vertex's own spelling of a canonical Claude ID: the row's
-// Vertex member, and whether the map carries a row for the model at all. The
-// second half is the fail-closed direction — a model with no row has no Vertex
-// spelling, and a caller that took the canonical ID anyway would send a call to
-// a model nobody checked Vertex for (D3175).
+// vertexIDFor answers Vertex's own spelling of a canonical model ID, and
+// whether Vertex may be sent the model at all. It is the one reader of both
+// halves of the spelling: a Claude row's Vertex member, and — for a model the
+// Claude map does not carry, which is every Gemini model — the Vertex Gemini
+// catalog (vertex_gemini.go, GV3), so a caller cannot get a Vertex spelling out
+// of one half that the other contradicts.
+//
+// The split is a question of which table answers, never of which is consulted
+// first as a preference: a model the Claude map carries is a Claude model and
+// its row is the answer, and one the Claude map does not carry falls to the
+// Gemini catalog, which has no row for a Claude model. The second half of the
+// answer is the fail-closed direction in both — a model neither table carries
+// has no Vertex spelling, and a caller that took the canonical ID anyway would
+// send a call to a model nobody checked Vertex for (D3175).
 func vertexIDFor(canonical string) (string, bool) {
 	for _, r := range claudeRoutes {
 		if r.Canonical == canonical {
 			return r.Vertex, r.Vertex != ""
 		}
 	}
-	return "", false
+	return vertexGeminiID(canonical)
 }
 
 // spellingFor is the real translation behind SpellingFor (spelling_stub.go
