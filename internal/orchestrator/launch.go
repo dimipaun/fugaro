@@ -263,7 +263,7 @@ type Action struct {
 // ladder launches on top (LadderLaunch): a rung's runs are the executor's to
 // ask for, and its own bound is not this plan's caps.
 func Plan(s State, view RunView, caps Caps, now time.Time) []Action {
-	actions, _ := planNode(s, view, caps, now, CountsOf(s, now), 0, BreakerOpen(s, now))
+	actions, _ := planNode(s, view, caps, now, CountsOf(s, now), 0, BreakerOpen(s, now), nil)
 	return actions
 }
 
@@ -283,7 +283,13 @@ func Plan(s State, view RunView, caps Caps, now time.Time) []Action {
 // through a pause that stands, which is the stop O19 and D2022 (a) exist for.
 // What hands it in is the cycle, over every node it works (Tick.Nodes); a
 // daemon's own node reads it off the state it plans, which is what Plan does.
-func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, planned int, paused bool) ([]Action, int) {
+//
+// other is what the cycle resolved this node's cross references to (D3208), and
+// nil for a caller that read no other orchestrator: an item depending on one
+// then waits, which is the direction a plan that cannot see the far end fails
+// in. The reading is of this node's references alone, so a node whose items name
+// nobody else is planned exactly as it was before there were references.
+func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, planned int, paused bool, other crossPhases) ([]Action, int) {
 	if caps.KillSwitch || OverCap(s) || paused {
 		return nil, planned
 	}
@@ -299,7 +305,7 @@ func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, pl
 			}
 			continue
 		}
-		a, ok := nextAttempt(s, w)
+		a, ok := nextAttempt(s, other, w)
 		if !ok {
 			continue
 		}

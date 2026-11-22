@@ -685,14 +685,16 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		Mint:     func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
 		Caps:     caps,
 		Breaker:  &orchestrator.Breaker{},
-		// A tick has three things to say — a run it folded ended, it committed
-		// a question (O7), and it merged under a ceiling that tells somebody
-		// (D2030) — and the log sink is the channel slice 1 ships, one cleaned
+		// A tick has four things to say — a run it folded ended, it committed
+		// a question (O7), it merged under a ceiling that tells somebody
+		// (D2030), and it blocked an item on a cycle across orchestrators
+		// (D3220) — and the log sink is the channel slice 1 ships, one cleaned
 		// line on this daemon's own output, which is where the person running it
 		// in the foreground reads what it did (and where the login unit collects
 		// it). Left unset, every say() in a cycle returns at its nil check: the
 		// daemon would stop a run nobody hears about, pause on a spend question
-		// nobody sees, and land a merge nobody is told to read.
+		// nobody sees, land a merge nobody is told to read, and block an item on
+		// a deadlock nobody can break.
 		Notifier: orchestrator.LogSink{W: d.out},
 		Triage:   orchestratorTriageSeams(d),
 		// The labels of the pull requests the runs it launched opened (F25, T7):
@@ -724,6 +726,14 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		// repository says so through the client's own refusal, once per cadence,
 		// rather than ingesting nothing quietly.
 		Issues: issues,
+		// The cross-orchestrator references (D3208): the items of the other
+		// orchestrators this node's own items name, read from the same database
+		// the node is and only for the ids a reference names. It is wired
+		// always, because the reading is what makes such a reference mean
+		// anything: a daemon that resolved none would hold every item that
+		// names one, and the reference would be a dependency nothing can ever
+		// satisfy.
+		Cross: orchestrator.CrossShards{DB: d.db, Role: orchestrator.RoleOrchestrator},
 		// The audit log the trip writes its refusal line to (O19): the daemon's
 		// own node, under the id the entry derives from the run, which is the
 		// same log the triage and the decision agent append to. It is wired
