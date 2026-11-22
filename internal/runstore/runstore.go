@@ -1661,9 +1661,11 @@ type Record struct {
 	// Claude account each stage used, while this one answers whose token paid
 	// — so it carries a new name and neither of them moves (CLAUDE.md: a
 	// field never changes meaning). The runner writes it as each answer from
-	// the service reports it (recordCredentialOwner,
-	// internal/runner/record_owner.go); a record written before the field
-	// decodes unchanged and the format's version does not move
+	// the service reports it, in the same call and under the same lock as the
+	// credential's name above (recordCredential, internal/runner/runner.go):
+	// the two are one answer's pair, so no record holds one answer's credential
+	// beside another answer's owner; a record written before the field decodes
+	// unchanged and the format's version does not move
 	// (schemas/result.schema.json declares the property). The value is an
 	// account id and never a credential: no value ever leaves the service.
 	CredentialOwner string  `json:"credential_owner,omitempty"`
