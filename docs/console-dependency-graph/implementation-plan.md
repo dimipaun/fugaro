@@ -34,7 +34,7 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
 
 - **Go:** `gofmt -l .` clean, `GOFLAGS=-p=2 go vet ./...`, targeted tests with `-count=1
   -timeout 300s`, never the whole suite as the verification.
-- **Console:** Node 22 (`console/package.json` `engines.node` is `22.23.3`); targeted
+- **Console:** Node 22 (`console/package.json` `engines.node` is `>=22.23.3 <23`); targeted
   `npx vitest run <file>` and `npm run typecheck` in `console/`; e2e through `npm run test:e2e --
   <spec>` (Playwright on the built app). Exact versions only (`console/test/unit/pinning.test.ts`).
 - **The console's hard rules** (`docs/desktop-console/spec.md` §5.1): the CLI is the only data

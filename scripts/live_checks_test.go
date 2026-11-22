@@ -553,6 +553,21 @@ import (
 // about, and says that no message was sent into a stage that never ran. Every
 // case holds the same two things wherever it is about something else: a
 // message's own text never reaches the block, and no access token is asked for.
+// Checks 881 and 882 are the model-credentials routing work's owner-run checks.
+// 881's fakes are a fake `fugaro` (a routing table, a budget, a pool of
+// accounts whose members the case sets a state on, a launch and a run listing),
+// a fake `gcloud` serving the run's own record out of the runs bucket and a
+// fake `belong`, so a case says which source of the chain served the run, that
+// the fall-through was flagged and counted, and that nothing was launched where
+// the pool could still serve. 882's are a fake `fugaro` (a table that routes
+// two Claude models to Vertex, an `enforce` project with a per-run cap, a launch
+// the case can refuse and a run listing), a fake `gcloud` that mints an
+// impersonated token per job account, serves the job list, the IAM policy, a
+// role's own permissions and the run's record, and a fake `curl` that answers
+// the Vertex probe and records the URL, whether the Authorization header
+// arrived through the `--config` file rather than a command line, and that no
+// value ever reached the call log, so a case says what the service served and
+// priced, what a job's account was refused, and what each finding is.
 // Check 680's fakes are a fake `fugaro`, a fake `gcloud` and a fake `git` over
 // the installation's own project config, written to hold STATE rather than
 // answer: the fake `fugaro` judges the very file the check doctors -- the base
@@ -680,6 +695,8 @@ var liveCheckScripts = []struct {
 	{"check-830.sh", "check-830_test.sh"},
 	{"check-840.sh", "check-840_test.sh"},
 	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
+	{"check-881-chain-falls-through.sh", "check-881-chain-falls-through_test.sh"},
+	{"check-882-vertex-capped.sh", "check-882-vertex-capped_test.sh"},
 	{"check680.sh", "check680_test.sh"},
 }
 
@@ -745,7 +762,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 300 items on one runner (100 scripts, three shards each) and under
+// The suite is 306 items on one runner (102 scripts, three shards each) and under
 // a minute each; a split that dropped one, ran one twice or fell back to
 // everything would show up as a green run that tested less, which is the failure
 // this pins.
