@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 )
 
 // The Firebase side's singletons, in the Firebase project (the FP) and in
@@ -229,10 +230,19 @@ func CoordinatorRepos(lc *localcfg.Config) []CoordinatorRepo {
 // FirebaseSpec is the Firebase root's tfvars: exactly its variables.
 type FirebaseSpec struct {
 	// Project is the Firebase project's ID (the FP).
-	Project       string        `json:"project"`
-	FugaroProject string        `json:"fugaro_project"`
-	Names         FirebaseNames `json:"names"`
-	ManageAPIs    bool          `json:"manage_apis"`
+	Project string `json:"project"`
+	// DatabaseRegion is the location a NEW Realtime Database instance is
+	// created in: the mapping's answer for the installation's own region
+	// (place.For(inst.Region).RealtimeDatabase, D3089), which is us-central1
+	// for a US installation as D4 chose and one of Google's three Realtime
+	// Database locations for every other. It is NOT read for an instance that
+	// already exists — the module ignores the field, and discovery imports the
+	// instance at the location it really is in (D3091, F8) — which is why the
+	// rule that gives it a value lives here and not at the plan.
+	DatabaseRegion string        `json:"database_region"`
+	FugaroProject  string        `json:"fugaro_project"`
+	Names          FirebaseNames `json:"names"`
+	ManageAPIs     bool          `json:"manage_apis"`
 	// Launchers and Operators mint run tokens and read the database;
 	// Admins (the GCP project's owners and editors) and BudgetAdmins write
 	// it. The history account is the sweeper's, which holds its own roles.
@@ -338,7 +348,16 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 		}
 	}
 	s := FirebaseSpec{
-		Project:            in.FP,
+		Project: in.FP,
+		// The installation's own region decides where a new budget database
+		// goes, through the product's table rather than a rule of this file's
+		// (docs/location-preference/reconciliation.md, "The mapping"): Google
+		// offers the Realtime Database in three locations for the whole world,
+		// so the region itself is the answer only for the three that are one of
+		// them. The region a run in flight has is whatever its installation was
+		// created with, and an installation whose region is under europe-west1
+		// gets europe-west1 here.
+		DatabaseRegion:     place.For(inst.Region).RealtimeDatabase.Where,
 		FugaroProject:      inst.FugaroProject,
 		Names:              FirebaseNames{SignerAccountID: SignerAccountID, MinterRoleID: MinterRoleID, APIKey: APIKeyID},
 		ManageAPIs:         inst.ManageAPIs,

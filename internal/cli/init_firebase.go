@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -26,6 +27,23 @@ import (
 
 // printVarsUngatedFirebase is update --firebase-project --print-vars's warning.
 const printVarsUngatedFirebase = "--print-vars is ungated and makes no cloud call, so the Firebase root's admins list holds only --budget-admin and the local config's terraform.budget_admins: the GCP project's owners and editors are read from its IAM policy when the converge runs, and the Firebase project is not checked"
+
+// databaseRegionNote is what --print-vars says about the budget's Realtime
+// Database (LP2, D3089, D3091): where a NEW instance goes, from the
+// installation's region, and the one thing a printed document cannot know —
+// whether an instance already exists, and in which of the three locations.
+// --print-vars runs no discovery by design, so the line stands in for the read
+// and says as much; a converge finds the instance itself and, when its location
+// is not what the mapping says, adds the discovery's own note saying which it
+// is (DiscoverFirebase).
+func databaseRegionNote(region string) string {
+	loc := place.For(region).RealtimeDatabase
+	note := "the budget's Realtime Database instance goes in " + loc.Where
+	if loc.Reason != "" {
+		note += ", because " + loc.Reason
+	}
+	return note + "; an instance that already exists keeps the location it was created in, whatever this document says"
+}
 
 // firebaseVars is the installation's and the Firebase root's tfvars as one
 // JSON object, for --print-vars.

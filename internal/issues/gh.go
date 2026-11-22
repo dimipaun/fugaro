@@ -61,7 +61,7 @@ type GHRunner func(ctx context.Context, args ...string) ([]byte, error)
 // the error, which a caller prints as the reason nothing was filed.
 func ExecGH(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, GHBin, args...)
-	cmd.Env = ghEnv(cmd.Environ())
+	cmd.Env = GHEnv(cmd.Environ())
 	// A leaked descendant holding the output pipe must not hang us (see
 	// internal/image's runner, which waits the same way).
 	cmd.WaitDelay = 5 * time.Second
@@ -88,23 +88,26 @@ func ExecGH(ctx context.Context, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// ghEnv is the child's environment: the person's own — exec.Cmd's own copy of
+// GHEnv is the child's environment: the person's own — exec.Cmd's own copy of
 // it, so this file still names no package that could store what gh answers
-// with — with two changes.
+// with — with two changes. It is exported because every gh call this tree makes
+// about a repository it names itself is in the same position: the post's here,
+// and the state save's in internal/cli, which pushes a document to github.com.
 //
-// GH_HOST and GH_REPO are dropped. `-R github.com/<owner>/<repo>` already
-// decides both the host and the repository (F22), and an inherited GH_HOST
-// names a different GitHub for a person who has one, which is a machine this
-// post was never asked to go to; there is no reason to hand it to this call.
-// Everything else is left alone: GH_TOKEN is how a person in a terminal
-// without an interactive login authenticates, and gh's own credentials are
-// gh's to use.
+// GH_HOST and GH_REPO are dropped. A repository argument that writes the host
+// out (`-R github.com/<owner>/<repo>`, F22) already decides both the host and
+// the repository, and an inherited GH_HOST names a different GitHub for a
+// person who has one, which is a machine this call was never asked to go to;
+// there is no reason to hand it to the child. Everything else is left alone:
+// GH_TOKEN is how a person in a terminal without an interactive login
+// authenticates, and gh's own credentials are gh's to use.
 //
 // GH_PROMPT_DISABLED says what the no-prompt policy says (docs/no-prompt-policy):
-// no command waits for input. Title and body are supplied on the command line,
-// so gh has nothing to ask, and this makes that a property of the child rather
-// than of the arguments.
-func ghEnv(environ []string) []string {
+// no command waits for input. Every caller supplies what gh would ask for — the
+// one's title and body, the other's repository and branches — on the command
+// line, so gh has nothing to ask, and this makes that a property of the child
+// rather than of the arguments.
+func GHEnv(environ []string) []string {
 	out := make([]string, 0, len(environ)+1)
 	for _, kv := range environ {
 		name, _, _ := strings.Cut(kv, "=")

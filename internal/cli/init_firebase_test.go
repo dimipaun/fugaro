@@ -1037,6 +1037,81 @@ func TestInitFirebasePrintVarsNoCalls(t *testing.T) {
 	}
 }
 
+// setInstallRegion rewrites the rig's config to an installation in region:
+// --print-vars reads the region from the config alone, and the mapping's
+// answer for it is what the printed document and the note beside it carry.
+func setInstallRegion(t *testing.T, r *fbRig, region string) {
+	t.Helper()
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`(?m)^region: .*$`)
+	if !re.Match(b) {
+		t.Fatalf("the rig's config names no region:\n%s", b)
+	}
+	if err := os.WriteFile(r.cfg, re.ReplaceAll(b, []byte("region: "+region)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestPrintVarsSaysAnExistingInstanceKeepsItsOwn (LP2, D3089, D3091):
+// --print-vars runs no discovery by design, so it can know neither whether the
+// installation already has a Realtime Database instance nor where that one is.
+// What it prints is the mapping's answer for the installation's region, and
+// the line beside it says what a printed document cannot decide: an instance
+// that already exists keeps the location it was created in, whatever the
+// document says. A converge is the one that reads the instance and, when the
+// two differ, says in the discovery's note where it really is — which is the
+// sentence this line stands in for.
+func TestPrintVarsSaysAnExistingInstanceKeepsItsOwn(t *testing.T) {
+	r := newFBRig(t)
+	for _, tc := range []struct {
+		region, want string
+		because      bool
+	}{
+		// A location the region is not, so the line carries the reason too.
+		{"europe-west2", "europe-west1", true},
+		// The region itself is one of the three locations: nothing to explain.
+		{"europe-west1", "europe-west1", false},
+		// The fixture's own region, which is also the answer every
+		// installation got before this work.
+		{"us-east5", "us-central1", true},
+	} {
+		t.Run(tc.region, func(t *testing.T) {
+			setInstallRegion(t, r, tc.region)
+			out, errOut, err := executeStdin(t, "", "setup", "--firebase-project", fpID, "--print-vars")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var both struct {
+				Firebase map[string]any `json:"firebase"`
+			}
+			if err := json.Unmarshal([]byte(out), &both); err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			if got := both.Firebase["database_region"]; got != tc.want {
+				t.Errorf("the document says the database goes in %v; want %q, the mapping's answer for %s", got, tc.want, tc.region)
+			}
+			if !strings.Contains(errOut, "note: the budget's Realtime Database instance goes in "+tc.want) {
+				t.Errorf("the note does not name %s:\n%s", tc.want, errOut)
+			}
+			if !strings.Contains(errOut, "an instance that already exists keeps the location it was created in") {
+				t.Errorf("the note does not say an existing instance keeps its own location:\n%s", errOut)
+			}
+			if got := strings.Contains(errOut, "because"); got != tc.because {
+				t.Errorf("the note explains itself = %v, want %v:\n%s", got, tc.because, errOut)
+			}
+			if strings.Contains(out, "note:") {
+				t.Errorf("print-vars stdout must stay the tfvars alone:\n%s", out)
+			}
+			if len(r.calls(t)) != 0 || len(r.db.Requests()) != 0 || len(r.fbdb.Requests()) != 0 {
+				t.Errorf("--print-vars made calls: terraform %q", r.calls(t))
+			}
+		})
+	}
+}
+
 // update --repo writes the backend's address and web key into the workflow jobs
 // whenever the installation has them, whatever its budget mode (D11, plan
 // task 1.4 step 1). The mode is the project's policy now, and a run reads that

@@ -13,10 +13,16 @@ import (
 // the metadata of the keys that belong to no family of their own — `budget.`'s
 // caps and its mode, the project's base branch and its parallel limit, this
 // machine's own update check and commit identity, the account keys a run's
-// model calls go out on, the triage switch and the planning pass's switch.
+// model calls go out on, the triage switch, the review-against-task switch's
+// local carrier, the planning pass's switch and the phone admissions block.
 // The families beside it are the other three backfills' own files (SM1 to
 // SM3), and D2908 is why every writable key has an entry somewhere in the
 // table.
+//
+// The review-against-task carrier and the phone block are the two entries
+// SMC's own coverage test found: SM4's brief names the twelve keys beside them
+// and neither of the two is one of the four backfills' families, so the table
+// covered every key of every family and no key of neither.
 //
 // A bound here is the loader's own constant and not a number written out: what
 // the console's number input allows and what settingsReparse accepts part
@@ -174,6 +180,31 @@ var singleMeta = map[string]Meta{
 		Description: "Whether a review round's findings are judged by the triage stage.",
 		Group:       GroupReviews,
 		Type:        TypeBool,
+	},
+	// The review-against-task switch's local carrier (RA8b, R7, D2935): the
+	// machine's own file states it and the publish copies it into the policy
+	// node, which is the shape `triage` above has, and it is the local half of
+	// the pair `agent.review_against_task` (meta_agent.go) is the repository's
+	// half of.
+	"review_against_task": {
+		Label:       "Review against task",
+		Description: "Whether this machine's review stages are shown the task the pull request was written for.",
+		Group:       GroupReviews,
+		Type:        TypeBool,
+	},
+	// The phone admissions block (D231, D2603): the entries a person declares a
+	// device in. The entry pair writes it (`settings set mobile_allow
+	// --add-entry`), which is why no scalar write lands on the block's own
+	// spelling and the write refuses one of its leaves. The type states the
+	// shape of one member — a uid, an address and a role — for the reason the
+	// two lists above state theirs: the block is drawn read-only with the
+	// command to copy (R5), so no control is built from this. The group is this
+	// machine's own copy because the file the block lives in is (LayerLocal).
+	"mobile_allow": {
+		Label:       "Admitted phones",
+		Description: "The phones admitted to drive this project's runs, each with a uid, an address and a role.",
+		Group:       GroupMachine,
+		Type:        TypeString,
 	},
 	// The planning pass's switch is the project's, and the group is this
 	// machine's because that is where the order puts it (SM0's GroupMachine):
