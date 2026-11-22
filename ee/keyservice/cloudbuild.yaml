@@ -44,9 +44,13 @@ options:
 images:
   - "${_REPOSITORY}/fugaro-portal-api:${_TAG}"
   - "${_REPOSITORY}/fugaro-key-minter:${_TAG}"
+# Both Dockerfiles use FROM --platform=$BUILDPLATFORM and ARG TARGETARCH, which
+# only BuildKit sets; the docker builder's legacy default fails at step 0 with
+# `failed to parse platform`.
 steps:
   - id: portal-api
     name: gcr.io/cloud-builders/docker
+    env: ["DOCKER_BUILDKIT=1"]
     args:
       - build
       - --file
@@ -56,6 +60,7 @@ steps:
       - .
   - id: minter
     name: gcr.io/cloud-builders/docker
+    env: ["DOCKER_BUILDKIT=1"]
     args:
       - build
       - --file
