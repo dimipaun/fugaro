@@ -5,16 +5,19 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // workspace_create_test.go is the workspace's own project's root (W3 of the
@@ -974,6 +977,126 @@ func TestWorkspaceProjectStageCarriesTheRecordedBlockWhenItDeploysNothing(t *tes
 			}
 		})
 	}
+}
+
+// wsRosterPersonA and wsRosterPersonB are two people of the fixture roster: the
+// addresses the root's `people` variable takes and binds one invoke grant per.
+const (
+	wsRosterPersonA = "ada@example.com"
+	wsRosterPersonB = "grace@example.org"
+)
+
+// wsRosterMachine is the fixture roster's one machine: a member's job account,
+// which the root's `members` variable already binds its own invoke grant to and
+// which the `people` variable must never carry (a person is admitted by address
+// and by nothing else).
+const wsRosterMachine = "fugaro-run-borealis@member-borealis-1234.iam.gserviceaccount.com"
+
+// wsBudgetFor is the budget block of an installation whose database is db: what
+// the roster read needs, and the block the rig's own config carries none of.
+func wsBudgetFor(db *gcpfake.RTDB) string {
+	return "budget: { mode: observe, per_run_usd: 5, firebase_project: " + wsProject + ", rtdb_url: " + db.URL + " }\n"
+}
+
+// wsRosterDoc is a roster node as the workspace's own database carries it: two
+// people and one machine, encoded by the package that owns the document's shape
+// rather than written out here, because a node this reader refuses would test
+// the carry path and not the read.
+func wsRosterDoc(t *testing.T) map[string]any {
+	t.Helper()
+	roster := &workspace.Roster{
+		Version:   workspace.RosterVersion,
+		Mechanism: workspace.MechanismSA,
+		People: []workspace.Person{
+			{Address: wsRosterPersonA, Kind: workspace.KindHuman},
+			{Address: wsRosterMachine, Kind: workspace.KindSA},
+			{Address: wsRosterPersonB, Kind: workspace.KindHuman},
+		},
+		Admins: []string{wsRosterPersonA},
+	}
+	b, err := workspace.EncodeRoster(roster)
+	if err != nil {
+		t.Fatalf("encoding the fixture roster: %v", err)
+	}
+	var v map[string]any
+	if err := json.Unmarshal(b, &v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// wsSeedRecordedPeople writes the workspace root's tfvars as a run of an earlier
+// release left them, carrying the people that run's roster named: the list a run
+// whose own read fails hands back verbatim.
+func wsSeedRecordedPeople(t *testing.T, people []string) {
+	t.Helper()
+	if err := os.MkdirAll(wsWorkdirRoot(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := workspaceVars{Project: wsProject, Workspace: wsProjectName, Members: map[string]workspaceMemberVar{}, People: people}
+	doc.Names.WorkspaceAccountID = tf.WorkspaceServiceAccountID
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wsWorkdirRoot(), infra.VarsFile), append(b, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestWorkspaceVarsNameTheRostersPeople: var.people is the workspace roster's
+// human addresses, read from the workspace's own roster node
+// (`workspaceRosters/<name>`, R6, D2971) — so `fugaro update` renders the people
+// the roster names and the root binds one invoke grant on the workspace's own
+// service per address. A machine is never one of them: an `sa` entry of the
+// roster is a member's job account, which the root's `members` variable already
+// binds its own invoke grant to, and a person is admitted by address alone.
+//
+// The second case is the read that cannot be made, and it is the security
+// property rather than an error: the people the workdir's own tfvars already
+// hold go back VERBATIM, with one line saying why. An empty list there would
+// plan the deletion of every person's invoke grant — a loosening of the
+// workspace's own service that no run decided, and a deletion the root's cover
+// does not admit — so the state that cannot read the roster keeps the list it
+// already has.
+func TestWorkspaceVarsNameTheRostersPeople(t *testing.T) {
+	t.Run("the roster's own people and no machine", func(t *testing.T) {
+		db := gcpfake.NewRTDB(t)
+		g := newWSCreateRig(t, wsProjectName+"\n", wsOwnerTable+wsOwnerCap+wsBudgetFor(db))
+		db.Set("workspaceRosters/"+wsProjectName, wsRosterDoc(t))
+		g.noChanges(t)
+
+		g.check(t)
+		if _, err := g.plan(t, initflow.Env{Interactive: true}); err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		want := []string{wsRosterPersonA, wsRosterPersonB}
+		if got := g.tfvars(t).People; !slices.Equal(got, want) {
+			t.Errorf("var.people = %v, want the roster's human addresses %v: the root binds one invoke grant per entry, and a machine or a person the roster does not name here is a grant nothing asked for", got, want)
+		}
+	})
+
+	t.Run("a roster this run cannot read carries the recorded people", func(t *testing.T) {
+		// Deliberately not the order a roster would carry: what the run writes
+		// back is the document the workdir held, field for field, and not a list
+		// this run derived again from something it could not read.
+		recorded := []string{"zoe@example.com", wsRosterPersonA}
+		g := newWSCreateOwnerRig(t, wsProjectName+"\n")
+		wsSeedRecordedPeople(t, recorded)
+		g.noChanges(t)
+
+		g.check(t)
+		if _, err := g.plan(t, initflow.Env{Interactive: true}); err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		if got := g.tfvars(t).People; !slices.Equal(got, recorded) {
+			t.Errorf("var.people = %v, want the recorded list %v verbatim: a run that cannot read the roster must not empty it, because the empty list plans the deletion of every person's invoke grant", got, recorded)
+		}
+		out := g.out.String()
+		if !strings.Contains(out, "the workspace's roster is not read: ") {
+			t.Errorf("a run that could not read the roster said nothing about it, so an owner cannot tell a workspace with no people from a read that failed:\n%s", out)
+		}
+	})
 }
 
 // TestWorkspaceProjectStageNeverConfirmsByTheRunsOwnAnswer: what the stage
