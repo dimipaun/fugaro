@@ -129,7 +129,7 @@ import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
 import type { SpawnLogWriter } from '../../src/main/spawnlog'
 import { PRODUCTION_KEYRING } from '../../src/main/licence'
 import { LICENCE_KEY_CLI_FLOOR, licenceKeySupported } from '../../src/shared/version'
-import { RUNS_LIST_MAX_LIMIT, validateArguments } from '../../src/main/ipc'
+import { IMAGE_TAGS_MAX, IMAGE_TAG_RE, RUNS_LIST_MAX_LIMIT, validateArguments } from '../../src/main/ipc'
 import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
 import { CliSource, LOG_WINDOW_MAX_ENTRIES, MAX_LIVE_FEEDS, createInstallationStore, parseLogEntries } from '../../src/source/cli'
 import type { InstallationCandidate } from '../../src/source/cli'
@@ -2075,6 +2075,75 @@ describe('the spawn table and the argv it builds', () => {
         assertArgvFlags('image.add', ['image', 'add', '--no-apply', '--', word]),
       ).not.toThrow()
     }
+  })
+
+  it('refuses an image write whose tags or description the argv builder will not carry', () => {
+    // **The argv builder's own gate, asked with the validator out of the way**
+    // (MW2, D2903). The image write's own suite goes through
+    // `validateArguments` first, so what a case there sees refused is the
+    // renderer's gate (`ipc.ts`'s `imageTags` and `imageDescription`) and never
+    // this one; these cases call `argvFor` **directly**, which is the only way
+    // to see the `equalsList` and `equalsText` kinds at all.
+    //
+    // **Both gates refuse the same values**, the way the two `since` cases above
+    // require: the members and the text are asked again in `spawn.ts` rather
+    // than trusted, because a bound asked in one place is a bound the next
+    // caller can miss -- and here the list is the one argument whose shape is
+    // the CLI's own free-form tag rule rather than a membership, so the second
+    // gate is what stands between a widened list and a child.
+    const values = {
+      name: 'app',
+      dockerfile: 'acme/app:.fugaro/app.Dockerfile',
+      tags: 'node,redis',
+      description: 'the app image',
+    }
+    // A member outside the CLI's tag grammar (`IMAGE_TAG_RE`: lower-case, and no
+    // member may be empty) and the empty list, which the row reads as no tags at
+    // all rather than as a word of its own.
+    for (const tags of ['node,Redis', 'Redis', 'node,', ',node', 'node,,redis', 'node,redis ', ' ']) {
+      expect(validateArguments('image.add.plan', { ...values, tags }).ok, JSON.stringify(tags)).toBe(false)
+      for (const operation of ['image.add.plan', 'image.add'] as const) {
+        expect(
+          () => argvFor(operation, { ...values, tags }, safeContext()),
+          `${operation} ${JSON.stringify(tags)}`,
+        ).toThrow(/not a list of tags this console will pass/)
+      }
+    }
+    // ...and the count, in one word: `IMAGE_TAGS_MAX` members is the most the
+    // CLI reads, and one over is refused by both gates. The members are
+    // generated from the constant rather than written out, so this case moves
+    // with it -- and `IMAGE_TAG_RE` is what says they are members at all.
+    const atMost = Array.from({ length: IMAGE_TAGS_MAX }, (_, index) => `tag${String(index)}`)
+    expect(atMost.every((tag) => IMAGE_TAG_RE.test(tag))).toBe(true)
+    const list = atMost.join(',')
+    expect(validateArguments('image.add.plan', { ...values, tags: list }).ok).toBe(true)
+    expect([...argvFor('image.add.plan', { ...values, tags: list }, safeContext())]).toContain(`--tags=${list}`)
+    expect(validateArguments('image.add.plan', { ...values, tags: `${list},node` }).ok).toBe(false)
+    for (const operation of ['image.add.plan', 'image.add'] as const) {
+      expect(() => argvFor(operation, { ...values, tags: `${list},node` }, safeContext())).toThrow(
+        /not a list of tags this console will pass/,
+      )
+    }
+    // The description: empty (the way a renderer says "no description" is by
+    // leaving the argument out, so an empty `--description=` is a different argv
+    // for the same entry), a control character -- a newline would break a listing
+    // that prints one line per entry -- and the console's own bound.
+    for (const description of ['', 'the app\nimage', 'the app\u0000image', 'x'.repeat(MAX_ARGUMENT_LENGTH + 1)]) {
+      expect(
+        validateArguments('image.add.plan', { ...values, description }).ok,
+        JSON.stringify(description),
+      ).toBe(false)
+      for (const operation of ['image.add.plan', 'image.add'] as const) {
+        expect(
+          () => argvFor(operation, { ...values, description }, safeContext()),
+          `${operation} ${JSON.stringify(description)}`,
+        ).toThrow(/not a value this console will pass/)
+      }
+    }
+    // ...and the values both gates do carry are the ones the case above writes
+    // out: a list inside the grammar and a description with a space in it.
+    expect(validateArguments('image.add', values).ok).toBe(true)
+    expect([...argvFor('image.add', values, safeContext())]).toContain('--description=the app image')
   })
 
   it('spawns `settings` with exactly these words and no argument a renderer can fill', () => {
