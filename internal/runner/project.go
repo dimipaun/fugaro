@@ -543,8 +543,13 @@ func (r *run) proxiedBitbucket(p *projectpolicy.Policy, found bool, kind, repo s
 
 // proxiedOpener builds the opener a proxied run opens its Bitbucket provider
 // with (B1.7, G1): providers.Proxied pointed at this execution's own loopback
-// forwarder, and handed the identity set the project's published node carries
-// (T16, F20).
+// forwarder, handed the identity set the project's published node carries
+// (T16, F20), and handed the service the run's own route names for the
+// Bitbucket kind — the job's own credentials service, or the workspace's at the
+// address the run's record carries (WS18, D2979). The forwarder is what ends
+// the run's proxy chain, so the service named here is the service the two
+// halves of the chain agree on: the opener refuses a proxied run that names
+// none, which is the run whose route the runner could not read.
 //
 // The two belong together because they are the same fact seen twice: the
 // credentials service serves one run with several of the node's tokens in turn
@@ -554,9 +559,9 @@ func (r *run) proxiedBitbucket(p *projectpolicy.Policy, found bool, kind, repo s
 // checkout could carry: an identity planted in one of the three would make its
 // author's comments read as the run's own, and that decision is the node
 // writer's alone (F21).
-func (r *run) proxiedOpener(ctx context.Context) gitprov.Opener {
+func (r *run) proxiedOpener(ctx context.Context, service string) gitprov.Opener {
 	own, partial := r.bitbucketOwnIdentities(ctx)
-	return providers.Proxied(r.d.Env, r.forward.URL(), nil,
+	return providers.Proxied(service, r.forward.URL(), nil,
 		func(msg string) { r.d.Log.Warn(r.redact(msg)) }, own, partial)
 }
 

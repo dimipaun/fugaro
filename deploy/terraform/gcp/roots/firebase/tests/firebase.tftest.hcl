@@ -188,6 +188,105 @@ run "TestLauncherHasViewerAndMinterOnly" {
   }
 }
 
+# The issuer's row (launcher-does-not-mint plan task LM11; D3121). With an
+# account given, the module plans exactly one signJwt row for it on the runs'
+# signer, and the people's row is untouched beside it: the two coexist for the
+# one release the update that moves the grant lives in (LM14).
+run "TestIssuerMinterRow" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    issuer_account = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+  }
+
+  assert {
+    condition = (length(google_service_account_iam_member.issuer_minter) == 1 &&
+      google_service_account_iam_member.issuer_minter[0].service_account_id == "projects/fp-1234/serviceAccounts/fugaro-token-signer@fp-1234.iam.gserviceaccount.com" &&
+      google_service_account_iam_member.issuer_minter[0].role == "projects/fp-1234/roles/fugaroTokenMinter" &&
+    google_service_account_iam_member.issuer_minter[0].member == "serviceAccount:fugaro-credentials@proj-1234.iam.gserviceaccount.com")
+    error_message = "the issuer's account holds iam.serviceAccounts.signJwt on the runs' signer of the FP, and nowhere else: the row is bound on the account and not on the project"
+  }
+  assert {
+    condition     = keys(google_service_account_iam_member.minter) == ["user:launcher@example.com", "user:operator@example.com"]
+    error_message = "the issuer's row is added beside the people's and not instead of it: the row the launchers and operators hold leaves in the update that moves the grant, and not in this one"
+  }
+}
+
+# The switch (LM11): with it off, no launcher and no operator holds the minter
+# row, and the issuer's row is not the switch's — it is planned either way,
+# which is what makes the one plan that turns the switch off a plan that moves
+# the grant rather than one that leaves nobody able to mint.
+run "TestPeopleMinterIsOffWithTheSwitch" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    people_minter  = false
+    issuer_account = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+  }
+
+  assert {
+    condition     = length(google_service_account_iam_member.minter) == 0
+    error_message = "with people_minter = false not one launcher or operator holds the minter row"
+  }
+  assert {
+    condition     = length(google_service_account_iam_member.issuer_minter) == 1
+    error_message = "people_minter gates the people's row alone: the issuer's row is planned whatever it says"
+  }
+  assert {
+    condition     = alltrue([for m in google_project_iam_member.viewer : m.role == "roles/firebasedatabase.viewer"])
+    error_message = "people_minter gates the minter row alone: a launcher and an operator keep every read the roster gives them"
+  }
+}
+
+# ... and its default, which is what makes the release carrying this change a
+# plan with nothing new in it: the people's minter row, and no row for an
+# account nobody has named.
+run "people_minter_defaults_on" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  override_resource {
+    target          = google_service_account.signer
+    override_during = plan
+    values = {
+      name   = "projects/fp-1234/serviceAccounts/fugaro-token-signer@fp-1234.iam.gserviceaccount.com"
+      email  = "fugaro-token-signer@fp-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-token-signer@fp-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = (keys(google_service_account_iam_member.minter) == ["user:launcher@example.com", "user:operator@example.com"] &&
+    length(google_service_account_iam_member.issuer_minter) == 0)
+    error_message = "with the defaults the module still plans the people's row and plans no issuer row: the first update carrying this change has to plan nothing new"
+  }
+}
+
+run "bad_issuer_account" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    issuer_account = "not-an-email"
+  }
+
+  expect_failures = [var.issuer_account]
+}
+
 # M9d: the spend history in Firestore. The history account writes (user, on
 # the FP only); everyone who can read the RTDB, and every admin, reads
 # (viewer). No domain: or wildcard member can reach these (variable

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -383,7 +384,10 @@ func (e *initEngine) accessLists(ctx context.Context) []access {
 		{what: "operators", members: e.announced(e.spec.Launchers), source: src(o.operatorsChanged), note: "start runs; also mint run tokens when --firebase-project's token signer is applied"},
 		{what: "admins", members: e.announced(e.spec.Operators), source: src(o.adminsChanged), note: "onboard repositories and submit builds"},
 	}
-	if o.firebase != "" || e.lc.Terraform.BudgetBackend {
+	// F29: the budget admins' review follows the budget backend's presence, not
+	// the flag that used to be the only way to build one: a plain update of an
+	// installation whose database this run created or adopted shows them.
+	if e.budgetBackendOn() {
 		bs := "from the local config"
 		if o.budgetAdminsChanged {
 			bs = "from a flag"
@@ -437,7 +441,7 @@ func (e *initEngine) announced(members []string) []string {
 // groups, which the Firebase root makes budget admins; read once, read-only,
 // and empty when it cannot be read (then a plan granting them is not covered).
 func (e *initEngine) projectAdmins(ctx context.Context) []string {
-	if e.adminsRead || (e.r.o.firebase == "" && !e.lc.Terraform.BudgetBackend) {
+	if e.adminsRead || !e.budgetBackendOn() {
 		return e.admins
 	}
 	e.adminsRead = true
@@ -559,8 +563,9 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	}
 	if todo[initflow.Firebase] {
 		_, fpWhy := e.firebaseVerified(ctx)
-		fmt.Fprintf(w, "  firebase:       Terraform applies of the installation root (GCP project %s) and of the Firebase root in %s, then the budget database's marks and rules and Identity Platform (planned when applied)\n", pluginwire.Printable(r.gcpProject), pluginwire.Printable(o.firebaseProject()))
-		fmt.Fprintf(w, "                  the Firebase project %s: %s\n", pluginwire.Printable(o.firebaseProject()), fpWhy)
+		fp := cmp.Or(o.firebaseProject(), r.gcpProject)
+		fmt.Fprintf(w, "  firebase:       Terraform applies of the installation root (GCP project %s) and of the Firebase root in %s, then the budget database's marks and rules and Identity Platform (planned when applied)\n", pluginwire.Printable(r.gcpProject), pluginwire.Printable(fp))
+		fmt.Fprintf(w, "                  the Firebase project %s: %s\n", pluginwire.Printable(fp), fpWhy)
 	}
 	if todo[initflow.Images] {
 		fmt.Fprintln(w, "  "+e.images.reviewLine(ctx))
@@ -779,7 +784,12 @@ func (e *initEngine) alertEmail() (string, string) {
 // root and its database writes take their own typed names.
 func (e *initEngine) firebaseVerified(ctx context.Context) (bool, string) {
 	r := e.r
-	fp := r.o.firebase
+	// The project this run's Firebase steps write into: the flag's value, or the
+	// installation's own project where no flag was given (AB7, R2 — the no-flag
+	// stage adopts or creates the database in that project and nowhere else).
+	// The two are the same answer here, which is why the second case below is
+	// the common one for both doors.
+	fp := cmp.Or(r.o.firebase, r.gcpProject)
 	switch {
 	case fp == "":
 		return false, ""

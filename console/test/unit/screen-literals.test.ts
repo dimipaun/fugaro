@@ -1829,6 +1829,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'manage/command.ts',
       'manage/kinds/budget.ts',
       'manage/kinds/images.ts',
+      'manage/kinds/index.ts',
       'manage/kinds/keys.ts',
       'manage/kinds/models.ts',
       'manage/kinds/people.ts',

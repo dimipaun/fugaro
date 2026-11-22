@@ -10,9 +10,12 @@ import (
 // first.
 //
 // It is D23's answer to a run that touches several areas: the strictest level
-// among the matched rules decides, and every rule that matched is kept so
-// the run can record which ones did. Strictest-first means the caller never
-// has to order them again, and the first entry is the one whose level won.
+// among the matched rules of one layer decides, and every rule that matched is
+// kept so the run can record which ones did. Strictest-first means the caller
+// never has to order them again, and the first entry carries the strictest
+// level of them. Which rule decided a resolution is a different question —
+// within one layer it is this first entry, and across the two layers it is the
+// narrower layer's own answer (Resolve reads the lists apart).
 //
 // repo is the run's repository in the "owner/name" spelling a task's own Repo
 // carries, and it is what a project layer's members are matched on (LD4): a
