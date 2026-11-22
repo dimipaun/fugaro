@@ -93,7 +93,7 @@ import { ONBOARDING_COPY } from './installations'
 import { newOpsFrom } from './new-bridge'
 import { readStream } from './stream'
 import type { StreamWhole } from './stream'
-import type { NewOps } from '../shared/new-ops'
+import type { NewOps, NewOpsReply, SettingsEditorOutcome } from '../shared/new-ops'
 import { readGate } from './gating'
 import { disabledWrite } from './writes'
 import type { CompatibilityBridge, MountLike, ScreenGate } from './app'
@@ -702,32 +702,6 @@ export function launchBridgeFrom(fugaro: unknown): LaunchBridge {
 }
 
 /**
- * SettingsBridge is the Project tab's one write: `settings.edit`, the settings
- * pencil's press (the settings-edit plan's C3). It is a bridge of its own rather
- * than a member of `ReadBridge` for `LaunchBridge`'s reason: that interface is
- * the reads a screen is drawn from, and this one **changes a file on disk**.
- *
- * The object it is handed carries two of the three members the operation's
- * schema closes -- the subcommand and the key -- and the operator's value when
- * the subcommand is `set` -- and never a layer, a path or a flag: the layer is
- * the settings read's own `target_layer`, read by the main process for this
- * edit (**D1105**), so a renderer cannot name one the CLI did not offer.
- *
- * It is answered the way the other bridges are: a member that is missing or
- * fails to answer is `null`, and the press draws a sentence it could not read
- * rather than claiming a write. A reply that arrived is a `SettingsEditOutcome`
- * inside the envelope -- a sentence and whether anything was written.
- */
-export interface SettingsBridge {
-  editSetting(args: Readonly<Record<string, unknown>>): Promise<unknown>
-}
-
-export function settingsBridgeFrom(fugaro: unknown): SettingsBridge {
-  const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
-  return { editSetting: (args) => ask('editSetting', args) }
-}
-
-/**
  * LicenceBridge is the Project tab's second write: `licence.save`, the paste
  * that keeps the licence key this installation runs under (the subscriptions
  * plan's S2.7). It is a bridge of its own rather than a member of `ReadBridge`
@@ -757,106 +731,67 @@ export function licenceBridgeFrom(fugaro: unknown): LicenceBridge {
   return { saveLicence: (args) => ask('saveLicence', args) }
 }
 
-/** SETTINGS_EDIT_OUTCOME_KEYS is the whole key set of one `settings.edit`
- * answer (`SettingsEditOutcome`, `src/main/settingsedit.ts`). The shape is read
- * **closed**, for `launchOutcomeOf`'s reason: a member the contract does not
- * give is a claim this console does not draw, and the answer is one sentence. */
-const SETTINGS_EDIT_OUTCOME_KEYS: readonly string[] = Object.freeze(['ok', 'sentence'])
+/**
+ * SETTINGS_EDIT_OUTCOME_CLASS is the settings outcome's hook: the sentence a
+ * pencil's press draws under the row it was pressed on, marked `aria-live` when
+ * it is drawn -- an answer that lands while the operator is looking elsewhere (a
+ * refusal from the flow's own window, the CLI's account of a write) is announced
+ * the way the launch form's outcome region is.
+ *
+ * **The row is where it belongs.** The entry appends it to the `li` the pencil
+ * sits in, so the key, the scope it belongs to and the value a run gets stay on
+ * the screen around the sentence, and the section's own repaint takes it down
+ * with the row it was about.
+ */
+export const SETTINGS_EDIT_OUTCOME_CLASS = 'projects-settings-editor-outcome'
 
-/** SettingsEditRead is one `settings.edit` reply after both envelopes have been
- * read: whether a write happened, and the sentence the row's editor draws
- * either way. There is no third state -- a reply nobody can read is a sentence
+/** SettingsEditorRead is one `settings.editor.open` answer read into the two
+ * facts the row draws: whether a write happened, and the sentence to draw either
+ * way. There is no third state -- an operation no handler answers, a refusal the
+ * channel answered with and an answer this build cannot read are all a sentence
  * saying so. */
-export interface SettingsEditRead {
+export interface SettingsEditorRead {
   readonly written: boolean
   readonly sentence: string
 }
 
 /**
- * settingsEditOutcomeOf reads one `settings.edit` reply: the envelope `dispatch`
- * builds (`ConsoleReply`), and inside it the operation's `SettingsEditOutcome`.
- * Both are read closed, and every door out of this function is a sentence the
- * editor draws.
+ * settingsEditorRead reads one reply into those two facts. The operation's own
+ * decoder has already turned the wire into the contract's shape
+ * (`SettingsEditorOutcome`, `src/shared/new-ops.ts`), so what is left is the two
+ * halves of an answer: the outcome itself, or the gap that stands in for one.
+ * Both carry the sentence the row draws, and both go through `textOf`, because a
+ * sentence from the CLI is text like any other.
  *
  * **A write that happened and a write that did not are told apart by the
- * answer's own `ok` field and never by a sentence**, the way `launchOutcomeOf`
+ * answer's own `ok` field and never by its sentence**, the way `launchOutcomeOf`
  * deliberately does not do: a refusal here is the CLI's own words (the
- * compare-and-swap's sentence, a permissions refusal, the WSL wrapper's
- * metacharacter refusal), no two of which share a shape, so the field the main
- * process set from the child's exit code is the only thing that knows.
+ * compare-and-swap's sentence, a permissions refusal, the flow's own
+ * already-open sentence), no two of which share a shape, so the field the main
+ * process set is the only thing that knows.
  */
-export function settingsEditOutcomeOf(reply: unknown): SettingsEditRead {
-  const refuse = (sentence: string): SettingsEditRead => ({ written: false, sentence })
-  const envelope = typeof reply === 'object' && reply !== null && !Array.isArray(reply)
-    ? (reply as Record<string, unknown>)
-    : null
-  if (envelope === null) return refuse(READ_UNREADABLE)
-  if (envelope['ok'] !== true) {
-    const reason = envelope['reason']
-    return typeof reason === 'string' && reason !== ''
-      ? refuse(textOf(reason, 'the settings edit’s refusal'))
-      : refuse(READ_UNREADABLE)
-  }
-  const data = envelope['data']
-  if (data === null || typeof data !== 'object' || Array.isArray(data)) return refuse(READ_UNREADABLE)
-  const outcome = data as Record<string, unknown>
-  const keys = Object.keys(outcome)
-  if (keys.length !== SETTINGS_EDIT_OUTCOME_KEYS.length) return refuse(READ_UNREADABLE)
-  if (!SETTINGS_EDIT_OUTCOME_KEYS.every((key) => keys.includes(key))) return refuse(READ_UNREADABLE)
-  const ok = outcome['ok']
-  const sentence = outcome['sentence']
-  if (typeof ok !== 'boolean' || typeof sentence !== 'string' || sentence === '') {
-    return refuse(READ_UNREADABLE)
-  }
-  return { written: ok, sentence: textOf(sentence, 'the settings edit’s sentence') }
+export function settingsEditorRead(reply: NewOpsReply<SettingsEditorOutcome>): SettingsEditorRead {
+  const sentence = (raw: string): string => textOf(raw, 'the settings editor’s sentence')
+  if (!reply.ok) return { written: false, sentence: sentence(reply.gap.sentence) }
+  return { written: reply.value.ok, sentence: sentence(reply.value.sentence) }
 }
 
-/** SETTINGS_EDIT_VALUE_LABEL is the value box's own words, and the row's key
- * follows them: the box is drawn inside the row it edits, but a name that is
- * only "New value" is a control a reader of the accessibility tree cannot tell
- * from the same control on five other rows. */
-const SETTINGS_EDIT_VALUE_LABEL = 'New value for'
-
-/** SETTINGS_EDIT_EMPTY_HINT is what the box says about the empty case. An empty
- * box is the `unset` subcommand (D1103) rather than a value of `""`, and the
- * operator is told so before they press rather than after. */
-const SETTINGS_EDIT_EMPTY_HINT = 'Leave the box empty to remove the key.'
-
-/** SETTINGS_EDIT_SUBMIT_LABEL is the editor's one control, and it names the two
- * steps that follow the press rather than the write alone: the dry run and the
- * confirmation window come first, and a button that said "Write" would be a
- * control whose press does not write anything yet. */
-const SETTINGS_EDIT_SUBMIT_LABEL = 'Review and write'
-
-/** SETTINGS_EDIT_CANCEL_LABEL puts the row back the way the screen drew it. It
- * cancels the editor and nothing else: an edit already in flight has its own
- * window, and that window's Cancel is the one that declines **it**. */
-const SETTINGS_EDIT_CANCEL_LABEL = 'Cancel'
-
-/** SETTINGS_EDIT_READ_AGAIN_LABEL is the control every outcome carries, and it
- * is a **read**: it starts the settings section's own `settings --json` again so
- * the row shows what the file says now. It never re-sends the edit (D1112). */
-const SETTINGS_EDIT_READ_AGAIN_LABEL = 'Read again'
-
-/** SETTINGS_EDITOR_CLASS is the editor's own hook. It is drawn by the entry into
- * a row a screen drew and carries no rule of this theme's: the row's own layout
- * is what places it (`li.projects-settings-row` wraps and gaps its children), so
- * a hook here would be a selector for something the stylesheet does not paint. */
-export const SETTINGS_EDITOR_CLASS = 'projects-settings-editor'
-
-/** SETTINGS_EDIT_OUTCOME_CLASS is the editor's sentence, marked `aria-live` when
- * it is drawn: a refusal that arrived while the operator was looking at the
- * window is announced, the way the launch form's outcome region is. */
-export const SETTINGS_EDIT_OUTCOME_CLASS = 'projects-settings-editor-outcome'
-
-/** OpenSettingsEditor is the one editor this session has open, if any. It holds
- * the key it edits -- so the same pencil pressed twice is one box -- and the two
- * nodes that take it down: the row it was appended to, and the element it drew
- * inside it. */
-interface OpenSettingsEditor {
-  readonly key: string
-  readonly row: Element
-  readonly root: Element
+/**
+ * clearSettingsOutcome takes down the outcome line a previous press of this
+ * row's pencil drew, if one is still there. A second press asks the question
+ * again, and two sentences under one row would be two answers to one question
+ * with the older one first.
+ *
+ * It walks the row's own children rather than holding a reference to the node it
+ * appended: the section repaints its rows, so a press can outlive the row it
+ * started in, and a node this file remembered would be one a repaint had already
+ * detached.
+ */
+function clearSettingsOutcome(row: Element): void {
+  const kept = [...row.children].filter(
+    (child) => child.getAttribute('class') !== SETTINGS_EDIT_OUTCOME_CLASS,
+  )
+  row.replaceChildren(...kept)
 }
 
 /**
@@ -3060,7 +2995,6 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     rail,
     railBridge,
     launchBridge: launchBridgeFrom(scope.fugaro),
-    settingsBridge: settingsBridgeFrom(scope.fugaro),
     moveBridge: moveBridgeFrom(scope.fugaro),
     licenceBridge: licenceBridgeFrom(scope.fugaro),
     linkBridge: linkBridgeFrom(scope.fugaro),
@@ -3171,10 +3105,6 @@ interface DashboardDeps {
   /** launchBridge is the Live view's one write (`run.launch`, V2.5.1b), the
    * only operation of this console that spends money. */
   readonly launchBridge: LaunchBridge
-  /** settingsBridge is the Project tab's settings pencil (`settings.edit`, the
-   * settings-edit plan's C3): the console's second write, and the one that
-   * changes a file on disk rather than starting a run. */
-  readonly settingsBridge: SettingsBridge
   /** moveBridge is the Graph screen's own write (`roadmap.move`, GV3.2): the
    * console's third write, and the one that changes what every other console of
    * the project is drawn from. */
@@ -3212,7 +3142,7 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, roles, bridge, ops, rail, railBridge, launchBridge, settingsBridge, moveBridge, licenceBridge, linkBridge, wiring, navigator, header } =
+  const { document, surface, gate, roles, bridge, ops, rail, railBridge, launchBridge, moveBridge, licenceBridge, linkBridge, wiring, navigator, header } =
     deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
@@ -3593,7 +3523,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   })
   // The other four scopes are registered by the tabs themselves, when they open:
   // what a tab holds and how to read it again are the tab's own facts -- the
-  // visit's read, its cache and its editor -- and a table here would have to
+  // visit's read, its cache and its sections -- and a table here would have to
   // reach into four screens for them.
 
   // The navigation is the redesign's five tabs, in the header after the
@@ -5954,29 +5884,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * rest of the body is drawn, and stays drawn, whatever that read does.
    */
 
-  /** settingsEditor is the row editor this console has open, if any -- the one
-   * box the settings pencils open (the settings-edit plan's C3). It is held here
-   * rather than inside `showProjects`, which draws and binds it, because
-   * `forgetLive` is the other place that has to take it down: an editor is a box
-   * for one row of one installation's table, and that row belongs to the
-   * installation that is going away. One at a time, always. */
-  let settingsEditor: OpenSettingsEditor | null = null
-
-  /**
-   * closeSettingsEditor takes the open editor down. The row returns to exactly
-   * what the screen drew, because the editor is the one child this file appended
-   * to it, and the recorded state goes with the node: a press on another pencil,
-   * an installation change, or the section's own repaint must not leave a
-   * control whose row is gone -- or, worse, one whose row belongs to another
-   * installation's table.
-   */
-  const closeSettingsEditor = (): void => {
-    const open = settingsEditor
-    settingsEditor = null
-    if (open === null) return
-    open.row.replaceChildren(...[...open.row.children].filter((child) => child !== open.root))
-  }
-
   const showProjects = async (): Promise<void> => {
     const mine = claim()
     const project = railNow.find((row) => row.open)?.project ?? ''
@@ -6074,8 +5981,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let licenceAttempt = 0
     /** licenceDrawn is the panel the box is in, or null when the section holds
      * no form -- a read that did not answer offers none, and an answer to a save
-     * is drawn only while the panel that sent it is still the one on screen
-     * (`settingsEditor`'s own rule, one section over). */
+     * is drawn only while the panel that sent it is still the one on screen: a
+     * box whose panel was redrawn while the save was out is a box that is gone,
+     * and its answer belongs to a section nobody is looking at. */
     let licenceDrawn: LicenceDrawn | null = null
     /** seats, seatsSentence, seatsOut and seatsAttempt are the seat estimate's
      * own read (`seats.read`, the subscriptions plan's S4.2): the document
@@ -6289,172 +6197,80 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
 
     /**
-     * openSettingsEdit opens the row's own editor: a value box, the one control
-     * that starts an edit, and the sentence the flow ended with (the
-     * settings-edit plan's C3).
+     * openSettingsRow is a pencil's press: the row's own key is handed to
+     * `settings.editor.open` (SU1's one modal, D2902), and that flow does the
+     * entry, the dry run's diff and the confirmation, and the write on a yes
+     * from its own window's top frame (rules 11 and 12).
      *
-     * **The value is typed here**, and the editor is drawn **inside the row it
-     * belongs to** (`li.projects-settings-row`) so that the key, its scope, the
-     * value a run gets and the layer that decides it stay on the screen while
-     * the box is open. It is a child the entry appends to a row a screen drew,
-     * because the screen is a function of the document and this is a function of
-     * a press: `paintSettings` redraws the section and takes the editor with it,
-     * and `closeSettingsEditor` is the other way it goes.
+     * **What leaves this file is the key and nothing else**
+     * (`SettingsEditorOpenRequest`): no value, no subcommand, no layer and no
+     * argv. The value is the operator's and it is typed into the window rather
+     * than into a box this console draws, so the layer, the dry run, the window
+     * and the write are the main process's -- and an empty box there is the
+     * `unset` subcommand rather than a value of `""` (D1103).
      *
-     * **What leaves this file is the subcommand, the key and the value**
-     * (`SettingsBridge`): the layer, the dry run's argv, the confirmation window
-     * and the write are the main process's, and an empty box is the `unset`
-     * subcommand rather than a value of `""`.
+     * **The row draws the outcome.** The answer is the CLI's own sentence
+     * (`SettingsEditorOutcome`, the shape `settings.edit` answered with) and it
+     * is appended to the `li` the pencil sits in, so the key, the scope it
+     * belongs to and the value a run gets stay on the screen around it. A reply
+     * this build cannot read -- no handler behind the operation, a channel that
+     * threw, a document the contract's decoder refused -- draws the operation's
+     * own gap sentence rather than a claim about a write
+     * (`settingsEditorRead`).
      *
-     * **Nothing is retried.** A refusal draws the CLI's own sentence beside a
-     * **Read again** control, and that control reads the section rather than
-     * re-sending the edit (D1112): the CLI's compare-and-swap refuses an edit
-     * built on bytes that moved, and a silent second write is this console
-     * deciding what it was told not to. A **second press** of the editor's own
-     * control is not a retry -- it is the operator deciding again, and it runs
-     * the whole flow, dry run included.
+     * **Nothing is retried, and nothing is held.** A refusal draws the CLI's own
+     * words and no second write follows it (D1112): the compare-and-swap refuses
+     * an edit built on bytes that moved, and the operator's way to ask again is
+     * the pencil itself, which is a press and not this console's decision. The
+     * one window is main's, so an edit already open on the project is refused by
+     * the flow with its own sentence, which this row draws like any other
+     * answer: a second press is not this file's to refuse or to remember.
+     *
+     * **A write re-reads the tab at once** (R2): the row is one figure of this
+     * tab's documents and the console's cached copy of them is the one from
+     * before the write, so the scope the visit registered is dropped and read
+     * again -- the body's reads and this section's own, which is what puts the
+     * row the outcome was about back with the value the write left (`beginSettings`,
+     * in the scope's `reread`). The sentence above it is the CLI's account of
+     * the write, and it stays on the screen until that read lands.
      */
-    const openSettingsEdit = async (key: string, pencil: Element): Promise<void> => {
+    const openSettingsRow = async (key: string, pencil: Element): Promise<void> => {
       const row = pencil.closest('li')
       if (row === null) return
-      if (settingsEditor !== null) {
-        // The same row's pencil pressed again is the box that is already open,
-        // and another row's is one editor at a time: two open boxes would be two
-        // values for one installation, and the one behind is a control the
-        // operator stopped looking at.
-        if (settingsEditor.key === key) return
-        closeSettingsEditor()
-      }
-
-      const editor = factory.create('span')
-      editor.setAttribute('class', SETTINGS_EDITOR_CLASS)
-      const box = factory.create('input')
-      box.setAttribute('type', 'text')
-      const label = factory.create('label')
-      // The key is the drawing's own `settingsKeyText` output, read back off the
-      // pencil: the name the box is announced with and the name the button is
-      // announced with cannot come out of one key differently.
-      const named = pencil.getAttribute(SETTINGS_PENCIL_KEY) ?? ''
-      label.textContent = named === '' ? SETTINGS_EDIT_VALUE_LABEL : `${SETTINGS_EDIT_VALUE_LABEL} ${named}`
-      label.append(box)
-      const hint = factory.create('span')
-      hint.textContent = SETTINGS_EDIT_EMPTY_HINT
-      const submit = factory.create('button')
-      submit.setAttribute('type', 'button')
-      submit.textContent = SETTINGS_EDIT_SUBMIT_LABEL
-      const cancel = factory.create('button')
-      cancel.setAttribute('type', 'button')
-      cancel.textContent = SETTINGS_EDIT_CANCEL_LABEL
+      clearSettingsOutcome(row)
       const outcome = factory.create('span')
       outcome.setAttribute('class', SETTINGS_EDIT_OUTCOME_CLASS)
       outcome.setAttribute('aria-live', 'polite')
-      editor.append(label)
-      editor.append(hint)
-      editor.append(submit)
-      editor.append(cancel)
-      editor.append(outcome)
-      const root = surface.nodeOf(editor)
-      row.appendChild(root)
-      const open: OpenSettingsEditor = { key, row, root }
-      settingsEditor = open
-
-      let busy = false
-      /** busyNow says an edit is in flight on this editor: the one control that
-       * starts one is disabled and the box says so, so a double press cannot be
-       * two flows over one row -- and the flow's own window is the confirmation
-       * either way (`settingsedit.ts`). */
-      const busyNow = (now: boolean): void => {
-        busy = now
-        ;(surface.nodeOf(submit) as unknown as { disabled: boolean }).disabled = now
-        editor.setAttribute('aria-busy', now ? 'true' : 'false')
-      }
-
-      /** drawOutcome writes the sentence this flow ended with, and the read
-       * control beside it. It replaces what the editor last said, so a second
-       * attempt's answer is not drawn under the first one's. */
-      const drawOutcome = (read: SettingsEditRead): void => {
-        outcome.textContent = read.sentence
-        // A write that happened leaves nothing to write: the box and the control
-        // that sends it are done, and the row behind them is stale until the
-        // operator reads the section again.
-        if (read.written) {
-          ;(surface.nodeOf(box) as unknown as { disabled: boolean }).disabled = true
-          ;(surface.nodeOf(submit) as unknown as { disabled: boolean }).disabled = true
-          // R2: the write names the tab it was made in. The row this box edits is
-          // one figure of the document the tab's body is drawn from, and the
-          // console's cached copy of it is now the one from before the write --
-          // dropped and read again at once, rather than served as fresh on the
-          // next visit.
-          invalidator.invalidate(['projects'])
-        }
-        const again = factory.create('button')
-        again.setAttribute('type', 'button')
-        again.textContent = SETTINGS_EDIT_READ_AGAIN_LABEL
-        surface.nodeOf(outcome).appendChild(surface.nodeOf(again))
-        surface.nodeOf(again).addEventListener('click', () => {
-          // The read is the section's own, and the editor goes first: the row it
-          // was appended to is one of the rows that read's repaint replaces, and
-          // the answer to this edit is a figure of that document rather than of
-          // a box the operator typed in.
-          closeSettingsEditor()
-          beginSettings()
-        })
-      }
-
-      /** sendEdit runs one edit of this row. The outcome is drawn whatever
-       * happened, and it is drawn only while this editor is still the open one:
-       * an answer that landed after the operator moved to another row is an
-       * answer about a row that is gone. */
-      const sendEdit = async (): Promise<void> => {
-        if (busy) return
-        const value = valueOf(surface, box)
-        busyNow(true)
-        let reply: unknown = null
-        try {
-          reply = await settingsBridge.editSetting(
-            value === '' ? { op: 'unset', key } : { op: 'set', key, value },
-          )
-        } finally {
-          if (settingsEditor === open) busyNow(false)
-        }
-        if (settingsEditor !== open) return
-        drawOutcome(settingsEditOutcomeOf(reply))
-      }
-
-      surface.nodeOf(submit).addEventListener('click', () => {
-        void sendEdit()
-      })
-      surface.nodeOf(cancel).addEventListener('click', () => {
-        if (settingsEditor === open) closeSettingsEditor()
-      })
+      row.appendChild(surface.nodeOf(outcome))
+      const read = settingsEditorRead(await ops.openSettingsEditor({ key }))
+      outcome.textContent = read.sentence
+      if (read.written) invalidator.invalidate(['projects'])
     }
 
     /**
      * bindSettingsPencils attaches each pencil the settings panel just drew to
-     * the editor, and puts the focus on the pencil it was pressed on as the
-     * editor is drawn, so a press leaves the keyboard on the control that opened
-     * the row's editor rather than dropping it (D1116). The focus is taken on
-     * the node the drawing answered with and not on a re-drawn one, for
-     * `redraw`'s reason: a node this session has taken down is one a real window
-     * has detached, and focusing it would leave the keyboard behind.
+     * the press above, and puts the focus back on the pencil it was pressed on
+     * once the flow has ended, so the keyboard returns to the control that
+     * opened the window rather than staying on the window that closed (D1116).
+     * The focus is taken on the node the drawing answered with and not on a
+     * re-drawn one, for `redraw`'s reason: a node this session has taken down is
+     * one a real window has detached, and focusing it would leave the keyboard
+     * behind.
      *
-     * It is put here rather than at the window's answer because
-     * `openSettingsEdit` returns as soon as the editor is drawn: the dry run,
-     * the window and the write are that editor's own flow from there.
-     *
-     * **D1116's other half is not done.** The rule also asks the keyboard back
-     * on the pencil when the confirmation window closes, and nothing moves the
-     * focus after this call: the editor's own box and its submit control take it
-     * as the operator uses them, and the editor goes when the outcome is drawn,
-     * so a real window can end with the keyboard on `<body>`. Closing that is
-     * the editor flow's (C3) and a product question, not a line here.
+     * **The focus moves after the answer and not on the press**, which is the
+     * one thing this half of D1116 changes with the modal: the press now waits
+     * for the window (`openSettingsRow` resolves when the flow has ended), and a
+     * focus taken while the window is still open would pull the keyboard back
+     * out of it. A write's own re-read replaces the row this node is in, and a
+     * replaced node cannot hold the keyboard -- the limit the inline editor had,
+     * one press later.
      */
     const bindSettingsPencils = (host: Drawn): void => {
       for (const pencil of classed(host, SETTINGS_PENCIL_CLASS)) {
         const key = pencil.getAttribute(SETTINGS_PENCIL_KEY) ?? ''
         const node = surface.nodeOf(pencil)
         node.addEventListener('click', () => {
-          void openSettingsEdit(key, node).then(() => {
+          void openSettingsRow(key, node).then(() => {
             const focusable = node as Element & { focus(): void }
             focusable.focus()
           })
@@ -6472,14 +6288,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * own sentence and no table -- an empty table would read as "this project
      * sets nothing", which is a claim no answer here made.
      *
-     * The rows are replaced whole, so an editor an earlier visit opened goes
-     * with them: it is a box in one of these rows, and the row it was drawn in
-     * no longer exists.
+     * The rows are replaced whole, so an outcome line an earlier press drew
+     * goes with them: it is a child of one of these rows, and the row it was
+     * appended to no longer exists. That is also what takes a write's own
+     * sentence off the screen -- the re-read the write asked for is this paint,
+     * and the fresh row is what the operator is left reading.
      */
     const paintSettings = (): void => {
       const drawn = mount(false)
       settingsPainted = true
-      closeSettingsEditor()
       clearSection(drawn.settings, drawn.settingsSlot)
       fillProjectsSettings(
         factory,
@@ -6646,7 +6463,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           if (licenceDrawn === painted) busyNow(false)
         }
         // An answer that landed after the section was drawn again is an answer
-        // about a box that is gone (`settingsEditor`'s rule one section over).
+        // about a box that is gone, for `licenceDrawn`'s reason.
         if (licenceDrawn !== painted) return
         const read = licenceSaveOutcomeOf(reply)
         if (outcome !== null) {
@@ -7190,16 +7007,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
 
     // R2: the scope a settings write names, registered by the visit that owns it.
-    // The clear is this session's cached document for the tab; the read is the
-    // **budget's own**, which is the section a written setting moves and the read
-    // the cache holds.
+    // The clear is this session's cached document for the tab; the reads are the
+    // body's own -- the budget read, which is the document the cache holds -- and
+    // **the settings section's**, whose every row is a figure a write can change.
     //
-    // It is deliberately not `start()`: that would re-read the settings panel as
-    // well, and the panel is where the operator is reading the CLI's own answer
-    // to the write they just made (`drawOutcome`, D1112's flow) -- a repaint of
-    // that section would take the sentence off the screen before they had read
-    // it. The panel's own re-read is the `Read again` control the outcome draws,
-    // which is the operator's press and not this console's.
+    // It is deliberately not `start()`: that would re-read every section of the
+    // tab, and the six others (`models ls`, the managed state, `policy.show`,
+    // `doctor`, the licence key and the seat estimate) read documents a settings
+    // write cannot move. The settings section's own read is what makes the row
+    // the operator wrote show the value the CLI now reports rather than the one
+    // from before the write (SU2b).
     invalidator.remember('projects', {
       clear: () => projectsViews.clear(),
       reread: () => {
@@ -7210,6 +7027,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         const drawn = mount(false)
         projectsRead.mark(token, drawn.body, drawn.slot, PROJECTS_BUSY)
         void load(token)
+        beginSettings()
       },
     })
   }
@@ -9193,12 +9011,6 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // console is about to close every read it holds and the first visit to a tab
     // reads it.
     invalidator.forget()
-    // An open settings editor is not a cache and is not the invalidator's: it is
-    // a box for one row of one installation's table, and the row under it belongs
-    // to the installation
-    // that is gone. The section repaints on the next visit either way; this is
-    // what takes the box down while the operator is still looking at the tab.
-    closeSettingsEditor()
     // The graph is a picture of **one installation's** plan, laid out by a worker
     // this console started for it: both are dropped here, so the next
     // installation is drawn from its own document by its own engine rather than

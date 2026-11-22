@@ -237,6 +237,12 @@ func TestMe(t *testing.T) {
 	// `git config --global` below can succeed; this keeps the developer's
 	// real global config out of the test, same as IsolateGit intends.
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	// Me runs `git config user.email`, which is the merged config: the
+	// checkout this test runs in is a repository, so a user.email set in its
+	// own .git/config would answer over the temp global above. A GIT_DIR of a
+	// directory that is no repository takes the checkout's config out of the
+	// read, so only the global this test wrote answers.
+	t.Setenv("GIT_DIR", t.TempDir())
 	c, _ := Parse([]byte(sample + "user: someone@example.com\n"))
 	if me, err := c.Me(context.Background()); err != nil || me != "someone@example.com" {
 		t.Fatalf("Me = %q, %v", me, err)

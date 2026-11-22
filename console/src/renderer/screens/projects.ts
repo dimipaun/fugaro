@@ -2006,10 +2006,12 @@ function settingsRowLine(
  * controls. `type="button"` keeps it out of a form's submit path, the way every
  * live control in this theme is drawn.
  *
- * It binds nothing here. The press is the entry's (`paintSettings`), because the
- * entry is the only place holding the bridge, the row set and the focus to hand
- * back -- and what pressing it opens (the dry run, `settingsView`'s window, the
- * argv) is C3's.
+ * It binds nothing here. The press is the entry's (`bindSettingsPencils`),
+ * because the entry is the only place holding the operation, the row set and the
+ * focus to hand back -- and what pressing it opens is **main's one window**
+ * (`settings.editor.open`, the settings-edit plan's SU1): the entry sends the
+ * row's key and main does the entry, the dry run's diff, the confirmation and
+ * the write (D2902).
  *
  * **It is drawn through the raw `create`/`setAttribute` pair rather than through
  * `make`, and the hook is the reason.** `theme-selectors.test.ts` checks each
