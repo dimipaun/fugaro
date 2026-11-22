@@ -45,11 +45,14 @@ func TestMigrate(t *testing.T) {
 		// bridge is the set of "repo model" pairs the migration leaves on the
 		// release-1 bridge, as "repo\x00model".
 		bridge []string
+		// moves are the calls whose first reachable source the migration must
+		// report, in the order it sorts them: repo, then model.
+		moves []Move
 	}{{
 		name: "oauth",
 		in: Installation{
 			Project:  "acme/widgets",
-			Accounts: []string{"ada"},
+			Accounts: []Account{{Name: "ada", AllowDataTo: []string{"acme/api"}}},
 			Repos: []Repo{{
 				Name:     "acme/api",
 				Auth:     testAuthOAuth,
@@ -65,7 +68,7 @@ func TestMigrate(t *testing.T) {
 		name: "oauth with no account named goes out on the shared pool",
 		in: Installation{
 			Project:        "acme/widgets",
-			Accounts:       []string{"ada"},
+			Accounts:       []Account{{Name: "ada", AllowDataTo: []string{"acme/api"}}},
 			DefaultAccount: "ada",
 			Repos: []Repo{{
 				Name:   "acme/api",
@@ -95,7 +98,7 @@ func TestMigrate(t *testing.T) {
 		name: "api-key with the mix's account beside it",
 		in: Installation{
 			Project:  "acme/widgets",
-			Accounts: []string{"hopper"},
+			Accounts: []Account{{Name: "hopper", AllowDataTo: []string{"acme/api"}}},
 			Repos: []Repo{{
 				Name:     "acme/api",
 				Auth:     testAuthAPIKey,
@@ -114,7 +117,7 @@ func TestMigrate(t *testing.T) {
 		name: "cascade without fallback auto",
 		in: Installation{
 			Project:        "acme/widgets",
-			Accounts:       []string{"ada"},
+			Accounts:       []Account{{Name: "ada", AllowDataTo: []string{"acme/batch"}}},
 			DefaultAccount: "ada",
 			Repos: []Repo{{
 				Name:   "acme/batch",
@@ -130,7 +133,7 @@ func TestMigrate(t *testing.T) {
 		name: "cascade with fallback auto",
 		in: Installation{
 			Project:        "acme/widgets",
-			Accounts:       []string{"ada"},
+			Accounts:       []Account{{Name: "ada", AllowDataTo: []string{"acme/batch"}}},
 			DefaultAccount: "ada",
 			FallbackAuto:   true,
 			Repos: []Repo{{
@@ -175,7 +178,7 @@ func TestMigrate(t *testing.T) {
 		name: "a Vertex model with no spelling reaches nothing, even where the file names an account",
 		in: Installation{
 			Project:        "acme/widgets",
-			Accounts:       []string{"ada"},
+			Accounts:       []Account{{Name: "ada"}},
 			DefaultAccount: "ada",
 			Repos: []Repo{{
 				Name:     "acme/vertex",
@@ -200,7 +203,7 @@ func TestMigrate(t *testing.T) {
 		name: "via direct keeps a Claude model on its own credential",
 		in: Installation{
 			Project:  "acme/widgets",
-			Accounts: []string{"ada"},
+			Accounts: []Account{{Name: "ada", AllowDataTo: []string{"acme/web"}}},
 			Via:      testViaDirect,
 			Providers: []Provider{
 				{Name: "openrouter", AllowDataTo: []string{"*"}},
@@ -252,7 +255,7 @@ func TestMigrate(t *testing.T) {
 		name: "via cascade changes the credential, never the route",
 		in: Installation{
 			Project:        "acme/widgets",
-			Accounts:       []string{"ada"},
+			Accounts:       []Account{{Name: "ada", AllowDataTo: []string{"acme/batch"}}},
 			DefaultAccount: "ada",
 			Via:            testViaCascade,
 			ViaModels:      []string{"claude-sonnet-5-5"},
@@ -321,8 +324,11 @@ func TestMigrate(t *testing.T) {
 	}, {
 		name: "a pool the installation carries keeps its name against an account's",
 		in: Installation{
-			Project:  "acme/widgets",
-			Accounts: []string{"ada", "grace"},
+			Project: "acme/widgets",
+			Accounts: []Account{
+				{Name: "ada"},
+				{Name: "grace", AllowDataTo: []string{"acme/web"}},
+			},
 			Pools: []Pool{{
 				Name:      "grace",
 				Members:   []string{"ada", "grace"},
@@ -349,7 +355,7 @@ func TestMigrate(t *testing.T) {
 		name: "two repositories that differ",
 		in: Installation{
 			Project:  "acme/widgets",
-			Accounts: []string{"ada"},
+			Accounts: []Account{{Name: "ada", AllowDataTo: []string{"acme/api", "acme/web"}}},
 			Providers: []Provider{{
 				Name:        "dashscope",
 				AllowDataTo: []string{"acme/api"},
@@ -382,8 +388,11 @@ func TestMigrate(t *testing.T) {
 	}, {
 		name: "two accounts that land in the one shared pool",
 		in: Installation{
-			Project:  "acme/widgets",
-			Accounts: []string{"ada", "grace"},
+			Project: "acme/widgets",
+			Accounts: []Account{
+				{Name: "ada", AllowDataTo: []string{"acme/api"}},
+				{Name: "grace", AllowDataTo: []string{"acme/web"}},
+			},
 			Repos: []Repo{{
 				Name:     "acme/api",
 				Auth:     testAuthOAuth,
@@ -402,6 +411,45 @@ func TestMigrate(t *testing.T) {
 		}, {
 			Match: "claude-sonnet-5-5",
 			Chain: []Source{{Kind: KindPool, Pool: SharedPool}},
+		}},
+	}, {
+		// The finding this case answers: an api-key repository that names no
+		// account but that an account consents to — its allow_data_to lists it —
+		// reaches the shared pool once the chain names it, because a pool's
+		// admission is its members' own (D3182, R20). Its own configuration
+		// sends it to the paid key, so the migration reports the call rather
+		// than moving it quietly.
+		name: "an account's consent moves a key's call onto the pool, and is reported",
+		in: Installation{
+			Project: "acme/widgets",
+			Accounts: []Account{{
+				Name:        "ada",
+				AllowDataTo: []string{"acme/web", "acme/api"},
+			}},
+			DefaultAccount: "ada",
+			Repos: []Repo{{
+				Name:   "acme/api",
+				Auth:   testAuthAPIKey,
+				Models: []Model{claude("claude-haiku-4-5")},
+			}, {
+				Name:     "acme/web",
+				Auth:     testAuthOAuth,
+				Accounts: []string{"ada"},
+				Models:   []Model{claude("claude-haiku-4-5")},
+			}},
+		},
+		want: Table{{
+			Match: "claude-haiku-4-5",
+			Chain: []Source{
+				{Kind: KindPool, Pool: SharedPool},
+				{Kind: KindAnthropic, Admit: []string{"acme/api"}},
+			},
+		}},
+		moves: []Move{{
+			Repo:  "acme/api",
+			Model: "claude-haiku-4-5",
+			From:  SourceName{Kind: KindAnthropic},
+			To:    SourceName{Kind: KindPool, Name: SharedPool},
 		}},
 	}}
 
@@ -426,6 +474,12 @@ func TestMigrate(t *testing.T) {
 			slices.Sort(bridged)
 			if !slices.Equal(bridged, tc.bridge) {
 				t.Errorf("the bridge holds %v, want %v", bridged, tc.bridge)
+			}
+			// Nothing moves silently: a call the table sends somewhere else than
+			// the repository's own configuration does is reported by name, and a
+			// call it keeps where it was is not.
+			if !slices.Equal(got.Moves, tc.moves) {
+				t.Errorf("the migration reports the moves %+v, want %+v", got.Moves, tc.moves)
 			}
 			// The shared pool holds every account in the installation's own order
 			// (D3183), and it is written only where there is one to put in it: a
@@ -462,7 +516,9 @@ func TestMigrate(t *testing.T) {
 // and the ones a repository's file names.
 func accountsOf(in Installation) []string {
 	var out []string
-	out = appendUnique(out, in.Accounts...)
+	for _, a := range in.Accounts {
+		out = appendUnique(out, a.Name)
+	}
 	out = appendUnique(out, in.DefaultAccount)
 	for _, r := range in.Repos {
 		out = appendUnique(out, r.Accounts...)
@@ -552,7 +608,7 @@ func TestMigrateMovesNoRepository(t *testing.T) {
 				t.Errorf("%s of %s has no entry: the run that calls it is refused", model.ID, repo.Name)
 				continue
 			}
-			src, ok := firstReaching(entry, repo)
+			src, ok := firstReaching(entry, repo, in, got.Pools)
 			if !ok {
 				t.Errorf("%s of %s reaches no source of its chain %+v", model.ID, repo.Name, entry.Chain)
 				continue
@@ -561,6 +617,15 @@ func TestMigrateMovesNoRepository(t *testing.T) {
 				t.Errorf("%s of %s goes out on %+v, want %+v", model.ID, repo.Name, src, want[key])
 			}
 		}
+	}
+
+	// And nothing moves: the accounts consent to the repositories that go out
+	// on them and to no other, so no call's first reachable source changes. A
+	// consent that named acme/api — the key's repository — would move that call
+	// onto the pool, and the migration has to report it rather than let it
+	// happen quietly (D3182, R20).
+	if len(got.Moves) != 0 {
+		t.Errorf("the migration reports the moves %+v, and this fixture's accounts consent to no repository that does not go out on them", got.Moves)
 	}
 
 	// The pools: the shared pool holds every account in the installation's own
@@ -582,15 +647,6 @@ func TestMigrateMovesNoRepository(t *testing.T) {
 	}
 }
 
-func entryFor(table Table, model string) (Entry, bool) {
-	for _, e := range table {
-		if e.Match == model {
-			return e, true
-		}
-	}
-	return Entry{}, false
-}
-
 func pool(t *testing.T, m Migration, name string) PoolSpec {
 	t.Helper()
 	for _, p := range m.Pools {
@@ -602,19 +658,17 @@ func pool(t *testing.T, m Migration, name string) PoolSpec {
 	return PoolSpec{}
 }
 
-// firstReaching is the first source of a chain a repository's runs go out on,
-// as its own configuration says: a single-credential source admits it by name
-// (D3182), and the shared pool is the pool of every repository whose file names
-// an account, which every subscription repository does (D3183, D3171). Which
-// member of the shared pool serves it is that member's own allow_data_to, which
-// is not part of a pool source and so is not something this test can see
-// (R20, D3182).
-func firstReaching(entry Entry, repo Repo) (Source, bool) {
-	subscription := repo.Auth == testAuthOAuth || repo.Auth == testAuthCascade || len(repo.Accounts) > 0
+// firstReaching is the first source of a chain a repository's runs reach, as
+// the contract decides it: a single-credential source admits a repository by
+// name (D3182), and a pool carries no admission of its own — its members'
+// allow_data_to decides (D3182, R20), so this test has to read the accounts to
+// see the move a pool makes. A pool whose members consent to the repository
+// takes it; a source nothing admits it to is skipped.
+func firstReaching(entry Entry, repo Repo, in Installation, pools []PoolSpec) (Source, bool) {
 	for _, s := range entry.Chain {
 		switch s.Kind {
 		case KindPool:
-			if s.Pool == SharedPool && subscription {
+			if poolReaches(s.Pool, repo.Name, in, pools) {
 				return s, true
 			}
 		case KindAnthropic, KindProvider, KindVertex:
@@ -626,13 +680,32 @@ func firstReaching(entry Entry, repo Repo) (Source, bool) {
 	return Source{}, false
 }
 
+// poolReaches is the pool's admission: a member consents to a repository
+// through its own allow_data_to, and an account the installation's config does
+// not carry consents to nobody (config.ClaudeAccount.AllowsData).
+func poolReaches(pool, repo string, in Installation, pools []PoolSpec) bool {
+	for _, p := range pools {
+		if p.Name != pool {
+			continue
+		}
+		for _, member := range p.Members {
+			for _, a := range in.Accounts {
+				if a.Name == member && a.allowsData(repo) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // The fixture's own shapes: testdata/migrate is an installation's config and a
 // repository's file each, written the way a person writes them, and the
 // migration's input types are deliberately not a format anything decodes — so
 // the test carries the tags and the translation.
 type fx struct {
 	Project            string       `yaml:"project"`
-	Accounts           []string     `yaml:"accounts"`
+	Accounts           []fxAccount  `yaml:"accounts"`
 	DefaultAccount     string       `yaml:"default_account"`
 	Providers          []fxProvider `yaml:"providers"`
 	Pools              []fxPool     `yaml:"pools"`
@@ -641,6 +714,11 @@ type fx struct {
 	Via                string       `yaml:"via"`
 	ViaModels          []string     `yaml:"via_models"`
 	VertexSpelled      []string     `yaml:"vertex_spelled"`
+}
+
+type fxAccount struct {
+	Name        string   `yaml:"name"`
+	AllowDataTo []string `yaml:"allow_data_to"`
 }
 
 type fxProvider struct {
@@ -683,13 +761,15 @@ func readFixture(t *testing.T) Installation {
 	readYAML(t, filepath.Join(dir, "installation.yaml"), &f)
 	in := Installation{
 		Project:            f.Project,
-		Accounts:           f.Accounts,
 		DefaultAccount:     f.DefaultAccount,
 		SubscriptionSpread: f.SubscriptionSpread,
 		FallbackAuto:       f.FallbackAuto,
 		Via:                f.Via,
 		ViaModels:          f.ViaModels,
 		VertexSpelled:      f.VertexSpelled,
+	}
+	for _, a := range f.Accounts {
+		in.Accounts = append(in.Accounts, Account{Name: a.Name, AllowDataTo: a.AllowDataTo})
 	}
 	for _, p := range f.Providers {
 		in.Providers = append(in.Providers, Provider{

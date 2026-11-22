@@ -78,6 +78,17 @@ import (
 // and it stays on the release-1 bridge by name (D3196); Inert is what MG2
 // prints once, per pool, because those pools start rotating when the switch is
 // gone (D3177).
+//
+// Moves is the one part of the answer that is not a document to write but a
+// thing to say: the calls this table sends somewhere else than the
+// configuration does today. A pool's admission is its members' own
+// `allow_data_to` (D3182, R20) — an account's consent, which this migration
+// reads and does not write — so a repository the accounts consent to and whose
+// own configuration never used them reaches the pool after the migration where
+// it reached a key before. That is the move "nothing moves on upgrade" forbids,
+// and the answer to it is that MG2 names it: the migration reports the pair,
+// the source it had and the source it gets, and the consent behind it is a
+// person's to change.
 
 // SharedPool is the name of the pool every account of the installation becomes
 // a member of (D3183): the pool a subscription chain names, the pool the
@@ -130,9 +141,10 @@ type Installation struct {
 	// Accounts are every Claude account the installation names — the
 	// `claude_accounts` block, the default account, a stage's account, a
 	// grade's access where it names an account — in the order the accounts
-	// block lists them. Every one of them becomes a member of the shared pool,
-	// in this order (D3183), and gets a pool of one named after it (D3176).
-	Accounts []string
+	// block lists them, each with the consent its own `allow_data_to` carries.
+	// Every one of them becomes a member of the shared pool, in this order
+	// (D3183), and gets a pool of one named after it (D3176).
+	Accounts []Account
 	// DefaultAccount is the account a repository that names none goes out on:
 	// the retired walk's last two steps (`default_claude_account`, then the
 	// unsuffixed `default`), resolved by the caller. It is a member of the
@@ -164,6 +176,34 @@ type Installation struct {
 	// Repos are the repositories of the installation, each as its own file
 	// resolved.
 	Repos []Repo
+}
+
+// Account is one Claude account of the installation: the subscription a
+// repository's stages go out on, and the consent that lets them.
+type Account struct {
+	// Name is the account's name, as the config's `claude_accounts` block
+	// names it, and what the shared pool's member list carries.
+	Name string
+	// AllowDataTo are the repositories whose runs may choose this account —
+	// config.ClaudeAccount.AllowDataTo, which D3065 made the consent (F9). It
+	// is the whole of a pool's admission: a pool carries no admit list of its
+	// own, its members' allow_data_to decides (D3182, R20), and this is what
+	// tells the migration which calls its table would move.
+	//
+	// Empty means none, which is config.ClaudeAccount.AllowsData's own answer
+	// and not ModelProvider.AllowsData's: a provider key nobody wrote an
+	// allow_data_to for serves every repository, and an account nobody wrote one
+	// for serves none. The caller hands each account the list its own config
+	// holds, and an account the config does not carry at all — a name only a
+	// repository's file or a carried pool mentions — consents to nobody.
+	AllowDataTo []string
+}
+
+// allowsData is config.ClaudeAccount.AllowsData.
+func (a Account) allowsData(repo string) bool {
+	return slices.ContainsFunc(a.AllowDataTo, func(r string) bool {
+		return strings.EqualFold(r, repo)
+	})
 }
 
 // Provider is one provider key of the installation: the key a repository's
@@ -272,6 +312,39 @@ type Migration struct {
 	// (D3177): two or more members, the spread switch off, and not the pool the
 	// cascade was marked with. MG2 prints one line per pool.
 	Inert []string
+	// Moves are the calls whose first reachable source changes: the ones the
+	// table sends somewhere else than the repository's own configuration does
+	// today. MG2 names every one of them, because "nothing moves on upgrade" is
+	// the promise this migration is held to and a move nobody is told about is
+	// the one thing it forbids; it repairs none of them, because what they turn
+	// on is an account's own consent to a repository, which is a person's to
+	// write (D3182, R20).
+	Moves []Move
+}
+
+// Move is one call the migration's table sends somewhere else than the
+// configuration it replaces does today: a repository's call of one model whose
+// first reachable source changes.
+//
+// The shared pool is what moves a call, and a pool's admission is the reason it
+// can: a pool carries no admit list of its own and reaches a repository through
+// its members' `allow_data_to` (D3182, R20), so an account's consent to a
+// repository is enough to put that repository on the pool — where the
+// repository's own configuration never used those accounts, an api-key
+// repository an account lists above all. The consent is a person's to write and
+// this migration does not touch it, so the move is reported rather than
+// prevented.
+type Move struct {
+	// Repo and Model are the repository whose call moves and the model it calls.
+	Repo  string `json:"repo"`
+	Model string `json:"model"`
+	// From is the source the repository's own configuration gives it today, and
+	// To the source the table's chain reaches for it. A zero SourceName on
+	// either side is the call nothing serves: From where the repository's own
+	// configuration reaches nothing — the state C1's rule refuses a run for
+	// (F49) — and To where the chain reaches nothing for it.
+	From SourceName `json:"from"`
+	To   SourceName `json:"to"`
 }
 
 // PoolSpec is one pool as the migration writes it: a name, the rule it is
@@ -299,15 +372,16 @@ type BridgeEntry struct {
 	Reason string `json:"reason"`
 }
 
-// Migrate answers the table, the pools and the admissions one installation's
-// configuration becomes.
+// Migrate answers the table, the pools, the admissions and the moves one
+// installation's configuration becomes.
 func Migrate(in Installation) Migration {
-	m := &migrator{in: in, poolOf: map[string]bool{}}
+	m := &migrator{in: in, poolOf: map[string]bool{}, own: map[string]SourceName{}}
 	m.collectAccounts()
 	m.buildPools()
 	m.buildTable()
+	m.buildMoves()
 	m.buildInert()
-	return Migration{Table: m.table, Pools: m.pools, Bridge: m.bridge, Inert: m.inert}
+	return Migration{Table: m.table, Pools: m.pools, Bridge: m.bridge, Inert: m.inert, Moves: m.moves}
 }
 
 type migrator struct {
@@ -316,6 +390,11 @@ type migrator struct {
 	table  Table
 	bridge []BridgeEntry
 	inert  []string
+	moves  []Move
+	// own is what each call's own configuration goes out on today: the first
+	// source that call puts in its chain, by "repo\x00model". It is what
+	// buildMoves compares the table's answer against.
+	own map[string]SourceName
 	// poolOf records the pools written by name, so that an account and a pool
 	// the installation carries are written once.
 	poolOf map[string]bool
@@ -334,7 +413,9 @@ type migrator struct {
 // names that the installation's own list does not: an account a repository goes
 // out on is an account, and the shared pool it lands in has to hold it.
 func (m *migrator) collectAccounts() {
-	m.accounts = appendUnique(nil, m.in.Accounts...)
+	for _, a := range m.in.Accounts {
+		m.accounts = appendUnique(m.accounts, a.Name)
+	}
 	m.accounts = appendUnique(m.accounts, m.in.DefaultAccount)
 	for _, r := range m.in.Repos {
 		m.accounts = appendUnique(m.accounts, r.Accounts...)
@@ -469,6 +550,7 @@ func (m *migrator) addCall(c *chain, repo Repo, model Model, name string) {
 		m.addAuthSource(c, repo, model.ID, name)
 	default:
 		c.addProvider(model.Provider, name)
+		m.ownSource(name, model.ID, SourceName{Kind: KindProvider, Name: model.Provider})
 	}
 }
 
@@ -496,6 +578,7 @@ func (m *migrator) addAuthSource(c *chain, repo Repo, model, name string) {
 	// nothing, which is what it reaches today.
 	if m.shared && (len(repo.Accounts) > 0 || repo.Auth == authOAuth || repo.Auth == authCascade) {
 		c.addPool(SharedPool)
+		m.ownSource(name, model, SourceName{Kind: KindPool, Name: SharedPool})
 	}
 	switch repo.Auth {
 	case authOAuth:
@@ -507,16 +590,19 @@ func (m *migrator) addAuthSource(c *chain, repo Repo, model, name string) {
 			// D3064 as amended: the paid key is in the cascade's chain only
 			// where the policy's fallback is auto today.
 			c.anthropic = appendUnique(c.anthropic, name)
+			m.ownSource(name, model, SourceName{Kind: KindAnthropic})
 		}
 	case authAPIKey:
 		// The key is what the repository's stages go out on beside the
 		// accounts, and the walk falls to it when the pool holds nothing it
 		// may use — the tier order the retired walk used.
 		c.anthropic = appendUnique(c.anthropic, name)
+		m.ownSource(name, model, SourceName{Kind: KindAnthropic})
 	case authVertex:
 		// The map spells this model for Vertex, or the guard above would have
 		// bridged the call.
 		c.vertex = appendUnique(c.vertex, name)
+		m.ownSource(name, model, SourceName{Kind: KindVertex})
 	default:
 		// Nothing answers: an auth this release does not know — fail closed, as
 		// the config's own validation refuses such a file before a run sees it —
@@ -559,6 +645,144 @@ func (m *migrator) repo(name string) Repo {
 		}
 	}
 	return Repo{}
+}
+
+// account is the installation's own entry for an account, or the zero Account
+// for one the config does not carry: a name only a repository's file or a
+// carried pool mentions consents to nobody, which is the fail-closed direction
+// an unwritten admission takes everywhere else.
+func (m *migrator) account(name string) Account {
+	for _, a := range m.in.Accounts {
+		if a.Name == name {
+			return a
+		}
+	}
+	return Account{}
+}
+
+// ownSource records the source one call's own configuration goes out on today:
+// the first source that call puts in the chain is the one its auth gives it,
+// and a later one is the fallback behind it, so the first recording is the one
+// that counts and the order here is the chain's own order.
+func (m *migrator) ownSource(repo, model string, src SourceName) {
+	key := repo + "\x00" + model
+	if _, ok := m.own[key]; !ok {
+		m.own[key] = src
+	}
+}
+
+// buildMoves reports every call whose first reachable source the table changes.
+//
+// The two sides are the two answers the migration has: what a repository's own
+// call goes out on today (ownSource), and what the table's chain reaches for it
+// (firstReaching, which walks a pool's admission rather than assuming it). They
+// differ where a source another repository's call put in the chain also reaches
+// this repository — the shared pool above all, whose members' `allow_data_to` is
+// a consent the migration reads but does not write — and the pair is reported so
+// that MG2 names it instead of letting the run move quietly (D3182, R20).
+//
+// A pair whose model was bridged has no entry to compare against — it is
+// reported as a bridge entry of its own (D3196) — and a pair whose two sides
+// both reach nowhere is the call nothing serves, which is what C1's rule
+// answers for it today too (F49). A pair whose own configuration reaches
+// nothing and whose chain now reaches a source is a move like any other, and
+// reported: the run that was refused would go out on a credential after the
+// migration.
+func (m *migrator) buildMoves() {
+	for _, repo := range m.in.Repos {
+		for _, model := range repo.Models {
+			if model.ID == "" {
+				continue
+			}
+			entry, ok := entryFor(m.table, model.ID)
+			if !ok {
+				continue
+			}
+			now := m.firstReaching(entry, repo)
+			was := m.own[repo.Name+"\x00"+model.ID]
+			if now == was {
+				continue
+			}
+			m.moves = append(m.moves, Move{Repo: repo.Name, Model: model.ID, From: was, To: now})
+		}
+	}
+	slices.SortFunc(m.moves, func(a, b Move) int {
+		if c := strings.Compare(a.Repo, b.Repo); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Model, b.Model)
+	})
+}
+
+// firstReaching is the first source of an entry's chain a repository's runs
+// reach: a single-credential source admits it by name (D3182), and a pool
+// reaches it through its members' own allow_data_to (D3182, R20) — the
+// admission a pool does not carry itself. The zero SourceName is the call
+// nothing serves, the fail-closed answer C1 gives one.
+func (m *migrator) firstReaching(entry Entry, repo Repo) SourceName {
+	for _, s := range entry.Chain {
+		switch s.Kind {
+		case KindPool:
+			if m.poolReaches(s.Pool, repo.Name) {
+				return SourceName{Kind: KindPool, Name: s.Pool}
+			}
+		case KindAnthropic:
+			if slices.Contains(s.Admit, repo.Name) {
+				return SourceName{Kind: KindAnthropic}
+			}
+		case KindProvider:
+			if slices.Contains(s.Admit, repo.Name) {
+				return SourceName{Kind: KindProvider, Name: s.Provider}
+			}
+		case KindVertex:
+			if slices.Contains(s.Admit, repo.Name) {
+				return SourceName{Kind: KindVertex}
+			}
+		case KindLauncherPool:
+			// The migration writes no launcher-pool source: which pool serves a
+			// launcher is decided per run (D3176, D3179), so a chain carrying
+			// one is not this migration's answer and nothing here reaches
+			// through it.
+		}
+	}
+	return SourceName{}
+}
+
+// poolReaches reports whether a pool reaches a repository: its members' own
+// allow_data_to is its admission (D3182, R20), and a member that consents is
+// enough. A pool this migration wrote no members for reaches nobody, which is
+// the same fail-closed answer an unwritten admission gives.
+//
+// No account is exempt, DefaultAccount included: the reserved `default` is
+// always a name a repository may choose (config.AllowedClaudeAccounts) and the
+// retired walk falls back to it without consulting an allow_data_to, so an
+// installation whose default account carries none reaches nothing through the
+// pool — and the migration says so, per call, in Moves, rather than assuming a
+// consent the config does not hold. Writing that consent is not this
+// migration's: "each account keeps its own admissions untouched" (D3182).
+func (m *migrator) poolReaches(pool, repo string) bool {
+	for _, p := range m.pools {
+		if p.Name != pool {
+			continue
+		}
+		for _, member := range p.Members {
+			if m.account(member).allowsData(repo) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// entryFor is the entry that routes a model: the migration writes one entry per
+// model ID, so the match is the whole of the lookup.
+func entryFor(table Table, model string) (Entry, bool) {
+	for _, e := range table {
+		if e.Match == model {
+			return e, true
+		}
+	}
+	return Entry{}, false
 }
 
 // buildInert lists the pools that are inert today and rotate once migrated

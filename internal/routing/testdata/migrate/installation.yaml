@@ -2,8 +2,20 @@
 # independent of any repository. The repositories are the files under repos/.
 project: acme/widgets
 # Every account the installation names, in the order the accounts block lists
-# them (D3183: the shared pool takes them in this order).
-accounts: [ada, grace, hopper]
+# them (D3183: the shared pool takes them in this order), each with the
+# repositories its own allow_data_to consents to. That consent is the whole of
+# the shared pool's admission — a pool carries none of its own (D3182, R20) — so
+# every repository that goes out on an account is listed by it and no other
+# repository is: acme/api is on the paid key and no account consents to it.
+accounts:
+  # The default account too: a repository that names none, acme/batch, goes out
+  # on it.
+  - name: ada
+    allow_data_to: [acme/mixed, acme/batch]
+  - name: grace
+    allow_data_to: [acme/web, acme/mixed]
+  - name: hopper
+    allow_data_to: [acme/mixed-key]
 # The account a repository that names none goes out on: the retired walk's
 # `default_claude_account`, then the unsuffixed `default`.
 default_account: ada
