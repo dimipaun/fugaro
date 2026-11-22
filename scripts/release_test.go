@@ -1402,13 +1402,12 @@ func TestAtStillNeedsACleanMain(t *testing.T) {
 // TestAtNeedsNoLocalMainRef: --at is cut from a checkout whose tree is
 // origin/main's, and the `main` ref is not part of that question. The branch is
 // still main (the check above, pinned by TestAtStillNeedsACleanMain even when
-// the tree's own scripts are not origin's); what is compared with origin/main is
-// HEAD, which that check has tied to main, so a checkout where a local `main`
-// cannot be resolved at all -- a linked worktree, or a single-branch clone
-// pointed elsewhere -- cuts the release instead of ending in git's own `fatal:`
-// line: `git rev-parse main` under `set -eu` used to end every run there, with
-// no refusal and no tag. The wrapper below is what says the run asked that ref
-// at all, and the control just after it is what says the wrapper bites.
+// the tree's own scripts are not origin's), and what is compared with
+// origin/main is HEAD's commit, the one that check has tied to main. A run that
+// asks the bare ref instead ends in git's own `fatal:` line the moment it does
+// not resolve -- no refusal, no tag -- which is the abort the wrapper below makes
+// real. The wrapper is what says the run asked that ref at all, and the control
+// just after it is what says the wrapper bites.
 func TestAtNeedsNoLocalMainRef(t *testing.T) {
 	r := newReleaseRepo(t)
 	sha := atBump(t, r, "0.12.0")
