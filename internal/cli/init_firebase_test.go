@@ -967,6 +967,50 @@ func TestALeftFirestoreLocationPlansNoIndexAndConverges(t *testing.T) {
 	}
 }
 
+// The gate's third state is the one the read cannot answer in: the plan made
+// before the apply fails on a read AFTER the database's own (a mark, a rules
+// list, a collection list), which is an error the run tolerates and carries on
+// from (init_firebase.go). The answer it would take from that plan is false,
+// and false is the last thing the tfvars may say for an installation that
+// already has the eleven indexes: the module's for_each would be empty and the
+// apply would plan their destruction. The state is what says the installation
+// has them (runIndexIndexesManaged).
+//
+// The second arm is the control, and the pair is why this test proves anything:
+// with the same failing read and a state that manages no index, the answer is
+// false — which is only true of a read that did not answer at all, since the
+// rig's project HAS a Firestore database and a read that answered would say so.
+func TestAnUnreadableFirestoreReadKeepsTheIndexesTheStateHas(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		managed []string
+		want    bool
+	}{
+		{"the state manages one", []string{`module.firebase.google_firestore_index.run["slug_updated_at"]`}, true},
+		{"the state manages none", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := alwaysRig(t)
+			mayCreate(t, r)
+			r.fs.SetDatabase("us-east5") // the project has one; the READ is what fails
+			r.fbPlan(t, nil, nil, tc.managed)
+			r.fs.DisabledReads(1)
+			fakeTerminal(t)
+
+			out, err := updateRun(t, r.initRig, "update")
+			if err != nil {
+				t.Fatalf("the run did not converge on an unreadable Firestore read: %v\n%s", err, out)
+			}
+			if v := r.fbVars(t)["firestore_database_exists"]; v != tc.want {
+				t.Errorf("the Firebase root is applied with firestore_database_exists = %v, want %v (RI2): the plan's own read failed, so the state is what answers", v, tc.want)
+			}
+			if !strings.Contains(out, "ensured the Firestore database") {
+				t.Errorf("the run did not reach the Firestore step's own end, so what the root was applied with is not this run's:\n%s", out)
+			}
+		})
+	}
+}
+
 // The local config records the Firebase outputs, and jobs get them only when
 // asked; the history job waits for its image.
 func TestInitFirebaseWritesConfigAndHistoryJob(t *testing.T) {

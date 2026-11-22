@@ -383,6 +383,13 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	// under a database that is not there, and this stage creates the database
 	// LAST, long after that apply (D3027). The step is planned again after the
 	// apply and that second plan is the one deployFirestore acts on.
+	//
+	// This is the answer of a read that answered. One that did not — the API not
+	// enabled yet, or a permission or Rules-API failure on the reads after the
+	// database's own — answers false here, and false is the last thing the tfvars
+	// may say for an installation that already has the indexes: an empty for_each
+	// is a plan to destroy them. That case is decided from the Firebase state,
+	// further down (runIndexIndexesManaged).
 	dbExists := fsStep.DatabaseExists()
 
 	// 1. The installation root.
@@ -416,13 +423,6 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return initErr(err)
 	}
-	vars, err := infra.FirebaseVars(fspec)
-	if err != nil {
-		return err
-	}
-	if err := fwd.WriteVars(vars); err != nil {
-		return userErr("writing the Firebase tfvars: %v", err)
-	}
 	backend, err := fwd.WriteBackend(spec.StateBucket, infra.StatePrefixFirebase)
 	if err != nil {
 		return userErr("%v", err)
@@ -449,6 +449,26 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	managed := map[string]bool{}
 	for _, a := range st.Addresses() {
 		managed[a] = true
+	}
+	// The run index's gate (RI2), decided here because this is where the state is
+	// known — and the tfvars are written here, and not before the state was read,
+	// for that reason: nothing in between reads the file (terraform init and show
+	// take no variables) and the plan below does. The plan above answers only when
+	// its read of the database answered at all; when it did not, the tfvars must
+	// not say there is no database, because the module's for_each would then plan
+	// away the composite indexes an installation already has. A state that manages
+	// one is an installation that has them, and it keeps them. A state that
+	// manages none keeps the plan's false, which is the direction that costs a
+	// read and never a failed apply.
+	if !fsStep.DatabaseKnown() {
+		fspec.FirestoreDatabaseExists = runIndexIndexesManaged(managed)
+	}
+	vars, err := infra.FirebaseVars(fspec)
+	if err != nil {
+		return err
+	}
+	if err := fwd.WriteVars(vars); err != nil {
+		return userErr("writing the Firebase tfvars: %v", err)
 	}
 	// Read-only discovery of the Firebase project's own singletons that the
 	// state does not manage: a look-alike is refused before any plan or
@@ -552,6 +572,23 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	// installation has its budget database, this machine records it, and what
 	// waits is the database the history job writes into.
 	return r.deployFirestore(ctx, fsStep)
+}
+
+// runIndexIndexesManaged reports whether the Firebase root's state already
+// manages a run index composite index (RI2). It is the fallback for the gate
+// the root's tfvars carry (FirestoreStep.DatabaseKnown): a run whose Firestore
+// read did not answer must keep the indexes an installation already has, and
+// the state is what says it has them. It is the resource's prefix and not one
+// address: the module's resources are a for_each keyed by the contract's rows,
+// and any of them is an installation that has been through an apply that
+// created them, whatever the rows are called.
+func runIndexIndexesManaged(managed map[string]bool) bool {
+	for a := range managed {
+		if strings.HasPrefix(a, "module.firebase.google_firestore_index.") {
+			return true
+		}
+	}
+	return false
 }
 
 // discoveryClients are the clients that read the Firebase project's
