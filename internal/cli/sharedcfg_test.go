@@ -317,10 +317,10 @@ func setLocalBatch(t *testing.T, path string, b *localcfg.Batch) {
 // leaves in the runs bucket is the installation's, and every publish rewrites
 // this machine's own copy of it from the published one (R15, BR19). The
 // published object is the local config of every teammate who has none — the
-// reference the project shares and the copy their launches read the fact off —
-// so a publishing machine's own block is never the authority on it: a stale
-// local `in` neither publishes over a withdrawal nor survives one. The two
-// writers R15 names are the only publishes that CHANGE the value, through
+// reference `fugaro project show` reads and the copy their launches read the
+// fact off — so a publishing machine's own block is never the authority on it:
+// a stale local `in` neither publishes over a withdrawal nor survives one.
+// The two writers R15 names are the only publishes that CHANGE the value, through
 // publishSharedOptIn: an operator's selection passes `in` (R2, BR18) and the
 // opt-out passes `withdrawn` (R16, BR20), the value passed explicitly because
 // no other publish may write one.
