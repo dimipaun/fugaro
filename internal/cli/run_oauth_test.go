@@ -98,6 +98,10 @@ func TestRunTokenDefaultsToConfiguredThenDefaultAccount(t *testing.T) {
 	t.Run("else default", func(t *testing.T) {
 		f := newCloudFixture(t)
 		oauthCheckout(t, f, "")
+		// The seal gate judges every launch of an installation with a database
+		// (AB4, F7), so a job whose build record is missing is refused — the
+		// record the two rows above write for the same reason.
+		writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 		if _, _, err := execute(t, "run", "--run-id", "20261012-100000-cccc", "A task"); err != nil {
 			t.Fatal(err)
 		}

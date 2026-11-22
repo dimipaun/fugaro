@@ -223,6 +223,18 @@ const (
 	mixElsewhereDefault = "default_claude_account: acme-elsewhere\n"
 )
 
+// mixEnforceOn is mixEnforce with the installation's own database, for the
+// rows that launch: every launch of an installation whose config names a
+// database mints the run's identity (AB4, F7), so a block appended over the
+// harness's — which replaces it whole, appendConfig — has to name the
+// database, the signer the mint signs through and the key the client
+// exchanges the token with, or the launch is refused before anything is
+// written. The rows that only resolve an account keep the one above.
+func mixEnforceOn(f *cloudFixture) string {
+	return "budget: { mode: enforce, per_run_usd: 5, rtdb_url: " + f.budget.DB.URL +
+		", token_signer: " + testSigner + ", firebase_api_key: " + f.budget.APIKey + " }\n"
+}
+
 // mixCase is one row's fixture: the accounts (keys adds the account-choice
 // keys the row is about), the routes and the budget mode, over a checkout of
 // acme/other whose coder is on the provider route and whose reviews run on
@@ -437,7 +449,7 @@ func TestRunLandsAMixedRunOnTheMixsAccount(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCloudFixture(t)
-			f.appendConfig(t, claudeAccountsConfig+mixRouteConfig+mixEnforce+tc.keys)
+			f.appendConfig(t, claudeAccountsConfig+mixRouteConfig+mixEnforceOn(f)+tc.keys)
 			recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+tc.reviewer+", background: "+mixCoderModel+" }\n", nil)
 			writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 			// The account's own job variant, which a mixed run has to start
@@ -468,7 +480,7 @@ func TestRunLandsAMixedRunOnTheMixsAccount(t *testing.T) {
 // no execution starts.
 func TestRunRetryLaunchesAMixedRunOnTheMixsAccount(t *testing.T) {
 	f := newCloudFixture(t)
-	f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforce)
+	f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforceOn(f))
 	recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+claudeReviewer+", background: "+mixCoderModel+" }\n", nil)
 	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	variant := gcp.WorkflowVariant("svc", "acme-overflow")
@@ -522,7 +534,7 @@ func TestRunPRLandsAFollowUpOfAMixedRunOnTheMixsAccount(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCloudFixture(t)
-			f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforce)
+			f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforceOn(f))
 			recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+claudeReviewer+", background: "+mixCoderModel+" }\n", nil)
 			writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 			variant := gcp.WorkflowVariant("svc", "acme-overflow")
