@@ -12,8 +12,10 @@ pretend to be able to check, and **R9** is the one rule about who may put a toke
 `internal/routing/pools.go` (the pool's own shapes, the designation, the lookup and the listing) and
 `internal/creds/slip_chain.go` (the grant's two new members and the picker's signature); the stubs
 it ships are `internal/credsvc/launcherpool_stub.go` ("no pool designated") and
-`internal/creds/poolrule_stub.go` (the pool's first member), and its test is
-`internal/routing/pools_test.go` (`TestPoolShapesAreStable`).
+`internal/creds/poolrule_stub.go` (the pool's first member). The tests are
+`internal/routing/pools_test.go` (`TestPoolShapesAreStable`), which pins every name and the JSON of
+every shape, and `internal/creds/poolrule_stub_test.go` and
+`internal/credsvc/launcherpool_stub_test.go`, which are the two stubs' own and go with them.
 
 **PL1** (the config's members), **PL2** (the account commands and the JSON), **PL3** (the rule),
 **PL4** (the launcher's pool), **PL5** (designating, and contributing to the shared pool), **PL6**
@@ -261,5 +263,5 @@ decides nothing.**
 | `internal/credsvc/launcherpool_stub.go` | no pool designated, for every principal and every name, with no error | read a designation, a pool, a policy or an entitlement, or answer an error that a caller could tell from "none" |
 | `internal/creds/poolrule_stub.go` | the pool's first member, `ErrNoCandidates` for an empty pool | read or write a mark, a lease, a placement, a counter or a utilisation figure, or take a lease on the member it answers |
 
-I1 deletes both — and nothing a side keeps is declared in them — and points the service at the real
-lookup (PL4) and the real rule (PL3).
+I1 deletes both — and nothing a side keeps is declared in them, and each stub's own test goes with
+it — and points the service at the real lookup (PL4) and the real rule (PL3).
