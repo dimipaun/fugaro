@@ -1330,6 +1330,35 @@ const rigorSpellingSince = "0.27.0"
 // carries a mode when its PR recorded one (T5.2, rigorGateSubject).
 const rigorRequestSince = "0.11.1"
 
+// promoteSince is the first fugaro release whose runner reads a task's promote
+// block (task.Spec.Promote, fugaro run --promote): an older runner refuses the
+// whole spec outright, since task.Parse decodes with DisallowUnknownFields, and
+// the run would fail at bootstrap on a task nobody can read — after the launch
+// was paid for. It must equal the release that ships task.Spec.Promote:
+// docs/release.md ("Before you tag") has the release checklist verify it, and
+// TestPromoteSinceHasAReleaseBullet holds the two together.
+//
+// It is not rigorRequestSince (0.11.1), which gates the two fields a promote
+// launch also carries (Spec.Rigor and Spec.Paths, the mode and the area's own
+// paths): that constant names a release far older, so gating the block on it
+// would pass an image that knows the request and not the promote — the
+// [0.11.1, promoteSince) bracket, which is every image today — and the run
+// would die at bootstrap with the launch already paid for. A promote launch is
+// therefore judged on this constant rather than that one, and the two are
+// checked in that order (run.go's finishLaunch): for a promote launch the
+// refusal a person can act on names the block they asked for.
+//
+// It names 0.28.0 "Yak", the release this work ships in
+// (docs/release-streams.yaml has 0.27.0 current and Yak 0.28.0 next), which is
+// **not tagged yet**: verify the constant against the tag actually cut, the way
+// keyCredentialSince's bullet records, and move it if the block lands in
+// another release. It is not 0.27.0, which is tagged and whose runner knows no
+// promote block: that value would admit exactly the image this gate exists to
+// refuse, and the launch would be paid for and die at bootstrap. A wrong value
+// refuses too late (an older runner dies at bootstrap on the stored task) or
+// too early (an image that reads the block stays blocked).
+const promoteSince = "0.28.0"
+
 // governanceSince is the first fugaro release whose config reader knows
 // fugaro.yaml's governance: block and the project layer's governance: block
 // (docs/task-governance/spec.md). Both files are decoded with KnownFields, so
@@ -1607,7 +1636,16 @@ func securityRequestRaiseOnly(cfg *config.Config, task *config.ReviewLevels) (*c
 // inherits a mode rather than asking for one (T5.2): both readings are the
 // spec's, which is the only thing the job reads.
 func asksForRigor(spec *task.Spec) bool {
-	return spec.Rigor != "" || len(spec.Paths) > 0 || spec.Promote != nil
+	return spec.Rigor != "" || len(spec.Paths) > 0
+}
+
+// promoteGateSubject is what the promoteSince gate calls the field it judges:
+// the block a promote launch writes, named by the flag that wrote it — the
+// fields a runner older than promoteSince refuses are the block's
+// (task.Promote), and a refusal that named the launch's mode instead would
+// send its reader to a flag whose own gate is older and already passed.
+func promoteGateSubject(spec *task.Spec) string {
+	return fmt.Sprintf("the promote run's own block (--promote %s, which names the area and its paths)", spec.Promote.Area)
 }
 
 // rigorGateSubject is what the rigorRequestSince gate calls the field it
@@ -1621,14 +1659,7 @@ func asksForRigor(spec *task.Spec) bool {
 // that passed no flag and carries paths alone — a stored task, launched again
 // by --retry — is described by the flags: it carries no mode to name, and
 // "(rigor: )" would report the field's absence as the thing the gate judged.
-//
-// A promote launch is described by its own block: the fields a runner older
-// than rigorRequestSince refuses are the block's (task.Promote), and the
-// refusal has to name the flag that wrote them.
 func rigorGateSubject(o *runOptions, spec *task.Spec) string {
-	if spec.Promote != nil {
-		return fmt.Sprintf("the promote run's own block (--promote %s, which names the area and its paths)", spec.Promote.Area)
-	}
 	if o.rigor == "" && len(o.paths) == 0 && spec.IsFollowUp() && spec.Rigor != "" {
 		return fmt.Sprintf("the mode a follow-up keeps from its PR (rigor: %s)", spec.Rigor)
 	}

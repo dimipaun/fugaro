@@ -17,11 +17,13 @@ const areaPromoteYAML = "rigor:\n  default: poc\n  areas:\n" +
 	"    - { name: ledger, match: \"internal/ledger/**\", mode: pro }\n"
 
 // areaPromoteFixture is a launch of acme/app from a checkout whose fugaro.yaml
-// declares those areas, on a job image that reads a rigor request.
+// declares those areas, on a job image whose runner reads the promote block —
+// the release this work ships in, since an older one refuses the stored task at
+// bootstrap (TestRunPromoteRefusesAJobImageThatPredatesTheBlock).
 func areaPromoteFixture(t *testing.T) *cloudFixture {
 	t.Helper()
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release0160)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+promoteSince)
 	checkoutWorkflows(t, areaPromoteYAML, "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
 	return f
 }
@@ -143,6 +145,62 @@ func TestRunPromoteRefusesHotfixAndAModeOfItsOwn(t *testing.T) {
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--promote", "payments", "--mode", "sizzle")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--mode") {
 		t.Fatalf("err = %v, want the mode refused by --mode's own rule", err)
+	}
+}
+
+// TestRunPromoteRefusesAJobImageThatPredatesTheBlock is LV7.1's skew gate at
+// its call site: the promote block is a field of the task format, and a runner
+// older than promoteSince refuses the whole spec at bootstrap — after the
+// launch was paid for — so the launch judges the job image before anything is
+// written.
+//
+// The image refused is one release below promoteSince and it is deliberately
+// an image that passes the rigor-request gate (promoteSince is newer than
+// rigorRequestSince): the refusal has to be the promote block's, or a person
+// reads a message about the mode they passed beside the flag instead of the
+// flag itself. Mutation (drop the Promote gate in either branch of the launch,
+// or gate it on rigorRequestSince): this test's row stops being refused.
+func TestRunPromoteRefusesAJobImageThatPredatesTheBlock(t *testing.T) {
+	f := newCloudFixture(t)
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, promoteSince, -1)
+	writeBuildRecord(t, f, appSlug, "web", older)
+	checkoutWorkflows(t, areaPromoteYAML, "  web: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261122-130500-abcd", "--promote", "ledger", "--mode", "critical")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the job image refused", err)
+	}
+	for _, want := range []string{"fugaro " + promoteSince + " or later", older, "--promote", "ledger", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q:\n%v", want, err)
+		}
+	}
+}
+
+// TestPromoteSinceHasAReleaseBullet: promoteSince names the release that ships
+// task.Spec.Promote, and that release is not tagged yet, so docs/release.md's
+// Before-you-tag list is where a release verifies it against the tag actually
+// cut.
+func TestPromoteSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `promoteSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no promoteSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+promoteSince+"\"`") {
+		t.Errorf("docs/release.md's promoteSince bullet does not carry the constant's release (%q)", promoteSince)
+	}
+	for _, want := range []string{
+		"`task.Spec.Promote`", "not tagged yet", "checkImageSince", "checkCloneImageSince",
+		"promoteGateSubject", "rigorRequestSince",
+	} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's promoteSince bullet does not say %q", want)
+		}
 	}
 }
 
