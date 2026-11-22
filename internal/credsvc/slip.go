@@ -379,7 +379,7 @@ func (s *Server) slipGrant(ctx context.Context, w http.ResponseWriter, r *http.R
 		// the caller IS verified, so this refusal is one of the route's and
 		// writes its one line (noGrantForTheOrchestrator says why a slip cannot
 		// be written for it and where a resumed run's grant comes from instead).
-		s.refuseGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, noGrantForTheOrchestrator)
+		s.refuseGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, requestRefused+noGrantForTheOrchestrator)
 		return
 	}
 	if id := r.Header.Get(HeaderRunIdentity); id != "" {
@@ -771,7 +771,7 @@ type grantCaller struct {
 // record, and the launcher of such a run is the one the run's own grant names —
 // which is what PR3 grants, against the record it wrote, and the seam this
 // refusal leaves open.
-const noGrantForTheOrchestrator = "the request is refused before any credential is read: a slip records the launcher it serves as the launcher's own account id, and the orchestrator's class names an address instead of one — a resumed run's slip is granted from the service's own record of the paused run's grant"
+const noGrantForTheOrchestrator = "a slip records the launcher it serves as the launcher's own account id, and the orchestrator's class names an address instead of one — a resumed run's slip is granted from the service's own record of the paused run's grant"
 
 // launcherCaller verifies the caller of the grant route, which is the three
 // classes the identity routes admit and no others: a person on the
