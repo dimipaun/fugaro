@@ -19,7 +19,7 @@ func item(id, area, status string, body string) backlog.Item {
 // which of them it may close, and the reading at finalize says what it did.
 func TestPromoteReadsAndClosesTheAreasItems(t *testing.T) {
 	ours := item("20260101-01", "payments", "open", "## What was left open\n\nNo retry on `internal/payments/charge.go`.\n")
-	other := item("20260101-02", "console", "open", "## What was left open\n\nA stall in `console/src/app.ts`.\n")
+	other := item("20260101-02", "billing", "open", "## What was left open\n\nA stall in `internal/billing/invoice.go`.\n")
 	folder := []backlog.Item{ours, other, item("20260101-03", "payments", "closed", "already done")}
 
 	area := promoteAreaItems(folder, "payments")
@@ -49,7 +49,7 @@ func TestPromoteReadsAndClosesTheAreasItems(t *testing.T) {
 // no items behind, so the first promote pass of its area is the audit — the
 // pass that works out what is missing and files it, and pays nothing down.
 func TestPromoteAuditRunsWhenTheAreaHasNoItems(t *testing.T) {
-	only := []backlog.Item{item("20260101-02", "console", "open", "`console/src/app.ts`")}
+	only := []backlog.Item{item("20260101-02", "billing", "open", "`internal/billing/invoice.go`")}
 	if !promoteAudit(only, "payments") {
 		t.Fatalf("an area with no item of its own is the audit pass")
 	}

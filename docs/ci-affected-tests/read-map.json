@@ -17598,6 +17598,7 @@
         "cmd/fugaro/**",
         "deploy/terraform/**",
         "docs/*.md",
+        "docs/backlog/**",
         "docs/design/v1.md",
         "docs/fugaro-reviews/**",
         "docs/fugaro-reviews/README.md",
