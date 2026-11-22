@@ -135,7 +135,7 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 	// Registered after the fakes, so it runs before they close: no
 	// execution outlives the test.
 	t.Cleanup(r.wait)
-	r.remote = testutil.NewRemote(t, testutil.FixtureFiles(t))
+	r.remote = testutil.NewRemote(t, pricedFixtureFiles(t))
 	r.claude = testutil.FakeClaude(t, claudeScript)
 	dir := t.TempDir()
 	r.dir = dir
@@ -1120,18 +1120,26 @@ func sameRunIDs(rows []map[string]any, ids ...string) bool {
 	return slices.Equal(got, want)
 }
 
+// pricedFixtureFiles is the fixture repository with priced models pinned: a
+// budget is always on, and a run whose models it cannot price stops at
+// bootstrap.
+func pricedFixtureFiles(t *testing.T) map[string]string {
+	t.Helper()
+	files := testutil.FixtureFiles(t)
+	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "  review_rounds: 2\n", `  review_rounds: 2
+  model: claude-sonnet-5-5
+  models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5, background: claude-haiku-4-5 }
+`, 1)
+	return files
+}
+
 // gatewayRig makes the rig's jobs run an api-key workflow through the
 // budget gateway, against the fake upstream at upstream: the repository
 // pins priced models, and each job gets mode and, when not empty, cap.
 func gatewayRig(upstream, mode, capUSD string) rigOption {
 	return func(r *cloudRig) {
 		r.gatewayUpstream, r.budgetMode, r.budgetCap = upstream, mode, capUSD
-		files := testutil.FixtureFiles(r.t)
-		files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "  review_rounds: 2\n", `  review_rounds: 2
-  model: claude-sonnet-5-5
-  models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5, background: claude-haiku-4-5 }
-`, 1)
-		r.remote = testutil.NewRemote(r.t, files)
+		r.remote = testutil.NewRemote(r.t, pricedFixtureFiles(r.t))
 	}
 }
 
