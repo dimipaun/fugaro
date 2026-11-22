@@ -1081,12 +1081,13 @@ export interface ProjectsStreamRead {
  * feed answered -- and `source` is what tells them apart, so a caller that needs
  * a member only the whole document carries (the rail's spend, the fleet gauge)
  * asks for it only where `source` is `whole`. */
-export interface ProjectsStreamOutcome {
-  readonly status: StreamStatus
-  readonly source: StreamSource
-  readonly document: unknown | null
-  readonly sentence: string | null
-}
+export type ProjectsStreamOutcome =
+  | { readonly status: 'complete'; readonly source: StreamSource; readonly document: JSONDoc }
+  | {
+      readonly status: Exclude<StreamStatus, 'complete'>
+      readonly source: StreamSource
+      readonly sentence: string | null
+    }
 
 /**
  * readBudgetStream makes this tab's caps read.
@@ -1127,16 +1128,15 @@ export async function readBudgetStream(read: ProjectsStreamRead): Promise<Projec
     paint: read.paint,
   })
   if (result.status === 'withheld') {
-    return { status: 'withheld', source: 'none', document: null, sentence: CAPS_STREAM_HIDDEN }
+    return { status: 'withheld', source: 'none', sentence: CAPS_STREAM_HIDDEN }
   }
   if (result.status !== 'complete') {
-    return { status: result.status, source: result.source, document: null, sentence: result.sentence }
+    return { status: result.status, source: result.source, sentence: result.sentence }
   }
   return {
     status: 'complete',
     source: result.source,
     document: whole !== null ? whole : budgetFromFeed(result.rows),
-    sentence: null,
   }
 }
 

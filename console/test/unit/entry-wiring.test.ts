@@ -4557,6 +4557,13 @@ describe('the sections Spend fills as their own reads land', () => {
     buttonFor(document, 'live').click()
     await flush()
     buttonFor(document, 'spend').click()
+    // The caps read is RS5's streamed one, and this bridge has no
+    // `budget.stream` behind it: the read asks the operation first and reaches
+    // `budget show` when that answers nothing, one gap later than the click. A
+    // visit still makes the read -- nothing here waits for anything -- and the
+    // held refusal is on screen until this answer replaces it.
+    await flush()
+    expect(answers, 'the visit made no caps read').toHaveLength(2)
     answers[1]?.release({ ok: true, data: { document: {} } })
     await flush()
     const caps = sectionOf(document, 'spend-caps')
@@ -4943,11 +4950,16 @@ describe('the view a session already read', () => {
     await flush()
     buttonFor(document, 'spend').click()
     const caps = sectionOf(document, 'spend-caps')
+    // The mark is up in the click's own frame, over the caps this session
+    // already has: the read itself is RS5's streamed one, whose whole-document
+    // fallback (`budget show`, this bridge's only caps read) is one gap behind
+    // the operation it asks first.
+    expect(busyLabels(document)).toEqual(['Reading the budget caps…'])
+    await flush()
     expect(
       fake.calls.filter((call) => call.name === 'showBudget'),
       'the budget was not read again on the visit',
     ).toHaveLength(2)
-    expect(busyLabels(document)).toEqual(['Reading the budget caps…'])
     // The answer from the visit before is on screen under that mark: a blank
     // section for the second the read takes is what the owner's rule is against.
     // `data-available` is `fillSpendCaps`'s own, so it is set by the drawing and
@@ -4968,16 +4980,22 @@ describe('the view a session already read', () => {
     buttonFor(document, 'live').click()
     await flush()
     buttonFor(document, 'spend').click()
+    await flush()
     const before = fake.calls.filter((call) => call.name === 'showBudget').length
 
     const refresh = classed(panelOf(document), STAMP_REFRESH_CLASS)[0]
     expect(refresh, 'the stamp drew no refresh control: the case proves nothing').toBeDefined()
     refresh?.click()
+    // The mark goes up in the click's own frame, over the caps the session has.
+    expect(sectionOf(document, 'spend-caps').getAttribute(BUSY_ATTRIBUTE)).toBe('true')
+    // The caps read is RS5's streamed one: it asks `budget.stream` first and
+    // reaches `budget show` (this bridge's only caps read, one gap later) when
+    // the operation answers nothing.
+    await flush()
     expect(
       fake.calls.filter((call) => call.name === 'showBudget').length,
       'the stamp’s Refresh read the report and left the caps as they were',
     ).toBe(before + 1)
-    expect(sectionOf(document, 'spend-caps').getAttribute(BUSY_ATTRIBUTE)).toBe('true')
     await flush()
   })
 })
@@ -5896,7 +5914,6 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       calls.slice(before).map((call) => call.name),
       'the Projects tab made a read that is not its own',
     ).toEqual([
-      'showBudget',
       'listModels',
       'readSettings',
       'managedStatus',
@@ -5904,6 +5921,11 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       'environmentReport',
       'readLicence',
       'readSeats',
+      // The caps read is RS5's streamed one (`budget.stream`), and this bridge
+      // has no such operation: the whole-document read it falls back to is one
+      // gap behind the operation the click asks first. Every one of these is in
+      // the click's own turn; none of them waited for another's answer.
+      'showBudget',
     ])
     expect(
       calls.slice(before).some((call) => call.name === 'listRuns'),
@@ -5935,13 +5957,27 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       },
     })
     const document = await boot(bridge, new FakeDocument())
+    // A bridge that **can** be asked the caps feed's operation (C-OPS's
+    // `budget.stream`, which RS5 reads through): the read asks this first and
+    // only reaches `budget show` -- the whole document -- when it answers
+    // nothing, which is what the refusal here makes it do.
+    const streams: unknown[] = []
+    bridge['streamBudget'] = (args: unknown): unknown => {
+      streams.push(args)
+      return { ok: false, reason: 'the console did not read budget.stream in this case' }
+    }
     const before = calls.length
     buttonFor(document, 'projects').click()
-    // **Nothing is awaited**: the click's own turn is where all four calls are,
-    // so a tab that serialised them would show fewer than four here. The licence
-    // key's read is the fourth (S2.7) even though it is the one read here that
-    // spawns no child: it is a read of the console's own store, and it starts
-    // with the others rather than behind them.
+    // **Nothing is awaited**: the click's own turn is where the caps read's own
+    // operation is asked, beside the four whole-document calls -- so a tab that
+    // serialised its reads would show fewer than these five here. The licence
+    // key's read is the fourth of those (S2.7) even though it is the one read
+    // here that spawns no child: it is a read of the console's own store, and it
+    // starts with the others rather than behind them. The caps read's fallback
+    // is the fifth call and it is one gap later, which is `readStream`'s own
+    // shape for every screen that reads a feed: the operation first, the whole
+    // document where the operation cannot be asked.
+    expect(streams, 'the caps read did not ask its own operation in the click’s turn').toHaveLength(1)
     expect(
       calls
         .slice(before)
@@ -5954,7 +5990,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
             name === 'readLicence' ||
             name === 'readSeats',
         ),
-    ).toEqual(['showBudget', 'listModels', 'readSettings', 'readLicence', 'readSeats'])
+    ).toEqual(['listModels', 'readSettings', 'readLicence', 'readSeats'])
     // While all nine are out, the tab says which read each of its marks is --
     // one mark per section, on the section's own host (CM10's four siblings are
     // in the middle, the licence key's the eighth, S4.2's seat estimate the

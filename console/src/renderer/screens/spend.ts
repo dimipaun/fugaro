@@ -324,6 +324,14 @@ const CAPS_HEADROOM_WORD = 'headroom'
  * them is a setting. */
 const CAPS_MODE_ABSENT_WORD = 'mode not in this read'
 
+/** CAPS_MODE_UNSET_WORD is what the caps panel draws for the CLI's empty `mode`,
+ * which is the one mode the whole caps document carries and no other read does:
+ * `""` means "unset, which acts as observe" (the CLI's own help), and the words
+ * are the console's -- the JSON carries the empty string and never the phrase.
+ * Drawing the empty string would be an empty cell and drawing `observe` would be
+ * inventing a setting the document did not make. */
+const CAPS_MODE_UNSET_WORD = 'mode unset (acts as observe)'
+
 /** CAPS_BAR_UNITS is the cap bar's own drawing unit: the `viewBox` is a hundred
  * units wide, so the filled `rect`'s width is the share of the cap the counted
  * dollars reached and never a pixel (the shape the chart above and Live's fleet
@@ -2192,16 +2200,22 @@ export const CAPS_STREAM_HIDDEN = 'the caps are withheld for the installation th
 const SPEND_PEOPLE_READING = 'the by-person read is still going: this panel fills when it lands'
 
 /** SpendStreamOutcome is what a streamed read of either of this screen's two
- * documents answers. `model` (or `caps`) is the thing to draw and it is present
- * **only** for `complete`: every other status is a section with a sentence
- * beside it and, for all but `withheld`, R1's Retry, which is the caller's to
- * draw because it is the caller's read that is asked again. */
-export interface SpendStreamOutcome {
-  readonly status: StreamStatus
-  readonly source: StreamSource
-  readonly model: SpendModel | null
-  readonly sentence: string | null
-}
+ * documents answers, and it is a union for `SpendOutcome`'s reason: the model
+ * exists **only** where the read is `complete`, and a caller that drew one for
+ * any other status would be drawing the rows of a list no read finished.
+ *
+ * Every other status is a section with a sentence in its own place and, for all
+ * but `withheld`, R1's Retry -- which is the caller's to draw, because it is the
+ * caller's read that is asked again. `dropped` is the exception with no sentence
+ * (`readStream`'s own answer for a section that moved on): a caller reaching it
+ * has already answered `current` false and returned. */
+export type SpendStreamOutcome =
+  | { readonly status: 'complete'; readonly source: StreamSource; readonly model: SpendModel }
+  | {
+      readonly status: Exclude<StreamStatus, 'complete'>
+      readonly source: StreamSource
+      readonly sentence: string | null
+    }
 
 /** CapsStreamOutcome is the caps read's: the panel's own model, and the whole
  * document when one was read.
@@ -2211,13 +2225,18 @@ export interface SpendStreamOutcome {
  * -- neither of which is a row of the feed -- so it is `null` on the stream path
  * and those two figures are left as the Live poll last filled them rather than
  * drawn from a read that does not carry them. */
-export interface CapsStreamOutcome {
-  readonly status: StreamStatus
-  readonly source: StreamSource
-  readonly caps: SpendCaps | null
-  readonly document: JSONDoc | null
-  readonly sentence: string | null
-}
+export type CapsStreamOutcome =
+  | {
+      readonly status: 'complete'
+      readonly source: StreamSource
+      readonly caps: SpendCaps
+      readonly document: JSONDoc | null
+    }
+  | {
+      readonly status: Exclude<StreamStatus, 'complete'>
+      readonly source: StreamSource
+      readonly sentence: string | null
+    }
 
 /**
  * reportFromFeed is the document a streamed report read can assemble: the rows
@@ -2319,7 +2338,7 @@ export async function readReportStream(read: SpendReportStreamRead): Promise<Spe
   // there is no read to name, which is what `source: 'none'` says.
   const decision = spendArguments(read.controls)
   if (!decision.ok) {
-    return { status: 'failed', source: 'none', model: null, sentence: decision.reason }
+    return { status: 'failed', source: 'none', sentence: decision.reason }
   }
   const args = decision.args
   /** modelOf builds the model from the rows read so far and the totals the `end`
@@ -2355,10 +2374,10 @@ export async function readReportStream(read: SpendReportStreamRead): Promise<Spe
     paint: read.paint,
   })
   if (result.status === 'withheld') {
-    return { status: 'withheld', source: 'none', model: null, sentence: SPEND_STREAM_HIDDEN }
+    return { status: 'withheld', source: 'none', sentence: SPEND_STREAM_HIDDEN }
   }
   if (result.status !== 'complete') {
-    return { status: result.status, source: result.source, model: null, sentence: result.sentence }
+    return { status: result.status, source: result.source, sentence: result.sentence }
   }
   const people = await readPeople(read.controls, read.people ?? null)
   const options: SpendOptions = {
@@ -2377,7 +2396,7 @@ export async function readReportStream(read: SpendReportStreamRead): Promise<Spe
           read.caps,
           { ...options, streamed: true },
         )
-  return { status: 'complete', source: result.source, model, sentence: null }
+  return { status: 'complete', source: result.source, model }
 }
 
 /**
@@ -2475,29 +2494,16 @@ export async function readCapsStream(read: CapsStreamRead): Promise<CapsStreamOu
     paint: read.paint,
   })
   if (result.status === 'withheld') {
-    return {
-      status: 'withheld',
-      source: 'none',
-      caps: null,
-      document: null,
-      sentence: CAPS_STREAM_HIDDEN,
-    }
+    return { status: 'withheld', source: 'none', sentence: CAPS_STREAM_HIDDEN }
   }
   if (result.status !== 'complete') {
-    return {
-      status: result.status,
-      source: result.source,
-      caps: null,
-      document: null,
-      sentence: result.sentence,
-    }
+    return { status: result.status, source: result.source, sentence: result.sentence }
   }
   return {
     status: 'complete',
     source: result.source,
     caps: whole !== null ? capsOf(whole) : capsFromFeed(result.rows),
     document: whole,
-    sentence: null,
   }
 }
 
@@ -3429,7 +3435,7 @@ export function fillSpendCaps(
     // read's gap (`capsFromFeed`), and drawing the second as the first would
     // claim a setting nobody read.
     const unset = cell(element, factory, 'span', 'spend-caps-mode')
-    literal(unset, caps.modeCarried ? 'mode unset (acts as observe)' : CAPS_MODE_ABSENT_WORD)
+    literal(unset, caps.modeCarried ? CAPS_MODE_UNSET_WORD : CAPS_MODE_ABSENT_WORD)
   }
   // The largest single lease, drawn outside the block whose word is `global`
   // and above it -- the CLI prints it above the `project` block too. A
