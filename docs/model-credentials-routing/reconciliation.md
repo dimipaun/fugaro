@@ -259,7 +259,7 @@ All answered by the owner on 2026-11-21.
 | D3173 | routing-table | What becomes of `routing.claude.via` and a provider's `models` | The table replaces `via`; a provider's `models` stays as what it can serve | **As recommended** |
 | D3174 | chain-serving | A chain naming Vertex on an `enforce` project | Cap Vertex in this plan, so it is an ordinary paid source | **As recommended** |
 | D3175 | chain-serving | May the service rewrite the `model` field when a call moves down the chain? | Yes, from a checked-in map extended to Vertex; an unmapped source is refused at validation; a written downgrade is the same rewrite | **As recommended** |
-| D3176 | pools | `fugaro run --token` (D3069) | Retire it; `update` wraps each lone account in a pool of one | **As recommended.** Reverses D3069 |
+| D3176 | pools | `fugaro run --token` (D3069) | Retire it; `update` wraps each lone account in a pool of one | **As recommended** when first asked: retire it. **Amended by the owner, 2026-11-21**, in his words: "Maybe --token should become --pool, wdyt?" So: `--token` is rejected with a fix naming `--pool`, and `fugaro run --pool <name>` makes "the launcher's pool" resolve, for that run, to the named pool the launcher owns or is allowed on. The chain is unchanged; the flag is refused where no chain of the run's models names the launcher's pool; the service checks the entitlement; a resumed run keeps the pool its launch named. Reverses D3069 |
 | D3177 | pools | The `subscription_spread` switch | Retire it | **As recommended.** The owner's to confirm as to the provider's terms; answered. Reverses D1622 and D1636 |
 | D3178 | pools | The usage-threshold rule | Behind an owner-run check; round robin and fixed order ship now | **As recommended** |
 | D3179 | pools | Where personal pools live | On workspace-credentials; its D3141, D3142, D3144 and D2974 amended by a documents task | **As recommended** |
@@ -339,7 +339,7 @@ One defensible answer each; stated, not asked.
   the two-release removal of `agent.auth` and its rule for an unmigrated repository (R3 there).
   Withdrawn: every not-started task that writes or reads a craft's access, and contract C1 as
   drafted. Reversed or amended: D3060 (access per craft), D3068 (per-stage accounts), D3069
-  (`--token`), D3064 (the cascade pool becomes the shared pool and the generated chain). The
+  (`--token`, now a narrow `--pool`), D3064 (the cascade pool becomes the shared pool and the generated chain). The
   task-by-task table is in the plan; its first task amends that plan's documents.
 - **workspace-credentials** (D3179, D3180). D3141, D3142, D3144 and D2974 are amended; D2976
   stands. A documents task of this plan amends that plan.

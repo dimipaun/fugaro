@@ -546,8 +546,8 @@
           "internal/cli/run.go",
           "internal/cli/run_attach.go",
           "internal/cli/launch_budget.go",
-          "internal/cli/project_routing.go",
-          "internal/cli/run_chain_test.go"
+          "internal/cli/run_chain_test.go",
+          "plugin/skills/working/SKILL.md"
         ]
       }
     },
@@ -1797,6 +1797,11 @@
       "task": "DOC4",
       "needs": "RT5",
       "reason": "kept: one file, `setup/SKILL.md`"
+    },
+    {
+      "task": "DOC4",
+      "needs": "CS10",
+      "reason": "kept: one file, `working/SKILL.md`"
     },
     {
       "task": "X1",

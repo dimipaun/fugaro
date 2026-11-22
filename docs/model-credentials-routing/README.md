@@ -32,7 +32,8 @@ owner's that supersedes part of it, so it has its own folder, and the plan's fir
 writes into that folder what this one replaces.
 
 **Owner answers of 2026-11-21:** D3170–D3188, eighteen as recommended and one not (D3184: a short
-wait inside the job is kept under a floor, where the recommendation was always to suspend). Four
+wait inside the job is kept under a floor, where the recommendation was always to suspend). He
+amended one the same day: D3176, where `--token` becomes a narrow `--pool` instead of going. Four
 answers reverse or amend an earlier ruling and say so in their row: D3170 and D3171 (D3060 and
 D3068 of credentials belong to models), D3176 (D3069), D3177 (D1622 and D1636 of model crafts)
 and D3180 (D2974 of workspace credentials). The capability map was approved the same day.

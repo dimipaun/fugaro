@@ -9,8 +9,7 @@ No run was launched to write this plan and none launches from it.
 The answers that shaped it, all the owner's of 2026-11-21: the table supersedes craft access now
 and the earlier plan's not-started tasks are re-cut here (D3170); one chain per model (D3171);
 the most specific pattern wins (D3172); the table replaces `routing.claude.via` (D3173); Vertex
-is capped (D3174); the service rewrites the model's spelling on a move (D3175); `--token` is
-retired (D3176); `subscription_spread` is retired (D3177); the threshold rule waits on Check 870
+is capped (D3174); the service rewrites the model's spelling on a move (D3175); `--token` becomes a narrow `--pool` (D3176, amended by the owner the same day); `subscription_spread` is retired (D3177); the threshold rule waits on Check 870
 (D3178); personal pools live on workspace-credentials (D3179); a launcher with no pool is served
 by the next source (D3180); a service account's pool is a project pool an admin fills (D3181);
 per-repository admission stays, for every source kind (D3182); existing accounts become the
@@ -56,6 +55,7 @@ by the task named.
 | --- | --- |
 | The launcher is only ever the verified principal on a slip; a forged requester gets nothing | PL4 (`TestAForgedRequesterGetsNothing`), PR3 (`TestAJobCannotNameAnotherLauncher`) |
 | A personal pool serves only its owner's runs, including after a pause and a reissue | PL4, PL6, PR3, I2 |
+| `--pool` picks only among the launcher's own pools and never changes a chain | PL4 (`TestANamedPoolMustBeTheLaunchers`), CS10 |
 | A service account's run never draws on a person's pool (D2976) | PL6 |
 | The agent never sees a credential, a source or a switch | CS2, CS7, I1 |
 | The in-job gateway holds no key and no table | CS2, DOC1 |
@@ -164,7 +164,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### C2: the pools contract
 
 - Module: `pools`.
-- Acceptance: `internal/routing/pools.go` holds a pool's new members as types (`Rule` with `ordered`, `round-robin`, `failover`; `Owner` as a principal of kind person, service account or project; the optional `Threshold`), the designation record (principal, project, pool) and the interface `LauncherPool(ctx, principal) (PoolRef, bool, error)` the service calls; `contract-pools.md` says where a personal pool's tokens live (the workspace, D3179), that a principal is only ever the verified one on a slip (R7), and the JSON of `fugaro accounts pool ls --json` with state, next reset and headroom and never a value; the stub answers "no pool designated".
+- Acceptance: `internal/routing/pools.go` holds a pool's new members as types (`Rule` with `ordered`, `round-robin`, `failover`; `Owner` as a principal of kind person, service account or project; the optional `Threshold`), the designation record (principal, project, pool) and the interface `LauncherPool(ctx, principal, named) (PoolRef, bool, error)` the service calls, where `named` is the pool a run asked for with `--pool` or empty (D3176); `contract-pools.md` says where a personal pool's tokens live (the workspace, D3179), that a principal is only ever the verified one on a slip (R7), and the JSON of `fugaro accounts pool ls --json` with state, next reset and headroom and never a value; the stub answers "no pool designated".
 - Files: `internal/routing/pools.go` (new), `internal/routing/pools_test.go` (new), `internal/credsvc/launcherpool_stub.go` (new, stub), `docs/model-credentials-routing/contract-pools.md` (new).
 - Interfaces: Consumes nothing. Produces the pool types, the designation record and the lookup interface for `pools`, CS1, MG1 and VS2.
 - Tests: `TestPoolShapesAreStable`.
@@ -324,11 +324,11 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### PL4: the launcher's pool: a person's own tokens
 
 - Module: `pools`.
-- Acceptance: The service resolves "the launcher's pool" for a run from the verified owner of its slip and that person's designation for the project, reads the pool's tokens through the workspace's grant route and serves them only to runs that person launched; no designation, or an empty pool, answers "none" and never an error; no other person's run can name the pool, with a mutation test that a forged `requested_by` changes nothing.
+- Acceptance: The service resolves "the launcher's pool" for a run from the verified owner of its slip and that person's designation for the project, reads the pool's tokens through the workspace's grant route and serves them only to runs that person launched; no designation, or an empty pool, answers "none" and never an error; a run launched with `--pool` resolves to the named pool only where its launcher owns it or is allowed on it, and to nothing otherwise (D3176); no other person's run can name the pool, with a mutation test that a forged `requested_by` changes nothing and one that naming another person's pool gets nothing.
 - Files: `internal/credsvc/launcherpool.go` (new), `internal/credsvc/launcherpool_test.go` (new), `internal/creds/designation.go` (new), `internal/creds/designation_test.go` (new), `internal/budget/rules/rules.json.tmpl`.
 - Interfaces: Consumes C2's interface and the workspace plan's grant route. Produces the real `LauncherPool` behind the stub.
-- Tests: `TestLauncherPoolIsTheSlipOwners`, `TestNoDesignationIsNone`, `TestAForgedRequesterGetsNothing`.
-- Command: `go test ./internal/credsvc/ -run 'TestLauncherPool|TestNoDesignationIsNone|TestAForgedRequesterGetsNothing' -count=1`
+- Tests: `TestLauncherPoolIsTheSlipOwners`, `TestNoDesignationIsNone`, `TestAForgedRequesterGetsNothing`, `TestANamedPoolMustBeTheLaunchers`.
+- Command: `go test ./internal/credsvc/ -run 'TestLauncherPool|TestNoDesignationIsNone|TestAForgedRequesterGetsNothing|TestANamedPoolMustBeTheLaunchers' -count=1`
 - Red step: `TestLauncherPoolIsTheSlipOwners` fails against the stub, which always answers "none".
 - Depends on: C2 (the contract's interface and record); CS9 (kept: one file, `rules.json.tmpl`).
 - Gate: **Not launched before workspace-credentials' I1 has merged: it reads tokens through the route that plan builds.**
@@ -351,7 +351,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### PL6: a service account's pool
 
 - Module: `pools`.
-- Acceptance: A run whose slip names a verified service account (`VerifyServiceAccountLauncher`) resolves "the launcher's pool" to the project pool that principal owns, filled by an admin (D3181); it never resolves to a person's pool (D2976); a run the orchestrator reissues keeps the pool of the launcher recorded on the original slip.
+- Acceptance: A run whose slip names a verified service account (`VerifyServiceAccountLauncher`) resolves "the launcher's pool" to the project pool that principal owns, filled by an admin (D3181); it never resolves to a person's pool (D2976); a run the orchestrator reissues keeps the launcher recorded on the original slip and the pool that launch named.
 - Files: `internal/credsvc/launcherpool.go`, `internal/credsvc/launcherpool_sa_test.go` (new), `internal/credsvc/launchers.go`.
 - Interfaces: Consumes PL4's lookup. Produces nothing a task calls.
 - Tests: `TestAServiceAccountsPool`, `TestAServiceAccountNeverGetsAPersonsPool`, `TestAReissuedRunKeepsItsLauncher`.
@@ -512,11 +512,11 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### CS10: the launch
 
 - Module: `chain-serving`.
-- Acceptance: `fugaro run` asks the slip for the sources the run's models can reach by the table, tells the job about the service wherever a chain has a served source, refuses a launch whose model no entry matches with the fix, and rejects `--token` naming `fugaro accounts pool designate` (D3176); it asks nothing.
-- Files: `internal/cli/run.go`, `internal/cli/run_attach.go`, `internal/cli/launch_budget.go`, `internal/cli/project_routing.go`, `internal/cli/run_chain_test.go` (new).
+- Acceptance: `fugaro run` asks the slip for the sources the run's models can reach by the table, tells the job about the service wherever a chain has a served source, refuses a launch whose model no entry matches with the fix, takes `--pool <name>`, which it carries on the slip request as the pool the launcher's pool resolves to for this run and refuses with the fix where no chain of the run's models names the launcher's pool, and rejects `--token` with a fix naming `--pool` (D3176, amended); the working skill names the flag in the same change; it asks nothing.
+- Files: `internal/cli/run.go`, `internal/cli/run_attach.go`, `internal/cli/launch_budget.go`, `internal/cli/run_chain_test.go` (new), `plugin/skills/working/SKILL.md`.
 - Interfaces: Consumes C1 and CS11's plan of the cloud side. Produces the launch every later live check uses.
-- Tests: `TestRunGrantsByTheTable`, `TestRunRefusesAnUnroutedModel`, `TestTokenFlagIsRejectedWithTheFix`.
-- Command: `go test ./internal/cli/ -run 'TestRunGrantsByTheTable|TestRunRefusesAnUnroutedModel|TestTokenFlagIsRejectedWithTheFix' -count=1`
+- Tests: `TestRunGrantsByTheTable`, `TestRunRefusesAnUnroutedModel`, `TestTokenFlagIsRejectedWithTheFix`, `TestPoolFlagNeedsALaunchersPoolInAChain`.
+- Command: `go test ./internal/cli/ -run 'TestRunGrantsByTheTable|TestRunRefusesAnUnroutedModel|TestTokenFlagIsRejectedWithTheFix|TestPoolFlagNeedsALaunchersPoolInAChain' -count=1`
 - Red step: `TestTokenFlagIsRejectedWithTheFix` fails: the flag is accepted.
 - Depends on: C1 (the contract's names); CS11 (kept, behaviour: it decides whether a job is told about the service from what CS11 plans).
 - Commit: `model-credentials-routing CS10: the launch`
@@ -860,13 +860,13 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### DOC4: the plugin's skills
 
 - Module: `migration`.
-- Acceptance: The `setup` and `working` skills say how a model's source is set (`fugaro routing`, `fugaro accounts pool`), what a paused run is and that it needs nothing from the user, and name no `--token` and no auth mode; the plugin's tests pass against the CLI.
+- Acceptance: The `setup` and `working` skills say how a model's source is set (`fugaro routing`, `fugaro accounts pool`), what a paused run is and that it needs nothing from the user, what `--pool` does, and name no `--token` and no auth mode; the plugin's tests pass against the CLI.
 - Files: `plugin/skills/setup/SKILL.md`, `plugin/skills/setup/reference/decisions.md`, `plugin/skills/working/SKILL.md`.
 - Interfaces: Consumes the CLI after I1 and I2.
 - Tests: The plugin's tests.
 - Command: `go test ./plugin/... -count=1`
 - Red step: The plugin's test of documented flags fails while a skill names `--token`.
-- Depends on: DOC3 (kept: the documents tasks run one after another over shared tests); PL5 (kept: one file, `decisions.md`); RT5 (kept: one file, `setup/SKILL.md`).
+- Depends on: DOC3 (kept: the documents tasks run one after another over shared tests); PL5 (kept: one file, `decisions.md`); RT5 (kept: one file, `setup/SKILL.md`); CS10 (kept: one file, `working/SKILL.md`).
 - Commit: `model-credentials-routing DOC4: the plugin's skills`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -1030,6 +1030,7 @@ through another task. A change to any task's Files re-checks this table.
 | `internal/watch/render.go` | CS9, PR7 | CS9 then PR7 |
 | `plugin/skills/setup/SKILL.md` | RT5, DOC4 | RT5 then DOC4 |
 | `plugin/skills/setup/reference/decisions.md` | PL5, DOC4 | PL5 then DOC4 |
+| `plugin/skills/working/SKILL.md` | CS10, DOC4 | CS10 then DOC4 |
 | `schemas/fugaro.schema.json` | MG5, X2 | MG5 then X2 |
 | `schemas/project-layer.schema.json` | MG5, X2 | MG5 then X2 |
 | `schemas/result.schema.json` | CS8, PR1 | CS8 then PR1 |
@@ -1129,6 +1130,7 @@ integration task named, which deletes the contract's stubs.
 | DOC4 → DOC3 | the documents tasks run one after another over shared tests |
 | DOC4 → PL5 | one file, `decisions.md` |
 | DOC4 → RT5 | one file, `setup/SKILL.md` |
+| DOC4 → CS10 | one file, `working/SKILL.md` |
 | X1 → I1 | Behaviour: it deletes what I1 proves unused |
 | X1 → DOC1 | one file, `SECURITY.md`'s test |
 | X2 → X1 | Behaviour: its gate must exist before a file may lose the key |
@@ -1192,6 +1194,8 @@ and no release depends on: designate a personal pool and move their own token in
 
 - **Layering the table on top of the finished earlier plan** (D3170's alternative): two
   migrations of the same config and about 30 runs building a shape that is then removed.
+- **A broad `--pool`** that replaces every pool source of a chain for one run (D3176's other
+  option): a per-run override of the project's table.
 - **A craft key in a table entry** (D3171's alternative): a second key and a precedence rule.
 - **Always suspending** (the recommendation of D3184): declined by the owner; the floor stays.
 - **The same run id for the resumed job** (D3185's alternative): it breaks one terminal outcome
