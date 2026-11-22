@@ -52,8 +52,14 @@ func TestProjectPolicyMobileDefaults(t *testing.T) {
 	if m.BiometricOnCostly == nil || *m.BiometricOnCostly {
 		t.Errorf("DefaultMobile().BiometricOnCostly = %v, want a written false (D2786)", m.BiometricOnCostly)
 	}
-	if m.CrashReports == nil || !*m.CrashReports {
-		t.Errorf("DefaultMobile().CrashReports = %v, want a written true (D731, D738: crash reports are on by default and opt-out)", m.CrashReports)
+	// The app's crash-report switch is NOT a member of this block: it is a
+	// top-level key beside it, because a member inside the block would be
+	// refused by every reader of the release behind (the block decodes
+	// strictly, Policy.MobileCrashReports's comment). Its own default is on all
+	// the same, and TestProjectPolicyMobileCrashReportsHoldsTheSwitch is where
+	// the key and its reader are held (D731, D738).
+	if !DefaultMobileCrashReports {
+		t.Error("DefaultMobileCrashReports = false, want true (D731, D738: crash reports are on by default and opt-out)")
 	}
 
 	// The spelling of the age and the duration it means are one value in two
@@ -83,8 +89,8 @@ func TestProjectPolicyMobileDefaultsRoundTrip(t *testing.T) {
 		t.Fatalf("the block update writes is not an object: %v", err)
 	}
 	slices.Sort(names)
-	if want := []string{"accepted_providers", "biometric_on_costly", "costly_modes", "crash_reports", "enabled", "max_auth_age", "strict_new_device", "sync"}; !slices.Equal(names, want) {
-		t.Errorf("the published block names %v, want %v: the plan's P6 acceptance is that the node carries every member, and crash_reports is the one D731 and D738 add", names, want)
+	if want := []string{"accepted_providers", "biometric_on_costly", "costly_modes", "enabled", "max_auth_age", "strict_new_device", "sync"}; !slices.Equal(names, want) {
+		t.Errorf("the published block names %v, want %v: the plan's P6 acceptance is that the node carries every member the block has, and the app's crash-report switch is a top-level key beside it and not one of them (D731, D738)", names, want)
 	}
 	p, found, err := Decode(mobileNode(string(block)))
 	if err != nil || !found || p == nil {
@@ -105,8 +111,23 @@ func TestProjectPolicyMobileDefaultsRoundTrip(t *testing.T) {
 	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Pro, rigor.Critical}) {
 		t.Errorf("MobileCostlyModes() = %v", got)
 	}
-	if !p.MobileCrashReports() {
-		t.Error("the published default reads back crash_reports=false, want true: the member a publish writes is the default on (D731, D738)")
+	// A node a publish writes carries the crash-report key true as well, and it
+	// is read back through the key's own reader: the block above is what the
+	// publish fills member by member, and the switch is the key beside it
+	// (MobileCrashReportsForPublish).
+	whole, err := json.Marshal(&Policy{Version: Version, Budget: Budget{Mode: "observe"}, Mobile: DefaultMobile(), MobileCrashReports: MobileCrashReportsForPublish(nil)})
+	if err != nil {
+		t.Fatalf("marshalling the published node: %v", err)
+	}
+	if !strings.Contains(string(whole), `"`+MobileCrashReportsKey+`":true`) {
+		t.Errorf("the node a publish writes does not carry %s:true:\n%s", MobileCrashReportsKey, whole)
+	}
+	q, found, err := Decode(whole)
+	if err != nil || !found || q == nil {
+		t.Fatalf("the node a publish writes does not decode = (%v, %v, %v)", q, found, err)
+	}
+	if !q.MobileCrashReportsOn() {
+		t.Error("MobileCrashReportsOn() = false for the node a publish writes, want true: the switch a publish writes is the default on (D731, D738)")
 	}
 }
 
@@ -147,7 +168,9 @@ func TestProjectPolicyMobileAbsentBlockIsOff(t *testing.T) {
 // TestProjectPolicyMobileReadsTheSwitches is the plan's red step: reading
 // mobile.strict_new_device from a published policy fails until the typed struct
 // exists. Every member is read here, because the one that fails to compile is
-// only the first of the seven a reader needs.
+// only the first of the seven a reader needs. The app's crash-report switch is
+// not one of them and is read from its own node below
+// (TestProjectPolicyMobileCrashReportsHoldsTheSwitch).
 func TestProjectPolicyMobileReadsTheSwitches(t *testing.T) {
 	p, found, err := Decode(mobileNode(`{
 		"enabled": true,
@@ -156,8 +179,7 @@ func TestProjectPolicyMobileReadsTheSwitches(t *testing.T) {
 		"max_auth_age": "6h",
 		"strict_new_device": true,
 		"costly_modes": ["critical"],
-		"biometric_on_costly": true,
-		"crash_reports": false
+		"biometric_on_costly": true
 	}`))
 	if err != nil || !found || p == nil {
 		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
@@ -183,9 +205,6 @@ func TestProjectPolicyMobileReadsTheSwitches(t *testing.T) {
 	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Critical}) {
 		t.Errorf("MobileCostlyModes() = %v, want [critical]", got)
 	}
-	if p.MobileCrashReports() {
-		t.Error("MobileCrashReports() = true, want false: the node writes it false, and a project's written off is what the app reads")
-	}
 	// The list a reader matches a name against is the node's own, never a copy
 	// of the default it could write into.
 	got := p.MobileAcceptedProviders()
@@ -203,13 +222,10 @@ func TestProjectPolicyMobileReadsTheSwitches(t *testing.T) {
 // update that publishes a block with a member added later) gets the product's
 // defaults and not an off switch.
 //
-// **`crash_reports` is the one member this does not hold for**, and the
-// assertion at the end of the test is the reason: an absent member answers off,
-// because the app may send nothing before it has read the switch (D734), and a
-// session a release behind assembled carries no such member. It is the rule
-// MobileStrictNewDevice and MobileBiometricOnCostly follow, and it is what the
-// member-wise fill in MobileForPublish exists to make unreachable: after
-// `fugaro update` no node of this release is left without it.
+// The app's crash-report switch is not a member of this block and is not here: a
+// key that is not there answers off (TestProjectPolicyMobileCrashReportsHoldsTheSwitch),
+// which is the block's own reading the other way round, because nothing may be
+// collected before the switch has been read (D734).
 func TestProjectPolicyMobileAbsentMembersTakeTheDefaults(t *testing.T) {
 	p, _, err := Decode(mobileNode(`{}`))
 	if err != nil || p == nil || p.Mobile == nil {
@@ -230,18 +246,6 @@ func TestProjectPolicyMobileAbsentMembersTakeTheDefaults(t *testing.T) {
 	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Pro, rigor.Critical}) {
 		t.Errorf("MobileCostlyModes() = %v, want [pro critical]", got)
 	}
-	// The one exception, and the whole of the fail-safe: an absent crash_reports
-	// is off (D731, D734, D738). The member's own default is on and the fill
-	// writes it; what answers a block that does not carry it is this reader, and
-	// it answers a phone that was told nothing, which may therefore send
-	// nothing.
-	if p.MobileCrashReports() {
-		t.Error("MobileCrashReports() = true for a block that does not carry the member, want false: nothing is sent before the switch has been read (D734)")
-	}
-	var noBlock *Policy
-	if noBlock.MobileCrashReports() {
-		t.Error("MobileCrashReports() = true for a nil Policy, want false: the pairing route asks before it has read anything")
-	}
 	// A written false is a decision and never the absent member, which is what
 	// the pointers are for: an operator turning one switch off must be able to.
 	off, _, err := Decode(mobileNode(`{"enabled": false, "sync": false}`))
@@ -250,6 +254,171 @@ func TestProjectPolicyMobileAbsentMembersTakeTheDefaults(t *testing.T) {
 	}
 	if off.MobileEnabled() || off.MobileSync() {
 		t.Errorf("a written false reads enabled=%v sync=%v, want both false", off.MobileEnabled(), off.MobileSync())
+	}
+}
+
+// TestProjectPolicyMobileCrashReportsHoldsTheSwitch is D731 and D738's switch
+// where it lives: a **top-level key of the node**, `mobile_crash_reports`,
+// beside the mobile block and never inside it, read by MobileCrashReportsOn.
+//
+// It is beside the block and not a member of it because the block decodes
+// strictly: a member added inside it makes every reader of the release behind
+// refuse the WHOLE policy, and the node is re-read while runs are in flight —
+// which is what `update` promises never to do (docs/design/update-in-flight.md,
+// Policy.MobileCrashReports's comment). TestProjectPolicyMobileDecodesStrictly
+// is the other half of the same fact: the block refuses a member it does not
+// have, so a reader of the release behind is exactly the reader that would
+// refuse `crash_reports` inside it.
+//
+// The reading rules, each of them a way the switch can go wrong:
+//
+//   - a key that is not there is **off**, never the default on — a session a
+//     release behind assembled tells a phone nothing, and nothing may be
+//     collected before the switch has been read (D734);
+//   - a written false is a decision and reads off (D731's opt-out);
+//   - a value that is not a bool is refused rather than read as anything;
+//   - a nil Policy answers off, because the pairing route asks before it has
+//     read anything;
+//   - the value a publish writes for a node without the key is on
+//     (MobileCrashReportsForPublish), which is the whole of what makes the
+//     switch reach an installation that published before it existed.
+func TestProjectPolicyMobileCrashReportsHoldsTheSwitch(t *testing.T) {
+	if MobileCrashReportsKey != "mobile_crash_reports" {
+		t.Fatalf("MobileCrashReportsKey = %q: the key's spelling is the node's, and this test writes nodes with it", MobileCrashReportsKey)
+	}
+	crashNode := func(key string) []byte {
+		return []byte(`{"version": 10, "budget": {"mode": "observe"}, "mobile": {"enabled": true}, "mobile_crash_reports": ` + key + `}`)
+	}
+	for _, tc := range []struct {
+		name string
+		key  string
+		want bool
+	}{
+		{name: "written true", key: "true", want: true},
+		{name: "written false", key: "false", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode(crashNode(tc.key))
+			if err != nil || !found || p == nil {
+				t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+			}
+			if len(p.UnknownKeys) != 0 {
+				t.Errorf("UnknownKeys = %v, want none: the key is this Fugaro's own", p.UnknownKeys)
+			}
+			if got := p.MobileCrashReportsOn(); got != tc.want {
+				t.Errorf("MobileCrashReportsOn() = %v for a key written %s, want %v", got, tc.key, tc.want)
+			}
+		})
+	}
+	// A node that carries no key at all, and one whose value is null: both are
+	// the absent switch, and both answer off.
+	for _, node := range []string{
+		`{"version": 10, "budget": {"mode": "observe"}, "mobile": {"enabled": true}}`,
+		`{"version": 10, "budget": {"mode": "observe"}, "mobile": {"enabled": true}, "mobile_crash_reports": null}`,
+	} {
+		p, found, err := Decode([]byte(node))
+		if err != nil || !found || p == nil {
+			t.Fatalf("Decode(%s) = (%v, %v, %v), want the node read", node, p, found, err)
+		}
+		if p.MobileCrashReports != nil {
+			t.Errorf("the switch of %s decoded to %v, want nil: neither state is an answer", node, p.MobileCrashReports)
+		}
+		if p.MobileCrashReportsOn() {
+			t.Errorf("MobileCrashReportsOn() = true for %s, want false: nothing is sent before the switch has been read (D731, D734, D738)", node)
+		}
+	}
+	// The pairing route asks before it has read anything.
+	var none *Policy
+	if none.MobileCrashReportsOn() {
+		t.Error("MobileCrashReportsOn() = true for a nil Policy, want false: the pairing route asks before it has read anything")
+	}
+	// A value that is not a bool is refused: the switch decides whether anything
+	// is sent, and a string that happens to be truthy is not an answer.
+	if p, _, err := Decode(crashNode(`"yes"`)); err == nil {
+		t.Fatalf("a key written as a string was read: %+v", p.MobileCrashReports)
+	}
+	// The fill: the value a publish writes for a node without the key is the
+	// default on, and a node's own value is written back as it stands.
+	if got := MobileCrashReportsForPublish(nil); got == nil || !*got {
+		t.Errorf("MobileCrashReportsForPublish(nil) = %v, want a written true: the reader answers an absent key off, so the fill is the only thing that puts the default on the node", got)
+	}
+	no := false
+	if got := MobileCrashReportsForPublish(&no); got != &no {
+		t.Errorf("MobileCrashReportsForPublish(a written false) = %v, want the node's own false: a publish keeps the project's answer (O13)", got)
+	}
+}
+
+// TestProjectPolicyMobileCrashReportsToleratedByAReaderThatPredatesIt is the
+// test the review of T3.1 asked for, and it is the reason the switch is a
+// top-level key: **the node a publish writes decodes with the release behind's
+// key set and its member set**, so a run in flight on the previous image — and
+// a CLI of the previous release — reads the whole policy it is served after one
+// `fugaro update` (docs/design/update-in-flight.md).
+//
+// The two sets are named here rather than taken from this binary: the previous
+// release's mobile member set is written out as the seven names it knew, and its
+// key set is this Fugaro's own list with the switch's key removed — which is
+// exactly what a reader of that age carries. The node is built the way a publish
+// builds one (MobileForPublish and MobileCrashReportsForPublish, the two
+// functions internal/cli's buildProjectPolicy calls), so the claim is about the
+// node the update really writes and not about a fixture.
+func TestProjectPolicyMobileCrashReportsToleratedByAReaderThatPredatesIt(t *testing.T) {
+	// The mobile members the release behind decodes, as that release spelled
+	// them (its own closed set, which had no crash_reports). A member added to
+	// the block since would be refused by its decodeMobile, so the block of the
+	// node a publish writes must name no other.
+	previousMembers := []string{
+		"accepted_providers", "biometric_on_costly", "costly_modes", "enabled",
+		"max_auth_age", "strict_new_device", "sync",
+	}
+	raw, err := json.Marshal(&Policy{
+		Version:            Version,
+		Budget:             Budget{Mode: "observe"},
+		Mobile:             MobileForPublish(nil),
+		MobileCrashReports: MobileCrashReportsForPublish(nil),
+	})
+	if err != nil {
+		t.Fatalf("marshalling the node a publish writes: %v", err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("the node a publish writes is not a document: %v", err)
+	}
+	block, ok := doc["mobile"]
+	if !ok {
+		t.Fatal("the node a publish writes carries no mobile block")
+	}
+	names, err := objectMemberNames(block)
+	if err != nil {
+		t.Fatalf("the block is not an object: %v", err)
+	}
+	slices.Sort(names)
+	if !slices.Equal(names, previousMembers) {
+		t.Errorf("the mobile block a publish writes names %v, want %v: a member beside them would be refused by the release behind's decodeMobile, which returns that error for the whole policy", names, previousMembers)
+	}
+	if err := checkMemberNames("mobile", names, mobileMembers); err != nil {
+		t.Errorf("the block a publish writes is refused by this Fugaro's own member set as well: %v", err)
+	}
+
+	preKey := make(map[string]bool, len(knownTopLevelKeys))
+	for k, v := range knownTopLevelKeys {
+		preKey[k] = v
+	}
+	delete(preKey, MobileCrashReportsKey)
+	q, found, err := decodeWithKeys(raw, preKey)
+	if err != nil || !found || q == nil {
+		t.Fatalf("the reader that predates the key refused the node a publish writes: (%v, %v, %v)", q, found, err)
+	}
+	if want := []string{MobileCrashReportsKey}; !slices.Equal(q.UnknownKeys, want) {
+		t.Errorf("the reader that predates the key lists UnknownKeys = %v, want %v: that is the node a CLI of that age refuses at publish time and a runner of it logs", q.UnknownKeys, want)
+	}
+	// The rest of the policy stays in force beside a key the reader does not
+	// know, which is the whole point of P8: the run keeps running.
+	if !q.MobileEnabled() {
+		t.Error("the reader that predates the key reads the mobile block as disabled: the block it knows is there, and only the new key is unknown")
+	}
+	if q.Budget.Mode != "observe" {
+		t.Errorf("Budget.Mode = %q, want observe: the rest of the policy stays in force beside a key the reader does not know", q.Budget.Mode)
 	}
 }
 
@@ -371,13 +540,18 @@ func TestProjectPolicyMobileRefusesAnEntryItCannotResolve(t *testing.T) {
 	}
 }
 
-// TestProjectPolicyMobileForPublishFillsEveryMember is the update-side rule
-// D738 records, and it is the one that keeps a member added by a later release
+// TestProjectPolicyMobileForPublishFillsEveryMember is the update-side rule the
+// block follows, and it is the one that keeps a member added by a later release
 // from being lost: a node published before the member existed carries a block
 // without it, and a publish that returned that block as it found it would leave
-// the member off the node for ever — while MobileCrashReports answers an absent
-// member off, so a switch that is on by default would be permanently off on
-// every installation that has not published since.
+// the member off the node for ever.
+//
+// The app's crash-report switch is not a member of this block and is filled
+// beside it (MobileCrashReportsForPublish,
+// TestProjectPolicyMobileCrashReportsHoldsTheSwitch): a member added inside the
+// block would be refused by every reader of the release behind, which is why
+// D731's switch is a top-level key and why this fill is about the block's own
+// members only.
 //
 // Three claims, and each of them is a way the fill can go wrong:
 //
@@ -397,10 +571,15 @@ func TestProjectPolicyMobileForPublishFillsEveryMember(t *testing.T) {
 	if got, want := MobileForPublish(&Mobile{}), DefaultMobile(); !reflect.DeepEqual(got, want) {
 		t.Errorf("MobileForPublish(&Mobile{}) = %+v, want DefaultMobile() = %+v: a block a release behind published is filled member by member, so a member added to the struct without a line here is left off every such node", got, want)
 	}
-	// The absent member is the one this release adds, and it is filled with the
-	// default a publish writes rather than with the reader's fail-safe.
-	if got := MobileForPublish(&Mobile{Enabled: boolPtr(false)}); got.CrashReports == nil || !*got.CrashReports {
-		t.Errorf("MobileForPublish fills crash_reports as %v, want a written true: the reader answers an absent member off, so the fill is the only thing that puts the default on the node", got.CrashReports)
+	// A block that carries one member is filled for the rest and keeps what it
+	// carries, which is what makes the published block state every switch
+	// explicitly (D2796) rather than leaving a reader to know a default.
+	partial := MobileForPublish(&Mobile{Enabled: boolPtr(false)})
+	if partial.Enabled == nil || *partial.Enabled {
+		t.Errorf("MobileForPublish turned the block's written enabled=%v into something else, want the project's own false", partial.Enabled)
+	}
+	if partial.Sync == nil || !*partial.Sync {
+		t.Errorf("MobileForPublish left a partial block's sync as %v, want the default a publish writes", partial.Sync)
 	}
 
 	written := &Mobile{
@@ -411,7 +590,6 @@ func TestProjectPolicyMobileForPublishFillsEveryMember(t *testing.T) {
 		StrictNewDevice:   boolPtr(true),
 		CostlyModes:       []rigor.Rigor{rigor.Critical},
 		BiometricOnCostly: boolPtr(true),
-		CrashReports:      boolPtr(false),
 	}
 	got := MobileForPublish(written)
 	if !reflect.DeepEqual(got, written) {

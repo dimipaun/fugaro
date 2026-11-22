@@ -841,20 +841,21 @@ func TestUpdateKeepsAHandWrittenModelGrades(t *testing.T) {
 }
 
 // TestUpdateConvergesTheCrashReportSwitch is D738's whole update-side claim at
-// the one door the HARD RULE is about: an installation whose published node
-// carries the mobile block a release behind wrote — every member there but
-// `crash_reports`, which is the member this release adds (D731) — reaches it
-// with `fugaro update` alone, and one run is enough.
+// the one door the HARD RULE is about: an installation whose published node is
+// the node a release behind wrote — the mobile block as it states it and no
+// `mobile_crash_reports` key, which is the key this release adds (D731) —
+// reaches it with `fugaro update` alone, and one run is enough.
 //
 // The node is the current version's and not the release behind's, which is the
-// state that makes the member-wise fill load-bearing: no migration step runs
-// for it, so `fugaro update`'s policy stage is the only thing that could carry
-// the member, and it does it through the `mobile` row `policyConfigDrift` has
-// (project_policy_test.go's TestMobileCrashReportsDriftNamesTheMember is the
-// same claim at the comparison itself). Without the fill the row would be silent
-// — the node carries a block, so the publish keeps it — and the app of every
+// state that makes the key's own fill load-bearing: no migration step runs for
+// it, so `fugaro update`'s policy stage is the only thing that could carry the
+// key, and it does it through the row `policyConfigDrift` has for it
+// (project_policy_test.go's TestMobileCrashReportsDriftNamesTheKey is the same
+// claim at the comparison itself). Without the fill the row would be silent —
+// the node carries no value, so nothing would write one — and the app of every
 // installation at the release behind would send nothing for ever, because the
-// reader answers a member that is not there off (projectpolicy.MobileCrashReports).
+// reader answers a key that is not there off
+// (projectpolicy.MobileCrashReportsOn).
 //
 // The published default is `true` and not the reader's fail-safe, which is the
 // other half: the value in the node is what an operator reads and what a hand
@@ -875,13 +876,13 @@ func TestUpdateConvergesTheCrashReportSwitch(t *testing.T) {
 	}
 	r := newConvergeRig(t, node)
 	// The fixture is the release behind, or the assertions below prove nothing:
-	// the block it carries predates the member, in the node's own bytes.
+	// the node it carries predates the key, in the node's own bytes.
 	raw, err := json.Marshal(r.db.Value(projectpolicy.PathShared()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(raw, []byte(`"crash_reports"`)) {
-		t.Fatalf("the fixture's node already carries crash_reports (%s): it is not an installation whose block predates the member", raw)
+	if bytes.Contains(raw, []byte(`"`+projectpolicy.MobileCrashReportsKey+`"`)) {
+		t.Fatalf("the fixture's node already carries %s (%s): it is not an installation whose node predates the key", projectpolicy.MobileCrashReportsKey, raw)
 	}
 
 	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
@@ -890,11 +891,11 @@ func TestUpdateConvergesTheCrashReportSwitch(t *testing.T) {
 	if p.Mobile == nil {
 		t.Fatal("after one fugaro update, the node carries no mobile block: the run dropped the project's own switches")
 	}
-	if p.Mobile.CrashReports == nil || !*p.Mobile.CrashReports {
-		t.Errorf("after one fugaro update, the node's mobile.crash_reports = %v, want a written true: the member did not reach the node, so the app would send nothing and the operator would have no diff to read", p.Mobile.CrashReports)
+	if p.MobileCrashReports == nil || !*p.MobileCrashReports {
+		t.Errorf("after one fugaro update, the node's %s = %v, want a written true: the key did not reach the node, so the app would send nothing and the operator would have no diff to read", projectpolicy.MobileCrashReportsKey, p.MobileCrashReports)
 	}
-	if !p.MobileCrashReports() {
-		t.Error("after one fugaro update, MobileCrashReports() = false, want true: the reader every phone's session is assembled from is what decides whether a report is sent")
+	if !p.MobileCrashReportsOn() {
+		t.Error("after one fugaro update, MobileCrashReportsOn() = false, want true: the reader every phone's session is assembled from is what decides whether a report is sent")
 	}
 	if p.MobileSync() {
 		t.Error("after one fugaro update, sync = true, want the written false: the fill overwrote a member the project chose")

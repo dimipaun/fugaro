@@ -4679,8 +4679,13 @@ func TestProjectPolicyPublishKeepsTheOrchestratorSwitchAndIssueSync(t *testing.T
 // a written `sync: false` away from a project that chose to store nothing in
 // the identity project, silently, from a machine whose config predates the key.
 //
-// The diff has to say it was kept, the two lines above it: the member is
-// unchanged, so no +/- line above mentions it, and an operator who set these
+// The app's crash-report switch is kept the same way and is a key of its own
+// beside the block (`mobile_crash_reports`, D731, D738): the fixture writes it
+// false, which is exactly D731's opt-out, and the publish has to carry that
+// answer back and say so (O13: a hand edit is the only door that value has).
+//
+// The diff has to say both were kept, the two lines above it: the members are
+// unchanged, so no +/- line above mentions them, and an operator who set these
 // switches would read that silence as "they are gone".
 func TestProjectPolicyPublishKeepsTheMobileBlock(t *testing.T) {
 	f := newProjectFixture(t, "")
@@ -4696,6 +4701,7 @@ func TestProjectPolicyPublishKeepsTheMobileBlock(t *testing.T) {
 			"costly_modes":        []string{"critical"},
 			"biometric_on_costly": true,
 		},
+		"mobile_crash_reports": false,
 	})
 	out, _, err := execute(t, "project", "policy", "publish")
 	if err != nil {
@@ -4723,31 +4729,39 @@ func TestProjectPolicyPublishKeepsTheMobileBlock(t *testing.T) {
 	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Critical}) {
 		t.Errorf("MobileCostlyModes() = %v, want [critical]", got)
 	}
-	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"mobile"`) {
-		t.Errorf("the node no longer carries mobile:\n%s", raw)
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"mobile"`) || !strings.Contains(raw, `"mobile_crash_reports"`) {
+		t.Errorf("the node no longer carries mobile and its crash-report key:\n%s", raw)
 	}
-	if want := "mobile kept: pairing on, sync off, crash reports on, providers google.com, auth age 6h, a new device needs a QR code, costly modes critical, biometric on a costly start"; !strings.Contains(out, want) {
-		t.Errorf("the publish does not say %q:\n%s", want, out)
+	if p.MobileCrashReportsOn() {
+		t.Error("MobileCrashReportsOn() = true, want false: the publish turned the app's crash reports back on over a written false")
+	}
+	for _, want := range []string{
+		"mobile kept: pairing on, sync off, providers google.com, auth age 6h, a new device needs a QR code, costly modes critical, biometric on a costly start",
+		"mobile_crash_reports kept: false",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the publish does not say %q:\n%s", want, out)
+		}
 	}
 }
 
-// TestMobileCrashReportsDriftNamesTheMember is the update-side half of D738 at
-// the policy stage's own input: a node whose mobile block predates the member
-// `crash_reports` (every other member there, which is exactly the block the
-// release behind published) is a member `policyConfigDrift` reports, and the
-// node the fill wrote is not — so one `fugaro update` publishes the member and
-// the run after it finds nothing.
+// TestMobileCrashReportsDriftNamesTheKey is the update-side half of D738 at the
+// policy stage's own input: a node whose policy carries no `mobile_crash_reports`
+// (every other key there, which is exactly the node the release behind
+// published) is a member `policyConfigDrift` reports, and the node the fill
+// wrote is not — so one `fugaro update` publishes the key and the run after it
+// finds nothing.
 //
 // It is the typed-Bitbucket-tokens row's reason (the comment above
 // "add(\"mobile\", ...)" in init_policy_publish.go): the key is new with a
 // release that does not move the node's version, so an installation already at
 // this version has no migration step that would carry it, and this comparison
 // is the whole of what makes `fugaro update` write it. Without the fill, a node
-// that carries a block is left exactly as it is — and the reader answers an
-// absent member off (projectpolicy.MobileCrashReports), so the app of every
-// installation at the release behind would send nothing for ever, with no diff
-// for the operator to read.
-func TestMobileCrashReportsDriftNamesTheMember(t *testing.T) {
+// is left exactly as it is — and the reader answers an absent key off
+// (projectpolicy.MobileCrashReportsOn), so the app of every installation at the
+// release behind would send nothing for ever, with no diff for the operator to
+// read.
+func TestMobileCrashReportsDriftNamesTheKey(t *testing.T) {
 	lc := &localcfg.Config{Budget: &localcfg.Budget{Mode: "enforce", PerRunUSD: 5}}
 	budget := projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}
 	members := func(p *projectpolicy.Policy) []string {
@@ -4758,25 +4772,24 @@ func TestMobileCrashReportsDriftNamesTheMember(t *testing.T) {
 		return got
 	}
 
-	// The block the release before this one published: the seven members that
-	// existed, each written, and no crash_reports.
-	previous := projectpolicy.DefaultMobile()
-	previous.CrashReports = nil
-	if got := members(&projectpolicy.Policy{Budget: budget, Mobile: previous}); !slices.Equal(got, []string{"mobile"}) {
-		t.Errorf("policyConfigDrift = %v, want [mobile]: a block that predates the member is the gap the update's policy stage exists to close", got)
+	// The node the release before this one published: the mobile block as it
+	// states it and no crash-report key.
+	previous := &projectpolicy.Policy{Budget: budget, Mobile: projectpolicy.DefaultMobile()}
+	if got := members(previous); !slices.Equal(got, []string{projectpolicy.MobileCrashReportsKey}) {
+		t.Errorf("policyConfigDrift = %v, want [%s]: a node that predates the key is the gap the update's policy stage exists to close", got, projectpolicy.MobileCrashReportsKey)
 	}
 	// The node the fill wrote — what this run's publish leaves — drifts on
 	// nothing, which is the "the next update finds no drift" half.
-	if got := members(&projectpolicy.Policy{Budget: budget, Mobile: projectpolicy.MobileForPublish(previous)}); len(got) != 0 {
+	filled := &projectpolicy.Policy{Budget: budget, Mobile: previous.Mobile, MobileCrashReports: projectpolicy.MobileCrashReportsForPublish(previous.MobileCrashReports)}
+	if got := members(filled); len(got) != 0 {
 		t.Errorf("the node the fill wrote drifts on %v, want nothing: the update would publish on every run for ever", got)
 	}
-	// And a project that wrote the switch off keeps it: the fill fills a member
-	// the block lacks and never overwrites one it carries (D731's opt-out, which
+	// And a project that wrote the switch off keeps it: the fill fills a key the
+	// node lacks and never overwrites one it carries (D731's opt-out, which
 	// today only a hand edit can write — O13).
 	no := false
-	off := projectpolicy.MobileForPublish(previous)
-	off.CrashReports = &no
-	if got := members(&projectpolicy.Policy{Budget: budget, Mobile: off}); len(got) != 0 {
-		t.Errorf("a node whose block writes crash_reports false drifts on %v, want nothing: the publish keeps the project's own answer", got)
+	off := &projectpolicy.Policy{Budget: budget, Mobile: previous.Mobile, MobileCrashReports: &no}
+	if got := members(off); len(got) != 0 {
+		t.Errorf("a node whose policy writes %s false drifts on %v, want nothing: the publish keeps the project's own answer", projectpolicy.MobileCrashReportsKey, got)
 	}
 }
