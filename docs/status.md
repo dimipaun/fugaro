@@ -68,6 +68,7 @@ Merged since the last read (86 commits, read from `4ce11172f`; 2 are specs' own 
 
 | Spec | State |
 | --- | --- |
+| console-fixes | planned 2026-11-21: decisions D3200-D3214 answered, D3215-D3224 resolutions (D3223, D3224, the amended D3215, D3217, D3218, D3220, tension T1 and the reindex IAM question wait on the owner, O3, O4, O6, O7), 37 tasks in four modules, nothing built and no task approved; owner Checks 870 and 871 after the build |
 | managed-flag-ergonomics | planned 2026-11-21: decisions D2211-D2219 and D3160 answered (only managed projects: every writing command stops on an unmanaged one), 12 tasks, nothing built and no task approved (docs/managed-flag-ergonomics) |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
 | voice-module, collateral, backlog, plans, design | no plan or not a spec (plans holds v1's milestone plans M0 to M6, design holds v1 and update-in-flight) |
