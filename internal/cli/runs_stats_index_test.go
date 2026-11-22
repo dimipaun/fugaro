@@ -82,6 +82,20 @@ func statsIndexInstall(t *testing.T, idx runindex.Reader) {
 	t.Cleanup(func() { runIndexReader = prev })
 }
 
+// statsIndexMintTime is the moment a run id names, which is what the fold
+// writes as an entry's updated_at when the run's record and launch carry none:
+// a run that was claimed and never launched has no other moment, and an entry
+// with no sort key would fall outside every window (contract-index.md, "The run
+// document").
+func statsIndexMintTime(t *testing.T, id string) time.Time {
+	t.Helper()
+	at, err := runstore.RunTime(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return at
+}
+
 // statsIndexEntry is one index entry for a run of the fixture's window: the
 // fields this command reads, and nothing else.
 func statsIndexEntry(id, launchedBy string, updated time.Time, rec *runstore.Record) runindex.Entry {
@@ -204,18 +218,23 @@ func TestRunsStatsReadsIndexNoObjects(t *testing.T) {
 // unlaunched runs, and it is in a row: the unknown one with no record, which is
 // where the record read puts a started run whose launch nobody can read
 // (TestRunsStatsUnreadableLaunchIsUnknownNotUnlaunched). The entry the fold
-// wrote with neither record and no status is the one that never started.
+// wrote with neither record and no status is the one that never started, and it
+// is in this window on the sort key the fold gives it -- its own run id's mint
+// time, `updated_at`'s last fallback -- which is the key such a run has and the
+// only reason the branch below is reachable at all.
 func TestRunsStatsCountsAnOverlayRowAsARunNotAsUnlaunched(t *testing.T) {
 	f := newCloudFixture(t)
 	env := envOn(t, f, gcpfake.NewGCS(t).Bucket(t, "runs"))
 	day := time.Now().UTC().Truncate(time.Second)
+	overlayOnly, neverLaunched := userStatsID(day, 1), userStatsID(day, 2)
 	statsIndexInstall(t, &statsIndex{complete: true, entries: []runindex.Entry{
 		// The overlay's row: the run id and the slug are the path's own, the
 		// status is the overlay's, and there is nothing else to carry.
-		{RunID: userStatsID(day, 1), Slug: appSlug, UpdatedAt: day, Status: runstore.StatusRunning},
+		{RunID: overlayOnly, Slug: appSlug, UpdatedAt: day, Status: runstore.StatusRunning},
 		// The fold's row for a run that was claimed and never launched: a
-		// task.json and nothing else, so nothing settled a status for it.
-		{RunID: userStatsID(day, 2), Slug: appSlug, UpdatedAt: day.Add(-time.Minute)},
+		// task.json and nothing else, so nothing settled a status for it and its
+		// sort key is the moment its run id names.
+		{RunID: neverLaunched, Slug: appSlug, UpdatedAt: statsIndexMintTime(t, neverLaunched)},
 	}})
 
 	read, err := readUserStatsRuns(context.Background(), env, []string{appSlug}, day.Add(-7*24*time.Hour), userStatsMaxRuns)
