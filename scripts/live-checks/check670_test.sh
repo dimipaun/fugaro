@@ -126,7 +126,7 @@ write_fake_fugaro() { # dir
 # marker file.
 set -euo pipefail
 state=${FAKE670_DIR:-}
-printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"$state/logs/fugaro.calls"
+printf 'fugaro %s (in %s, ide-marker=%s)\n' "$*" "$PWD" "${CLAUDE_CODE_SSE_PORT:-none}" >>"$state/logs/fugaro.calls"
 
 knob() { # knob NAME [DEFAULT]
   if [ -f "$state/$1" ]; then cat "$state/$1"; else printf '%s' "${2:-}"; fi
@@ -802,6 +802,25 @@ test_a_coding_agents_session_is_refused() {
   expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "fugaro" "a coding agent's session: nothing is run"
 }
 
+# The editor extension's own marker is not a coding agent's: it says this shell
+# sits in an editor's terminal, where the owner is still the one typing, so the
+# guard does not refuse it. It must not reach the children either — they run with
+# their stdin on /dev/null and no terminal, and in a run with no terminal
+# agentenv.Session reads that marker as a coding agent's session, so `add`, `rm`,
+# `update` and the runs would be refused and the block would record those
+# refusals as findings about the release, after the repository had already been
+# enrolled and the two runs spent.
+test_an_editors_own_marker_is_dropped_not_refused() {
+  local dir=$work/editor-marker
+  prepare "$dir"
+  run_check "$dir" CLAUDE_CODE_SSE_PORT=12345
+  expect_status "$status" 0 "an editor's own marker: the run is the ordinary one"
+  expect_verdict agent-session PASS "an editor's own marker: the owner's own session, not refused"
+  expect_row agent-session "CLAUDE_CODE_SSE_PORT" "an editor's own marker: the row says what it did with it"
+  expect_absent "$(cat "$dir/state/logs/fugaro.calls")" "ide-marker=12345" "an editor's own marker: no call saw it"
+  expect_contains "$(cat "$dir/state/logs/fugaro.calls")" "ide-marker=none" "an editor's own marker: the calls read none"
+}
+
 test_xtrace_is_refused() {
   local dir=$work/xtrace
   prepare "$dir"
@@ -1327,6 +1346,7 @@ t test_a_repository_that_is_not_a_sandbox_is_refused
 t test_a_repository_that_is_not_owner_slash_name_is_refused
 t test_fugaro_prod_is_refused_without_production
 t test_a_coding_agents_session_is_refused
+t test_an_editors_own_marker_is_dropped_not_refused
 t test_xtrace_is_refused
 t test_a_key_file_that_is_not_there_is_not_measured
 t test_a_key_file_that_is_not_0600_is_not_measured

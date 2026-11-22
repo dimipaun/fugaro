@@ -541,6 +541,18 @@ guard_xtrace() {
 # guard_agent_session: `add` and `rm` refuse a coding agent's session by name
 # before any read, and this check runs them. Refusing here rather than letting
 # each command refuse is what makes the block say why.
+#
+# The loop is the five markers that say an agent, and not a person, is driving
+# this shell: agentenv.AgentMarkers. agentenv.Markers holds a sixth,
+# CLAUDE_CODE_SSE_PORT, and it is not one of those -- it says this shell sits in
+# an editor's terminal, where the person is still the one typing, so refusing on
+# it would lock you out of this check in your own editor. It is DROPPED from this
+# script's environment instead: every child below has no terminal (its stdin is
+# on /dev/null), and in a run with no terminal agentenv.Session reads that marker
+# as a coding agent's session -- `add`, `rm`, `update` and the runs would take
+# the agent-refusal path, and the block would record those refusals as findings
+# about the release after this check had already enrolled the repository and
+# spent its billable runs.
 guard_agent_session() {
   local marker="" name
   for name in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_REMOTE CURSOR_AGENT AI_AGENT; do
@@ -549,7 +561,8 @@ guard_agent_session() {
   if [ -n "$marker" ]; then
     stop "${marker} is set, so this is a coding agent's session: Check 670 is yours to run at your own terminal, on a throwaway installation, and no agent runs any step of it"
   fi
-  fact agent-session PASS "no coding agent's marker is set (CLAUDECODE and the like): this is your own session, which is the one this check is written for"
+  unset CLAUDE_CODE_SSE_PORT
+  fact agent-session PASS "no coding agent's marker is set (CLAUDECODE and the like): this is your own session, which is the one this check is written for — the editor extension's own marker (CLAUDE_CODE_SSE_PORT) is dropped from this script's environment rather than refused: it says this shell sits in an editor's terminal, not that an agent is driving it, and every command below has no terminal, where the CLI would read it as an agent's own session"
 }
 
 # guard_inputs: the installation, the repository and the key file, read before
