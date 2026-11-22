@@ -203,7 +203,7 @@ type Summary struct {
 	// absent when no run's compute is known: "not estimated" is not "free".
 	// ComputeRuns says how many runs the figure covers, and
 	// ComputeNotEstimated how many carry no figure at all.
-	ComputeMicros       *int64 `json:"compute_micros"`
+	ComputeMicros       *int64 `json:"compute_micros,omitempty"`
 	ComputeRuns         int64  `json:"compute_runs"`
 	ComputeNotEstimated int64  `json:"compute_not_estimated"`
 	// Estimate is the table `plan status` reads instead of scanning history

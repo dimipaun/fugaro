@@ -249,7 +249,7 @@ time of the write, written with an ETag compare-and-swap (`rtdb.ServerNow`,
 | --- | --- | --- |
 | `holder` | string | who holds it: the execution's name, or the CLI's own identity for a reset |
 | `at` | timestamp | the server time of the write, never a local clock's |
-| `expires_at` | timestamp | `at` plus **20 minutes**: twice the history job's own timeout (`600s`, `deploy/terraform/gcp/modules/installation/history.tf`), so a dead execution's lease lapses (RI5) |
+| `expires_at` | timestamp | `at` plus **60 minutes**: twice the longest execution that may hold it, the rollover's own `1800s` (`deploy/terraform/gcp/modules/installation/history.tf`, whose Scheduler call overrides the job's `600s`), so a dead execution's lease lapses (RI5) |
 | `cursor` | string, absent when no walk is unfinished | the reindex walk's position, `runindex.Cursor.Encode` |
 
 A reindex at 100x is about a million reads, far past the job's 600 s timeout
@@ -346,8 +346,8 @@ written:
 - F39's "far past the history job's 600 s timeout" is right: the job's execution
   timeout is `600s` (`deploy/terraform/gcp/modules/installation/history.tf`), and
   the CLI's own sweep deadline is tighter still (`historyTimeout`, 8 minutes,
-  `internal/cli/history.go`). The lease's 20 minutes is twice the job's timeout,
-  as RI5 says.
+  `internal/cli/history.go`). The lease's 60 minutes is twice the longest
+  execution that may hold it, the rollover's `1800s`, as RI5 says.
 - The overlay's two nodes are `agents/<slug>/<run>` and
   `outcomes/<day>/<slug>/<run>` (`internal/budget/model.go`), and `AgentEntry`
   and `Outcome` carry the identity and title fields the overlay must not read.
