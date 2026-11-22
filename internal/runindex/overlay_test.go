@@ -140,6 +140,24 @@ func TestOverlayStatusOnConflict(t *testing.T) {
 	}
 }
 
+// TestOverlaySettlesTheStateAPageWasReadBy: a page read per state is a page
+// about the state the run is in, and the merge is what decides it. An entry the
+// fold read as going, and an outcome that settled it, is not a row of a page of
+// going runs -- and it is a row of the page of the state it ended in, which the
+// index does not carry yet either.
+func TestOverlaySettlesTheStateAPageWasReadBy(t *testing.T) {
+	f := folded(t)
+	f.seed(Entry{RunID: runNewest, Slug: pageSlug, UpdatedAt: indexAt(11, 0), Status: runstore.StatusRunning})
+	f.seedOutcome(pageSlug, runNewest, runstore.StatusFailed)
+
+	if got := ids(f.list(Filter{States: []runstore.Status{runstore.StatusRunning}})); len(got) != 0 {
+		t.Fatalf("the running page = %v, want no rows: the outcome settled the run as failed", got)
+	}
+	if got, want := ids(f.list(Filter{States: []runstore.Status{runstore.StatusFailed}})), []string{runNewest}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("the failed page = %v, want %v: the index has the run as going, and the outcome is what settled it", got, want)
+	}
+}
+
 // TestOverlayNeverSuppliesPRorIdentity is F9: both overlay nodes are written by
 // the run's own service account, so nothing they say about the run is read --
 // only that it exists, whether it is going, and how it ended.

@@ -224,10 +224,29 @@ func (r *firestoreReader) page(ctx context.Context, f Filter, sum Summary, overl
 	for _, e := range entries {
 		merged = append(merged, mergeEntry(e, rows[e.RunID]))
 	}
+	// A row the overlay carries and the queries did not reach is a run the
+	// index may already carry, and it has to be placed where its entry is and
+	// not where the overlay's own account of it is. A page starts after a run
+	// id and that run's cursor is read off its entry (cursor), so a row placed
+	// at its heartbeat would be printed above the runs a page resuming from it
+	// then skips, and the runs between the two positions would be listed by no
+	// page at all. The entries are read for these rows alone -- a run a query
+	// returned is merged above -- and the rows are the live set and the days
+	// since the fold, so the reads are bounded by the overlay's own size rather
+	// than by the history's (F10).
 	for id, o := range rows {
-		if !seen[id] && overlayMatches(o, f) {
-			merged = append(merged, o.entry())
+		if seen[id] || !overlayMatches(o, f) {
+			continue
 		}
+		e, found, err := r.entry(ctx, id)
+		if err != nil {
+			return Page{}, err
+		}
+		if !found {
+			merged = append(merged, o.entry())
+			continue
+		}
+		merged = append(merged, mergeEntry(e, o))
 	}
 	sort.Slice(merged, func(i, j int) bool { return newer(merged[i], merged[j]) })
 
@@ -240,6 +259,13 @@ func (r *firestoreReader) page(ctx context.Context, f Filter, sum Summary, overl
 		// what stops the walk, and here to the overlay's, which are read whole
 		// and have no order to stop in.
 		if !f.Since.IsZero() && e.UpdatedAt.Before(f.Since) {
+			continue
+		}
+		// The state is applied here and not only in the query the page was read
+		// by: a page read per state is a page about the state the run is in, and
+		// the merge is what decides it -- an entry the fold read as going and an
+		// outcome that settled it is not a row of a page of going runs.
+		if len(f.States) > 0 && !slices.Contains(f.States, e.Status) {
 			continue
 		}
 		if f.Active && !active(e, rows[e.RunID]) {
@@ -342,6 +368,24 @@ func (r *firestoreReader) cursor(ctx context.Context, f Filter, overlay *overlay
 	}
 	at := row.At
 	return &Cursor{UpdatedAt: &at, RunID: row.RunID}, nil
+}
+
+// entry is one run's index document, or false where the index does not carry
+// the run -- a run the fold has not read yet, which the overlay is the whole
+// account of.
+func (r *firestoreReader) entry(ctx context.Context, run string) (Entry, bool, error) {
+	doc, err := r.db.Get(ctx, entryCollection, run)
+	if errors.Is(err, firestore.ErrNotFound) {
+		return Entry{}, false, nil
+	}
+	if err != nil {
+		return Entry{}, false, fmt.Errorf("runindex: reading the run %s the overlay carries: %w", run, err)
+	}
+	e, err := decodeEntry(*doc)
+	if err != nil {
+		return Entry{}, false, err
+	}
+	return e, true, nil
 }
 
 // afterCursor reports whether a row comes after the page's cursor in the

@@ -51,13 +51,17 @@ type overlayRow struct {
 	// node under agents/ whose heartbeat is fresh (budget.DefaultStaleAfter,
 	// the bound the crash sweep reaps a dead run's node by).
 	Live bool
-	// At is the sort key the overlay gives the row: the latest moment the
-	// overlay can account for the run having changed. It is the registry
-	// entry's own heartbeat where there is one, else the start of the UTC day
-	// the outcome landed under, and never before the index's fold stamp -- the
-	// index carries every run that changed before that stamp, so a run it does
-	// not carry changed after it. It is a floor and not a finish time: the
-	// overlay is what fills the gap between two folds, not a second history.
+	// At is the latest moment the overlay can account for the run having
+	// changed: the registry entry's own heartbeat where there is one, else the
+	// start of the UTC day the outcome landed under, and never before the
+	// index's fold stamp -- the index carries every run that changed before
+	// that stamp, so a run it does not carry changed after it. It is a floor
+	// and not a finish time: the overlay is what fills the gap between two
+	// folds, not a second history.
+	//
+	// It is the row's sort key only where the index does not carry the run:
+	// where it does, the entry's own sort key places the row, because the
+	// overlay supplies a status and a liveness and never a position (D3202).
 	At time.Time
 }
 

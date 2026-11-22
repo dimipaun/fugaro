@@ -215,6 +215,40 @@ func TestFirestoreReaderPages(t *testing.T) {
 		}
 	})
 
+	t.Run("paging visits every run once, where the whole list puts it", func(t *testing.T) {
+		// A run the fold read as going whose own registry entry is still fresh:
+		// the overlay knows it, a one-row page's query does not reach it, and a
+		// page that placed it at its heartbeat while the cursor placed it at its
+		// entry would list it above runs the next page then skips, and never
+		// list them at all.
+		f := seeded(t)
+		f.seed(Entry{RunID: runMid, Slug: pageSlug, UpdatedAt: indexAt(9, 0), Status: runstore.StatusRunning})
+		f.seedAgent(pageSlug, runMid, budget.AgentEntry{
+			StartedAt: indexAt(8, 55).UnixMilli(),
+			UpdatedAt: indexNow.Add(-time.Minute).UnixMilli(),
+		})
+		want := ids(f.list(Filter{}))
+		if len(want) != 5 {
+			t.Fatalf("the whole list = %v, want the five runs", want)
+		}
+		var got []string
+		after := ""
+		for page := 0; ; page++ {
+			if page > len(want)+1 {
+				t.Fatalf("paging never ended: %v", got)
+			}
+			p := f.list(Filter{Limit: 1, After: after})
+			got = append(got, ids(p)...)
+			if p.Next == nil {
+				break
+			}
+			after = p.Next.RunID
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("one row at a time = %v, want the whole list %v", got, want)
+		}
+	})
+
 	t.Run("a page is read per repository and per state", func(t *testing.T) {
 		if got, want := ids(f.list(Filter{Slugs: []string{pageSlug}})), []string{runNewest, runTieLow, runMid}; !reflect.DeepEqual(got, want) {
 			t.Fatalf("one repository = %v, want %v", got, want)
