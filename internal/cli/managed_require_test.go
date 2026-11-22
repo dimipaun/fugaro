@@ -157,9 +157,11 @@ func TestEveryManagedCommandResolves(t *testing.T) {
 var seamFencedCommands = []struct{ path, door string }{
 	{"accounts add", "accountsAddConverge"},
 	{"accounts rm", "accountsRmDeleteSecret"},
+	{"budget chain raise", "runChainRaise"},
 	{"cancel", "newCancelCmd"},
 	{"config publish", "newConfigPublishCmd"},
 	{"image build", "openBuildCloud"},
+	{"orchestrator run", "runOrchestratorRun"},
 	{"project repos add", "reposEnrolmentStages"},
 	{"recipes publish", "newRecipesPublishCmd"},
 	{"review", "runReviewLaunch"},
@@ -200,10 +202,11 @@ func TestFencedCommandRefusesUnmanaged(t *testing.T) {
 		})
 	}
 	// `fugaro apply`, end to end: its fence is called where its own run starts,
-	// so the world is the one that command runs in and the proof is the whole
-	// invocation rather than a call to a helper.
+	// so the world is the one that command runs in — the installation, the
+	// record and the steps, with no mark on the project — and the proof is the
+	// whole invocation rather than a call to a helper.
 	t.Run("apply", func(t *testing.T) {
-		applyWorld(t)
+		applyWorldUnmanaged(t)
 		out, errOut, err := executeStdin(t, "", "apply")
 		checkFenceRefusal(t, err, "apply")
 		if said := out + errOut + err.Error(); !strings.Contains(said, managedFencedCommands["apply"]) {
@@ -222,7 +225,7 @@ func TestFencedCommandWritesNothingOnUnmanaged(t *testing.T) {
 	noAgentSession(t)
 	noRunSession(t)
 	fugaroAtItsOwnName(t)
-	r, _ := applyWorld(t)
+	r, _ := applyWorldUnmanaged(t)
 	if _, _, err := executeStdin(t, "", "apply"); err == nil {
 		t.Fatal("fugaro apply ran on a project that is not managed")
 	}

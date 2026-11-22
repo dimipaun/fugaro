@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
 	"slices"
@@ -12,7 +13,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	managed "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
-	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
@@ -55,6 +55,19 @@ func managedAddMarker() []byte {
 	return []byte(`{"version":1,"gcp_project":"` + initProject + `"}`)
 }
 
+// markManaged marks the rig's world managed for gcpProject: the project's own
+// fugaro_managed label and, in the runs bucket of that name, the installation's
+// label with the creation fact in it — both halves of what D1541's read
+// requires, and neither a shortcut for the other. It is what makes a rig a
+// project a run is admitted to, and the one place the two fakes are marked.
+func (r *addRig) markManaged(t *testing.T, gcpProject string) {
+	t.Helper()
+	bucket := "fugaro-runs-" + gcpProject
+	r.gcs.AddBucket(bucket, initProjectNumber, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
+	r.gcs.Put(bucket, managed.MarkerObject, []byte(fmt.Sprintf(`{"version":1,"gcp_project":%q}`, gcpProject)))
+	labelled(r.crm, gcpProject)
+}
+
 // newManagedAddRig is the accounts-add rig in a project whose marks say managed
 // (or, with managed false, in the ordinary installation this row must leave
 // exactly as it was), running in a checkout whose origin is owner/repo-a: the
@@ -64,17 +77,14 @@ func newManagedAddRig(t *testing.T, local string, marks managedAddMarks) *addRig
 	t.Helper()
 	// The rig first and the checkout after it: the rig builds the fake
 	// terraform once per test binary, from the module this checkout is not in.
-	r := newAddRigWith(t, local)
-	r.managed = marks == addMarksManaged
+	r := newAddRigMarks(t, local, marks == addMarksManaged)
 	accountsAddCheckout(t, "owner/repo-a")
-	// The identity a record names is this test's own: a file that happened to
-	// be on the machine would otherwise name a real address in a record, and in
-	// this test's failure output. The time is fixed for the same reason —
-	// a record is filed under its day, and a test reads one day back.
+	// The credentials in force are the fixtures': a real file on the machine
+	// would otherwise be read, and the record would name an address that was on
+	// it. The identity itself is stubbed one layer down, with the marks
+	// (newAddRigMarks). The time is fixed for the same reason: a record is
+	// filed under its day, and a test reads one day back.
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(r.dir, "no-application-default-credentials.json"))
-	oldUser := authenticatedUser
-	authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return managedGateUser, nil }
-	t.Cleanup(func() { authenticatedUser = oldUser })
 	oldNow := managedGateNow
 	managedGateNow = func() time.Time { return managedGateTestNow }
 	t.Cleanup(func() { managedGateNow = oldNow })
@@ -83,12 +93,10 @@ func newManagedAddRig(t *testing.T, local string, marks managedAddMarks) *addRig
 	// carrying the installation's label, and the fugaro_managed label on the
 	// project itself. A world with one of the two is a world this program must
 	// answer "not managed" about, which is why the fixtures below exist.
-	switch marks {
-	case addMarksManaged:
-		r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
-		r.gcs.Put(initRunsBucket, managed.MarkerObject, managedAddMarker())
-		labelled(r.crm, initProject)
-	case addMarksUnlabelled:
+	// The one-mark world keeps its own bucket and object, and no label: the
+	// label's absence is the whole of what it is about, since the read answers a
+	// project without one from the label alone and never looks in the bucket.
+	if marks == addMarksUnlabelled {
 		r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{gcp.LabelManaged: gcp.ManagedValue})
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, managedAddMarker())
 	}
@@ -486,7 +494,11 @@ func TestAccountsAddManagedRecordsNothingWhenThereIsNoWrite(t *testing.T) {
 // An installation that is not managed keeps today's refusal exactly: the
 // declaration is not written, no record is filed — D1025 writes down nothing
 // about a project that is not managed — and the sentence is the one this
-// command has always used.
+// command has always used. In a coding agent's session that sentence is this
+// command's own marker fence, which answers before the converge reaches the
+// cloud and so before D1541's fence is asked at all; a person at their own
+// terminal on the same project meets the fence instead, which is what
+// TestFencedCommandRefusesUnmanaged pins at the seam.
 func TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession(t *testing.T) {
 	r := newManagedAddRig(t, addRigLocal, addMarksNone)
 	before := readFileString(t, r.cfg)
@@ -513,7 +525,9 @@ func TestAccountsAddUnmanagedKeepsTheRefusalInAnAgentSession(t *testing.T) {
 // A mark read that does not answer fails closed: one half of the fact is not
 // the fact, so the project is not managed, the command refuses as it always
 // did, and nothing is recorded. The wrong answer here would be the admitting
-// one, and this is the test that makes it the refusing one.
+// one, and this is the test that makes it the refusing one. As above, the
+// sentence is this command's own because a coding agent's session is refused by
+// the marker fence before the cloud is reached.
 func TestAccountsAddManagedUnreadMarksKeepTheRefusal(t *testing.T) {
 	for name, unread := range map[string]func(t *testing.T) *addRig{
 		"the creation fact cannot be read": func(t *testing.T) *addRig {

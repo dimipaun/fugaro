@@ -25,7 +25,11 @@ import (
 func TestAccountsAddRefusesInAnAgentSession(t *testing.T) {
 	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
-			path := accountsAddFixture(t, accountsAddLocal)
+			// The ordinary installation, by name: D2217's fence is what a
+			// managed one answers with (accounts_managed.go's gate, and
+			// TestAccountsAddManaged* for its sentences), and this row is the
+			// refusal that stands before the cloud is reached at all.
+			path := newManagedAddRig(t, accountsAddLocal, addMarksNone).cfg
 			before := readFileString(t, path)
 			t.Setenv(marker, "1")
 
@@ -73,13 +77,14 @@ func rotationLocal(t *testing.T) string {
 // TestAccountsAddAsksNothing is this command's own reading of D1540: the
 // declaration, the profile entry, the secret and the converge are one
 // sentence, printed before the run makes them, and no question follows it.
-// The invocation passes neither --ask nor --yes and has no terminal, which is
-// the shape a script drives the command with — the deployment the old y/N was
-// answered for is the same one either way, and what a person gets instead of a
-// question is the sentence naming every change, printed before the first of
-// them is written.
+// The invocation passes neither --ask nor --yes, and it is the owner's own
+// terminal — the one place a managed project lets this command make the
+// change, and the shape the sentence was written for: what a person gets
+// instead of a question is the sentence naming every change, printed before
+// the first of them is written.
 func TestAccountsAddAsksNothing(t *testing.T) {
 	r := newAddRig(t)
+	ownerAtTheTerminal(t)
 	writes := r.secretWrites(t)
 
 	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
@@ -111,7 +116,9 @@ func TestAccountsAddAsksNothing(t *testing.T) {
 func TestAccountsAddRotationRerunRefusesInAnAgentSession(t *testing.T) {
 	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
-			r := newAddRigWith(t, rotationLocal(t))
+			// The ordinary installation, as above: the marker's own fence
+			// answers here, before the converge's cloud is reached.
+			r := newManagedAddRig(t, rotationLocal(t), addMarksNone)
 			writes := r.secretWrites(t)
 			before := readFileString(t, r.cfg)
 			t.Setenv(marker, "1")
@@ -149,11 +156,12 @@ func TestAccountsAddRotationRerunRefusesInAnAgentSession(t *testing.T) {
 // the file unchanged, so the change this run is about is the converge's — the
 // token stored project-wide and the database the mark lives in — and the run
 // names it instead of asking about it (D1540). The invocation below passes
-// neither --ask nor --yes and has no terminal: the sentence naming the
-// converge is printed in full, nothing waits on an answer to it, and the token
-// reaches the store.
+// neither --ask nor --yes and stands at the owner's own terminal: the sentence
+// naming the converge is printed in full, nothing waits on an answer to it, and
+// the token reaches the store.
 func TestAccountsAddRotationRerunAsksNothing(t *testing.T) {
 	r := newAddRigWith(t, rotationLocal(t))
+	ownerAtTheTerminal(t)
 	writes := r.secretWrites(t)
 
 	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
