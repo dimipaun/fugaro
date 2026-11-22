@@ -145,6 +145,31 @@ const copyNoServiceReason = "the project's config carries no credentials_service
 // is here, and the copy looked.
 const copyNothingReason = "this installation holds no model key outside the credentials service's bundle: nothing to copy"
 
+// copyNotOwnerReason is the skip of a run that is not a project owner (D3006).
+//
+// The probe's own refusal is a COMMAND's sentence and about twice a stage's
+// line: it says what the document is, who may write into it and what to ask
+// for, and a stage's Detail is one bounded line (pluginwire.MaxPrintable) —
+// printed whole there it would be cut at the byte where the permission is
+// named, which is the half an operator acts on. So the stage says the part a
+// person has to do first (who runs what, and which project they own) and leaves
+// the rest to the sentence every writer of an entry by hand prints.
+func copyNotOwnerReason(lc *localcfg.Config) string {
+	return fmt.Sprintf("a project owner of %s must run %s: only a project owner copies this installation's model keys into the credentials service's bundle, and this run is not one (D3006)",
+		safetext.Field(lc.GCPProject), selfCommand()+" update")
+}
+
+// copyServiceTooOldReason is the skip for a deployed credentials service whose
+// release cannot read the family the copy writes. It is the guard's answer said
+// the way a stage says one, for the reason above and one more: the guard's
+// refusal names the entry, the release and the image, and its fix is the
+// command this run already is — the deployment of that service and this copy
+// are the two stages of one `fugaro update`, so the line says the state, that
+// nothing was copied, and what settles it.
+func copyServiceTooOldReason() string {
+	return fmt.Sprintf("this installation's credentials service is older than the entries the copy writes, so nothing was copied: the next %s moves that service onto this release and settles it", selfCommand()+" update")
+}
+
 // copySkip is a state the copy does not act on, with the sentence that names
 // why. undone marks the skips that leave work owed — a bundle this run could
 // not read, a person who is not a project owner, a service too old to read the
@@ -273,7 +298,7 @@ func copyPlanRead(ctx context.Context, e *initEngine) (*copyPlan, error) {
 	if err := bundleOwnerProbe(ctx, store, lc, "copied"); err != nil {
 		// D3006: an operator's update does not copy, and the probe's own
 		// sentence names the project owner who can.
-		return nil, &copySkip{reason: oneLineCLI(err.Error()), undone: true}
+		return nil, &copySkip{reason: copyNotOwnerReason(lc), undone: true}
 	}
 	if err := refuseAnEntryTheServiceCannotRead(ctx, lc, repoCredentialFamily, repoCredentialSince); err != nil {
 		// The deployed service cannot read the family, so a document holding
@@ -281,7 +306,7 @@ func copyPlanRead(ctx context.Context, e *initEngine) (*copyPlan, error) {
 		// every caller of it, a coding run included, would be halted by this
 		// write. The work is owed, and the run that settles it is this one's
 		// own service stage, or the next `fugaro update`.
-		return nil, &copySkip{reason: oneLineCLI(err.Error()), undone: true}
+		return nil, &copySkip{reason: copyServiceTooOldReason(), undone: true}
 	}
 	before, err := providerKeyBundleBefore(ctx, store)
 	if err != nil {
@@ -550,12 +575,42 @@ func (p *copyPlan) rest() string {
 	return " (" + strings.Join(parts, ", ") + ")"
 }
 
-// idle is whether this run has nothing to write, and the line that says so.
+// idle is whether this run has nothing to write, and the line that says so. An
+// entry the copy did not write is NAMED here and not only in the diff, because
+// a run with nothing to write prints no diff at all — the diff is what a
+// confirmation is made against — and "one left as it is" with no name is a
+// state nobody could act on.
 func (p *copyPlan) idle() (string, bool) {
 	if len(p.writes()) > 0 {
 		return "", false
 	}
-	return "every model key of this installation is already in the credentials service's bundle" + p.rest(), true
+	lead := "every model key of this installation is already in the credentials service's bundle"
+	if p.count(copyUnchanged) == 0 && p.count(copyLeft) > 0 {
+		// Every entry the bundle holds is someone else's, so the sentence above
+		// would claim a copy that has not happened. An owner reading this line
+		// is deciding whether their service is served the key the entry holds,
+		// and "already in the bundle" answers that wrongly.
+		lead = "nothing here is a model key this copy wrote into the credentials service's bundle"
+	}
+	return lead + p.rest() + p.leftClause(), true
+}
+
+// leftClause names the entries this run leaves alone because it did not write
+// them (R4) — the entries the bundle held before this stage, with whatever
+// value their own writer put there. rest() says how many there are and this
+// says which, because a person has to be able to find the entry the copy
+// declined to touch and the value nobody may silently replace.
+func (p *copyPlan) leftClause() string {
+	var names []string
+	for _, row := range p.rows {
+		if row.state == copyLeft {
+			names = append(names, safetext.Field(row.pair.entry))
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return ": this run does not overwrite an entry it did not write, and the copy wrote no marker on " + strings.Join(names, ", ")
 }
 
 // planDetail is what the stage says it is about to do.
