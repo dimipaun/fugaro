@@ -41,6 +41,21 @@
 // on every open, after a token refresh, and after a switch is flipped.
 // (Q10's other lever -- FCM's `deleteToken` when an installation is left --
 // belongs to whichever task wires the app's revoke; no such call is built.)
+//
+// **The calls are SERIALIZED, and the reason is the switches' read.** A
+// registration reads the record, then awaits the token -- the relay's network
+// call, the slow half -- and only then writes, with the client stamping the
+// message `at`. Two overlapping calls would therefore each read a record the
+// other had already replaced, and the consumer applies inbox items **in `at`
+// order** (`internal/mailbox/inbox.go` sorts on the record's own `at`) and
+// replaces `prefs` whole (`internal/cli/mailbox.go`'s `runRegistration`), so the
+// OLDER settings could be the ones that landed with the LATER `at` -- the
+// owner's newest flip silently not honoured. `controls.js` serializes the store
+// halves and says why; that queue cannot cover this one, whose work is a token
+// call and a mailbox write, so the queue is here, per client (one per account,
+// `push.js`). What it buys is the order the read depends on: each call reads the
+// switches only after the previous call's write is done, so the last write
+// carries the last state of the record.
 
 import { judgeField } from './message.js';
 import { readPushToken } from './token.js';
@@ -57,6 +72,27 @@ export const PUSH_STATES = Object.freeze({
 
 function refuse(state, code, field) {
   return Object.freeze({ ok: false, state, code, field, id: null, at: null });
+}
+
+/**
+ * The tail of each account's queue, keyed by the mailbox client -- the writer
+ * whose order the consumer's `at` ordering rests on (the header). The client is
+ * the WeakMap key for the same reason `controls.js` uses the store: a door
+ * dropped with its account takes its queue with it.
+ */
+const QUEUES = new WeakMap();
+
+function serialize(client, work) {
+  let previous = QUEUES.get(client) ?? Promise.resolve();
+  const run = previous.then(work, work);
+  QUEUES.set(
+    client,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
 }
 
 /** "Nothing has been asked yet", as the same shape everything else answers in. */
@@ -98,12 +134,15 @@ export function createPushRegistration({ client, controls, token, platform } = {
 
   /**
    * Register this phone: read the switches, ask for the token, and write one
-   * signed registration message through the mailbox client.
+   * signed registration message through the mailbox client. The body of the
+   * door's `register`, which runs it behind the client's own queue (the header):
+   * one call at a time, so the read above cannot land on a record the previous
+   * write already replaced.
    *
    * @returns {Promise<{ok: boolean, state: string, code: string|null,
    *   field: string|null, id: string|null, at: number|null}>}
    */
-  async function register() {
+  async function registerNow() {
     if (refusedPlatform !== null) {
       last = refuse(PUSH_STATES.UNREGISTERED, refusedPlatform.code, refusedPlatform.field);
       return last;
@@ -144,7 +183,7 @@ export function createPushRegistration({ client, controls, token, platform } = {
 
   return Object.freeze({
     ok: true,
-    register,
+    register: () => serialize(client, registerNow),
     state: () => last,
   });
 }

@@ -73,7 +73,10 @@ async function world(options = {}) {
     store: db,
     connection,
     speaker: new MemorySpeaker(),
-    now: () => 1_700_000_000_000,
+    // A clock the overlapping-flips test drives: the consumer applies
+    // registrations in `at` order, so a test about which WRITE wins has to be
+    // able to tell the two apart.
+    now: options.now ?? (() => 1_700_000_000_000),
     newId: () => `m-${++minted}`,
     secrets: ['synthetic-token-0123456789'],
     heartbeatIntervalMs: 60_000,
@@ -232,6 +235,101 @@ test('the screen renders the last outcome and the switches, and never a code', a
   assert.equal(line.includes(TOKEN_CODES.NO_TOKEN), false, 'a code is a word for the app, never for the owner');
   assert.notEqual(line, PUSH_WAITING, 'and the phrase for a missing token is its own');
   assert.equal(line.includes('token'), true, 'it says what is missing, in words');
+});
+
+/**
+ * A handful of event-loop turns, so a promise chain that is already underway
+ * reaches its next await before the test does anything else. A macrotask drains
+ * the microtasks queued before it, and the in-memory ports of a test are all
+ * microtasks, so three rounds are more than a registration's own chain needs.
+ */
+function turns() {
+  const turn = () => new Promise((resolve) => { setImmediate(resolve); });
+  return turn().then(turn).then(turn);
+}
+
+/**
+ * A token source whose FIRST call is held open until the test releases it: the
+ * relay's network call is the slow half of a registration, and holding it is
+ * what makes two flips overlap on the record. `started` resolves when the first
+ * call is inside the source, so the test can start the second flip at exactly
+ * the moment the first one is waiting.
+ */
+function slowFirstToken() {
+  let calls = 0;
+  let began;
+  const started = new Promise((resolve) => { began = resolve; });
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  return {
+    started,
+    release,
+    token: async () => {
+      calls += 1;
+      if (calls === 1) {
+        began();
+        await held;
+      }
+      return { ok: true, token: TOKEN };
+    },
+  };
+}
+
+test('two flips that overlap on a slow token land the later record last, with both switches', async () => {
+  // The hazard this test exists for (the design's §3.8 read with the consumer's
+  // own order): a registration reads the switches, then awaits the token, then
+  // writes with the client's `at`. The consumer applies inbox items in `at`
+  // order and replaces `prefs` whole, so two overlapping registrations that read
+  // the record out of order would land the OLDER settings with the LATER `at`
+  // and the owner's newest flip would never reach the sender.
+  let clock = 1_700_000_000_000;
+  const token = slowFirstToken();
+  const w = await world({ token, now: () => (clock += 1) });
+  // A switch the first flip does not touch, so the second read has something to
+  // be wrong about: without the queue, the second registration's read can be the
+  // one that happened BEFORE the first flip was stored.
+  const first = w.door.setControl('kill_switch', false);
+  await token.started;
+  const second = w.door.setControl('prompt', false);
+  // Let the event loop run before the first call's token arrives: an
+  // implementation with no queue lets the second registration reach its write in
+  // these turns, which is what makes the FIRST call's stale record the one that
+  // lands last -- the ordering this test is about. With the queue the second
+  // registration cannot run at all until the first finishes, so this wait
+  // changes nothing there.
+  await turns();
+  token.release();
+  const [a, b] = await Promise.all([first, second]);
+  // Both flips are stored and both are published -- this test is about which
+  // record wins, not about one of them being dropped.
+  for (const [answer, what] of [[a, 'kill_switch'], [b, 'prompt']]) {
+    assert.equal(answer.ok, true, what);
+    assert.equal(answer.published.ok, true, what);
+  }
+
+  // The consumer's own order: `at`, then the id (`internal/mailbox/inbox.go`).
+  const ordered = (await w.inbox())
+    .slice()
+    .sort((x, y) => (x.at === y.at ? (String(x.id) < String(y.id) ? -1 : 1) : x.at - y.at));
+  assert.equal(ordered.length, 2, 'each flip writes its own registration');
+  const last = ordered.at(-1);
+  // The one the sender obeys: the LAST write carries BOTH switches, so the
+  // record the consumer keeps has the owner's two choices and not just the one
+  // it happened to read last. Mutation: take the queue out of `registration.js`
+  // and this write carries whichever record its read saw, one flip behind.
+  assert.deepEqual(
+    { kill_switch: last.prefs.kill_switch, prompt: last.prefs.prompt },
+    { kill_switch: false, prompt: false },
+    `the last registration carries ${JSON.stringify(last.prefs)}`,
+  );
+  assert.equal(last.at > ordered[0].at, true, 'and it is the later of the two, which is what the sender applies last');
+  // ... and both records are registrations the consumer would take: the whole
+  // path D113 is about, not a stub's word for it.
+  for (const record of ordered) {
+    assert.equal(record.kind, 'registration');
+    assert.equal(validateMessage(record).ok, true);
+    assert.equal(verifyMac(record, MAC_KEY, 'inbox'), true);
+  }
 });
 
 test('two accounts over one settings store are two records, and two doors', async () => {
