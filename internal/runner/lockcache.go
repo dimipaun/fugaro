@@ -118,6 +118,11 @@ func (r *run) disownRecord(ctx context.Context, owner lock.Holder) {
 		// Changed since it was read: the owner wrote it. Leave it.
 	case err != nil:
 		r.d.Log.Warn("handing the run record to its owner failed", "err", r.redact(err.Error()))
+	default:
+		// result.json now names the owner: the summary that stands in for it
+		// is rewritten from that very record, so a listing does not read this
+		// execution's own account of a run it does not own (saveSummary).
+		r.saveSummary(ctx, cur)
 	}
 }
 

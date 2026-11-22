@@ -1,0 +1,897 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/run-summary.schema.json",
+  "title": "Fugaro run summary",
+  "description": "One run's summary object, at `runs/<slug>/<run>/summary.json`: the parts of the run's task.json and result.json that a `runs ls` row is built from, written by the run's own job at every stage end and at finalize, so a listing reads one object per run where it used to read three (docs/runs-ls-speed, RL4, D2966). It is a hint and never a source of rows or of a decision: the run's service account can write any object under its slug (SECURITY.md, docs/bucket-iam/spec.md §2.1), so a reader decodes this document strictly, checks it against the run it was found under (version, run_id, slug) and falls back to the run's three objects for anything it cannot vouch for -- an absent summary, another version, an unreadable object -- which is what every run written before this object existed needs. It carries no launch-time field either: who launched the run, its log URL and its plan task are launch.json's, which a launcher wrote, and a summary may never override them. A member is only ever added within a version, and a member whose meaning has to change is a new member under a new name with `version` raised, because a reader outside this binary consumes this shape (CLAUDE.md); the nested blocks below are schemas/result.schema.json's own, member for member, because the summary carries the record's blocks verbatim and a row is built from them by the same join. `additionalProperties` is left true for the reason the other document schemas leave it true -- a consumer that refused a member this schema does not know would refuse a newer writer's summary -- while the binary that reads a summary is strict, which is a rule of the codec and not of this contract.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "version",
+    "run_id",
+    "slug",
+    "at",
+    "record"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "description": "The summary's format version, written on every summary and the only one this reader reads. A summary of another version is skipped rather than read as this one, and a member whose meaning has to change raises this number instead of being reused.",
+      "$comment": "runstore.SummaryVersion in internal/runstore/summary.go."
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+      "description": "The run's own ID, which is also the directory this object sits under. A reader refuses a summary whose run_id is not the run it asked for, so one run's summary can never stand in for another's.",
+      "$comment": "runIDRE in internal/runstore/list.go."
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "The repository slug, which is also the directory the run sits under. A reader refuses a summary that names another slug, so one repository's run cannot answer for another's.",
+      "$comment": "slugRE in internal/runstore/list.go."
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the summary was written, in UTC, from the writing run's own clock. It orders nothing and decides nothing: the run that wrote it is not trusted, and every field a row shows is read from the blocks below rather than from when it was written."
+    },
+    "task": {
+      "$ref": "#/$defs/task",
+      "description": "The parts of the run's task.json a row is built from. Absent for a run whose task could not be read, which is the row the run's three objects give for an unreadable task.json too."
+    },
+    "record": {
+      "$ref": "#/$defs/record",
+      "description": "The parts of the run's result.json a row is built from. Always present: a summary with no record stands in for nothing, so the writer writes none and the reader reads none."
+    }
+  },
+  "$defs": {
+    "task": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "repo"
+      ],
+      "description": "The task's own members a row shows, and no more: the prompt, the recipe's YAML, the project layer and the attached files are most of what reading task.json costs and none of what a row shows, so none of them is here. A row reads this block through the same task.Spec the task.json path builds (runstore.Summary.Spec), which is why title is already the title a row prints: task.Spec.TitleLine's answer -- the stored title, else the prompt's own first line -- and not the prompt.",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The repository's owner/name, the row's REPO cell."
+        },
+        "workflow": {
+          "type": "string",
+          "description": "The workflow the run belongs to (task.spec.Workflow): what `runs ls --workflow` groups by."
+        },
+        "batch": {
+          "type": "string",
+          "description": "The batch the run was launched in, if any: a row carries it."
+        },
+        "requested_by": {
+          "type": "string",
+          "description": "Who asked for the run: the row's BY cell and what `runs ls --mine` filters on."
+        },
+        "title": {
+          "type": "string",
+          "description": "The run's title as task.Spec.TitleLine gives it: the stored title, else the prompt's own first line. The prompt itself is not carried, so a reader is never asked to derive what the writer already knew."
+        },
+        "oauth_token": {
+          "type": "string",
+          "description": "The named account the launch resolved the run to run under (task.Spec.OAuthToken, set once at launch): the row's fallback when the record names none."
+        },
+        "recipe": {
+          "type": "string",
+          "description": "The recipe's name the task named, which the row shows when the record names none. Never the recipe's YAML."
+        },
+        "branch": {
+          "type": "string",
+          "description": "The branch a follow-up run continues. A task that names a branch is a follow-up (task.Spec.IsFollowUp), which is what the row's follow-up mark and the pull-request fold read."
+        },
+        "pr": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The pull request a follow-up run continues, 0 when the task names none. A --pr listing reads it to place the run on its pull request without reading the run's other objects (taskOnOtherPR, onPR)."
+        },
+        "previous_run": {
+          "type": "string",
+          "description": "The run this one continues, if any: the row's chain link."
+        },
+        "follow_up_of": {
+          "$ref": "#/$defs/follow_up_of",
+          "description": "The triage deferral this run was filed from, if any."
+        },
+        "review_prs": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": "The pull requests a review run reviews. A review names them here and in no record until its artifact stage writes one, so while the review is going this block is the only thing that places it on a pull request (reviewPR, the fold)."
+        },
+        "debt": {
+          "type": "boolean",
+          "description": "Whether the run was filed from a triage deferral, which `runs ls --debt` filters on."
+        }
+      }
+    },
+    "follow_up_of": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run"
+      ],
+      "description": "The run a triage follow-up was filed from (docs/post-review-triage, task.Spec.FollowUpOf; decision D1843): the parent run's ID and the keys of the deferred findings the task was filed for. The CLI writes it out of the parent's own record, since a job writes only its result record and never files a follow-up; no run reads it, and it is what tells work a run left behind from work somebody asked for. Absent for every task that is not one of those, which is every task written before this field, so such a spec is byte-identical to the previous release's. A task that carries it needs a runner that knows the field: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than running the task without its parent, which is why the launcher gates a launch that would set it (the launcher-side gate T-TR10 of that plan adds).",
+      "properties": {
+        "run": {
+          "type": "string",
+          "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+          "description": "The parent's run ID, of the one shape every run ID has (task.ValidRunID), which task.Spec.Validate applies: a follow-up whose parent is not a run ID names nothing a reader could find the deferred findings in."
+        },
+        "keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The parent record's own finding keys (D1850, a hash of a file and a summary) that this task carries: one task per group, and the ungrouped case is one key. A task the CLI files always names at least one, since a group is formed from the deferrals themselves, but neither this schema nor task.Spec.Validate requires it: a key is only ever compared with the keys the parent's record carries, and never joined into a path, a command or a prompt. Unlike the spec's other lists, this one is carried through as written — the keys are opaque hashes, not launcher text."
+        },
+        "importance": {
+          "enum": [
+            "important",
+            "minor"
+          ],
+          "description": "How much this follow-up matters (task.FollowUpOf.Importance, docs/outer-loop-escalation, D2040): the launcher orders the important ones ahead of new work and notifies about them, and that is the whole of what the mark decides — an important follow-up is not an approved one (G6, F21). It is written from the merge judge's classification when a judge ran and from a deterministic rule when none did (a security or data-loss class, or impact 5, is important), so task.Spec.Validate refuses a value outside the two names rather than reading it as a third opinion about a finding. Absent — and so empty — for every follow-up filed before this field, including every one filed by hand, and empty is not `minor`: it is no answer, and a reader that has to sort one applies its own rule rather than reading a mark nobody wrote. It is a new key inside an existing block, so an older runner that knows `follow_up_of` still refuses the whole spec on it (task.Parse decodes with DisallowUnknownFields), and the launcher gates it with `model_grade`'s constant (taskGradeSince, internal/cli/recipes_skew.go), which covers both fields of this release."
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "status",
+        "stage",
+        "started_at",
+        "cost_usd"
+      ],
+      "description": "The record's own members a row is built from, and no more: whatever a row never shows and nothing reads back -- the stage timings, the review rounds, the verify records, the switch log, the policy, the budget block, the inputs, the chain raises -- is not here, which is most of what reading result.json costs. The blocks it does carry are the record's own, member for member (schemas/result.schema.json), so the row built from a summary is the row built from the record: runview.Join reads both through runstore.Record and runstore.Summary.AsRecord.",
+      "properties": {
+        "status": {
+          "enum": [
+            "running",
+            "succeeded",
+            "failed",
+            "unreviewed",
+            "infra_error",
+            "cancelled",
+            "halted"
+          ]
+        },
+        "stage": {
+          "enum": [
+            "bootstrap",
+            "plan",
+            "implement",
+            "review_first",
+            "review",
+            "fix",
+            "render",
+            "finalize",
+            "writeback"
+          ],
+          "description": "The step the run is in. plan and render are a mode: artifact run's optional plan stage and its render step (design artifact-runs.md §3)."
+        },
+        "reason": {
+          "type": "string"
+        },
+        "failure_class": {
+          "enum": [
+            "review_not_converged",
+            "review_unread",
+            "tests_failed",
+            "unverified_final_commit",
+            "no_commits",
+            "halted_budget",
+            "halted_governance",
+            "halted_credential",
+            "halted_kill_switch",
+            "cancelled",
+            "provider_auth_refused",
+            "transport_failed",
+            "stage_error_unexplained",
+            "stage_no_result",
+            "config_invalid",
+            "git_provider_error",
+            "branch_moved",
+            "infra_error",
+            "unclassified"
+          ],
+          "description": "Why the run did not end succeeded, in the closed vocabulary of docs/failure-classes/design.md §3, which is internal/failure's Classes() and which TestResultSchemaFailureClassesAgreeWithGo holds this enum to. It is additive beside reason, which keeps its text and its meaning, and it is deliberately not in required: a succeeded run, a mode: review run that reviewed, an artifact run that delivered and a run that never started carry none. A reader that does not know a value reads unclassified."
+        },
+        "halt": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reason",
+            "scope",
+            "at"
+          ],
+          "description": "Why the run was halted; set when status is halted.",
+          "properties": {
+            "reason": {
+              "enum": [
+                "kill_switch",
+                "run_cap",
+                "repo_daily_cap",
+                "global_daily_cap",
+                "no_cap",
+                "token_cap",
+                "budget_unavailable",
+                "budget_token_expired",
+                "no_credential",
+                "creds_rules_denied",
+                "stage_budget",
+                "review_ratio",
+                "fanout",
+                "review_scope",
+                "expected_exceeded",
+                "owner_decision"
+              ]
+            },
+            "scope": {
+              "enum": [
+                "run",
+                "repo",
+                "global"
+              ]
+            },
+            "at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "detail": {
+              "type": "string"
+            },
+            "workspace_refusal": {
+              "enum": [
+                "stop",
+                "cap",
+                "settle"
+              ],
+              "description": "The workspace's own credentials service refused this run, and which of the workspace's refusals it was (docs/workspaces/spec.md §5, §9; D2022's O19): its stop switch, the workspace's own spend cap, or a call the service made and could not record the cost of, which it refuses rather than serves. It is the marker a run the workspace refused did not have — the refusal reaches a member's run as the same budget_unavailable/run halt a member's own credentials-service outage writes, so a reader of records alone cannot tell the two apart (docs/stateless-orchestrator/reconciliation.md U12) — and it is read off the marker the workspace's service put on the refusal it answered (internal/gateway's WorkspaceRefusalHeader) and never inferred from reason, scope or detail, which a member's own service writes the same way. The enum is internal/gateway's WorkspaceRefusals, which TestResultSchemaWorkspaceRefusalsAgreeWithGo holds this list to. reason, scope and detail keep exactly what they said before this property existed: a run refused by a workspace stops where it always stopped. Absent — never an empty string — for every run no workspace refused, which is every run on an installation with no workspace and every record written before this property existed, so an old reader sees the record it always saw and version stays 1 (the field is additive)."
+            }
+          }
+        },
+        "outcome": {
+          "enum": [
+            "",
+            "ready",
+            "draft",
+            "none",
+            "reviewed",
+            "artifacts"
+          ],
+          "description": "Empty while the run is in progress. artifacts is a mode: artifact run whose deliverable is in the runs bucket: it opens no pull request."
+        },
+        "branch": {
+          "type": "string"
+        },
+        "base_branch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The base the run's pull request targets: git.base_branch of the config it ran with. A follow-up takes it as its ref."
+        },
+        "head_sha": {
+          "type": "string"
+        },
+        "pushed_head": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The commit the run pushed, set right after a successful push."
+        },
+        "pr": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "number",
+            "url"
+          ],
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "url": {
+              "type": "string"
+            },
+            "desc": {
+              "type": "string",
+              "description": "Digest of the title and description the runner last wrote, outside the status section."
+            },
+            "status_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the runner last wrote the status section into the description; a running record with an old value is the stale draft of a run that died."
+            }
+          }
+        },
+        "draft_fallback": {
+          "type": "boolean",
+          "description": "The host refused draft pull requests; the PR is a normal one with a [DRAFT] title prefix."
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deadline": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "follow_up": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pr",
+            "previous_run",
+            "comments"
+          ],
+          "description": "Set for a run that continues an existing pull request (design §4.4).",
+          "properties": {
+            "pr": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "previous_run": {
+              "type": "string",
+              "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$"
+            },
+            "start_sha": {
+              "type": "string",
+              "description": "The pull request's head the run started from."
+            },
+            "session": {
+              "enum": [
+                "resumed",
+                "fresh"
+              ]
+            },
+            "session_note": {
+              "type": "string"
+            },
+            "comments": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "How many comments reached the agent."
+            },
+            "authors": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "description": "Display name to the number of that author's comments used."
+            },
+            "untrusted_authors": {
+              "type": "array",
+              "maxItems": 20,
+              "items": {
+                "type": "string"
+              },
+              "description": "Display names whose comments were dropped as untrusted, sorted."
+            },
+            "untrusted_author_count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "How many distinct untrusted authors were dropped, those beyond the 20 named included."
+            },
+            "omitted": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "description": "Comments left out, by reason."
+            }
+          }
+        },
+        "oauth_account": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "The named Claude OAuth account this run's agent.auth: oauth workflow used last (docs/accounts-add spec §11.2): one scalar for the whole run."
+        },
+        "execution": {
+          "type": "string",
+          "description": "The canonical full execution name; empty or absent for local runs."
+        },
+        "project_layer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "sha256",
+            "applied"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "applied": {
+              "type": "boolean"
+            }
+          }
+        },
+        "config_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "baked_commit"
+          ],
+          "description": "What the image the run started in was built from, read before the checkout was synced.",
+          "properties": {
+            "built_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "When the image was built; absent when the image doesn't say."
+            },
+            "baked_commit": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The baked checkout's HEAD when the run started."
+            }
+          }
+        },
+        "changed_files": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "paths",
+            "total"
+          ],
+          "description": "The paths the run changed, as the run itself recorded them at finalize (console v2 design D27, F17). Paths only: no contents, no diff, no commit message, no line counts. Bounded, with the truncation recorded rather than hidden. Absent for a run that recorded none — one that died before finalize, or whose git read failed — and absent means 'no record of what this run changed', never 'it changed nothing'.",
+          "properties": {
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "The paths, sorted as git listed them, at most 200 of them (runstore.MaxChangedFiles). Never null: an empty array is a run that changed no path, which is a different fact from the field being absent."
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "How many paths the run really changed, so a truncated record still says how big the set it is part of was."
+            },
+            "truncated": {
+              "type": "boolean",
+              "description": "Set only when paths is shorter than total, which happens at 200 paths or 16 KiB of path (runstore.MaxChangedPathBytes), whichever comes first: the stored set is then not the whole set."
+            }
+          }
+        },
+        "rigor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "from",
+            "at"
+          ],
+          "description": "The level the run resolved, the layer that decided it, the areas that matched and the moment of the run each was known at (docs/rigor-modes/implementation-plan.md T1.2, D22, D24, D25). **The level is carried under two keys, `mode` and `level`** (LD2, docs/rigor-modes/levels-spec.md): LD2 retired the word mode for this axis, and a field never changes meaning -- the record is read by a console, a history and a `fugaro runs ls --json` outside the binary that wrote it -- so `level` is added beside the key the block has always carried and never replaces it. Every record this runner writes carries both with the same value, a record written before LD2 carries `mode` alone, and a reader prefers `level` and falls back to `mode`; `version` stays 1, the field having been added and not retyped. The level's configuration is read from the base branch (D25), so revision names where it came from. Absent for a run that resolved none — a record from before this field existed, or a run that died before bootstrap — and absent means 'no record of this run's rigor', never 'it resolved nothing'.",
+          "properties": {
+            "mode": {
+              "enum": [
+                "poc",
+                "startup",
+                "pro",
+                "critical",
+                "hotfix"
+              ],
+              "description": "The resolved level, under the key this block has always carried (internal/rigor's vocabulary; pro is Fugaro's built-in default, D19). A record written since LD2 carries `level` beside it with the same value; read both through the record's own preference, which is `level` first."
+            },
+            "level": {
+              "enum": [
+                "poc",
+                "startup",
+                "pro",
+                "critical",
+                "hotfix"
+              ],
+              "description": "The same level under the name the vocabulary uses since LD2, written beside `mode` and equal to it. Absent in a record written before LD2, which is why a reader falls back to `mode` rather than requiring this key."
+            },
+            "from": {
+              "enum": [
+                "area",
+                "repo",
+                "project",
+                "default",
+                "request"
+              ],
+              "description": "The layer that decided the level: an area rule the run's paths matched, the repository's rigor.default, the project layer's defaults.rigor.default, Fugaro's built-in default, or the run's own request, which may raise and never lower (D6): fugaro run --mode, or the level a --pr follow-up keeps from its pull request, which it records as request with or without the flag (T5.2). It is never reached: that is the resolver's answer to a later moment asking again — hold what you already have (D22) — and the record keeps the earlier, narrower reason instead, which is the layer that actually set the level (D24's 'the layer that won'). internal/runstore's KnownRigorFrom is this set."
+            },
+            "areas": {
+              "type": "array",
+              "maxItems": 100,
+              "description": "Every area rule that matched, strictest first (D23), each with the level it sets -- under both keys, the block's own rule -- and the moment it was first applied at. Absent when none matched: a reader must not see 'there were rules' where the answer is 'there were none'. The order is one the record establishes wherever a block is built — the writer folds a moment in and sorts, the reader sorts a block the job may have written — so the first entry is the rule whose mode decided, which is what fugaro runs ls's MODE column names.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "mode",
+                  "at"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40,
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$",
+                    "description": "The rule's name, as its layer wrote it (internal/rigor's Area.Validate)."
+                  },
+                  "mode": {
+                    "enum": [
+                      "poc",
+                      "startup",
+                      "pro",
+                      "critical",
+                      "hotfix"
+                    ],
+                    "description": "The level this rule sets, under the key a rule has always carried (internal/rigor's vocabulary). It is carried per rule, not only on the block, because D23's order is by it: without it a reader could not check that the first entry is the strictest."
+                  },
+                  "level": {
+                    "enum": [
+                      "poc",
+                      "startup",
+                      "pro",
+                      "critical",
+                      "hotfix"
+                    ],
+                    "description": "The same level under the name the vocabulary uses since LD2, written beside `mode` and equal to it. Absent in a record written before LD2."
+                  },
+                  "at": {
+                    "enum": [
+                      "bootstrap",
+                      "round",
+                      "finalize"
+                    ],
+                    "description": "The moment of the run this rule was first applied at: the run's own moment it matched."
+                  }
+                }
+              }
+            },
+            "at": {
+              "enum": [
+                "bootstrap",
+                "round",
+                "finalize"
+              ],
+              "description": "The moment of the resolution this block records: the last one that changed it, so a moment that resolved the same answer leaves it as it was."
+            },
+            "revision": {
+              "type": "string",
+              "maxLength": 120,
+              "description": "The revision of the configuration the mode was read from, origin/<base branch> (D25), so a run whose other keys came from the checked-out ref can be told apart from the mode it ran under (F35's 'two answers' made visible). Absent when the run could not name it."
+            }
+          }
+        },
+        "owner_decisions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "decisions",
+            "total"
+          ],
+          "description": "The findings a run's review left that only the repository's owner can settle (OD1), in the reviewer's own order: a licence or legal clearance, a product or policy choice, a step the owner runs. The reviewer marked them needs_owner and no code change could settle them, so the run bought no fix round on them: where the deciding round's findings were all of them the run halted with `halt.reason` owner_decision, and otherwise it ended a draft whose `reason` is the same waiting sentence. Either way the pull request stays a draft. Bounded: at most 100 decisions (runstore.MaxOwnerDecisions), each a path and a sentence of at most 200 runes. Absent — never an empty block — for a run whose review left none, which is every record written before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1.",
+          "properties": {
+            "decisions": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 100,
+              "description": "One entry per pending decision, in the reviewer's order. Never empty (minItems 1, and runstore.NewOwnerDecisions returns no block at all when it has nothing to put in one): a run with nothing pending carries no block, which is a different fact from a block that lists none. Shorter than total only when the review left more than 100, which the cap makes a record of the first 100 rather than of the whole set.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "summary"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "The path the reviewer read, clipped to 200 runes and redacted by the runner. Absent when it named none: a decision about a licence or a product choice may name no file at all."
+                  },
+                  "summary": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "The reviewer's own sentence for the finding, clipped to 200 runes (runstore.MaxOwnerDecisionText) and redacted by the runner. It is what a person reads to decide, and what `fugaro runs ls`, `fugaro diagnose` and the launcher's refusal print; the whole summary stays in the transcript."
+                  }
+                }
+              }
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "How many decisions the review left, so a record whose list was capped still says how many there were. Never less than the length of decisions."
+            }
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "description": "The files a mode: artifact run uploaded, in name order (design artifact-runs.md §3, §8): one entry per object under this run's artifacts/ prefix. Absent — never an empty array — for every run that delivered none, including every record written before this field existed.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "bytes",
+              "sha256",
+              "content_type"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "The object's key leaf, relative to artifacts/: the sanitiser's own output, never a path out of the prefix, with no .. element, no leading dot, no NUL and no newline."
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "The size of the bytes in the bucket, as the upload measured them."
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$",
+                "description": "The sha256 of the bytes in the bucket, hashed in the same pass that wrote them and checked against the staged copy's hash."
+              },
+              "content_type": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Recorded, never trusted (§8.1): from the name's extension or a sniff of the first bytes."
+              },
+              "probe": {
+                "type": "object",
+                "description": "What commands.probe said about this artifact (design artifact-runs.md §3, plan Task 5). Every artifact this runner uploads carries one: a recipe that asks for no probe — outputs.probe: none, or the default — records {ran: false, exit_code: -1} rather than leaving the key out, so 'no probe ran' is stated in the record instead of inferred from a field that is not there (plan Review Focus 6), and a probe that did run records ran: true with the exit code it exited or was killed on (negative when a signal killed it, -1 for the SIGKILL after its grace). Absent only in a record written before the probe step existed.",
+                "additionalProperties": false,
+                "required": [
+                  "ran",
+                  "exit_code"
+                ],
+                "properties": {
+                  "ran": {
+                    "type": "boolean",
+                    "description": "False when the recipe asked for no probe: the runner started no process at all. The exit code beside it is then -1 and not 0, because a reader skimming an exit code must never read 'skipped' as 'passed'."
+                  },
+                  "exit_code": {
+                    "type": "integer"
+                  },
+                  "warning": {
+                    "type": "string",
+                    "description": "Empty when the probe passed. Deliberately unwritten by this release: a probe that fails refuses the upload, so a record carries no artifact whose verdict could hold one (plan Task 5)."
+                  }
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "properties": {
+                        "ran": {
+                          "const": false
+                        }
+                      },
+                      "required": [
+                        "ran"
+                      ]
+                    },
+                    "then": {
+                      "properties": {
+                        "exit_code": {
+                          "const": -1
+                        }
+                      },
+                      "required": [
+                        "exit_code"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "cost_usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "The model spend, summed over stages."
+        },
+        "cost": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "model_usd",
+            "compute_usd",
+            "compute_estimated",
+            "total_usd",
+            "estimate",
+            "model_basis"
+          ],
+          "properties": {
+            "model_usd": {
+              "type": "number",
+              "minimum": 0
+            },
+            "compute_usd": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Meaningful only when compute_estimated is true; otherwise 0."
+            },
+            "compute_estimated": {
+              "type": "boolean",
+              "description": "True only when the backend's prices and the workflow's resources were known."
+            },
+            "compute_source": {
+              "type": "string",
+              "description": "The price table compute_usd was priced from, in the table's own words, so a reader can tell an estimate priced from the Compute Engine VM table from one priced with Cloud Run's jobs list price. Absent for Cloud Run's list price (and for every record written before the field existed), which is why it is not required."
+            },
+            "total_usd": {
+              "type": "number",
+              "minimum": 0,
+              "description": "Billed dollars only: excludes the model figure when model_basis is subscription."
+            },
+            "estimate": {
+              "type": "boolean"
+            },
+            "model_basis": {
+              "enum": [
+                "api-list",
+                "subscription"
+              ]
+            },
+            "model_notional_usd": {
+              "type": "number",
+              "minimum": 0,
+              "description": "The part of model_usd that was notional: what the calls a subscription paid for would have cost at list rates (an oauth run's every call, and a cascade run's tier A, D140). It is never in total_usd. model_usd keeps its meaning -- every stage's model dollars, notional ones included -- so sum(stages[].model_usd) + model_by[\"unattributed\"] == model_usd still holds exactly, and this says how much of it was notional. A mixed run's model_basis is api-list for the whole run, so a reader splitting the run's dollars must split on this field, never on model_basis. Absent when nothing was notional, and in records written before this field existed."
+            },
+            "model_source": {
+              "enum": [
+                "gateway",
+                "claude-code"
+              ],
+              "description": "Where model_usd came from: the gateway's settled ledger or Claude Code's own total."
+            },
+            "fallback_usd": {
+              "type": "number",
+              "minimum": 0,
+              "description": "The real money the run's fallback calls spent (C1, CS8, D140): the calls a source that is not the chain's first served and a metered source paid for. A part of model_usd and of nothing else -- those calls are charged, held to the caps and settled like the calls they fell back from -- and never a subscription's list price, which is notional and in model_notional_usd. Absent for a run whose chain never fell back, and for every run the credentials service does not serve."
+            },
+            "model_by": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "minimum": 0
+              },
+              "description": "Model spend in USD, by model."
+            },
+            "route_by": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "minimum": 0
+              },
+              "description": "Model spend in USD, by provider route; calls on Anthropic have no route."
+            },
+            "reported_usd": {
+              "type": "number",
+              "minimum": 0,
+              "description": "What providers said their calls cost, summed. A complete call on a provider route settles on this figure, with the route's fee and floored at the price table's charge for the same usage at the selected tier's cheapest end (D2640, D2651), so it is the money those calls were charged and not a comparison with model_usd -- which also holds the route fee, and every call no provider served. It is read against table_lo_usd and table_hi_usd, the band the table would have charged the calls that reported. One report can still sit above what its call was charged: a figure above ten times that call's reservation is not a price, so the call is charged at the table instead and this field keeps what the provider said (D2641)."
+            },
+            "reported_by": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "minimum": 0
+              },
+              "description": "What providers said their calls cost, by serving model (F7): the report split by the model that served each call, with no route fee, so a model's charge can be read beside its report. Whether a call the table could not band -- one priced max whose pin the table does not know -- is a key of it, and so whether the entries sum to reported_usd, is left open (O5, docs/spend-accuracy/reconciliation.md). Absent for a record written before the field existed, and for a run whose calls reported no cost."
+            },
+            "table_lo_usd": {
+              "type": "number",
+              "minimum": 0,
+              "description": "What the price table would have charged, at the selected tier's cheapest end, the calls a provider reported a cost for -- with no route fee (D2650). With table_hi_usd it is the band a report is read against: `fugaro diagnose` and the drift alarm compare the two. It is over reported calls only, because a call the table settled is the table's own figure and counting it would make the band agree with itself, and a model the catalog does not price puts the same figure in both ends. Absent for a record written before the field existed, and for a run whose calls reported no cost."
+            },
+            "table_hi_usd": {
+              "type": "number",
+              "minimum": 0,
+              "description": "The dearest end of the same band: what the price table would have charged, at the selected tier's dearest end, the calls a provider reported a cost for, with no route fee (D2650). It is over reported calls only, so a report above it is the provider's figure disagreeing with the table rather than an overcharge."
+            },
+            "unreported_calls": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The run's settled calls whose response carried no provider cost: what says how much of the band, and of reported_usd, the report is actually over. Absent when every call reported a cost, and for a record written before the field existed."
+            },
+            "unreconciled": {
+              "type": "number",
+              "minimum": 0,
+              "description": "USD charged from reservations rather than from reported usage."
+            },
+            "cache_read_tokens": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The run's prompt-cache read token total, summed from the gateway's per-call usage. A token count and not a dollar split: the price table returns one blended figure per call, so a cache read's dollars cannot be told from a write's (P12). Absent when the run read nothing from cache, and for a run with no gateway."
+            },
+            "cache_write_tokens": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The run's prompt-cache write token total, summed from the gateway's per-call usage, both cache TTLs together. Absent when the run wrote nothing to cache, and for a run with no gateway."
+            },
+            "model_tokens": {
+              "type": "object",
+              "description": "The run's token counts by model: the counts a repricing of the run reads, so `fugaro estimate` can price a run's own usage again on another model (F8). A key is a model ID the run's own path keyed usage under, never a string an upstream response claimed. On a run with a gateway these counts are what cache_read_tokens and cache_write_tokens sum; a run without one records no such totals -- they are the gateway's -- so its per-model counts stand alone and a reader that wants a total sums these entries. The 5m/1h split is what each path could tell -- the gateway prices every call from pricing.Usage, which keeps the two cache TTLs apart, and a run without a gateway records the agent's single cache-creation count as cache_write_5m -- so a zero is 'none, or this path could not tell', never a guess. Absent for a run that recorded no tokens, and in records written before this field existed.",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "input",
+                  "output",
+                  "cache_read",
+                  "cache_write_5m",
+                  "cache_write_1h"
+                ],
+                "description": "One model's counts. Every count is written, zero included, so a member is never absent: a zero is a count, and which paths could tell one from 'used none' is model_tokens' own note. A short entry is a truncated write and is refused. Web searches are not here: they are priced apart and a repricing of the run's tokens does not carry them.",
+                "properties": {
+                  "input": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "output": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "cache_read": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "cache_write_5m": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Cache-creation tokens written with the 5-minute TTL, and -- on a run with no gateway -- every cache-creation token the agent reported, which that path cannot split."
+                  },
+                  "cache_write_1h": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Cache-creation tokens written with the 1-hour TTL. Always 0 on a run with no gateway, whose agent reports one cache-creation count."
+                  }
+                }
+              }
+            },
+            "usage_unparsed": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Calls settled at their reservation because their usage could not be read."
+            },
+            "service_tiers": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "description": "The service tiers the run's calls came back at that the price table has no multiplier for, spelled as a violation is (`usage.service_tier \"priority\"`). Those calls were charged the conservative multiple of the rates each call was priced at -- or, where the route reported what the call cost, the dearer of that multiple and the provider's own figure plus the route fee, up to the reservation that call made -- rather than failing their stage, so model_usd counts that charge and this is what names it. At most eight distinct names, then one `+N more` entry counting the distinct names beyond them, so a provider that answers a new tier on every call cannot grow the record with the call count. Absent when every call was priced at the model's own rates."
+            },
+            "catalog_stale": {
+              "type": "boolean",
+              "description": "True when the built-in provider price catalog was older than its own 30-day threshold (catalog.StaleAfter, internal/pricing/catalog), so every model it priced was charged the dearest end of its tier's range rather than the end price_policy asked for. The run over-counts on purpose and logs one `budget: price catalog stale` WARN. Absent when the catalog was fresh, or when no catalog-priced model was charged."
+            }
+          }
+        },
+        "recipe": {
+          "type": "string",
+          "description": "The recipe's name as the record wrote it -- the name, never the record's recipe block, which no row shows."
+        }
+      }
+    }
+  }
+}
