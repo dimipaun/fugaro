@@ -49,33 +49,47 @@
 // alert only on a `fresh` answer, and a port that refuses, throws or answers
 // anything else produces no alert.
 //
-// **The sentence is resolved on the phone, and Q6 left that to this task.** The
-// owner's answer names the two candidates -- the sentence travels in the payload,
-// or the phone composes it from a key in its own bundle, "depends on what the
-// relay passes through (not verified)" -- and the second is the one that holds
-// whatever a relay does: `ALERT_PHRASES` is a table in this file, the sender's
-// wire format carries no title and no body to read one out of
-// (`internal/cli/push.go`), and the relay's own pass-through is unverified. So
-// **no text this app shows ever comes from a message**, which is the same claim
-// §3.1 makes about the payload, made again about the sentence.
+// **The sentence, and the half of it that is not here.** Q6 left one thing to
+// this task -- whether the sentence travels in the payload or the phone resolves
+// it from a key in its own bundle, "depends on what the relay passes through
+// (not verified)" -- and the answer is not one answer. **Android's half is the
+// phone's**: `ALERT_PHRASES` is a table in this file, the app composes the alert
+// after the verified read, and no text the app shows ever comes from a message.
+// **iOS's half cannot be**, and this module does not claim it: the system draws
+// the visible alert *before* any Fugaro code runs, so the sentence there can only
+// be display text the **sender** puts in the payload -- the sentence itself, or
+// the localization key the phone's own bundle resolves at display time (§4 rule 1
+// binds "the sender's fallback title" as one of the places text may live, and
+// APNs' `loc-key` is the key-shaped spelling of that field; neither needs a
+// Notification Service Extension, which is why Q6's answer holds). **That half is
+// built nowhere yet**: `internal/cli/push.go` (P5.2.6) sends `data` with the
+// category and no title and no body, so there is no visible iOS alert today, and
+// whether the publisher's relay passes one through is unverified. What this
+// module fixes is the **vocabulary the two ends share** -- the five category
+// names below, one fixed sentence each -- so that a sentence a sender writes and
+// a sentence the app writes cannot drift into two. And the app never reads one
+// either way: `receive` takes the category and nothing else, so display text in a
+// payload is never state, never a route and never a link, on either platform.
 //
-// **The iOS exception is stated here rather than assumed.** On iOS the push is a
-// visible alert shown by the system *before* the app runs, so on iOS an alert
+// **The iOS exception is stated here rather than assumed.** On iOS an alert
 // appears **before any MAC is verified** -- §4 rule 11's own exception, the price
 // the owner accepted for no NSE and no D111 amendment. What that costs is the
 // rule's subject, and not this module's: on iOS rule 11 still holds for **state**
 // (what the app's own screen shows is built from nothing but the MAC-verified
 // mailbox), and what the receipt answers on iOS is exactly what it answers on
-// Android -- nothing to do, nothing to open, nothing to write. The phrase the
-// system shows is this table's, drawn from rule 10's closed enumeration, and it
-// is no route and no input (rules 3 and 8), which is why `receive` is the same
-// function on both platforms and takes no platform at all.
+// Android -- nothing to do, nothing to open, nothing to write, which is why
+// `receive` is the same function on both platforms and takes no platform at all.
+// The sentence the system shows there is rule 10's closed enumeration all the
+// same, and it is no route and no input (rules 3 and 8) -- but it is the
+// sender's to write, and not this file's.
 //
 // **What is deliberately NOT here.** No Notification Service Extension: Q6's
 // answer is a visible iOS alert with **no NSE and no keychain access group**,
-// so **D111 is not amended** and there is no iOS file to write -- the sentence
-// the system shows on iOS is this module's own phrase for the category
-// (`ALERT_PHRASES`), which is why the phrases live here and not in a sender.
+// so **D111 is not amended** and there is no iOS file to write on this half
+// either -- the sentence the system shows on iOS is payload display text the
+// sender writes, and what this module holds is the vocabulary it must be written
+// from. `ALERT_PHRASES` is the app's own table: the alert Android composes, and
+// the words the app's own screens show.
 // No tap handler and no route either: a tap is the OS opening the app, the app
 // signs in and renders its own screen, and there is no target for a payload to
 // choose -- so `src/app/root.js` is untouched by this task, because a tap has
@@ -119,6 +133,11 @@ export const CATEGORY_FIELD = 'category';
  * alert** rather than a sentence nobody wrote (`receive` answers
  * `unknown-category`), and the test pins the whole table so a sixth category
  * arrives as a missing name rather than as a blank notification.
+ *
+ * It is also the **shared vocabulary**: iOS's visible sentence is written by the
+ * sender into the payload (the header), so the same five names and the same five
+ * sentences have to be what a sender writes, and this list is where a change to
+ * one of them is made.
  */
 export const ALERT_PHRASES = Object.freeze({
   kill_switch: 'Fugaro: a kill switch is on.',

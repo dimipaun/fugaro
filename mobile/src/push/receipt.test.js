@@ -164,9 +164,11 @@ test('§3.1 and rule 10: a phrase names the app and nothing about the owner’s 
 
 test('§3.1: the text is the app’s own table, never a sentence a message carries', async () => {
   // Q6 left this choice to this task -- the sentence travels in the payload, or
-  // the phone composes it from its own bundle -- and it is the second. Said from
-  // the outside: a payload carrying a *plausible* sentence, another category's
-  // phrase or the redacted line changes nothing about what is posted.
+  // the phone composes it from its own bundle -- and the answer is the phone's
+  // for the alert the APP composes (iOS's visible sentence is the sender's
+  // payload text, which the header states and this module does not read). Said
+  // from the outside: a payload carrying a *plausible* sentence, another
+  // category's phrase or the redacted line changes nothing about what is posted.
   const receipt = receiptOver(new MemoryMailboxChange({ fresh: true }));
   for (const [category, text] of Object.entries(ALERT_PHRASES)) {
     const decision = await receipt.receive(push({
