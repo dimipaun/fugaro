@@ -1060,6 +1060,15 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 // walk a pull request's rigor back. A request the rule refuses is refused
 // before the spec is built, so nothing is written (refuseFollowUpRigor).
 //
+// The mode written into the spec is one the run carried and not one it asked
+// for (task.Spec.RigorCarried), which is the other half of "never lower":
+// raise-only against the recorded mode is a rule about the pull request, and
+// raise-only is also what the resolver holds the carried mode to (LF5 §3a), so
+// a repository whose settings have risen since that run — or a diff of the
+// follow-up's own that matches a stricter area — decides the level. The
+// recorded mode is where the work starts, never a ceiling on what the run must
+// be held to today.
+//
 // A record that carries no readable mode — an older run, or one that died
 // before bootstrap — imposes nothing: Strictest skips the empty value, so the
 // flag stands exactly as it does on a first run. A recorded hotfix is dropped
