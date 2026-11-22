@@ -90,10 +90,11 @@ import (
 //     own deliberate act, selecting its installation and naming it.
 //
 // What it is not, stated rather than implied: it does not create or change a
-// budget alert. The amount it records is the amount the owner states, in the
-// marker, and the apply reads it as the evidence that a budget was chosen at
-// all (Task 4.4) — the billing account's alert thresholds are Terraform's,
-// created by fugaro setup's installation root.
+// budget alert. The amount it records is the amount the owner states or the
+// default it takes (D2212), in the marker, and the apply reads it as the
+// evidence that a budget was chosen at all (Task 4.4) — the billing account's
+// alert thresholds are Terraform's, created by fugaro setup's installation
+// root.
 
 // newManagedFlagCmd is `fugaro managed flag [PROJECT_ID]`.
 func newManagedFlagCmd() *cobra.Command {
