@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// This file is KS12a: the stage that copies this installation's model keys into
+// This file is KS12: the stage that copies this installation's model keys into
 // the credentials service's bundle (internal/cli/update_keys.go, D3001,
 // D3014). Chunk a is the machinery — the read of a container, the marker, the
 // decision, the guard and the write — and the pairs it works on are put in
@@ -30,6 +30,13 @@ import (
 // service to refuse the document, and the write goes through as every other
 // writer's of the same document does.
 //
+// Chunk b is the provider keys (copyProviderKeys): the pairs the installation's
+// own config answers for, over the containers internal/infra's
+// projectSecretContainers gives every declared provider. Its tests put NO seam
+// in front of copySources, so what they assert is the enumeration itself —
+// which entries the installation's config really asks for, and which keys it
+// really holds.
+//
 // Every test is hermetic and every assertion about a value goes through
 // assertNoValue: the copy moves credentials, and the one thing it may never do
 // is print one.
@@ -40,6 +47,15 @@ import (
 // is what gcpfake.Run fails a test on if a stage asks it instead — the guard's
 // read is exactly that call, and the fake is here so it is answered.
 func copyFixture(t *testing.T) (*projectFixture, *gcpfake.Secrets, *runServiceSkew) {
+	t.Helper()
+	return copyFixtureWith(t, projectProvidersYAML)
+}
+
+// copyFixtureWith is copyFixture over a stated providers block. The
+// enumeration's tests need providers the fixture's single one cannot state — a
+// second key, a key only one repository may use, a container nobody has filled
+// — and everything else about the installation stays the policy fixture's.
+func copyFixtureWith(t *testing.T, providers string) (*projectFixture, *gcpfake.Secrets, *runServiceSkew) {
 	t.Helper()
 	// This process may itself be a coding agent's session, and a stage that
 	// refuses one is a different run than the one under test.
@@ -52,7 +68,7 @@ func copyFixture(t *testing.T) (*projectFixture, *gcpfake.Secrets, *runServiceSk
 	realSelf := selfCommand
 	selfCommand = func() string { return "fugaro" }
 	t.Cleanup(func() { selfCommand = realSelf })
-	f := newProjectFixture(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	f := newProjectFixtureWith(t, providers, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	rewriteConfigLine(t, "no_auth: true", "no_auth: true, secret_manager: "+sm.URL+"/, run: "+svc.url+"/")
 	return f, sm, svc
 }
@@ -136,6 +152,77 @@ func withCopySources(t *testing.T, pairs ...keyCopy) {
 	real := copySources
 	copySources = func(context.Context, *localcfg.Config) ([]keyCopy, error) { return pairs, nil }
 	t.Cleanup(func() { copySources = real })
+}
+
+// copyProviderKeysYAML is the operator's providers block the enumeration's
+// tests run on: the fixture's own `openrouter`, which no allow_data_to names
+// and which therefore every repository of the installation may use, beside a
+// second key only acme/app may use (`moonshot`) and a third whose container
+// nobody has filled (`quiet`, the state a declared provider's key is in until
+// the owner stores one). The model patterns do not overlap, which the config's
+// own validation requires.
+const copyProviderKeysYAML = projectProvidersYAML +
+	"  moonshot:\n" +
+	"    kind: anthropic-compat\n" +
+	"    base_url: https://api.moonshot.ai/anthropic\n" +
+	"    auth: x-api-key\n" +
+	"    secret: moonshot-key\n" +
+	"    models: [\"kimi/*\"]\n" +
+	"    allow_data_to: [\"acme/app\"]\n" +
+	"  quiet:\n" +
+	"    kind: anthropic-compat\n" +
+	"    base_url: https://api.quiet.example/v1\n" +
+	"    auth: bearer\n" +
+	"    secret: quiet-key\n" +
+	"    models: [\"quiet/*\"]\n" +
+	"    allow_data_to: [\"acme/app\"]\n"
+
+// copyContainerID is the Secret Manager ID of the container a provider key is
+// held in, spelled here the way the copy must pick it: the project-wide
+// container of the provider's own declared secret name — what internal/infra's
+// projectSecretContainers gives every declared provider, and what a job of an
+// allowed repository mounts. It is the derivation the test asserts the code
+// makes, so it is written out rather than read back from the code.
+func copyContainerID(logical string) string { return gcp.ProjectSecretID(initProjectName, logical) }
+
+// newEnumRig is the rig the enumeration's own tests run on: the same stage and
+// the same fakes as newCopyRig, over an installation whose providers block the
+// test states — and with NO seam in front of copySources, so the pairs are the
+// ones copyProviderKeys really answers for it.
+func newEnumRig(t *testing.T, providers string, doc []byte) *copyRig {
+	t.Helper()
+	f, sm, svc := copyFixtureWith(t, providers)
+	bundle := bundleFixtureFor(t, sm, initProjectName, doc)
+	// The container reads and the bundle read go through the one allowance:
+	// the fake refuses a value read until a test says otherwise.
+	sm.AllowAccess()
+
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := &syncBuf{}
+	cmd := NewRootCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(&syncBuf{})
+	cmd.SetIn(strings.NewReader(""))
+	run := newInitRun(cmd, &initOptions{door: updateDoor.name})
+	run.setProject(lc)
+	return &copyRig{f: f, sm: sm, svc: svc, s: newCredentialsCopyStage(&initEngine{r: run, lc: lc, path: f.path}),
+		cmd: cmd, out: out, bundle: bundle}
+}
+
+// readCount is how many times this run read the value of one container: the
+// fake records one entry per access call, so a key two repositories share is
+// read once and not once per entry.
+func (h *copyRig) readCount(id string) int {
+	n := 0
+	for _, got := range h.sm.Accessed() {
+		if got == id {
+			n++
+		}
+	}
+	return n
 }
 
 // check is the stage's Check over the pairs in front of it.
@@ -542,4 +629,153 @@ func TestTheCopyIsRefusedOverAServiceThatCannotReadTheFamily(t *testing.T) {
 func copyBundleSeed(t *testing.T) []byte {
 	t.Helper()
 	return []byte(config.AnthropicSecret + ": " + credsValue(t, "served") + "\n")
+}
+
+// TestTheCopyWritesEveryModelKey: the pairs are the installation's own config
+// and not a test's (KS12b): every provider credential a repository the
+// installation serves may send code to is one entry per repository, holding
+// what the container the installation keeps that key in holds, with the two
+// routing facts the provider's own declaration states. Three things are
+// asserted over one run, because they are one answer read from one document —
+// the entries the config asks for, the facts each carries, and the provider
+// whose container nobody has filled, which is skipped in one line naming the
+// provider and the repository rather than failing the run or disappearing.
+func TestTheCopyWritesEveryModelKey(t *testing.T) {
+	openrouterValue, moonshotValue := credsValue(t, "openrouter"), credsValue(t, "moonshot")
+	// The bundle holds no version: the first copy starts from the containers
+	// Terraform created, which is the state a fresh installation is in.
+	h := newEnumRig(t, copyProviderKeysYAML, nil)
+	// Two of the three declared keys are stored; `quiet`'s container is not
+	// there at all.
+	h.sm.Seed(copyContainerID("openrouter-key"), nil, []byte(openrouterValue))
+	h.sm.Seed(copyContainerID("moonshot-key"), nil, []byte(moonshotValue))
+
+	oc, out, err := h.apply(t)
+	if err != nil {
+		t.Fatalf("the copy of an installation's provider keys failed: %v", err)
+	}
+	assertNoValue(t, out, openrouterValue, moonshotValue)
+	if !oc.Changed {
+		t.Fatalf("the copy wrote the installation's provider keys into an empty bundle and reports no change: %+v", oc)
+	}
+	// One version for the whole document, however many entries it holds.
+	if n := h.adds(); n != 1 {
+		t.Errorf("the copy added %d version(s) of the bundle, want one: a key entered for some of the repositories it serves and not for the others is a half-applied move", n)
+	}
+
+	// Every pair the config answers for, and the facts each entry carries: the
+	// value from the container the installation holds that key in, and the
+	// base_url and auth of the provider's own declaration.
+	want := []struct {
+		credential, repo, slug, container, value, baseURL, auth string
+	}{
+		{"openrouter", "acme/app", mustSlug("github", "acme/app"), "openrouter-key", openrouterValue, "https://openrouter.ai/api/v1", providerAuthBearer},
+		{"openrouter", "acme/other", mustSlug("bitbucket", "acme/other"), "openrouter-key", openrouterValue, "https://openrouter.ai/api/v1", providerAuthBearer},
+		{"moonshot", "acme/app", mustSlug("github", "acme/app"), "moonshot-key", moonshotValue, "https://api.moonshot.ai/anthropic", providerAuthXAPIKey},
+	}
+	for _, w := range want {
+		entry := bundleEntry(t, h.sm, h.bundle, w.slug, w.credential)
+		if entry.Value() != w.value {
+			t.Errorf("%s for %s holds %d bytes and the container %s holds %d: the value did not land", w.credential, w.repo, len(entry.Value()), w.container, len(w.value))
+		}
+		if entry.BaseURL != w.baseURL || entry.Auth != w.auth {
+			t.Errorf("%s for %s holds base_url %q and auth %q, want %q and %q: the entry's routing facts are the provider's own declaration and never a caller's (F45, D1418)",
+				w.credential, w.repo, entry.BaseURL, entry.Auth, w.baseURL, w.auth)
+		}
+		if entry.Source.Container != w.container {
+			t.Errorf("%s for %s carries the container %q, want %q: the marker is the container the value was copied out of", w.credential, w.repo, entry.Source.Container, w.container)
+		}
+	}
+
+	// A provider a repository may not send code to is no entry for it: a key
+	// that cannot reach a repository's runs may not be entered under its name.
+	if _, found := credsvc.ReadProviderKey(bundleOf(t, h.sm, h.bundle), mustSlug("bitbucket", "acme/other"), "moonshot"); found {
+		t.Errorf("the copy wrote moonshot's key for acme/other, which providers.moonshot.allow_data_to does not name: the entry is a key a run of that repository may not be served")
+	}
+
+	// The provider whose container nobody has filled: nothing is copied for it,
+	// and the run says which provider and which repository in one line.
+	if _, found := credsvc.ReadProviderKey(bundleOf(t, h.sm, h.bundle), mustSlug("github", "acme/app"), "quiet"); found {
+		t.Errorf("the copy wrote an entry for quiet, whose container holds no version: the entry would name a key no container holds")
+	}
+	for _, want := range []string{"quiet for acme/app", "served no key"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the run does not say %q, and a provider the installation holds no key for is a state a person has to be able to find: %q", want, out)
+		}
+	}
+}
+
+// TestASharedKeyIsCopiedOncePerRepository: a key two repositories use is
+// entered TWICE, once under each repository's entry, and never once — the
+// entry's name carries the repository (D3008), so one entry for a shared key
+// serves one repository and leaves the other with no key at all. And the
+// container is read ONCE whatever the number of entries: the two pairs are one
+// read and two entries, which is what a rotation of one key for a fleet of
+// repositories costs.
+func TestASharedKeyIsCopiedOncePerRepository(t *testing.T) {
+	value := credsValue(t, "shared")
+	// The fixture's one provider carries no allow_data_to, which means every
+	// repository of the installation may use it: the two the fixture declares
+	// are the two that share this key.
+	h := newEnumRig(t, projectProvidersYAML, nil)
+	id := copyContainerID("openrouter-key")
+	h.sm.Seed(id, nil, []byte(value))
+
+	oc, out, err := h.apply(t)
+	if err != nil {
+		t.Fatalf("the copy of a key two repositories share failed: %v", err)
+	}
+	assertNoValue(t, out, value)
+	if !oc.Changed {
+		t.Fatalf("the copy reports no change over a key two repositories use: %+v", oc)
+	}
+	if n := h.adds(); n != 1 {
+		t.Errorf("the copy added %d version(s) of the bundle, want one: both entries are one document, and a version holding one of them is a key served to one repository and not the other", n)
+	}
+	if !strings.Contains(oc.Detail, "2 model key(s)") {
+		t.Errorf("the copy says %q for a key two repositories use, want two entries: the entry's name carries the repository, so one entry cannot serve both", oc.Detail)
+	}
+
+	slugs := []string{mustSlug("github", "acme/app"), mustSlug("bitbucket", "acme/other")}
+	for _, slug := range slugs {
+		entry := bundleEntry(t, h.sm, h.bundle, slug, "openrouter")
+		if entry.Value() != value {
+			t.Errorf("the entry for %s holds %d bytes and the container holds %d: the shared key did not land for that repository", slug, len(entry.Value()), len(value))
+		}
+		if entry.Source.Container != "openrouter-key" {
+			t.Errorf("the entry for %s carries the container %q, want openrouter-key", slug, entry.Source.Container)
+		}
+	}
+	// The two entries are two names: one entry written twice is one name.
+	first, err := credsvc.RepoCredentialKey(slugs[0], "openrouter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := credsvc.RepoCredentialKey(slugs[1], "openrouter")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("the two repositories' entries are the same name %q: C1's rule carries the repository", first)
+	}
+	if got := h.readCount(id); got != 1 {
+		t.Errorf("the copy read the container %s %d times for two entries, want once: the read is made once per container whatever the number of repositories it serves", id, got)
+	}
+}
+
+// bundleOf is the bundle's newest version through the service's own loader: a
+// test asking whether an entry is there at all reads the document with the
+// loader the service reads it with, and not with a second parse of the same
+// YAML.
+func bundleOf(t *testing.T, sm *gcpfake.Secrets, id string) *credsvc.Bundle {
+	t.Helper()
+	raw := sm.Latest(id)
+	if raw == nil {
+		t.Fatalf("the bundle %s holds no version, and this test reads an entry out of it", id)
+	}
+	held, err := credsvc.ParseBundle(raw)
+	if err != nil {
+		t.Fatalf("the bundle this run wrote does not read back: %v", err)
+	}
+	return held
 }

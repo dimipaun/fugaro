@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	"google.golang.org/api/googleapi"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -126,11 +129,70 @@ func (c keyCopy) name() string {
 // It is the half of the copy that reads the installation's own config, and it
 // is a variable so that the machinery the rest of this file is — the read, the
 // marker, the decision, the guard and the write — can be put in front of pairs
-// a test builds. What it answers today is none: the enumeration is the part of
-// KS12 its provider-key and repository-key tasks complete, and until they do an
-// installation is copied nothing and the stage says so rather than pretending
-// otherwise.
-var copySources = func(ctx context.Context, lc *localcfg.Config) ([]keyCopy, error) { return nil, nil }
+// a test builds. What it answers today is the provider keys
+// (copyProviderKeys); a repository's own Anthropic key and its OAuth token are
+// the repository-key task of KS12 and are not enumerated here yet, so an
+// installation whose only model keys are those is copied nothing and the stage
+// says so rather than pretending otherwise.
+var copySources = func(ctx context.Context, lc *localcfg.Config) ([]keyCopy, error) {
+	return copyProviderKeys(lc)
+}
+
+// copyProviderKeys is the provider-key half of the enumeration (KS12b): every
+// provider credential a repository this installation serves may send code to,
+// entered once for each such repository (D3008).
+//
+// Both halves of a pair are the owner's own config and nothing here is a
+// literal. The container is the provider's declaration's own `secret` — the
+// logical name this installation holds that key under, which is the name the
+// marker carries and the name `fugaro secrets ls` speaks — and its Secret
+// Manager ID is the project-wide container that name resolves to, the one
+// internal/infra's projectSecretContainers gives every declared provider the
+// day the installation is applied. The entry is C1's name for that repository
+// and that provider, built by the one function that builds it
+// (providerKeyEntry, which derives the slug from the repository's git provider
+// as every other writer of the family does), and its two routing facts are the
+// provider's base_url and auth, which the loader holds an entry to and which
+// are therefore already refused by the config's own validation before a pair
+// is built.
+//
+// One pair per repository and not one per key: a key two repositories share is
+// two pairs over ONE container, written twice under each repository's entry
+// (D3008) — and the read is made once per container whatever the count
+// (copyPlan.read, keyed by secretID), so a shared key is read once and entered
+// as many times as it is used.
+//
+// A repository the installation serves is an entry of the config's `repos`
+// map: that map is where the slug C1's name carries comes from and it is the
+// whole of the repositories a run of this installation is launched on. A
+// provider the repository may not send code to (config.ModelProvider.AllowsData)
+// is no pair at all: the key may not reach it, so no run of it is served one
+// and no entry is written for it.
+func copyProviderKeys(lc *localcfg.Config) ([]keyCopy, error) {
+	var out []keyCopy
+	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
+		for _, name := range slices.Sorted(maps.Keys(lc.Providers)) {
+			p := lc.Providers[name]
+			if !p.AllowsData(repo) {
+				continue
+			}
+			entry, err := providerKeyEntry(lc, name, repo)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, keyCopy{
+				container:  p.Secret,
+				secretID:   gcp.ProjectSecretID(lc.Name, p.Secret),
+				entry:      entry,
+				baseURL:    p.BaseURL,
+				auth:       p.Auth,
+				repo:       repo,
+				credential: name,
+			})
+		}
+	}
+	return out, nil
+}
 
 // copyNoServiceReason is the stage's skip on an installation whose config
 // carries no credentials service at all. The block's presence is the opt-in
@@ -380,8 +442,13 @@ func (p *copyPlan) read(ctx context.Context, e *initEngine, pair keyCopy, held *
 			return row, err
 		}
 		if !found {
+			// A container holding nothing is the state a provider's key is in
+			// before anybody has stored one, and it is answered as the skip it
+			// is. It names the provider and the repository and not only the
+			// container, because that is the state a person acts on: which
+			// repository of the installation is served no key.
 			row.state = copyAbsent
-			row.why = fmt.Sprintf("%s holds no version this run can read", safetext.Field(pair.container))
+			row.why = fmt.Sprintf("%s holds no version this run can read, so %s is served no key", safetext.Field(pair.container), pair.name())
 			return row, nil
 		}
 		// The slots are built once per engine, and a stage driven on its own —
@@ -594,24 +661,36 @@ func (p *copyPlan) rest() string {
 	return " (" + strings.Join(parts, ", ") + ")"
 }
 
-// idle is whether this run has nothing to write, and the line that says so. An
-// entry the copy did not write is NAMED here and not only in the diff, because
-// a run with nothing to write prints no diff at all — the diff is what a
-// confirmation is made against — and "one left as it is" with no name is a
-// state nobody could act on.
+// idle is whether this run has nothing to write, and the line that says so. A
+// pair this run left alone is NAMED here and not only in the diff, because a
+// run with nothing to write prints no diff at all — the diff is what a
+// confirmation is made against — and "one with no version to copy" with no
+// name is a state nobody could act on.
+//
+// The lead is the strongest thing this run can say about the whole of what it
+// found, and it is read off the states the rows carry rather than assumed: a
+// bundle this run did not move because every entry it holds is already right is
+// not the same state as one where the containers it looked at held nothing to
+// copy, and the sentence the first state earns would tell a person their keys
+// are served when no container holds them.
 func (p *copyPlan) idle() (string, bool) {
 	if len(p.writes()) > 0 {
 		return "", false
 	}
 	lead := "every model key of this installation is already in the credentials service's bundle"
-	if p.count(copyUnchanged) == 0 && p.count(copyLeft) > 0 {
-		// Every entry the bundle holds is someone else's, so the sentence above
-		// would claim a copy that has not happened. An owner reading this line
-		// is deciding whether their service is served the key the entry holds,
-		// and "already in the bundle" answers that wrongly.
+	switch {
+	case p.count(copyUnchanged) == 0 && p.count(copyLeft) > 0:
+		// Every entry the bundle holds is someone else's, so the sentence
+		// above would claim a copy that has not happened. An owner reading
+		// this line is deciding whether their service is served the key the
+		// entry holds, and "already in the bundle" answers that wrongly.
 		lead = "nothing here is a model key this copy wrote into the credentials service's bundle"
+	case p.count(copyUnchanged) == 0 && p.count(copyAbsent) > 0:
+		lead = "no model key this installation holds outside the credentials service's bundle has a value to copy"
+	case p.count(copyAbsent) > 0:
+		lead = "every model key this installation holds outside the credentials service's bundle is either already in it or a container that holds nothing to copy"
 	}
-	return lead + p.rest() + p.leftClause(), true
+	return lead + p.rest() + p.leftClause() + p.absentClause(), true
 }
 
 // leftClause names the entries this run leaves alone because it did not write
@@ -630,6 +709,27 @@ func (p *copyPlan) leftClause() string {
 		return ""
 	}
 	return ": this run does not overwrite an entry it did not write, and the copy wrote no marker on " + strings.Join(names, ", ")
+}
+
+// absentClause names the pairs this run found no version to copy out of, by the
+// provider and the repository they belong to. It is leftClause's counterpart
+// and exists for the same reason: a run with nothing to write prints no diff,
+// so without it the provider whose container nobody has filled yet is a key
+// nobody is told about. The name a person acts on is the pair's and not the
+// container's: the container is an implementation detail of where this
+// installation keeps the key, while "this repository is served no key" is the
+// state a run of it is in.
+func (p *copyPlan) absentClause() string {
+	var names []string
+	for _, row := range p.rows {
+		if row.state == copyAbsent {
+			names = append(names, row.pair.name())
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return ": nothing is copied for " + strings.Join(names, ", ")
 }
 
 // planDetail is what the stage says it is about to do.
