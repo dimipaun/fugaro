@@ -481,28 +481,40 @@ func TestCreateRaceAdoptsOnlyAcceptable(t *testing.T) {
 	r := newFBRig(t)
 	fakeTerminal(t)
 	r.fs.RaceCreate("us-east5")
-	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID); err != nil {
+	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
+	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if _, ok := r.fs.Value("meta", "installation"); !ok {
 		t.Error("the raced database was not marked")
 	}
-	// A database that appeared elsewhere meanwhile is adopted too (LP3, R3):
-	// where it is decides nothing. The plan was made before it existed, so no
-	// line of it names a location (TestEnsureAdoptsDatabaseElsewhere is where
-	// the line is pinned).
+	// And the run says where it is, because it did not create it: the location
+	// is permanent and nobody chose it in this run.
+	if !strings.Contains(out, "created by someone else after the plan, in us-east5, adopted as it is") {
+		t.Errorf("the run does not say where the adopted database is:\n%s", out)
+	}
+	// A database that appeared elsewhere meanwhile is refused (LP3, D3085):
+	// the plan and the confirmation named us-east5, a location is permanent,
+	// and nothing agreed to keeping the installation's history in
+	// europe-west1. The refusal names both locations and the way out, and
+	// nothing is written to it.
 	r2 := newFBRig(t)
 	fakeTerminal(t)
 	r2.fs.RaceCreate("europe-west1")
-	out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
-	if err != nil {
-		t.Fatalf("a database that appeared in europe-west1 was not adopted: %v\n%s", err, out)
+	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID)
+	if ExitCode(err) != ExitUserError || err == nil ||
+		!strings.Contains(err.Error(), "europe-west1") || !strings.Contains(err.Error(), "us-east5") ||
+		!strings.Contains(err.Error(), "run it again") {
+		t.Fatalf("err = %v\n%s", err, out)
 	}
 	if loc, _ := r2.fs.Database(); loc != "europe-west1" {
-		t.Errorf("the raced database was changed: %s", loc)
+		t.Errorf("the refused database was changed: %s", loc)
 	}
-	if _, ok := r2.fs.Value("meta", "installation"); !ok {
-		t.Error("the raced database elsewhere was not marked")
+	if _, ok := r2.fs.Value("meta", "installation"); ok {
+		t.Error("a database that is not where the plan said was marked")
+	}
+	if _, ok := r2.rules.Source(); ok {
+		t.Error("rules deployed over a refused database")
 	}
 	// Ours it is not: a raced database holding data and no mark is refused.
 	r3 := newFBRig(t)
