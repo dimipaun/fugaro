@@ -3156,7 +3156,418 @@ Two honest limits of this diff, both deliberate:
 
 ## `ci.yml`
 
-**Status: `ci.yml` is staged and pending again (2026-11-15), in the `shard` job, so that every `test-shard` runner finishes in under seven minutes.** The staged file is the real `.github/workflows/ci.yml` plus the changes in the block below and nothing else, so the copy-in diff is the `shard` job — its comment, its matrix and two of its steps. The `terraform` job's loop is untouched, so nothing here has to be applied by hand.
+**Status: `ci.yml` is staged and pending (2026-11-22), written out rather than copied, for the selector (CS6 of `docs/ci-affected-tests/implementation-plan.md`).** What the owner copies is the block below, and the block is **the whole new `.github/workflows/ci.yml`**: the change reaches the trigger block, the job set and the `shard` matrix at once, so a diff of it would be the file. The four one-line permission edits it needs in the other workflows are in this section too, and they belong in the same commit.
+
+**It is written here rather than staged as a file for the reason this section has used before, and one more.** The file to change is a `.github/workflows/` file, and no agent run may push one. And a staged copy is a *snapshot* a person copies over the real file: a `docs/pending-workflows/ci.yml` would have to be the whole 345-line file, which is what the copy below is, and staging it as a file named `.yml` would move this directory's pending-workflow count, the site's README, and `images/cloudbuild_test.go`'s staged-copy guard with it. The text below is the same thing without that.
+
+**What the block changes, line by line.**
+
+- **`changes` goes and `select` takes its place.** The old job computed `docs_only` (only ever for a `pull_request` event, so always `false` here — F1) and the `live_scripts` boolean (R9 removes it). The new job is the selector itself: `actions/checkout` with `fetch-depth: 0` (the changed files are a two-dot tree diff against the base, R2), then `go run ./scripts/ci-select -full=...`, whose one line of JSON becomes this run's matrix and jobs. It writes its own summary to `$GITHUB_STEP_SUMMARY`.
+- **`run-name` is what the release gate reads** (R1, D3040): `ci (full)` or `ci (selected)`. A scheduled run takes no input, so the event name is what tells it from a dispatch (R11); `scripts/release-gate.sh` counts only the checks of a `ci (full)` run and ignores a `ci (selected)` one.
+- **`on:` gains one `full` input and one `schedule:`.** `workflow_dispatch` keeps its meaning and drops `live_scripts`; `-f full=true` is a full run, which is what `scripts/release.sh` dispatches for a release (CS7b) and what a tag's gate requires. The nightly (`17 4 * * *`) is the one scheduled run of D3041 — the narrow exception to the dispatch-only ruling of 2026-11-07 — because a selected run needs a full run to measure from (R2) and to weigh its shards with (R5). It is full and takes no input.
+- **`shard`'s matrix is the selector's output**: `matrix: ${{ fromJSON(needs.select.outputs.legs) }}`, so the leg keys are CS3's `Leg` fields — `name`, `pkg`, `index`, `of` and `only` — and nothing else. A leg with `of: 1` and no `only` runs every test of the packages it names, and `pkg` may name several of them (a leg the packer filled). `internal/cli`'s `update` and `other` families and the live checks keep the splitting they have today, because the packer keeps them. Two new outputs decide the run: `has_legs` skips the job on an empty leg set (GitHub fails a matrix with no entries; the `test` job already counts a skipped `shard` as success), and `trace` turns on the read trace below.
+- **`terraform` and `rules` are chosen too**, from the same output (`if: needs.select.outputs.terraform == 'true'`, `.rules`), and `check` runs on every run — a build break anywhere has to fail (R6). A full run sets both true, so nothing about a tag's gate changes.
+- **A full run traces what its tests read and uploads it** (CS2b, R10): each shard wraps its `go test` in `strace -f -y -e trace=openat,open,execve`, reduces the log with `go run ./scripts/ci-readmap --trace ... --trace-out reads-<leg>.json`, and uploads it as `reads-<leg>` beside the `test-times-<leg>` it already uploads. Nothing is committed from here: a person (or a Fugaro run) downloads the nightly's artifacts and merges them into `docs/ci-affected-tests/read-map.json` with `--from-artifact`, in an ordinary pull request. `strace` missing from the runner image is a warning and not a failure, and CS9's measurement decides whether the trace stays on a full run at all — its one-line flag is the `trace` line in the `select` step.
+- **`actions: read` on the `select` job alone, at job level.** It lists this repository's workflow runs and downloads the last full run's timings, which is the actions API; the workflow-level `permissions:` stays exactly `contents: read`, because **the guard that keeps every workflow's default token read-only fails when a grant moves to the workflow level** (`images/cloudbuild_test.go`'s `TestCIWorkflowPermissionsScoped`, and the red step that pins it).
+
+**The `test` name, the checkouts and the timeouts do not move.** `test` is still the one check name the gate and the branch rules know, still `needs: [check, shard]`, and still counts a skipped `shard` as success; every `uses:` keeps the pin it has today; `check`'s vet steps, the `terraform` job's root loop and its `tfmt`/tflint/scan steps, and the `rules` job's emulator setup are byte for byte what runs today.
+
+**One thing the block does not close, and CS4's acceptance does not ask it to.** If the `select` job itself fails — a crash, not a doubt: every doubt inside the selector is a full run instead (R8) — its outputs are empty, so `shard`, `rules` and `terraform` all skip, `check` still runs, and `test` counts the skipped shard as success: a dispatched full run would then show `test` green having run no tests. A release is still caught, because `scripts/release-gate.sh` reads a skipped check as failed, so the gate refuses a full run whose `terraform` and `rules` are skipped; a reader of `test` alone on a branch is not. Closing it is one line in the `test` job (`$SELECT` in its loop, beside `$CHECK` and `$SHARD`) and CS4's acceptance fixes that job as it is, so it is recorded here for CS6b or the owner rather than folded in.
+
+**Four one-line edits go with the block, in the same commit.** Each publishes a release and runs `scripts/release-gate.sh` first, and the gate now lists the tag's workflow runs (`actions/runs?head_sha=`) as well as its checks (R1), so each gate job's `permissions:` gains one line beside its `checks: read`:
+
+```yaml
+      actions: read # the gate lists the tag's workflow runs and reads their titles
+```
+
+- `.github/workflows/release.yml` — the `release` job.
+- `.github/workflows/images.yml` — the `version` job.
+- `.github/workflows/mobile-release.yml` — the `ios` job and the `android` job.
+- `.github/workflows/console-release.yml` — the `release` job and the `linux` job, in **both** copies of that file: the staged `docs/pending-workflows/console-release.yml` and the applied `.github/workflows/console-release.yml`, which `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` requires to stay byte-identical while both exist. **The edit is not in the staged copy here yet**, and that is deliberate: editing it alone reddens that byte-identity clause and the console's permission pin in the same run, and both move with CS6b at the copy-in.
+
+**Whether the grant is needed was measured, not assumed** (F13): CS7's first step asked this repository's runs API with a token that holds no `actions: read` and it answered — the repository is public, and an anonymous caller could list its runs (recorded in `scripts/release-gate.sh`'s header, 2026-11-20). The grant is therefore harmless here and required on a private fork of it, and it goes on all four gate jobs either way.
+
+**CS6b lands with this copy-in, and it is not optional — and CS6b's list is one pin short.** Four pins in `internal/cli` read what this change moves, and the fourth is not in CS6b's brief:
+
+- `docs_runner_timeout_test.go` reads the literal `pkg: ./internal/runner` line, which a matrix built from the selector's output no longer has (`TestRunnerTimeoutDocsMatchCI`);
+- `docs_mobile_release_workflow_test.go` pins every job of `mobile-release.yml` as exactly `contents: read` and `checks: read` (`TestDocsMobileReleaseWorkflowIsStagedAndPinned`);
+- `docs_desktop_console_test.go` pins the console-release gate jobs' permissions the same way (`TestDocsConsoleReleaseWorkflowIsStagedAndPinned`);
+- and **`docs_mobile_eas_runbook_test.go` requires §10 of `docs/mobile/eas-signing-runbook.md` to name every scope both jobs of that file declare** (`TestDocsMobileEasRunbookMatchesTheStagedReleaseWorkflow`), so the added line in `mobile-release.yml` needs the one line in that page too. A run may edit that page — it is not under `.github/workflows/` — but it must not move before the workflow does, so it belongs to the same commit.
+
+Verified in a scratch worktree on 2026-11-22, with all five edits applied: `go test ./internal/cli/ -run 'Docs|ReleaseGate|Release' -count=1` fails on exactly those four tests and on nothing else in the file.
+
+**Verified offline before it was written down**, on 2026-11-22, in a scratch worktree with the block applied and nothing committed: the block parses as YAML and holds the shape above; `go test ./images/ ./deploy/terraform/ -count=1` passes; the guard above fails when `actions: read` is moved to the workflow level, which is the red step (`TestCIWorkflowPermissionsScoped`); with the block applied and the other four files untouched, the same `-run 'Docs|ReleaseGate|Release'` command fails on `TestRunnerTimeoutDocsMatchCI` alone; all six `run:` blocks pass `bash -n`; and the `shard` step was exercised against a stub go for each of the five leg shapes the packer emits — a packed leg of several packages, an `other`, an `update`, a `nonlive` and a `live` leg — and picks the branch it should in each. **Not verified:** the workflow has never run. That the selector selects what it should under a real dispatch, that the nightly's trace uploads, and that `strace` is on `ubuntu-latest` are CS9's measurement and the first real dispatch.
+
+**To copy it in**, from the repository root, once the CS6b commit is in or ready to go with it:
+
+```sh
+# 1. the block below, over the whole file
+$EDITOR .github/workflows/ci.yml
+# 2. the four permission edits above, in release.yml, images.yml,
+#    mobile-release.yml and BOTH copies of console-release.yml
+$EDITOR .github/workflows/release.yml .github/workflows/images.yml \
+        .github/workflows/mobile-release.yml .github/workflows/console-release.yml \
+        docs/pending-workflows/console-release.yml
+git add .github/workflows/ci.yml .github/workflows/release.yml .github/workflows/images.yml \
+        .github/workflows/mobile-release.yml .github/workflows/console-release.yml \
+        docs/pending-workflows/console-release.yml
+git commit -m "ci: run the tests a change can reach, and a full run on a schedule"
+gh workflow run ci --ref main -f full=true   # the first full run, which is the gate's own requirement
+gh workflow run ci --ref main                # and one selected run, which is CS9's other half
+```
+
+**The block, and nothing else in it.** It is `.github/workflows/ci.yml` as it runs today plus this change: the two other changes this section writes down — the `internal/runner` bound and the key service's Terraform suite — are **not** in it, and neither is `ci-hygiene.yml.snippet`; each is applied by its own copy-in. Nothing in the block is a comment-only difference from the file it replaces except the comments that name what moved.
+
+```yaml
+name: ci
+# A run names itself, and the name is load-bearing: scripts/release-gate.sh
+# reads the checks of a run of this workflow titled `ci (full)` and ignores a
+# `ci (selected)` one, so a selected run can never vouch for a tag (R1, D3040).
+# A scheduled run takes no input and is full, so the event name is what tells it
+# from a dispatch (R11).
+run-name: ${{ github.event_name == 'schedule' && 'ci (full)' || (github.event.inputs.full == 'true' && 'ci (full)' || 'ci (selected)') }}
+on:
+  # Pull requests and pushes do not run CI (owner's rulings of 2026-10-16 and
+  # 2026-11-07: the in-run loop already runs the tests, and a run per push is
+  # what the dispatch-only ruling keeps out). `gh workflow run ci --ref <branch>`
+  # starts a selected run — only what the change can reach — and `-f full=true`
+  # starts a full one. A release dispatches the full variant on its own
+  # (scripts/release.sh), and scripts/release-gate.sh requires the checks of a
+  # full run on the tag's commit.
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "run every test of every package, whatever changed (a release's gate run; scripts/release.sh dispatches it)"
+        type: boolean
+        default: false
+  # The one scheduled run (D3041, the owner's answer of 2026-11-20): a narrow
+  # exception to the dispatch-only ruling, because the selector measures a change
+  # from the last full run (R2) and weighs the shards with its timings (R5) —
+  # without a nightly, a selected run would have nothing to measure from. It is
+  # full and takes no input (R11).
+  schedule:
+    - cron: '17 4 * * *'
+permissions:
+  contents: read
+jobs:
+  # The selector (CS4): it reads the last full run on main from GitHub, diffs
+  # this commit against it in a full checkout, and prints the shard matrix and
+  # which of terraform, rules and check run. It never fails open — every doubt
+  # is a full run, and the reason is on the run's summary (R8) — and an empty
+  # leg set skips the shard job rather than handing GitHub an empty matrix.
+  select:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # The selector lists this repository's workflow runs and downloads the
+      # last full run's test-times artifacts: reads of the actions API, and of
+      # nothing else. Job level, never workflow level: every other job here
+      # needs the token for the checkout alone (images/cloudbuild_test.go's
+      # TestCIWorkflowPermissionsScoped).
+      actions: read
+    outputs:
+      legs: ${{ steps.select.outputs.legs }}
+      has_legs: ${{ steps.select.outputs.has_legs }}
+      trace: ${{ steps.select.outputs.trace }}
+      terraform: ${{ steps.select.outputs.terraform }}
+      rules: ${{ steps.select.outputs.rules }}
+    steps:
+      # fetch-depth: 0, because the changed files are a two-dot tree diff
+      # against the base commit (R2): a shallow clone cannot run it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          FULL_INPUT: ${{ github.event.inputs.full }}
+        run: |
+          set -euo pipefail
+          full=false
+          if [ "$EVENT" = schedule ] || [ "$FULL_INPUT" = true ]; then
+            full=true
+          fi
+          go run ./scripts/ci-select -full="$full" | tee select.json
+          {
+            echo "legs=$(jq -c '{include: .legs}' select.json)"
+            echo "has_legs=$(jq -r '(.legs | length) > 0' select.json)"
+            # Every full run traces and uploads what its test processes read,
+            # and that artifact is what the committed read-map is refreshed
+            # from, by hand, in a pull request (R10).
+            echo "trace=$(jq -r '.full' select.json)"
+            echo "terraform=$(jq -r '.terraform' select.json)"
+            echo "rules=$(jq -r '.rules' select.json)"
+          } >> "$GITHUB_OUTPUT"
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go vet -tags docker ./...
+      # Type-checks the live tests (never runs them), so they can't rot.
+      - run: go vet -tags live ./...
+      # The live gateway test needs both tags.
+      - run: go vet -tags 'live docker' ./...
+      # Type-checks the terraform-tagged tests (the real-terraform ones).
+      - run: go vet -tags terraform ./...
+      # Type-checks the emulator tests of the database rules (the rules job runs them).
+      - run: go vet -tags firebase ./...
+  # The Go tests run on parallel runners, and the matrix is the selector's own
+  # output (CS3, CS4): one leg per entry, with the keys `name`, `pkg`, `index`,
+  # `of` and `only` and nothing else. A family ci.yml cannot take in one go
+  # keeps the legs it has today — internal/cli's update tests hang when a subset
+  # of the package runs without the tests that precede them, so the packer keeps
+  # `update` and `other` whole, and the live checks split by LIVE_CHECK_SHARD,
+  # which no -run pattern can spell. A leg with `of: 1` and no `only` runs every
+  # test of the packages it names, and `pkg` may name several of them: the
+  # packer fills a leg with packages a change reaches and no family owns, and go
+  # test takes them as its arguments. A leg of a family splits its one package's
+  # tests by a stable hash of the test name mod `of`, so a new test lands in a
+  # leg on its own and none is dropped or run twice.
+  #
+  # A full run (the nightly, or `-f full=true`) also traces each shard's reads
+  # and uploads them (CS2b, R10): that artifact is what the committed read-map
+  # is refreshed from, in a pull request, never by a push from here.
+  shard:
+    needs: select
+    if: needs.select.outputs.has_legs == 'true'
+    name: test-shard (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.legs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: go test -race
+        env:
+          PKG: ${{ matrix.pkg }}
+          INDEX: ${{ matrix.index }}
+          OF: ${{ matrix.of }}
+          ONLY: ${{ matrix.only }}
+          TRACE: ${{ needs.select.outputs.trace }}
+        run: |
+          set -euo pipefail
+          # strace is not on every runner image, and a missing one is not what a
+          # full run should fail on: the shard says so and runs untraced.
+          if [ "$TRACE" = true ] && ! command -v strace >/dev/null 2>&1; then
+            echo "::warning::strace is not on this runner, so this shard's reads are not traced"
+            TRACE=false
+          fi
+          traced=(go test)
+          if [ "$TRACE" = true ]; then
+            traced=(strace -f -y -e trace=openat,open,execve -o strace.log -qq go test)
+          fi
+          run_tests() {
+            "${traced[@]}" "$@" | tee test.json | jq -rj 'select(.Action=="output").Output'
+          }
+          if [ "${ONLY:-}" = live ]; then
+            # TestLiveCheckScripts builds its items here and runs them through
+            # a worker pool, so they are not subtests and no -run pattern can
+            # choose between them: a top-level test whose name matches the
+            # first element of a multi-element pattern runs whatever its
+            # subtests do, and there are none. The split is the variable, read
+            # by the test itself; an unreadable value fails the runner rather
+            # than running everything (scripts/live_checks_test.go).
+            export LIVE_CHECK_SHARD="$INDEX/$OF"
+            run_tests -race -timeout 40m -json -run '^TestLiveCheckScripts$' "$PKG"
+            exit 0
+          fi
+          if [ "$OF" = 1 ] && [ -z "${ONLY:-}" ]; then
+            # The leg's packages, word-split on purpose: `pkg` is a list.
+            run_tests -race -timeout 40m -json $PKG
+            exit 0
+          fi
+          # -race, so that the run below finds this build rather than making a
+          # second one: without it the package is compiled twice per runner,
+          # once without the race detector and once with, and the two builds
+          # are most of what a cli runner's seven minutes hold.
+          go test -race -list '.*' "$PKG" | grep -E '^(Test|Example|Fuzz)' | sort > all.txt
+          case "${ONLY:-}" in
+            update) grep -E '^TestUpdate' all.txt > sel.txt || true; mv sel.txt all.txt ;;
+            other) grep -vE '^TestUpdate' all.txt > sel.txt || true; mv sel.txt all.txt ;;
+            nonlive) grep -vE '^TestLiveCheckScripts$' all.txt > sel.txt || true; mv sel.txt all.txt ;;
+          esac
+          total=$(wc -l < all.txt)
+          while read -r name; do
+            if [ $(( $(printf '%s' "$name" | cksum | cut -d' ' -f1) % OF )) -eq "$INDEX" ]; then
+              echo "$name"
+            fi
+          done < all.txt > mine.txt
+          echo "shard $INDEX of $OF: $(wc -l < mine.txt) of $total tests"
+          test -s mine.txt
+          run="^($(paste -sd'|' mine.txt))\$"
+          run_tests -race -timeout 40m -json -run "$run" "$PKG"
+      - name: timings
+        if: always()
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          test -s test.json || exit 0
+          {
+            echo "### shard $NAME"
+            echo "package elapsed (s):"
+            jq -r 'select(.Test==null and (.Action=="pass" or .Action=="fail") and .Elapsed!=null) | "\(.Elapsed)\t\(.Package)"' test.json | sort -rn | head -20
+            echo "slowest 40 tests (s):"
+            jq -r 'select(.Test!=null and (.Action=="pass" or .Action=="fail")) | "\(.Elapsed)\t\(.Package) \(.Test)"' test.json | sort -rn | head -40
+          } | tee timings.txt >> "$GITHUB_STEP_SUMMARY"
+          jq -r 'select(.Test!=null and (.Action=="pass" or .Action=="fail")) | "\(.Elapsed)\t\(.Package)\t\(.Test)"' test.json | sort -rn > test-times.tsv
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: test-times-${{ matrix.name }}
+          path: test-times.tsv
+          if-no-files-found: ignore
+      # The reads of this shard, reduced to repository-relative paths: one
+      # artifact per leg, named for the leg, which is what
+      # `go run ./scripts/ci-readmap --from-artifact <dir>` merges into the
+      # committed map (CS2b, R10).
+      - name: trace the reads
+        if: always()
+        env:
+          NAME: ${{ matrix.name }}
+          PKG: ${{ matrix.pkg }}
+          TRACE: ${{ needs.select.outputs.trace }}
+        run: |
+          set -euo pipefail
+          if [ "$TRACE" != true ] || [ ! -s strace.log ]; then
+            exit 0
+          fi
+          packages=$(printf '%s' "$PKG" | tr ' ' ',')
+          go run ./scripts/ci-readmap --trace strace.log --shard "$NAME" --packages "$packages" --trace-out "reads-$NAME.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: reads-${{ matrix.name }}
+          path: reads-${{ matrix.name }}.json
+          if-no-files-found: ignore
+  # The one check name the release gate and branch rules know: it passes when
+  # every shard and the vet job passed, and when the shard was skipped because
+  # the selector found nothing to run.
+  test:
+    needs: [check, shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          CHECK: ${{ needs.check.result }}
+          SHARD: ${{ needs.shard.result }}
+        run: |
+          for r in "$CHECK" "$SHARD"; do
+            case "$r" in success|skipped) ;; *) echo "a test job ended $r"; exit 1;; esac
+          done
+  # The budget database rules are the only thing between a compromised run's
+  # token and every shared counter, so their tests run against the Realtime
+  # Database emulator: a firebase-tools pinned by
+  # internal/budget/rules/emulator/package-lock.json, Java 21 and Node 22. No
+  # step has a Firebase account or credential (the project id is a demo- id the
+  # emulator treats as local); the only network use is the package and
+  # emulator-jar downloads. FUGARO_REQUIRE_EMULATOR makes a missing emulator a
+  # failure instead of a skip, so this required check cannot pass vacuously.
+  rules:
+    needs: select
+    if: needs.select.outputs.rules == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      # The lockfile is written by npm 11.19.0; the npm that ships with Node
+      # 22 resolves the optional picomatch peer differently and refuses it.
+      - name: pin npm to the version that wrote the lockfile
+        run: npm install --global npm@11.19.0
+      - name: install the pinned firebase-tools
+        working-directory: internal/budget/rules/emulator
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: cache the emulator jar
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}
+      - name: the generated rules and the emulator suite
+        env:
+          FUGARO_REQUIRE_EMULATOR: "1"
+        run: go test -tags firebase -count=1 -timeout 15m -v ./internal/budget/rules/...
+  # Lints and tests the Terraform with a mock provider. No step has cloud
+  # credentials: init -backend=false only downloads the provider the lock
+  # file pins.
+  terraform:
+    needs: select
+    if: needs.select.outputs.terraform == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.4
+          terraform_wrapper: false
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v0.64.0
+      - run: terraform fmt -check -recursive deploy/terraform
+      # Terraform's data directory stays outside the tree: deploy/terraform
+      # embeds all of gcp/, so provider binaries under a root's .terraform
+      # would end up in the Go test binary of the last step.
+      - name: validate and test the roots
+        run: |
+          for r in installation firebase repo compute workspace; do
+            [ -d "deploy/terraform/gcp/roots/$r" ] || { echo "no Terraform root $r" >&2; exit 1; }
+            export TF_DATA_DIR="$RUNNER_TEMP/tf-$r"
+            terraform -chdir=deploy/terraform/gcp/roots/$r init -backend=false -lockfile=readonly -input=false
+            terraform -chdir=deploy/terraform/gcp/roots/$r validate
+            terraform -chdir=deploy/terraform/gcp/roots/$r test
+          done
+      # tflint --init asks the GitHub API for the plugin's release: with the
+      # workflow's read-only token it isn't held to the 60 requests an hour an
+      # anonymous caller on a shared runner gets.
+      - run: tflint --chdir=deploy/terraform/gcp --init && tflint --chdir=deploy/terraform/gcp --recursive
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      # The Trivy image images/scan.sh pins, over the Terraform.
+      - run: sh deploy/terraform/scan.sh
+      # The tf wrapper's tests against a real terraform binary.
+      - run: go test -tags terraform ./internal/infra/... ./deploy/terraform/...
+```
+
+**The record of the 2026-11-15 staging, applied on main: the `shard` job, so that every `test-shard` runner finishes in under seven minutes.** The staged file was the real `.github/workflows/ci.yml` plus the changes described in the paragraphs below and nothing else, so the copy-in diff was the `shard` job — its comment, its matrix and two of its steps. The `terraform` job's loop was untouched, so nothing there had to be applied by hand.
+
 
 **Where the seven minutes went, measured on the 2026-11-15 14:03 run of `main`.** Ten of the twenty-one `test-shard` runners took longer than seven minutes: `scripts-live-0` 598s, `scripts-live-2` 581s, `scripts-live-1` 527s, `rest-1` 505s, `cli-4` 456s, `cli-6` 443s, `rest-3` 438s, `cli-2` 437s, `cli-7` 432s and `issues` 421s. Those are the jobs' own wall clock; the per-test numbers below are read out of the `test-times.tsv` artifact each of those jobs uploaded, whose rows are `<elapsed>\t<package>\t<test>` for every test that ran.
 
