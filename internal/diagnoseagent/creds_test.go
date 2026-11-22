@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/routing"
 )
 
 // credsFrag is the harmless constant every fixture credential is built from.
@@ -452,4 +453,155 @@ func TestCredsLocalHandleCarriesNoValue(t *testing.T) {
 	if (Handle{}).carries() {
 		t.Error("the zero Handle is reported as a credential")
 	}
+}
+
+// credsTable is one entry routing every model of a project through one source:
+// the shape a project publishes for the model a diagnosis runs on, written with
+// the source it names.
+func credsTable(sources ...routing.Source) routing.Table {
+	return routing.Table{{Match: "*", Chain: sources}}
+}
+
+// TestTheDiagnoseAgentGoesByTheTable is CS13 for the local diagnosis: the
+// project's routing table decides what a diagnosis reaches a model through, and
+// an account name no longer chooses the credential by itself.
+//
+// Four properties, and each is a way the table is the decider:
+//
+//   - a table whose entry names the project's own Anthropic key reads that key
+//     and never an account's token, whatever the configuration's account keys
+//     say — the source the table answered with is what chose the credential;
+//   - a table whose entry names a pool reads the project's Claude account's
+//     token, and the handle records the pool the table named;
+//   - a model the table has no entry for is refused with the fix, BEFORE any
+//     credential is read, and so is an entry whose every source is one only a
+//     deployment holds;
+//   - a project that has published no table is served as it was before the
+//     table existed, and records no source, because none named one.
+//
+// The reader fails the test on the paths that must not read a secret, so
+// "the credential the table did not name was not read" is a property of the
+// run and not a hope about its ordering.
+func TestTheDiagnoseAgentGoesByTheTable(t *testing.T) {
+	t.Run("the table's anthropic source is the project's own key", func(t *testing.T) {
+		value := credsValue(t, "key")
+		var asked []string
+		a := credsAccounts("team-b")
+		a.Model = "claude-sonnet-5-5"
+		a.Table = credsTable(routing.Source{Kind: routing.KindAnthropic})
+		h, err := Resolve(nil, a, credsReader(value, &asked))
+		if err != nil {
+			t.Fatalf("a table naming the project's Anthropic key did not resolve: %v", err)
+		}
+		if want := []string{config.AnthropicSecret}; !slices.Equal(asked, want) {
+			t.Errorf("the secrets read were %v, want %v: the table's source decides which credential a diagnosis reaches", asked, want)
+		}
+		if got, want := h.Env(), []string{credsKeyVar + "=" + value}; !slices.Equal(got, want) {
+			t.Errorf("Env() = %v, want the project's key under %s: %v", got, credsKeyVar, want)
+		}
+		if h.Account() != config.AnthropicKeyAccount {
+			t.Errorf("Account() = %q, want %q: the project's own key belongs to no account of the configuration", h.Account(), config.AnthropicKeyAccount)
+		}
+		src, ok := h.Source()
+		if !ok || src != (routing.SourceName{Kind: routing.KindAnthropic}) {
+			t.Errorf("Source() = %+v, %v, want the anthropic source the table named and true", src, ok)
+		}
+	})
+
+	t.Run("the table's pool source is the project's account", func(t *testing.T) {
+		value := credsValue(t, "pool")
+		var asked []string
+		a := credsAccounts("team-b")
+		a.Model = "claude-sonnet-5-5"
+		a.Table = credsTable(routing.Source{Kind: routing.KindPool, Pool: "acme-team"})
+		h, err := Resolve(nil, a, credsReader(value, &asked))
+		if err != nil {
+			t.Fatalf("a table naming a pool did not resolve: %v", err)
+		}
+		if want := []string{config.ClaudeAccountSecret("team-b")}; !slices.Equal(asked, want) {
+			t.Errorf("the secrets read were %v, want %v", asked, want)
+		}
+		if h.Account() != "team-b" {
+			t.Errorf("Account() = %q, want team-b", h.Account())
+		}
+		src, ok := h.Source()
+		if !ok || src != (routing.SourceName{Kind: routing.KindPool, Name: "acme-team"}) {
+			t.Errorf("Source() = %+v, %v, want the pool the table named and true", src, ok)
+		}
+	})
+
+	t.Run("a model with no entry is refused with the fix", func(t *testing.T) {
+		// The resolver is the contract's own seam (C1): the stub answers the
+		// first entry for any model, and RT1's real one answers ErrNoEntry for
+		// a model no entry matches. A table whose model is routed by nothing is
+		// therefore written here by answering ErrNoEntry, which is the answer
+		// the caller is written against.
+		restore := routing.Resolve
+		routing.Resolve = func(routing.Table, string) (routing.Entry, error) {
+			return routing.Entry{}, routing.ErrNoEntry
+		}
+		t.Cleanup(func() { routing.Resolve = restore })
+
+		a := credsAccounts("team-b")
+		a.Model = "claude-opus-5-5"
+		a.Table = credsTable(routing.Source{Kind: routing.KindAnthropic})
+		_, err := Resolve(nil, a, credsUnread(t))
+		if err == nil {
+			t.Fatal("a model the table has no entry for was served: a diagnosis must not reach a model the project has not said how to reach")
+		}
+		for _, want := range []string{"claude-opus-5-5", "fugaro routing set", "no entry"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name %q: %v", want, err)
+			}
+		}
+	})
+
+	t.Run("an entry only a deployment can serve is refused with the fix", func(t *testing.T) {
+		a := credsAccounts("team-b")
+		a.Model = "claude-sonnet-5-5"
+		a.Table = credsTable(routing.Source{Kind: routing.KindVertex})
+		_, err := Resolve(nil, a, credsUnread(t))
+		if err == nil {
+			t.Fatal("a chain of Vertex alone was served by a local diagnosis: no command on a person's machine holds the installation's service account")
+		}
+		for _, want := range []string{"claude-sonnet-5-5", "vertex", "fugaro routing set", "fugaro diagnose"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name %q: %v", want, err)
+			}
+		}
+	})
+
+	t.Run("a project with no table is served as before and records no source", func(t *testing.T) {
+		value := credsValue(t, "untabled")
+		var asked []string
+		a := credsAccounts("team-b")
+		a.Model = "claude-sonnet-5-5"
+		h, err := Resolve(nil, a, credsReader(value, &asked))
+		if err != nil {
+			t.Fatalf("a project that has published no table was refused: %v", err)
+		}
+		if want := []string{config.ClaudeAccountSecret("team-b")}; !slices.Equal(asked, want) {
+			t.Errorf("the secrets read were %v, want %v", asked, want)
+		}
+		if _, ok := h.Source(); ok {
+			t.Error("a diagnosis recorded a source while no table named one")
+		}
+	})
+
+	t.Run("the person's own credential is reached by no table", func(t *testing.T) {
+		own := credsValue(t, "own")
+		a := credsAccounts("team-b")
+		a.Model = "claude-sonnet-5-5"
+		a.Table = credsTable(routing.Source{Kind: routing.KindVertex})
+		h, err := Resolve([]string{credsOAuthVar + "=" + own}, a, credsUnread(t))
+		if err != nil {
+			t.Fatalf("the person's own credential was refused over a table that does not route the model: %v", err)
+		}
+		if h.Secret() != own {
+			t.Error("the handle does not carry the person's own credential")
+		}
+		if _, ok := h.Source(); ok {
+			t.Error("the person's own credential was recorded as a source of the project's table, which does not reach it")
+		}
+	})
 }
