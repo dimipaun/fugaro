@@ -128,7 +128,7 @@ const ANDROID = 'com.example.sample';
 const DECLARED = {
   ...EXPO,
   // The Firebase wiring is the second thing a resolution carries in every state
-  // (P7.1a, and P5.2.8 for the fourth package): `app.config.js` appends the four
+  // (P7.1a, and P5.2.8 for `messaging`): `app.config.js` appends the three
   // `@react-native-firebase` plugins and `expo-build-properties` to the list
   // `app.json` already has, and removes Android's advertising-id permission.
   // Spelled out, like the declaration below it, so this stays a statement about
@@ -137,7 +137,6 @@ const DECLARED = {
     ...EXPO.plugins,
     ['expo-build-properties', { ios: { useFrameworks: 'dynamic' } }],
     '@react-native-firebase/app',
-    ['@react-native-firebase/analytics', { ios: { withoutAdIdSupport: true } }],
     '@react-native-firebase/crashlytics',
     '@react-native-firebase/messaging',
   ],

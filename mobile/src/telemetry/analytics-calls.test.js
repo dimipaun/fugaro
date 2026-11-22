@@ -65,11 +65,16 @@
 //      argument but a constant would leave `breadcrumb` a function nothing may
 //      pass to the only door a breadcrumb has, and a fence that took the name on
 //      trust would let a local helper of that name send the text unredacted.
-//   4. `setAnalyticsCollectionEnabled(` and `setCrashlyticsCollectionEnabled(`
-//      -- refused at any call site. D255's answer is always-on: a call that sets
-//      collection state IS the switch the plan says the app does not have,
-//      whether it is called with `true` or with `false`. §6's "there is no
-//      switch" is this rule rather than a sentence on a page.
+//   4. `setAnalyticsCollectionEnabled(` -- refused at any call site. D255's
+//      answer was always-on, so a call that sets collection state IS the switch
+//      the plan said the app does not have; **D731 supersedes that answer** and
+//      drops Analytics from the app entirely, so the rule stays and its reason
+//      changes: a call that could set Analytics' state is the package coming
+//      back into a build nobody discloses it in. The crash half of the old rule
+//      is **`scan.test.js`'s** now -- D731 admits exactly one
+//      `setCrashlyticsCollectionEnabled(` call site, `src/telemetry/crash.js`'s,
+//      and an app-wide rule must be able to say "exactly one, and here" rather
+//      than "none", which is why it is not this list's to hold.
 //
 // **What this scan does NOT claim.** It is about the app's own source. What the
 // *native* SDK collects by itself -- its automatic events, its app-instance id,
@@ -541,15 +546,19 @@ const RULES = [
     why: 'D256, §7.3: a breadcrumb is a constant from the module’s list, or the module’s own redactor, and nothing else',
   },
   {
-    name: 'nothing in the app switches collection on or off',
-    pattern: /setAnalyticsCollectionEnabled\s*\(|setCrashlyticsCollectionEnabled\s*\(/g,
+    name: 'nothing in the app switches Analytics collection on or off',
+    // The Analytics half of §7.4's original rule, kept after D731 dropped the
+    // package: a call that could set its state is the package reaching a build
+    // again. The Crashlytics half moved to `scan.test.js`, which can say
+    // "exactly one call site, in this file" -- the shape D731's opt-out needs
+    // and this rule's allow-list cannot express.
+    pattern: /setAnalyticsCollectionEnabled\s*\(/g,
     controls: [
       'analytics().setAnalyticsCollectionEnabled(true);',
       'analytics().setAnalyticsCollectionEnabled(false);',
-      'crashlytics().setCrashlyticsCollectionEnabled(true);',
     ],
     accepted: [],
-    why: 'D255: collection is always on, so a call that sets its state is the switch the app does not have',
+    why: 'D731: Analytics is dropped from the app, so no call site may set its collection state',
   },
 ];
 
