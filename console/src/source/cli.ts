@@ -1313,9 +1313,11 @@ function graphSourcesOf(document: JSONDoc): readonly string[] {
 /** ORCHESTRATOR_SCOPE_PREFIX is the part of a graph scope before the id of the
  * orchestrator it names -- `orchestrator:<id>`, `ee/graph/key.go`'s
  * `Scope.String()`, and the spelling `src/main/ipc.ts`'s `GRAPH_SCOPE_RE` admits
- * up to `MAX_GRAPH_SCOPE_LENGTH`. It is the scope the Coordinator's drill-down
- * asks for, so the map read below and the press that opens one box have to spell
- * it the same way. */
+ * up to `MAX_GRAPH_SCOPE_LENGTH`. It is here rather than imported by both ends
+ * because the two ends cannot share it: the Coordinator's drill-down builds the
+ * same string in the renderer bundle (`src/renderer/entry.ts`), which is not
+ * allowed to require this module's process. The value is the CLI's, so neither
+ * spelling is this console's to choose. */
 const ORCHESTRATOR_SCOPE_PREFIX = 'orchestrator:'
 
 /** orchestratorMapScopesOf is the scopes one **map** document says exist: one
