@@ -28,6 +28,13 @@ import (
 // route serves the model the coder names. The two subscriptions are what makes
 // the pool inert while the project's subscription-spread switch is off
 // (D1622), which is one of the four things a row has to be able to say.
+//
+// The model_prices block is the owner's own answer for the two Opus IDs the
+// crafts pin, and the shape every installation of one is in now: a craft's model
+// is judged by its price wherever a run has a gateway, whatever the budget mode
+// says (AB4, D3020: the mode was the second condition and it is gone), and
+// neither ID is in the built-in table, so the read refuses the row until a price
+// is written here — in the words this block is the answer to.
 const craftLocalExtra = `
 credentials:
   - {name: openrouter-main, type: openrouter}
@@ -39,6 +46,9 @@ pools:
 crafts:
   coder: {model: deepseek/deepseek-v4.1-flash, access: openrouter-main}
   senior-review: {model: claude-opus-4, access: claude-pool}
+model_prices:
+  claude-opus-4: {input_per_m: 15, output_per_m: 75}
+  claude-opus-4-1: {input_per_m: 15, output_per_m: 75}
 providers:
   openrouter-main:
     kind: anthropic-compat
@@ -165,10 +175,13 @@ func writeCraftLayer(t *testing.T, layer string) {
 //
 // Every row is servable here, which is the one thing this fixture has to say
 // about MC16's member: the coder's model is claimed by the route the fixture's
-// provider entry declares, the three Claude IDs are ones the routing switch
-// does not name and so go direct, and this installation judges no prices (its
-// budget mode is off). The rows that cannot be served are the next test's, with
-// the causes it names.
+// provider entry declares and so carries its starter price, the three Claude IDs
+// are ones the routing switch does not name and so go direct, and every one of
+// them is priced — the installation's own model_prices block covers the two Opus
+// pins and the built-in table the review's claude-sonnet-5-5 — because a craft's
+// model is judged by its price wherever a run has a gateway (AB4, D3020: the
+// mode is not read here). The rows that cannot be served are the next test's,
+// with the causes it names.
 func craftRows() []craftLsRow {
 	return []craftLsRow{
 		{
@@ -533,8 +546,10 @@ func craftRowServes(t *testing.T, out, craft string) (bool, string) {
 // naming what is missing — the same verdict MC15's checks report, asked over
 // the same facts a run has (the allow-list a run of this checkout is under, the
 // routes this repository's runs carry and the prices its calls are charged
-// from). The three arms are the three checks MC16's member covers, and each one
-// is a model the row would otherwise let a reader promise themselves a run on.
+// from). The arms are the checks MC16's member covers, and each one
+// is a model the row would otherwise let a reader promise themselves a run on —
+// the price ones three times over, because the gate that asks it is the auth
+// alone now (AB4, D3020) and an arm that read the mode would answer instead.
 //
 // The member is what the row gained: a reader that finds no model_servable has
 // an older CLI's row, which is why every arm reads the member out of the
@@ -571,8 +586,11 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 	t.Run("the allow-list excludes the model", func(t *testing.T) {
 		// The coder's own model, under a project whose allow-list names the
 		// Claude IDs alone: the arm the ceiling contributes, and the one a run
-		// is refused by whatever its routes say. The mode is off so the price
-		// rule is not asked here — one check, one sentence.
+		// is refused by whatever its routes say. The mode is off and the price
+		// rule is asked anyway — a run with a gateway prices its calls in every
+		// mode (AB4, D3020) — and the coder's model carries the starter price
+		// its route's entry gives it, so the allow-list is the one problem this
+		// arm sees: one check, one sentence.
 		craftFixtureWith(t, "budget: { allowed_models: [claude-sonnet-5-5], mode: off }\n")
 		out, _, err := execute(t, "craft", "ls", "--json")
 		if err != nil {
@@ -593,10 +611,10 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 	})
 
 	t.Run("no price row covers the model", func(t *testing.T) {
-		// A mode a run prices under, and a model the fixture's route claims and
-		// the price table does not know: the third check MC16's member covers,
-		// asked only where a run really charges for the craft (the mode on and
-		// no oauth, which has no gateway).
+		// A model the fixture's route claims and the price table does not know:
+		// the third check MC16's member covers, asked wherever a run really
+		// charges for the craft — an auth with a gateway, which is now the whole
+		// of the gate (AB4, D3020: the mode is not read).
 		craftFixtureWith(t, "budget: { mode: observe }\n")
 		testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": strings.Replace(craftRepoUnservedModelYAML,
 			"qwen/qwen3-coder", "deepseek/deepseek-v9", 1)})
@@ -615,16 +633,39 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 		}
 	})
 
+	t.Run("the mode is off and the price is still asked", func(t *testing.T) {
+		// AB4 (D3020): the gate is the auth alone, so the mode that used to
+		// switch the price rule off switches nothing off. This is the arm the
+		// row stopped being silent about — the same world as the arm above, one
+		// mode down — and it is what makes the read's own answer the run's: a
+		// run with a gateway prices its calls in every mode.
+		craftFixtureWith(t, "budget: { mode: off }\n")
+		testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": craftRepoUnpricedModelYAML})
+		out, _, err := execute(t, "craft", "ls", "--json")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		servable, problem := craftRowServes(t, out, config.CraftCoder)
+		if servable {
+			t.Errorf("the coder row says deepseek/deepseek-v9 is servable under an off mode, and this run has a gateway: every run with one is priced, whatever the mode says (AB4, D3020): %s", out)
+		}
+		for _, want := range []string{"deepseek/deepseek-v9", "no price"} {
+			if !strings.Contains(problem, want) {
+				t.Errorf("the sentence does not name %q: %q", want, problem)
+			}
+		}
+	})
+
 	t.Run("the project answers oauth, so nothing is priced", func(t *testing.T) {
 		// The auth the price gate reads is the resolved one, and it is the
 		// project's to write: this checkout's file names no auth at all, and
 		// the layer answers oauth -- no gateway, nothing charged, so no price
 		// row is required of a craft. The file names the same model the arm
-		// above refuses, under a mode that prices, so a gate read off the
-		// checkout's own block (api-key by default) reports a refusal where a
-		// run would charge nothing. The file is one config.Resolve accepts
-		// because a refused file contributes no layer and there would be no
-		// resolved auth to read at all.
+		// above refuses, under an auth whose gateway would price it, so a gate
+		// read off the checkout's own block (api-key by default) reports a
+		// refusal where a run would charge nothing. The file is one
+		// config.Resolve accepts because a refused file contributes no layer and
+		// there would be no resolved auth to read at all.
 		craftFixture(t)
 		writeCraftLayer(t, craftProjectOAuthLayer)
 		testutil.WriteFiles(t, ".", map[string]string{"fugaro.yaml": craftRepoUnpricedModelYAML})
@@ -645,7 +686,7 @@ func TestCraftLsRowNamesWhyAModelCannotBeServed(t *testing.T) {
 			t.Fatalf("%v\n%s", err, out)
 		}
 		if servable, problem := craftRowServes(t, out, config.CraftCoder); servable {
-			t.Errorf("the coder row says deepseek/deepseek-v9 is servable under an api-key project with a mode that prices, and no price row covers it: %s", out)
+			t.Errorf("the coder row says deepseek/deepseek-v9 is servable under an api-key project, and no price row covers it: %s", out)
 		} else if !strings.Contains(problem, "no price") {
 			t.Errorf("the control's sentence is not the price rule's: %q", problem)
 		}

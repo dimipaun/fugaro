@@ -122,7 +122,7 @@ func TestALaunchWithNoDatabaseIsRefusedWithTheFix(t *testing.T) {
 	}
 	for _, shape := range shapes {
 		t.Run(shape.name, func(t *testing.T) {
-			f := newCloudFixture(t)
+			f := launchFixtureForMode(t, "")
 			// The installation has no database at all: the config names none
 			// and its jobs were deployed without one (noBudget).
 			f.noBudget(t)
@@ -176,7 +176,7 @@ func TestALaunchWithNoDatabaseIsRefusedWithTheFix(t *testing.T) {
 // (budgetJobBackend) — the launch mints, writes its object and its execution,
 // and fails here.
 func TestALaunchOnAJobThatPredatesTheDatabaseIsRefused(t *testing.T) {
-	f := newCloudFixture(t)
+	f := launchFixtureForMode(t, "")
 	// The repository's own job, as an installation that had no database
 	// deployed it: no address, no key. The config names the database, which is
 	// the state `fugaro update --firebase-project` leaves behind for one
@@ -208,7 +208,7 @@ func TestALaunchOnAJobThatPredatesTheDatabaseIsRefused(t *testing.T) {
 	// And the same repository, once the job carries the database its config
 	// names: the launch mints and starts, which is what makes the refusal
 	// about the job rather than about the repository.
-	g := newCloudFixture(t)
+	g := launchFixtureForMode(t, "")
 	if _, _, err := runBudget(t); err != nil {
 		t.Fatalf("the same launch on a job deployed with the database was refused too: %v", err)
 	}
