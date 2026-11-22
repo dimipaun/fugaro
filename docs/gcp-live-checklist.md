@@ -1080,7 +1080,10 @@ probe account carries predefined grants only).
 | 304 | The handoff between two people ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O17** and its Check 304 — the text O2 wrote, the `ee/` command O17 builds): an agent handed from one developer to another by an owner or an admin, on a real installation, with the two people in different sessions — the receiving person holding the agent, the giving person no longer able to act as it, and the project-owned agent that belongs to no person at all behaving as the registered extension it is | See "Check 304" below; `bash scripts/live-checks/check304.sh first-person --installation <name> --from <user:address> --to <user:address>` is the first person's half — it checks the Subscription Edition build before anything else, writes the record and prints what the other person runs — and `bash scripts/live-checks/check304.sh second-person --installation <name> --as <user:address> --handoff <the record>` is the second person's; **you** run one phase each, on a real installation with a second person, **never `belong`**, and **no agent runs any step of it** | Two sessions and one handoff: no model call unless the agent is asked to work, and nothing billable in the handoff itself. **USER-RUN, NOT RUN.** |
 | 305 | The MCP state group served — the front door's reach into the node ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O16b** and its Check 305 — the text O16b wrote into the number the register held; **D2020** (a) and **D2021** (a), answered 2026-11-10, and the reconciliation's **F27**, **R2** and **R3**): with the front door on, a real MCP client holding `state:read` reads `get_state` and `get_events` for the installation's orchestrator — the same documents `fugaro orchestrator state --json` and `fugaro orchestrator events --json` answer — a token holding only `tasks:*` is refused both, `apply_patch` is absent from `tools/list` (D2021 (a); no `spawn_task` anywhere in it, T2), and the front door's own role in the real project is `firebasedatabase.instances.get` and nothing else, bound to `fugaro-mcp@<the installation's project>` and to nobody else, so the account the public service runs as holds no database write. IAM has no path-level scope, so that read reaches the whole database, and what it exposes node by node is the reconciliation's **U11** — no reading here settles it  | See "Check 305" below; `bash scripts/live-checks/check305.sh --installation <name> [--door <url>]` is the whole of it — it finds the door the way a client does, signs itself in twice and makes every reading the section names (the tool list, both documents, both refusals, the role and the project's policy read back) with its own tokens — and **you** run it, on your own installation with the front door on, **never `belong`**; **no agent runs any step of it** | Nothing billable and no model call: three MCP calls, one role describe and one policy read, and no run and no image build. Nothing is created, granted or deleted by the check itself, so there is nothing to restore — what it reads is a service the installation already runs, a role it already holds and the node its own orchestrator already wrote. **USER-RUN, NOT RUN.** |
 | 330 | The api-key review's own path, and the review-only job beside it ([`docs/api-key-review/`](api-key-review/implementation-plan.md), its task **AK8** and its Check 330 — the plan's §5 is the check's text; **D1410** (both slices) and **D1421** (after 0.20.0), and **F10**, **F11** and **F22**): on a sandbox installation and a sandbox repository, one task whose `fugaro.yaml` writes `agent.auth: api-key`, whose coder runs a model the project's provider route claims and whose `models.reviewer` is a Claude model, runs with **no** `claude_accounts` stage account published, and the same task runs again with a `review` stage account — the gateway's log carries a route for the run's own stages' calls and none for the review class's, the review stage's `model_usd` is the gateway's figure with **no** `model_notional_usd` at all, the run's `route_by` totals the coder's stages rather than the whole run, and the second run's review class reads `credential=oauth` with `model_notional_usd` equal to `model_usd`; and, on an installation that publishes the pairing's sentinel with the credentials service on, a `fugaro review --pr N` runs the review-only job — the job named for the sentinel's review variant, its environment holding no credential of the repository's, its calls route-less in the gateway's log — while a repository whose profile does **not** name the key is still refused. **Slice C (the OpenRouter path) may not be run before Check 50**: `internal/creds/select.go` refuses every tier-C candidate today, so the script refuses `--provider` outright rather than measure that refusal | See "Check 330" below; `bash scripts/live-checks/check330.sh --sandbox <checkout> --run <slug>/<run-id> --contrast <slug>/<run-id> [--review <slug>/<run-id>]` is the whole of it — it reads the sandbox's own project, policy and run listing, the named runs' records, their executions' gateway log lines and the review job's description, and prints PASS or FAIL per fact — and **you** run it, on the sandbox only, **never `belong`**; **no agent runs any step of it** | Nothing billable and no model call: the check launches no run, writes no object, publishes no policy and mints no credential, so there is nothing to restore — what it reads are runs the sandbox already ran and the log lines they wrote, and the key's own name and the refusal stay steps of yours. **USER-RUN, NOT RUN.** |
-| 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/bucket-iam/spec.md` §4 — the H3 veto — and §11 item **V7**): which value the `storage.googleapis.com/objectListPrefix` request attribute carries, read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists the FOUR prefixes R12's design gives the reports job — `runs/<slug>/`, `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/` — reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. **The third run (2026-11-13) settled the value form: the attribute carries the request's own RELATIVE prefix (`runs/`, `reports/`) — under the full-path form every listing was refused — and that is the only form the script reads any more.** The bare `reports/` prefix that run was refused despite the binding being read back as present is a **DIAGNOSTIC** row, asked three ways and gating nothing, because the job never lists it. **The wrong form is a grant that lists nothing, and if the listings do not hold, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds five objects of its own, reads the four listings the job makes and the read it makes (one row per listing, every answer its own), records the bare `reports/` prefix as a diagnostic asked three ways, and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, five small objects under `runs/`, `reports/` (two depths), `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** Three attempts have been made: two on 2026-11-07, both exit `2` and both aborted — the first with an unreadable block, the second by a `tokens/` listing whose refusal named `storage.objects.get` where the script then accepted only `storage.objects.list` — and one on 2026-11-13, exit `1`, the first run that really read the probe and the one that settled the value form (relative) while leaving the bare `reports/` refusal unexplained. **The row stays NOT RUN**: the revision the third run's reading produced has not itself been run, so no `PASS` for `list-prefix` is recorded here yet; the section below records what each run did and did not measure. |
+| 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/bucket-iam/spec.md` §4 — the H3 veto — and §11 item **V7**): which value the `storage.googleapis.com/objectListPrefix` request attribute carries, read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists the FOUR prefixes R12's design gives the reports job — `runs/<slug>/`, `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/` — reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. **The third run (2026-11-13) settled the value form: the attribute carries the request's own RELATIVE prefix (`runs/`, `reports/`) — under the full-path form every listing was refused — and that is the only form the script reads any more.** The bare `reports/` prefix that run was refused despite the binding being read back as present is a **DIAGNOSTIC** row, asked three ways and gating nothing, because the job never lists it. **The wrong form is a grant that lists nothing, and if the listings do not hold, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds five objects of its own, reads the four listings the job makes and the read it makes (one row per listing, every answer its own), records the bare `reports/` prefix as a diagnostic asked three ways, and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, five small objects under `runs/`, `reports/` (two depths), `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, PASS (2026-11-13).** Four runs have been made: two on 2026-11-07, both exit `2` and both aborted — the first with an unreadable block, the second by a `tokens/` listing whose refusal named `storage.objects.get` where the script then accepted only `storage.objects.list` — and two on 2026-11-13, the third exit `1`, the first run that really read the probe and the one that settled the value form (relative) while leaving the bare `reports/` refusal unexplained, and the fourth the one this row records: **exit `0`, every criterion held, its Restore clean**. The fourth run is the revision the third run's reading produced, so its `PASS` for `list-prefix` is the answer R12 waits for — the attribute carries the request's own prefix, `runs/` for the runs binding and `reports/` for the reports binding, each written `api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("<prefix>/")` — and the bare `reports/` prefix stays a diagnostic that gates nothing: the fourth run asked it three ways (the plain listing refused naming `storage.objects.list`, the wildcard listing allowed, the JSON API's delimiter listing `200`), so the clause does reach the prefix and R12's job, which never lists it, needs no change. The section below records what each run did and did not measure. |
+| 341 | The reports job's first firing, and what it stored ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 341, and the plan's rulings **E1** and **E3**): with `jobs.reports.paused: false` set in the project layer and `fugaro update` run, the project's own reports job fires once on its schedule, and the reader takes what it stored — one report per repository under `reports/<slug>/<YYYY>/<key>.md`, the project aggregate at `reports/<YYYY>/<key>.md` beside them, and the `reports/` objects still there after the run records' own 90 days, which is the 18-month `reports/` lifecycle rule (E3) doing what it is for. It is also the check that settles the question R10 is blocked on (**Open item 5**): whether `fugaro runs digest` may write to `reports/` at all, since **E4** makes the reports job its only writer | See "Check 341" below; **no script is written yet** — the check is the setting, one `fugaro update`, one firing of the schedule and the reads of what it stored, and **you** run every step of it; **no agent runs any step of it** | One scheduled firing of the project's own reports job: **no model call, no run and no pull request**, and nothing billable beyond the job's own execution. What it writes are ordinary stored reports in the project's own `reports/` prefix, which the bucket's own rule reaps; the setting goes back to `paused` afterwards. **USER-RUN, NOT RUN.** |
+| 342 | The failures report reproduces a window a person built by hand ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 342, and [`docs/failure-classes/design.md`](failure-classes/design.md)): a window whose causes are already known — the design's own seven-day table is one — read back through `fugaro runs ls --group-by failure_class` and the **Failures table** of the period's stored report, including the runs whose class the legacy reader read from `reason` (**FC5**). It is the one check that says whether the vocabulary means what the design says it means | See "Check 342" below; **no script is written yet** — the check is two reads of a period you already know and the comparison between them, and **you** run it; **no agent runs any step of it** | Two reads — the grouped listing and the stored report — with no write, no run and no model call: nothing is created, nothing is granted and there is nothing to restore. **USER-RUN, NOT RUN.** |
+| 343 | The opt-in commit into the designated repository ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 343, and R9; [reconciliation.md](periodic-reviews/reconciliation.md) §7 and **D2750–D2754**, its §7.3 for the check's number): with `reports_commit` — the designated repository, and `dir` if the reports do not go to the default folder — named in the owner's local project config and published, **one** `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` in that repository's checkout with the starting person's own launcher account opens a pull request carrying one file per stored report under `<dir>/<slug>/<YYYY>/<key>.md`, the project aggregate at `<dir>/<YYYY>/<key>.md` beside them and the index regenerated over the whole folder; a second run with nothing new in the store ends **without** a pull request; and a file the folder holds and the store does not is still there, named in the run's own record | See "Check 343" below; **no script is written, and none is needed** — the check is **one command**, `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"`, in the designated repository's checkout, plus the pull request it opens and the record the run leaves — and **you** run it, in the designated repository's checkout with your own launcher account, **never `belong`**; **no agent runs any step of it** | One ordinary run with its own model spend under the repository's and the installation's caps, one branch and one pull request in the designated repository. **No account, no IAM and no credential is created**: the read is the launcher's existing bucket-wide `objectViewer` and the write is the ordinary push path, so there is nothing to restore. **USER-RUN, NOT RUN.** |
 | 360 | The managed screens show what the CLI says, on a managed project ([`docs/console-managed-screens/`](console-managed-screens/implementation-plan.md), its Check 360 and task **CM12**; **F3** and **D1489**, the owner's ask of 2026-11-07): the Project tab's five later sections — the managed state, the retirements, the account keys, the credentials service and the policy panel — drawn on a real managed project, each within its own read and from the document that read answers with, agreeing with `fugaro managed status --json`, `fugaro settings --json`, `fugaro project policy show --json` and `fugaro doctor`'s policy lines; **no section offers a control that changes anything**, and no token appears anywhere (**D1471**). Its hermetic half is `console/test/e2e/managed.spec.ts`, which walks the same tab against the stub — and the live reading is the one a stub cannot take | See "Check 360" below; there is **no script** — the check is three steps you do by hand in the console and the reading you take from them — and **you** run it, on your own machine, with an installation and a managed project; **no agent runs any step of it** | One `fugaro update` — the same run you would make anyway — plus two reads and one window: no model call, no run and nothing billable. Nothing is created or written by the check itself, so there is nothing to restore. **USER-RUN, NOT RUN.** |
 | 361 | The workspace's own Firebase's sign-in providers ([`docs/workspaces/`](workspaces/spec.md) spec §3's provider pin, and that plan's **W3**): the Identity Platform configuration of the workspace's **own** project, read once over REST and judged against the pin — `google.com` and `password` enabled, `anonymous` and phone-number sign-in off, no other provider enabled, and public sign-up **not** disabled. It is the check W3's design says no hermetic test can hold: the project and its rules come from the installation path, but `fugaro setup`'s Identity Platform step initializes with **no provider** (`IdentityPlatformStep`, `internal/infra/identityplatform.go`) — right for a member's project and wrong for the workspace's — and `refusePublicSignUp` (`internal/cli/init_firebase.go`) refuses an off-pin provider on a workspace's own project by name while never *requiring* the pinned pair, so the providers are enabled by you and this is the read-back. A workspace whose project carries no provider has nobody who can sign in, and one that carries a provider the pin refuses is a sign-in path the exchange never sees | See "Check 361" below; `bash scripts/live-checks/check361.sh --project <the workspace's own project>` is the whole of it — ONE read-only GET, nothing created and nothing deleted, so it is safe to run repeatedly — and **you** run it: a project whose name contains `belong` is refused before any call, and **no agent runs any step of it** | Nothing billable and no model call: one GET of the project's Identity Platform configuration with your own credentials. **USER-RUN, NOT RUN.** |
 | 370 | The security escalation ([`docs/security-classification/`](security-classification/implementation-plan.md) §6, its Check 370; the plan's task **SC6**; reconciliation **D1507**, **D1508**, **D1509** and **D1519**): a run whose own diff touches a path the list in force calls security-sensitive turns review level 3 on for the rest of the run — the adversarial step runs, and the run's record names the matched row's `name`, its `category` and the moment, while the rigor mode stays the mode it was (D1508) — and a run whose diff touches nothing on the list does neither, its record carrying no escalation member. Its reader's half is `fugaro security paths --json` (the same work's task **SC3**, in slice 1: it landed as `cb69f1754`, #1979, and is an ancestor of this checkout) on a project that has published no key: the floor's 43 rows, with `internal/creds/state.go` sensitive and `docs/recipes.md` not — the pair that shows the floor is a **positive list and not the classifier's complement** (F1, F22) — and the same command against a working tree whose `fugaro.yaml` carries a `security` row and a base that does not, which must print the **base's** list (D1518) | See "Check 370" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | Two sandbox runs and three reader commands: **the runs are model calls and real money** and the reader commands are free. Nothing is granted, nothing is written outside the runs' own prefixes, and there is nothing to restore. **USER-RUN, NOT RUN.** |
@@ -1181,6 +1184,8 @@ probe account carries predefined grants only).
 | 791 | **The two refusals the release adds under a mode that refuses nothing** ([`docs/always-a-budget/`](always-a-budget/implementation-plan.md), its task **AB14** and its "Check 791"; **D3020** and **D3022** read under **D3010**'s `observe`): on a sandbox repository whose **published mode is `observe`** (the mode in force is the premise, and a mode that is not observe makes both rows below rows about another mode), **a model with no price is refused in EVERY mode, and the refusal NAMES the `model_prices` entry that clears it** (**D3020** — the prices come from the embedded table, the provider catalog and the project's own `model_prices`, and a mode of off used to skip the check while observe no longer does); and, when the repository's **COMMITTED** `fugaro.yaml` says **`budget.mode: off`** (read with `git show HEAD:fugaro.yaml`, never the working tree), **a launch from that checkout is rejected AT ONCE and the refusal NAMES the word `off`** (**D3022** — off is accepted nowhere, AB2, rather than read as unset for one release). The refusal's **exit status** is what says it refused: a warning that names the fix and exits 0 is a FAIL and not the reading D3020 writes. A repository whose model IS priced, or whose committed file does not say off, leaves that row **UNVERIFIED** — the check names what to point it at rather than inventing a reading | See "Check 791" below; `bash scripts/live-checks/check791.sh --sandbox <a sandbox repository checkout> [--installation <name>]` is the whole of it, its sibling test `scripts/live-checks/check791_test.sh` drives it against a fake `fugaro` and a **real local git repository** in a temp directory (no network, no cloud, nothing spent), and **you** run it, at your own terminal, on a sandbox checkout, **never `belong`** (a coding agent's session is refused outright, as is a traced shell); **no agent runs any step of it** | **Nothing, as long as the release holds**: no model is called, no build is made and no write is made anywhere — `fugaro validate` spends nothing, and the one launch spends nothing when the refusal happens, because the refusal is a config load's, made before anything is built or run. A launch the release does NOT refuse is a real, billable run, and the `mode-off` row then names it and the `fugaro cancel --now <run id>` that stops it. Every row is a read of a document the repository or the installation already wrote: its committed `fugaro.yaml`, its HEAD's own tree, the published policy and the refusals themselves. Its scratch directory is removed from the exit trap and the `restore` row says whether it really went. **OWNER-RUN, NOT RUN.** |
 | 830 | What links a Batch VM to its job, and what a launcher can put on one ([`docs/batch-run-identity/`](batch-run-identity/implementation-plan.md), its task **BR0** and the plan's own **Check 830**; **U1** — which Google-made fact ties a VM to its job, and which permission reads it — is the owner's **O1**, **U2** is what the identity token in full format carries inside the task's container (the carrier of **D3101**), **U3** is where a job's variable reaches (**F3**, **R7**: the wrapped blob of **R5** must not be published anywhere), and **U8** is how soon a deleted job's name can be used again — with **R1** and **D3108** the reason U1's answer decides whether **BR3** can be built on it at all): with a throwaway Batch job in `fugaro-dev` shaped like a real run, a second job that writes the first job's uid and name into every launcher-controlled field it has (the job's own labels, the labels Batch puts on the VMs, and the task's variables), and a plain Compute Engine VM for **O8**'s avenue, the container reads the metadata server itself — so the link is judged on what the VM says about itself rather than on a naming convention, and a field a launcher can write is caught by the second job and by the plain VM rather than assumed safe. Run by **you**, at your own terminal, as **one command**: `CHK830_OWNER_RUN=yes bash scripts/live-checks/check-830.sh` (`--dry-run` prints every command and touches no project), with the test that drives it against a fake `gcloud` on PATH, `scripts/live-checks/check-830_test.sh` (run by `go test ./scripts`). **No agent runs any step of it**, and the plan blocks **BR3** on the result (**R4**). It costs two small `e2-standard-4` jobs and one VM alive for seconds, and deletes every job and instance it made. **OWNER-RUN, NOT RUN.** |
 | 840 | **What a Cloud Run execution can prove** ([`docs/launcher-does-not-mint/`](launcher-does-not-mint/implementation-plan.md), its task **LM0**, which is the register's side of its **U1**, **U2** and **U3**; **F9**, **F11** and **R15** of its [reconciliation.md](launcher-does-not-mint/reconciliation.md)): what a Cloud Run job **execution's** metadata identity token carries, and whether anything in it is that execution's (**U1** — the platform's answer decides whether a contract change binds a run's claim to it, which is that work's **R-C1-execution**, and whether the residual **R5** leaves closes for Cloud Run); whether **`run.executions.get` returns an execution's environment overrides** to a caller the launcher role admits (**U2**, **F9**: a second launcher reads a peer's sealed token out of the execution's own override through exactly this call); and whether **Firebase accepts a second exchange of one custom token** inside its hour (**U3**, which **F9** assumes it does — if it does not, the copy F9 describes is a race today as well) | See "Check 840" below; **one command**, run by **you**, on your own **development installation** (**never `belong`**): `bash scripts/live-checks/check-840.sh --project <project> --region <region> --job <a job the installation already runs>`, with the hermetic test that drives it against fakes, `scripts/live-checks/check-840_test.sh` (run by `go test ./scripts`). It creates **one throwaway Cloud Run job of its own** (`fugaro-chk840-probe`, an image with a shell in it, no Fugaro code and no secret), launches **one execution of it with an environment override through the API's `jobs.run`** (which `gcloud run jobs execute` has no flag for), reads the execution back, **deletes the job again, read back by a describe**, and **deletes the Firebase Auth user U3's exchange creates, read back gone**. **No agent runs any step of it.** | Each of the three is a **reading**, and the block says which of them came back the other way: nothing in the identity token names the execution — the claims carry the account and the audience and **no claim carries the execution** by name, resource name or the uid of its own document, which is **F11**'s reading of the platform, and a claim that **does** is the finding **R15** and **R-C1-execution** exist for; `run.executions.get` answers with the execution's own document **carrying the override's environment variable**, and the row beside it reads whether the launcher role carries `run.executions.get` at all (a role without it is that finding); and Firebase **accepts the same custom token a second time**, under the same uid — a second exchange Firebase refuses is a **FAIL** and is what **U3** and **F9** must be read against. An unreachable read, a job name already taken, or a credential that mints nothing is **not measured** (exit 2) rather than a FAIL. **OWNER-RUN, NOT RUN.** |
+| 810 | **The auth retirement's first release, watched across four repositories and a run in flight** ([`docs/credentials-belong-to-models/`](credentials-belong-to-models/implementation-plan.md), its task **CM22** and its "Check 810, after release 1"; the reconciliation's **U5** and the owner's **O1**): on a real installation **at the previous release** — the **premise** that stops the check on one release 1 has already reached — with a repository on a **subscription**, one on an **Anthropic key**, one on the **cascade** and one on **Vertex**, and a run of the subscription repository **already in flight**: a project owner's `fugaro update` **migrates all four** (once for the installation and once with `--repo` in each checkout, all five exiting 0), each repository's **new record out of the database's `creds` node** names the credential its old `agent.auth` meant, names `vertex` for the Vertex repository and **never** for the other three, and names no version other than 1, and the update's **own output names each repository and the credential its crafts resolve to**; the run that was **in flight across the migration finishes** (**U5**); a **new run of each of the four** is launched **together**, ends, has a **served line** in the service's own log (it went through its gateway) and carries the **same `model_basis`** in its own record out of the runs bucket that it carried before the update (the subscription for the subscription repository, the API list for the other three, **F25**); and a call the check builds **BY HAND** — carrying a live run's own identity, minted the way the launcher mints it, and declaring a craft that repository's record does not name — is **refused**, with **exactly one** audit line for it in the service's log (**U5**, **O1**, **C1.13**) | See "Check 810" below; `bash scripts/live-checks/check810.sh --installation <name> --oauth <checkout> --api-key <checkout> --cascade <checkout> --vertex <checkout> --job <the subscription repository's Cloud Run job> --gcp-project <project> --region <region>` is the whole of it, its sibling test `scripts/live-checks/check810_test.sh` drives it against fake `gcloud`, `fugaro` and `curl` on PATH with four **real local git repositories** in a temp directory (no network, no cloud, nothing spent), and **you** run it, at your own terminal, on an installation you may upgrade and on repositories you may spend on, **never `belong`** (a coding agent's session is refused outright, as is a traced shell); **no agent runs any step of it** | **FIVE billable runs** — the one in flight across the update and the four launched after it — on the four repositories' own budgets, plus a project owner's `fugaro update`. Everything else is a read: the four checkouts' committed `fugaro.yaml`, the database's `creds` node before and after, the job and service descriptions, the update's own output, `fugaro runs ls`, the five runs' records out of the runs bucket and the service's own log lines. The premise row **stops the check (exit 2)** on an installation release 1 has already reached, **before any run is launched**. The identity the audit row mints is signed in as the run the check launched, whose Auth user that run's own launch already made, so the exchange creates no user and none is deleted. Its scratch directory is removed from the exit trap and the `restore` row says whether it really went; the five runs are left to end on their own and nothing else was created. **OWNER-RUN, NOT RUN.** |
+| 811 | **The auth retirement's second release: the token out of the agent's environment, the image gate, the retired key and the old record** ([`docs/credentials-belong-to-models/`](credentials-belong-to-models/implementation-plan.md), its task **CM22** and its "Check 811, after release 2"; **CM9**, **CM28**, **CM29** and **CM31** read together): a run of the subscription repository comes out of a **job whose container environment carries no `CLAUDE_CODE_OAUTH_TOKEN`**, whose calls the **credentials service's own log** shows served through its gateway, and whose **own record names no subscription credential for any of its stages** (**CM9**, **CM28**, **D3067**); a launch on an image **older than release 1** is **refused** with the command that rebuilds it (`fugaro update`, or `fugaro image build`) and the release it needs (**CM28**); a file that still writes a **retired key** (`agent.auth`, `agent.oauth_token`, a craft's `access`, a grade's `access`) is **rejected by `fugaro validate` naming the key and the fix** (**CM29**); and the repository's **old record** (`creds/repoauth/<slug>`) is **kept while its run is in flight** and **gone** once none is going, with release 2's update **never writing one** where the installation had none (**CM31**, **D3063**) | See "Check 811" below; `bash scripts/live-checks/check811.sh --installation <name> --subscription <checkout> --job <the subscription repository's Cloud Run job> --gcp-project <project> --region <region> [--retired-key <checkout>] [--old-image <checkout>]` is the whole of it, its sibling test `scripts/live-checks/check811_test.sh` drives it against fake `gcloud`, `fugaro` and `curl` on PATH with three **real local git checkouts** in a temp directory (no network, no cloud, nothing spent), and **you** run it, at your own terminal, on an installation release 1 reached and release 2 is reaching, on a subscription repository you may spend on, **never `belong`** (a coding agent's session is refused outright, as is a traced shell); **no agent runs any step of it** | **ONE billable run** (the subscription repository's own model spend, bounded by its cap), plus a second launch that costs **nothing** when the refusals row is right — an image older than release 1 is refused before anything is built or run — and **two** `fugaro update --repo` calls in the subscription checkout. **No secret is read at all**: every document is a name, a status or a record, and the job's own document is read for the **names** of its container's environment and the **ids** of the secrets it mounts, never a value. A premise that does not hold — a committed or working file that still writes a retired key, a database that cannot be read, a repository with no access record, a subscription this check cannot read off the records — **stops the check (exit 2)** before anything is launched. Its scratch directory is removed from the exit trap and the `restore` row says whether it really went; the run is left to end on its own and nothing else was created. **OWNER-RUN, NOT RUN.** |
 | 740 | **Messaging a run that is going**, live ([`docs/run-messages/`](run-messages/implementation-plan.md), its **Check 740** and task **RM8**; the reconciliation's **U2**, **U3** and **U4**, and **D2941**'s read-only prefix): one real run of a repository you name, sent a plain message and a `--now` message while its implement stage is going, and read four ways — the plain message **`delivered`** at the next coder stage; the `--now` message delivered into that same stage carrying **no reason** on its fate, which is the runner finding a quiet point **and** going on in the same session, so `no quiet point in 10m` and `session lost at forced stop` are exactly what **U2** and **U3** answer with when the answer is no; the **IAM Policy Troubleshooter** asked whether the **real** job account of the run's execution — and, where the installation has one, the account of a shared project job — holds `storage.objects.create` on a `tokens/<slug>/<run>/messages/<seq>.msg.json` object, which must be **denied** (**D2941**), a throwaway account given only `objectViewer` proving nothing because the role cannot write by definition; and the runs bucket's **lifecycle configuration**, where the `.msg.json` rule must select the messages and leave the sealed `budget-token` beside them alone (**U4**) | See "Check 740" below; **the script is how you run it**: `bash scripts/live-checks/check-740-run-messages.sh --installation <name> --repo <owner/name>`, with the test that drives every step of it against fakes, `scripts/live-checks/check-740-run-messages_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on a **scratch installation you own** (**never `belong`**), after the release and `fugaro update`, and **no agent runs any step of it** | It launches **one real run** of the repository you name: that run's own model spend, one branch and one pull request, plus the two small objects `fugaro tell` writes under `tokens/`, which expire by the bucket's own rule. Everything else is a read (`fugaro doctor`, `fugaro version`, `fugaro runs ls`, `gcloud run jobs describe`/`list`, `gcloud storage cat`/`buckets describe`, the troubleshooter). It changes nothing anywhere else: the run it launched stays, the `restore` row says the scratch directory went, and no credential value is read. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -15361,14 +15366,15 @@ credential. Its whole footprint is the reads above and a scratch directory remov
 **Paste back:** the whole `CHECK 330 RESULT` block, the run references, and what steps 2 and 3 answered — and **never a credential,
 never a key, and never `belong`'s project**.
 
-## Check 340: the prefix-limited listing grant — one script you run (a sandbox bucket only, never `belong`; run by you; NOT RUN)
+## Check 340: the prefix-limited listing grant — one script you run (a sandbox bucket only, never `belong`; run by you; PASS, 2026-11-13)
 
-**NOT RUN.** Three attempts have been made and none of them is an answer. Written by the task that
+**PASS, 2026-11-13.** Four runs have been made and the fourth is the answer. Written by the task that
 implemented Check 340 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
 §P8 (the plan's **E4**) — §P8 names the number and leaves the row and this section to that task, which is the
-register's own rule for a work that reserved none — and **no `PASS` is recorded for `list-prefix` anywhere
-here**: the third run read the probe and settled the attribute's value form, but the row above stays **NOT RUN**
-until the revision that reading produced has itself been run. It is the check **R12** waits on: R12's Terraform writes one conditioned binding per prefix for the
+register's own rule for a work that reserved none — and **its `PASS` for `list-prefix` is recorded here**: the
+third run read the probe and settled the attribute's value form, and the fourth — the revision that reading
+produced — held every criterion with a clean Restore, so the row above reads **PASS** rather than NOT RUN. It is
+the check **R12** waits on: R12's Terraform writes one conditioned binding per prefix for the
 reports job, and each binding's listing half names the `storage.googleapis.com/objectListPrefix` request
 attribute. What that attribute **carries** is unverified in this tree — `docs/bucket-iam/spec.md` §4's H3 veto
 and its §11 item **V7** record the value form as unverified, and grepping the tree finds the attribute's name in
@@ -15405,8 +15411,8 @@ probes a prefix as an object before it lists it), and the script accepted only `
 so it read the refusal as "a call that did not answer" and stopped the run there. The `cache/` refusal was therefore
 never read and the **full-path form was never reached**, because the run stopped before it: of the fourteen per-form
 rows, five under the relative form were reached — four `PASS`ing and the `reports/` listing `FAIL`ing — and the other
-nine were not reached at all. **The row 340 above is still NOT RUN and no `PASS` is recorded for `list-prefix`
-anywhere here**: four `PASS`ing criteria and one `FAIL`ed listing are not an answer about the attribute, and the
+nine were not reached at all. **The row 340 above stayed NOT RUN after that run, and no `PASS` was recorded for
+`list-prefix` anywhere here off it**: four `PASS`ing criteria and one `FAIL`ed listing are not an answer about the attribute, and the
 full-path form — the only one that could have carried it — was never read. Three faults left that run where it
 stopped, and all three were fixed in the task that followed it: **either permission is a refusal** for the `tokens/` **read**,
 while the `tokens/` and `cache/` **listings** are asked with a **wildcard** (`gs://<bucket>/tokens/*`) so that gcloud
@@ -15451,9 +15457,31 @@ the plan's own order), so this is the design's statement of what the job will li
 job: the check reads those four prefixes because that is what R12's Terraform and R11's reader are being built to
 do, and a refusal of the bare `reports/` prefix is a request the design never makes, which is why it must not gate
 R12. That design statement is why the revision this run's reading produced reads the four prefixes the job lists,
-drops the second form, and asks the bare prefix as a **DIAGNOSTIC** that gates nothing. The revision has not itself
-been run, so **the row above is still NOT RUN**: what it needs is one more run of the same command, on a fresh
-sandbox bucket, whose `list-prefix` row is `PASS` and whose Restore confirms the teardown.
+drops the second form, and asks the bare prefix as a **DIAGNOSTIC** that gates nothing. The revision had not itself
+been run then, so the row above stayed **NOT RUN**: what it needed was **one more run of the same command**, on a
+fresh sandbox bucket, whose `list-prefix` row is `PASS` and whose Restore confirms the teardown — and that is
+exactly what the fourth run below did.
+
+**Fourth run: 2026-11-13, exit `0` — the run that answers the check.** The owner ran the revision once more, on
+`fugaro-dev` and a fresh sandbox bucket, and it **PASSED**: under the one relative form the throwaway account
+**LISTED** `runs/<slug>/`, `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/`, **READ** a `runs/`
+object, and was **refused** the bucket root listing and a `tokens/` read and a `tokens/` and a `cache/` listing,
+each refusal naming the permission the missing clause would have carried — every criterion held — and its
+**Restore was clean**, so nothing the run made was left behind. **The bucket had to have uniform bucket-level
+access enabled first**: the two conditioned bindings this check grants are refused on a bucket that lacks it (HTTP
+`412`), and the first attempt at this run failed on exactly that until the guard of #2584 (`872a5a32a`) was added —
+since then the script reads the bucket's own access mode back before creating anything and stops, naming
+`gcloud storage buckets update gs://<bucket> --project=<project> --uniform-bucket-level-access`, rather than
+reading a bucket's configuration as a refusal of the grant. **The reading is the value form, and it is what R12's
+builder writes: the attribute carries the request's own prefix — `runs/` for the runs binding and `reports/` for
+the reports binding, each written `api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("<prefix>/")`
+— and the root, `tokens/` and `cache/` are refused with the permission names the missing clauses would have
+carried.** The bare `reports/` diagnostic came back answered three ways, and its answer closes the question the
+third run left open **without changing R12**: the plain `gcloud storage ls gs://<bucket>/reports/` is refused
+naming `storage.objects.list`, while the wildcard `gcloud storage ls gs://<bucket>/reports/*` lists and the JSON
+API's `objects.list` with `prefix=reports/&delimiter=/` answers `200` — so gcloud's own request, which resolves the
+prefix as an object before it lists, is what was refused, and the clause itself does reach the bare prefix. R12's
+job never lists the bare prefix, so **it needs no change on that account**, and the row above is a **PASS**.
 
 **Run it:**
 
@@ -15583,12 +15611,13 @@ the other side.
 
 **Paste back:** the whole block into row 340 above and to the coordinator, with the `list-prefix` row's string —
 that string is the `<list prefix>` R12's builder writes into the two listing clauses, and it is the only thing
-this check exists to produce — **and the `reports-bare-diagnostic` row with it**, which is what explains the bare
-`reports/` refusal the third run left open.
+this check exists to produce — **and the `reports-bare-diagnostic` row with it**, whose three answers are what
+explain the bare `reports/` refusal the third run left open.
 
-**What waits on it.** R12, and behind R12 the reports job's first firing (Check 341) and `fugaro runs digest`'s
+**What it answered.** R12, and behind R12 the reports job's first firing (Check 341) and `fugaro runs digest`'s
 own writing to `reports/` (R10, Open item 5 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)):
-neither the Terraform nor anything it enables may land before this check answers.
+the check answered on 2026-11-13, so the Terraform and what it enables may land on the two prefix forms this
+section records, and the plan's **E4** no longer holds anything back.
 
 ## Check 360: the managed screens show what the CLI says, on a managed project (your own machine, an installation and a managed project; run by you; NOT RUN)
 
@@ -23734,6 +23763,308 @@ copy. Nothing here is a prerequisite for another task; the three are read when t
 
 **USER-RUN, NOT RUN: no agent runs any step of it.**
 
+## Check 810: the auth retirement's first release, watched across four repositories and a run in flight (an installation at the previous release, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CM22** of
+[credentials-belong-to-models/implementation-plan.md](credentials-belong-to-models/implementation-plan.md), its
+"### CM22: the live checks, as scripts" and the plan's own **Check 810, after release 1** (§8); what it reads
+back is **U5** and the owner's **O1** of
+[credentials-belong-to-models/reconciliation.md](credentials-belong-to-models/reconciliation.md), and the
+record it reads them against is **C1**'s (a repository's crafts resolve to a credential, written at
+`creds/repoaccess/<slug>`, **C1** (d); a file that still writes `agent.auth` is read as the same answer it
+always meant, **C1** (c); a refusal of a craft a record does not name writes exactly **one** audit line,
+**C1.13**). It is **run by the owner** at their own terminal. The script is
+`scripts/live-checks/check810.sh`, with the test that drives it against fake `gcloud`, `fugaro` and `curl` on
+PATH and **four real local git repositories** in a temp directory (`scripts/live-checks/check810_test.sh`, run
+by `go test ./scripts`). **No agent runs any step of it** — the script refuses a coding agent's session by name
+(`CLAUDECODE` and the four other markers that say an agent, and not a person, is driving the shell) and refuses
+a shell started with `-x` — and the whole of its registration is this one command:
+
+```sh
+bash scripts/live-checks/check810.sh --installation <name> --oauth <checkout> --api-key <checkout> \
+  --cascade <checkout> --vertex <checkout> --job <the subscription repository's Cloud Run job> \
+  --gcp-project <project> --region <region> [--rtdb-url <url>] [--access-header <name>]
+```
+
+**What the check settles.** Release 1 of `credentials-belong-to-models` takes a repository's auth mode away:
+a run stops saying how it goes out, and the installation records, per repository, which credential its crafts
+resolve to. Nothing offline can settle what that migration does to a real installation, so the check watches
+one, and the clauses it reads are these:
+
+- **The migration reaches every repository.** A project owner's `fugaro update` is run once for the
+  installation (which migrates the local config and the published policy) and once with `--repo` in each of the
+  four checkouts. All five must exit 0: the whole upgrade is that one command (CLAUDE.md's HARD RULE), and an
+  update that did not finish is not the migration this check is about.
+- **Each craft resolves to what the old file meant.** Every repository's **new** record out of the database's
+  `creds` node (`creds/repoaccess/<slug>`) names the credential its old `agent.auth` meant: `vertex` for the
+  Vertex repository and **never** for the other three, the account the subscription repository's own old record
+  carries for that one, a credential that is neither for the key and cascade repositories, and a version of 1
+  where it names one at all. The old `agent.auth` is read as the answer "what did it mean" — **C1** (c).
+- **The update says what it did.** Its own output names each of the four repositories **and** a credential its
+  crafts resolve to: the plan's after-deploy step for this release is that the update tells the owner what each
+  craft resolves to (§9), and an owner who is not told cannot tell a migration from a stop.
+- **A run in flight survives it.** One run of the subscription repository is launched **before** the update and
+  followed across it: the migration must not kill a run that started on the release behind (**U5**).
+- **The four runs afterwards go out the same way.** A run of each repository is launched **after** the update,
+  ends, has a **served line** in the service's own log (`credsvc: audit` with status `ok`, so its calls went
+  through its gateway) and carries in its own record out of the runs bucket the **same `model_basis`** the
+  subscription repository's runs carried before the update — the subscription for the subscription repository,
+  the API list for the other three (**F25**).
+- **A craft the record does not name is refused, and recorded once.** A call the check builds **by hand**,
+  carrying a live run's own identity (a Google ID token for the job's own account, over a run identity minted
+  the way the launcher mints it: the runs' signer, a Firebase custom token, the identity toolkit exchange) and
+  declaring a craft no repository's record names, must be **refused**, with **exactly one** audit line for that
+  run in the service's log (**U5**, **O1**, **C1.13**). The four runs above are launched **first** and read
+  afterwards, so the call is made while one of them is going and the identity it presents is one the service
+  can verify.
+
+**The premise it reads first, and why it stops.** This check is about an installation the release has **not**
+reached, and the first thing it reads is the opposite. Each of the four checkouts' **committed** `fugaro.yaml`
+writes its own old `agent.auth` (`oauth`, `api-key`, `cascade`, `vertex`); the database's `creds` node carries
+the four old records (`creds/repoauth/<slug>`) and **no** access record (`creds/repoaccess`) at all. Any leg
+failing is a row reading FAIL and a **STOP (exit 2)** — the check launches **five billable runs**, and every
+row below would be a row about nothing. The database's URL comes out of the installation's own local project
+config (`${XDG_CONFIG_HOME:-$HOME/.config}/fugaro/projects/<installation>.yaml`, key `budget.rtdb_url`), or from
+`--rtdb-url` when that file names none — `fugaro doctor --json` carries no database address, so it is not a
+source. An installation whose records cannot be read is a stop too, because no row below can be measured
+without them. The check launches **no run** before the premise holds.
+
+**Prerequisites.** An installation **at the previous release** that you may upgrade, and four **git checkouts**
+of its repositories — one on a subscription, one on an Anthropic key, one on the cascade, one on Vertex — each
+whose committed `fugaro.yaml` still writes its own `agent.auth`. `--job` is the subscription repository's own
+Cloud Run job: the `audit` row reads it for the account and the Firebase web API key the identity toolkit is
+addressed with. `--gcp-project` and `--region` name where that job and the service live. `--access-header` is
+the header the new narrowing declares a craft in (**C1** (e), the headers a new runner declares its craft in):
+this script was written before that contract, so it is an argument and never a guess, and without it the
+`audit` row reads **UNVERIFIED** rather than making a call whose header the check made up. `--signer` overrides
+the account the custom tokens are signed as. `fugaro`, `gcloud` (authenticated as the installation's **project
+owner**), `curl`, `git`, `python3` and `mktemp` on PATH; nothing is installed and nothing is fetched.
+
+**What a failure means, row by row.** Each row says what it read and where to look next:
+
+- `premise` — the leg that failed is named: a checkout that does not write the `agent.auth` the flag naming it
+  claims, a database that cannot be read, an access record that is already there (the installation has already
+  been reached) or an old record that is not. **Stops the check** before anything is launched.
+- `in-flight` — the run that has to be in flight across the update could not be launched; read the launcher's
+  own refusal in the detail. A run launched whose answer carries no run id the check can read leaves the row
+  UNVERIFIED, and `in-flight-2` then says there is nothing to follow.
+- `update` — the installation's own `fugaro update --project`, or one repository's `fugaro update --repo`, did
+  not exit 0; the failing checkout is named, and each run's own output is in the scratch directory's
+  `update-*.out`.
+- `crafts` — a new record names no credential, names `vertex` for a repository whose old auth did not mean it,
+  does not name the account the subscription repository's own old record carries, is missing altogether, or
+  names a version that is not 1. The records themselves are at `creds/repoaccess.json`.
+- `says` — the update's own output names no repository, or names none of the credentials its crafts resolve to.
+- `in-flight-2` — the run that was in flight when the migration was applied underneath it ended `failed` or
+  `cancelled` (**U5**). A run still not terminal after the check's own wait leaves the row UNVERIFIED; read it
+  yourself with `fugaro runs ls`.
+- `runs-launched` — how many of the four repositories' runs were launched after the update. A launch that
+  failed has its own row above; this row is the count, and it is a reading rather than a criterion.
+- `oauth-run`, `key-run`, `cascade-run`, `vertex-run` — the run did not end, ended `failed` or `cancelled`,
+  has **no served line** in the service's log (its model calls did not go through its gateway, **F25**),
+  carries no `cost.model_basis` (UNVERIFIED), or is recorded with a `model_basis` other than the one its
+  repository's runs carried before the migration.
+- `audit` — no `--access-header` was given, no run of the subscription repository is going, the job or the
+  service could not be read, or the identity could not be minted: UNVERIFIED, with what was read. A call that
+  was **served** is a FAIL (a repository offered a credential its record does not name, **O1**). A refusal with
+  **no** audit line is a FAIL (an operator cannot see it). A refusal with **two**, or one the check cannot tell
+  from the run's own traffic, or a refusal whose words name neither the craft nor a repository, is UNVERIFIED —
+  as is the shape of a refusal taken **before** the identity was verified.
+- `aborted` — an extra row, present only when the script ended on an error rather than on an answer; the rows
+  it did not reach were **not** measured.
+
+**The knobs.** Every one of them is read from the environment and none of them is asked for:
+`CHECK810_INSTALLATION`, `CHECK810_OAUTH`, `CHECK810_API_KEY`, `CHECK810_CASCADE`, `CHECK810_VERTEX`,
+`CHECK810_JOB`, `CHECK810_GCP_PROJECT`, `CHECK810_REGION`, `CHECK810_RTDB_URL`, `CHECK810_ACCESS_HEADER`,
+`CHECK810_SIGNER`, `CHECK810_SERVICE` (the credentials service's name, `fugaro-credentials` by default),
+`CHECK810_CONFIG` (the installation's local project config file, when it does not sit at the path the premise
+paragraph names), `CHECK810_DRY_RUN`, and the polling, logging and curl knobs the test uses to keep a case
+short (`CHECK810_POLLS`, `CHECK810_POLL_SECONDS`, `CHECK810_LOG_AGE`, `CHECK810_LOG_LIMIT`,
+`CHECK810_LOG_POLL_SECONDS`, `CHECK810_LOG_WAIT_SECONDS`, `CHECK810_CURL_SECONDS`). The command line itself
+takes `--installation`, `--oauth`, `--api-key`, `--cascade`, `--vertex`, `--job`, `--gcp-project`, `--region`,
+`--rtdb-url`, `--access-header`, `--signer`, `--service`, `--dry-run` and `--help`; `--dry-run` prints the
+plan, makes **no call at all** — no `gcloud`, no `fugaro`, no run, no update, nothing spent — and touches
+nothing.
+
+**Reading the `CHECK 810 RESULT` block.** One block of `FACT`-shaped lines, in this order, and the same block
+is what you paste back: `premise`, `in-flight`, `update`, `crafts`, `says`, `in-flight-2`, `runs-launched`,
+`audit`, `oauth-run`, `key-run`, `cascade-run`, `vertex-run`, then `aborted` when the script ended on an error
+rather than on an answer, and `restore` (the scratch directory is gone) last. Each line is the key,
+`PASS`/`FAIL`/`UNVERIFIED` and the sentence saying what was read. The exit status is **0** for an all-PASS
+block, **1** for a criterion that was measured and failed, **2** for a run that stopped before it could
+measure everything (the premise, a missing tool, an update that did not finish — and any run that ended before
+its last step) and **3** for a run that reached the end with at least one row reading UNVERIFIED. **ONLY an
+all-PASS block is a PASS.**
+
+**What it costs, and what it leaves.** **FIVE billable runs** — the one in flight across the update and the
+four launched after it, each an ordinary run of its own repository on that repository's budget — plus a project
+owner's `fugaro update` five times over. Everything else is a read: the four checkouts' committed
+`fugaro.yaml`, the database's `creds` node before and after, the job's and the service's own documents, the
+five updates' own outputs, `fugaro runs ls`, the five runs' rows and records out of the runs bucket and the
+service's own log lines. **No credential is printed**: the job's own document is read for the **names** of what
+its container holds, for its account and for the Firebase **web** API key the toolkit is addressed with (a
+public key, written only into a `0600` file inside the check's `0700` scratch directory and never into the
+block), and the one value the check writes elsewhere is a task file of its own making. The premise row **stops
+the check (exit 2)** on an installation release 1 has already reached, **before any run is launched**.
+
+**Restore.** The scratch directory — the four checkouts' committed files' `agent.auth` readings, the
+database's `creds` node before and after, the five updates' own outputs, the five runs' rows and their records,
+the job's and the service's documents, the service's own log lines, the identity documents and the task file
+the check wrote — is removed on the way out, from the exit trap on a Ctrl-C as well, and the `restore` row is
+that reading (a FAILed row names the directory to remove by hand). The identity the `audit` row mints is signed
+in as the run the check launched, whose Auth user that run's own launch already made, so the exchange creates
+**no** user and none is deleted. The five runs are left to end on their own, as any run is. **OWNER-RUN, NOT
+RUN: no agent runs any step of it.**
+
+## Check 811: the auth retirement's second release — the token out of the agent's environment, the image gate, the retired key and the old record (an installation release 2 is reaching, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CM22** of
+[credentials-belong-to-models/implementation-plan.md](credentials-belong-to-models/implementation-plan.md), its
+"### CM22: the live checks, as scripts" and the plan's own **Check 811, after release 2** (§8). It is the
+second half of the retirement: release 2 takes the subscription token out of the agent's environment
+(**CM28**), rejects a file that still writes a retired key (**CM29**) and stops writing the repository's old
+record, deleting it only where the repository has no run in flight (**CM31**); the run's own record naming no
+subscription credential for any stage is **CM9**'s and **D3067**'s reading of the flip. It is **run by the
+owner** at their own terminal, after release 2. The script is `scripts/live-checks/check811.sh`, with the test
+that drives it against fake `gcloud`, `fugaro` and `curl` on PATH and **three real local git checkouts** in a
+temp directory (`scripts/live-checks/check811_test.sh`, run by `go test ./scripts`). **No agent runs any step
+of it** — the script refuses a coding agent's session by name (`CLAUDECODE` and the four other markers) and
+refuses a shell started with `-x` — and the whole of its registration is this one command:
+
+```sh
+bash scripts/live-checks/check811.sh --installation <name> --subscription <checkout> \
+  --job <the subscription repository's Cloud Run job> --gcp-project <project> --region <region> \
+  [--rtdb-url <url>] [--retired-key <checkout>] [--old-image <checkout>]
+```
+
+**What the check settles.** Four statements about a release's second half, each of which needs a **real**
+installation, and one of which — the old record — is a statement about **when** the update runs rather than
+about what it writes:
+
+- **A run on a subscription has no token in its agent's environment.** Three places are read together: the
+  repository's **job document**, whose container environment must carry no `CLAUDE_CODE_OAUTH_TOKEN`
+  (**CM28**'s flip takes the mount that variable comes from away); the **service's own log**, which must hold a
+  **served line** for the run (`credsvc: audit` with status `ok`, so its calls went through its gateway); and
+  the run's **own record**, which must name no subscription credential (`oauth`) for any of its stages — a
+  stage's `credential`/`served_by` names a credential the **job itself** holds (**CM10**), so a record that
+  names one is a run that went out on a token of its own rather than on the service alone (**CM9**, **D3067**,
+  **F25**).
+- **A file that still writes a retired key is rejected with the fix.** `fugaro validate` in the checkout you
+  point `--retired-key` at must **reject** its file, **naming** the retired key it writes (`agent.auth`,
+  `agent.oauth_token`, a craft's `access`, a grade's `access`) **and** the command that fixes it — the removal
+  `fugaro update` offers as a diff (**CM29**). The check's own scan of the file is only the **premise** (the
+  file must write one, or the row would be about nothing): the refusal is what the row measures.
+- **A launch on an image older than release 1 is refused with the rebuild command.** A launch in the checkout
+  you point `--old-image` at must be **refused**, naming the command that rebuilds the image (`fugaro update`,
+  or `fugaro image build`) **and** the release it needs (**CM28**). A launch that is **not** refused is the
+  finding, and the run it started is left to end on its own.
+- **An old record is kept while a run is in flight, and gone after.** `fugaro update --repo` is run in the
+  subscription checkout **while** the run is going: the repository's old record (`creds/repoauth/<slug>`) must
+  still be there afterwards, and the update's own output is read for the line that says so. The same update is
+  then run again with no run of the repository going — read off `fugaro runs ls`, this check's own run
+  included — and the old record must be **gone** (**CM31**, **D3063**). Where the installation carries **no**
+  old record at all, both record rows read **UNVERIFIED** and say how to measure them; a record the update
+  **writes** where there was none is a FAIL, because release 2's update no longer writes that record.
+
+**The premise it reads first, and why it stops.** The subscription checkout must be a git checkout whose
+repository can be matched (its origin's slug), whose **committed** and **working** `fugaro.yaml` write **no**
+retired key — release 2 refuses a launch from a file that does, so every row below would be about a launch
+that cannot happen — and whose repository the installation's `creds` node carries an **access** record for
+(`creds/repoaccess/<slug>`), which is the state release 1 left. The database's URL comes out of the
+installation's own local project config (`${XDG_CONFIG_HOME:-$HOME/.config}/fugaro/projects/<installation>.yaml`,
+key `budget.rtdb_url`), or from `--rtdb-url` when that file names none — `fugaro doctor --json` carries no
+database address, so it is not a source. A leg failing is a row reading FAIL, and a database that cannot be
+read is UNVERIFIED; both **stop the check (exit 2)** before the one paid run is launched.
+
+**Prerequisites.** An installation release 1 has reached and release 2 is reaching, with `creds/repoaccess`
+written for the repository whose checkout you name, and a run of it you may spend on. `--job` is that
+repository's own Cloud Run job: the `token` row reads **its** container environment, because that is where the
+token would be. `--retired-key` needs a checkout whose `fugaro.yaml` still writes a retired key, and
+`--old-image` a checkout whose repository's job image is older than release 1; without either flag that row
+reads **UNVERIFIED** rather than being skipped silently. `fugaro`, `gcloud` (authenticated as the installation's
+**project owner**), `curl`, `git`, `python3` and `mktemp` on PATH; nothing is installed and nothing is fetched.
+
+**What a failure means, row by row.** Each row says what it read and where to look next:
+
+- `premise` — a committed or working `fugaro.yaml` that still writes a retired key, a checkout whose origin
+  names no repository, or a repository with no access record. A database that cannot be read is UNVERIFIED.
+  Both **stop the check** before anything is launched.
+- `launch` — the run could not be launched; read the launcher's own refusal in the detail. A refusal here may
+  be one of release 2's own (a subscription the service does not serve, an image older than release 1), and the
+  message names the command that fixes it. A launch whose answer carries no run id leaves the row UNVERIFIED,
+  and the rows below say there is nothing to follow.
+- `old-record` — the update did not exit 0; the update **wrote** an old record where the installation had none
+  (release 2 no longer writes one, **CM31**); or the old record is **gone** after an update run while the run's
+  own row was live, which takes the narrowing a run in flight holds away from it
+  (`docs/design/update-in-flight.md`). An installation with no old record, a run that had already ended, and a
+  run whose row could not be read all leave the row UNVERIFIED, naming which of the three it measured.
+- `token` — the job's container environment carries `CLAUDE_CODE_OAUTH_TOKEN` (**CM28**), or the run's own
+  record names a subscription credential (`oauth`) for one of its stages, so the agent had something of its own
+  to go out on (**CM9**). An unreadable job document, a run still not terminal, a log with no served line, a
+  record that cannot be read and a record that names no stage each leave the row UNVERIFIED with what it read.
+  The job's document is read **first** and its finding kept, so a job that still mounts the token is the FAIL
+  it is even where the run cannot be followed.
+- `record-gone` — the old record is **still there** after an update run with no run of the repository going, or
+  the update did not exit 0. A run that had not ended when the row was reached, an installation with no old
+  record to delete, and a row that could not establish that no other run of the repository is going all leave
+  it UNVERIFIED, because an update that kept the record under those conditions did the right thing by its own
+  rule.
+- `retired-key` — `fugaro validate` **accepted** the file (exit 0), or it refused it **without naming a fix**.
+  A refusal that names none of the retired keys the file writes is UNVERIFIED: a refusal whose words are not
+  the key's is not the refusal **CM29** is about.
+- `old-image` — the launch was **not** refused (a run was launched on a job image older than release 1), or it
+  was refused without naming a command that rebuilds the image, or without naming the release the image has to
+  be at or past — both UNVERIFIED, with the refusal's own words.
+- `aborted` — an extra row, present only when the script ended on an error rather than on an answer; the rows
+  it did not reach were **not** measured.
+
+**The knobs.** Every one of them is read from the environment and none of them is asked for:
+`CHECK811_INSTALLATION`, `CHECK811_SUBSCRIPTION`, `CHECK811_JOB`, `CHECK811_GCP_PROJECT`, `CHECK811_REGION`,
+`CHECK811_RTDB_URL`, `CHECK811_RETIRED_KEY`, `CHECK811_OLD_IMAGE`, `CHECK811_SERVICE` (the credentials
+service's name, `fugaro-credentials` by default), `CHECK811_CONFIG` (the installation's local project config
+file, when it does not sit at the path the premise paragraph names), `CHECK811_DRY_RUN`, and the polling,
+logging, retry and curl knobs the test uses to keep a case short (`CHECK811_LIVE_TRIES`, `CHECK811_POLLS`,
+`CHECK811_POLL_SECONDS`, `CHECK811_LOG_AGE`, `CHECK811_LOG_LIMIT`, `CHECK811_LOG_POLL_SECONDS`,
+`CHECK811_LOG_WAIT_SECONDS`, `CHECK811_CURL_SECONDS`). The command line itself takes `--installation`,
+`--subscription`, `--job`, `--gcp-project`, `--region`, `--rtdb-url`, `--retired-key`, `--old-image`,
+`--service`, `--dry-run` and `--help`; `--dry-run` prints the plan, makes **no call at all** — no `gcloud`,
+no `fugaro`, no run, no update, nothing spent — and touches nothing.
+
+**Reading the `CHECK 811 RESULT` block.** One block of `FACT`-shaped lines, in this order, and the same block
+is what you paste back: `premise`, `launch`, `old-record`, `token`, `record-gone`, `retired-key`, `old-image`,
+then `aborted` when the script ended on an error rather than on an answer, and `restore` (the scratch directory
+is gone) last. Each line is the key, `PASS`/`FAIL`/`UNVERIFIED` and the sentence saying what was read. The exit
+status is **0** for an all-PASS block, **1** for a criterion that was measured and failed, **2** for a run that
+stopped before it could measure everything (a premise that failed, a missing tool, a path that is not a
+checkout — and any run that ended before its last step) and **3** for a run that reached the end with at least
+one row reading UNVERIFIED. **ONLY an all-PASS block is a PASS.**
+
+**When to run it, and the one reading that depends on it.** Release 2's own after-deploy step is "run `fugaro
+update`", and its update is the one that deletes a repository's old record. So **the two record rows are the
+reading that depends on the order**: run Check 811 on a repository **no update has reached yet** and
+`old-record` measures the record being kept across an update that finds a run in flight; run it after your own
+`fugaro update` and that record is already gone, so both record rows read **UNVERIFIED** and say so, rather
+than passing on a state release 2 has already changed. The other four rows — the token, the retired key, the
+image gate and the record never being written — measure either way.
+
+**What it costs, and what it leaves.** **ONE billable run** — the subscription repository's own model spend,
+bounded by its cap — plus a second launch that costs **nothing** when the row is right, since an image older
+than release 1 is refused before anything is built or run, and **two** `fugaro update --repo` calls in the
+subscription checkout. The other side of that coin is honest to state: an old-image launch the release does
+**not** refuse is a **real, billable run**, and the row names it. Every other row is a read of a document the
+repository or the installation already wrote: the checkout's committed and working `fugaro.yaml`, the
+database's `creds` node before, between and after the two updates, the two updates' own outputs, `fugaro runs
+ls`, the run's own record out of the runs bucket, the job's own document and the service's own log lines. **No
+secret is read at all**, so none can be printed: the job's own document is read for the **names** of its
+container's environment and the **ids** of the secrets it mounts, and never for a value.
+
+**Restore.** The scratch directory — the checkout's committed file's retired keys, the database's `creds` node
+before, between and after the two updates, the two updates' own outputs, the run's own row and record, the
+job's own document, the service's own log lines, and the task files the check wrote — is removed on the way
+out, from the exit trap on a Ctrl-C as well, and the `restore` row is that reading (a FAILed row names the
+directory to remove by hand). Nothing else was created: the run it launched is left to end on its own, and the
+two updates are the ones the owner would run anyway. **OWNER-RUN, NOT RUN: no agent runs any step of it.**
+
 ## Check 740: messaging a run that is going (a scratch installation you name, never `belong`; run by you; NOT RUN)
 
 **NOT RUN.** Written by task **RM8** of
@@ -23858,3 +24189,183 @@ needed to run the check as the register writes it.
 `scripts/live-checks/check-740-run-messages_test.sh`, which drives every step of it against fake tools — a
 fake `fugaro` and a fake `gcloud`, no cloud, no installation and no run — and is run by
 `go test ./scripts`.
+
+## Check 341: the reports job's first firing, and what it stored (an installation and its own project, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the task that registered Check 341 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
+§P8 — the plan names the number and leaves the row and this section to the task that implements the
+check, which is the register's own rule for a work that reserved none — and **no step of it has been
+run, and nothing here is a claim that the job fires or that what it stores is right.** It is the check
+the reports job's own Terraform (**R12**) and plan (**R7**) are read by: the module plans the job
+**paused** (`jobs.reports.paused`, the setting **R13** puts on the project layer), so this check is
+the one that turns it on, watches it fire and reads what landed. It is also the check that settles
+the question **R10** is blocked on — **Open item 5** of the plan: whether `fugaro runs digest` may
+write to `reports/` at all, since **E4** makes the reports job its only writer.
+
+**What the check confirms.** With `jobs.reports.paused: false` in the project layer and `fugaro
+update` applied, the schedule fires once, and what it stored is what the plan's **E1** and **E3**
+say: **one report per repository** under `reports/<slug>/<YYYY>/<key>.md`, **the project aggregate**
+at `reports/<YYYY>/<key>.md` beside them, and the `reports/` objects **still there after the run
+records' own 90 days** — which is the **18-month `reports/` lifecycle rule** (E3) doing what it is
+for, and the half no hermetic test holds, because the bucket's own rule is read from the installed
+bucket rather than from a plan. And the second reading: whether the stored report **reads back** —
+`fugaro runs digest --stored` (**R10**) against what the job wrote — which is Open item 5's question
+and the reason R10's own write half is held.
+
+**What you do.** **You** run every step and **no agent runs any step of it**; point it at an
+installation whose project the job may write into, and **never at a project whose name contains
+`belong`** — this check turns the job on, and the job writes.
+
+1. In the project layer, set `jobs.reports.paused: false` and run `fugaro update`. Record what it
+   prints for the reports job, its account, its schedule and its grants.
+2. Let the schedule fire once. The job's own command is `fugaro runs reports --job`, and it
+   **refuses outside the job's environment** (a person writes one repository's report into a
+   checkout with `fugaro runs digest`), so the schedule is the way to make the firing; record the
+   execution and when it ran.
+3. Read what landed under `reports/`: one report per repository at `reports/<slug>/<YYYY>/<key>.md`,
+   and the project aggregate at `reports/<YYYY>/<key>.md`.
+4. Read one stored report back — `fugaro runs digest --stored <period>` — and record what it prints.
+
+**Expected.** One report per repository that ran in the period, each under its own slug and year; the
+project aggregate beside them; the objects still present after the run records' own 90 days, which is
+the bucket's own `reports/` rule and not a plan; and the stored report reading back as the report the
+job wrote, with no launcher having written to `reports/` to make that so.
+
+**Refutation.** A period with no report where a repository ran, an aggregate whose figures disagree
+with the repository reports beside it, a `reports/` object gone with the run records' 90 days, or a
+stored report that does not read back — the last of which is the reading that answers Open item 5
+**no**, and holds R10's write half where it is.
+
+**Restore.** Set `jobs.reports.paused: true` again and run `fugaro update`, which plans the job paused
+— that is the whole of putting it back. The stored reports it wrote are ordinary reports in the
+project's own `reports/` prefix and are meant to stay: the bucket's own 18-month rule reaps them, and
+removing them by hand would take the very reading this check exists to take. Nothing else is created:
+no account of the check's own, no binding and no credential.
+
+**A script is not written yet.** The register's own rule ([CONTRIBUTING.md](../CONTRIBUTING.md))
+asks a new owner-run check to ship as ONE runnable script under `scripts/live-checks/` with a
+hermetic test beside it, and **that script does not exist for this check**: what is written here is
+the step list, the row above names no command, and the task that converts this check owes the script,
+its test and the one command in the row.
+
+**Paste back:** the execution's id and when it fired, the keys under `reports/` with the ones the
+repositories' own runs would predict, the aggregate's figure beside the repository reports' own, and
+what `fugaro runs digest --stored` printed — and **never a credential and never `belong`'s project**.
+
+## Check 342: the failures report reproduces a window a person built by hand (an installation with stored reports, your own machine; run by you; NOT RUN)
+
+**NOT RUN.** Written by the task that registered Check 342 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
+§P8 — the same rule as Check 341's, the task that implements the check writing its row and its
+section — and **no step of it has been run.** It is the one check that says whether the **failure
+classes** mean what [failure-classes/design.md](failure-classes/design.md) says they mean: a
+vocabulary can be internally consistent, and every hermetic test can pass, while the word it puts on a
+run is not the word a person who watched the run would use. Nothing here is a claim that it does.
+
+**What the check confirms.** A window whose causes **you already know** — the design's own seven-day
+table is one — read back two ways that must agree with each other and with what you know happened:
+`fugaro runs ls --group-by failure_class` (**FC6**, the live reading of the window) and the
+**Failures table** of the period's stored report (**R8**'s aggregate, which by **D1432**'s
+recommendation carries the period's table beside its figures). **Including the runs whose class the
+legacy reader read from `reason`** (**FC5**): a run that predates the `failure_class` field carries
+none of its own, and the reader derives one from its `reason` rather than writing anything back — so
+the check is also the reading that says the derivation lands on the class a person would give the run.
+
+**What you do.** **You** run every step and **no agent runs any step of it** — both reads are yours,
+and the account of the window is what only a person has.
+
+1. Take a window you already know the causes of. The design's own seven-day table is one; a window
+   you watched run is another.
+2. Run `fugaro runs ls --group-by failure_class` over that window and record the table. If you use
+   the design's table, compare row by row.
+3. Read the same period's stored report — the Failures table under `reports/<YYYY>/<key>.md`, or
+   `fugaro runs digest --stored <period>` in a checkout — and record it.
+4. Put the two tables beside your own account of the window: each class's runs and the counts.
+
+**Expected.** The two tables agree with each other and with the causes you know; the runs that
+predate the field sit in the class their `reason` implies rather than in a class of their own or in
+none; and the period's report and the live listing of the same period name the same runs under the
+same classes.
+
+**Refutation.** A class whose runs a person would not put there, a run that predates the field
+falling out of every class, the live table and the stored table disagreeing over the same period, or
+a class the design names that no window ever produces — any of which is a reading about the
+**vocabulary**, and none of which the hermetic tests can take.
+
+**Restore.** Nothing to undo: two reads and a comparison. No run is launched, nothing is written,
+nothing is granted and no credential is minted, and there is nothing to paste back but the two
+tables and the account of the window they are checked against.
+
+**A script is not written yet.** The register's own rule ([CONTRIBUTING.md](../CONTRIBUTING.md))
+asks a new owner-run check to ship as ONE runnable script under `scripts/live-checks/` with a
+hermetic test beside it, and **that script does not exist for this check**: what is written here is
+the step list, the row above names no command, and the task that converts this check owes the
+script, its test and the one command in the row.
+
+**Paste back:** the window, the account of its causes, the two tables — the grouped listing and the
+stored report's Failures table — and where they disagreed, if they did.
+
+## Check 343: the opt-in commit into the designated repository (the designated repository's checkout, your own launcher account, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the task that registered Check 343 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
+§P8, the number claimed for **R9**'s own live check by the designation design of 2026-11-17
+([reconciliation.md](periodic-reviews/reconciliation.md) §7.3) — and, as with 341 and 342, the plan
+names the number and leaves the row and this section to the task that implements the check. **No
+script is written, and none is needed**: unlike Check 340 this check creates no account, writes no
+IAM and needs no teardown, because the read is the launcher's existing bucket-wide `objectViewer`
+and the write is the ordinary push path — the check is **one command** and the pull request it
+opens. **No step of it has been run**, and nothing here is a claim that the commit works.
+
+**What the check confirms.** The whole of the opt-in commit: that with `reports_commit` named — the
+designated repository, and `dir` if the reports do not go to the default folder — **one**
+`fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` in that repository's
+checkout carries the stored reports into it, that
+a second run with nothing new in the store ends **without** a pull request, and that a file the
+folder holds and the store does not is **still there** and named in the run's own record. It is
+**R9**'s check and the last of the reports job's: the read of `reports/` is the starting person's own
+launcher account (**D2754**), so no new credential and no new grant exists for it.
+
+**The one command:**
+
+```bash
+fugaro run --recipe commit-reports --commit-reports "commit the stored reports"
+```
+
+**The two flags go together.** `--commit-reports` is what hands the stored reports to the run, and
+the recipe is what reads them: a launch carrying it on any other recipe is refused at your terminal,
+by name, before anything runs, so the command above is the whole of it — one line, one run.
+
+**What you do.** **You** run every step and **no agent runs any step of it**; the run reads the
+project's own `reports/` prefix with your launcher account and opens its pull request in the
+designated repository, so **never point the installation at a project whose name contains `belong`**.
+
+1. Name `reports_commit` (the `repo`, and `dir` if the reports do not go to the default folder) in
+   your local project config and publish it — or let `fugaro update`'s policy stage carry it.
+2. In the designated repository's checkout, run
+   `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` with the
+   starting person's own launcher account. Record the run's id and what it printed.
+3. Read the pull request it opens: **one file per stored report** under `<dir>/<slug>/<YYYY>/<key>.md`,
+   **the project aggregate** at `<dir>/<YYYY>/<key>.md` beside them, and the **index regenerated**
+   over the whole folder.
+4. Run `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` again with
+   nothing new in the store: it must end **without** a pull request.
+5. Leave a file in the folder the store does not hold, run
+   `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` once more, and
+   check the file is still there and named in the run's own record.
+
+**Expected.** Step 2 opens one pull request carrying exactly the store's reports and the index over
+the whole folder; step 4 ends with no new pull request; step 5 leaves the folder's own file where it
+was and names it in the record rather than removing it.
+
+**Refutation.** A file the store does not hold that the run removes or rewrites, an index that does
+not cover the whole folder, a second run that opens a pull request over nothing new, or a pull
+request that carries a report the store does not have — any of which is a reading about the commit
+step, and none of which the hermetic tests can take of a real repository.
+
+**Restore.** Nothing the check itself creates has to be put back: no account, no binding and no
+credential is made, and the read is the launcher's existing bucket-wide `objectViewer`. What it
+leaves is one branch and one pull request in the **designated repository**, which you merge or close
+the way you would any other — and the stored reports under `reports/` are untouched, because the
+check reads them.
+
+**Paste back:** the run's reference, the pull request's URL and the files it carried, what the second
+and third runs printed — and **never a credential and never `belong`'s project**.

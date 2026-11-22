@@ -440,13 +440,11 @@ const rehearsalSandbox = "fake-sandbox"
 // red, missing or other-commit record overrides these with g.with(...) or by
 // writing the record file itself.
 //
-// It also clears the coding-agent markers release.sh's own precondition refuses
-// on (internal/agentenv's list, scripts/agent-session.sh): the fixture is a
-// person at a terminal, and the machine running these tests may itself be an
-// agent's session, where every run here would otherwise be refused before it
-// started. The rehearsal reads no markers itself -- an agent's session runs it
-// (the owner's ruling of 2026-11-19) -- so this is release.sh's refusal alone.
-// A test that means to be an agent's session sets one of them last
+// It also clears the coding-agent markers (internal/agentenv's list): the
+// fixture is a person at a terminal. Since the owner's order of 2026-11-21
+// release.sh refuses no agent's session, so this is no longer about a refusal,
+// only about every run here starting from the same environment. A test that
+// means to be an agent's session sets one of them last
 // (g.with("CLAUDECODE=1"), or extra in runRehearsal), which wins over this.
 func rehearsalEnv(r *releaseRepo, bin string) []string {
 	return []string{
@@ -2444,7 +2442,7 @@ func TestExistingRemoteBranchWithoutPR(t *testing.T) {
 	}
 	// The catalogue and the two doc lines that name the released version
 	// (releasedVersionDocs), sorted as git lists them.
-	want := "docs/project-named-oauth-tokens/spec.md\ndocs/project-claude-accounts.md\ndocs/release-streams.yaml"
+	want := "docs/project-claude-accounts.md\ndocs/project-named-oauth-tokens/spec.md\ndocs/release-streams.yaml"
 	if files := testutil.Git(t, r.bare, "diff-tree", "--no-commit-id", "--name-only", "-r", "refs/heads/release/v0.12.0"); files != want {
 		t.Errorf("the commit on top of the pushed bump should touch the catalogue and the released-version docs only, got:\n%s", files)
 	}

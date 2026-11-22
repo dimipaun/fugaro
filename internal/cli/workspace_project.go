@@ -171,7 +171,7 @@ config is kept, except inside the entry it replaces, which is written fresh.`,
 	f.BoolVar(&o.external, "external", false, "adopt the member's grantees outside the workspace's allowed domains, marking them external (D2812)")
 	f.StringArrayVar(&o.member.jobServiceAccounts, "job-service-account", nil, "a job service account of the member, which the workspace's service resolves a caller by (repeatable)")
 	f.StringArrayVar(&o.member.jobRepos, "job-repos", nil, "a repository a job service account is a job of, as <account>=<owner/name> (repeatable; every account needs at least one)")
-	f.StringVar(&o.member.databaseRegion, "database-region", "", "the region of the member's Realtime Database; omit it for a database in the project's default region")
+	f.StringVar(&o.member.databaseRegion, "database-region", "", "the region of the member's Realtime Database; omit it to read it from the member's own budget.rtdb_url (a database in the project's default region has none)")
 	f.StringVar(&o.member.firebaseProject, "firebase-project", "", "the member's Firebase project ID, which the caller's token is issued under")
 	f.StringVar(&o.member.fp, "fp", "", "the member's Fugaro project name, which the token's fp claim must be")
 	f.StringVar(&o.member.exchangeURL, "exchange-url", "", "the member's exchange endpoint, where the workspace's signer mints a member-bound assertion for")

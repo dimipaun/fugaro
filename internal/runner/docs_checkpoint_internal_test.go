@@ -50,7 +50,7 @@ func TestCheckpointDocsMatchTheCode(t *testing.T) {
 			t.Errorf("%s still says the draft opens at the first verified push", f)
 		}
 	}
-	if !strings.Contains(read("../../docs/design/v1.md"), "checkpoint-pushes.md") {
+	if !strings.Contains(read("../../docs/design/v1.md"), "checkpoint-pushes/spec.md") {
 		t.Error("design v1 §4.2a does not link the checkpoint design")
 	}
 }
