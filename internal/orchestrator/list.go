@@ -98,6 +98,33 @@ func ReadLeaseNode(ctx context.Context, db CAS, agentID string) (LeaseClaim, err
 	return LeaseClaim{Holder: doc.Holder, At: stamp(doc.At)}, nil
 }
 
+// ReadDriverNode reads one id's driver node: the principal of the credential
+// driving the id, written by whoever holds its lease (D3218, F18).
+//
+// It is a sibling of the state, the lease and the audit, and it is read the way
+// the lease is: without a claim and without a clock, because "who is driving
+// this id" is not "does this daemon hold it". A node this release cannot read is
+// refused rather than reported as a driver nobody is, which is DecodeDriver's
+// own rule for a node naming no principal. An id with no node at all
+// is the zero Driver and not an error: every id driven before this node existed
+// has none, and a listing that failed on one would fail on the whole
+// installation.
+func ReadDriverNode(ctx context.Context, db CAS, agentID string) (Driver, error) {
+	path, err := PathDriver(agentID)
+	if err != nil {
+		return Driver{}, err
+	}
+	var raw json.RawMessage
+	_, found, err := db.GetETag(ctx, path, &raw)
+	if err != nil {
+		return Driver{}, err
+	}
+	if !found {
+		return Driver{}, nil
+	}
+	return DecodeDriver(raw)
+}
+
 // Fresh reports whether the claim is being beaten: somebody holds the id and
 // its last beat is inside the lease's TTL, and not stamped so far ahead of now
 // that this release would not honour it (Lease.Read's own rule, LeaseSkew).

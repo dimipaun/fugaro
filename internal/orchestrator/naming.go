@@ -109,6 +109,14 @@ func DefaultOrchestratorID(project string) (string, error) {
 	return project, nil
 }
 
+// ValidOrchestratorName reports whether name is the name half of an
+// orchestrator id (D3207) — the rule NamedOrchestratorID applies to its second
+// argument. It is exported for the one caller that has no project to build an
+// id from: `fugaro orchestrator install`'s --name, which reads no project at all
+// and turns the name into a login unit's own file name, so a name the rule
+// refuses has to be refused before it becomes one.
+func ValidOrchestratorName(name string) bool { return orchestratorNameRE.MatchString(name) }
+
 // NamedOrchestratorID is one named orchestrator of a project:
 // `<project>~<name>`.
 func NamedOrchestratorID(project, name string) (string, error) {
