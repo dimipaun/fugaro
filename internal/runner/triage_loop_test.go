@@ -194,7 +194,7 @@ func TestFixerIsNeverGivenADeferredFinding(t *testing.T) {
 // moves (F3): the adversarial round's security finding is deferred by the judge
 // and blocks anyway, so the run ends a draft on the level that read it.
 func TestLevelThreeFindingsAreTriagedButFloorStillBlocks(t *testing.T) {
-	cfg := startupCfg(t, 1, "  adversarial_rounds: 1\n  levels: { l3: { model: senior-model } }\n")
+	cfg := startupCfg(t, 1, "  adversarial_rounds: 1\n  levels: { l3: { model: "+opus+" } }\n")
 	h := newHarness(t, cfg, nil)
 	rec, err := h.run(t,
 		implement("feature"),
@@ -240,7 +240,7 @@ func TestLevelThreeFindingsAreTriagedButFloorStillBlocks(t *testing.T) {
 // one the judge deferred whole, level 3's ships, and both levels' rounds are in
 // the record.
 func TestAllDeferredLevelTwoAdvancesToLevelThree(t *testing.T) {
-	cfg := startupCfg(t, 1, "  levels: { l3: { model: senior-model } }\n")
+	cfg := startupCfg(t, 1, "  levels: { l3: { model: "+opus+" } }\n")
 	h := newHarness(t, cfg, nil)
 	rec, err := h.run(t,
 		implement("feature"),
@@ -275,7 +275,7 @@ func TestAllDeferredLevelTwoAdvancesToLevelThree(t *testing.T) {
 func TestAllDeferredLevelThreeRoundEndsTheRun(t *testing.T) {
 	// Two adversarial rounds configured: a level that simply ran out of them
 	// would reach the second, which the script does not answer.
-	cfg := startupCfg(t, 1, "  levels: { l3: { model: senior-model } }\n  adversarial_rounds: 2\n")
+	cfg := startupCfg(t, 1, "  levels: { l3: { model: "+opus+" } }\n  adversarial_rounds: 2\n")
 	h := newHarness(t, cfg, nil)
 	rec, err := h.run(t,
 		implement("feature"),
@@ -321,7 +321,7 @@ func TestAllDeferredLevelThreeRoundEndsTheRun(t *testing.T) {
 // the merge is stated. What files the finding is then the cap and not the judge
 // whose word was taken back (T-TR8): one entry, and the cap's own source.
 func TestAReversedDeferralIsNotFiled(t *testing.T) {
-	cfg := startupCfg(t, 1, "  levels: { l3: { model: senior-model } }\n  adversarial_rounds: 1\n")
+	cfg := startupCfg(t, 1, "  levels: { l3: { model: "+opus+" } }\n  adversarial_rounds: 1\n")
 	h := newHarness(t, cfg, nil)
 	rec, err := h.run(t,
 		implement("feature"),
@@ -452,7 +452,7 @@ func TestADeferralIsTakenBackWhenTheRaisedModeStopsTriaging(t *testing.T) {
 // ships, and the same round with one finding the judge blocked does — which is
 // the rule, and not a level 2 the loop never left.
 func TestHeldBackLevelReadsTheDeferredSet(t *testing.T) {
-	cfg := startupCfg(t, 1, "  levels: { l3: { model: senior-model } }\n")
+	cfg := startupCfg(t, 1, "  levels: { l3: { model: "+opus+" } }\n")
 	steps := []struct {
 		name string
 		word string

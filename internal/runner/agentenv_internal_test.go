@@ -97,11 +97,14 @@ func TestStagePinsProviderRouteVars(t *testing.T) {
 		t.Errorf("reviewer stage with a provider background pins = %+v, want both set", pins)
 	}
 
-	// Without the gateway on, no pins at all, provider or not.
+	// Without the gateway, no pins at all, provider or not. What decides
+	// whether a run has one is its credential and not its mode (AB1b,
+	// D3009): oauth is the credential the gateway does not carry, and no mode
+	// takes a gateway away from the others.
 	r = stagePinsRun(t, "vendor/model-a", "claude-opus-5", "")
-	r.spend = Spend{Mode: "off"}
+	r.cfg.Agent.Auth = "oauth"
 	if pins := r.stagePins("implement"); pins != nil {
-		t.Errorf("gateway off: pins = %+v, want nil", pins)
+		t.Errorf("no gateway (oauth): pins = %+v, want nil", pins)
 	}
 }
 
@@ -478,7 +481,8 @@ func TestImageEnvDropsThePlatformNames(t *testing.T) {
 // read is denied because the gateway refuses the image block a Read puts in
 // the next request, so a stage the gateway does not carry keeps its reads.
 // Two such stages exist, and neither is refused anything: a run whose calls
-// reach no gateway writes no managed settings file at all, and a stage the
+// reach no gateway — an oauth one, the credential the gateway does not carry
+// (D3026, R12) — writes no managed settings file at all, and a stage the
 // run's Claude OAuth account serves goes straight to Anthropic on that
 // account's token (stageDirect), which serves the image. Answering off the
 // price row alone would forbid both a read the stage can make — and a model
@@ -487,7 +491,7 @@ func TestImageEnvDropsThePlatformNames(t *testing.T) {
 // (forward.go's modelFor).
 //
 // Mutation (drop the gatewayOn and stageDirect conditions from
-// denyBinaryReads): the budget-off and the account-served stages below are
+// denyBinaryReads): the gateway-less and the account-served stages below are
 // denied, and this test fails.
 func TestDenyBinaryReadsIsOnlyAnsweredWhereTheGatewayCarriesTheStage(t *testing.T) {
 	// The gateway carries this run (api-key, enforcing) and its coder's model
@@ -496,9 +500,11 @@ func TestDenyBinaryReadsIsOnlyAnsweredWhereTheGatewayCarriesTheStage(t *testing.
 	if !r.denyBinaryReads("implement") {
 		t.Error("the gateway-carried coder is not denied its image reads")
 	}
-	// The same run with the budget off reaches no gateway and writes no
-	// managed settings file: nothing refuses the image and nothing denies it.
-	r.spend = Spend{Mode: "off"}
+	// The same run on the credential the gateway does not carry reaches no
+	// gateway and writes no managed settings file: nothing refuses the image
+	// and nothing denies it. The mode is not what decides that any more
+	// (AB1b, D3009): off is not a state a run can be in, and oauth is.
+	r.cfg.Agent.Auth = "oauth"
 	if r.denyBinaryReads("implement") {
 		t.Error("a coder whose calls reach no gateway is denied its image reads")
 	}
