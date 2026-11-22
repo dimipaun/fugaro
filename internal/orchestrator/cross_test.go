@@ -340,7 +340,16 @@ func TestCrossCycleWritesOnlyOwnState(t *testing.T) {
 // the cycle D3220 is about, built through the reading D3208 resolves.
 func crossCycle(t *testing.T, now time.Time) (*harness, *orchestrator.Node) {
 	t.Helper()
-	own := workItemOf("wi-1")
+	return crossCycleOver(t, now, workItemOf("wi-1"))
+}
+
+// crossCycleOver is crossCycle with this cycle's own item as the caller built
+// it, because what blockable has to leave alone is the item a run is moving
+// through: running, and review, where the run has reported and a pull request
+// waits for its merge. A test reaches either by handing the item in that phase
+// with the run that is carrying it.
+func crossCycleOver(t *testing.T, now time.Time, own orchestrator.WorkItem) (*harness, *orchestrator.Node) {
+	t.Helper()
 	own.DependsOn = []string{otherID + "/wi-9"}
 	other := shardItem("wi-9", "the other orchestrator's work")
 	other.DependsOn = []string{daemonID + "/wi-1"}
@@ -348,6 +357,42 @@ func crossCycle(t *testing.T, now time.Time) (*harness, *orchestrator.Node) {
 	far.AgentID = otherID
 	far.WorkItems = []orchestrator.WorkItem{other}
 	return twoOrchestrators(t, o6Node(t, now, o6ApprovedBy(own, now.Add(-time.Hour))), far, now)
+}
+
+// TestCrossCycleLeavesAStartedItemAlone is the rule the cycle's own write
+// follows: it blocks an item that is waiting on the deadlock, and an item a run
+// is moving through is not one. Review is the case that matters — the phase
+// table would move it to blocked and let the write through, and the write is a
+// repair that cannot be undone, because blocked has no edge to done and the
+// merge the item is waiting for is the only thing that can finish it (D2705).
+func TestCrossCycleLeavesAStartedItemAlone(t *testing.T) {
+	now := o6Now()
+	for _, phase := range []orchestrator.Phase{orchestrator.PhaseRunning, orchestrator.PhaseReview} {
+		t.Run(string(phase), func(t *testing.T) {
+			own := workItemOf("wi-1")
+			own.Phase = phase
+			own.RunID = "20261107-090000-abcd"
+			h, _ := crossCycleOver(t, now, own)
+
+			rep := h.step()
+			if rep.Blocked != 0 {
+				t.Fatalf("the cycle blocked %d items, and the one on it is %s with a run carrying it", rep.Blocked, phase)
+			}
+			w, ok := h.state().Item("wi-1")
+			if !ok {
+				t.Fatalf("the node no longer carries wi-1")
+			}
+			if w.Phase == orchestrator.PhaseBlocked {
+				t.Fatalf("the cycle set an item in %s blocked, and blocked has no move to done", phase)
+			}
+			if told := h.sink.cycleBlocked(); len(told) != 0 {
+				t.Errorf("the cycle told a person about a deadlock it did not have: %v", told)
+			}
+			if entries := auditEntries(t, h.db, daemonID); len(entries) != 0 {
+				t.Errorf("the cycle wrote %d lines into the log for an item it did not block", len(entries))
+			}
+		})
+	}
 }
 
 // twoOrchestrators is one cycle's own node and another orchestrator's node in

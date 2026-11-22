@@ -967,22 +967,34 @@ func (c *cycle) ownCycles(g *crossGraph, at int) []blockNote {
 	return out
 }
 
-// blockable reports whether this cycle may set the item blocked: an item whose
-// phase the phase table moves to blocked from, no attempt of which has not
-// reported, and which is not already blocked.
+// blockable reports whether this cycle may set the item blocked: an item
+// nothing is in flight for, and whose phase the table moves to blocked from.
 //
-// A finished item is left where it stands — done, cancelled and failed are a
-// person's or the fold's word about the item, and the table has no edge from any
-// of them to blocked, so a write there would be a refusal rather than a repair.
-// An item a run is moving through is left to that run: the deadlock is
-// re-derived every tick (D1229), and the cycle after the run reports is the one
-// that blocks it. An item already blocked is left alone for the same reason, and
-// it is what makes the write happen once.
+// An item a run is moving through is left to that run — running, and review,
+// where the run has reported and its pull request waits for a merge. The
+// deadlock is re-derived every tick (D1229), so the cycle after the run reports
+// is the one that blocks an item still waiting on it. Review is left alone for a
+// reason of its own, and the table would let that write through: an item in
+// review waits on nothing — the merge it is waiting for is what frees whatever
+// waits on it (D2705) — so a cycle that reaches one is no deadlock at all, and
+// `blocked` has no move to `done`, so blocking it would put its pull request
+// beyond the merge that is the only thing that can finish it.
+//
+// A finished item is left where it stands: done and cancelled are a person's or
+// the fold's word about the item, and the table has no edge from either to
+// blocked, so a write there would be a refusal rather than a repair. `failed`
+// passes the check above — a person's new approval is what re-opens it, so
+// nothing is in flight for it — and the table is what declines the write there.
+// An item already blocked is left alone for the same reason, and it is what
+// makes the write happen once.
 func (c *cycle) blockable(w WorkItem) bool {
 	if _, open := openIntentOf(c.state, w.ID); open {
 		return false
 	}
-	return w.Phase != PhaseBlocked && w.Phase.CanMoveTo(PhaseBlocked)
+	if w.Phase != PhaseQueued && w.Phase != PhaseFailed {
+		return false
+	}
+	return w.Phase.CanMoveTo(PhaseBlocked)
 }
 
 // cycleNote is the sentence an item blocked by a cross-orchestrator cycle
