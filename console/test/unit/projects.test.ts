@@ -1468,7 +1468,13 @@ describe('the settings section', () => {
     // pencil, which opens main's window (`entry.ts`) -- and the section's other
     // box is the search field, which is a filter and not a value anything is
     // written with. Nothing here is a value the operator types into.
-    const tree = settingsTree(settingsInputs({ raw: SETTINGS_GROUPED }))
+    const writableGrouped = {
+      ...SETTINGS_GROUPED,
+      settings: SETTINGS_GROUPED.settings.map((row) =>
+        row['key'] === 'budget.per_run_usd' ? { ...row, writable: true, target_layer: 'project' } : row,
+      ),
+    }
+    const tree = settingsTree(settingsInputs({ raw: writableGrouped }))
     for (const tag of ['textarea', 'select', 'form']) {
       expect(walk(tree).filter((node) => node.tag === tag), `the panel drew a <${tag}>`).toEqual([])
     }

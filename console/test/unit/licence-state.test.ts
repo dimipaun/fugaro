@@ -334,8 +334,8 @@ describe('the refused class is the table\'s column', () => {
       ['roadmap.move', undefined],
       ['setup.apply', undefined],
       ['models.add', undefined],
-      ['settings.editor.open', undefined],
       ['image.add', undefined],
+      ['settings.editor.open', undefined],
     ])
   })
 
