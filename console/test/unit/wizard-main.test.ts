@@ -95,6 +95,7 @@ import {
   validateSetupAnswers,
 } from '../../src/main/wizardrun'
 import type { SetupAnswersHeld, SetupBounds, SetupPlanner } from '../../src/main/wizardrun'
+import { LAPSE_REFUSAL } from '../../src/main/licence-state'
 import { NEW_READ_BOUNDS } from '../../src/source/new-reads'
 import {
   SETUP_ANSWER_KEYS,
@@ -390,6 +391,8 @@ function aWizard(
     readonly digest?: (bytes: Uint8Array) => string
     readonly bounds?: SetupBounds
     readonly code?: number
+    /** the licence: valid unless a case says otherwise. */
+    readonly lapsed?: () => boolean
   } = {},
 ) {
   const confirmer = aConfirmer()
@@ -406,6 +409,9 @@ function aWizard(
     plan: rows.planner,
     cliVersion: options.cliVersion ?? '0.120.0',
     floor: options.floor ?? null,
+    // The licence is valid unless a case says otherwise: the lapse's gate is at
+    // the door (`lapseHandlers`) *and* here, where the apply really starts.
+    lapsed: options.lapsed ?? (() => false),
     spawner: recorder.spawner,
     directories: rows.directories,
     // The serialiser is counted on every wizard, so "serialised once" is a fact

@@ -72,6 +72,7 @@ import type { ValidatedArguments } from './ipc'
 import { setupConfirmID, setupView } from './setupview'
 import type { SetupView } from './setupview'
 import { FUGARO_SETUP_COMMAND } from './onboarding'
+import { LAPSE_REFUSAL } from './licence-state'
 import {
   SETUP_ANSWER_KEYS,
   SETUP_ANSWERS_FILE_KEYS,
@@ -528,6 +529,21 @@ export interface SetupWizardDeps {
    * carries them: every setup refuses its own sentence rather than spawning an
    * argv nothing answers. */
   readonly floor?: string | null
+  /** `lapsed` answers whether the licence has lapsed for the installation this
+   * setup runs in, and it is asked **where the apply really starts** and not
+   * only at the door: the window's own yes reaches `runApply` from `decide`,
+   * with no IPC handler anywhere on that path, so `lapseHandlers`' gate on
+   * `setup.apply` -- the design's `refusedAfterLapse` column
+   * (`docs/lapse-read-only/spec.md`) -- is not what stops a plan made after the
+   * lapse, which is kept and opens its window. The plan is a dry run and stays
+   * reachable; the apply it stands for is the row the lapse takes away, and this
+   * is the column made true on the window's path. It is the same fact the two
+   * writes ask (`modelsadd.ts`, `imageadd.ts`), and for the same reason.
+   *
+   * It is required rather than optional: a wizard built without it would be an
+   * apply the lapse does not stop, and no test of a payload could see the
+   * difference. */
+  readonly lapsed: () => boolean
   readonly bounds?: SetupBounds
   /** `serialise` is where the bytes come from. It is called **once per plan**,
    * and the buffer it answers is the one both children are given: a test that
@@ -638,9 +654,21 @@ export function createSetupWizard(deps: SetupWizardDeps): SetupWizard {
     return { document: { lines: outcome.lines.map((line) => throughClasses(line)) } }
   }
 
-  /** runApply runs the apply once for a record: the digest first, then the same
-   * bytes, and the directory goes as soon as the outcome is held. */
+  /** runApply runs the apply once for a record: the lapse first, then the
+   * digest, then the same bytes, and the directory goes as soon as the outcome is
+   * held. */
   const runApply = async (wizard: HeldWizard): Promise<void> => {
+    // **The lapse's sentence, and the first fact.** The window's yes reaches
+    // this function from `decide`, and no IPC handler is on that path at all,
+    // so the gate at the door is not what stops this child -- see `lapsed`
+    // above. Nothing is spawned: the sentence is the console's own one for the
+    // lapse (`LAPSE_REFUSAL`), which is the same sentence a lapsed console
+    // answers `setup.apply` with, so the two paths say one thing.
+    if (deps.lapsed()) {
+      wizard.outcome = { kind: 'refused', sentence: LAPSE_REFUSAL }
+      removeDirectory(wizard.directory)
+      return
+    }
     if (wizard.digest !== digest(wizard.bytes)) {
       wizard.outcome = { kind: 'refused', sentence: SETUP_BYTES_CHANGED_REFUSAL }
       removeDirectory(wizard.directory)

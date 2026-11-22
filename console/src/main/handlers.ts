@@ -13,23 +13,32 @@
 // through `reducedModeHandlers` and `lapseHandlers` exactly as the rows they
 // replace did: a refused console still registers no channel at all, and a lapsed
 // one still refuses `setup.apply`, `models.add` and `image.add` before a handler
-// -- and so before a child -- is reached.
+// -- and so before a child -- is reached. The gate on a row is not the whole of
+// the lapse, though, and the three flows carry the rest of it: each of them asks
+// the licence again where its child really starts -- the window's own yes, which
+// no handler is on -- so a plan made after the lapse, kept and shown, spawns
+// nothing (`wizardrun.ts`, `modelsadd.ts` and `imageadd.ts` say so at the field,
+// and `index.ts` builds the one predicate all of them ask).
 //
 // **Nothing is registered here.** This module builds rows and hands them back;
 // `src/main/index.ts` is the one place the surface is assembled, and a module
 // that called `ipcMain.handle` itself would be a second place the allow-list
 // could be widened from.
 //
-// **One resolution per binding, at the first message of the set.** Every row
-// here needs two facts the payload does not carry: which `fugaro` to spawn and
-// where. Both are the installation's, and this module resolves them the way the
-// console's own source does -- the record's optional override first (design
-// section 3.4 rule 4), then the well-known prefixes -- through the same function
-// and the same arguments as `CliSource.create` (`src/source/cli.ts`): the
-// override, the app's own environment, and the checkout, or the console's
+// **One resolution, at the first message of the set.** Every row here but the
+// two setup ones needs two facts the payload does not carry: which `fugaro` to
+// spawn and where. Both are the installation's, and this module resolves them
+// the way the console's own source does -- the record's optional override first
+// (design section 3.4 rule 4), then the well-known prefixes -- through the same
+// function and the same arguments as `CliSource.create` (`src/source/cli.ts`):
+// the override, the app's own environment, and the checkout, or the console's
 // private working directory when the record names none (rule 5). A resolution
 // that failed is a `SourceRefusal` carrying the resolver's own sentence, which
-// is what a screen draws.
+// is what a screen draws. **The two setup rows are the exception, and
+// deliberately**: the wizard is what the no-installation onboarding state shows
+// in place of a command line, so they resolve the CLI through the
+// no-installation route instead of refusing for the lack of one (`buildWizard`
+// and `loadSetup` below say how).
 //
 // It is done **lazily, once per installation, and cached by the fields that
 // decide what the child is and where it runs** (`bindingKey`'s five, the same
@@ -76,6 +85,7 @@ import {
   IMAGE_ADD_PLAN_OPERATION,
   MODELS_ADD_OPERATION,
   MODELS_ADD_PLAN_OPERATION,
+  NO_INSTALLATION_TARGET,
   planFor,
   privateWorkingDirectory,
   resolveBinary,
@@ -162,7 +172,9 @@ export type NewOperationRows = { readonly [Name in NewOperationHandlerName]: Con
 export interface NewOperationDeps {
   /** the active installation, read at call time: `null` is D13's
    * no-installation state, answered with the console's own sentence rather than
-   * with a source built from whatever the machine happened to have. */
+   * with a source built from whatever the machine happened to have -- for the
+   * eleven rows that drive an installation, while the two setup ones answer it
+   * with the onboarding wizard (`loadSetup`). */
   readonly binding: () => BoundInstallation | null
   /** the one confirmation window, read at call time (SU1's `createConfirmWindow`
    * is built in `main`, after this surface exists). */
@@ -346,7 +358,10 @@ function imageAddArgs(values: ImageAddValues): ValidatedArguments {
  * **a row reads the binding, then the session, then the flow** -- so an
  * operation that no installation answers for is refused with the console's own
  * sentence before anything is walked, resolved or spawned, and the flows' own
- * refusals (a floor, a payload, a lapse) stay where their modules put them.
+ * refusals (a floor, a payload, a lapse) stay where their modules put them. The
+ * two setup rows read the binding too, and answer the no-installation state with
+ * the onboarding wizard rather than with a refusal (`loadSetup`); everything else
+ * about them is the same three steps.
  */
 export function newOperationHandlers(deps: NewOperationDeps): NewOperations {
   const log = deps.log ?? createSpawnLog(deps.appEnv)
@@ -356,7 +371,17 @@ export function newOperationHandlers(deps: NewOperationDeps): NewOperations {
       deps.confirmer().close(id)
     },
   }
+  // The seams every flow of a session is built with, and the unbound wizard's
+  // as well: a test's spawner and timers, and nothing else, because everything
+  // the flows need beyond them is a fact of the installation.
+  const seams = {
+    ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
+    ...(deps.timers === undefined ? {} : { timers: deps.timers }),
+  }
   let session: { readonly key: string; readonly built: Promise<Session> } | null = null
+  // The setup flow built with no installation bound, for the onboarding view;
+  // `loadSetup` says why it has no key.
+  let wizard: { readonly built: Promise<SetupWizard> } | null = null
 
   /** contextFor is one plan's own facts: the target main named, the binary rule 4
    * resolved, and the directory the child runs in. */
@@ -399,10 +424,6 @@ export function newOperationHandlers(deps: NewOperationDeps): NewOperations {
     if (!resolution.ok) throw new SourceRefusal(resolution.reason)
     const context = (where: string, project: string): PlanContext =>
       contextFor(installation, resolution.path, where, project)
-    const seams = {
-      ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
-      ...(deps.timers === undefined ? {} : { timers: deps.timers }),
-    }
     return {
       read: newReadHandlers({
         source: cliNewReads({
@@ -423,6 +444,11 @@ export function newOperationHandlers(deps: NewOperationDeps): NewOperations {
         plan: (name: SetupSpawnName, where: string) => planFor(name, {}, context(where, installation.project)),
         cliVersion: resolution.version,
         floor: SETUP_CLI_FLOOR,
+        // The setup runs in the installation's project, which is the one whose
+        // licence the apply is judged on -- the same reader the two writes are
+        // built with, for the same reason (`wizardrun.ts` says why the window's
+        // yes asks it a second time).
+        lapsed: () => deps.lapsed(installation.project),
         log,
         ...seams,
       }),
@@ -477,6 +503,73 @@ export function newOperationHandlers(deps: NewOperationDeps): NewOperations {
     return built
   }
 
+  /** buildWizard resolves the binary and builds the setup flow **without a
+   * binding**. The wizard is what the no-installation onboarding view shows in
+   * place of a command line (the console-improvements plan, SW3b), so it may not
+   * be refused for the lack of an installation -- and the two rows it drives take
+   * no project (`spawn.ts`'s `takesProject: false`), which is what lets a
+   * `fugaro setup` child create the installation its answers name.
+   *
+   * The resolution is rule 4's walk with no override, because there is no record
+   * to carry one, over the target the startup handshake reads the CLI through
+   * with nothing chosen (`NO_INSTALLATION_TARGET`), and the child's directory is
+   * the console's private working directory (rule 5) -- which the wizard replaces
+   * with its own working directory anyway (`SETUP_DIR_PREFIX`).
+   */
+  const buildWizard = async (): Promise<SetupWizard> => {
+    const directory = privateWorkingDirectory()
+    const resolution = await resolveBinary({
+      appEnv: deps.appEnv,
+      directory,
+      target: NO_INSTALLATION_TARGET,
+      ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
+      log,
+    })
+    if (!resolution.ok) throw new SourceRefusal(resolution.reason)
+    return createSetupWizard({
+      confirmer,
+      plan: (name: SetupSpawnName, where: string) =>
+        planFor(name, {}, {
+          target: NO_INSTALLATION_TARGET,
+          binaryPath: resolution.path,
+          directory: where,
+          appEnv: deps.appEnv,
+        }),
+      cliVersion: resolution.version,
+      floor: SETUP_CLI_FLOOR,
+      // There is no installation here and so no project whose licence could have
+      // lapsed: the store answers a project it holds no key for as `none`, which
+      // is not the lapse (`licence-store.ts`), and the onboarding state is
+      // exactly the one with no key at all.
+      lapsed: () => deps.lapsed(''),
+      log,
+      ...seams,
+    })
+  }
+
+  /** loadSetup answers the wizard for the message's binding: the active
+   * installation's own flow when there is one -- one resolution, the same session
+   * the reads use -- and the unbound wizard when there is none, which is the
+   * state the onboarding view shows it in.
+   *
+   * The unbound wizard is built once and kept, with the same discard-on-failure
+   * the session keeps and for the same reason: a CLI installed after the console
+   * started must answer the next message rather than being refused under a
+   * failure that has passed. There is no binding key to build it under, and none
+   * is needed -- there is no installation for one to change.
+   */
+  const loadSetup = async (): Promise<SetupWizard> => {
+    if (deps.binding() !== null) return (await load()).setup
+    if (wizard === null) {
+      const built = buildWizard()
+      wizard = { built }
+      built.catch(() => {
+        if (wizard !== null && wizard.built === built) wizard = null
+      })
+    }
+    return wizard.built
+  }
+
   const rows: NewOperationRows = {
     'runs.stream': async (args) => (await load()).read['runs.stream'](args),
     'spend.stream': async (args) => (await load()).read['spend.stream'](args),
@@ -484,8 +577,8 @@ export function newOperationHandlers(deps: NewOperationDeps): NewOperations {
     whoami: async (args) => (await load()).read.whoami(args),
     'image.catalog.ls': async (args) => (await load()).read['image.catalog.ls'](args),
     'recipes.ls': async (args) => (await load()).read['recipes.ls'](args),
-    'setup.plan': async (args) => (await load()).setup['setup.plan'](setupPlanArgs(args)),
-    'setup.apply': async (args) => (await load()).setup['setup.apply'](args),
+    'setup.plan': async (args) => (await loadSetup())['setup.plan'](setupPlanArgs(args)),
+    'setup.apply': async (args) => (await loadSetup())['setup.apply'](args),
     // **The settings editor spawns no child of its own** (SU2b): the runner is
     // the flow, built in `main` over the window, and its three reads are the
     // bound source's -- so this row reads it at message time and hands the

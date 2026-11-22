@@ -942,7 +942,11 @@ let confirmWindow: LaunchConfirmer = DECLINING_CONFIRMER
  * (`licenceStateOf` over the store's reply), because the two writes ask it a
  * second time **where they really start**: the window's own yes reaches
  * `runApply` with no IPC handler on the path, so the gate on the row is not what
- * stops a plan made after the lapse (`modelsadd.ts` says so at the field).
+ * stops a plan made after the lapse (`modelsadd.ts` says so at the field). The
+ * setup wizard is the third flow that asks it, for the same reason and on the
+ * same path: it is handed the bound installation's project when there is one and
+ * no project at all in the no-installation state, where there is no key that
+ * could have lapsed (`src/main/handlers.ts`).
  */
 const newOperations = newOperationHandlers({
   binding: activeBinding,
@@ -1041,6 +1045,10 @@ const gated: ConsoleHandlers = {
   // is `handlers.ts`'s: the nine the contract names, the models and image
   // writes' four, and the settings editor's own -- thirteen rows over the active
   // installation, built at the first message of the set and never at startup.
+  // The two setup rows are the exception to "over the active installation", and
+  // they are the state's whole point: with nothing chosen they are the
+  // onboarding wizard (`handlers.ts`'s `loadSetup`), which is what the
+  // no-installation view shows in place of a command line.
   //
   // **The spread is what keeps every one of them gated.** They are rows of this
   // same table, so they pass through `reducedModeHandlers` and `lapseHandlers`
