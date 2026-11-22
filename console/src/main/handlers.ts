@@ -465,6 +465,15 @@ export function newOperationHandlers(deps: NewOperationDeps): NewOperations {
     if (session !== null && session.key === key) return session.built
     const built = buildSession(installation)
     session = { key, built }
+    // A build that failed is not kept as this binding's session: resolution can
+    // fail for a reason that passes (a binary mid-upgrade, a `version` probe
+    // that did not answer in time on a loaded machine, an installation chosen
+    // after the console started), and the binding key carries no version, so a
+    // rejection kept here would answer all thirteen operations with it until
+    // the operator switched installations. The next message builds again.
+    built.catch(() => {
+      if (session !== null && session.built === built) session = null
+    })
     return built
   }
 

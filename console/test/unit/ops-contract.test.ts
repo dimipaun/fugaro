@@ -80,6 +80,7 @@ import {
   MODELS_ADD_OPERATION,
   MODELS_ADD_PLAN_OPERATION,
 } from '../../src/main/spawn'
+import type { ChildSpawner, SpawnedChildLike } from '../../src/main/spawn'
 import { APP_ENTRY_URL } from '../../src/main/protocol'
 import type { BoundInstallation } from '../../src/source/cli'
 import {
@@ -91,6 +92,7 @@ import {
   decodeNewOperationAnswer,
 } from '../../src/shared/new-ops'
 import type { NewOperationName, NewOperationRequest } from '../../src/shared/new-ops'
+import { newReadFloorSentence } from '../../src/source/new-reads'
 import { NEW_OP_ANSWERS, SETUP_REFUSED_LINES } from '../support/newOpAnswers'
 
 /** CONSOLE_ROOT and REPO_ROOT are this package and the repository it sits in:
@@ -271,6 +273,66 @@ function bench(overrides: Partial<NewOperationDeps> = {}): Bench {
   return { deps, settingsCalls, closes }
 }
 
+/** PROBE_VERSION is what the second handshake below answers -- the version line
+ * `fugaro version` prints for a built binary, and the one the session is built
+ * with. */
+const PROBE_VERSION = '0.30.0'
+
+/** MID_UPGRADE is what the first handshake's child refuses with, in the CLI's
+ * own `fugaro: <sentence>` shape: a refusal a moment later is gone. */
+const MID_UPGRADE = 'fugaro: the binary is being upgraded\n'
+
+/**
+ * aVersionProbe is a `spawn` that answers the version handshake twice: the first
+ * child fails the probe (exit 1, the sentence above on stderr) and the second
+ * answers a version line. It exists because the case below must make **one
+ * binding** fail one build and answer the next -- a real binary that was
+ * mid-upgrade when the first message arrived and works a moment later -- which
+ * no one file can be asked to be. `probes` counts the handshakes, so the case can
+ * say the resolver was reached again rather than reading a cached rejection.
+ */
+function aVersionProbe(): { readonly spawner: ChildSpawner; readonly probes: () => number } {
+  let probes = 0
+  const spawner = (() => {
+    probes += 1
+    const fails = probes === 1
+    const stdout: ((chunk: Buffer | string) => void)[] = []
+    const stderr: ((chunk: Buffer | string) => void)[] = []
+    const closes: ((code: number | null, signal: string | null) => void)[] = []
+    const child: SpawnedChildLike = {
+      stdout: {
+        on: (_event, listener) => {
+          stdout.push(listener)
+        },
+      },
+      stderr: {
+        on: (_event, listener) => {
+          stderr.push(listener)
+        },
+      },
+      // `spawn` fires at registration, as the other stubs in this tree do; the
+      // bytes and the close come a tick later, once `runToCompletion` has
+      // subscribed -- `close` is the event a reader settles on, so `exit` alone
+      // would leave the probe waiting for its deadline, and an `error` is never
+      // fired here (a child that starts is not a spawn that failed).
+      on: ((event: string, listener: (...args: never[]) => void) => {
+        if (event === 'spawn') (listener as () => void)()
+        else if (event === 'close') {
+          closes.push(listener as (code: number | null, signal: string | null) => void)
+        }
+        return undefined
+      }) as SpawnedChildLike['on'],
+      kill: () => true,
+    }
+    setImmediate(() => {
+      for (const listener of fails ? stderr : stdout) listener(fails ? MID_UPGRADE : `${PROBE_VERSION}\n`)
+      for (const listener of closes) listener(fails ? 1 : 0, null)
+    })
+    return child
+  }) as ChildSpawner
+  return { spawner, probes: () => probes }
+}
+
 describe('every name of the contract is an operation of the allow-list', () => {
   it('is a row of the surface, under the method the preload exposes', () => {
     for (const name of THE_NINE) {
@@ -415,6 +477,37 @@ describe('the handlers behind the contract are the real ones', () => {
     const opened = await surfaceWith(open).call('settings.editor.open', { key: 'agent.models.coder' })
     expect(opened.ok).toBe(true)
     expect(handed).toEqual([{ key: 'agent.models.coder' }])
+  })
+
+  it('builds again when a build failed, instead of keeping the refusal for the binding', async () => {
+    // **The one thing thirteen messages share.** The session is kept per binding
+    // so a screen's reads do not walk rule 4 once each -- but a resolution can
+    // fail for a reason that passes: a binary mid-upgrade, a `version` probe that
+    // did not answer in time on a loaded machine, an installation chosen after the
+    // console started. `bindingKeyOf` carries no version, so a rejection kept
+    // under the key would answer every later message with it until the operator
+    // switched installations. The first call below fails at the probe and the
+    // second is answered by a session that was built -- the reply is the **read's
+    // own floor**, which only a session that exists can compose -- and the probe
+    // count is what says the resolver was reached again rather than read from a
+    // cache. `src/source/cli.ts` drops a failed build for the same reason, and
+    // this is the case that holds the two to each other.
+    const probe = aVersionProbe()
+    const surface = surfaceWith(
+      bench({
+        binding: () => anInstallation({ binaryPath: process.execPath }),
+        spawner: probe.spawner,
+      }).deps,
+    )
+    const failed = await surface.call('runs.stream', PAYLOADS['runs.stream'])
+    expect(reasonOf(failed), 'the first build did not fail at the version probe').toContain(
+      'exited 1 for `version`',
+    )
+    const answered = await surface.call('runs.stream', PAYLOADS['runs.stream'])
+    expect(reasonOf(answered), 'the failed build was kept as this binding’s session').toBe(
+      newReadFloorSentence('runs.stream', null, PROBE_VERSION),
+    )
+    expect(probe.probes(), 'the resolver was not reached again').toBe(2)
   })
 
   it('refuses a payload the allow-list closes, before any handler is reached', async () => {
