@@ -17599,6 +17599,7 @@
         "deploy/terraform/**",
         "docs/*.md",
         "docs/backlog/**",
+        "docs/backlog/FORMAT.md",
         "docs/design/v1.md",
         "docs/fugaro-reviews/**",
         "docs/fugaro-reviews/README.md",
