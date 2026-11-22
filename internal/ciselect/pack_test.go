@@ -187,3 +187,14 @@ func sortLegsByName(legs []Leg) []Leg {
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
+
+func TestDropGatedDropsWhatTheLegsCannotName(t *testing.T) {
+	gated := gatedPackages([]string{"./a", "./gated"}, map[string]bool{"./a": true})
+	got := dropGated([]string{"./a", "./gated", "./unknown"}, gated)
+	if want := []string{"./a", "./unknown"}; !slices.Equal(got, want) {
+		t.Errorf("dropGated = %q, want %q", got, want)
+	}
+	if got := dropGated([]string{"./gated"}, gated); got == nil || len(got) != 0 {
+		t.Errorf("dropGated of only a gated package = %#v, want an empty slice", got)
+	}
+}
