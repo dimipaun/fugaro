@@ -232,7 +232,17 @@ func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 
 // openCloudFor connects to the backend and the runs bucket of an already
 // selected project config.
+//
+// D1541's fence is applied here, before any client exists: the command the
+// root's pre-run filed in ctx (managed_require.go) is asked whether it may
+// write to a project that is not managed, and a fenced one is refused with
+// nothing opened. A command that reaches its cloud clients another way asks the
+// same question itself (requireManaged); one whose clients are opened here gets
+// the fence by construction, and cannot forget it.
 func openCloudFor(ctx context.Context, lc *localcfg.Config) (*cloudEnv, error) {
+	if err := requireManaged(ctx, managedCommandFrom(ctx), lc); err != nil {
+		return nil, err
+	}
 	opts := gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region, LogView: lc.LogView, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager,
 		CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
