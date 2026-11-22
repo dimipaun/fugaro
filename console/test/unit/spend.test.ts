@@ -1231,7 +1231,7 @@ describe('the person breakdown', () => {
     ).toEqual(['person'])
   })
 
-  it('shows the rows when it is asked to, and draws an address as the console\'s marker', () => {
+  it('shows the rows when it is asked to, and draws the address that spent the money', () => {
     const model = buildSpendModel(PERSON_REPORT, BUDGET, { persons: true })
     expect(model.persons).toEqual({ enabled: true, withheld: false })
     expect(drawnRows(model).map((row) => row.key)).toEqual(['ada@example.com', 'unknown'])
@@ -1239,13 +1239,12 @@ describe('the person breakdown', () => {
 
     const tree = renderSpend(factory, model, 'light')
     const text = drawn(tree)
-    // The person class: a whole address is the console's marker, and the login
-    // `unknown` -- the CLI's own bucket for runs with no requester -- is drawn
-    // as itself.
-    expect(text).toContain('redacted@example.invalid')
+    // The person class draws the identity it names (D3213): the address is the
+    // answer this panel exists to give, and the login `unknown` -- the CLI's own
+    // bucket for runs with no requester -- is drawn as itself beside it.
+    expect(text).toContain('ada@example.com')
     expect(text).toContain('unknown')
-    expect(text).not.toContain('ada@example.com')
-    expect(text).not.toContain('ada')
+    expect(text).not.toContain('redacted@example.invalid')
     expect(keyClass('person', 'ada@example.com')).toBe('person')
   })
 })
@@ -1486,7 +1485,7 @@ describe('the by-person view', () => {
     expect(panel.getAttribute('data-view')).toBe('all')
     expect(panel.getAttribute('data-admin')).toBe('true')
     expect(texts(tree, 'spend-people-view')).toEqual(['everyone in this project'])
-    expect(texts(tree, 'spend-people-you')).toEqual(['redacted@example.invalid'])
+    expect(texts(tree, 'spend-people-you')).toEqual(['ada@example.com'])
     expect(texts(tree, 'spend-people-admin')[0]).toContain('place you as an admin')
     expect(texts(tree, 'spend-people-max-runs')).toEqual([formatReading(people.maxRuns, 'count')])
     // Three rows and the total line. The total is the console's own word,
@@ -1494,8 +1493,8 @@ describe('the by-person view', () => {
     expect(all(tree, 'spend-person')).toHaveLength(4)
     expect(one(tree, 'spend-person-total').getAttribute('data-user')).toBeNull()
     expect(texts(tree, 'spend-person-user')).toEqual([
-      'redacted@example.invalid',
-      'redacted@example.invalid',
+      'ada@example.com',
+      'bob@example.com',
       'unknown',
       'total',
     ])
@@ -1509,20 +1508,20 @@ describe('the by-person view', () => {
 
   it('draws a person key through the person class, and the attribute carries what was drawn', () => {
     // An identity is untrusted display text -- it is whatever a `launch.json`
-    // recorded -- so an address is the console's own marker, in the cell and in
-    // the attribute alike: `data-user` is read back off the drawn cell, so a
-    // hostile key cannot reach the screen through the attribute.
+    // recorded -- so it goes through the `person` class before it reaches the
+    // cell or the attribute: `data-user` is read back off the drawn cell, so a
+    // hostile key cannot reach the screen through the attribute, and the class
+    // draws the identity it names (D3213) while still refusing a credential.
     const model = buildSpendModel(PERSON_REPORT, BUDGET, { persons: true, people: statsDocument() })
     const tree = renderSpend(factory, model, 'light')
     const [first] = all(tree, 'spend-person')
-    expect(first?.getAttribute('data-user')).toBe('redacted@example.invalid')
+    expect(first?.getAttribute('data-user')).toBe('ada@example.com')
     expect(first?.getAttribute('data-currency')).toBe('USD')
-    expect(drawn(tree)).toContain('redacted@example.invalid')
-    expect(drawn(tree)).not.toContain('ada@example.com')
-    expect(drawn(tree)).not.toContain('bob@example.com')
-    // The identity the view was resolved for is that same untrusted text, and
-    // it is drawn the same way -- through the same class, and nowhere raw.
-    expect(drawn(tree)).not.toContain('ada')
+    expect(drawn(tree)).toContain('ada@example.com')
+    expect(drawn(tree)).toContain('bob@example.com')
+    // The identity the view was resolved for is that same untrusted text, drawn
+    // through the same class.
+    expect(texts(tree, 'spend-people-you')).toEqual(['ada@example.com'])
   })
 
   it('draws one row for a private view, and says the total under it is that person’s own', () => {
@@ -1547,9 +1546,12 @@ describe('the by-person view', () => {
     const tree = renderSpend(factory, model, 'light')
     // One row and the total.
     expect(all(tree, 'spend-person')).toHaveLength(2)
-    expect(texts(tree, 'spend-person-user')).toEqual(['redacted@example.invalid', 'total'])
+    expect(texts(tree, 'spend-person-user')).toEqual(['bob@example.com', 'total'])
     expect(texts(tree, 'spend-people-admin')[0]).toContain('do not place you as an admin')
-    expect(drawn(tree)).not.toContain('ada@example.com')
+    // The by-person panel draws the caller's row and nothing else: the other
+    // launcher of the window is not in it. (The *report*'s own person breakdown
+    // draws its rows' identities beside it, which is that panel's business.)
+    expect(drawn(one(tree, 'spend-people'))).not.toContain('ada@example.com')
   })
 
   it('still counts the rows of an own view a document should not have carried', () => {
@@ -1567,7 +1569,7 @@ describe('the by-person view', () => {
     expect(people.withheld).toBe(2)
     expect(people.sentences.join(' ')).toContain('2 row(s) of this document are not drawn')
     expect(people.sentences.join(' ')).toContain('other people’s rows are withheld')
-    expect(drawn(renderSpend(factory, model, 'light'))).not.toContain('ada@example.com')
+    expect(drawn(one(renderSpend(factory, model, 'light'), 'spend-people'))).not.toContain('ada@example.com')
   })
 
   it('fails private: with no identity to key the view by, it draws neither a row nor a total', () => {
@@ -1618,8 +1620,12 @@ describe('the by-person view', () => {
       // asserted on: it is the *report*'s own key for its unattributed row,
       // which this document legitimately draws when the person breakdown is
       // on -- the by-person panel's rows are the ones asserted empty above.)
+      // The by-person panel draws no row of the by-person document -- read off
+      // the panel's own subtree, because the *report*'s person breakdown beside
+      // it draws its own rows' identities (D3213) and a whole-tree assertion
+      // would be about that panel instead of this one.
       for (const row of STATS_ROWS.filter((one) => one.user.includes('@'))) {
-        expect(drawn(tree), row.user).not.toContain(row.user)
+        expect(drawn(one(tree, 'spend-people')), row.user).not.toContain(row.user)
       }
     }
   })
@@ -1660,7 +1666,7 @@ describe('the by-person view', () => {
       expect(lines[0]?.classes, you).toContain('spend-person-total')
       expect(texts(tree, 'spend-person-user'), you).toEqual(['total'])
       for (const row of STATS_ROWS.filter((line) => line.user.includes('@'))) {
-        expect(drawn(tree), row.user).not.toContain(row.user)
+        expect(drawn(one(tree, 'spend-people')), row.user).not.toContain(row.user)
       }
     }
   })
