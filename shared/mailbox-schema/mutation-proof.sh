@@ -290,6 +290,16 @@ run "kind: the defaults are the table's, not a fallthrough" \
   answer: Object.freeze(['reply_to']),
   action: Object.freeze(['action', 'reply_to']),"
 
+# P5.1g's kind, and the one guard of it that is not P6.3's generic one: the
+# (kind, field) table has to NAME the stop request, or a message of that kind
+# meets `KIND_OPTIONAL[kind].includes` with an undefined table and throws rather
+# than refusing a field. That is the shape of the bug this row exists for -- a
+# kind added to KINDS and forgotten in the two tables -- and the file's `a stop
+# request carries nothing but its sentence` case is what catches it.
+run "stop: the kind is in the (kind, field) table" \
+  "  registration: Object.freeze(['token', 'platform', 'prefs']),
+  stop: Object.freeze([])," "  registration: Object.freeze(['token', 'platform', 'prefs']),"
+
 # The agent and the strings that are named aloud.
 run "agent: the id shape is the heartbeat's own" \
   "  if (!IDENTITY_PATTERN.test(text.value)) return { bad: refuse(REFUSALS.BAD_CHARACTER, field) };" ""

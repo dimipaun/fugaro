@@ -3206,11 +3206,16 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// registration-generation marker already has those fields and only the
 		// four day-counter leaves a stage report writes per model are new to it,
 		// a spend-leaves-generation marker already has those leaves and only the
-		// paired device's read of a run's outcome is new to it, and an
+		// paired device's read of a run's outcome is new to it, an
 		// outcome-generation marker already has that read and only the credential
-		// route a run reads is new to it (workspace-service task WS22).
+		// route a run reads is new to it (workspace-service task WS22), and a
+		// route-generation marker already has that route and only the phone's
+		// stop request and the launch envelope are new to it (mobile plan task
+		// P5.1g).
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesRouteGeneration:
+			adds = "the phone's stop request and the launch envelope"
 		case gen >= rulesOutcomeGeneration:
 			adds = "the credential route a run reads"
 		case gen >= rulesSpendLeavesGeneration:
