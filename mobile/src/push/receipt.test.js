@@ -314,7 +314,11 @@ test('a mailbox read that refuses or throws posts nothing and claims nothing', a
   const throwing = { newChange: async () => { throw new Error('the read failed'); } };
   const nonsense = { newChange: async () => 'fresh' };
   const partial = { newChange: async () => Object.freeze({ ok: true }) };
-  for (const mailbox of [refusal, throwing, nonsense, partial]) {
+  // A refusal that still says `fresh` is the shape a real adapter could return
+  // and the one that makes the `ok` check load-bearing: read only for `fresh`
+  // and this refusal posts an alert the mailbox never confirmed.
+  const refusingButFresh = { newChange: async () => Object.freeze({ ok: false, fresh: true }) };
+  for (const mailbox of [refusal, throwing, nonsense, partial, refusingButFresh]) {
     const decision = await receiptOver(mailbox).receive(push({ category: 'prompt' }));
     assert.equal(decision.ok, false);
     assert.equal(decision.post, false);
