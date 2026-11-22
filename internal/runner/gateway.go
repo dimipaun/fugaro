@@ -1348,7 +1348,22 @@ func (r *run) routingKnob() bool {
 // checkManagedDirWritable is the gateway's precondition: Claude Code's
 // managed settings are what keep a repository's own settings from
 // rerouting the agent, so a directory that can't hold them fails the run.
+//
+// It is the image's precondition, and a local invocation has no image: the
+// path is Claude Code's own (agent.ManagedSettingsPath), a developer's
+// machine may hold no such directory and may not be the developer's to
+// write, and --managed-settings cannot be pointed elsewhere there
+// (checkTestHooks). What the file is for still holds without it: the
+// gateway's address and token reach the stage in its environment
+// (agent.BuildEnv), which is the runner's own, and checkSettingsRouting
+// below refuses any settings file that would send the agent elsewhere. So
+// the directory is the cloud's to require, and a local run goes on
+// without it — equally true of the write in writeManagedSettings, which
+// warns rather than refusing.
 func (r *run) checkManagedDirWritable() error {
+	if r.d.Local {
+		return nil
+	}
 	dir := filepath.Dir(r.managedPath())
 	f, err := os.CreateTemp(dir, agent.ManagedSettingsTmpPattern)
 	if err != nil {
@@ -1363,7 +1378,8 @@ func (r *run) checkManagedDirWritable() error {
 // before the lock: a Vertex run that enforces is refused (a misconfiguration,
 // so an infra_error), an api-key run that enforces without a cap halts (a
 // policy, so a halt), and a run through the gateway needs prices for its
-// models and a managed settings directory it can write.
+// models and — in the image, where Claude Code reads them — a managed
+// settings directory it can write.
 func (r *run) checkBudget(ctx context.Context) error {
 	auth, s := r.cfg.Agent.Auth, r.spend
 	if auth == "vertex" && s.Mode == "enforce" {

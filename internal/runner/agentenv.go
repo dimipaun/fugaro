@@ -606,6 +606,24 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 		}
 	}
 	if err := write(r.managedPath(), vars, deny); err != nil {
+		if r.d.Local {
+			// The managed settings directory is the image's, and a local
+			// invocation is not refused over one it has no image for: the
+			// stage reaches the gateway through the environment this run
+			// hands it (stageAgentEnv), and checkSettingsRouting has already
+			// refused any settings file that would send it elsewhere. The
+			// file is still written wherever the developer's machine holds
+			// the directory, so the fence is kept where it exists. Said once
+			// per run: every stage writes the file.
+			r.mu.Lock()
+			warned := r.warnedManagedWrite
+			r.warnedManagedWrite = true
+			r.mu.Unlock()
+			if !warned {
+				r.d.Log.Warn("Claude Code's managed settings could not be written for this local run; its stages still reach the gateway through their environment", "err", r.redact(err.Error()))
+			}
+			return nil
+		}
 		return fmt.Errorf("writing Claude Code's managed settings: %w", err)
 	}
 	r.mu.Lock()

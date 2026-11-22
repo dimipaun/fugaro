@@ -372,7 +372,12 @@ type run struct {
 	// returns, and says what the gateway saw: violations of the stage's
 	// rules (the first fails the stage) and its token count.
 	wroteManaged bool // this run wrote the managed settings file (guarded by mu)
-	warnedKnob   bool // the routing-settings knob's Cloud Run warning was logged
+	// warnedManagedWrite is whether the one line about a local run's managed
+	// settings that could not be written has been logged: every stage writes
+	// the file, and the machine either holds the directory or does not
+	// (guarded by mu).
+	warnedManagedWrite bool
+	warnedKnob         bool // the routing-settings knob's Cloud Run warning was logged
 	// ignoredGovernanceSaid is whether the untagged build's one line about the
 	// governance block it ignores has been written: the line is about the
 	// build, so a run says it once however many stages it has (guarded by mu).

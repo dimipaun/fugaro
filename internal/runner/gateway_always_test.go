@@ -1,7 +1,11 @@
 package runner_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // allModes is every string a job's FUGARO_BUDGET_MODE can carry into a run:
@@ -80,6 +85,65 @@ func TestTheGatewayNoLongerReadsTheMode(t *testing.T) {
 		if !probed {
 			t.Fatalf("mode %q: no stage ran", mode)
 		}
+	}
+}
+
+// TestALocalRunNeedsNoManagedSettingsDirectory (AB1b, D149, the review finding
+// on #3481): Claude Code's managed settings are the image's and so is the
+// directory they live in. `fugaro exec --task-file` is the CLI's one local
+// invocation (execPlatform, D149) and it runs on the developer's own machine,
+// which may hold no /etc/claude-code at all and cannot point --managed-settings
+// elsewhere while the budget is on (checkTestHooks). So the gateway's
+// precondition and the file it writes are the cloud's: a local run goes on
+// without either, its stages reach the gateway through the environment the
+// runner hands them, and it says so once.
+//
+// Red step: with the precondition applied to a local run, this run stops at
+// bootstrap — "the image can't hold Claude Code's managed settings (<dir>: no
+// such file or directory); rebuild it on an M9a base image" — a remedy no host
+// machine has.
+//
+// Hand mutation this fails on: dropping the Local arm from
+// checkManagedDirWritable (the bootstrap refusal returns), or turning the
+// tolerated write back into a refusal (the run ends at its first stage).
+func TestALocalRunNeedsNoManagedSettingsDirectory(t *testing.T) {
+	g := newGW(t, pinnedConfig(t), "", "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 1}))
+	h := g.harness
+	if !h.deps.Local {
+		t.Fatal("the harness is not a local run: this test is about the local invocation")
+	}
+	// The developer's machine, which holds no managed settings directory.
+	h.deps.ManagedSettingsPath = filepath.Join(t.TempDir(), "absent", "managed-settings.json")
+	var logs bytes.Buffer
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	stages := 0
+	inspect := func(inner step) step {
+		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			base, key := gwEnv(req)
+			if !strings.HasPrefix(base, "http://127.0.0.1:") {
+				t.Errorf("stage %d: the agent's calls go nowhere: ANTHROPIC_BASE_URL = %q", stages, base)
+			}
+			// The gateway's per-run token, never the job's own key: that the
+			// key stays out of the agent's environment is the whole point.
+			if key == "" || key == "test-key" {
+				t.Errorf("stage %d: ANTHROPIC_API_KEY = %q, want the gateway's per-run token", stages, key)
+			}
+			stages++
+			return inner(t, ctx, req)
+		}
+	}
+	rec, err := h.run(t, inspect(implement("feature")), inspect(review("ship", 0)))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if stages != 2 {
+		t.Fatalf("%d stages ran, want 2", stages)
+	}
+	if _, err := os.Stat(filepath.Dir(h.deps.ManagedSettingsPath)); !os.IsNotExist(err) {
+		t.Errorf("the host's managed settings directory was touched: %v", err)
+	}
+	if n := strings.Count(logs.String(), "managed settings could not be written"); n != 1 {
+		t.Errorf("%d lines about the managed settings, want 1:\n%s", n, logs.String())
 	}
 }
 

@@ -495,10 +495,24 @@ func TestManagedSettingsRemovedAtRunEnd(t *testing.T) {
 	}
 }
 
+// TestGatewayManagedDirNotWritableFailsBootstrap: in the image, a directory
+// that cannot hold Claude Code's managed settings fails the run before the
+// lock is taken — the managed settings are what keep a repository's own
+// settings from rerouting the agent there.
+//
+// It is a cloud run on purpose: the directory is the image's, and a local
+// invocation takes no such precondition at all
+// (TestALocalRunNeedsNoManagedSettingsDirectory; the #3481 finding).
 func TestGatewayManagedDirNotWritableFailsBootstrap(t *testing.T) {
 	g := newGW(t, gwConfig(t, ""), "observe", "")
 	h := g.harness
 	h.deps.ManagedSettingsPath = filepath.Join(t.TempDir(), "absent", "managed-settings.json")
+	// A run in the cloud: the platform's own report of its execution, and the
+	// project its job names (a local run is named by the invocation alone).
+	h.deps.Local = false
+	h.deps.Project = "aurora"
+	h.deps.Execution = cloudRunExecution(fixtureJob())
+	h.deps.Env = append(h.deps.Env, "CLOUD_RUN_EXECUTION=exec-1")
 	b := withBucket(h)
 	rec, err := h.run(t)
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "can't hold Claude Code's managed settings") ||
