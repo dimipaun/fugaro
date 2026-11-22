@@ -71,7 +71,7 @@ func (f *daemonFixture) daemon(t *testing.T, binary string) (*orchestratorDaemon
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := orchestrator.NewLease(db, id, daemonHolder, db.ServerNow)
+	lease, err := orchestrator.NewLease(db, id, daemonHolder, daemonDriver, db.ServerNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,8 +100,13 @@ func (f *daemonFixture) daemon(t *testing.T, binary string) (*orchestratorDaemon
 }
 
 // daemonHolder is the name the fixture's daemon holds the lease under, the way
-// task.NewRunID names a real one.
-const daemonHolder = "20261109-101500-abcd"
+// task.NewRunID names a real one, and daemonDriver is the principal whose
+// credential holds it — what `fugaro orchestrator run` reads from the local
+// config (D3218).
+const (
+	daemonHolder = "20261109-101500-abcd"
+	daemonDriver = "driver@example.com"
+)
 
 // statePath is where the fixture's daemon reads its node.
 func (f *daemonFixture) statePath(t *testing.T) string {
@@ -880,7 +885,7 @@ func TestRunOnceTakesOneCycleAndReleasesTheLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, db.ServerNow)
+	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, daemonDriver, db.ServerNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1114,7 +1119,7 @@ func TestRunOnceReportsAFailedCycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, db.ServerNow)
+	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, daemonDriver, db.ServerNow)
 	if err != nil {
 		t.Fatal(err)
 	}

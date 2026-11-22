@@ -126,6 +126,34 @@ const (
 // command's output and a message's text never does.
 const mailboxStaleReply = "nothing was performed: the message arrived outside its window"
 
+// mailboxStopReply is what the phone is told about a **stop request** — the
+// schema's `stop` kind, which the app writes when the human says to stop what
+// they are looking at (mobile plan task P5.1g, the owner's answer Q10(c)). Like
+// mailboxStaleReply it is this command's own sentence — no module declares one
+// — and it carries none of the message's text, because §4.3's rule is that an
+// id may appear in this command's output and a message's text never does.
+//
+// It carries the two halves the resident orchestrator's own answer carries
+// (internal/orchestrator's consumerStopRequest is that sibling pass's sentence
+// for the same request): the request was read, and **nothing was stopped from
+// here**, because there is nothing here to stop it with — the enforcement side
+// is `config/kill/**` and `config/caps/**`, which no client writes and this
+// consumer holds no grant for. It names where the stop can be made, the console
+// or the laptop, where a human can act on the request the phone just made, and
+// the one thing the phone can always do by itself, which is to revoke its own
+// pairing. What it never does is claim a run was stopped: Q10's answer (c) is a
+// request and not a phone-writable kill switch, and an answer that pretended
+// otherwise would be the lie that answer exists to avoid.
+//
+// It is deliberately not a prompt in the outbox either, for the reason the
+// resident pass's own note gives: a prompt is a question the phone reads out
+// and answers, and asking the human to confirm a stop this process cannot
+// perform would be exactly the confirmation of its own prompt D168 forbids the
+// consumer to synthesise. Nothing raises a prompt for a stop record — no
+// console or laptop code does — so the request travels to the human as this
+// answer alone.
+const mailboxStopReply = "nothing was stopped: this consumer read your stop request, and this installation has no phone-writable kill switch. Stop the run from the console or the laptop, or revoke this device's pairing; the phone cannot stop a run by itself."
+
 // mailboxCodeDuplicate is the module's own word for a redelivery. §4.4 counts
 // duplicates among the refusals a pass reports — the message was read and
 // nothing was done with it — so a duplicate lands in refused[] beside the codes
@@ -140,12 +168,13 @@ const mailboxCodeDuplicate = mailbox.Code("duplicate")
 const mailboxCodeActionRefused = mailbox.Code("refused-action")
 
 // mailboxCodeUnexpectedKind is the code a kind this consumer does not read out
-// of an inbox is recorded with. The schema names five kinds and the direction
+// of an inbox is recorded with. The schema names six kinds and the direction
 // decides which of them travel: a `prompt` is written by the host, so one read
 // out of the host's own inbox is a message nothing here can act on — refused
 // and reported rather than delivered to an orchestrator that would take it for
 // a question. A `registration` used to be refused here too; since P5.2.4 it is
-// applied (runRegistration), which is why this code names the one kind left.
+// applied (runRegistration), and a `stop` (P5.1g) is answered rather than
+// refused, which is why this code names the one kind left.
 const mailboxCodeUnexpectedKind = mailbox.Code("unexpected-kind")
 
 // mailboxCodeRegistrationUnpaired is the code a registration whose account has
@@ -280,13 +309,13 @@ const (
 	mailboxOfferQueueFull = "queue-full"
 )
 
-// mailboxKindAction, mailboxKindAnswer, mailboxKindPrompt and
-// mailboxKindRegistration are the kinds this file reads and writes beside the
-// module's own KindMessage. The module declares no constant for any of them —
-// its KindPrompt is the *ledger's* kind vocabulary, which spells one of these
-// the same by coincidence — so they are bound here and held to `mailbox.Kinds`
-// by TestMailboxInboxKindsAreTheSchemas: a kind the schema renames is a failing
-// test rather than a branch nothing reaches.
+// mailboxKindAction, mailboxKindAnswer, mailboxKindPrompt,
+// mailboxKindRegistration and mailboxKindStop are the kinds this file reads and
+// writes beside the module's own KindMessage. The module declares no constant
+// for any of them — its KindPrompt is the *ledger's* kind vocabulary, which
+// spells one of these the same by coincidence — so they are bound here and held
+// to `mailbox.Kinds` by TestMailboxInboxKindsAndVerbsAreTheSchemas: a kind the
+// schema renames is a failing test rather than a branch nothing reaches.
 const (
 	mailboxKindAction = "action"
 	mailboxKindAnswer = "answer"
@@ -296,6 +325,12 @@ const (
 	// consumer applies to `config/admin/push/$uid` and never to a device node
 	// (P5.2.4).
 	mailboxKindRegistration = "registration"
+	// mailboxKindStop is the phone's stop request (the schema's `stop` kind,
+	// mobile plan task P5.1g, the owner's answer Q10(c)): the app asking a
+	// human to stop what they are looking at. It travels phone to host like
+	// every other kind bound here, and it is answered rather than acted on —
+	// the switch's own arm says why, and with what.
+	mailboxKindStop = "stop"
 )
 
 // mailboxCodeHeadMoved is the code a merge refused because the pull request's
@@ -1307,7 +1342,7 @@ func (c *mailboxConsumer) deliver(ctx context.Context, pairing mailboxPairing, l
 		// Consumed once and performed for nothing: the reply is still owed (M2),
 		// and it says that nothing happened.
 		pass.refuse(result.Entry.ID, mailbox.Code(mailbox.OutcomeStalePending), false)
-		return c.reply(ctx, pairing, message, pass)
+		return c.reply(ctx, pairing, message, pass, mailboxStaleReply)
 	case mailbox.OutcomeActed:
 		// The runner above saw it: it either performed the delivery or refused
 		// it, and a refusal is recorded by the runner itself.
@@ -1326,7 +1361,9 @@ func (c *mailboxConsumer) deliver(ctx context.Context, pairing mailboxPairing, l
 // or a refusal recorded against the record's own id, and never with both. The
 // kind that does not travel phone to host — `prompt` — is refused here rather
 // than delivered, because an orchestrator handed one out of its own inbox would
-// take it for a question it must answer.
+// take it for a question it must answer. One kind is neither delivered nor
+// refused: a `stop` request is answered in the outbox with nothing performed,
+// which is the whole of what Q10's answer (c) has this consumer do with one.
 //
 // The order of the checks inside a case is the rule: what the record says, then
 // whether this machine has already spent it, then the run. Nothing is run
@@ -1342,6 +1379,18 @@ func (c *mailboxConsumer) run(ctx context.Context, pairing mailboxPairing, messa
 		return c.runAction(ctx, pairing, message, entry, pass)
 	case mailboxKindRegistration:
 		return c.runRegistration(ctx, pairing, message, entry, pass)
+	case mailboxKindStop:
+		// The phone's stop request (P5.1g, the owner's answer Q10(c)): nothing
+		// here acts on it — the enforcement side is `config/kill/**`, which no
+		// client writes and this consumer has no grant for — and it is
+		// **answered** rather than refused, because a record refused outright
+		// is answered by nothing, and an unanswered record is one the phone's
+		// own at-least-once rule keeps owing (M2), so the human's stop request
+		// would sit in the app as a pending utterance with nothing to say about
+		// it. That is exactly what the resident orchestrator does with one it
+		// reads out of the same inbox (internal/orchestrator's consumerCarries
+		// and consumerStopRequest); the sentence is this command's own.
+		return c.reply(ctx, pairing, message, pass, mailboxStopReply)
 	default:
 		pass.refuse(entry.ID, mailboxCodeUnexpectedKind, false)
 		return nil
@@ -1793,15 +1842,21 @@ func mailboxTargetName(record *mailbox.ConfirmRecord) string {
 }
 
 // reply signs and writes the answer a consumed delivery is owed, create-only
-// (§8.2). A write the signer refuses is **not** written and is a per-write
-// refusal of a completed pass — exit 0, M4's third row — and nothing is
-// recorded for it, so the reply is owed again on the next pass.
-func (c *mailboxConsumer) reply(ctx context.Context, pairing mailboxPairing, message *mailbox.Message, pass *mailboxPass) error {
+// (§8.2), in the words the caller passes: mailboxStaleReply for a delivery the
+// ledger consumed and performed nothing for, and mailboxStopReply for the
+// phone's stop request. Both are answers of the same shape — kind `answer`,
+// naming the message they answer (§8.2's `reply_to`, which the schema requires
+// of that kind) — because the outbox is where a phone reads what became of what
+// it sent, whatever the sentence says. A write the signer refuses is **not**
+// written and is a per-write refusal of a completed pass — exit 0, M4's third
+// row — and nothing is recorded for it, so the reply is owed again on the next
+// pass.
+func (c *mailboxConsumer) reply(ctx context.Context, pairing mailboxPairing, message *mailbox.Message, pass *mailboxPass, text string) error {
 	id := mailbox.ReplyID(message.ID)
 	run, err := mailbox.WriteReply(ctx, c.db, pairing.signer, mailbox.Reply{
 		ID:      id,
 		Sender:  pairing.uid,
-		Text:    mailboxStaleReply,
+		Text:    text,
 		At:      c.now(),
 		Kind:    "answer",
 		ReplyTo: message.ID,

@@ -525,7 +525,7 @@ func firestoreLocationLeft(t *testing.T, door string) initflow.Left {
 	t.Helper()
 	noTypedTerminal(t)
 	r := &initRun{o: &initOptions{door: door, firebase: "aurora-fp"}, w: io.Discard, in: bufio.NewReader(strings.NewReader(""))}
-	err := r.confirmLocation()
+	err := r.confirmLocation(fsLocation("us-east5"))
 	var ny *initflow.NeedsYouError
 	if !asNeedsYou(err, &ny) {
 		t.Fatalf("the Firestore location's refusal is %v, want needs-you", err)

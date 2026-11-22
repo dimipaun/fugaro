@@ -96,7 +96,6 @@ import {
   GRAPH_BUSY,
   GRAPH_SCOPE_BUSY,
   RUNS_SINCE,
-  SETTINGS_EDITOR_CLASS,
   SETTINGS_EDIT_OUTCOME_CLASS,
   VIEW_PANEL_CLASS,
   VIEWS,
@@ -107,6 +106,8 @@ import {
   tabStop,
   tabTarget,
 } from '../../src/renderer/entry'
+import { NEW_OPS_NOT_AVAILABLE, NEW_OPS_UNREADABLE } from '../../src/shared/new-ops'
+import type { SettingsEditorOpenRequest, SettingsEditorOutcome } from '../../src/shared/new-ops'
 import { GRAPH_DOCUMENT_VERSION, decodeSnapshot } from '../../src/shared/schema'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { NO_PLAN_CHECKOUT } from '../../src/source/source'
@@ -1667,17 +1668,26 @@ describe('the launch the entry wires', () => {
     // the one the surface and the cancel paths read.
     expect(withoutComments(index).match(/createLaunchRunner\(/g) ?? []).toHaveLength(2)
 
-    // And **both** of `main`'s flows are over that one window's confirmer, never
-    // over the declining one: D1115's "one window, two questions" is one
-    // `createConfirmWindow` call in this whole file and two runners built over
-    // it -- a second window would be a second implementation of the tick, the
-    // delay and the sender gate.
+    // And **every** flow `main` builds is over that one window's confirmer,
+    // never over the declining one: D1115's "one window, two questions" is one
+    // `createConfirmWindow` call in this whole file and three runners built over
+    // it -- the launcher, the older settings edit and the one modal SU2b wires
+    // the Project tab's pencil to -- because a second window would be a second
+    // implementation of the tick, the delay and the sender gate.
     const asked = /const confirmer = createConfirmWindow\(\{[\s\S]*?\n  \}\)\n/.exec(body)
     if (asked === null) throw new Error('the entry builds no confirmer to read')
     expect(withoutComments(index).match(/createConfirmWindow\(/g) ?? []).toHaveLength(1)
     expect(body).toContain('launchRunner = createLaunchRunner(')
     expect(body).toContain('settingsEditRunner = createSettingsEdit(')
+    expect(body).toContain('settingsEditorRunner = createSettingsEditor(')
     expect(body).not.toContain('DECLINING_CONFIRMER')
+
+    // The third runner's fail-closed default is its own declining twin, so a
+    // pencil pressed before `main` has built the window is answered
+    // `SETTINGS_EDIT_UNBUILT` rather than reaching a half-built flow -- and the
+    // surface's `settings.editor.open` reads it at message time.
+    expect(index).toContain('let settingsEditorRunner: SettingsEditorRunner = DECLINING_SETTINGS_EDITOR_FLOW')
+    expect(withoutComments(index)).toContain("'settings.editor.open': (args) => settingsEditorRunner.open(args)")
 
     // Both places the entry learns an installation moved cancel the launch its
     // project has in flight: the choose -- "re-chosen" is that installation
@@ -1691,16 +1701,18 @@ describe('the launch the entry wires', () => {
       chosen[0].indexOf('lifecycle.choose'),
     )
     expect(chosen[0]).toContain('lifecycle.choose')
-    // **And the settings edit with it** (D1115): an installation that moved
+    // **And the settings window with it** (D1115): an installation that moved
     // closes the edit's window too, and one already read for that installation
-    // must not write. Both flows are named, in both places, because the mark the
-    // edit leaves is only reachable while its window is not.
+    // must not write. All three flows are named, in both places, because the mark
+    // an edit leaves is only reachable while its window is not.
     expect(chosen[0]).toContain('settingsEditRunner.cancelFor(chosen.project)')
+    expect(chosen[0]).toContain('settingsEditorRunner.cancelFor(chosen.project)')
 
     const removed = /onRecordRemoved: \(project\) => \{[\s\S]*?\n    \},\n/.exec(body)
     if (removed === null) throw new Error('the entry has no onRecordRemoved to read')
     expect(removed[0]).toContain('launchRunner.cancelFor(project)')
     expect(removed[0]).toContain('settingsEditRunner.cancelFor(project)')
+    expect(removed[0]).toContain('settingsEditorRunner.cancelFor(project)')
   })
 
   it('brings the update policy up with the launcher it defers to, and stops it on the way out', () => {
@@ -3733,29 +3745,22 @@ function holdsText(root: FakeNode, text: string): boolean {
   return everyNode(root).some((node) => node.textContent === text)
 }
 
-/** controlUnder is the one drawn button carrying exactly this label under a
- * root. The settings editor's controls carry words rather than class hooks --
- * they are drawn by the entry into a row a screen drew -- so a case finds the
- * one it means by the word the operator reads. */
-function controlUnder(root: FakeNode, label: string): FakeNode {
-  const found = everyNode(root).filter((node) => node.tagName === 'BUTTON' && node.textContent === label)
-  expect(found, `expected exactly one control labelled ${JSON.stringify(label)}`).toHaveLength(1)
-  return found[0] as FakeNode
-}
-
-/** theBox is the one input under a root: the settings editor's value box. A
- * screen's interfaces carry text and attributes and never a value, so a case
- * writes one on the node behind the drawn element, exactly as `valueOf` reads
- * it. */
-function theBox(root: FakeNode): FakeNode {
-  const found = everyNode(root).filter((node) => node.tagName === 'INPUT')
-  expect(found, 'expected exactly one box').toHaveLength(1)
-  return found[0] as FakeNode
-}
-
 /** typeValue writes what an operator would type into one control. */
 function typeValue(box: FakeNode, value: string): void {
   ;(box as unknown as { value: string }).value = value
+}
+
+/** valueUnderPencil is the value cell of the row whose pencil the section drew,
+ * as it draws it now: the figure a settings write's own re-read replaces. The
+ * row is found through the pencil and not by its place in the table -- the
+ * section groups its rows, so a place is not a fact about which row this is --
+ * and the case asks again rather than holding the node it pressed, because the
+ * read the write asked for repaints the row.
+ */
+function valueUnderPencil(document: FakeDocument): string {
+  const pencil = classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode
+  const row = pencil.closest('li') as FakeNode
+  return textIn(row, 'projects-settings-value')
 }
 
 /** textIn is the text of the single node carrying one class under a root: the
@@ -4552,6 +4557,13 @@ describe('the sections Spend fills as their own reads land', () => {
     buttonFor(document, 'live').click()
     await flush()
     buttonFor(document, 'spend').click()
+    // The caps read is RS5's streamed one, and this bridge has no
+    // `budget.stream` behind it: the read asks the operation first and reaches
+    // `budget show` when that answers nothing, one gap later than the click. A
+    // visit still makes the read -- nothing here waits for anything -- and the
+    // held refusal is on screen until this answer replaces it.
+    await flush()
+    expect(answers, 'the visit made no caps read').toHaveLength(2)
     answers[1]?.release({ ok: true, data: { document: {} } })
     await flush()
     const caps = sectionOf(document, 'spend-caps')
@@ -4762,6 +4774,174 @@ describe('the sections Spend fills as their own reads land', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// The rail's spend beside the caps feed, and the caps a feed never finished
+// (RS5, review follow-up b).
+//
+// RS5 moved two reads onto `budget.stream`, and that feed carries the
+// repositories' rows and the project's kill switch and **neither** figure the
+// rail and the fleet gauge draw -- so the call site makes the console's own
+// `budget show` read for those two beside the feed (design section 4.1: the
+// rail's spend is the console's **own** budget read, and no field is added to
+// the feed for it). And a feed is a read **arriving**: the rows it has written
+// so far are that read's, never a view this session holds, so a tab left
+// mid-feed has nothing to draw as the caps on the next visit (R1: never a
+// partial list drawn as the list).
+// ---------------------------------------------------------------------------
+
+/** capsFeedLine is one line of the caps feed: RS1 wraps a document's own row in
+ * the line (`{"type":"row","row":{...}}`), as the Coordinator's jobs feed does
+ * with its runs. */
+function capsFeedLine(row: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  return { type: 'row', row }
+}
+
+/** CAPS_FEED_ROW is one repository's row of `budget show --stream`: one element
+ * of the document's `repos`, unchanged (`internal/cli/budget_stream.go`). */
+const CAPS_FEED_ROW: Readonly<Record<string, unknown>> = {
+  slug: 'github/acme/app',
+  repo: 'acme/app',
+  daily_cap_usd: 25,
+  per_run_cap_usd: 4,
+  counted_usd: 3.5,
+  headroom_usd: 21.5,
+  kill: null,
+}
+
+/** CAPS_FEED is that feed: one repository's row, and the line that ends it. */
+const CAPS_FEED: Readonly<Record<string, unknown>> = {
+  lines: [capsFeedLine(CAPS_FEED_ROW), { type: 'end', version: 1, count: 1 }],
+}
+
+/** streamed lets one chunk of a feed land. A feed crosses the bridge as one
+ * promise, so what makes its rows arrive one at a time is `readStream`'s own
+ * tick (`STREAM_ROWS_PER_PAINT`), which is the host's `setTimeout(step, 0)` and
+ * this suite's fake clock. */
+async function streamed(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(10)
+  await flush()
+}
+
+describe('the rail’s spend beside the caps feed', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('fills the rail’s spend and the gauge from the console’s own read where the Spend caps feed answered', async () => {
+    // The table is the feed's, and the two figures are not in it: the rail and
+    // the gauge draw the project's counted dollars and its counters, which
+    // `budget.stream` does not carry -- so the call site makes the console's own
+    // `budget show` read for them beside the feed.
+    const budget = { global: { daily_cap_usd: 40, counted_usd: 10 } }
+    const fake = spendBridge({
+      showBudget: () => ({ ok: true, data: { document: budget } }),
+      runReport: () => ({ ok: true, data: { document: reportDoc('2026-10-01') } }),
+    })
+    const streams: unknown[] = []
+    fake.bridge['streamBudget'] = (args: unknown): unknown => {
+      streams.push(args)
+      return { ok: true, data: { document: CAPS_FEED } }
+    }
+    const document = await openSpend(fake.bridge)
+    await streamed()
+    // The non-vacuity guard: the caps section drew the **feed's** row, so this
+    // is not the whole-document fallback filling the two figures on its way.
+    expect(textIn(sectionOf(document, 'spend-caps'), 'spend-cap-repo-name')).toBe('acme/app')
+    expect(streams).toHaveLength(1)
+    // And both figures are filled, from the document the console read for them.
+    expect(spanOf(document, RAIL_SPEND_CLASS).textContent).toBe('$10.00')
+    const gauge = classed(document.body, GAUGE_CLASS)[0] as FakeNode
+    expect(classed(gauge, GAUGE_CAP_CLASS)[0]?.textContent).toBe('$40.00')
+    expect(
+      fake.calls.filter((call) => call.name === 'showBudget'),
+      'the console made more than the one read the two figures need',
+    ).toHaveLength(1)
+  })
+
+  it('fills them the same way where the Project tab’s caps feed answered', async () => {
+    // The Project tab reads the same feed for the same three panels, and the
+    // two figures are the same document's: the one read at the call site serves
+    // both screens.
+    const budget = { global: { daily_cap_usd: 40, counted_usd: 10 } }
+    const fake = spendBridge({ showBudget: () => ({ ok: true, data: { document: budget } }) })
+    const streams: unknown[] = []
+    fake.bridge['streamBudget'] = (args: unknown): unknown => {
+      streams.push(args)
+      return { ok: true, data: { document: CAPS_FEED } }
+    }
+    const document = await boot(fake.bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+    await streamed()
+    expect(streams, 'the tab never asked its own caps feed').toHaveLength(1)
+    expect(spanOf(document, RAIL_SPEND_CLASS).textContent).toBe('$10.00')
+    const gauge = classed(document.body, GAUGE_CLASS)[0] as FakeNode
+    expect(classed(gauge, GAUGE_CAP_CLASS)[0]?.textContent).toBe('$40.00')
+    expect(fake.calls.filter((call) => call.name === 'showBudget')).toHaveLength(1)
+  })
+
+  it('holds no caps a feed was still writing when the operator left the tab', async () => {
+    // A tab left mid-feed answers `dropped` at the next chunk (`readStream`),
+    // and the rows it had already drawn are that read's and not the session's:
+    // what the next visit draws under its own mark must not be the partial list
+    // as the held caps (R1 -- a partial list is never drawn as the list).
+    const fake = spendBridge({
+      runReport: () => ({ ok: true, data: { document: reportDoc('2026-10-01') } }),
+    })
+    const partial: Readonly<Record<string, unknown>> = {
+      slug: 'github/acme/partial',
+      repo: 'acme/partial',
+      daily_cap_usd: 25,
+      counted_usd: 3.5,
+      kill: null,
+    }
+    const streams: ReturnType<typeof holding>[] = []
+    fake.bridge['streamBudget'] = (): unknown => {
+      const answer = holding()
+      streams.push(answer)
+      return answer.reply()
+    }
+    const document = await openSpend(fake.bridge)
+    streams[0]?.release({
+      ok: true,
+      data: {
+        document: {
+          lines: [
+            capsFeedLine(partial),
+            capsFeedLine(CAPS_FEED_ROW),
+            { type: 'end', version: 1, count: 2 },
+          ],
+        },
+      },
+    })
+    await flush()
+    // The first row is drawn while the feed is still arriving, one tick before
+    // the second -- which is the state this case leaves the tab in.
+    expect(
+      holdsText(sectionOf(document, 'spend-caps'), 'acme/partial'),
+      'the feed drew no first row: the case proves nothing',
+    ).toBe(true)
+
+    buttonFor(document, 'live').click()
+    await streamed()
+    buttonFor(document, 'spend').click()
+    await flush()
+    // This visit's own read is out, and what is on screen is its mark over what
+    // the session holds -- which is nothing: the abandoned feed's rows were
+    // never the session's caps.
+    expect(streams).toHaveLength(2)
+    expect(busyLabels(document)).toEqual(['Reading the budget caps…'])
+    const caps = sectionOf(document, 'spend-caps')
+    expect(holdsText(caps, 'acme/partial')).toBe(false)
+    expect(classed(caps, 'spend-cap-repo-name')).toEqual([])
+    streams[1]?.release({ ok: false, reason: 'this case is not about the second answer' })
+    await flush()
+  })
+})
+
 describe('the view a session already read', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -4938,11 +5118,16 @@ describe('the view a session already read', () => {
     await flush()
     buttonFor(document, 'spend').click()
     const caps = sectionOf(document, 'spend-caps')
+    // The mark is up in the click's own frame, over the caps this session
+    // already has: the read itself is RS5's streamed one, whose whole-document
+    // fallback (`budget show`, this bridge's only caps read) is one gap behind
+    // the operation it asks first.
+    expect(busyLabels(document)).toEqual(['Reading the budget caps…'])
+    await flush()
     expect(
       fake.calls.filter((call) => call.name === 'showBudget'),
       'the budget was not read again on the visit',
     ).toHaveLength(2)
-    expect(busyLabels(document)).toEqual(['Reading the budget caps…'])
     // The answer from the visit before is on screen under that mark: a blank
     // section for the second the read takes is what the owner's rule is against.
     // `data-available` is `fillSpendCaps`'s own, so it is set by the drawing and
@@ -4963,16 +5148,22 @@ describe('the view a session already read', () => {
     buttonFor(document, 'live').click()
     await flush()
     buttonFor(document, 'spend').click()
+    await flush()
     const before = fake.calls.filter((call) => call.name === 'showBudget').length
 
     const refresh = classed(panelOf(document), STAMP_REFRESH_CLASS)[0]
     expect(refresh, 'the stamp drew no refresh control: the case proves nothing').toBeDefined()
     refresh?.click()
+    // The mark goes up in the click's own frame, over the caps the session has.
+    expect(sectionOf(document, 'spend-caps').getAttribute(BUSY_ATTRIBUTE)).toBe('true')
+    // The caps read is RS5's streamed one: it asks `budget.stream` first and
+    // reaches `budget show` (this bridge's only caps read, one gap later) when
+    // the operation answers nothing.
+    await flush()
     expect(
       fake.calls.filter((call) => call.name === 'showBudget').length,
       'the stamp’s Refresh read the report and left the caps as they were',
     ).toBe(before + 1)
-    expect(sectionOf(document, 'spend-caps').getAttribute(BUSY_ATTRIBUTE)).toBe('true')
     await flush()
   })
 })
@@ -5891,7 +6082,6 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       calls.slice(before).map((call) => call.name),
       'the Projects tab made a read that is not its own',
     ).toEqual([
-      'showBudget',
       'listModels',
       'readSettings',
       'managedStatus',
@@ -5899,6 +6089,11 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       'environmentReport',
       'readLicence',
       'readSeats',
+      // The caps read is RS5's streamed one (`budget.stream`), and this bridge
+      // has no such operation: the whole-document read it falls back to is one
+      // gap behind the operation the click asks first. Every one of these is in
+      // the click's own turn; none of them waited for another's answer.
+      'showBudget',
     ])
     expect(
       calls.slice(before).some((call) => call.name === 'listRuns'),
@@ -5930,13 +6125,27 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       },
     })
     const document = await boot(bridge, new FakeDocument())
+    // A bridge that **can** be asked the caps feed's operation (C-OPS's
+    // `budget.stream`, which RS5 reads through): the read asks this first and
+    // only reaches `budget show` -- the whole document -- when it answers
+    // nothing, which is what the refusal here makes it do.
+    const streams: unknown[] = []
+    bridge['streamBudget'] = (args: unknown): unknown => {
+      streams.push(args)
+      return { ok: false, reason: 'the console did not read budget.stream in this case' }
+    }
     const before = calls.length
     buttonFor(document, 'projects').click()
-    // **Nothing is awaited**: the click's own turn is where all four calls are,
-    // so a tab that serialised them would show fewer than four here. The licence
-    // key's read is the fourth (S2.7) even though it is the one read here that
-    // spawns no child: it is a read of the console's own store, and it starts
-    // with the others rather than behind them.
+    // **Nothing is awaited**: the click's own turn is where the caps read's own
+    // operation is asked, beside the four whole-document calls -- so a tab that
+    // serialised its reads would show fewer than these five here. The licence
+    // key's read is the fourth of those (S2.7) even though it is the one read
+    // here that spawns no child: it is a read of the console's own store, and it
+    // starts with the others rather than behind them. The caps read's fallback
+    // is the fifth call and it is one gap later, which is `readStream`'s own
+    // shape for every screen that reads a feed: the operation first, the whole
+    // document where the operation cannot be asked.
+    expect(streams, 'the caps read did not ask its own operation in the click’s turn').toHaveLength(1)
     expect(
       calls
         .slice(before)
@@ -5949,7 +6158,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
             name === 'readLicence' ||
             name === 'readSeats',
         ),
-    ).toEqual(['showBudget', 'listModels', 'readSettings', 'readLicence', 'readSeats'])
+    ).toEqual(['listModels', 'readSettings', 'readLicence', 'readSeats'])
     // While all nine are out, the tab says which read each of its marks is --
     // one mark per section, on the section's own host (CM10's four siblings are
     // in the middle, the licence key's the eighth, S4.2's seat estimate the
@@ -6258,13 +6467,19 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(calls.some((call) => call.name === 'readSettings')).toBe(true)
   })
 
-  it('opens the row’s own editor on a pencil press, and sends only what the operator’s control asks', async () => {
-    // The press draws the editor and sends nothing: an edit is the operator's
-    // value, and the pencil is a control that opens a box (C3). What leaves the
-    // renderer is the three members `settings.edit`'s schema closes -- the
-    // subcommand, the key and the value -- and the layer, the dry run, the
-    // window and the phase are the main process's.
+  it('hands the row’s own key to the operation on a pencil press, and draws no control of its own in the row', async () => {
+    // SU2b's red step, and the whole of the press: the pencil is a control that
+    // **opens main's window** (`settings.editor.open`, SU1, D2902), and the
+    // entry draws no box, no submit and no cancel into the row any more. What
+    // leaves the renderer is the row's own key and nothing else -- no value, no
+    // subcommand, no layer and no argv (`SettingsEditorOpenRequest`) -- and what
+    // comes back is the CLI's own sentence, appended to the `li` the pencil sits
+    // in so the key, its scope and the value a run gets stay on the screen
+    // around it.
+    const asked: SettingsEditorOpenRequest[] = []
     const sent: unknown[] = []
+    const stale =
+      'layers/project.yaml changed since it was read: nothing was written; read it again and repeat the edit'
     const { bridge } = fakeBridge({
       replies: {
         subscribeLive: () => snapshotReply(liveFrame()),
@@ -6273,12 +6488,17 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
         readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
       },
     })
+    bridge['openSettingsEditor'] = (args: SettingsEditorOpenRequest): unknown => {
+      asked.push(args)
+      const answer: SettingsEditorOutcome = { ok: false, sentence: stale }
+      return { ok: true, data: answer }
+    }
+    // The old door is still registered in main (`settings.edit` stays until a
+    // follow-up removes it) and the renderer must not reach it: this member
+    // fails the case if it is ever called.
     bridge['editSetting'] = (args: unknown): unknown => {
       sent.push(args)
-      return {
-        ok: true,
-        data: { ok: true, sentence: 'wrote layers/project.yaml (backup at layers/project.yaml.bak)' },
-      }
+      return { ok: true, data: { ok: true, sentence: 'wrote' } }
     }
     const document = await boot(bridge, new FakeDocument())
     buttonFor(document, 'projects').click()
@@ -6286,117 +6506,162 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
 
     const pencil = classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode
     expect(pencil, 'the settings table drew no pencil').toBeDefined()
-    const row = pencil.closest('li')
+    const row = pencil.closest('li') as FakeNode
     expect(row, 'the pencil is not inside a row').not.toBeNull()
 
     pencil.click()
     await flush()
-    expect(sent, 'a pencil press sent an edit').toEqual([])
-    // D1116: the press puts the focus on the pencil as the editor is drawn, so
-    // it does not drop the keyboard to `<body>`. That is the half of the rule
-    // the entry owns; the other half -- the keyboard back on the pencil when the
-    // confirmation window closes -- is not done, and `bindSettingsPencils` names
-    // that limit where the code is.
-    expect(document.activeElement, 'the press dropped the keyboard').toBe(pencil)
 
-    const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
-    expect(editor, 'the pencil drew no editor').toBeDefined()
-    // The editor is drawn **inside the row it edits**, so the key, the layer
-    // that decides it and the value a run gets stay on the screen around the
-    // box the operator is typing in.
-    expect(editor.closest('li')).toBe(row)
-    expect(holdsText(editor, 'New value for budget.per_run_usd')).toBe(true)
-    expect(holdsText(editor, 'Leave the box empty to remove the key.')).toBe(true)
-    // The sentence the flow ends with is an announced region, like the launch
-    // form's: a refusal can arrive while the operator is looking elsewhere.
-    expect(classed(editor, SETTINGS_EDIT_OUTCOME_CLASS)[0]?.getAttribute('aria-live')).toBe('polite')
-
-    typeValue(theBox(editor), '25')
-    controlUnder(editor, 'Review and write').click()
-    await flush()
-    expect(sent).toEqual([{ op: 'set', key: 'budget.per_run_usd', value: '25' }])
-    expect(holdsText(editor, 'wrote layers/project.yaml (backup at layers/project.yaml.bak)')).toBe(true)
-
-    // The empty box is the **unset** subcommand and never a value of `""`.
-    controlUnder(editor, 'Cancel').click()
-    await flush()
-    expect(classed(panelOf(document), SETTINGS_EDITOR_CLASS)).toEqual([])
-
-    pencil.click()
-    await flush()
-    const reopened = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
-    controlUnder(reopened, 'Review and write').click()
-    await flush()
-    expect(sent).toEqual([
-      { op: 'set', key: 'budget.per_run_usd', value: '25' },
-      { op: 'unset', key: 'budget.per_run_usd' },
+    // The key, and only the key: a value here would be a box this console drew,
+    // and a subcommand or a layer would be this console choosing where a write
+    // lands.
+    expect(asked, 'the press asked for something other than the row’s key').toEqual([
+      { key: 'budget.per_run_usd' },
     ])
+    expect(sent, 'the press still called settings.edit').toEqual([])
+
+    // **The red step.** The row holds no control of this file's own: no box to
+    // type into, and no button beside the pencil that opened the window. The
+    // window is main's, and the renderer draws nothing for it.
+    const WRITERS = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'FORM'])
+    expect(
+      everyNode(row).filter((node) => WRITERS.has(node.tagName)),
+      'the press drew a control of its own in the row',
+    ).toEqual([])
+    const controls = everyNode(row).filter((node) => node.tagName === 'BUTTON')
+    expect(controls, 'the row drew a control beside its pencil').toHaveLength(1)
+    expect(controls[0]).toBe(pencil)
+
+    // The answer is drawn **in the row**, as an announced region, and it is the
+    // CLI's own sentence: a refusal is drawn the way the launch form's outcome
+    // region draws one, with the row it is about still around it.
+    const outcome = classed(row, SETTINGS_EDIT_OUTCOME_CLASS)[0] as FakeNode
+    expect(outcome, 'the press drew no outcome line').toBeDefined()
+    expect(outcome.getAttribute('aria-live')).toBe('polite')
+    expect(outcome.textContent).toBe(stale)
+    expect(holdsText(row, 'budget.per_run_usd'), 'the row lost its own key').toBe(true)
+
+    // D1116: the flow ends with the keyboard back on the control that opened the
+    // window rather than on the window that closed.
+    expect(document.activeElement, 'the answer dropped the keyboard').toBe(pencil)
   })
 
-  it('reads the Project tab again the moment a setting is written, and drops the view it held (R2)', async () => {
+  it('draws a write’s own sentence and reads the Project tab again at once (R2)', async () => {
     // F17, the defect R2 answers: the three writes of this console left every
-    // tab showing the figures it had read **before** them, because nothing but
-    // the installation switch ever cleared a cache. The settings write here is
-    // the plan's red step for the whole task, and the observed fact is the read
-    // **at once**: the second `budget show` is the only thing that can put the
-    // document the write left on the screen.
-    const sent: unknown[] = []
-    const written = { ...BUDGET_DOC, repos: [{ ...BUDGET_DOC.repos[0], kill: null }] }
+    // tab showing the figures it had read **before** them. The row the operator
+    // wrote is one of those figures, so the scope the visit registered is
+    // dropped and read again -- the body's read and the settings section's own
+    // -- and the CLI's account of the write stays on the screen until that read
+    // lands.
+    const second = holding()
+    const written = {
+      ...SETTINGS_DOC,
+      settings: [
+        { ...(SETTINGS_DOC.settings[0] as unknown as Record<string, unknown>), value: '25' },
+        SETTINGS_DOC.settings[1],
+      ],
+    }
+    let reads = 0
     const { bridge, calls } = fakeBridge({
       replies: {
         subscribeLive: () => snapshotReply(liveFrame()),
-        showBudget: () => ({
-          ok: true,
-          data: { document: calls.filter((call) => call.name === 'showBudget').length === 1 ? BUDGET_DOC : written },
-        }),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
         listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
-        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+        readSettings: () => {
+          reads += 1
+          return reads === 1 ? { ok: true, data: { document: SETTINGS_DOC } } : second.reply()
+        },
       },
     })
-    bridge['editSetting'] = (args: unknown): unknown => {
-      sent.push(args)
-      return {
+    bridge['openSettingsEditor'] = (): unknown => {
+      const answer: SettingsEditorOutcome = {
         ok: true,
-        data: { ok: true, sentence: 'wrote layers/project.yaml (backup at layers/project.yaml.bak)' },
+        sentence: 'wrote layers/project.yaml (backup at layers/project.yaml.bak)',
       }
+      return { ok: true, data: answer }
     }
     const document = await boot(bridge, new FakeDocument())
     buttonFor(document, 'projects').click()
     await flush()
-
-    /** killed is the kill switches the body draws, by their own state: the
-     * fixture's repository is killed before the write and live after it. */
-    const killed = (): readonly (string | null)[] =>
-      classed(panelOf(document), 'projects-kill-row').map((row) => row.getAttribute('data-killed'))
-    expect(calls.filter((call) => call.name === 'showBudget')).toHaveLength(1)
-    expect(killed()).toContain('true')
-
-    ;(classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode).click()
-    await flush()
-    const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
-    typeValue(theBox(editor), '25')
-    controlUnder(editor, 'Review and write').click()
-    await flush()
-
-    expect(sent).toEqual([{ op: 'set', key: 'budget.per_run_usd', value: '25' }])
-    expect(
-      calls.filter((call) => call.name === 'showBudget'),
-      'the write left the tab’s cache entry in place',
-    ).toHaveLength(2)
-    expect(killed(), 'the pre-write figures are still on screen').not.toContain('true')
-    // The read is the **body's** and not the whole visit's: the settings panel
-    // is where the operator is reading the CLI's own answer to the write they
-    // just made, and a repaint of that section would take the sentence off the
-    // screen before they had read it (D1112's flow).
-    expect(holdsText(editor, 'wrote layers/project.yaml (backup at layers/project.yaml.bak)')).toBe(true)
     expect(calls.filter((call) => call.name === 'readSettings')).toHaveLength(1)
+
+    /** countOf is how many times this case has read one bridge member. */
+    const countOf = (name: string): number => calls.filter((call) => call.name === name).length
+    // The sections a settings write **cannot** move: the reread is the body's and
+    // the settings section's own, and never `start()`.
+    const UNMOVED = [
+      'listModels',
+      'managedStatus',
+      'policyShow',
+      'environmentReport',
+      'readLicence',
+      'readSeats',
+    ]
+    const unmoved = UNMOVED.map(countOf)
+
+    const pencil = classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode
+    const row = pencil.closest('li') as FakeNode
+    pencil.click()
+    await flush()
+
+    // Both reads are **at once** and before any second press: the body's, whose
+    // cache entry is the one the write moved, and the settings section's own,
+    // whose every row is a figure of the document the write changed.
+    expect(calls.filter((call) => call.name === 'showBudget')).toHaveLength(2)
+    expect(calls.filter((call) => call.name === 'readSettings'), 'the write left the settings section as it was').toHaveLength(2)
+    expect(UNMOVED.map(countOf), 'a section a settings write cannot move was read again').toEqual(unmoved)
+
+    // The figures on the screen are still the ones from before the write -- that
+    // read is out -- and the sentence under the row is the CLI's account of it.
+    expect(valueUnderPencil(document), 'the pre-write figure is not on the screen').toBe('5')
+    const outcome = classed(row, SETTINGS_EDIT_OUTCOME_CLASS)[0] as FakeNode
+    expect(outcome.textContent).toBe('wrote layers/project.yaml (backup at layers/project.yaml.bak)')
+
+    second.release({ ok: true, data: { document: written } })
+    await flush()
+
+    // The read the write asked for is what the operator is left reading: the row
+    // carries the value the CLI now reports, and the sentence went with the row
+    // it was appended to.
+    expect(valueUnderPencil(document), 'the write’s own read did not reach the row').toBe('25')
+    expect(classed(panelOf(document), SETTINGS_EDIT_OUTCOME_CLASS)).toEqual([])
   })
 
-  it('disables the control that starts an edit while one is in flight', async () => {
-    // A double press is not two flows over one row: the control that sends is
-    // disabled and the editor says it is busy for as long as the edit takes --
-    // the dry run, the window and, on a yes, the write.
-    const held = holding()
+  it('draws the operation’s own gap sentence for a bridge that cannot answer, and no claim about a write', async () => {
+    // `newOpsFrom` turns a bridge with no member for the operation into the
+    // contract's own `not-available` gap (`new-ops.ts`): a console whose
+    // operation is unregistered -- AL's stub, until I-OPS swaps it -- draws a
+    // read this build cannot make, and the row never says a write happened.
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        showBudget: () => ({ ok: true, data: { document: BUDGET_DOC } }),
+        listModels: () => ({ ok: true, data: { document: MODELS_DOC } }),
+        readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+
+    const pencil = classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode
+    const row = pencil.closest('li') as FakeNode
+    const reads = calls.filter((call) => call.name === 'readSettings').length
+
+    pencil.click()
+    await flush()
+
+    expect(classed(row, SETTINGS_EDIT_OUTCOME_CLASS)[0]?.textContent).toBe(NEW_OPS_NOT_AVAILABLE)
+    // A press that answered nothing is not a write: nothing is read again for
+    // it, and no second press is made on the operator's behalf.
+    expect(calls.filter((call) => call.name === 'readSettings')).toHaveLength(reads)
+  })
+
+  it('draws an answer this build cannot read as the contract’s own sentence, not as a write', async () => {
+    // The third gap: something answered, and it is not the shape the contract
+    // gives this operation (`settingsEditorAt` refuses an `ok` that is not a
+    // boolean), so the row says the console could not read the answer rather
+    // than drawing a sentence about a write nobody can vouch for.
     const { bridge } = fakeBridge({
       replies: {
         subscribeLive: () => snapshotReply(liveFrame()),
@@ -6405,36 +6670,26 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
         readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
       },
     })
-    bridge['editSetting'] = () => held.reply()
+    bridge['openSettingsEditor'] = (): unknown => ({ ok: true, data: { ok: 'yes', sentence: 'wrote' } })
     const document = await boot(bridge, new FakeDocument())
     buttonFor(document, 'projects').click()
     await flush()
 
-    ;(classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode).click()
-    await flush()
-    const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
-    typeValue(theBox(editor), '25')
-    const submit = controlUnder(editor, 'Review and write')
-    submit.click()
+    const pencil = classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode
+    const row = pencil.closest('li') as FakeNode
+    pencil.click()
     await flush()
 
-    expect((submit as unknown as { readonly disabled: boolean }).disabled).toBe(true)
-    expect(editor.getAttribute('aria-busy')).toBe('true')
-
-    held.release({ ok: true, data: { ok: true, sentence: 'wrote layers/project.yaml (backup at layers/project.yaml.bak)' } })
-    await flush()
-    expect(editor.getAttribute('aria-busy')).toBe('false')
-    expect((submit as unknown as { readonly disabled: boolean }).disabled).toBe(true)
+    expect(classed(row, SETTINGS_EDIT_OUTCOME_CLASS)[0]?.textContent).toContain(NEW_OPS_UNREADABLE)
   })
 
-  it('draws the refusal’s own sentence and offers a read, and never sends the edit again', async () => {
+  it('draws a refusal’s own words, keeps one outcome line per row, and never retries the edit', async () => {
     // D1112: the CLI's compare-and-swap refuses an edit built on bytes that
-    // moved, and the console shows that sentence and offers the section's own
-    // `settings --json` again. A silent second write would be this console
-    // deciding an edit it was told not to make.
-    const sent: unknown[] = []
-    const stale =
-      'layers/project.yaml changed since it was read: nothing was written; read it again and repeat the edit'
+    // moved, and the row draws that sentence. It is **not** retried -- a silent
+    // second write would be this console deciding an edit it was told not to
+    // make -- and the way to ask again is the pencil itself, which is the
+    // operator's press and not this file's decision.
+    const asked: SettingsEditorOpenRequest[] = []
     const { bridge, calls } = fakeBridge({
       replies: {
         subscribeLive: () => snapshotReply(liveFrame()),
@@ -6443,32 +6698,38 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
         readSettings: () => ({ ok: true, data: { document: SETTINGS_DOC } }),
       },
     })
-    bridge['editSetting'] = (args: unknown): unknown => {
-      sent.push(args)
-      return { ok: true, data: { ok: false, sentence: stale } }
+    bridge['openSettingsEditor'] = (args: SettingsEditorOpenRequest): unknown => {
+      asked.push(args)
+      return { ok: false, reason: 'permission denied: this account may not write the project layer' }
     }
     const document = await boot(bridge, new FakeDocument())
     buttonFor(document, 'projects').click()
     await flush()
 
-    ;(classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode).click()
-    await flush()
-    const editor = classed(panelOf(document), SETTINGS_EDITOR_CLASS)[0] as FakeNode
-    typeValue(theBox(editor), '25')
-    controlUnder(editor, 'Review and write').click()
-    await flush()
-
-    expect(holdsText(editor, stale), 'the refusal’s sentence is not drawn').toBe(true)
+    const pencil = classed(panelOf(document), SETTINGS_PENCIL_CLASS)[0] as FakeNode
+    const row = pencil.closest('li') as FakeNode
     const reads = calls.filter((call) => call.name === 'readSettings').length
 
-    controlUnder(editor, 'Read again').click()
+    pencil.click()
     await flush()
-    // The control is a **read**, and the edit went out once.
-    expect(calls.filter((call) => call.name === 'readSettings')).toHaveLength(reads + 1)
-    expect(sent).toHaveLength(1)
-    // The editor goes with the read: the row it was drawn into is one of the
-    // rows that read's repaint replaces.
-    expect(classed(panelOf(document), SETTINGS_EDITOR_CLASS)).toEqual([])
+    expect(classed(row, SETTINGS_EDIT_OUTCOME_CLASS)[0]?.textContent).toBe(
+      'permission denied: this account may not write the project layer',
+    )
+    expect(asked, 'the refusal was followed by a second edit').toHaveLength(1)
+
+    // A second press is the operator asking again, and it leaves **one**
+    // sentence under the row: two answers to one question, the older one first,
+    // is a row nobody can read.
+    pencil.click()
+    await flush()
+    expect(asked).toHaveLength(2)
+    const outcomes = classed(row, SETTINGS_EDIT_OUTCOME_CLASS)
+    expect(outcomes, 'the second press left two answers under one row').toHaveLength(1)
+    expect(outcomes[0]?.textContent).toBe(
+      'permission denied: this account may not write the project layer',
+    )
+    // Neither press wrote anything, so neither read the tab again.
+    expect(calls.filter((call) => call.name === 'readSettings')).toHaveLength(reads)
   })
 
   it('draws the verifier’s own state for the key this installation holds, and re-reads the section on a paste', async () => {

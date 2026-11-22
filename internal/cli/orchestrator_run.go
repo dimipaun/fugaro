@@ -49,6 +49,12 @@ import (
 // orchestratorRunOptions are `fugaro orchestrator run`'s flags.
 type orchestratorRunOptions struct {
 	cloudOptions
+	// name is --name: which of the project's orchestrators this daemon drives
+	// (D3206, D3207). Empty is the project's own, which is the id the login unit
+	// `fugaro setup` and `fugaro update` write starts, and a name is one the unit
+	// `fugaro orchestrator install --name` wrote starts: the two halves of the id
+	// are the selection here and the flag there.
+	name string
 	// binary is the stable path the unit names, and the path whose version is
 	// checked each tick. Empty is a foreground run with no unit behind it:
 	// nothing restarts it, so nothing is checked.
@@ -89,11 +95,14 @@ func newOrchestratorRunCmd() *cobra.Command {
 			"never converges, publishes or installs anything, and a state node this\n" +
 			"release does not read is reported as an update being due rather than\n" +
 			"touched. Run it in the foreground to watch it; the login unit is what keeps\n" +
-			"it running (fugaro setup installs it).",
+			"it running (fugaro setup installs it).\n\n" +
+			"One process drives one orchestrator: the project's own unless --name\n" +
+			"names one of its named ones, whose id is `<project>~<name>`.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorRun(cmd, &o) },
 	}
 	f := cmd.Flags()
+	addOrchestratorNameFlag(cmd, &o.name)
 	f.StringVar(&o.binary, "binary", "", "the stable path of the fugaro binary the login unit names: the daemon exits cleanly when the version there differs from this process")
 	f.DurationVar(&o.interval, "interval", 30*time.Second, "how long to wait between cycles when the node says nothing moved")
 	f.BoolVar(&o.once, "once", false, "run one cycle and exit, releasing the lease, instead of driving the id until it is stopped")
@@ -120,7 +129,7 @@ func runOrchestratorRun(cmd *cobra.Command, o *orchestratorRunOptions) error {
 	if err != nil {
 		return err
 	}
-	id, err := orchestratorID(lc)
+	id, err := orchestratorIDFor(lc, o.name)
 	if err != nil {
 		return err
 	}
@@ -132,7 +141,16 @@ func runOrchestratorRun(cmd *cobra.Command, o *orchestratorRunOptions) error {
 	if err != nil {
 		return userErr("naming this daemon: %v", err)
 	}
-	lease, err := orchestrator.NewLease(db, id, holder, db.ServerNow)
+	// Who drives the id is the person whose credential takes this lease (D3218,
+	// F18): the driver node names a principal, and the console's Coordinator tab
+	// draws it. A machine that cannot say who it is — no user in the local
+	// config and no git identity — writes no driver node rather than a wrong
+	// one, which the map reads as unknown, exactly as it is.
+	driver, meErr := lc.Me(ctx)
+	if meErr != nil {
+		driver = ""
+	}
+	lease, err := orchestrator.NewLease(db, id, holder, driver, db.ServerNow)
 	if err != nil {
 		return userErr("%v", err)
 	}
@@ -676,14 +694,16 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		Mint:     func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
 		Caps:     caps,
 		Breaker:  &orchestrator.Breaker{},
-		// A tick has three things to say — a run it folded ended, it committed
-		// a question (O7), and it merged under a ceiling that tells somebody
-		// (D2030) — and the log sink is the channel slice 1 ships, one cleaned
+		// A tick has four things to say — a run it folded ended, it committed
+		// a question (O7), it merged under a ceiling that tells somebody
+		// (D2030), and it blocked an item on a cycle across orchestrators
+		// (D3220) — and the log sink is the channel slice 1 ships, one cleaned
 		// line on this daemon's own output, which is where the person running it
 		// in the foreground reads what it did (and where the login unit collects
 		// it). Left unset, every say() in a cycle returns at its nil check: the
 		// daemon would stop a run nobody hears about, pause on a spend question
-		// nobody sees, and land a merge nobody is told to read.
+		// nobody sees, land a merge nobody is told to read, and block an item on
+		// a deadlock nobody can break.
 		Notifier: orchestrator.LogSink{W: d.out},
 		Triage:   orchestratorTriageSeams(d),
 		// The labels of the pull requests the runs it launched opened (F25, T7):
@@ -715,6 +735,14 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		// repository says so through the client's own refusal, once per cadence,
 		// rather than ingesting nothing quietly.
 		Issues: issues,
+		// The cross-orchestrator references (D3208): the items of the other
+		// orchestrators this node's own items name, read from the same database
+		// the node is and only for the ids a reference names. It is wired
+		// always, because the reading is what makes such a reference mean
+		// anything: a daemon that resolved none would hold every item that
+		// names one, and the reference would be a dependency nothing can ever
+		// satisfy.
+		Cross: orchestrator.CrossShards{DB: d.db, Role: orchestrator.RoleOrchestrator},
 		// The audit log the trip writes its refusal line to (O19): the daemon's
 		// own node, under the id the entry derives from the run, which is the
 		// same log the triage and the decision agent append to. It is wired

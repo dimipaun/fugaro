@@ -827,7 +827,7 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is thirty-eight argvs, and this surface is the same thirty-eight.** (The
+ * **It is thirty-nine argvs, and this surface is the same thirty-nine.** (The
  * enumeration below numbers twenty-two of them: CG9a's `graph --json` landed
  * after it was written and sits between `plan status --json` and
  * `coordinator status --from-store --all --json`, and this plan's
@@ -902,7 +902,8 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * one fixed `--json`, and the whole argv is what the `spawn.test.ts` pins hold.
  * **`settings.editor.open` is the one operation of the nine that adds no row
  * here at all**: its `command` is `null` (`licence.read`'s shape), because the
- * editor is a window rather than a child.
+ * editor is a window rather than a child -- and the child behind it is
+ * `settings.edit`'s, which is the row it drives (`drivesOperation`).
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -948,6 +949,18 @@ const DESIGN_ARGV: readonly string[] = [
   // out -- and with no argument to fill, no caller word can reach the child
   // (`src/main/spawn.ts`'s empty `args`).
   'coordinator intents --all --json',
+  // The orchestrator map (the console-fixes plan's CG7a, D3221; C-ORCH's
+  // document, `internal/orchestrator/mapdoc.go`). The declarations read's shape
+  // exactly: the whole argv is the row's own words -- `--json` included -- and
+  // the row declares no argument at all (`src/main/spawn.ts`'s empty `args`),
+  // so this file's convention has nothing to take out and no caller word can
+  // reach the child. The two project flags are main-process state like every
+  // other read's here. It is the one row on this list whose command a released
+  // CLI has not got: `fugaro orchestrator map` is registered from `ee/`
+  // (`ee/orchestrator/cli/map.go`, CG6), so the console's own read sits behind
+  // `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`) and below that floor
+  // the tab names the CLI version it needs rather than spawning the row.
+  'orchestrator map --json',
   // The record's move (the dependency-graph plan's GV3.2). This row is the
   // command and its one fixed flag: the task is the operation's positional
   // argument and `--to` is its release argument, so this file's convention
@@ -1947,6 +1960,53 @@ describe('the never-reachable table', () => {
     expect(() => assertReachableSurface(spawner)).not.toThrow()
   })
 
+  it('refuses the lapse\'s column on a window that drives a row the lapse keeps', () => {
+    // The third shape of the same check (SU2b): a row that spawns no command of
+    // its own belongs to the refused class **only** through one the lapse refuses
+    // (`drivesOperation`), because the window spawns whatever the row it drives
+    // spawns and nothing else. A window pointed at a read would be refused after
+    // a lapse while every child behind it is one the design keeps -- a capability
+    // taken away on a row that grants none -- and a window whose column named no
+    // row of the table at all would be admitted with no child to refuse:
+    const windowOnARead: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS,
+      {
+        name: 'settings.window',
+        method: 'openSettingsWindow',
+        command: null,
+        flags: [],
+        summary: 'a window whose column points at a read a lapse keeps',
+        args: [],
+        drivesOperation: 'settings.read',
+        refusedAfterLapse: true,
+      },
+    ]
+    expect(() => assertReachableSurface(windowOnARead)).toThrow(/settings\.window/)
+    expect(() => assertReachableSurface(windowOnARead)).toThrow(/does not take away/)
+    // And a window that drives a row which is not on the surface at all: the
+    // column names nothing to refuse, so the window would be in the class with
+    // every child behind it admitted. The write is taken out of the table, and
+    // the real window with it, so the mutation is the only row that carries the
+    // column and there is nowhere else for the guard to fail first.
+    const windowWithNoWrite: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS.filter(
+        (operation) => operation.name !== 'settings.edit' && operation.name !== 'settings.editor.open',
+      ),
+      {
+        name: 'settings.window',
+        method: 'openSettingsWindow',
+        command: null,
+        flags: [],
+        summary: 'a window whose column names no row at all',
+        args: [],
+        drivesOperation: 'settings.edit',
+        refusedAfterLapse: true,
+      },
+    ]
+    expect(() => assertReachableSurface(windowWithNoWrite)).toThrow(/settings\.window/)
+    expect(() => assertReachableSurface(windowWithNoWrite)).toThrow(/not an operation of this surface/)
+  })
+
   it('refuses a target installation the row\'s own payload does not carry', () => {
     // The lapse gate asks about the installation a refused row acts on, and it
     // reads that installation out of the row's own payload
@@ -2268,6 +2328,12 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
     tags: 'node,redis',
     description: 'the app image',
   },
+  // The empty payload again: the orchestrator map takes no argument at all (the
+  // console-fixes plan's CG7a, D3221). The map is already one project's whole
+  // active set, so there is no scope, no repository and no window here for a
+  // caller to spell -- the two project flags are main-process state like every
+  // other read's -- which the pins below read back key by key.
+  'orchestrator.map': {},
 }
 
 const RUN_ID = '20261016-121029-4a1b'
@@ -3760,7 +3826,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these fifty-six, and no others".
+ * channel. The claim is "these fifty-seven, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -4009,14 +4075,21 @@ describe('the spend read’s arguments', () => {
  *   - **`setup.apply` is the surface's fourth write** and the only one of the
  *     nine with `refusedAfterLapse`, which is what makes a lapsed console refuse
  *     it while `setup.plan` -- the same command as a read -- keeps answering.
- *   - **`settings.editor.open` is the one operation of the nine that spawns
- *     nothing** (`command: null`, `licence.read`'s shape), so the surface's
- *     no-command count goes from eleven to twelve.
+ *   - **`settings.editor.open` is the one operation of the nine that adds no row
+ *     of its own** (`command: null`, `licence.read`'s shape), so the surface's
+ *     no-command count goes from eleven to twelve. What it drives is
+ *     `settings.edit`'s row and not one of its own, which its row says
+ *     (`drivesOperation`) -- that is also why it is in the lapse's class with the
+ *     write: the dry run and the write behind the window are that row's children.
  *   - **Every one of them is inert until the CLI release that carries its
  *     flags**: each floor in `src/shared/version.ts` is `null` today, and the
  *     handler behind each answers 'not available in this build' until I-OPS
- *     registers the real one. The rows are here rather than in a later task
- *     because the allow-list is the thing the whole console spawns through.
+ *     registers the real one -- **except `settings.editor.open`, whose handler
+ *     the console improvements plan's SU2b registered** (`settingsEditorRunner`
+ *     in `src/main/index.ts`), because the pencil that presses it is on screen
+ *     and a stub behind it would make the Project tab's only write dead. The
+ *     rows are here rather than in a later task because the allow-list is the
+ *     thing the whole console spawns through.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -4056,6 +4129,14 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['coordinator.status', 'coordinatorStatus'],
   ['coordinator.show', 'coordinatorShow'],
   ['coordinator.intents', 'coordinatorIntents'],
+  // The Coordinator tab's map read (the console-fixes plan's CG7a, D3221), in
+  // the preload table's own order: `fugaro orchestrator map --json` sits beside
+  // the declarations read it replaces on that screen's v2 sections. It is a read
+  // with no argument at all -- the whole argv is the row's own words and the
+  // installation's two -- and it is behind `ORCHESTRATOR_MAP_CLI_FLOOR`
+  // (`src/shared/version.ts`), because the command it spawns is registered from
+  // `ee/` and no release carries it yet.
+  ['orchestrator.map', 'orchestratorMap'],
   // The record's move (the dependency-graph plan's GV3.2), appended for the
   // reason every row above was: what the task added must be visible as a diff.
   // It is the surface's **third write**, the first whose two caller-named
@@ -4141,6 +4222,12 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // operation driving `image add` is refused.
   ['image.add.plan', 'planImageAdd'],
   ['image.add', 'addImage'],
+  // The Coordinator tab's map read (the console-fixes plan's CG7a, D3221),
+  // appended for the reason every row above was: what the task added must be
+  // visible as a diff. It is a read with no argument at all -- the whole argv is
+  // the row's own words and the installation's two -- and it is behind
+  // `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`), because the command
+  // it spawns is registered from `ee/` and no release carries it yet.
 ]
 
 /**
@@ -4171,7 +4258,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these fifty-six, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these fifty-seven, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -4188,11 +4275,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A fifty-seventh channel: what each task added must stay one row, and the
+    // A fifty-eighth channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
     const fiftyThird = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
     expect(fiftyThird).toContain('fleet.report: a channel this console does not ship')
-    expect(fiftyThird).toContain('57 rows, and this console ships 56')
+    expect(fiftyThird).toContain('58 rows, and this console ships 57')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -4206,7 +4293,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('55 rows, and this console ships 56')
+    expect(withoutTheNewRow).toContain('56 rows, and this console ships 57')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -4221,8 +4308,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the fifty-six methods and nothing else', () => {
-    // The bridge the window is handed: the fifty-six methods and the names,
+  it('is frozen, and hands the window a bridge with the fifty-seven methods and nothing else', () => {
+    // The bridge the window is handed: the fifty-seven methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -5402,7 +5489,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: forty-seven of the surface's fifty-six operations,
+    // The non-vacuity half: forty-eight of the surface's fifty-seven operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -5505,22 +5592,23 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // the operation is not in `REDUCED_VIEW_OPERATIONS`, and the mode withholds
     // figures rather than writes -- whether a converge may be offered at all is
     // the lapse's own gate (`refusedAfterLapse`, tested below), not this one.
-    // `settings.editor.open` reaches no child at all, for `licence.read`'s
-    // reason, and its answer is the outcome object the settings write answers
-    // with.
+    // `settings.editor.open` is on this list for `licence.read`'s reason -- it
+    // fixes no command of its own, and the children behind its window are the
+    // settings write's (`drivesOperation`) -- and its answer is the outcome
+    // object the settings write answers with.
     //
-    // **The two writes' four halves are the forty-fourth to forty-seventh**
-    // (MW1 and MW2, D2903): `models.add.plan` and `models.add`, then
-    // `image.add.plan` and `image.add`. Each pair is here for `settings.edit`'s
-    // reason -- neither write is in `REDUCED_VIEW_OPERATIONS`, and the mode
-    // withholds figures rather than writes, so whether a write may be offered at
-    // all is the lapse's own gate (`refusedAfterLapse`, tested below) rather
-    // than this one -- and for `apply.pending`'s: what a reduced console holds
-    // when it asks for one of these is a **plan**, whose dry run reaches a child
-    // that writes nothing and prints a document of the repository's own state.
-    // Withholding either pair would take the write away from a console that can
-    // still read the catalog it edits.
-    expect(THE_OPEN_OPERATIONS.length).toBe(47)
+    // The two writes' four halves are the forty-fourth to forty-seventh (MW1
+    // and MW2, D2903), each pair open for `settings.edit`'s reason.
+    //
+    // **`orchestrator.map` (the console-fixes plan's CG7a, D3221) is the
+    // forty-eighth**, and it is here for `graph.read`'s reason: the map is
+    // repository state -- the orchestrators being driven right now, the edges
+    // between them and the coordinator's heartbeat -- so there is no spent
+    // dollar, no notional dollar and no cap anywhere in its document for the
+    // reduced mode to withhold. Withholding it would take away the one read
+    // that says what is running, which is what an operator bringing an
+    // installation back needs.
+    expect(THE_OPEN_OPERATIONS.length).toBe(48)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

@@ -87,7 +87,7 @@ function verified(name, why, record) {
   return signedRecord;
 }
 
-// --- the four kinds, and the heartbeat, each with a tag over its own fields ---
+// --- the kinds, and the heartbeat, each with a tag over its own fields ---
 const plain = verified(
   'plain message',
   'the ordinary message of §3.1: four fields and a tag, and the acked flag the phone writes later is not covered',
@@ -116,6 +116,16 @@ const mergeOne = verified(
   'action: merge a pull request',
   'a merge carries the head SHA read back at confirmation, which the consumer re-checks before it merges',
   message({ kind: 'action', agent: 'orchestrator', text: 'merge the pull request', action: { id: 'a-0002', verb: 'merge', target: { repo: 'dimipaun/fugaro', pr: 532 }, head_sha: 'b'.repeat(40), confirmation: { id: 'c-0002', at: AT } } }),
+);
+
+// P5.1g's kind, and the one record here whose whole point is what it does NOT
+// carry: a stop request is a sentence for a human to act on, so it has no
+// action record, no verb and no confirmation — nothing a consumer could execute
+// even if it wanted to (Q10's answer (c)).
+verified(
+  'stop request',
+  'the phone asking a human to stop what it is looking at: a kind of its own, signed like every other, and never executed by anything',
+  message({ kind: 'stop', text: 'stop everything' }),
 );
 
 verified('heartbeat', 'O7: the consumer\'s liveness record, whose agent list feeds D163 — an unsigned heartbeat is offline', heartbeat());
@@ -267,6 +277,7 @@ refused('unsigned message', 'the tag is required on every inbox and outbox messa
 refused('unsigned prompt', 'a prompt is signed like every other kind', 'message', unsigned(message({ kind: 'prompt', options: ['merge it', 'leave it'] })));
 refused('unsigned answer', 'an unsigned answer is exactly what an impostor would send to "approve the merge?"', 'message', unsigned(message({ kind: 'answer', reply_to: 'm-0000' })));
 refused('unsigned action', 'an action record without a tag is never executed', 'message', unsigned(message({ kind: 'action', action: actionCancel })));
+refused('unsigned stop', 'a stop request is signed like every other kind: an impostor could otherwise put a stop request in the owner\'s name', 'message', unsigned(message({ kind: 'stop' })));
 refused('unsigned heartbeat', 'an unsigned heartbeat is offline, and its agent list is ignored (O7)', 'heartbeat', unsigned(heartbeat()));
 refused('short mac', 'a tag is exactly 64 hex characters: 63 is not a tag', 'message', message({ mac: 'f'.repeat(63) }));
 refused('long mac', '65 is not a tag either', 'message', message({ mac: 'f'.repeat(65) }));

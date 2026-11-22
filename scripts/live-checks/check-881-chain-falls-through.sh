@@ -148,7 +148,6 @@ PROG=${0##*/}
 say() { printf '%s: %s\n' "$PROG" "$*" >&2; }
 owner() { printf '%s: %s\n' "$PROG" "$*" >&4; }
 ABORT=""
-REACHED_END=no
 CLEANUP_RUNNING=no
 
 # Every global a step assigns is set to the empty string here, so the exit trap
@@ -296,31 +295,6 @@ finish() {
 }
 
 # ------------------------------------------------------------------- the tools
-# run_bounded SECONDS KEY CMD...: run one command with its output in
-# $SCRATCH/KEY.out and .err, and end it after SECONDS. `timeout` is not used: it
-# is GNU coreutils, and this check runs on the owner's machine, where the tool
-# is absent on macOS. Sets BOUNDED_STATUS and BOUNDED_TIMED_OUT.
-run_bounded() { # run_bounded SECONDS KEY CMD...
-  local secs=$1 key=$2
-  shift 2
-  BOUNDED_TIMED_OUT=no
-  "$@" >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
-  local pid=$! waited=0
-  while kill -0 "$pid" 2>/dev/null; do
-    [ "$waited" -lt "$secs" ] || break
-    sleep 1
-    waited=$((waited + 1))
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    BOUNDED_TIMED_OUT=yes
-    kill -TERM "$pid" 2>/dev/null || true
-    sleep 2
-    kill -KILL "$pid" 2>/dev/null || true
-  fi
-  BOUNDED_STATUS=0
-  wait "$pid" 2>/dev/null || BOUNDED_STATUS=$?
-}
-
 oneline() { tr '\n\t' '  ' | tr -s ' ' | sed -e 's/^ //' -e 's/ $//'; }
 
 # jget FILE PATH prints the value at a dotted path of a JSON document, or the
@@ -457,6 +431,49 @@ for p in pools:
         print("%s|%s|%s" % (state, headroom, until))
     sys.exit(0)
 print("absent")
+PY
+}
+
+# member_can_serve STATE HEADROOM WINDOW: whether a pool member can serve a call,
+# which is what the gate below reads. It cannot when its state word says the
+# credential is out for good (a revoked, retired, disabled, invalid, dead or
+# broken one waits for a person and never for a clock), when its headroom is known
+# to be zero, or when it is exhausted and its window is still closed. Nothing else
+# counts as unable, and every direction matters. An absent headroom figure is
+# nobody having reported one (PL10) rather than zero. A window in the past is a
+# window that has reopened: an exhausted mark whose hold has lapsed serves again
+# (internal/creds Mark.Usable), so the state word alone does not say "out". An
+# instant this check cannot read is not one it may call a closed window. And the
+# instant is consulted only for an exhausted member: the listing prints a next
+# reset for every member (PL10), so an available member's reset is when its window
+# rolls over and not a closed one, and reading it as closed would call a pool that
+# can serve unable — the costly mistake, because a member wrongly called unable
+# passes the gate and spends a paid run on a pool that could have served it, which
+# is the whole thing the gate prevents.
+member_can_serve() { # member_can_serve <state> <headroom> <window>
+  case "$1" in
+  *retir* | *revok* | *disabl* | *invalid* | *dead* | *broken*) return 1 ;;
+  esac
+  python3 - "$1" "$2" "$3" <<'PY'
+import datetime, sys
+state, headroom, window = sys.argv[1], sys.argv[2], sys.argv[3]
+if headroom not in ("", "null", "None"):
+    try:
+        if float(headroom) == 0.0:
+            sys.exit(1)
+    except ValueError:
+        pass
+if "exhaust" in state and window not in ("", "null", "None"):
+    text = window[:-1] + "+00:00" if window.endswith("Z") else window
+    try:
+        when = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        sys.exit(0)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=datetime.timezone.utc)
+    if when > datetime.datetime.now(datetime.timezone.utc):
+        sys.exit(1)
+sys.exit(0)
 PY
 }
 
@@ -761,8 +778,8 @@ PY
     ;;
   esac
   local source
-  cap=${cap%%|*}
   source=${cap#*|}
+  cap=${cap%%|*}
   fact budget PASS "the project enforces its caps and ${REPO_NAME}'s own effective per-run cap is \$${cap}${source:+ (from ${source})}: R17 holds, so the paid source the chain falls through to is money against the run's cap"
 }
 
@@ -787,39 +804,24 @@ step_first_source() {
   fi
   local n=${report#present|}
   n=${n%%$'\n'*}
-  local usable=0 line state headroom until
+  local usable=0 line state headroom window
   while IFS= read -r line; do
     case "$line" in
     present\|*) continue ;;
     "") continue ;;
     esac
     state=${line%%|*}
-    until=${line##*|}
+    window=${line##*|}
     headroom=${line#*|}
     headroom=${headroom%%|*}
-    case "$state" in
-    *exhaust* | *retir* | *revok* | *disabl* | *invalid* | *dead*) continue ;;
-    esac
-    # An exhausted_until in the future is a member that cannot serve, whatever
-    # its state word says. A member with no headroom figure reported is not
-    # counted as usable either: the figure is absent when the provider reported
-    # none (PL10), and a member whose headroom nobody knows is not one this
-    # check may call good.
-    case "$until" in
-    "" | "null" | "None") ;;
-    *) continue ;;
-    esac
-    case "$headroom" in
-    "" | "null" | "None") continue ;;
-    0 | 0.0 | 0.00) continue ;;
-    esac
+    member_can_serve "$state" "$headroom" "$window" || continue
     usable=$((usable + 1))
   done <<<"$report"
   if [ "$usable" -gt 0 ]; then
-    fact first-source FAIL "${pool} still has a member that can serve (${usable} of ${n} members carries headroom and no exhausted-until), so a run would be served by the pool and the rows below would measure no fall-through at all: this check stops before spending anything. Make the first source unable to serve — wait for the members' window to run out, or point --pool at a pool whose members are at their limit — and run the check again"
+    fact first-source FAIL "${pool} still has a member that can serve (${usable} of ${n} members carries neither a known-zero headroom nor an exhausted mark with its window still closed), so a run would be served by the pool and the rows below would measure no fall-through at all: this check stops before spending anything. Make the first source unable to serve — wait for the members' window to run out, or point --pool at a pool whose members are at their limit — and run the check again"
     stop "the launcher's pool still has a member that can serve"
   fi
-  fact first-source PASS "every member of ${pool} is at its limit (${n} members, none carrying headroom and none with an exhausted-until in the past), so the chain's first source cannot serve and the next source has to: this is the state the check measures"
+  fact first-source PASS "every member of ${pool} is at its limit (${n} members, each carrying a known-zero headroom or an exhausted mark with its window still closed), so the chain's first source cannot serve and the next source has to: this is the state the check measures"
 }
 
 step_launch() {
@@ -887,7 +889,7 @@ PY
     if [ "$answered" = no ]; then
       unmeasured run "fugaro runs ls --json never answered in $CHECKOUT, so the run ${RUN_ID} was not followed to its end and its record was not read: $(head -c 300 "$SCRATCH/runs.err" | oneline)"
     else
-      unmeasured run "the run ${RUN_ID} is still not terminal after this check's own wait of ${WAIT_SECONDS}s (fugaro runs ls --json was read ${answered}): whether the chain fell through is NOT measured. Read it yourself ('fugaro watch', then the run's own record) and record the outcome in the register's section"
+      unmeasured run "the run ${RUN_ID} is still not terminal after this check's own wait of ${WAIT_SECONDS}s (fugaro runs ls --json answered, and the row it answered with reads terminal=${terminal:-unknown}, outcome=${outcome:-unknown}): whether the chain fell through is NOT measured. Read it yourself ('fugaro watch', then the run's own record) and record the outcome in the register's section"
     fi
     stop "the run did not reach a terminal outcome inside the check's wait"
   fi
@@ -1208,7 +1210,6 @@ main() {
   step_served_by_the_paid_source
   step_flagged
   step_counted
-  REACHED_END=yes
 }
 
 trap finish EXIT

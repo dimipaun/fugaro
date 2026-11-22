@@ -1,0 +1,539 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "The state document's shape as the release behind this one decodes it, frozen: this release adds no field to the state (D3218 as amended, F35), and every node it writes into an orchestrator subtree is a state document through and through — the state, the standing backlog's node and a plan's (D2735) — so this shape is that release's strict decoder for all of them. `fugaro update`'s one write there is the fold of a checkout's docs/backlog/ folder into the backlog node (D2716), and it writes no state, no lease and no driver node of its own. internal/orchestrator/compat_test.go is what holds every node this release writes to it; a release that adds a field to the state updates this file in the change that carries its migration, because until then the node it writes is one a member still on this release refuses.",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/internal/orchestrator/testdata/prev-release/state.schema.json",
+  "title": "Fugaro orchestrator state",
+  "description": "One orchestrator's state document, the `state` child of `orchestrator/<id>` in the project's Realtime Database (docs/stateless-orchestrator/spec.md). It is written by the person's own credential through the CLI and read by every session of that orchestrator; nothing else writes it, and the rules refuse a token writer outright, so the shape check here is a description of the document a release writes rather than the thing that keeps a hostile one out (that is the region's rules). Unlike the documents a newer CLI hands an older reader, this one is closed: `schema_version` is bumped whenever a field is added, removed or re-meant, and the daemon's decoder refuses a field it does not model, so `additionalProperties` is false everywhere. A reader that finds `schema_version` above what it writes must stop rather than guess. Go: internal/orchestrator/state.go.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "rev",
+    "agent_id",
+    "role",
+    "goal",
+    "work_items",
+    "decisions",
+    "facts",
+    "archived",
+    "intents",
+    "counters"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 5,
+      "$comment": "orchestrator.SchemaVersion. Migrate raises a document written by an earlier release (0, 1, 2, 3 or 4) to this value, one version at a time: 0 is the node from before the schema carried a version, 1 the node from before the ladder kept its ledger on an item, 2 the node from before a work item carried a spec \u2014 one of the two steps that also rewrite stored digests, because `spec` is digested and an approval stored under the old walk would never launch again \u2014 3 the node from before the ledger named the item it is on, which the reports job's read needs (repo, run_id), and 4 the node from before a work item carried the ticket it came from, that ticket's body hash and its plan task, which rewrites stored digests for the same reason."
+    },
+    "rev": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "The revision every patch names as its base. A patch built from another revision is refused rather than applied on top of a change its author did not see."
+    },
+    "agent_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+      "description": "The orchestrator this document belongs to, which is also its node's id."
+    },
+    "role": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,31}$",
+      "description": "The loop this orchestrator runs: the orchestrator role dispatches the work, the coordinator role keeps a goal's work items in order (orchestrator.RoleOrchestrator, RoleCoordinator)."
+    },
+    "goal": {
+      "type": "string",
+      "maxLength": 600,
+      "description": "The standing instruction, set by a person alone. Empty until one is given, and never set by a session or the daemon."
+    },
+    "work_items": {
+      "type": "array",
+      "maxItems": 100,
+      "description": "The work this orchestrator knows about, live items only: an item moved to archived is no longer here.",
+      "items": {
+        "$ref": "#/$defs/work_item"
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "maxItems": 100,
+      "description": "The questions raised, open and closed. Each names the class that has to answer it, and the class is checked when it is closed.",
+      "items": {
+        "$ref": "#/$defs/decision"
+      }
+    },
+    "facts": {
+      "type": "object",
+      "maxProperties": 64,
+      "description": "What the loop has learned and wants to keep across sessions, keyed by a name. The key is a fact's only identity: setting one that is there replaces it. A name is also a database key \u2014 the node is a JSON document in the Realtime Database, where a property name is a path segment \u2014 so the pattern refuses `. $ # [ ] /` and control characters, which the transport refuses anywhere in the tree; Go: internal/orchestrator's idRE, which refuses a colon as well.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/fact"
+      }
+    },
+    "archived": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "Work items that left the work list, with how they ended. A dependency of a live item is never archived while that item is live.",
+      "items": {
+        "$ref": "#/$defs/archived"
+      }
+    },
+    "intents": {
+      "type": "array",
+      "maxItems": 64,
+      "description": "One entry per attempt a launch was declared for. The declaration is written before the run starts, so a daemon that dies before the start re-issues the same launch instead of minting a second one, and it is the only record of which approval an attempt spent.",
+      "items": {
+        "$ref": "#/$defs/intent"
+      }
+    },
+    "counters": {
+      "$ref": "#/$defs/counters",
+      "description": "How many decision-agent calls were made this hour and this UTC day, derived from the decisions list at each write (orchestrator.DecisionCalls) and never incremented by hand."
+    }
+  },
+  "$defs": {
+    "work_item": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "repo",
+        "recipe",
+        "rigor_tier",
+        "brief",
+        "depends_on",
+        "phase",
+        "attempts"
+      ],
+      "additionalProperties": false,
+      "not": {
+        "required": [
+          "approved",
+          "spent_approval_at"
+        ],
+        "description": "A standing approval and a spent-approval marker at once: the marker names the approval a retry spent, and the write that spends it clears the approval in the same one, so the two are never both there. Go: ValidateState refuses the pair."
+      },
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+          "description": "The item's name, unique among the live items, and a name a database key can carry (see `facts`). It carries no colon: an intent's id is \"<item>:<attempt>\"."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$",
+          "description": "The repository the run works in, canonical owner/name (task.CanonicalRepo)."
+        },
+        "recipe": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$",
+          "description": "The recipe the run uses, a name from the repository's own fugaro.yaml (recipe.NameRE)."
+        },
+        "rigor_tier": {
+          "enum": [
+            "trivial",
+            "small",
+            "medium",
+            "large"
+          ],
+          "description": "The expectation tier (internal/tier). An expectation, never a cap."
+        },
+        "spec": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,43}$",
+          "description": "The plan's folder under docs/ this work belongs to, which is what the daemon's `spec:<name>` label is built from (docs/forge-labels, R3). Optional: the encoder leaves it out for an item that carries none, and such an item gets no spec label. Stored lower-cased and at most 44 characters, so `spec:` plus the name is at most 49 of GitHub's 50. It is one of the fields a person approves, so an edit to it revokes a standing approval \u2014 which is why it is a declaration and not the daemon's to write."
+        },
+        "external": {
+          "type": "string",
+          "pattern": "^github:[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*#[1-9][0-9]{0,18}$",
+          "description": "The ticket this item came from outside Fugaro with, `github:<owner>/<repo>#<n>` (D2728). It is the dedupe key of the backlog \u2014 one issue is one item, unique across the project's nodes \u2014 so the shape is one spelling: lower-case as the installation's GitHub App answers a name, GitHub the only host, and the issue's own number from one. The ingest builds it and writes it as built: it is checked for shape and never folded, since a fold would make two spellings of one ticket two keys here and one in the ingest. Written by the daemon's ingest alone, and part of the spec a person approves."
+        },
+        "body_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "The SHA-256 of the external ticket's body as it was when the item was ingested, lower-case hex and without the `sha256:` prefix a spec digest carries (D2720). The ingest stores this and never the body; the body is read again at launch and an item whose body no longer hashes to this goes back to queued and unapproved, so a run is briefed with what the person approved. Part of the spec a person approves."
+        },
+        "plan_task": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+$",
+          "maxLength": 128,
+          "description": "The plan node this item is, as `<plan>/<task>` in the shape task.PlanTaskProblem checks (D2704), the same shape and the same bound as the launch record's own field (schemas/task.schema.json). It joins the item to its plan graph and to the run that carries it, and it is how an item the daemon adopted meets the import that would otherwise write a second one (D2702). Written by the plan import, and part of the spec a person approves. Two rules of task.PlanTaskProblem the pattern cannot carry are that a '.' or '..' element and a control character are refused."
+        },
+        "brief": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "description": "What the work is. It is one of the fields a person approves, so an edit to it revokes a standing approval."
+        },
+        "depends_on": {
+          "type": "array",
+          "maxItems": 32,
+          "description": "Work items that have to be done before this one starts. Each names a live item, and an item that something live depends on cannot be archived.",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+          }
+        },
+        "phase": {
+          "enum": [
+            "queued",
+            "running",
+            "review",
+            "done",
+            "failed",
+            "blocked",
+            "cancelled"
+          ],
+          "description": "Where the item is. There was no `status` field: the run record and the task both use that name for other things, and one name must not carry two meanings across the documents a person reads together (orchestrator.Phase)."
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+          "description": "The run this item's attempt is running, set with the intent. Empty for an item that is not running."
+        },
+        "approved": {
+          "$ref": "#/$defs/approval",
+          "description": "The standing approval, if one is. Absent unless a person approved the item at its current spec digest, and cleared by any edit to the item, by an archive, and by the attempt that spends it."
+        },
+        "spent_approval_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The `at` of the approval the item's last covered attempt spent, which is what stops a second failure from starting a third attempt without a person. Kept so that a summary can say why the next attempt needs a new approval."
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The number of the last attempt committed for this item, counting every approval it has had: attempt numbers run on across approvals, because an intent's id is the item and the attempt and stays unique for the item's life. What an approval covers is counted off the intents stamped with its own `at` (orchestrator.AttemptsUnder), not off this number."
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "A line the daemon keeps for whoever reads the item next. It is not part of the spec, so writing one revokes no approval."
+        },
+        "adopted": {
+          "type": "boolean",
+          "description": "Set on an item the daemon wrote for a run already in flight when it took the id over (D2702). The daemon's alone to write, and bookkeeping: it says how the item entered the node rather than what the work is, so it moves no digest. The ladder skips every rung that merges for such an item until a person approves it."
+        },
+        "escalation": {
+          "$ref": "#/$defs/escalation",
+          "description": "The ladder's ledger on this item, absent until the ladder first acts on it. The daemon's alone to write, and bookkeeping: a rung change leaves a standing approval where it is."
+        }
+      }
+    },
+    "escalation": {
+      "type": "object",
+      "required": [
+        "rung",
+        "entered_at",
+        "outer_attempts",
+        "transitions"
+      ],
+      "additionalProperties": false,
+      "description": "The ladder's ledger on one work item (docs/outer-loop-escalation). Nothing here is free text: every string is a value of a closed vocabulary, a git object name or a name of a known shape, so a prompt, a finding or a diff has nowhere to sit (G8). Go: internal/orchestrator/state.go.",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "The item's repository, copied from the item the block sits on. It is here because this block is what the reports job may read and the item beside it is not (E12, F27), so it is what a per-repository digest filters on (orchestrator.validateEscalation)."
+        },
+        "run_id": {
+          "type": "string",
+          "description": "The run this ledger's last move was about: the ladder's own where it launched one, the item's where the rung starts nothing. It joins the block to the run record that carries the chain's pull request, hours and cost (orchestrator.validateEscalation)."
+        },
+        "rung": {
+          "enum": [
+            "R0",
+            "R1",
+            "R2",
+            "R3",
+            "R4"
+          ],
+          "description": "The rung the item is at, and the highest it has entered: the ladder does not walk back down, and Apply refuses a patch that tries (escalation.Rung)."
+        },
+        "entered_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the item entered that rung, on the server clock. It is the last transition's own time, so the two cannot disagree."
+        },
+        "outer_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16,
+          "description": "How many of the ladder's own runs the item has spent \u2014 rung 0, the one rung 2, the judge, the review of a rebased head \u2014 and never a normal run of the item's recipe, which `approved.attempts` counts (orchestrator.MaxOuterAttempts)."
+        },
+        "transitions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "description": "The ladder's history, oldest first and append-only: a transition that happened is not rewritten, reordered or dropped, and Apply refuses a patch that tries (orchestrator.MaxEscalationTransitions).",
+          "items": {
+            "$ref": "#/$defs/transition"
+          }
+        }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "required": [
+        "to",
+        "reason",
+        "at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "enum": [
+            "R0",
+            "R1",
+            "R2",
+            "R3",
+            "R4"
+          ],
+          "description": "The rung the item left. Absent on the first transition, which is an item entering the ladder: the zero rung is how this document spells \"none\", as escalation.Facts.Reached reads it."
+        },
+        "to": {
+          "enum": [
+            "R0",
+            "R1",
+            "R2",
+            "R3",
+            "R4"
+          ],
+          "description": "The rung it entered. Never empty: a transition to nowhere records nothing."
+        },
+        "reason": {
+          "enum": [
+            "age",
+            "attempts",
+            "cost",
+            "churn_new",
+            "churn_same",
+            "hotfix",
+            "critical_path",
+            "rebase",
+            "r2_clean",
+            "r2_findings"
+          ],
+          "description": "Why, as one of escalation.Reasons: a code, never a sentence, so the ledger holds no finding text and no model (G8)."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it happened, on the server clock."
+        },
+        "head_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,64}$",
+          "description": "The head the ladder was looking at, lower-hex and possibly abbreviated as a provider reports it (Bitbucket gives twelve characters). It is what rung 0 is spent by: a head already in the ledger has had its rebase (escalation.Facts.RebasedHeads)."
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "required": [
+        "by",
+        "at",
+        "spec_digest",
+        "attempts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Who approved it."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When, on the server clock. An intent carries this same value, and it is how an attempt is counted against the approval it spends."
+        },
+        "spec_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "The digest of the spec the person read (orchestrator.SpecDigest). A launch whose spec does not digest to it is refused, so a session that can read the item cannot approve it by proxy."
+        },
+        "attempts": {
+          "const": 2,
+          "$comment": "orchestrator.ApprovalAttempts: the approved attempt and one automatic retry."
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "required": [
+        "id",
+        "question",
+        "waiting_on",
+        "at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "waiting_on": {
+          "enum": [
+            "person",
+            "session",
+            "daemon"
+          ],
+          "description": "The class that may close it. A person may close any of the three: the others' answers are a person's to overrule."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it was raised, which is what the hour and day counters count."
+        },
+        "answer": {
+          "type": "string",
+          "maxLength": 600,
+          "description": "What was decided. Absent while the question is open."
+        },
+        "by": {
+          "enum": [
+            "person",
+            "session",
+            "daemon",
+            "decision-agent"
+          ],
+          "description": "The class that closed it, which is the actor and not a field of the op that closed it."
+        },
+        "resolved_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When it was closed. Its presence is what makes the decision closed."
+        }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "required": [
+        "value",
+        "by"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "One line: a fact that needs paragraphs is a decision or a work item."
+        },
+        "by": {
+          "enum": [
+            "person",
+            "session",
+            "daemon",
+            "decision-agent"
+          ],
+          "description": "The class that wrote it, which is the actor and never a field of the op."
+        }
+      }
+    },
+    "archived": {
+      "type": "object",
+      "required": [
+        "id",
+        "outcome",
+        "at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "How it ended, in a line."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "intent": {
+      "type": "object",
+      "required": [
+        "id",
+        "run_id",
+        "spec_digest",
+        "approval_at",
+        "at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}:[0-9]+$",
+          "description": "The work item and the attempt, so that one attempt cannot be declared twice and a daemon that dies before the start re-issues the same launch."
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+          "description": "Minted before the launch and committed with the declaration."
+        },
+        "spec_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "The digest of the spec being launched: the approval's and the item's, at the moment it was declared."
+        },
+        "approval_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The `at` of the approval this attempt spends."
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the declaration was written, on the server clock."
+        },
+        "outcome": {
+          "enum": [
+            "succeeded",
+            "failed",
+            "refused",
+            "cancelled",
+            "abandoned"
+          ],
+          "description": "How the attempt ended, written by the fold that reads the run record. Absent while the attempt is in flight."
+        }
+      }
+    },
+    "counters": {
+      "type": "object",
+      "required": [
+        "decisions_hour",
+        "decisions_day"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "decisions_hour": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "decisions_day": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "At least decisions_hour, since a day contains the hour."
+        }
+      }
+    }
+  }
+}
