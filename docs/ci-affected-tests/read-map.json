@@ -9989,6 +9989,7 @@
         "internal/credsvc/bundle_workspace.go",
         "internal/credsvc/github.go",
         "internal/credsvc/githubread.go",
+        "internal/credsvc/scope_workspace.go",
         "internal/diagnoseagent/**",
         "internal/digest/**",
         "internal/escalation/**",
