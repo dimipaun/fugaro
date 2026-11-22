@@ -555,11 +555,13 @@ import (
 // message's own text never reaches the block, and no access token is asked for.
 // Checks 881 and 882 are the model-credentials routing work's owner-run checks.
 // 881's fakes are a fake `fugaro` (a routing table, a budget, a pool of
-// accounts whose members the case sets a state on, a launch and a run listing),
-// a fake `gcloud` serving the run's own record out of the runs bucket and a
-// fake `belong`, so a case says which source of the chain served the run, that
-// the fall-through was flagged and counted, and that nothing was launched where
-// the pool could still serve. 882's are a fake `fugaro` (a table that routes
+// accounts whose members the case sets a state on, a launch and a run listing)
+// and a fake `gcloud` serving the run's own record out of the runs bucket, so a
+// case says which source of the chain served the run, that the fall-through was
+// flagged and counted, and that nothing was launched where the pool could still
+// serve. Its belong refusal needs no fake: the guard is the script's own, and a
+// case exercises it by pointing the check at an installation whose name carries
+// belong. 882's are a fake `fugaro` (a table that routes
 // two Claude models to Vertex, an `enforce` project with a per-run cap, a launch
 // the case can refuse and a run listing), a fake `gcloud` that mints an
 // impersonated token per job account, serves the job list, the IAM policy, a
@@ -762,7 +764,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 306 items on one runner (102 scripts, three shards each) and under
+// The suite is 324 items on one runner (108 scripts, three shards each) and under
 // a minute each; a split that dropped one, ran one twice or fell back to
 // everything would show up as a green run that tested less, which is the failure
 // this pins.
