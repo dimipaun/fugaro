@@ -4774,6 +4774,174 @@ describe('the sections Spend fills as their own reads land', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// The rail's spend beside the caps feed, and the caps a feed never finished
+// (RS5, review follow-up b).
+//
+// RS5 moved two reads onto `budget.stream`, and that feed carries the
+// repositories' rows and the project's kill switch and **neither** figure the
+// rail and the fleet gauge draw -- so the call site makes the console's own
+// `budget show` read for those two beside the feed (design section 4.1: the
+// rail's spend is the console's **own** budget read, and no field is added to
+// the feed for it). And a feed is a read **arriving**: the rows it has written
+// so far are that read's, never a view this session holds, so a tab left
+// mid-feed has nothing to draw as the caps on the next visit (R1: never a
+// partial list drawn as the list).
+// ---------------------------------------------------------------------------
+
+/** capsFeedLine is one line of the caps feed: RS1 wraps a document's own row in
+ * the line (`{"type":"row","row":{...}}`), as the Coordinator's jobs feed does
+ * with its runs. */
+function capsFeedLine(row: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
+  return { type: 'row', row }
+}
+
+/** CAPS_FEED_ROW is one repository's row of `budget show --stream`: one element
+ * of the document's `repos`, unchanged (`internal/cli/budget_stream.go`). */
+const CAPS_FEED_ROW: Readonly<Record<string, unknown>> = {
+  slug: 'github/acme/app',
+  repo: 'acme/app',
+  daily_cap_usd: 25,
+  per_run_cap_usd: 4,
+  counted_usd: 3.5,
+  headroom_usd: 21.5,
+  kill: null,
+}
+
+/** CAPS_FEED is that feed: one repository's row, and the line that ends it. */
+const CAPS_FEED: Readonly<Record<string, unknown>> = {
+  lines: [capsFeedLine(CAPS_FEED_ROW), { type: 'end', version: 1, count: 1 }],
+}
+
+/** streamed lets one chunk of a feed land. A feed crosses the bridge as one
+ * promise, so what makes its rows arrive one at a time is `readStream`'s own
+ * tick (`STREAM_ROWS_PER_PAINT`), which is the host's `setTimeout(step, 0)` and
+ * this suite's fake clock. */
+async function streamed(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(10)
+  await flush()
+}
+
+describe('the rail’s spend beside the caps feed', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('fills the rail’s spend and the gauge from the console’s own read where the Spend caps feed answered', async () => {
+    // The table is the feed's, and the two figures are not in it: the rail and
+    // the gauge draw the project's counted dollars and its counters, which
+    // `budget.stream` does not carry -- so the call site makes the console's own
+    // `budget show` read for them beside the feed.
+    const budget = { global: { daily_cap_usd: 40, counted_usd: 10 } }
+    const fake = spendBridge({
+      showBudget: () => ({ ok: true, data: { document: budget } }),
+      runReport: () => ({ ok: true, data: { document: reportDoc('2026-10-01') } }),
+    })
+    const streams: unknown[] = []
+    fake.bridge['streamBudget'] = (args: unknown): unknown => {
+      streams.push(args)
+      return { ok: true, data: { document: CAPS_FEED } }
+    }
+    const document = await openSpend(fake.bridge)
+    await streamed()
+    // The non-vacuity guard: the caps section drew the **feed's** row, so this
+    // is not the whole-document fallback filling the two figures on its way.
+    expect(textIn(sectionOf(document, 'spend-caps'), 'spend-cap-repo-name')).toBe('acme/app')
+    expect(streams).toHaveLength(1)
+    // And both figures are filled, from the document the console read for them.
+    expect(spanOf(document, RAIL_SPEND_CLASS).textContent).toBe('$10.00')
+    const gauge = classed(document.body, GAUGE_CLASS)[0] as FakeNode
+    expect(classed(gauge, GAUGE_CAP_CLASS)[0]?.textContent).toBe('$40.00')
+    expect(
+      fake.calls.filter((call) => call.name === 'showBudget'),
+      'the console made more than the one read the two figures need',
+    ).toHaveLength(1)
+  })
+
+  it('fills them the same way where the Project tab’s caps feed answered', async () => {
+    // The Project tab reads the same feed for the same three panels, and the
+    // two figures are the same document's: the one read at the call site serves
+    // both screens.
+    const budget = { global: { daily_cap_usd: 40, counted_usd: 10 } }
+    const fake = spendBridge({ showBudget: () => ({ ok: true, data: { document: budget } }) })
+    const streams: unknown[] = []
+    fake.bridge['streamBudget'] = (args: unknown): unknown => {
+      streams.push(args)
+      return { ok: true, data: { document: CAPS_FEED } }
+    }
+    const document = await boot(fake.bridge, new FakeDocument())
+    buttonFor(document, 'projects').click()
+    await flush()
+    await streamed()
+    expect(streams, 'the tab never asked its own caps feed').toHaveLength(1)
+    expect(spanOf(document, RAIL_SPEND_CLASS).textContent).toBe('$10.00')
+    const gauge = classed(document.body, GAUGE_CLASS)[0] as FakeNode
+    expect(classed(gauge, GAUGE_CAP_CLASS)[0]?.textContent).toBe('$40.00')
+    expect(fake.calls.filter((call) => call.name === 'showBudget')).toHaveLength(1)
+  })
+
+  it('holds no caps a feed was still writing when the operator left the tab', async () => {
+    // A tab left mid-feed answers `dropped` at the next chunk (`readStream`),
+    // and the rows it had already drawn are that read's and not the session's:
+    // what the next visit draws under its own mark must not be the partial list
+    // as the held caps (R1 -- a partial list is never drawn as the list).
+    const fake = spendBridge({
+      runReport: () => ({ ok: true, data: { document: reportDoc('2026-10-01') } }),
+    })
+    const partial: Readonly<Record<string, unknown>> = {
+      slug: 'github/acme/partial',
+      repo: 'acme/partial',
+      daily_cap_usd: 25,
+      counted_usd: 3.5,
+      kill: null,
+    }
+    const streams: ReturnType<typeof holding>[] = []
+    fake.bridge['streamBudget'] = (): unknown => {
+      const answer = holding()
+      streams.push(answer)
+      return answer.reply()
+    }
+    const document = await openSpend(fake.bridge)
+    streams[0]?.release({
+      ok: true,
+      data: {
+        document: {
+          lines: [
+            capsFeedLine(partial),
+            capsFeedLine(CAPS_FEED_ROW),
+            { type: 'end', version: 1, count: 2 },
+          ],
+        },
+      },
+    })
+    await flush()
+    // The first row is drawn while the feed is still arriving, one tick before
+    // the second -- which is the state this case leaves the tab in.
+    expect(
+      holdsText(sectionOf(document, 'spend-caps'), 'acme/partial'),
+      'the feed drew no first row: the case proves nothing',
+    ).toBe(true)
+
+    buttonFor(document, 'live').click()
+    await streamed()
+    buttonFor(document, 'spend').click()
+    await flush()
+    // This visit's own read is out, and what is on screen is its mark over what
+    // the session holds -- which is nothing: the abandoned feed's rows were
+    // never the session's caps.
+    expect(streams).toHaveLength(2)
+    expect(busyLabels(document)).toEqual(['Reading the budget caps…'])
+    const caps = sectionOf(document, 'spend-caps')
+    expect(holdsText(caps, 'acme/partial')).toBe(false)
+    expect(classed(caps, 'spend-cap-repo-name')).toEqual([])
+    streams[1]?.release({ ok: false, reason: 'this case is not about the second answer' })
+    await flush()
+  })
+})
+
 describe('the view a session already read', () => {
   beforeEach(() => {
     vi.useFakeTimers()

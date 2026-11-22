@@ -2460,8 +2460,9 @@ export interface CapsStreamRead {
  *
  * `document` is answered only from the fallback: the rail's spend and the fleet
  * gauge read the document's `global` block and its counters, and the feed
- * carries neither, so a streamed read leaves those two as the Live poll last
- * filled them.
+ * carries neither, so those two are left to the call site -- which makes this
+ * same whole-document read for them where the feed answered (`entry.ts`'s
+ * `railBudget`, design section 4.1).
  */
 export async function readCapsStream(read: CapsStreamRead): Promise<CapsStreamOutcome> {
   let whole: JSONDoc | null = null

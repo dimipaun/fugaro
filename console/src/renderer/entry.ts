@@ -5322,6 +5322,37 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   // ---- Spend ------------------------------------------------------------
 
+  /** railBudget makes the console's own budget read where the caps of a screen
+   * came from the feed, and answers the document it read.
+   *
+   * **The rail's spend is this read and never the feed's.** The design says so
+   * in as many words (console-styling spec, "What the rail draws": "the spend is
+   * the console's own budget read -- `budget.show` on the dashboard's channel --
+   * ... and no field is added to it for the rail"), and the feed could not fill
+   * it anyway: its rows are the repositories and the project's kill switch, and
+   * neither the project's counted dollars the rail draws nor the counters the
+   * gauge does are among them. So both figures are filled here or not at all.
+   *
+   * **It is one read for both screens** -- the Spend caps section and the Project
+   * tab, the two RS5 gave the feed to -- because the two figures are one
+   * document's, and it is exactly the read those screens made before the feed
+   * existed. It draws no panel: the table a screen is looking at is the feed's,
+   * and a document landing behind it does not undo it.
+   *
+   * **It is a read of the installation and not of a visit**, which is the same
+   * division the rail's spend has always had: it is not tied to a section's
+   * token, so a read that lands after the operator moved on still fills the rail,
+   * and it draws no sentence of its own -- the sentence a section draws is the
+   * read that section made. A read the console cannot make answers `null` and
+   * leaves both figures as they are. */
+  const railBudget = async (): Promise<Readonly<Record<string, unknown>> | null> => {
+    const answer = documentOf(await bridge.showBudget({}))
+    if (!answer.ok) return null
+    rail.setSpend(railSpend(answer.data))
+    setGauge(gaugeFromBudget(answer.data))
+    return answer.data
+  }
+
   /** spendCaps, spendCapsSentence and spendCapsWithheld are what the caps read
    * of this installation last answered, in the three states the section draws: a
    * panel of figures, the CLI's own words for a read it refused (drawn with
@@ -5336,8 +5367,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * **spendBudget is the document and only a document read has one** (RS5): the
    * `budget show --stream` feed carries the repositories' rows and the project's
    * kill switch and neither the project's own figures nor the counters the rail
-   * and the gauge read, so a streamed answer leaves it as it was and the report
-   * model's own `caps` field is built from what the session already holds. */
+   * and the gauge read, so where the feed answered the section holds no document
+   * of its own and the report model's own `caps` field is built from what the
+   * session already holds -- until the console's own budget read, made for the
+   * rail and the gauge beside the feed, lands with one (`railBudget`). */
   let spendBudget: Readonly<Record<string, unknown>> | null = null
   let spendCaps: SpendCaps | null = null
   let spendCapsSentence: string | null = null
@@ -5413,6 +5446,18 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const holdingCaps = (): boolean =>
       spendCaps !== null || spendCapsSentence !== null || spendCapsWithheld !== null
     let capsPending = !holdingCaps()
+    /** capsPartial is the caps feed's rows read **so far** by the read that is
+     * out, and `paintCaps` draws it ahead of the session's held answer (RS5: the
+     * table one line longer each time the feed writes one).
+     *
+     * **It is this visit's and never the session's.** Only a read that finished
+     * is a view this session has read, so the rows of a feed still arriving --
+     * or of one the operator left mid-feed, which `readStream` answers `dropped`
+     * -- are never written to `spendCaps`: a partial list held as the caps would
+     * be drawn as the caps on the next visit, which is the reading R1 forbids
+     * (never a partial list as a complete one). It is cleared when this read
+     * settles, whatever it settled as, and when a new read starts. */
+    let capsPartial: SpendCaps | null = null
     /** capsWithheld is the reduced mode's answer for the caps view, asked once
      * per visit through `hidesView` and handed to the read itself: a mode that
      * withholds the caps must not have the console spawn the read whose answer it
@@ -5495,7 +5540,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       capsPending = false
       const drawn = mount()
       clearSection(drawn.caps, drawn.capsSlot)
-      if (spendCapsWithheld !== null) {
+      if (capsPartial !== null) {
+        // The feed's rows read so far, and they are drawn ahead of the
+        // session's held answer **and** of a sentence an earlier read left: this
+        // section is being read again now, and the rows arriving are this read's
+        // -- which is what the report section's own partial paint does with its
+        // refusal, one section over.
+        fillSpendCaps(factory, capsPartial, drawn.caps)
+      } else if (spendCapsWithheld !== null) {
         // A withheld view is not a refused read: there is nothing to ask again,
         // so the section carries the console's own word and no Retry.
         refusedInto(
@@ -5669,8 +5721,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * section, and a feed that stopped without one is R1's interrupted read.
      * What the feed does not carry -- the project's own figures, the counters
      * the rail and the gauge read -- is left to the whole-document read rather
-     * than invented from the rows: `readCapsStream` answers a document only for
-     * that read, and this fills the rail and the gauge only from one. */
+     * than invented from the rows: where that is the read that answered, it fills
+     * them itself, and where the feed answered they are read for on their own
+     * (`railBudget`). */
     const loadCaps = async (token: number): Promise<void> => {
       const outcome = await readCapsStream({
         stream: () => ops.streamBudget({}),
@@ -5686,23 +5739,36 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         onRows: (caps) => {
           if (stale(mine)) return
           if (!spendCapsRead.current(token)) return
-          spendCaps = caps
-          spendCapsSentence = null
-          spendCapsWithheld = null
+          // The rows are drawn from `capsPartial` and nowhere else: this read
+          // has not answered yet, and a feed still arriving is not a view the
+          // session holds (`capsPartial`'s own note).
+          capsPartial = caps
           paintCaps()
         },
         current: () => !stale(mine) && spendCapsRead.current(token),
       })
-      // The rail's spend is the console's own budget read -- this one, the read
-      // the caps section makes -- and the rail makes none of its own (design
-      // section 4.1). It is filled before the staleness check below: the spend
-      // is a fact about the installation rather than about the view the
-      // operator chose, so a read that landed after they moved on still fills
-      // the rail. Only a whole document carries it (`spendBudget`).
-      if (outcome.status === 'complete' && outcome.document !== null) {
-        rail.setSpend(railSpend(outcome.document))
-        setGauge(gaugeFromBudget(outcome.document))
-        spendBudget = outcome.document
+      // The feed's rows are the section's while its read is out and not after
+      // it: whatever this read answered is the whole of what the section holds.
+      capsPartial = null
+      // The rail's spend and the gauge are the console's own budget read -- this
+      // one, the read the caps section makes -- and the rail makes none of its
+      // own (design section 4.1). They are filled before the staleness check
+      // below: the spend is a fact about the installation rather than about the
+      // view the operator chose, so a read that landed after they moved on still
+      // fills the rail.
+      if (outcome.status === 'complete') {
+        if (outcome.document !== null) {
+          rail.setSpend(railSpend(outcome.document))
+          setGauge(gaugeFromBudget(outcome.document))
+          spendBudget = outcome.document
+        } else {
+          // The feed answered, and it carries neither figure: they are read for
+          // on their own, and the document that read answers becomes the one the
+          // report model's own `caps` field draws on.
+          void railBudget().then((document) => {
+            if (document !== null) spendBudget = document
+          })
+        }
       }
       // The three states are one answer between them, and `paintCaps` reads the
       // withheld word first and the sentence second: a refusal left standing
@@ -5737,6 +5803,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * read in flight must not look as though it has answered.
      */
     const startCaps = (): void => {
+      // A new read starts from what the session holds: rows an earlier feed was
+      // still writing when the operator left it are that read's and not this
+      // one's (`capsPartial`'s own note).
+      capsPartial = null
       capsToken = spendCapsRead.start()
       if (frame === null) capsPending = true
       else spendCapsRead.mark(capsToken, frame.caps, frame.capsSlot, SPEND_CAPS_BUSY)
@@ -6674,16 +6744,24 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         },
         current: () => !stale(mine) && projectsRead.current(readToken),
       })
-      // The rail's spend and the fleet gauge are this read's too (design section
-      // 4.1): they are filled before the staleness check, because the spend is a
-      // fact about the installation rather than about the panel the operator is
-      // on, and a read that landed after they moved on still fills them. **Only
-      // the whole document carries them** -- the feed's rows have neither the
-      // project's own figures nor the counters these two read -- so a streamed
-      // answer leaves them as the Live poll last filled them.
-      if (outcome.status === 'complete' && outcome.source === 'whole') {
-        rail.setSpend(railSpend(outcome.document))
-        setGauge(gaugeFromBudget(outcome.document))
+      // The rail's spend and the fleet gauge are the console's own budget read
+      // (design section 4.1) and never the feed's: a whole-document answer fills
+      // them itself, and where the feed answered -- the feed carries neither the
+      // project's counted dollars nor the counters these two draw -- they are
+      // read for on their own (`railBudget`). Both are filled before the
+      // staleness check, because the spend is a fact about the installation
+      // rather than about the panel the operator is on, and a read that landed
+      // after they moved on still fills them. The document that read answers is
+      // **not** held as `budgetDoc`: that one travels with `budgetStreamed`, and
+      // a whole document drawn as the feed's would put back the members the feed
+      // does not carry as figures (`paint`'s own note).
+      if (outcome.status === 'complete') {
+        if (outcome.source === 'whole') {
+          rail.setSpend(railSpend(outcome.document))
+          setGauge(gaugeFromBudget(outcome.document))
+        } else {
+          void railBudget()
+        }
       }
       // The token is checked before anything is taken down, so a read from an
       // earlier visit cannot end the *current* visit's mark -- **and it is
