@@ -153,7 +153,7 @@ Merged since the last read (103 commits on `main` after `d49063235`, the last co
 | recipes | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | registry-remote-repository | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
 | retire-image-mirror | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |
-| review-against-task | owner Check 750 after the release (no script); RA7 merged as #3518 (16/16) |
+| review-against-task | owner Check 750 after the release: its script is on main (`scripts/live-checks/check-750-review-against-task.sh`, with its own test, not run); RA7 merged as #3518 (16/16) |
 | review-job | owner Checks 610 and 611 (scripts on main, #3150 and #3154), not run |
 | rigor-command | none (R2 to R5 were closed 2026-11-10 as duplicates of settings-commands and config-management, which win; every live task has merged) |
 | roles | none recorded: a spec from before the folder layout, moved from docs/design and docs/plans on 2026-11-21 and not re-counted |

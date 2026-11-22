@@ -716,6 +716,7 @@ var liveCheckScripts = []struct {
 	{"check-830.sh", "check-830_test.sh"},
 	{"check-840.sh", "check-840_test.sh"},
 	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
+	{"check-750-review-against-task.sh", "check-750-review-against-task_test.sh"},
 	{"check670.sh", "check670_test.sh"},
 	{"check-881-chain-falls-through.sh", "check-881-chain-falls-through_test.sh"},
 	{"check-882-vertex-capped.sh", "check-882-vertex-capped_test.sh"},
