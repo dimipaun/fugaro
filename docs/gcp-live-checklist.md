@@ -23088,14 +23088,34 @@ the seats **still readable** and the key **still installed**, because a withdraw
 - **The entitlement.** The purchase appears at `GET /api/entitlements` for the workspace with source `purchase`
   and status `active`, and the workspace's own mirror (`GET /api/workspaces/{workspace}/subscription`) names
   Paddle's subscription. A purchase whose workspace names none is a **FAIL**.
+- **The binding.** A purchase mints no key of its own (**F25**): it is a licence of the **account** you sign in
+  as. So the check asks for **ONE browser sign-in** in the middle of the run — `fugaro licence login` in the
+  sandbox, as the account that bought — and holds the installation's own read against the purchase's own tier.
+  A key of the per-machine store rather than the project's own is a **FAIL**; a sign-in for a licence whose
+  tier is not the purchase's is a row that could **not be measured** (nothing below it would be about this
+  purchase). The key is never read.
 - **The renewal.** Paddle's own period end (`GET /subscriptions/{id}`) and the entitlement's own end **agree**,
   and after you bill the renewal the term has **moved**. A renewal that did not move the term is a row that
-  could **not be measured** rather than a finding, because it may mean the sandbox did not bill.
+  could **not be measured** rather than a finding, because it may mean the sandbox did not bill. The check
+  fires the deployed Scheduler job `fugaro-licence-renew` through `gcloud scheduler jobs run` to make the
+  installation re-read its licence, and it fires it in the job's **own** location: Scheduler is not offered in
+  every Cloud Run region (**K4.2**), so the job's location is read from the installation's project (and
+  `--scheduler-region` names it when there is nothing to read) rather than taken to be the installation's own
+  region. A job in no location the project serves, or a fire that fails, is a row that could **not be
+  measured**, and the check says so **before** anything is bought.
 - **The refund.** The entitlement reads **`revoked`** — every key it ever minted, and not only the key the event
   named (**D2147**, **F29**) — and it is the portal's own record that says so.
+- **The tick after the refund.** The installation hears about a withdrawal only from its **own** check
+  (**K4.1**): the portal's record and the local store say nothing to it until then. So after the refund the
+  check fires `fugaro-licence-renew` **once more** and waits for a completed execution of the Cloud Run job
+  `fugarolicence` that was **created after that fire** — an execution that ran earlier is never read as this
+  fire's answer, and a tick whose fire started no execution is a row that could **not be measured**.
 - **The installation.** `fugaro licence status --json` in the sandbox reads `revoked: true` with
-  `last_check.status` `revoked`, while the tier, the seats and the key itself are **still there** (D436). A key
-  still **serving** after the refund is the **FAIL**.
+  `last_check.status` `revoked` and a `last_check.at` **after** the instant the check saw the refund land at the
+  portal, while the tier, the seats and the key itself are **still there** (D436). A key still **serving** after
+  the refund is the **FAIL**; an installation that has recorded **no check since the refund** has not heard
+  about the withdrawal, which is a row that could **not be measured** — never a FAIL, however the local store
+  reads.
 
 **The command.** It is **one command**, run at your own terminal:
 
@@ -23106,16 +23126,20 @@ bash scripts/live-checks/check564.sh --sandbox <the checkout> --workspace-id <th
 ```
 
 `--workspace-id` names the portal workspace the purchase is for (one workspace has one subscription, D2192) and is
-required; `--api` names the portal's own origin and `--terms` the licence terms **version** you accepted; `--dry-run` makes every guard and prints every
+required; `--api` names the portal's own origin, `--terms` the licence terms **version** you accepted and
+`--scheduler-region` the location the licence renewal Scheduler job lives in (read from the installation's
+project when it is not given, since Scheduler does not serve every Cloud Run region); `--dry-run` makes every guard and prints every
 command it would run, calling nothing; `--help` prints the header above. The **LIVE** Paddle host is refused
 **by name** — no live purchase is ever made — a value naming `fugaro-prod`, and the GCP project the
 installation's own `fugaro doctor` names, are refused unless `--production` is given, a value naming `belong`
 is refused by name, and a coding agent's session is refused too. The block is headed
 `CHECK 564 RESULT`, ends `CHECK 564 RESULT END (exit N)`, and exits **0** when every criterion held, **1** when
 one did not, **2** when it could not measure — a token file that is not `0600`, the sandbox account missing or
-refusing its key, a transaction the sandbox does not hold, a renewal the sandbox did not bill. Its keys are
-`xtrace`, `agent-session`, `belong`, `project`, `paddle-sandbox`, `api`, `token`, `sandbox`, `checkout`,
-`entitlement`, `renewal`, `refund`, `install`, `restore` and `scratch`.
+refusing its key, a transaction the sandbox does not hold, a renewal the sandbox did not bill, a sign-in that
+did not come back, a renewal job in no location the project serves or a fire that failed, and an installation
+that has recorded no check since the refund. Its keys are
+`xtrace`, `agent-session`, `belong`, `project`, `paddle-sandbox`, `api`, `token`, `sandbox`, `scheduler`,
+`checkout`, `entitlement`, `bind`, `renewal`, `refund`, `tick`, `install`, `restore` and `scratch`.
 
 **What it creates, and what it leaves behind.** A Paddle **SANDBOX** transaction, its subscription and its
 refund — real objects in the sandbox and nothing at all in the live merchant — plus one withdrawn entitlement in
@@ -23130,8 +23154,10 @@ file of its own; neither reaches a command line or the block.
 
 **OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
 `scripts/live-checks/check564_test.sh`, which drives every step against fakes — a fake `curl` over the portal's
-API and the Paddle sandbox API, and a fake `fugaro` — with no cloud, no purchase and no account, and is run by
-`go test ./scripts`.
+API and the Paddle sandbox API, a fake `fugaro` (its `licence login` prints an address; its `licence status
+--json` holds a check the case places before or after the refund) and a fake `gcloud` (the Scheduler job in a
+location the installation's region is not, both fires, and the licence job's executions, the fire's own and an
+older one) — with no cloud, no purchase and no account, and is run by `go test ./scripts`.
 
 ## Check 570: pay before setup — the unbound purchase, the refused binding and the seat a refresh brings (the staging project and the staging portal first, never `belong`; run by you; NOT RUN)
 

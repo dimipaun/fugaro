@@ -39,6 +39,12 @@
 #     workspace, with source `purchase` and status `active`, and the workspace's
 #     own mirror (`GET /api/workspaces/{workspace}/subscription`) names Paddle's
 #     subscription. A purchase whose workspace names no subscription is a finding;
+#   * **the binding**: the purchase is a licence of the ACCOUNT you sign in as,
+#     and nothing binds it to an installation by itself (a purchase mints no key,
+#     F25). ONE browser sign-in (`fugaro licence login` in the sandbox, as the
+#     account that bought) puts that account's key in the installation, and the
+#     installation's own read is held against the purchase's own tier, kind and
+#     seats. The key is never read;
 #   * **the renewal**: Paddle's own period end (`GET /subscriptions/{id}`) and the
 #     entitlement's own end agree, and after you bill the renewal the term has
 #     MOVED. A renewal that did not move the term is a row this check could not
@@ -46,10 +52,17 @@
 #   * **the refund**: the entitlement reads `revoked`, which is every key it ever
 #     minted and not only the key the event named (D2147, F29), and it is the
 #     portal's own record that says so;
+#   * **the tick after the refund**: the installation hears about a withdrawal
+#     only from its own check (K4.1), so after the refund this check fires the
+#     deployed Scheduler job (`fugaro-licence-renew`) once more and waits for a
+#     completed execution of the Cloud Run job `fugarolicence` that was CREATED
+#     after that fire. No check recorded since the refund is a row this check
+#     could NOT measure — never a FAIL;
 #   * **the installation**: `fugaro licence status --json` in the sandbox reads
-#     `revoked: true` with `last_check.status` `revoked`, and the tier, the seats
-#     and the key itself are still there (D436). A key still serving after the
-#     refund is the finding.
+#     `revoked: true` with `last_check.status` `revoked` and `last_check.at`
+#     AFTER the instant this run saw the refund land at the portal, and the tier,
+#     the seats and the key itself are still there (D436). A key still serving
+#     after the refund is the finding.
 #
 # What it creates: a Paddle SANDBOX transaction, its subscription and its refund —
 # real objects in the sandbox and nothing at all in the live merchant — plus one
@@ -57,6 +70,7 @@
 # left holding a revoked key; the restore row names what you do about it.
 #
 # Usage:      bash scripts/live-checks/check564.sh --sandbox <dir> --token-file <file> --paddle-key-file <file>
+#             bash scripts/live-checks/check564.sh --sandbox <dir> --token-file <file> --paddle-key-file <file> [--scheduler-region <region>]
 #             bash scripts/live-checks/check564.sh --sandbox <dir> --token-file <file> --paddle-key-file <file> --dry-run
 #             bash scripts/live-checks/check564.sh --help
 # Needs:      bash, mktemp, python3 and curl (the portal API, the Paddle sandbox
@@ -64,12 +78,19 @@
 #             (the installation's own `doctor`, `licence status` and renewal job).
 #             The Paddle SANDBOX account and its API key come from subscriptions
 #             S8.5, which is yours to run: without it this check refuses at once.
+#             The renewal job is fired through `gcloud scheduler jobs run`, and
+#             Scheduler is not offered in every Cloud Run region (K4.2): the job's
+#             own location is read from the installation's project, and
+#             `--scheduler-region` names it when there is nothing to read.
 # Where:      your own machine, a THROWAWAY installation's checkout (`--sandbox`),
 #             and the Paddle SANDBOX. The LIVE Paddle host is refused by name and
 #             no live purchase is ever made. `fugaro-prod` among the values you
 #             were given, and the GCP project the installation's own `doctor`
 #             names, are refused unless `--production`; a value naming belong is
 #             refused by name; and so is a coding agent's session.
+#             ONE browser sign-in is asked for in the middle of the run (the bind
+#             step): sign in as the account that bought the licence, and the check
+#             waits for it with the same bound as the sign-in's own certificate.
 # Costs:      nothing real. Every price, transaction, subscription and refund is
 #             the Paddle SANDBOX's, whose cards are test cards; the portal and the
 #             installation are ones you can throw away.
@@ -88,7 +109,9 @@
 #             after the refund). 2: a row could not be measured for a reason that
 #             is this check's own setup — the sandbox API key is not in hand
 #             (S8.5), the token file is not 0600, the Paddle host is not the
-#             sandbox, the renewal did not move the term. A key the run never
+#             sandbox, the renewal did not move the term, the Scheduler job is in
+#             no location this project serves or could not be fired, the sign-in
+#             did not come back, or no check has been recorded since the refund. A key the run never
 #             reached reads `FAIL — not reached`, which is a row that was NOT
 #             measured.
 #
@@ -103,7 +126,9 @@
 # CHECK564_SANDBOX, CHECK564_TOKEN_FILE, CHECK564_PADDLE_KEY_FILE,
 # CHECK564_WORKSPACE_ID, CHECK564_TERMS, CHECK564_API (the portal's origin),
 # CHECK564_PADDLE_API (the Paddle host; a value that is not the sandbox is
-# refused by name), CHECK564_PRODUCTION, CHECK564_FUGARO, CHECK564_GCLOUD,
+# refused by name), CHECK564_PRODUCTION, CHECK564_SCHEDULER_REGION (where the
+# licence renewal Scheduler job lives, read from the installation's project when
+# it is not given), CHECK564_FUGARO, CHECK564_GCLOUD,
 # CHECK564_DRY_RUN, CHECK564_KEEP_SCRATCH, CHECK564_CURL_SECONDS (60),
 # CHECK564_CLI_TIMEOUT_SECONDS (180), CHECK564_WAIT (30: how many times a poll
 # looks) and CHECK564_POLL_SECONDS (10: the pause between looks).
@@ -194,6 +219,9 @@ SCRATCH_REMOVED=no
 SCRATCH_KEPT=no
 CLEANUP_RUNNING=no
 PRINTED=""
+LOGIN_PID=""
+LOGIN_REAPED=yes
+LOGIN_STATUS=0
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/check564.XXXXXX") || die "Check 564 could not make a scratch directory"
@@ -213,10 +241,34 @@ scratch_down() {
   SCRATCH_REMOVED=yes
 }
 
+# login_stop kills the sign-in if this check ends before it does, so a stop, a
+# Ctrl-C or a failed assertion never leaves a `fugaro licence login` holding this
+# terminal and a listener.
+login_stop() {
+  [ -n "$LOGIN_PID" ] || return 0
+  if kill -0 "$LOGIN_PID" 2>/dev/null; then
+    kill -TERM "$LOGIN_PID" 2>/dev/null || true
+    sleep 1
+    kill -KILL "$LOGIN_PID" 2>/dev/null || true
+  fi
+  wait "$LOGIN_PID" 2>/dev/null || true
+  LOGIN_REAPED=yes
+  LOGIN_PID=""
+}
+
+reap_login() {
+  [ "$LOGIN_REAPED" = yes ] && return 0
+  LOGIN_STATUS=0
+  wait "$LOGIN_PID" 2>/dev/null || LOGIN_STATUS=$?
+  LOGIN_REAPED=yes
+  LOGIN_PID=""
+}
+
 finish() {
   local status=$?
   CLEANUP_RUNNING=yes
   trap - ERR
+  login_stop
   local facts=""
   if [ -n "$FACTS_FILE" ] && [ -f "$FACTS_FILE" ]; then facts=$(cat "$FACTS_FILE"); fi
   scratch_down
@@ -254,7 +306,7 @@ finish() {
 # printed in this order whatever happened, one that was never reached reads
 # `FAIL — not reached`, and any other recorded key follows in the order the run
 # recorded it.
-BLOCK_KEYS=(xtrace agent-session belong project paddle-sandbox api token sandbox checkout entitlement renewal refund install restore scratch)
+BLOCK_KEYS=(xtrace agent-session belong project paddle-sandbox api token sandbox scheduler checkout entitlement bind renewal refund tick install restore scratch)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2
@@ -450,6 +502,7 @@ try:
 except Exception:
     raise SystemExit(0)
 last = doc.get("last_check") or {}
+print("source=%s" % (doc.get("source") or ""))
 print("revoked=%s" % ("true" if doc.get("revoked") else "false"))
 print("state=%s" % (doc.get("state") or ""))
 print("tier=%s" % (doc.get("tier") or ""))
@@ -457,11 +510,144 @@ print("kind=%s" % (doc.get("kind") or ""))
 print("seats=%s" % (doc.get("seats") if doc.get("seats") is not None else ""))
 print("paid_through=%s" % (doc.get("paid_through") or ""))
 print("check_status=%s" % (last.get("status") or ""))
+print("check_at=%s" % (last.get("at") or ""))
 PY
 }
 
 field() { # field FILE KEY — the value of one `key=value` line, "" when absent
   sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1
+}
+
+# scheduler_fields FILE — the Scheduler job's own document, as far as this check
+# reads it. The state and the schedule are printed rather than held against
+# anything: `gcloud scheduler jobs run` fires a paused job too, and the row this
+# check is about is the fire, not the cron.
+scheduler_fields() { # scheduler_fields FILE
+  python3 - "$1" <<'PY'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    raise SystemExit(0)
+if not isinstance(doc, dict):
+    raise SystemExit(0)
+print("state=%s" % (doc.get("state") or ""))
+print("schedule=%s" % (doc.get("schedule") or ""))
+PY
+}
+
+# The newest execution of the job created at or after the fire. `gcloud run jobs
+# executions list --format=json` prints the executions in whichever order the API
+# hands them back, so the newest is picked here by its own creation time against
+# the instant this check fired the Scheduler job: the only thing this check does
+# to start work is that fire, so an execution created after it is that fire's.
+executions_fields() { # executions_fields FILE STARTED_EPOCH
+  python3 - "$1" "$2" <<'PY'
+import datetime, json, sys
+
+def epoch(ts):
+    if not isinstance(ts, str) or not ts:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    doc = []
+if not isinstance(doc, list):
+    doc = []
+started = int(sys.argv[2])
+best = None
+newest = None
+for e in doc:
+    if not isinstance(e, dict):
+        continue
+    md = e.get("metadata") or {}
+    st = e.get("status") or {}
+    created = md.get("creationTimestamp") or st.get("startTime") or ""
+    at = epoch(created)
+    if at is None:
+        continue
+    if newest is None or at > newest[0]:
+        newest = (at, e, created)
+    if at < started:
+        continue
+    if best is None or at > best[0]:
+        best = (at, e, created)
+
+
+def name_of(entry):
+    e = entry[1]
+    md = e.get("metadata") or {}
+    st = e.get("status") or {}
+    completed = ""
+    for c in st.get("conditions") or []:
+        if isinstance(c, dict) and c.get("type") == "Completed":
+            completed = c.get("status") or ""
+    return (md.get("name") or "").rsplit("/", 1)[-1], completed
+
+
+# The newest execution is printed whichever answer this is: when none of them was
+# created after the fire, the row that says so NAMES the newest one it did see —
+# "the job has not run since you fired it" and "the job's newest run is this one,
+# from before the fire" are different sentences, and only one of them is true.
+if best is None:
+    print("found=no")
+    if newest is None:
+        raise SystemExit(0)
+    entry = newest
+    created = entry[2]
+else:
+    print("found=yes")
+    entry = best
+    created = entry[2]
+name, completed = name_of(entry)
+print("name=%s" % name)
+print("created=%s" % created)
+print("completed=%s" % completed)
+PY
+}
+
+# extract_address FILE — the first sign-in address the command printed, or "". The
+# check reads that address off its own line so the MANUAL line can name it; it
+# reads no code, and it provides none.
+extract_address() { # extract_address FILE
+  python3 - "$1" <<'PY'
+import re, sys
+try:
+    text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+except OSError:
+    raise SystemExit(0)
+m = re.search(r'https?://[^\s]+/cli/authorize\?[^\s]+', text)
+print(m.group(0) if m else "")
+PY
+}
+
+# stamp_after LATER EARLIER — "yes" when both are timestamps and LATER is
+# strictly after EARLIER, "no" when it is not, "unknown" when either cannot be
+# read as one. The comparison is made in one place so a row's sentence is about a
+# fact rather than about how a shell compares two strings.
+stamp_after() { # stamp_after A B
+  python3 - "$1" "$2" <<'PY'
+import datetime, sys
+
+def at(ts):
+    if not isinstance(ts, str) or not ts.strip():
+        return None
+    try:
+        return datetime.datetime.fromisoformat(ts.strip().replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+a, b = at(sys.argv[1]), at(sys.argv[2])
+if a is None or b is None:
+    print("unknown")
+else:
+    print("yes" if a > b else "no")
+PY
 }
 
 last_lines() { tail -n 6 "$1" 2>/dev/null | tr '\n' ' ' | cut -c1-400; }
@@ -708,6 +894,76 @@ step_sandbox() {
   fact sandbox PASS "${installation:-<unnamed>} in $project (region ${region:-unknown}), read from $SANDBOX's own $FUGARO_BIN doctor --json — the THROWAWAY installation whose own licence the install row reads"
 }
 
+# scheduler_location — the region the licence renewal Scheduler job lives in,
+# resolved rather than assumed. K4.2's module places the job in the NEAREST
+# Scheduler location it can, and Scheduler is not offered everywhere Cloud Run is:
+# the installation's own Cloud Run region (us-east5 among them) is frequently not
+# a Scheduler location at all, so firing the job at $SANDBOX_REGION would aim the
+# fire at a location the job is not in. SCHEDULER_REGION is set HERE and not
+# returned through a command substitution: a stop below has to end THIS run, and a
+# stop inside $( ) would end a subshell instead, leaving the check to read an empty
+# answer as one it could not measure. Every path below leaves the job's own
+# document in $SCRATCH/scheduler.json.
+scheduler_location() {
+  local rc=0
+  if [ -n "$SCHEDULER_REGION" ]; then
+    "$GCLOUD_BIN" scheduler jobs describe "$SCHEDULER_JOB" --location "$SCHEDULER_REGION" --project "$SANDBOX_PROJECT" --format=json >"$SCRATCH/scheduler.json" 2>"$SCRATCH/scheduler.err" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      unmeasured scheduler "the Scheduler job $SCHEDULER_JOB is not in the location --scheduler-region named (\`$GCLOUD_BIN scheduler jobs describe\` exited $rc: $(last_lines "$SCRATCH/scheduler.err")). K4.2 applies that job UNDER THE COORDINATOR'S OWN CONDITION: an installation that has not opted into the coordinator has no tagged image to run and no renewal job at all, and \`fugaro licence status\` says renewal is by hand there (TN5). Nothing about the renewal was measured. Name the region the installation's Scheduler jobs live in (\`$GCLOUD_BIN scheduler jobs list --location <location>\`) or turn the coordinator on with \`fugaro update\`"
+      stop "the Scheduler job $SCHEDULER_JOB was not found in the location this check was given, so the renewal this check fires is not there"
+    fi
+    return 0
+  fi
+  "$GCLOUD_BIN" scheduler locations list --project "$SANDBOX_PROJECT" --format=json >"$SCRATCH/locations.json" 2>"$SCRATCH/locations.err" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    unmeasured scheduler "the project's Scheduler locations could not be listed (\`$GCLOUD_BIN scheduler locations list\` exited $rc: $(last_lines "$SCRATCH/locations.err")), so this check cannot find the region the renewal job runs in. Scheduler is not offered in every Cloud Run region (K4.2), so its region is a fact about this installation rather than a name this check can derive: pass --scheduler-region with the region the installation's Scheduler jobs live in, or run the command yourself"
+    stop "the Scheduler locations could not be listed, so the check cannot aim its fire at the renewal job"
+  fi
+  local candidate found=""
+  for candidate in "$SANDBOX_REGION" $(python3 - "$SCRATCH/locations.json" <<'PY'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    doc = []
+if not isinstance(doc, list):
+    doc = []
+names = []
+for e in doc:
+    if isinstance(e, dict):
+        n = e.get("locationId") or (e.get("name") or "").rsplit("/", 1)[-1]
+        if n:
+            names.append(n)
+print(" ".join(sorted(set(names))))
+PY
+  ); do
+    [ -n "$candidate" ] || continue
+    rc=0
+    "$GCLOUD_BIN" scheduler jobs describe "$SCHEDULER_JOB" --location "$candidate" --project "$SANDBOX_PROJECT" --format=json >"$SCRATCH/scheduler.json" 2>"$SCRATCH/scheduler.err" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      found=$candidate
+      break
+    fi
+  done
+  if [ -z "$found" ]; then
+    unmeasured scheduler "the Scheduler job $SCHEDULER_JOB is in none of this project's Scheduler locations (the installation's own Cloud Run region ${SANDBOX_REGION:-unknown} first). K4.2 applies that job UNDER THE COORDINATOR'S OWN CONDITION: an installation that has not opted into the coordinator has no tagged image to run and no renewal job at all, and \`fugaro licence status\` says renewal is by hand there (TN5). Nothing about the renewal was measured. Read that job's region yourself (\`$GCLOUD_BIN scheduler jobs list --location <location>\`) and pass --scheduler-region, or turn the coordinator on with \`fugaro update\`"
+    stop "the Scheduler job $SCHEDULER_JOB was not found in any location the project serves, so the renewal this check fires is not there"
+  fi
+  SCHEDULER_REGION=$found
+}
+
+# step_scheduler: where the renewal tick is, read BEFORE anything is bought. A job
+# this check cannot find is a row it could not measure, and it says so before a
+# sandbox transaction exists rather than after two billings.
+step_scheduler() {
+  scheduler_location
+  scheduler_fields "$SCRATCH/scheduler.json" >"$SCRATCH/scheduler.txt"
+  local state schedule
+  state=$(field "$SCRATCH/scheduler.txt" state)
+  schedule=$(field "$SCRATCH/scheduler.txt" schedule)
+  fact scheduler PASS "the renewal tick this check fires is $SCHEDULER_JOB in Scheduler location $SCHEDULER_REGION (state '${state:-unknown}', schedule '${schedule:-none}'): Scheduler is not offered in every Cloud Run region, so the location was read from the project $SANDBOX_PROJECT rather than taken to be the installation's own Cloud Run region ${SANDBOX_REGION:-unknown}. This check fires it twice — before the refund, for the term's move, and after it, so the installation's own check records the withdrawal"
+}
+
 # step_paddle_sandbox: one read of the Paddle SANDBOX, which is what proves the
 # account S8.5 creates is reachable and carries the licence's prices. What the
 # block carries is a count and an id: the key is never read into a fact.
@@ -833,6 +1089,9 @@ step_entitlement() {
     stop "the paid purchase did not appear at the portal, so the entitlement was not read"
   fi
   ENT_ENDS_BEFORE=$ends_at
+  ENT_TIER=$tier
+  ENT_KIND=$kind
+  ENT_SEATS=$seats
   # The workspace's own mirror names Paddle's subscription: an entitlement whose
   # workspace names none cannot be renewed, and the rows below read its period.
   local mcode
@@ -855,6 +1114,81 @@ step_entitlement() {
     stop "the workspace's subscription mirror names no subscription"
   fi
   fact entitlement PASS "the purchase is active at the portal: entitlement $ent_id for the workspace $WORKSPACE_ID, source 'purchase', status 'active', tier '${tier:-unknown}' (${kind:-unknown}, ${seats:-?} seat(s)), ending $ends_at, and the workspace's mirror names Paddle's subscription $SUB_ID (workspace '$sub_ws', state '${sub_state:-unknown}')"
+}
+
+# step_bind: the purchase has to be the INSTALLATION's before the renewal and the
+# refund can be read there. A purchase makes an unbound entitlement and mints no
+# key (F25), so this is the step that binds it: ONE `fugaro licence login` in the
+# sandbox, signed in as the account that bought the licence (the key is bound to
+# the account whose verified address bought it, K3.3), and then the installation's
+# own read held against the purchase's own tier, kind and seats. The key is never
+# read, and no line of the command's output may carry one.
+step_bind() {
+  say "binding the purchase to the installation: $FUGARO_BIN licence login, in ${SANDBOX}"
+  ( cd "$SANDBOX" || exit 1; exec "$FUGARO_BIN" licence login ) >"$SCRATCH/login.out" 2>"$SCRATCH/login.err" &
+  LOGIN_PID=$!
+  LOGIN_REAPED=no
+  local line="" ticks=0 max=$((CLI_TIMEOUT * 2))
+  while [ "$ticks" -lt "$max" ]; do
+    line=$(extract_address "$SCRATCH/login.out")
+    [ -n "$line" ] && break
+    kill -0 "$LOGIN_PID" 2>/dev/null || break
+    sleep 0.5
+    ticks=$((ticks + 1))
+  done
+  if [ -z "$line" ]; then
+    reap_login
+    unmeasured bind "\`$FUGARO_BIN licence login\` in $SANDBOX printed no sign-in address within ${CLI_TIMEOUT}s (exit $LOGIN_STATUS): the purchase cannot be bound to the installation without one, and the renewal and the install rows below read the INSTALLATION's own licence. What it printed is in $SCRATCH/login.out and $SCRATCH/login.err"
+    stop "the installation's sign-in printed no address, so the purchase was not bound to it"
+  fi
+  manual "open $line and sign in as the account that bought this licence — the workspace $WORKSPACE_ID's own account, which the browser the login command opens is already at. The key is bound to the account whose verified address bought it (K3.3), which is what makes the renewal and the refund read THIS installation. Nothing is typed at this terminal and the check never sees your key; wait for the terminal to finish by itself"
+  say "waiting up to ${WAIT_WINDOW}s for the sign-in to come back"
+  ticks=0
+  max=$((WAIT * 2))
+  while kill -0 "$LOGIN_PID" 2>/dev/null; do
+    [ "$ticks" -lt "$max" ] || break
+    sleep 0.5
+    ticks=$((ticks + 1))
+  done
+  if kill -0 "$LOGIN_PID" 2>/dev/null; then
+    login_stop
+    unmeasured bind "the sign-in was not finished within ${WAIT_WINDOW}s: the installation is still not bound to the purchase, so every row below would read a licence that is not this purchase's. Sign in again (raise CHECK564_WAIT if this machine is slow) and run the check again. Nothing was bought twice and nothing was written"
+    stop "the sign-in was not finished in ${WAIT_WINDOW}s, so the purchase was not bound to the installation"
+  fi
+  reap_login
+  if [ "$LOGIN_STATUS" != 0 ]; then
+    unmeasured bind "\`$FUGARO_BIN licence login\` in $SANDBOX ended with exit $LOGIN_STATUS: the installation was not bound to the purchase, so the rows below would read a licence that is not this purchase's. Sign in as the account that bought it, then run the check again. What it printed is in $SCRATCH/login.out and $SCRATCH/login.err"
+    stop "the sign-in ended with a refusal, so the purchase was not bound to the installation"
+  fi
+  if grep -q 'fgk_' "$SCRATCH/login.out" "$SCRATCH/login.err" 2>/dev/null; then
+    fact bind FAIL "\`$FUGARO_BIN licence login\`'s own output carries a key-shaped string ('fgk_'): no line of the command's output may carry the key (K3.3, F5). The value is not printed here"
+    stop "the sign-in's own output carries a key-shaped string"
+  fi
+  run_bounded "$CLI_TIMEOUT" bind "$FUGARO_BIN" licence status --json
+  if [ "$BOUNDED_TIMED_OUT" = yes ]; then
+    unmeasured bind "\`$FUGARO_BIN licence status --json\` did not answer within ${CLI_TIMEOUT}s in $SANDBOX after the sign-in: the installation signed in and this check cannot read what it now holds"
+    stop "the installation's licence status did not answer, so the bind row was not read"
+  fi
+  if [ "$BOUNDED_STATUS" -ne 0 ]; then
+    unmeasured bind "\`$FUGARO_BIN licence status --json\` exited $BOUNDED_STATUS in $SANDBOX after the sign-in: $(last_lines "$SCRATCH/bind.err")$(last_lines "$SCRATCH/bind.out")"
+    stop "the installation's licence status did not answer, so the bind row was not read"
+  fi
+  licence_fields "$SCRATCH/bind.out" >"$SCRATCH/bind.txt"
+  local source state tier kind seats
+  source=$(field "$SCRATCH/bind.txt" source)
+  state=$(field "$SCRATCH/bind.txt" state)
+  tier=$(field "$SCRATCH/bind.txt" tier)
+  kind=$(field "$SCRATCH/bind.txt" kind)
+  seats=$(field "$SCRATCH/bind.txt" seats)
+  if [ "$source" != project ]; then
+    fact bind FAIL "\`$FUGARO_BIN licence status --json\` in $SANDBOX reads source '${source:-none}' rather than 'project' after the sign-in (state '${state:-none}'): K3.3's sign-in writes a key of the signed-in account's own project, and a key from anywhere else is not the licence this purchase made. The rows below would be about somebody else's key"
+    stop "the installation's key did not come from the sign-in's own project"
+  fi
+  if [ -n "$ENT_TIER" ] && [ "$tier" != "$ENT_TIER" ]; then
+    unmeasured bind "the purchase is tier '$ENT_TIER' (${ENT_KIND:-unknown}, ${ENT_SEATS:-?} seat(s)) and the installation's own read after the sign-in is tier '${tier:-none}' (${kind:-unknown}, ${seats:-?} seat(s)): the account signed in for a licence that is not the one this purchase made, so the rows below would not be about it. Sign in as the account that bought the licence for $WORKSPACE_ID — or, if this purchase is the licence you mean to measure, take the key the portal issued for it — and run the check again"
+    stop "the installation signed in for a licence other than the one this purchase made"
+  fi
+  fact bind PASS "the installation is bound to the purchase: \`$FUGARO_BIN licence login\` in $SANDBOX wrote a key of the signed-in account's own project (source 'project'), and \`$FUGARO_BIN licence status --json\` describes the licence this purchase made (tier '${tier:-unknown}', ${kind:-unknown}, ${seats:-?} seat(s), state '${state:-none}') against the purchase's own tier '$ENT_TIER'. The key was never read by this check, and no line of the sign-in's output carried one"
 }
 
 # step_renewal: Paddle's own period end and the portal's own end agree, and after
@@ -893,16 +1227,22 @@ step_renewal() {
     fact renewal FAIL "Paddle says the subscription $SUB_ID's current period ends at $period_end and the portal's own mirror says $portal_end: the portal mirrors what Paddle says and never decides it (P4.3), so a period end the two disagree about is a term the installation would read wrong"
     stop "the portal and Paddle disagree about the subscription's period end"
   fi
-  manual "the purchase is active and the term is $ENT_ENDS_BEFORE. Bill the renewal: in the Paddle SANDBOX, take the subscription $SUB_ID through its next billing period with Paddle's own sandbox billing (the sandbox dashboard's subscription screen for $SUB_ID, or Paddle's sandbox API — this check names no command it cannot verify), so that Paddle sends the renewal event. The check then runs the installation's own renewal job ($GCLOUD_BIN scheduler jobs run fugaro-licence-renew --project $SANDBOX_PROJECT --location ${SANDBOX_REGION:-<region>} in $SANDBOX) and waits up to ${WAIT_WINDOW}s for the term to move. What to paste back: what you billed and when"
+  manual "the purchase is active, bound and its term is $ENT_ENDS_BEFORE. Bill the renewal: in the Paddle SANDBOX, take the subscription $SUB_ID through its next billing period with Paddle's own sandbox billing (the sandbox dashboard's subscription screen for $SUB_ID, or Paddle's sandbox API — this check names no command it cannot verify), so that Paddle sends the renewal event. The check then runs the installation's own renewal job ($GCLOUD_BIN scheduler jobs run $SCHEDULER_JOB --project $SANDBOX_PROJECT --location $SCHEDULER_REGION in $SANDBOX) and waits up to ${WAIT_WINDOW}s for the term to move. What to paste back: what you billed and when"
   # The installation's own renewal: the documented scheduler invocation, which is
   # the command that makes the installation re-read its licence. It writes nothing
   # to the portal; it is here because the term's move is read where the
   # installation reads it, and because the command is one the owner runs by hand
   # otherwise.
-  run_bounded "$CLI_TIMEOUT" renew "$GCLOUD_BIN" scheduler jobs run fugaro-licence-renew --project "$SANDBOX_PROJECT" --location "${SANDBOX_REGION:-us-east5}"
+  run_bounded "$CLI_TIMEOUT" renew "$GCLOUD_BIN" scheduler jobs run "$SCHEDULER_JOB" --project "$SANDBOX_PROJECT" --location "$SCHEDULER_REGION"
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
-    unmeasured renewal "$GCLOUD_BIN scheduler jobs run fugaro-licence-renew did not answer within ${CLI_TIMEOUT}s in the project $SANDBOX_PROJECT: the installation's own renewal was not triggered"
+    unmeasured renewal "\`$GCLOUD_BIN scheduler jobs run $SCHEDULER_JOB --location $SCHEDULER_REGION\` did not answer within ${CLI_TIMEOUT}s in the project $SANDBOX_PROJECT: the installation's own renewal was not triggered"
     stop "the installation's renewal job did not answer, so the term's move was not measured"
+  fi
+  # A fire that failed is not a finding about the release: the term's move is only
+  # ever read after this fire, so there is nothing below to read as one.
+  if [ "$BOUNDED_STATUS" -ne 0 ]; then
+    unmeasured renewal "\`$GCLOUD_BIN scheduler jobs run $SCHEDULER_JOB --project $SANDBOX_PROJECT --location $SCHEDULER_REGION\` exited $BOUNDED_STATUS ($(last_lines "$SCRATCH/renew.err")): the installation's own renewal was NOT triggered, and the term's move is read only after that fire. Nothing about the renewal was measured — run that command yourself, read what it says, and run the check again"
+    stop "the renewal job could not be fired, so the term's move was not measured"
   fi
   # The term's move, read at the portal, by the bounded wait.
   poll_reset
@@ -956,7 +1296,46 @@ step_refund() {
     stop "the refund did not withdraw the entitlement at the portal, so D2147's rule was not measured"
   fi
   REFUNDED_ENT=$ent_id
+  REFUND_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   fact refund PASS "the entitlement $ent_id reads 'revoked' after the refund of the transaction $TXN_ID: the withdrawal resolved to the ENTITLEMENT and not to a key (D2147) — every key the licence ever minted is withdrawn (F29), and the term it held (ending ${ends_at:-unknown}) is kept on the record"
+}
+
+# step_tick: ONE more fire, AFTER the refund. The installation records a
+# withdrawal only when its own check asks the licence server (K4.1) — the portal's
+# record and the local store both say nothing to the installation until then — so
+# the install row needs a check recorded after the refund, and this is what makes
+# one happen. The execution is the one the fire STARTED: read back by its own
+# creation time against the instant of the fire, because an execution that ran
+# earlier (last night's tick, say) is not this fire's answer.
+step_tick() {
+  local started
+  started=$(date -u +%s)
+  say "firing $SCHEDULER_JOB once more, so the installation checks its licence after the refund..."
+  local rc=0
+  "$GCLOUD_BIN" scheduler jobs run "$SCHEDULER_JOB" --project "$SANDBOX_PROJECT" --location "$SCHEDULER_REGION" >"$SCRATCH/tick-fire.out" 2>"$SCRATCH/tick-fire.err" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    unmeasured tick "\`$GCLOUD_BIN scheduler jobs run $SCHEDULER_JOB --project $SANDBOX_PROJECT --location $SCHEDULER_REGION\` exited $rc ($(last_lines "$SCRATCH/tick-fire.err")): no check has been asked for since the refund, so the installation has not heard about the withdrawal and the install row below could not be measured. Fire it yourself and run the check again"
+    stop "the renewal job could not be fired after the refund, so the installation was not made to check"
+  fi
+  poll_reset
+  local found=no exec_name="" exec_created="" exec_completed=""
+  while :; do
+    "$GCLOUD_BIN" run jobs executions list --job "$LICENCE_JOB" --project "$SANDBOX_PROJECT" --region "$SANDBOX_REGION" --limit 5 --format=json >"$SCRATCH/tick-execs.json" 2>"$SCRATCH/tick-execs.err" || true
+    executions_fields "$SCRATCH/tick-execs.json" "$started" >"$SCRATCH/tick-execs.txt"
+    exec_name=$(field "$SCRATCH/tick-execs.txt" name)
+    exec_created=$(field "$SCRATCH/tick-execs.txt" created)
+    exec_completed=$(field "$SCRATCH/tick-execs.txt" completed)
+    if [ "$(field "$SCRATCH/tick-execs.txt" found)" = yes ] && [ "$exec_completed" = True ]; then
+      found=yes
+      break
+    fi
+    if ! poll_again; then break; fi
+  done
+  if [ "$found" != yes ]; then
+    unmeasured tick "no execution of the Cloud Run job $LICENCE_JOB created after this run fired $SCHEDULER_JOB had completed within ${WAIT_WINDOW}s (the newest was ${exec_name:-none}, created ${exec_created:-unknown}, Completed '${exec_completed:-nothing}'; \`$GCLOUD_BIN run jobs executions list\` said $(last_lines "$SCRATCH/tick-execs.err")). The job's own lines for this fire are what say why (\`$GCLOUD_BIN logging read 'resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$LICENCE_JOB\" AND labels.\"run.googleapis.com/execution_name\"=\"$exec_name\"' --freshness 30m --limit 50\`), and the check's own log reader in check560.sh reads the same way. Nothing about the tick was measured"
+    stop "the tick the refund needs did not run to completion, so the installation was not made to record the withdrawal"
+  fi
+  fact tick PASS "firing $SCHEDULER_JOB after the refund started the Cloud Run job $LICENCE_JOB's execution $exec_name (created $exec_created, after the fire), which COMPLETED: the installation's own check ran after the refund, which is what makes the install row below about the withdrawal rather than about the previous read"
 }
 
 # step_install: the installation's own read after the refund. Three things have
@@ -975,13 +1354,24 @@ step_install() {
     stop "the installation's licence status did not answer, so the install row was not read"
   fi
   licence_fields "$SCRATCH/status.out" >"$SCRATCH/status.txt"
-  local revoked state tier seats kind check_status
+  local revoked state tier seats kind check_status check_at freshness
   revoked=$(field "$SCRATCH/status.txt" revoked)
   state=$(field "$SCRATCH/status.txt" state)
   tier=$(field "$SCRATCH/status.txt" tier)
   seats=$(field "$SCRATCH/status.txt" seats)
   kind=$(field "$SCRATCH/status.txt" kind)
   check_status=$(field "$SCRATCH/status.txt" check_status)
+  check_at=$(field "$SCRATCH/status.txt" check_at)
+  # The installation hears about the withdrawal from its OWN check and from
+  # nowhere else, so an installation whose last check was recorded before the
+  # refund has not heard about it: that is a row this check could not measure (the
+  # tick above asked and the job's lines say why), never a FAIL. Only a check
+  # recorded AFTER the refund makes the rows below about the withdrawal.
+  freshness=$(stamp_after "$check_at" "$REFUND_AT")
+  if [ "$freshness" != yes ]; then
+    unmeasured install "\`$FUGARO_BIN licence status --json\` in $SANDBOX reads last_check.at '${check_at:-none}', which is not after the instant this run saw the refund land at the portal (${REFUND_AT:-unknown}): the installation records a withdrawal when its own check asks the licence server (K4.1), and no check has been recorded since the refund. The tick row above fired $SCHEDULER_JOB, so the job's own lines for that fire are what say why. Nothing about the install row was measured"
+    stop "the installation has recorded no check since the refund, so it has not heard about the withdrawal and the install row was not measured"
+  fi
   if [ "$revoked" != true ]; then
     fact install FAIL "\`$FUGARO_BIN licence status --json\` in $SANDBOX reads revoked=$revoked (state '${state:-none}') after the refund of $TXN_ID: the entitlement is revoked at the portal and the key this installation runs on STILL SERVES, which is the finding this check exists for — a refund that left a key serving (D2147)"
     stop "the refund left the installation's key serving"
@@ -1013,9 +1403,12 @@ plan() {
   say "  [network, sandbox read-only] GET ${PADDLE_API}/prices?status=active with the sandbox API key — the count and the first price id; the key never leaves a 0600 curl config"
   say "  [network, WOULD CREATE] POST ${API}/api/checkout for the workspace ${WORKSPACE_ID} — a real transaction in the Paddle SANDBOX, then GET ${PADDLE_API}/transactions/{id} to hold that the sandbox minted it"
   say "  [browser + network] pay the sandbox overlay, then poll ${API}/api/entitlements and ${API}/api/workspaces/${WORKSPACE_ID}/subscription — the entitlement and the subscription it names"
+  say "  [local, read-only] ${GCLOUD_BIN} scheduler locations list and jobs describe for $SCHEDULER_JOB — the Scheduler location the renewal job is in, which is NOT the installation's Cloud Run region (K4.2), so the fire is aimed where the job is"
+  say "  [browser + network] sign in ONCE at ${FUGARO_BIN} licence login in ${SANDBOX} as the account that bought, then hold the installation's own read against the purchase's tier — the purchase mints no key by itself (F25)"
   say "  [browser + network] bill the renewal, then hold Paddle's period end and the portal's agree and the term MOVED"
   say "  [browser + network] refund the sandbox transaction, then hold the entitlement reads 'revoked' — the whole licence (D2147)"
-  say "  [read] ${FUGARO_BIN} licence status --json in ${SANDBOX} — revoked=true, last_check 'revoked', the tier and the seats still readable (D436)"
+  say "  [fire + read] fire ${GCLOUD_BIN} scheduler jobs run $SCHEDULER_JOB once more after the refund and wait for a completed execution of the Cloud Run job $LICENCE_JOB created after that fire — the installation hears about a withdrawal only from its own check (K4.1)"
+  say "  [read] ${FUGARO_BIN} licence status --json in ${SANDBOX} — revoked=true, last_check 'revoked' and last_check.at AFTER the refund, the tier and the seats still readable (D436)"
   say "  [no write by this check] the revoked key in ${SANDBOX} is replaced by you, per the restore MANUAL line"
   fact dry-run PASS "the plan was printed and nothing was run: no portal call, no sandbox call and no install — and the two MANUAL steps that buy and refund are named above as the acts they are"
 }
@@ -1033,11 +1426,14 @@ main() {
   fi
   step_api
   step_sandbox
+  step_scheduler
   step_paddle_sandbox
   step_checkout
   step_entitlement
+  step_bind
   step_renewal
   step_refund
+  step_tick
   step_install
   step_restore
 }
@@ -1050,6 +1446,25 @@ ENT_ENDS_BEFORE=""
 REFUNDED_ENT=""
 SANDBOX_PROJECT=""
 SANDBOX_REGION=""
+# The two names K4.2 gives these resources, spelled as internal/infra/licence.go
+# spells them: the Cloud Run job must not start with fugaro- (that is what
+# `fugaro runs ls` counts as a workflow job), and the schedule job carries the
+# prefix.
+LICENCE_JOB=fugarolicence
+SCHEDULER_JOB=fugaro-licence-renew
+# Where the Scheduler job lives. Scheduler is not offered in every Cloud Run
+# region (K4.2's module comment), so this is resolved rather than assumed to be
+# the installation's own region.
+SCHEDULER_REGION=""
+# The instant this run saw the refund land at the portal. The installation hears
+# about a withdrawal only from its own check, so the install row needs a check
+# recorded after this instant.
+REFUND_AT=""
+# The purchase's own terms, kept so the bind row can hold the key the
+# installation signed in for against the licence this purchase issued.
+ENT_TIER=""
+ENT_KIND=""
+ENT_SEATS=""
 
 DRY_RUN_CLI=""
 SANDBOX_CLI=""
@@ -1059,7 +1474,8 @@ API_CLI=""
 WORKSPACE_CLI=""
 TERMS_CLI=""
 PRODUCTION_CLI=""
-USAGE="check564.sh --sandbox <dir> --token-file <file> --paddle-key-file <file> [--api <origin>] [--workspace-id <id>] [--terms <row>] [--production] [--dry-run]"
+SCHEDULER_REGION_CLI=""
+USAGE="check564.sh --sandbox <dir> --token-file <file> --paddle-key-file <file> [--api <origin>] [--workspace-id <id>] [--terms <row>] [--scheduler-region <region>] [--production] [--dry-run]"
 usage() {
   sed -n '2,/^set -Eeuo/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&3
 }
@@ -1095,6 +1511,11 @@ while [ $# -gt 0 ]; do
     TERMS_CLI=$2
     shift 2
     ;;
+  --scheduler-region)
+    [ $# -ge 2 ] || die "--scheduler-region needs a region. usage: $USAGE"
+    SCHEDULER_REGION_CLI=$2
+    shift 2
+    ;;
   --production)
     PRODUCTION_CLI=1
     shift
@@ -1119,6 +1540,7 @@ PADDLE_KEY_FILE=${CHECK564_PADDLE_KEY_FILE:-${PADDLE_KEY_CLI:-}}
 WORKSPACE_ID=${CHECK564_WORKSPACE_ID:-${WORKSPACE_CLI:-}}
 TERMS=${CHECK564_TERMS:-${TERMS_CLI:-}}
 PRODUCTION=${CHECK564_PRODUCTION:-${PRODUCTION_CLI:-}}
+SCHEDULER_REGION=${CHECK564_SCHEDULER_REGION:-${SCHEDULER_REGION_CLI:-}}
 DRY_RUN=${CHECK564_DRY_RUN:-${DRY_RUN_CLI:-}}
 KEEP_SCRATCH=${CHECK564_KEEP_SCRATCH:-}
 API=${CHECK564_API:-${API_CLI:-}}

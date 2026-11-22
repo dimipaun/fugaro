@@ -520,9 +520,16 @@ import (
 // --device` prints an address and a code and then ends either approved or
 // expired, so a case says what each half holds and that a code which ran out
 // wrote nothing. Check 564's are a fake `curl` over the portal's API and the
-// Paddle SANDBOX API and a fake `fugaro`, so a case bends a transaction the
-// sandbox does not hold, a renewal that did not move the term, and a refund that
-// withdrew only the key the event named rather than the whole licence.
+// Paddle SANDBOX API, a fake `fugaro` whose `licence login` prints an authorize
+// address and whose `licence status --json` holds a check the case places before
+// or after the refund, and a fake `gcloud` whose Scheduler job is in a location
+// the installation's own Cloud Run region is NOT (Scheduler does not serve every
+// region, which is what K4.2's module works around), together with the licence
+// job's executions and both of the check's fires: so a case bends a transaction
+// the sandbox does not hold, a renewal that did not move the term, a refund that
+// withdrew only the key the event named rather than the whole licence, a fire
+// that failed, a job in no location the project serves, a tick whose fire started
+// no execution, and an installation that has recorded no check since the refund.
 // Check 760's fakes are a fake `fugaro` answering `doctor --json` and the four
 // `runs ls` reads it times, over a window that names two pull requests -- one of
 // them with no index entry, so its read falls back to the scan -- and a fake

@@ -14,6 +14,16 @@
 # moves a licence through. No body here is a real Paddle shape; each is the
 # case's own file.
 #
+# The fake `gcloud` serves the renewal Scheduler job and the licence Cloud Run
+# job: the job's own location and document (`scheduler.served` says which locations
+# Scheduler serves, so a case can put the job somewhere OTHER than the
+# installation's Cloud Run region, which is the state K4.2's module works around),
+# the two `scheduler jobs run` fires, and the job's executions — an older one that
+# ran before the fire and the one the fire starts, so a case can say which of them
+# the tick row read. The fake `fugaro` whose `licence login` prints an authorize
+# address, and whose `licence status --json` resolves the `at` the fixture carries
+# into a check recorded after this run's refund or an hour before it.
+#
 # Usage: bash scripts/live-checks/check564_test.sh
 #        CHECK_TEST_ONLY=test_happy_path bash scripts/live-checks/check564_test.sh
 #        CHECK_TEST_SHARD=0/3 bash scripts/live-checks/check564_test.sh
@@ -82,6 +92,10 @@ sandbox_api=https://sandbox-api.paddle.com
 workspace=ws-chk564
 txn=txn_sandbox_1
 sub=sub_sandbox_1
+# The two executions of the licence Cloud Run job the fixture holds: the one an
+# earlier tick started, and the one the fire this run makes starts.
+exec_older=fugarolicence-old99
+exec_fresh=fugarolicence-abc12
 # The two values a case writes into a file and asserts the check never prints:
 # marker words and not credentials, so a file here is a key's SHAPE and nothing
 # anybody could present.
@@ -166,9 +180,9 @@ write_fake_fugaro() { # dir
   cat >"$1/bin/fugaro" <<'FUGARO_EOF'
 #!/usr/bin/env bash
 # A stand-in for the released `fugaro`, for scripts/live-checks/check564_test.sh
-# only: `doctor --json` and `licence status --json` answer out of $FAKE564_DIR, and
-# every call is recorded so a case can assert which reads the check made and that
-# none of them was a write.
+# only: `doctor --json`, `licence login` and `licence status --json` answer out of
+# $FAKE564_DIR, and every call is recorded so a case can assert which reads the
+# check made and that none of them was a write.
 set -euo pipefail
 dir=${FAKE564_DIR:?}
 mkdir -p "$dir/logs"
@@ -179,7 +193,30 @@ doctor)
   exit "$(cat "$dir/doctor.status" 2>/dev/null || printf '0')"
   ;;
 licence)
-  cat "$dir/status.json"
+  if [ "${2:-}" = login ]; then
+    printf 'open this address to finish the sign-in: https://licence.chk564.example/cli/authorize?state=chk564&code_challenge=chk564\n'
+    printf 'waiting for the sign-in to come back\n' >&2
+    exit "$(cat "$dir/login.status" 2>/dev/null || printf '0')"
+  fi
+  # `licence status --json`. The `at` the fixture carries is a PLACEHOLDER and is
+  # resolved here, at the moment of this read: `after` is a second PAST the read
+  # and `before` an hour before it, so a case can give the installation a check
+  # recorded after this run's own refund instant — or one recorded long before it —
+  # without either side racing a clock. (The check compares whole seconds, and its
+  # own refund instant is the second it saw the refund land, so "after" is a second
+  # past rather than the same second.)
+  python3 - "$dir/status.json" <<'PY'
+import datetime, json, sys
+doc = json.load(open(sys.argv[1]))
+last = doc.get("last_check")
+if isinstance(last, dict):
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if last.get("at") == "after":
+        last["at"] = (now + datetime.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    elif last.get("at") == "before":
+        last["at"] = (now - datetime.timedelta(seconds=3600)).strftime("%Y-%m-%dT%H:%M:%SZ")
+print(json.dumps(doc))
+PY
   exit "$(cat "$dir/status.status" 2>/dev/null || printf '0')"
   ;;
 *)
@@ -196,13 +233,89 @@ write_fake_gcloud() { # dir
   cat >"$1/bin/gcloud" <<'GCLOUD_EOF'
 #!/usr/bin/env bash
 # A stand-in for `gcloud`, for scripts/live-checks/check564_test.sh only: the
-# renewal row's `scheduler jobs run` is recorded and answers out of $FAKE564_DIR.
+# Scheduler job's own location and document, the licence Cloud Run job's
+# executions, and the two `scheduler jobs run` fires all answer out of
+# $FAKE564_DIR, and every call is recorded, so a case reads the location each fire
+# was aimed at and which executions were looked at. Scheduler is NOT served in the
+# installation's own Cloud Run region here (list `$dir/scheduler.served`), which is
+# the state K4.2's module works around by placing the job in the nearest location
+# it can.
 set -euo pipefail
 dir=${FAKE564_DIR:?}
 mkdir -p "$dir/logs"
 printf 'gcloud %s\n' "$*" >>"$dir/logs/gcloud.calls"
-if [ -f "$dir/renew.status" ]; then exit "$(cat "$dir/renew.status")"; fi
-printf '{"name":"fugaro-licence-renew"}\n'
+served() { # served LOCATION — 0 when the fixture says Scheduler serves it
+  [ -f "$dir/scheduler.served" ] || return 1
+  local l
+  for l in $(cat "$dir/scheduler.served"); do
+    [ "$l" = "$1" ] && return 0
+  done
+  return 1
+}
+resolve() { # resolve FILE — the `after`/`before` placeholders of a fixture
+  python3 - "$1" <<'PY'
+import datetime, json, sys
+now = datetime.datetime.now(datetime.timezone.utc)
+
+def at(v):
+    if v == "after":
+        return now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if v == "before":
+        return (now - datetime.timedelta(seconds=3600)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return v
+
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    doc = []
+for e in doc if isinstance(doc, list) else []:
+    if not isinstance(e, dict):
+        continue
+    md = e.get("metadata")
+    if isinstance(md, dict) and "creationTimestamp" in md:
+        md["creationTimestamp"] = at(md["creationTimestamp"])
+    st = e.get("status")
+    if isinstance(st, dict) and st.get("completionTime"):
+        st["completionTime"] = at(st["completionTime"])
+print(json.dumps(doc))
+PY
+}
+case "${1:-} ${2:-}" in
+"scheduler locations")
+  if [ -f "$dir/locations.status" ]; then exit "$(cat "$dir/locations.status")"; fi
+  cat "$dir/locations.json"
+  ;;
+"scheduler jobs")
+  case "${3:-}" in
+  run)
+    if [ -f "$dir/renew.status" ]; then exit "$(cat "$dir/renew.status")"; fi
+    printf '{"name":"fugaro-licence-renew"}\n'
+    ;;
+  describe)
+    where=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+      --location) where=${2:-} ;;
+      esac
+      shift
+    done
+    served "$where" || exit 1
+    cat "$dir/scheduler.json"
+    ;;
+  *)
+    printf 'fake gcloud: no route for %s\n' "$*" >&2
+    exit 7
+    ;;
+  esac
+  ;;
+"run jobs")
+  resolve "$dir/execs.json"
+  ;;
+*)
+  printf 'fake gcloud: no route for %s\n' "$*" >&2
+  exit 7
+  ;;
+esac
 GCLOUD_EOF
   chmod +x "$1/bin/gcloud"
 }
@@ -279,7 +392,20 @@ prepare() { # dir
   cp "$dir/state/mirror.body.1" "$dir/state/mirror.body"
   printf '200\n' >"$dir/state/mirror.code"
 
-  printf '{"state":"licensed","tier":"team","kind":"paid","seats":1,"revoked":true,"last_check":{"status":"revoked"}}\n' >"$dir/state/status.json"
+  printf '{"source":"project","state":"licensed","tier":"team","kind":"paid","seats":1,"revoked":true,"last_check":{"status":"revoked","at":"after"}}\n' >"$dir/state/status.json"
+
+  # The renewal job: Scheduler serves europe-west1 and us-central1, and NOT
+  # us-east5, which is the installation's own Cloud Run region in this fixture —
+  # the state K4.2's module works around by placing the job in the nearest served
+  # location. The job's own document names the schedule and the state.
+  printf '[{"locationId":"europe-west1"},{"locationId":"us-central1"}]\n' >"$dir/state/locations.json"
+  printf 'europe-west1 us-central1\n' >"$dir/state/scheduler.served"
+  printf '{"name":"projects/%s/locations/europe-west1/jobs/fugaro-licence-renew","state":"ENABLED","schedule":"23 4 * * *","timeZone":"UTC"}\n' "$project" >"$dir/state/scheduler.json"
+
+  # The licence Cloud Run job's executions: an execution that ran LONG BEFORE this
+  # run's fire and completed, and the one the fire itself starts. The tick row has
+  # to name the fire's own (`after`) and never the older one.
+  printf '[{"metadata":{"name":"fugarolicence-old99","creationTimestamp":"before"},"status":{"conditions":[{"type":"Completed","status":"True"}]}},\n {"metadata":{"name":"fugarolicence-abc12","creationTimestamp":"after"},"status":{"conditions":[{"type":"Completed","status":"True"}]}}]\n' >"$dir/state/execs.json"
 }
 
 run_check() { # run_check DIR ENV... [-- ARGS...]
@@ -389,13 +515,20 @@ test_happy_path() {
   expect_row api "401 and code 'unauthenticated'" "the happy path: the origin is the portal's API"
   expect_row token "one line at mode 0600" "the happy path: the token file"
   expect_row sandbox "chk564-sandbox in $project" "the happy path: the installation"
+  expect_row scheduler "Scheduler location europe-west1" "the happy path: the renewal job's own location"
+  expect_row scheduler "not offered in every Cloud Run region" "the happy path: why the location is read"
   expect_row checkout "the sandbox merchant minted the transaction" "the happy path: the sandbox minted it"
   expect_row checkout "$txn" "the happy path: the transaction is named"
   expect_row entitlement "source 'purchase', status 'active'" "the happy path: the purchase is active"
   expect_row entitlement "names Paddle's subscription $sub" "the happy path: the subscription is named"
+  expect_row bind "bound to the purchase" "the happy path: the purchase is bound to the installation"
+  expect_row bind "source 'project'" "the happy path: the key came from the sign-in"
+  expect_row bind "never read by this check" "the happy path: the key was never read"
   expect_row renewal "the entitlement's term moved" "the happy path: the term moved"
   expect_row refund "reads 'revoked' after the refund" "the happy path: the whole licence is withdrawn"
   expect_row refund "D2147" "the happy path: D2147 is cited"
+  expect_row tick "$exec_fresh" "the happy path: the tick names the fire's own execution"
+  expect_row tick "COMPLETED" "the happy path: the tick ran to completion"
   expect_row install "revoked=true" "the happy path: the installation reads revoked"
   expect_row install "D436" "the happy path: nothing was deleted"
   expect_row restore "$txn" "the happy path: the restore names the transaction"
@@ -403,6 +536,8 @@ test_happy_path() {
   expect_contains "$out" "MANUAL: " "the happy path: a MANUAL line is printed"
   expect_contains "$out" "sandbox overlay" "the happy path: the pay MANUAL names the overlay"
   expect_contains "$out" "refund the transaction $txn" "the happy path: the refund MANUAL names the transaction"
+  expect_contains "$out" "sign in as the account that bought this licence" "the happy path: the bind MANUAL names the account"
+  expect_contains "$out" "https://licence.chk564.example/cli/authorize" "the happy path: the bind MANUAL names the address the login printed"
   expect_contains "$out" "CHECK 564 RESULT END (exit 0)" "the happy path: the block's end"
   # The calls, in the order the rows are: the anonymous read, the sandbox read,
   # the checkout and its read-back, then the entitlement, the mirror, Paddle's
@@ -413,7 +548,18 @@ test_happy_path() {
   expect_contains "$calls" "curl POST /api/checkout (config yes)" "the happy path: the checkout carried the sign-in"
   expect_contains "$calls" "curl GET /prices?status=active (config yes)" "the happy path: the sandbox read carried a config"
   expect_contains "$(cat "$dir/state/logs/config.mode")" "600" "the happy path: the secrets travelled in 0600 configs"
-  expect_contains "$(cat "$dir/state/logs/gcloud.calls")" "scheduler jobs run fugaro-licence-renew" "the happy path: the renewal job ran"
+  local gcloudcalls
+  gcloudcalls=$(cat "$dir/state/logs/gcloud.calls")
+  expect_contains "$gcloudcalls" "scheduler jobs run fugaro-licence-renew" "the happy path: the renewal job ran"
+  expect_contains "$gcloudcalls" "run jobs executions list --job fugarolicence" "the happy path: the Cloud Run job's executions were read"
+  # Both fires, each aimed at the job's OWN location and neither at the
+  # installation's Cloud Run region, which Scheduler does not serve.
+  local fires
+  fires=$(grep 'scheduler jobs run' "$dir/state/logs/gcloud.calls")
+  expect_absent "$fires" "us-east5" "the happy path: no fire is aimed at the Cloud Run region"
+  expect_contains "$fires" "--location europe-west1" "the happy path: the fires are aimed at the job's own location"
+  expect_contains "$(grep -c 'scheduler jobs run' "$dir/state/logs/gcloud.calls")" "2" "the happy path: the job is fired twice"
+  expect_contains "$(cat "$dir/state/logs/fugaro.calls")" "licence login" "the happy path: the installation signed in once"
   expect_contains "$(cat "$dir/state/logs/fugaro.calls")" "licence status --json" "the happy path: the installation was read"
   assert_scratch_removed "the happy path"
 }
@@ -547,7 +693,9 @@ test_a_purchase_whose_workspace_names_no_subscription_is_a_finding() {
 test_a_refund_that_left_a_key_serving_is_a_finding() {
   local dir=$work/serving
   prepare "$dir"
-  printf '{"state":"licensed","tier":"team","kind":"paid","seats":1,"revoked":false,"last_check":{"status":"ok"}}\n' >"$dir/state/status.json"
+  # A check recorded AFTER the refund, and it read ok: the installation has
+  # heard about the withdrawal and its key still serves, which is the FAIL.
+  printf '{"source":"project","state":"licensed","tier":"team","kind":"paid","seats":1,"revoked":false,"last_check":{"status":"ok","at":"after"}}\n' >"$dir/state/status.json"
   run_check "$dir"
   expect_status "$status" 1 "a refund that left a key serving"
   expect_row install FAIL "a refund that left a key serving: the row is a finding"
@@ -565,6 +713,123 @@ test_a_renewal_that_did_not_move_the_term_is_not_measured() {
   expect_status "$status" 2 "a renewal that did not move the term"
   expect_row renewal FAIL "a renewal that did not move the term: the row is not a pass"
   expect_row renewal "the entitlement's term did not move" "a renewal that did not move the term: the row says so"
+}
+
+# The Scheduler location is a fact about the installation and NOT its Cloud Run
+# region: Scheduler is not offered in us-east5, and K4.2's module puts the job in
+# the nearest location it can. A fire aimed at the Cloud Run region would name a
+# location the job is not in.
+test_the_scheduler_location_is_read_not_assumed() {
+  local dir=$work/schedloc
+  prepare "$dir"
+  run_check "$dir"
+  expect_status "$status" 0 "the Scheduler location"
+  expect_row scheduler "Scheduler location europe-west1" "the Scheduler location: the job's own location, not the region"
+  expect_row scheduler "Cloud Run region us-east5" "the Scheduler location: the installation's own region is named as the one it is not"
+  local calls fires
+  calls=$(cat "$dir/state/logs/gcloud.calls")
+  fires=$(grep 'scheduler jobs run' "$dir/state/logs/gcloud.calls")
+  expect_contains "$calls" "scheduler jobs describe fugaro-licence-renew --location us-east5" "the Scheduler location: the Cloud Run region is tried first and is not served"
+  expect_contains "$calls" "scheduler jobs describe fugaro-licence-renew --location europe-west1" "the Scheduler location: the job was found where it is"
+  expect_absent "$fires" "us-east5" "the Scheduler location: no fire at the Cloud Run region"
+  expect_contains "$fires" "--project $project --location europe-west1" "the Scheduler location: every fire is aimed at the job's own location"
+}
+
+# The job in no location this project serves (or no location list at all): the
+# renewal this check fires does not exist here, and that is NO finding about the
+# release — and it is said BEFORE anything is bought, so the run leaves no
+# transaction behind.
+test_a_renewal_job_in_no_served_location_is_not_measured() {
+  local dir=$work/nosched
+  prepare "$dir"
+  printf '[]\n' >"$dir/state/locations.json"
+  : >"$dir/state/scheduler.served"
+  run_check "$dir"
+  expect_status "$status" 2 "a job in no served location"
+  expect_row scheduler "in none of this project's Scheduler locations" "a job in no served location: the row"
+  expect_row scheduler "TN5" "a job in no served location: renewal by hand is named"
+  expect_absent "$(cat "$dir/state/logs/curl.calls")" "/api/checkout" "a job in no served location: nothing is bought"
+  expect_absent "$(cat "$dir/state/logs/curl.calls")" "/prices" "a job in no served location: the sandbox is not read"
+  expect_absent "$(cat "$dir/state/logs/gcloud.calls")" "scheduler jobs run" "a job in no served location: nothing is fired"
+  assert_scratch_removed "a job in no served location"
+}
+
+# A fire that exits non-zero triggers nothing: the term's move is only ever read
+# after that fire, so there is no measured row below it. Not a finding.
+test_a_renewal_fire_that_fails_is_not_measured() {
+  local dir=$work/firefail
+  prepare "$dir"
+  printf '1\n' >"$dir/state/renew.status"
+  run_check "$dir"
+  expect_status "$status" 2 "a fire that failed"
+  expect_row renewal "exited 1" "a fire that failed: the exit is named"
+  expect_row renewal "was NOT triggered" "a fire that failed: nothing was measured"
+  assert_scratch_removed "a fire that failed"
+}
+
+# The installation hears about a withdrawal only from its OWN check (K4.1): an
+# installation whose last check was recorded before the refund has not heard about
+# it, so the install row could NOT be measured — never a FAIL, however the local
+# store reads. The tick row above it is what shows the fire itself worked.
+test_no_check_since_the_refund_is_not_measured() {
+  local dir=$work/stalecheck
+  prepare "$dir"
+  printf '{"source":"project","state":"licensed","tier":"team","kind":"paid","seats":1,"revoked":true,"last_check":{"status":"revoked","at":"before"}}\n' >"$dir/state/status.json"
+  run_check "$dir"
+  expect_status "$status" 2 "no check since the refund"
+  expect_row tick "$exec_fresh" "no check since the refund: the tick still names the fire's own execution"
+  expect_row install "not after the instant this run saw the refund land at the portal" "no check since the refund: the row says why"
+  expect_row install "no check has been recorded since the refund" "no check since the refund: the row says what is missing"
+  expect_absent "$out" "FACT install: PASS" "no check since the refund: the install row is not a pass"
+  assert_scratch_removed "no check since the refund"
+}
+
+# The per-machine key answers only where the project holds none: an installation
+# whose `licence status --json` reads source 'machine' after the sign-in holds a key
+# that is not this purchase's, so every row below would be about somebody else's
+# licence. A FAIL, and nothing is renewed.
+test_a_machine_key_after_the_sign_in_is_a_finding() {
+  local dir=$work/machinekey
+  prepare "$dir"
+  printf '{"source":"machine","state":"licensed","tier":"team","kind":"paid","seats":1,"revoked":true,"last_check":{"status":"revoked","at":"after"}}\n' >"$dir/state/status.json"
+  run_check "$dir"
+  expect_status "$status" 1 "a machine key after the sign-in"
+  expect_row bind "reads source 'machine' rather than 'project'" "a machine key after the sign-in: the row says what it read"
+  expect_row bind "somebody else's key" "a machine key after the sign-in: the finding is named"
+  expect_absent "$(cat "$dir/state/logs/curl.calls")" "/subscriptions/" "a machine key after the sign-in: nothing is renewed"
+  assert_scratch_removed "a machine key after the sign-in"
+}
+
+# The account signed in for a licence whose tier is not the purchase's: the rows
+# below would not be about this purchase, and that is a state of the sandbox rather
+# than a finding about the release.
+test_a_sign_in_for_another_licence_is_not_measured() {
+  local dir=$work/othertier
+  prepare "$dir"
+  printf '{"source":"project","state":"licensed","tier":"business","kind":"paid","seats":1,"revoked":true,"last_check":{"status":"revoked","at":"after"}}\n' >"$dir/state/status.json"
+  run_check "$dir"
+  expect_status "$status" 2 "a sign-in for another licence"
+  expect_row bind "the purchase is tier 'team'" "a sign-in for another licence: the purchase's own terms are named"
+  expect_row bind "tier 'business'" "a sign-in for another licence: the licence actually held is named"
+  expect_absent "$(cat "$dir/state/logs/curl.calls")" "/subscriptions/" "a sign-in for another licence: nothing is renewed"
+  assert_scratch_removed "a sign-in for another licence"
+}
+
+# The tick fires the job and no execution of it was CREATED by that fire: the
+# newest execution the list holds ran long before it (last night's tick), and its
+# own terminal line is not this fire's answer. A row this check could NOT measure,
+# and never a PASS read off yesterday's run.
+test_a_tick_that_started_no_execution_is_not_measured() {
+  local dir=$work/notick
+  prepare "$dir"
+  printf '[{"metadata":{"name":"fugarolicence-old99","creationTimestamp":"before"},"status":{"conditions":[{"type":"Completed","status":"True"}]}}]\n' >"$dir/state/execs.json"
+  run_check "$dir"
+  expect_status "$status" 2 "a tick that started no execution"
+  expect_row tick "no execution of the Cloud Run job fugarolicence created after this run fired" "a tick that started no execution: the row"
+  expect_row tick "$exec_older" "a tick that started no execution: the older run is named as what it saw"
+  expect_row tick "created " "a tick that started no execution: the older run's own instant is named"
+  expect_absent "$out" "FACT install: PASS" "a tick that started no execution: the install row is not a pass"
+  assert_scratch_removed "a tick that started no execution"
 }
 
 test_fugaro_prod_is_refused_without_production() {
@@ -657,6 +922,13 @@ t test_a_live_merchant_is_a_finding
 t test_a_purchase_whose_workspace_names_no_subscription_is_a_finding
 t test_a_refund_that_left_a_key_serving_is_a_finding
 t test_a_renewal_that_did_not_move_the_term_is_not_measured
+t test_the_scheduler_location_is_read_not_assumed
+t test_a_renewal_job_in_no_served_location_is_not_measured
+t test_a_renewal_fire_that_fails_is_not_measured
+t test_no_check_since_the_refund_is_not_measured
+t test_a_machine_key_after_the_sign_in_is_a_finding
+t test_a_sign_in_for_another_licence_is_not_measured
+t test_a_tick_that_started_no_execution_is_not_measured
 t test_fugaro_prod_is_refused_without_production
 t test_a_fugaro_prod_installation_is_refused_without_production
 t test_a_fugaro_prod_installation_named_production_is_measured
