@@ -20,6 +20,16 @@ import "github.com/dimipaun/fugaro/internal/safetext"
 // records none — and so does one whose service answered no owner at all, which
 // is what an installation that has not deployed the slip routes does.
 //
+// An empty owner is therefore a WRITE and not a no-op: its caller hands over
+// every answer that named a credential, and an answer that names a credential
+// and no owner says the token that just served this call is not the launcher's
+// own. Keeping the owner such an answer would have left from an earlier one
+// would pair this credential's name with a token that did not serve it — the
+// record naming, beside a pool's credential, the launcher whose own token paid
+// for a call before the cascade moved (F16). A record that cannot name the
+// token's owner says nothing, so the field is cleared, and oauth_account stays
+// what recordCredential writes: the name of the credential that answered.
+//
 // The value is written as one word, the way every untrusted value the run
 // records is: the owner is the service's answer and not this build's text, and
 // a value carrying a control or bidi character would be the whole record's
@@ -28,9 +38,6 @@ import "github.com/dimipaun/fugaro/internal/safetext"
 // ever leaves the service.
 func (r *run) recordCredentialOwner(owner string) {
 	owner = safetext.Field(owner)
-	if owner == "" {
-		return
-	}
 	r.mu.Lock()
 	if r.rec != nil && r.rec.CredentialOwner != owner {
 		r.rec.CredentialOwner = owner

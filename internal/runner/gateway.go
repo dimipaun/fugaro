@@ -966,7 +966,11 @@ const execName = "fugaro exec"
 // the dashboard reads (C1.3). Both are written by r.recordCredential
 // (runner.go, with the run's other record writers) and decided here, where the
 // answer arrives, because a second reader of the same contract is how two
-// records come to disagree. The tier a call settled by and the switch are
+// records come to disagree. The owner of that credential's token is the same
+// answer's second fact (F16), written by r.recordCredentialOwner beside the
+// write above and never without it: the two are the record's pair, and an
+// answer that names a credential the launcher does not own clears the owner
+// rather than leaving the one an earlier answer gave. The tier a call settled by and the switch are
 // C1.16's ledger.
 //
 // The typed answer is turned back into the contract's own type
@@ -975,12 +979,18 @@ const execName = "fugaro exec"
 // hands it the same shape.
 func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
 	if a.Credential != "" {
+		// The credential that answered and the owner of its token are ONE
+		// answer's two facts (F16), so they are written together, and the
+		// owner is written even when the answer names none: that CLEARS it. A
+		// credential the launcher does not own -- a pool's, a bundle entry, a
+		// per-user name of another person -- is answered no owner
+		// (credsvc.credentialOwnedBy), so an owner kept from an earlier answer
+		// would pair this credential's name with a token that did not serve
+		// this call: the record would name the wrong person, which is the one
+		// thing this field may never do. An answer that names no credential is
+		// a refusal or a call the service did not serve, and it writes
+		// neither, so the record stands as it does.
 		r.recordCredential(a.Credential)
-	}
-	if a.CredentialOwner != "" {
-		// The owner of the token the call was served with (F16): a second
-		// fact beside the credential's name, written by its own writer so
-		// neither field can be asked to hold the other's.
 		r.recordCredentialOwner(a.CredentialOwner)
 	}
 	if a.Switch != "" {

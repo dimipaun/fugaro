@@ -820,6 +820,13 @@ func TestCascadeRecordsOAuthAccount(t *testing.T) {
 // runstore.Record.CredentialOwner -- carries it. oauth_account keeps the
 // meaning it had: the credential's name, not the owner, which is the second
 // fact this test is about.
+//
+// The two are ONE answer's pair, so this test drives the answers the way a
+// cascade produces them: one that names a credential and its owner, then one
+// that names a credential whose token the launcher does not own. The record
+// must end holding the later credential's name and NO owner -- the field
+// cleared by the answer that named that credential -- because an owner kept
+// from the call before it is a record naming the wrong person.
 func TestCascadeRecordsCredentialOwner(t *testing.T) {
 	const owner = "104329501182774832335"
 	r := svcServedRunWith(t, func() (http.Header, pricing.Usage) {
@@ -853,15 +860,27 @@ func TestCascadeRecordsCredentialOwner(t *testing.T) {
 	}
 
 	// The owner is written as one word, the way every untrusted value the run
-	// records is, and an answer that names no owner -- a call the service
-	// admitted under no slip -- leaves the record as it stands.
-	r.serviceAnswer(gateway.ServiceAnswer{CredentialOwner: "1043295\u0007011‮827"})
+	// records is.
+	r.serviceAnswer(gateway.ServiceAnswer{
+		Credential:      "repo-shared-b",
+		CredentialOwner: "1043295\u0007011‮827",
+	})
 	if got := r.rec.CredentialOwner; got != "1043295011827" {
 		t.Errorf("the record names the owner %q, want the value with what a terminal must not be handed stripped", got)
 	}
+	// The owner travels WITH the credential that answered: a call served a
+	// credential the launcher does not own is answered no owner
+	// (credsvc.credentialOwnedBy), so the field is CLEARED rather than left
+	// standing from the call before it. An owner kept beside this answer would
+	// name the launcher whose own token paid for an earlier call as the owner
+	// of a credential that is not theirs -- the misattribution F16 forbids,
+	// and the run would carry it in the record it ends with.
 	r.serviceAnswer(gateway.ServiceAnswer{Credential: "sharedce"})
-	if got := r.rec.CredentialOwner; got != "1043295011827" {
-		t.Errorf("the record names the owner %q after an answer with none, want it unchanged", got)
+	if got := r.rec.CredentialOwner; got != "" {
+		t.Errorf("the record names the owner %q after a call served a credential the launcher does not own, want none", got)
+	}
+	if got := r.rec.OAuthAccount; got != "sharedce" {
+		t.Errorf("oauth_account = %q, want the credential of the call that just answered", got)
 	}
 }
 
