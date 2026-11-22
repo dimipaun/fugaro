@@ -26,10 +26,21 @@ import (
 //     `depends_on`** (F14, F18): the state carries a task-level graph, which is
 //     what the coordinator's stored view has none of (F17, CG2). So this is
 //     where `graph --json` stops being a list of nodes.
-//   - **An edge stays inside one orchestrator.** A `depends_on` naming an item
-//     the same node does not carry draws nothing (contract §6.22): the ids are
-//     the node's own namespace, and an edge to a node this document does not
-//     hold is not one a screen can draw.
+//   - **An edge ends at a node this document holds.** A bare `depends_on` the
+//     node does not carry draws nothing: the ids are the node's own namespace,
+//     so nothing outside it answers to them (contract §6.22). A
+//     `<orchestrator>/<item>` names another orchestrator's item (D3208), and it
+//     draws an edge to that peer's node — keyed under the scope this document
+//     draws the peer in (Peers), because one document holds a local
+//     orchestrator of this machine and a central one under two scope names
+//     (F17). A reference to an id no scope of this document has, and one naming
+//     this very node, draw nothing for the bare case's reason: the far end
+//     would be no node at all. The *item* half is not checked and could not be
+//     from here — whether the peer carries the item is that peer's own state's
+//     answer, and a dependency a state records is one this source draws
+//     whatever the peer has done about it. The granularity is the map
+//     document's own: an edge to an orchestrator the document does not draw is
+//     the shape it refuses (D3221).
 //   - **It reads almost nothing.** The caller has already read
 //     `orchestrator/<id>` through the person's own credential (D1357, T2) and,
 //     for a local scope, listed the cached briefs this machine holds
@@ -114,6 +125,22 @@ type OrchestratorSource struct {
 	// this process's own environment and platform, which is what a scope built
 	// from the command line has (graphSources).
 	Endpoint endpoint.Client
+	// Peers is the scope each orchestrator id of this document is drawn under
+	// (`orchestrator:<id>` or `local:<id>`), built by the read that enumerated
+	// them (documentScopes). A dependency on another orchestrator's item is an
+	// edge to that peer's node (D3208, F17), and which scope the peer's key
+	// carries is a fact of the document and not of this source: one document
+	// holds a local orchestrator of this machine and a central one under two
+	// different scope names, so a source that guessed — by mirroring its own
+	// kind, the one thing it does know, or by always spelling the central one —
+	// would key an edge to a node that is not there whenever the two kinds
+	// differ. A peer this map does not name is no node of the document, and a
+	// reference to it draws nothing (§6.22).
+	//
+	// It is left nil by a caller that reads one scope by name: that document
+	// holds the one node, so a cross-orchestrator dependency has nothing to
+	// point at and draws nothing.
+	Peers map[string]string
 }
 
 // Scope is the scope this source is, as the command line spells it: the source
@@ -134,8 +161,10 @@ func (s OrchestratorSource) Scope() Scope {
 // so keys are unique inside one source — D1356), its title, the repository it
 // names, its phase as its state, and the time of the newest attempt committed
 // against it, which is the one age a work item carries. Its `depends_on` become
-// edges to the items this same node holds, and a dependency it does not hold
-// draws nothing.
+// edges: to the items this same node holds, and — where the reference names
+// another orchestrator's item (`<orchestrator>/<item>`, D3208) and this
+// document draws that peer (Peers) — to the peer's own node (F17). A dependency
+// that answers to neither of those draws nothing.
 //
 // A `local:` scope tries the endpoint this machine's daemon serves before it
 // answers from the node: a live endpoint is the daemon's own document, fresher
@@ -211,7 +240,7 @@ func (s OrchestratorSource) Nodes() ([]Node, []Edge, SourceState, error) {
 	source := s.Scope().String()
 	if s.Local && localID(source) {
 		if state, at, ok := s.live(); ok {
-			nodes, edges, err := orchestratorNodes(source, state)
+			nodes, edges, err := orchestratorNodes(source, state, s.Peers)
 			if err != nil {
 				return nil, nil, unreadableState(source, err), nil
 			}
@@ -224,7 +253,7 @@ func (s OrchestratorSource) Nodes() ([]Node, []Edge, SourceState, error) {
 		if err != nil {
 			return nil, nil, unreadableState(source, err), nil
 		}
-		nodes, edges, err := orchestratorNodes(source, state)
+		nodes, edges, err := orchestratorNodes(source, state, s.Peers)
 		if err != nil {
 			return nil, nil, unreadableState(source, err), nil
 		}
@@ -355,7 +384,10 @@ func unreadableState(source string, reason error) SourceState {
 // refuses an id that is not a name (ValidateState), so this is the second half
 // of the same fence and not the first: a document can also be hand-written, and
 // safetext.Field is lossy in ways a name's own pattern is not.
-func orchestratorNodes(source string, s orchestrator.State) ([]Node, []Edge, error) {
+//
+// peers is the scope every orchestrator id of the document is drawn under, and
+// it is what a cross-orchestrator dependency's far end is keyed by (Peers, F17).
+func orchestratorNodes(source string, s orchestrator.State, peers map[string]string) ([]Node, []Edge, error) {
 	nodes := make([]Node, 0, len(s.WorkItems))
 	edges := []Edge{}
 	for _, w := range s.WorkItems {
@@ -387,12 +419,32 @@ func orchestratorNodes(source string, s orchestrator.State) ([]Node, []Edge, err
 	}
 	for _, w := range s.WorkItems {
 		for _, dep := range w.DependsOn {
-			if !held[dep] {
+			if held[dep] {
+				edges = append(edges, Edge{
+					From: NodeKey(source, w.ID),
+					To:   NodeKey(source, dep),
+					Kind: DependsOnEdge,
+				})
+				continue
+			}
+			// Not this node's own id, so the only other thing a reference can
+			// be is another orchestrator's item (D3208). Its far end is that
+			// peer's node under the scope this document draws the peer in, and
+			// a document that does not draw the peer has no such node: the edge
+			// is left out for the reason above, and so is a reference naming
+			// this very orchestrator, whose item this node has just been seen
+			// not to hold.
+			ref, err := orchestrator.ParseItemRef(dep)
+			if err != nil || ref.Orchestrator == s.AgentID {
+				continue
+			}
+			peer, ok := peers[ref.Orchestrator]
+			if !ok {
 				continue
 			}
 			edges = append(edges, Edge{
 				From: NodeKey(source, w.ID),
-				To:   NodeKey(source, dep),
+				To:   NodeKey(peer, ref.Item),
 				Kind: DependsOnEdge,
 			})
 		}

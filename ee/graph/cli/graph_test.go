@@ -53,6 +53,10 @@ package cli
 //     as "this CLI has no graph".
 //   - TestGraphTextTableNamesTheScopeAndGroupsByRelease: the human half, which
 //     groups by release because the coordinator's view has no edges (F17).
+//   - TestCrossOrchestratorScopesAreTheDocumentsOwn: the scope map every source
+//     of one document carries, which is what a cross-orchestrator dependency's
+//     far end is keyed by — `local:<id>` for an id this machine runs and
+//     `orchestrator:<id>` for one only the database holds (D1358, F17).
 
 import (
 	"bytes"
@@ -1380,4 +1384,24 @@ func nodeByID(doc graph.Document, id string) (graph.Node, bool) {
 		}
 	}
 	return graph.Node{}, false
+}
+
+// TestCrossOrchestratorScopesAreTheDocumentsOwn: the scope map one document's
+// sources carry (documentScopes, F17) — the two kinds of this project's
+// orchestrators under the two scope names the rest of the tree draws them by,
+// `local:<id>` for an id this machine has a cached brief for and
+// `orchestrator:<id>` for one only the database holds (CG4's rule, D1358).
+//
+// It is held as a function of what `all` enumerates rather than through a
+// database, because that is what it is: the read's own wiring is the one line
+// that hands the map to each source, and the ids here are the argument that read
+// passes it. An id the map does not know is central, which is the same answer
+// the sources are built with — the cache is what makes an id local, and it is
+// asked about each one.
+func TestCrossOrchestratorScopesAreTheDocumentsOwn(t *testing.T) {
+	got := documentScopes([]string{"o1", "o2", "o3"}, map[string]bool{"o1": true, "o2": false})
+	want := map[string]string{"o1": "local:o1", "o2": "orchestrator:o2", "o3": "orchestrator:o3"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("the document's scopes are %v, want %v", got, want)
+	}
 }
