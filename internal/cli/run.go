@@ -377,15 +377,22 @@ type runOptions struct {
 	rigor string
 	// promote is --promote: the area this run raises to the mode, instead of
 	// running a task of its own (docs/rigor-modes/levels-spec.md §4, LD6,
-	// docs/rigor-modes/levels-reconciliation.md §3b item 12). It names a rule
-	// of the repository's own rigor.areas, whose paths become this launch's
-	// declared paths and whose level is compared with the one asked for: a
-	// target below it is refused and equal is allowed. Empty (the default) is
-	// no promote run at all, and the launch writes no such field: the task
-	// stays byte-identical to what the previous release wrote. The block is
-	// resolved once, at launch (resolvePromote), because the run has to be
-	// refused for a target it may not raise to before it is paid for.
+	// docs/rigor-modes/levels-reconciliation.md §3b item 12). The area is the
+	// launch's one argument — `fugaro run --promote --mode <level> <area>` —
+	// and it must name a rule of the repository's own rigor.areas, whose paths
+	// become this launch's declared paths and whose level is compared with the
+	// one asked for: a target below it is refused and equal is allowed. Empty
+	// (the default) is no promote run at all, and the launch writes no such
+	// field: the task stays byte-identical to what the previous release wrote.
+	// The block is resolved once, at launch (resolvePromote), because the run
+	// has to be refused for a target it may not raise to before it is paid
+	// for.
 	promote string
+	// promoteFlag is whether --promote was given, and o.promote is the area the
+	// launch read out of its one argument (promoteArea): the flag is a switch
+	// and the area is the argument, so a promote launch is spelled
+	// `fugaro run --promote --mode <level> <area>`.
+	promoteFlag bool
 	// tier is --tier: the expectation tier this run's own launcher dispatches
 	// it at (docs/task-governance spec §3, implementation-plan T8.1): how much
 	// the run is expected to cost and take, which the runner records with the
@@ -571,7 +578,7 @@ func newRunCmd() *cobra.Command {
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
 	f.BoolVar(&o.commitReports, "commit-reports", false, "hand the project's stored reports (reports/ of the runs bucket) to the run this launch starts: reads them with your own account, uploads every one the checkout's mirror folder does not already hold byte for byte into the run's own reports/, and names them in the task for the commit_reports step to commit. Needs --recipe commit-reports (the step is what reads them), is refused together with --attach, and is refused on a run ID that already has a task")
 	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.RigorList()+"; it is the narrowest rank of the mode's order, so it settles the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) whether it asks for more or for less, and only a floor, outside every layer, holds it back; hotfix is the mode the request takes whole and needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
-	f.StringVar(&o.promote, "promote", "", "raise the named rigor.areas rule of this repository to the mode given with --mode, instead of running a task of your own: the run reads that area's backlog items and its code, works at the mode asked for, and closes the items it pays down (the ones whose code its own diff changes, and no others). The area's paths are the launch's declared paths, so --path is refused with it; a mode below the level the area already resolves to is refused, and equal is allowed; hotfix is never a target. Needs --mode, an area the repository's own fugaro.yaml declares, and a checkout of it in the working directory")
+	f.BoolVar(&o.promoteFlag, "promote", false, "raise the area named as this launch's one argument to the mode given with --mode, instead of running a task of your own: the run reads that area's backlog items and its code, works at the mode asked for, and closes the items it pays down (the ones whose code its own diff changes, and no others). The area is a rule this repository's own fugaro.yaml declares (rigor.areas), and its paths are the launch's declared paths, so --path is refused with it; a mode below the level the area already resolves to is refused, and equal is allowed; hotfix is never a target. Needs --mode and a checkout of the repository in the working directory")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
 	f.StringArrayVar(&o.contextRepos, "context", nil, "a repository this run reads and never writes, as owner/name: repeatable, at most "+fmt.Sprint(task.MaxContextRepos)+", each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
