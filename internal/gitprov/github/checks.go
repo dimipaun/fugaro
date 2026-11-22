@@ -57,10 +57,13 @@ const (
 // names the missing integration — which checksErr reports as
 // ErrChecksPermission rather than as a bare refusal, and which is the only 403
 // it reports that way (a rate limit's 403 is a rate limit). The
-// grant is the owner's (Check 231 of docs/gcp-live-checklist.md, B2 of
-// docs/forge-authorship-images/implementation-plan.md, which widens
-// tokenPermissions and RequiredPermissions together); until it lands, this
-// call fails closed and the ladder's gate waits for a person.
+// grant is the owner's (Check 231 of docs/gcp-live-checklist.md, still NOT
+// RUN), and the widening it waits on is unwritten: B2 of
+// docs/forge-authorship-images/implementation-plan.md planned it and was closed
+// as superseded by E8 on 2026-11-21, and E8's plan says "config: none", so
+// tokenPermissions and RequiredPermissions gain the two together by the next
+// task that touches them; until then this call fails closed and the ladder's
+// gate waits for a person.
 func (p *Provider) Checks(ctx context.Context, number int, sha string) ([]gitprov.CheckRun, error) {
 	if number <= 0 {
 		return nil, fmt.Errorf("reading the checks of pull request #%d: not a pull request number", number)
