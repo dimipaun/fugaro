@@ -483,7 +483,7 @@ type chainLimitPolicy struct {
 // the run will read (launchLevelsConfig), which is never nil: a launcher with
 // no checkout of the repository merges the project layer the task carries.
 func chainLimitPolicyOf(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config) chainLimitPolicy {
-	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Level: rigor.Rigor(spec.Rigor), Paths: spec.Paths}).Level
+	mode := rigor.Resolve(cfg.RigorConfig(), spec.RigorRequest(spec.Paths)).Level
 	c := chainLimitPolicy{
 		ceiling: modeScaledCeiling(ceilingLayer(env.lc), mode),
 		under:   []policy.Layer{defaultBranchPolicyLayer(ctx, spec.Repo), runner.FileLayer(cfg)},

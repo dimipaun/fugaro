@@ -146,7 +146,17 @@ const SPEC = 'projects.spec.ts'
  * for a **type** only, which the compiler erases, so nothing of the main
  * process is reachable from here -- and the registry below refuses a specifier
  * that is not a relative path, so a bundle that grew an import of `node:` or of
- * a package fails here rather than in a window with no Node in it. */
+ * a package fails here rather than in a window with no Node in it.
+ *
+ * The thirteen after `renderer/screens/projects.js` are the Manage section (the
+ * console-improvements plan's task I-MG): the screen now imports
+ * `renderer/manage/kinds/index.js` and `renderer/manage/shell.js`, which closes
+ * over the kind files, the descriptor, the command builder and the Spend screen
+ * the Budget kind's cap rows come from. They are this spec's readings all the
+ * same -- it draws the frame the section is mounted into and asserts on the tab
+ * around it, and a module missing from this list fails the spec however little
+ * of the Manage section it touches -- and `manage.spec.ts` is where the section
+ * itself is drawn and proved. */
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
@@ -160,6 +170,19 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/writes.js',
   'renderer/screens/policynotes.js',
   'renderer/screens/projects.js',
+  'renderer/screens/spend.js',
+  'renderer/manage/types.js',
+  'renderer/manage/command.js',
+  'renderer/manage/shell.js',
+  'renderer/manage/kinds/index.js',
+  'renderer/manage/kinds/read.js',
+  'renderer/manage/kinds/people.js',
+  'renderer/manage/kinds/repos.js',
+  'renderer/manage/kinds/images.js',
+  'renderer/manage/kinds/recipes.js',
+  'renderer/manage/kinds/models.js',
+  'renderer/manage/kinds/keys.js',
+  'renderer/manage/kinds/budget.js',
 ])
 
 /** moduleSource is one compiled module as a registry entry. */
@@ -786,16 +809,13 @@ test.describe('the Projects screen', () => {
     // sentence (`may send data to`) and never a bare list, and the route open to
     // every repository says so in words rather than by an empty allow-list.
     expect(drawn.modelsRoutes).toEqual(['anthropic', 'gateway'])
-    // **The host here is the console's marker for a machine name and not the
-    // name the document wrote.** `routes[].host` is the `host` class in the
-    // decoder's own table (`WIRE_TEXT_CLASSES`, `src/shared/schema.ts`), and that
-    // class draws `HOST_PLACEHOLDER` for every machine name, valid or not --
-    // which is the recorder's rule as well (`src/source/redact.ts`). No other
-    // class draws the name either: `label` and `sentence` run the free-text
-    // rules, whose hostname rule replaces one before any class branch reads the
-    // value. The hostname the route points at is not hidden by this: it is drawn
-    // whole inside the `base_url` below, which is a `url`.
-    expect(drawn.modelsHosts).toEqual(['<host>', '<host>'])
+    // **The host here is the name the document wrote.** `routes[].host` is the
+    // `host` class in the decoder's own table (`WIRE_TEXT_CLASSES`,
+    // `src/shared/schema.ts`), and that class draws the name it was given, valid
+    // or not (D3213, 2026-11-21): which endpoint a route sends data to is a fact
+    // about the operator's own configuration. It is drawn whole inside the
+    // `base_url` below as well, which is a `url`.
+    expect(drawn.modelsHosts).toEqual(['api.anthropic.com', 'gateway.example.test'])
     expect(drawn.text).toContain('open to every repository')
     expect(drawn.modelsAllowed).toEqual(['example-owner/example-repo'])
     // The models: one priced, one not. A price the document does not carry is

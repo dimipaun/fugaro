@@ -110,18 +110,19 @@ func (r *run) projectPolicy(ctx context.Context) (*projectpolicy.Policy, bool, e
 		return p.policy, p.found, p.err
 	}
 	p.done = true
-	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv && !r.d.Backend.TokenMarked {
-		// No database in the job's environment: no client, no marker, no node.
-		// This is the absence the readiness gate refuses (fugaro update) once
-		// the project has published a policy; a run cannot invent the
-		// credential it would need to notice one. An environment that named a
-		// backend it could not parse is not that absence (L-b), and neither is
-		// one whose launcher minted a token (M2): both name something that only
-		// exists when a policy or a shared budget does, so both go through
-		// budgetClient, which refuses them. Answering
-		// "no policy" here for a marked job is the fail-open M2 closed one step
-		// too late: admissionCheck would never see the allow-list, and the
-		// clone would be made before startBudgetBackend refused.
+	if !r.d.Backend.On() && !r.d.Backend.MalformedEnv && !r.d.Backend.Issued() {
+		// No database in the job's environment: no client, nothing a launcher
+		// left, no node. This is the absence the readiness gate refuses (fugaro
+		// update) once the project has published a policy; a run cannot invent
+		// the credential it would need to notice one. An environment that named
+		// a backend it could not parse is not that absence (L-b), and neither
+		// is one whose launcher provisioned this run's identity -- a minted
+		// token (M2) or a ticket (LM7): both say something that only exists
+		// when a policy or a shared budget does, so both go through
+		// budgetClient, which refuses them. Answering "no policy" here for such
+		// a job is the fail-open M2 closed one step too late: admissionCheck
+		// would never see the allow-list, and the clone would be made before
+		// startBudgetBackend refused.
 		return nil, false, nil
 	}
 	db, err := r.budgetClient(ctx)
@@ -423,15 +424,16 @@ func (r *run) budgetClient(ctx context.Context) (*rtdb.Client, error) {
 		return nil, c.err
 	}
 	if !r.d.Backend.On() {
-		// A job with no database in its environment, and no launcher's marker
-		// either, has nothing to read (projectPolicy's early return does not
-		// send it here). A marked one is M2's state met at the policy read
-		// rather than at startBudgetBackend: the launcher minted a token, which
-		// it does only when the project has a shared budget or a published
-		// policy, so this run has a ceiling it cannot read and must stop before
-		// admission and before any git credential exists — not after the clone.
-		if r.d.Backend.TokenMarked {
-			c.err = strayTokenNoBackend()
+		// A job with no database in its environment, and nothing a launcher
+		// left on it, has nothing to read (projectPolicy's early return does
+		// not send it here). A job the launcher provisioned an identity for --
+		// a minted token or a ticket (LM7) -- is M2's state met at the policy
+		// read rather than at startBudgetBackend: the launcher does either only
+		// when the project has a shared budget or a published policy, so this
+		// run has a ceiling it cannot read and must stop before admission and
+		// before any git credential exists — not after the clone.
+		if r.d.Backend.Issued() {
+			c.err = noBackendForWhatTheLauncherLeft(r.d.Backend)
 			return nil, c.err
 		}
 		return nil, nil
@@ -506,18 +508,45 @@ func errLauncherPredatesSeal(runID string) error {
 	return fmt.Errorf("%s is 1, so the fugaro that launched this run predates the seal of the budget token: it wrote the token unsealed, where this runner never reads one, and handed this execution no key; nothing was read. Upgrade the launching fugaro (brew upgrade dimipaun/tap/fugaro), run 'fugaro update' with the newer binary, then start a new run (fugaro run with the same task): run %s has launched, and retrying its run id would only report it", BudgetTokenEnv, runID)
 }
 
-// takeBudgetToken reads the run's sealed token object. It has one call site —
-// budgetClient, which memoizes what this returns, so the object is read once
-// per run — and that is a shape the source holds rather than one a run's state
-// can show: see TestTheBudgetTokenIsTakenAtOneCallSite. Its refusals are the
-// shipped ones (plan R10, B1): a job whose environment says
-// the budget is on but carries no Firebase API key, or no runs bucket, or a
-// slug or run id that cannot be a database key, is damage to the job, and the
-// run stops before anything else.
+// takeBudgetToken yields the run's identity: it claims the ticket the launcher
+// asked the installation's credentials service for, or reads the sealed token
+// object a launcher of the release behind left in the runs bucket (LM7, R7). It
+// has one call site — budgetClient, which memoizes what this returns, so the
+// identity is taken once per run — and that is a shape the source holds rather
+// than one a run's state can show: see TestTheBudgetTokenIsTakenAtOneCallSite.
+//
+// Which of the two it does is what the launch left on the execution and nothing
+// else: a ticket where the launcher asked an issuer for this run's identity,
+// the marker's seal key where it minted the token itself. Both arms hand back
+// one custom token for the same exchange below, so the policy read and the
+// session are one identity whichever the launch was (the bridge, R7).
+//
+// Its refusals are the shipped ones (plan R10, B1) for the sealed object — a
+// job whose environment says the budget is on but carries no Firebase API key,
+// or no runs bucket, or a slug or run id that cannot be a database key, is
+// damage to the job, and the run stops before anything else — and the claim's
+// own for a ticket (identity_claim.go), which halts the run rather than
+// returning a reason a caller could carry on from.
 func (r *run) takeBudgetToken(ctx context.Context) (string, error) {
 	b := r.d.Backend
 	if b.APIKey == "" {
 		return "", fmt.Errorf("the budget backend is configured (%s) but %s is not set", RTDBURLEnv, FirebaseAPIKeyEnv)
+	}
+	if b.Ticket != "" {
+		// The claim needs the API key and nothing else of the backend: the
+		// custom token it answers is exchanged below with that key, and a
+		// claimed launch minted no object, so the runs bucket is not read and
+		// its absence is not an error here.
+		custom, err := r.claimBudgetIdentity(ctx, b.Ticket)
+		if err != nil {
+			return "", err
+		}
+		// Registered before anything can print it: the answer that carried it
+		// is already out of claimBudgetIdentity, and every reason this run
+		// publishes from here on is redacted of it (the sealed object's rule
+		// below, one mechanism over).
+		r.addSecret(custom)
+		return custom, nil
 	}
 	if r.d.Bucket == nil {
 		return "", errors.New("the budget token is delivered through the runs bucket, and this run has none")

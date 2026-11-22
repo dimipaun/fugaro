@@ -1649,12 +1649,16 @@ func TestOldFirebaseFlagIsGone(t *testing.T) {
 // halves, and this pins them apart, because reading either as the other is a
 // wrong run. The *id* the run works in defaults to the run's own --gcp-project
 // (one id for both), so the pairing rule, the validation and every message
-// have one answer for "which project". The *backend* is still the flag's own
-// presence (init_stages.go's newFirebaseStage and newInstallation2Stage), so a
-// run that names no project applies none — and `--firebase-project=` is
-// pflag's empty value, which reads as no flag at all: a script whose variable
-// is unset must not buy three applies against the installation's own project,
-// one of them a Firestore database in a location that can never change.
+// have one answer for "which project". The *backend* is no longer the flag's
+// presence alone: since AB7 a run that names no project takes the no-flag arm
+// of the same stage (adopt the database this machine records, or create one,
+// or say in one line why not — R2), which is NOT the flag's path, and
+// `--firebase-project=` is pflag's empty value, which reads as no flag at all:
+// the two spellings converge the same arm, and neither reaches the Firebase
+// root's engine for a credential that may not make the project's IAM changes
+// (this rig's, which holds none). What keeps an unset script variable from
+// buying a Firestore database in a permanent location is that arm's own
+// probes and the confirmation it needs, not the flag's absence.
 func TestTheFirebaseProjectDefaultNamesTheIdAndNotTheStage(t *testing.T) {
 	// The value is the id, whatever it names: the installation's own project
 	// spelled out, or a separate one (the advanced case).
@@ -1677,8 +1681,8 @@ func TestTheFirebaseProjectDefaultNamesTheIdAndNotTheStage(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%v:\n%s", err, out)
 			}
-			if l := stepLineOf(reportLines(out), "firebase"); !strings.HasPrefix(l, markSkipped+" firebase") {
-				t.Errorf("with %s the Firebase stage is %q, want skipped: the default names which project a backend would use, it does not ask for one\n%s", name, l, out)
+			if l := stepLineOf(reportLines(out), "firebase"); !strings.HasPrefix(l, markDone+" firebase no budget database was created") {
+				t.Errorf("with %s the Firebase stage is %q, want the no-flag arm's one line: the default names which project a backend would use, it does not ask for one\n%s", name, l, out)
 			}
 			for _, c := range r.calls(t) {
 				if strings.Contains(strings.Join(c, " "), "firebase") {

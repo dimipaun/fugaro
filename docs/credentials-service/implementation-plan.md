@@ -12,6 +12,8 @@
 
 **Checked against.** `origin/main` at `021728c1` (2026-10-17), the same commit as [reconciliation.md](reconciliation.md). Every path and symbol named below was located with `git grep` (there is no `graphify-out/` for this repository) and re-checked to exist before it was written; a path marked **new** does not exist yet. Line numbers are never cited.
 
+**Amended 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)** (D3184, R4, R11, R16, R17): Slice 3's **C3.1** (resume after job death) is un-deferred as that plan's `pause-resume` — the suspended run ends `paused` and the resident orchestrator starts a fresh job that resumes the saved session; D138's wait is kept only under the in-job floor; D152 and D153 are re-keyed into the routing table's chain and the new `pause` policy block; and D154's stickiness is one step rather than the run. The tasks they touch are marked in place, and this line approves none of them.
+
 **Spec.** [spec.md](spec.md) (verbatim). **Reconciliation.** [reconciliation.md](reconciliation.md) — F1–F37, D130–D154, O1–O4, U1–U7. **Index.** [README.md](README.md).
 
 **Related.** [mixed-credentials.md](../mixed-credentials/spec.md) · [2026-10-14-oauth-reviewer-stage.md](../mixed-credentials/oauth-reviewer-stage-plan.md) (superseded by D130) · [project-centric.md](../project-centric/spec.md) §7 (D131) · [m9-budget-and-dashboard.md](../m9-budget-and-dashboard/spec.md) §11 · [budget-token-channel.md](../budget-token-channel/spec.md) §7.1 (the seal) · [named-oauth-tokens.md](../named-oauth-tokens/spec.md) · [gcp-live-checklist.md](../gcp-live-checklist.md) · [SECURITY.md](../../SECURITY.md)
@@ -58,7 +60,7 @@ The plan's first version built the cascade inside the runner first (the existing
 | **0 — Verify first** | The supersession notes; Checks 90 and 91 written and **run by the owner** — **Check 90 run 2026-10-21: PASSED, TIER A VIABLE; Check 91 not run**; the `creds/` denial pinned against today's rules | C0.1–C0.6 | Yes — docs and one test file; C0.4 and C0.5 are owner-run and produce no commit but the recorded result | **Before 0.9.0**, on the owner's go |
 | **1 — The service and the cascade** | The `cascade` mode, the policy settings, the rules (no run-token grant on `creds/`), the OAuth upstream (**TIER A**), the state package, run-identity verification, the service (forward, cascade, probe, audit), the **bundle loader** (Q6), its image, the runner's service upstream, accounting, waiting, Terraform (one bundle secret, one grant), mounts and the init stage, wiring, visibility, SECURITY.md and the runbook, Checks 92, 94, 95 and 99 | C1.1–C1.25 | Yes — opt-in per installation (D147); with it off nothing changes, and a `cascade` workflow is refused on an installation without the service | **After the seal (both halves) has merged — 0.9.0** |
 | **2 — GitHub tokens through the service** | The mint endpoint, the runner's fetch, the App key's grant **and mount** moved, docs, Check 96 | C2.1–C2.5 | Yes — behind Slice 1's opt-in, and **C2.2 and C2.3 ship together**: the runner's fetch is the release that fills `config.ServiceHeldSecretNames`, and that one name is what turns C2.3's drop on (C2.2's and C2.3's notes). C2.3 landed gated and inert, so the order of the two merges is safe either way; the order this plan keeps is C2.2 first | After Slice 1 |
-| **3 — Later, unscheduled** | Resume after job death, alerts, the share model, egress, Batch, tier C for Claude, refresh, proxied push, shared jobs | C3.1–C3.9 | Unscheduled by construction | — |
+| **3 — Later, unscheduled** | Resume after job death — **un-deferred 2026-11-22 as [model credentials routing](../model-credentials-routing/README.md)'s `pause-resume`** — alerts, the share model, egress, Batch, tier C for Claude, refresh, proxied push, shared jobs | C3.1–C3.9 | Unscheduled by construction, C3.1 excepted | — |
 
 The former Slices 2, 3 and 4 are the new Slices 1, 2 and 3; the former Slice 1 is declined (above).
 
@@ -145,7 +147,7 @@ A reviewer of a **task** reads its own "Reviewer" line and the Review notes in i
 | D135 | C1.15 (gateway → service with an ID token), C1.18 (invoker) |
 | D136 | C0.6, C1.3 (`creds/` denied to every run token), C1.9 (CAS, written by the service only), C1.11 — as amended by O1 |
 | D137 | The slice order — as amended by O1 (Slice 1 skipped) |
-| D138 | C1.10 (the typed answer's wire form), C1.11 (the service answers it), C1.17 (review sessions saved, wait, `--resume`); C3.1 (job death) |
+| D138 | C1.10 (the typed answer's wire form), C1.11 (the service answers it), C1.17 (review sessions saved, the under-the-floor wait, `--resume`); C3.1 (job death) — **amended 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)**: the wait is kept only under `pause.wait_in_job` (D3184), and C3.1 is that plan's `pause-resume` |
 | D139 | C1.11 (401 → broken); C3.7 |
 | D140 | C1.16 (tier per call, notional A, real B/C, by-tier counters, switch log), C1.19 (`Record.OAuthAccount`, current credential), C1.21 |
 | D141 | C1.11 (the service writes `broken`), C1.21 (visible; cleared by the operator); C3.2 |
@@ -159,9 +161,9 @@ A reviewer of a **task** reads its own "Reviewer" line and the Review notes in i
 | D149 | C1.15 (local `fugaro exec` untouched), C3.5 |
 | D150 | C1.2 (the switch, `via: cascade` per O3), C1.19 (the launch reads it); C3.6 |
 | D151 | C0.3–C0.5 |
-| D152 | C1.2 (the setting and its validation), C1.11 (the service honours it) |
-| D153 | C1.2 (policy only), C1.9 (backoff), C1.12 (the probe) |
-| D154 | C1.9 (stickiness and the round-robin counter in `creds/`, service-written), C1.11 |
+| D152 | C1.2 (the setting and its validation), C1.11 (the service honours it) — **amended 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)**: `credentials.fallback` is retired; the answer lives in the routing table's chain, and a chain that names a paid source after a pool needs `budget.mode: enforce` and a per-run cap (R4, R17) |
+| D153 | C1.2 (policy only), C1.9 (backoff), C1.12 (the probe) — **amended 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)**: `credentials.wait_threshold` is retired; the waits left are the `pause` block in the same project policy (R4, R11) |
+| D154 | C1.9 (stickiness and the round-robin counter in `creds/`, service-written), C1.11 — **amended 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)**: a placement is sticky for one step, not for the run (R16) |
 | O1 (ruling) | The whole plan; Convention 11; Global Constraint 11; C0.6, C1.3 |
 | O2 (ruling) | C1.1 (`fugaro validate`), C1.19 (the launch) |
 | O3 (answered: `via: cascade`) | C1.1 (the O2 error names it), C1.2 (`CheckRouting` accepts it without a provider route), C1.19 (the launch reads it) |
@@ -516,7 +518,7 @@ The downgrade is not only something an older binary may do of its own accord —
 ### Task C1.17: Review-stage sessions saved, and the runner's wait — SECURITY-SENSITIVE
 
 **Files.** `internal/runner/session.go` (save the review stage's session too, redacted), `internal/runner/runner.go` (`stage`: on `ExhaustedUntil` end the stage, wait within the job's remaining timeout, resume with `--resume`; under `oauth-only` wait for the earliest reset whatever the threshold; write `waiting_until` on the run's agent entry while waiting (a `cascade` run only, C1.3) and clear it on resume; halt with a named reason when the wait would exceed the timeout), `internal/runstore/runstore.go` (the new halt reason), tests.
-**Interfaces.** Two new halt reasons: one for "no credential before the job's timeout", and `HaltCredsRulesDenied` for a `cascade` run whose write of `credential`, `waiting_until` or a by-tier counter is refused by the deployed rules (C1.3's known gap: the run fails with a message naming `fugaro init --firebase` with this release, and the write is not retried); C1.16 and C1.19 halt with it too. No resume after job death (C3.1). The runner only reacts to the service's answer; it writes no mark.
+**Interfaces.** Two new halt reasons: one for "no credential before the job's timeout", and `HaltCredsRulesDenied` for a `cascade` run whose write of `credential`, `waiting_until` or a by-tier counter is refused by the deployed rules (C1.3's known gap: the run fails with a message naming `fugaro init --firebase` with this release, and the write is not retried); C1.16 and C1.19 halt with it too. No resume after job death (**C3.1, un-deferred 2026-11-22 as [model credentials routing](../model-credentials-routing/README.md)'s `pause-resume`**; the wait this task builds is the under-the-floor wait D3184 leaves in the job). The runner only reacts to the service's answer; it writes no mark.
 **Tests.** `TestReviewSessionSaved`, `TestStageWaitsAndResumes`, `TestOAuthOnlyIgnoresThreshold`, `TestWaitingUntilWrittenAndCleared`, `TestWaitBeyondTimeoutHalts`, `TestDeniedCascadeWriteHaltsNamed`, `TestSessionRedacted` (existing redaction applies).
 **Red step.** `TestStageWaitsAndResumes` first.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/runner/... ./internal/runstore/... -count=1`.
@@ -663,7 +665,7 @@ The downgrade is not only something an older binary may do of its own accord —
 
 Each needs its own plan amendment and the owner's go.
 
-- **C3.1 Resume after job death** (D138): periodic session upload during a stage, a resumable-run record, a relauncher taking over the run id and branch; Check 98.
+- **C3.1 Resume after job death** (D138): periodic session upload during a stage, a resumable-run record, a relauncher taking over the run id and branch; Check 98. **Un-deferred 2026-11-22: it is [model credentials routing](../model-credentials-routing/README.md)'s `pause-resume` module** — the suspended run ends `paused`, the credentials service alone writes the paused node with its resume time, and the resident orchestrator starts a fresh job that resumes the saved session (that plan's D3184–D3186, R18, R19). Check 98 stays this plan's number for it.
 - **C3.2 Alerts** to a token's owner and project admins (D141), once a notification channel and phase 5's owner record exist.
 - **C3.3 The share model** — N sessions per window, per-token counters (D142).
 - **C3.4 Egress restriction** — a VPC with egress rules (D144).
