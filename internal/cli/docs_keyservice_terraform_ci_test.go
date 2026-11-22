@@ -15,7 +15,7 @@ import (
 // go tool the tag runs it. docs/pending-workflows/README.md's `## ci.yml` section
 // says in as many words that no job runs it today and writes out the exact change
 // that would — a format step, a second root loop, and one more package on the last
-// step's command — and docs/design/key-signing-service.md's status line states the
+// step's command — and docs/key-signing-service/spec.md's status line states the
 // same fact about the suite. Both are claims about `.github/workflows/ci.yml`, and
 // the section is what a reviewer reads before deciding whether the suite is
 // reached, so each is held to the workflow in both directions: a document still
@@ -72,7 +72,7 @@ var keyserviceCIClaims = []struct {
 		applied: keyserviceCIAppliedMarker,
 	},
 	{
-		path:    "docs/design/key-signing-service.md",
+		path:    "docs/key-signing-service/spec.md",
 		pending: "No job runs that suite in CI",
 		applied: "The suite runs in CI on every push to `main`",
 	},

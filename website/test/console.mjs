@@ -113,9 +113,9 @@ const SKIP_UNDER_WEBSITE = new Set(['node_modules', 'dist', '.astro'])
  * reworded fails a test instead of silently disagreeing with the page.
  */
 function decisionRow(id) {
-  const design = repoFile('docs/design/desktop-console.md')
+  const design = repoFile('docs/desktop-console/spec.md')
   const row = new RegExp(`^\\|\\s*\\*\\*${id}\\*\\*\\s*\\|.*$`, 'm').exec(design)
-  assert.ok(row, `docs/design/desktop-console.md carries no ${id} row, and the console's page cites it`)
+  assert.ok(row, `docs/desktop-console/spec.md carries no ${id} row, and the console's page cites it`)
   return row[0]
 }
 
@@ -791,7 +791,7 @@ test('every console claim is traceable to the document it came from', () => {
   )
   assert.ok(
     releasedIds.some((id) => /notaris/i.test(decisionRow(id))),
-    `the released claim promises a signed and notarised artifact and cites ${releasedIds.join(', ')}, and none of those rows in docs/design/desktop-console.md says the console's artifact is notarised: a page that promises a notarised download has to cite the row that decides it`,
+    `the released claim promises a signed and notarised artifact and cites ${releasedIds.join(', ')}, and none of those rows in docs/desktop-console/spec.md says the console's artifact is notarised: a page that promises a notarised download has to cite the row that decides it`,
   )
   assert.ok(
     repoFile(releasedSource)
@@ -807,7 +807,7 @@ test("the console's guarantees are stated as the document that decides them stat
   // misstate it. The two guarantees the page publishes are read out of the document that
   // decides them here, part by part — the defect this catches is a property that drops one
   // of a decision's parts and thereby promises more than the product does.
-  const design = repoFile('docs/design/desktop-console.md')
+  const design = repoFile('docs/desktop-console/spec.md')
   const data = downloadsData()
 
   const property = (id) => {
@@ -1502,7 +1502,7 @@ test('a Linux block naming an asset the data file does not carry fails the build
       data.linux = {
         text: 'The console also builds for Linux on arm64: an AppImage and a .deb, and neither is code-signed.',
         assets: ['linux-arm64-appimage', 'linux-arm64-deb'],
-        source: 'docs/design/desktop-console.md D10',
+        source: 'docs/desktop-console/spec.md D10',
       }
     })
   })
@@ -1654,12 +1654,12 @@ test('a Linux block that is not a claim naming the file’s own assets fails the
   const plants = [
     {
       what: 'a key nothing renders',
-      block: { text: 'Linux, unsigned.', assets: ['macos-dmg'], source: 'docs/design/desktop-console.md D10', platform: 'Linux' },
+      block: { text: 'Linux, unsigned.', assets: ['macos-dmg'], source: 'docs/desktop-console/spec.md D10', platform: 'Linux' },
       names: [/linux carries the key "platform"/],
     },
     {
       what: 'no assets',
-      block: { text: 'Linux, unsigned.', assets: [], source: 'docs/design/desktop-console.md D10' },
+      block: { text: 'Linux, unsigned.', assets: [], source: 'docs/desktop-console/spec.md D10' },
       names: [/linux\.assets is not a non-empty list/],
     },
     {
@@ -1669,7 +1669,7 @@ test('a Linux block that is not a claim naming the file’s own assets fails the
     },
     {
       what: 'one asset named twice',
-      block: { text: 'Linux, unsigned.', assets: ['macos-dmg', 'macos-dmg'], source: 'docs/design/desktop-console.md D10' },
+      block: { text: 'Linux, unsigned.', assets: ['macos-dmg', 'macos-dmg'], source: 'docs/desktop-console/spec.md D10' },
       names: [/linux\.assets names one asset twice/],
     },
     {
@@ -1678,7 +1678,7 @@ test('a Linux block that is not a claim naming the file’s own assets fails the
         text: 'Linux, unsigned.',
         assets: ['macos-dmg'],
         verify: [],
-        source: 'docs/design/desktop-console.md D10',
+        source: 'docs/desktop-console/spec.md D10',
       },
       names: [/linux\.verify is not a non-empty list/],
     },
@@ -1691,7 +1691,7 @@ test('a Linux block that is not a claim naming the file’s own assets fails the
         // one placeholder: the plant spells the version this checkout's data file carries, so
         // what it plants is the stale step a later bump would leave behind.
         verify: [`gh release download ${consoleTag()} -R dimipaun/fugaro -p console-sha256sums.txt`],
-        source: 'docs/design/desktop-console.md D10',
+        source: 'docs/desktop-console/spec.md D10',
       },
       names: [/linux\.verify\[0\].*spells the release's version/],
     },

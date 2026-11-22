@@ -93,7 +93,7 @@ export const GRAPH_NODE_HEIGHT = 88
 
 /**
  * STATE_WORDS is every word a node can carry, in the order the design's §3.9
- * amendment lists them (`docs/design/console-styling.md`): each animated state
+ * amendment lists them (`docs/console-styling/spec.md`): each animated state
  * is drawn **as text** on the node, with its colour second, so a reader who
  * cannot tell two colours apart reads the same graph and a greyscale screenshot
  * is still a graph.

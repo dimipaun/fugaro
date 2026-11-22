@@ -29,6 +29,17 @@
 //     showed a shortened task would be the app summarising what the design says
 //     the operator reads.
 //
+// **The setup half is the same window with a subject of its own** (SW3a,
+// D2904): `'setup'` is a first `fugaro setup`, and what it draws is the five
+// answers **the main process parsed** (never the renderer's own object), the
+// SHA-256 of the bytes the child is given on its stdin, the two command lines,
+// and the console's four sentences of what a yes does -- that `--json` confirms
+// no step, that everything needing a person comes back as a line for the
+// operator's terminal, that this yes is their go to run the CLI and not a
+// consent the CLI accepts, and that the Terraform plan is taken again at apply.
+// The window says all four **before** it asks, which is the whole reason they
+// are here rather than on a screen behind it.
+//
 // **The settings halves are the same window with two more subjects** (D1115's
 // union, D2902's one modal): `'settings'` is C3's confirmation of an edit whose
 // argv main has already frozen, and `'settings-entry'` is the entry form SU1
@@ -98,11 +109,11 @@ import type { SettingsEntryView } from '../shared/settingsentry'
  * this is the shape it is written against, and `test/unit/confirm.test.ts` holds
  * the main process's side of the same fields. */
 export interface ConfirmFields {
-  /** which of the window's three questions this is (D1115, D2902). It is the
+  /** which of the window's questions this is (D1115, D2902, SW3a). It is the
    * field the view branches on -- and it is a **tag**, not a hint: the launch's
-   * members, the settings view's and the entry form's are drawn by three
-   * different sets of rows, and a subject that carried the wrong one would draw
-   * the wrong window. */
+   * members, the settings view's, the entry form's and the setup's are drawn by
+   * four different sets of rows, and a subject that carried the wrong one would
+   * draw the wrong window. */
   readonly kind: 'launch'
   readonly runId: string
   readonly installation: string
@@ -147,10 +158,47 @@ export interface SettingsFields {
  * copy of R5's rule. */
 export type SettingsEntryFields = SettingsEntryView
 
-/** ConfirmSubjectFields is what the window is shown: one of the three subjects
- * (D1115, D2902). One window, three questions, and one document that draws all
- * three. */
-export type ConfirmSubjectFields = ConfirmFields | SettingsFields | SettingsEntryFields
+/**
+ * SetupFields is what the window is shown for a **first setup** (SW3a, D2904),
+ * mirrored from `SetupView` in `src/main/setupview.ts` the way the other two are
+ * mirrored from the main process's own modules.
+ *
+ * Two things about it are the point rather than the drawing:
+ *
+ *   - **the five answers are main's**, parsed and held by `wizardrun.ts` before
+ *     this window existed. They are drawn the way the launch's rows are -- as the
+ *     main process's own values -- because that is what they are: every one of
+ *     them has been through the CLI's own grammar, so a project row can hold
+ *     nothing but `[a-z0-9-]`. The renderer's object reaches no row, which is the
+ *     whole reason the operator is shown the parsed answers;
+ *   - **`notes` are the console's own sentences**, four constants of
+ *     `setupview.ts`: what a yes runs (`--json` confirms no step), what comes
+ *     back as a line for the operator's terminal, that this yes is their go to
+ *     run the CLI and not a consent the CLI accepts, and that the Terraform plan
+ *     is taken again at apply. The window says all four before it asks, which is
+ *     why they are drawn here and not on a screen behind the window.
+ */
+export interface SetupFields {
+  readonly kind: 'setup'
+  readonly project: string
+  readonly region: string
+  readonly name: string
+  readonly rigor: string
+  readonly bake: string
+  readonly digest: string
+  readonly planArgv: readonly string[]
+  readonly applyArgv: readonly string[]
+  readonly notes: readonly string[]
+}
+
+/** ConfirmSubjectFields is what the window is shown: one of the four subjects
+ * (D1115, D2902, SW3a). One window, one question at a time, and one document that
+ * draws all of them. */
+export type ConfirmSubjectFields =
+  | ConfirmFields
+  | SettingsFields
+  | SettingsEntryFields
+  | SetupFields
 
 /** CONFIRM_LABEL and CANCEL_LABEL are the two buttons' words. Cancel is the
  * default and the one a keyboard reaches; the confirming button takes a
@@ -171,6 +219,14 @@ export const SAVE_LABEL = 'Write it'
 /** ENTRY_OK_LABEL is the entry form's own button: it runs the dry run, and
  * nothing is written by it (D1106, rule 12's step 2). */
 export const ENTRY_OK_LABEL = 'OK'
+
+/** SETUP_LABEL is the setup window's confirming button (SW3a). It is a third
+ * word rather than the launch's for the reason `SAVE_LABEL` is a second one: this
+ * yes runs `fugaro setup` for answers the operator has just read, and a button
+ * saying "Run it" in both windows would be a window an operator could answer
+ * without reading which question they were answering.
+ */
+export const SETUP_LABEL = 'Run setup'
 
 /** ENTRY_RESET_LABEL is R6's reset: it submits the empty answer, which main
  * sends to the dry run as `settings unset` (F8: a reset writes no value at
@@ -226,16 +282,25 @@ const FIELDS = Object.freeze({
   wins: 'Decides today',
   sentence: 'What this changes',
   why: 'Why the CLI asks',
+  region: 'Region',
+  name: 'Name',
+  rigor: 'Rigor',
+  bake: 'Bake repositories',
+  digest: 'SHA-256 of the answers',
+  planCommand: 'Plan command',
+  applyCommand: 'Apply command',
+  setupNotes: 'What this does',
 })
 
-/** TITLE_LAUNCH, TITLE_SETTINGS and TITLE_ENTRY are the three questions'
- * headings, and TASK_HEADING is the launch's own subtitle. The settings window
- * has none: the `<pre>` below holds the command line for a launch and nothing
- * for an edit, and a heading over an empty box is a field an operator would look
- * for a value in. */
+/** TITLE_LAUNCH, TITLE_SETTINGS, TITLE_ENTRY and TITLE_SETUP are the questions'
+ * headings, and TASK_HEADING is the launch's own subtitle. The settings and
+ * setup windows have none: the `<pre>` below holds the command line for a launch
+ * and nothing for an edit or a setup, and a heading over an empty box is a field
+ * an operator would look for a value in. */
 export const TITLE_LAUNCH = 'Confirm this run'
 export const TITLE_SETTINGS = 'Confirm this settings change'
 export const TITLE_ENTRY = 'Edit this setting'
+export const TITLE_SETUP = 'Confirm this setup'
 export const TASK_HEADING = 'The task, as submitted'
 
 /** TICK_ID is the checkbox's id. It exists so that its `<label for=…>` names it
@@ -322,11 +387,11 @@ export function drawn(raw: string, textClass: TextClass, field: string): string 
  * first and Cancel second, Cancel still the focused one for every subject that
  * can write; a refusal draws its sentence and no button at all.
  *
- * **One window, three questions** (D1115, D2902): the subject's `kind` is what
- * decides which set of rows is drawn, and the three branches share every part
- * that is not a field -- the cancel, the refusal, the pointer-only writing
- * button and the main process's readiness gate. Nothing here decides anything
- * any subject means; it draws what it was handed.
+ * **One window, one question at a time** (D1115, D2902, SW3a): the subject's
+ * `kind` is what decides which set of rows is drawn, and the branches share
+ * every part that is not a field -- the cancel, the refusal, the pointer-only
+ * writing button and the main process's readiness gate. Nothing here decides
+ * anything any subject means; it draws what it was handed.
  */
 export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBridge): Promise<void> {
   const status = document.getElementById('confirm-status')
@@ -382,9 +447,14 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
   /** command appends the argv field by field, one word per row: every subject
    * shows what is spawned and not a summary of it. The words are the console's
    * own command line -- see this file's header for why they are not this view's
-   * `sanitizeText` case. */
-  const command = (argv: readonly string[]): void => {
-    term(FIELDS.command)
+   * `sanitizeText` case.
+   *
+   * `label` is the launch's and the settings confirmation's single `Command` row,
+   * and the setup window's two (`Plan command`, `Apply command`): one window
+   * spawns two children in turn, and a window that drew both under one label
+   * would leave the operator to guess which line is which. */
+  const command = (argv: readonly string[], label: string = FIELDS.command): void => {
+    term(label)
     for (const word of argv) detail(word)
   }
 
@@ -465,7 +535,7 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
    * starts it disabled. It carries no answer of its own beyond `yes` and the
    * tick: which argv that yes spawns is the main process's, frozen before this
    * window existed. */
-  const drawWrite = (subject: SettingsFields | ConfirmFields): void => {
+  const drawWrite = (subject: SettingsFields | ConfirmFields | SetupFields): void => {
     const confirm = document.createElement('button')
     confirm.setAttribute('type', 'button')
     // Out of the tab order, so no amount of tabbing reaches the button that
@@ -473,7 +543,8 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     // pointer-only rule is the same one: a click is deliberate and a keystroke
     // is not.
     confirm.tabIndex = -1
-    confirm.textContent = subject.kind === 'settings' ? SAVE_LABEL : CONFIRM_LABEL
+    confirm.textContent =
+      subject.kind === 'settings' ? SAVE_LABEL : subject.kind === 'setup' ? SETUP_LABEL : CONFIRM_LABEL
     confirm.disabled = false
 
     let tick: ConfirmElement | null = null
@@ -728,6 +799,40 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     cancel.focus()
   }
 
+  /** drawSetup is the first setup's set of rows: the five answers as main
+   * parsed them, the digest of the very bytes the child is given, the two command
+   * lines, and the four sentences of what a yes does. Every one of them is the
+   * main process's own value or its own sentence, which is why they are drawn as
+   * the launch's rows are -- and why the digest is drawn as `code`: it is the one
+   * string in the window an operator may want to compare against something else,
+   * and the mono face is what makes it legible and selectable. */
+  const drawSetup = (setup: SetupFields): void => {
+    if (title !== null) title.textContent = TITLE_SETUP
+    row(FIELDS.project, setup.project)
+    row(FIELDS.region, setup.region)
+    // An unanswered name is the CLI's own suggestion rather than an empty line:
+    // `NONE` is what this window draws for a field the main process did not fill
+    // (`wizardrun.ts` leaves it out of the answers file, and the run names the
+    // installation after the working directory's own).
+    row(FIELDS.name, setup.name === '' ? NONE : setup.name)
+    row(FIELDS.rigor, setup.rigor)
+    row(FIELDS.bake, setup.bake)
+    code(FIELDS.digest, setup.digest)
+    command(setup.planArgv, FIELDS.planCommand)
+    command(setup.applyArgv, FIELDS.applyCommand)
+    // The notes are the console's own sentences and they are drawn one to a line
+    // under one label, in the order main built them: what the yes runs, what it
+    // leaves for the operator, what the yes is, and what is taken again at apply.
+    term(FIELDS.setupNotes)
+    for (const note of setup.notes) detail(note)
+  }
+
+  if (subject.kind === 'setup') {
+    if (heading !== null) heading.textContent = ''
+    drawSetup(subject)
+    drawWrite(subject)
+    return
+  }
   if (subject.kind === 'settings-entry') {
     if (heading !== null) heading.textContent = ''
     drawEntryPhase(subject)

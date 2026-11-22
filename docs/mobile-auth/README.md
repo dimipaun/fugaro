@@ -13,7 +13,7 @@ citation is by **path and symbol, never by line number**.
 kept as the state it described.** The owner's ruling of **2026-10-22**: **D221–D236 accepted as
 recommended**, with **P0 and P1 approved** and **P3–P5 coming after P6.6 and P6.8** — the two mobile
 Phase 6 tasks that build the pairing CLI (`fugaro pair`, whose CLI plan is
-[../plans/2026-10-22-mobile-pairing-cli.md](../plans/2026-10-22-mobile-pairing-cli.md)) and the
+[../mobile/pairing-cli-plan.md](../mobile/pairing-cli-plan.md)) and the
 app's half of pairing, which this folder's P3 extends. The ruling is the **owner's own word, given on
 2026-10-22 and relayed to the change that wrote this note**: this folder did not carry it before, and
 it is recorded here the way [../mobile/functional-spec-reconciliation.md](../mobile/functional-spec-reconciliation.md)

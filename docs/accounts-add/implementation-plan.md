@@ -243,7 +243,7 @@ and the job shape as the rules they are, and keeps the version-3 rollout as hist
 
 *Files (≤6):* `docs/project-claude-accounts.md`, `internal/cli/docs_project_named_oauth_tokens_test.go`,
 `internal/cli/docs_project_policy_reseed_test.go`, `internal/cli/docs_named_oauth_tokens_test.go`,
-`docs/design/named-oauth-tokens.md`.
+`docs/named-oauth-tokens/spec.md`.
 *Named tests:* `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 40m` (**the red step**:
 the seven `TestDocsProjectClaudeAccounts*` tests and `TestDocsProjectPolicyReseed*` fail on the old
 wording first — that is how the pins are found rather than guessed),

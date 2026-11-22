@@ -110,7 +110,7 @@ in an agent's session. *Consequence:* `models add` and `rm` use it the same way 
 changes through the publish path that already exists.
 
 **F16: Exists. The console and the mobile app read no model configuration.** The console's sources are the CLI
-documents listed in `docs/design/desktop-console.md` §2.1; model names reach it only through each run's
+documents listed in `docs/desktop-console/spec.md` §2.1; model names reach it only through each run's
 entry in `fugaro watch --json`. *Consequence:* no console or mobile task (spec §10).
 
 ## 3. Decisions D780–D795

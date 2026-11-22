@@ -2,7 +2,10 @@
 
 ## Status
 
-**Status as of 2026-11-10: 9/25 merged, 1 closed as superseded (E0), 15 open — C8's C8a built; see [docs/status.md](../status.md) for the current table.** Every task below carries a **State** line
+**Status as of 2026-11-21: 12/25 merged, 2 closed as superseded (E0, by
+[docs/roles-scopes](../roles-scopes/); B2, by [docs/outer-loop-escalation](../outer-loop-escalation/)'s
+**E8** — the owner's ruling of 2026-11-21), 11 open — C8's C8a built; B3 and C8b/C8c stay parked; see
+[docs/status.md](../status.md) for the current table.** Every task below carries a **State** line
 from [reconciliation-image-setup.md](reconciliation-image-setup.md), which checked each one against
 `origin/main` and against [docs/image-setup-skill](../image-setup-skill/) at the owner's ask of
 2026-11-10 and wins where the two disagree about a task's state. It builds [spec.md](spec.md) **as amended by
@@ -20,7 +23,7 @@ Slices, each independent and orderable (D600 recommends A first, alone):
 | Slice | What it ships | Licence (D637, proposed) | Gated on |
 | --- | --- | --- | --- |
 | **A** Authorship and trailers | Commits authored by the launcher when a repository opts in; `Fugaro-Run`, `Fugaro-Rigor`, `Fugaro-Model` trailers on the commits the runner pushes, on by default (D647) | MIT | D600–D606, D644, D645, D647–D649 |
-| **B** Forge cleanup, CI status, GitLab | One list of forge kinds; a CI-status read; GitLab only after its own reconciliation | MIT | D610, D611; D614/D615 for B2 |
+| **B** Forge cleanup, CI status, GitLab | One list of forge kinds; a CI-status read (**B2**, closed as superseded by the outer loop's E8 on 2026-11-21); GitLab only after its own reconciliation (**B3**, parked) | MIT | D610, D611 |
 | **C** Repositories and images | Bitbucket listing in `fugaro project sync`; lockfile-first image layers; a digest check at launch; images shared between repos with the same normalised dependency set, under user control; read-only context repositories; a SECURITY.md registry note | MIT | D613, D617–D625 (D618 answered against the recommendation) |
 | **D** Change sets | Linked runs created together, a draft hold, a settle step, advisory merge order | `ee/` (D616, amended in round 2); the task's wire fields in core (ee-reorg D521) | D613–D616, D641, D642; ee-reorg's coordinator move |
 | **E** People and tokens | The roles design (D446) first; `fugaro user` over the existing IAM lists | MIT for E1; the rest per E0 | D627–D638 |
@@ -277,7 +280,7 @@ the stage runs (Constraint 1). Commits are now born stamped.
   `internal/gitprov/kinds_test.go` (`TestKindsListedOnce`, `TestEveryKindSwitchIsInventoried`). It
   landed after the census was read, in `9af1fd50` (#2332), whose subject is `gitprov: one list of
   forge kinds (B1)` and whose body's first bullet is the **Commit** line below;
-  [b1-already-landed.md](../forge-authorship-images-b1-already-landed.md) is the evidence. Nothing in
+  [b1-already-landed.md](b1-already-landed.md) is the evidence. Nothing in
   the image setup plan creates or moves a forge kind.
 
 - **Decisions:** D610, D611.
@@ -297,10 +300,27 @@ the stage runs (Constraint 1). Commits are now born stamped.
 - **Commit:** `gitprov: one list of forge kinds, and an inventory of every switch on them`
 - **Reviewer:** standard.
 
-#### B2. A CI-status read (GATED: D614 or D615 must need it)
+#### B2. A CI-status read (CLOSED 2026-11-21: superseded by the outer loop's E8)
 
-- **State:** Kept — no `Checks` on `gitprov.Provider`. image-setup's IS11 smokes a catalog entry's
-  prebuilt image, which is a build-time contract check and not a commit's CI status.
+- **State:** Closed as superseded — by [docs/outer-loop-escalation](../outer-loop-escalation/)'s task
+  **E8** (the owner's ruling of 2026-11-21). E8 landed the read on the provider seam in B2's place:
+  `gitprov.Provider.Checks(ctx, number, sha) ([]CheckRun, error)`, with `gitprov.CIState` and
+  `ChecksState` deciding green, red and unknown above it, `ErrChecksUnsupported` for a host that
+  cannot report checks and `ErrChecksPermission` for the credential the host refused
+  (`internal/gitprov/checks.go`, `internal/gitprov/github/checks.go`,
+  `internal/gitprov/bitbucket/escalation.go`, `internal/gitprov/fake/fake.go`). It takes the pull
+  request's number beside the SHA — the read the ladder's gate makes — so B2's planned
+  `Checks(ctx, sha) ([]CheckState, error)` is neither built nor wanted. **What E8 does not carry, and
+  what closing B2 therefore leaves unwritten:** the App's two read permissions (**Checks: read** and
+  **Commit statuses: read**) in `tokenPermissions` and `RequiredPermissions`, `doctor`'s report of a
+  grant an installation has not accepted, `docs/git-providers.md`'s permission line, B2's live test
+  (`internal/gitprov/github/live_test.go`, which does not exist) and **Check 231** — E8's own plan
+  says its config is none and leaves the widening out, so today the read fails closed with
+  `ErrChecksPermission` on an installation that has not granted both. They stay the **owner's** and
+  nobody's built task: Check 231 remains in the register, NOT RUN, and a task that next widens
+  `tokenPermissions` takes it. The bullet list below is the task as it was planned, kept as the
+  record. **B3** (GitLab) stays parked, gated on D610, and C8b/C8c stay parked (D650). See
+  [reconciliation-image-setup.md](reconciliation-image-setup.md) §2.
 
 - **Files:** `internal/gitprov/gitprov.go` (`Checks(ctx, sha) ([]CheckState, error)`),
   `internal/gitprov/github/checks.go` (new), `internal/gitprov/bitbucket/statuses.go` (new),
@@ -323,7 +343,8 @@ the stage runs (Constraint 1). Commits are now born stamped.
 
 #### B3. GitLab (GATED: D610 answered "build")
 
-- **State:** Kept — gated, and unwritten: no file under `docs/` reconciles GitLab.
+- **State:** Kept — **parked** (the owner's ruling of 2026-11-21 keeps it so), gated, and unwritten: no
+  file under `docs/` reconciles GitLab.
 
 A docs-only reconciliation in this folder first: tokens (project or group access tokens and what they
 cost), `Draft:` semantics, the image build's credential step, the credentials service's mint, the
@@ -535,7 +556,8 @@ behaviour (C8). C8 may start once the owner gives the go; T6 is no longer a gate
 #### C8. Build, lock, proposal and job update for shared images (after C7; the owner's go)
 
 - **State:** Kept — **C8a is merged** (`imagecheck.Key`, `imagecheck.ParseLock`/`ReadLock`/`Update`,
-  `imagecheck.Superset`, `schemas/image-lock.schema.json`); **C8b/C8c are not**: there is no
+  `imagecheck.Superset`, `schemas/image-lock.schema.json`); **C8b/C8c are not, and stay parked**
+  (D650, answered 2026-11-16: keep them, unscheduled): there is no
   `internal/cli/image_ls.go`, `image_proposal.go` or `image_prune.go`, and
   `config.SharedCheckoutRefusal` refuses `checkout: shared` until a release ships the images. Whether
   image-setup's catalog-first direction closes them is
@@ -686,7 +708,7 @@ tagged CLI refuses it until D3 has shipped, so no change set can be stuck in dra
 #### E0. The roles design (D446)
 
 - **State:** Closed as superseded — by [docs/roles-scopes](../roles-scopes/) (spec 2026-11-07,
-  D1580–D1593, tasks RS1–RS10), which extends the roles design E0 names (`docs/design/roles.md`) and
+  D1580–D1593, tasks RS1–RS10), which extends the roles design E0 names (`docs/roles/spec.md`) and
   answers reconciliation §6's O5 ("nobody owns it yet"). Its one shipped output, `fugaro user`, is
   E1's. See [reconciliation-image-setup.md](reconciliation-image-setup.md) §2.
 
@@ -763,8 +785,8 @@ from E0.
 | D610, D611 | B1, B3 |
 | D612 | A4 (`TestDocsSupportedForges`) |
 | D613 | C5a–C5c, D1–D4 |
-| D614 | D2, D3; B2 if needed |
-| D615 | D4; B2 if blocking is chosen |
+| D614 | D2, D3 — B2's "if needed" is closed with it (2026-11-21): D615 answered advisory, and the read a blocking check would have needed is the outer loop's E8 |
+| D615 | D4 — the advisory order it answered; B2, the blocking-check alternative, is closed (2026-11-21) |
 | D616, D637 | D3, D4 (`ee/`); all others MIT |
 | D617, D618 (T6 resolved 2026-10-29), D622 | C7, C8 (normalised key, superset reuse, lock, proposal, `image ls`, cap warning, clean-up) |
 | D619 (with D618) | C4, C8 |
@@ -788,8 +810,9 @@ from E0.
 
 ## Parallel execution
 
-**Edges** (from the Depends-on lines): A1→A3; A2a→A2b→A3→A4→A5; B1→B2; A2a→C5a; A2b→C5a;
-C5a→C5b→C5c; A3→C5c; C5a→D1; D1→D2; C5c→D2; D2→D3→D4; E1→C1. External: C5a and secrets-brokering B1.1 (the same token files; whichever lands second rebases).
+**Edges** (from the Depends-on lines): A1→A3; A2a→A2b→A3→A4→A5; A2a→C5a; A2b→C5a;
+C5a→C5b→C5c; A3→C5c; C5a→D1; D1→D2; C5c→D2; D2→D3→D4; E1→C1. (B1→B2 is gone with B2, closed as
+superseded by the outer loop's E8 on 2026-11-21.) External: C5a and secrets-brokering B1.1 (the same token files; whichever lands second rebases).
 
 The file-sharing edges (A2a→C5a, A2b→C5a, A3→C5c, C5a→D1, C5c→D2, E1→C1) exist only to keep
 one writer per file per level when slices run together. **A slice approved alone runs its own chain
@@ -800,7 +823,7 @@ only.**
 | Level | Tasks (concurrent) |
 | --- | --- |
 | **L0** | A1, A2a, B1, C3, C4, C6, E1, X1; docs B3, C7, E0 |
-| **L1** | A2b, B2, C1, C8 |
+| **L1** | A2b, C1, C8 (B2 was here and is closed, 2026-11-21) |
 | **L2** | A3, C5a |
 | **L3** | A4, C5b, D1 |
 | **L4** | A5 (OWNER-RUN), C5c |
@@ -823,7 +846,7 @@ runs beside A2a).
 | `internal/runner/runner.go` | A3 (L2), C5c (L4), D2 (L5) |
 | `internal/runner/prflow.go` | D1 (L3) |
 
-| `internal/gitprov/gitprov.go` | B1 (L0), B2 (L1) |
+| `internal/gitprov/gitprov.go` | B1 (L0) — B2 (L1) is closed (2026-11-21; the read is the outer loop's E8) |
 | `internal/gitprov/status.go` | D1 (L3), D4 (L7) |
 | `internal/gitprov/github/apptoken.go` | C5b (L3), D3 (L6) |
 | `internal/credsvc/github.go` | C5b (L3) |
@@ -832,7 +855,7 @@ runs beside A2a).
 | `internal/cli/project_enroll.go` | C1 (L1) |
 | `website/content/cli-reference.md` | E1 (L0), C1 (L1), C5a (L2), D1 (L3) |
 | `internal/cli/init.go` | A2b (L1) |
-| `internal/gitprov/github/installcheck.go`, `internal/gitprov/github/live_test.go` | B2 (L1) |
+| `internal/gitprov/github/installcheck.go`, `internal/gitprov/github/live_test.go` | none — B2 (L1) is closed (2026-11-21): the two read permissions it planned to widen into `tokenPermissions`/`RequiredPermissions` are unwritten, and the live test was never written |
 | `internal/budget/token/mint.go`, `exchange.go`, `internal/cli/launch_budget.go` | C5a (L2) |
 | `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go` | A2b (L1) |
 | `internal/cli/root.go`, `plugin/skills/working/SKILL.md` | E1 (L0) |
@@ -841,16 +864,16 @@ runs beside A2a).
 | `internal/credsvc/auth.go` | C5b (L3) |
 | `docs/release.md` | A2b (L1) |
 | `SECURITY.md`, `website/content/security.md` | C6 (L0), A4 (L3) |
-| `docs/git-providers.md` | B2 (L1), A4 (L3) |
+| `docs/git-providers.md` | A4 (L3) — B2 (L1), the permission line, is closed (2026-11-21) |
 | `docs/gcp-live-checklist.md` | X1 (L0) |
-| the next release's notes file under `docs/releases/` | B2 (L1), A4 (L3), C5c (L4) |
+| the next release's notes file under `docs/releases/` | A4 (L3), C5c (L4) — B2's entry (L1) went with it (2026-11-21) |
 | `internal/config/config.go`, `internal/config/validate.go`, `schemas/fugaro.schema.json`, `schemas/schemas_test.go` | A2a (L0) |
 | `internal/imagecheck/record.go` | C4 (L0), C8 (L1) |
 | `internal/imagecheck/lock.go`, `key.go`, `superset.go`, `internal/cli/image_refresh.go`, `image_record.go`, `image_ls.go`, `image_proposal.go`, `image_prune.go`, `internal/cli/doctor.go`, `internal/backend/gcp/` job update | C8 (L1) |
 | `images/derived/Dockerfile.tmpl` | C3 (L0) |
 | `internal/image/render.go` | C3 (L0), C8 (L1) |
 | `internal/gitprov/providers/providers.go` | B1 (L0) |
-| `internal/gitprov/bitbucket/` (new files) | B2 `statuses.go` (L1), C1 `list.go` (L1): different files |
+| `internal/gitprov/bitbucket/` (new files) | C1 `list.go` (L1) — B2's `statuses.go` (L1) is closed (2026-11-21): E8's Bitbucket `Checks` refuses with `ErrChecksUnsupported` rather than mapping pipelines |
 
 **What must be sequential and why:** A3 needs A1's `StampEnv` and hooks and A2's fields (interfaces); C5b binds
 its mint to C5a's task field and C5c needs both (interfaces); D2 needs D1's change-set record; D3
@@ -861,7 +884,7 @@ needs the coordinator under `ee/` (an external plan); every other edge is one fi
 | Check | Measures | Written by | Run by |
 | --- | --- | --- | --- |
 | 230 | Author, committer and trailers on GitHub and Bitbucket; the default unchanged | X1 | Owner (A5) |
-| 231 | The App's Checks and Commit statuses read permissions, accepted and working | X1 | Owner (B2) |
+| 231 | The App's Checks and Commit statuses read permissions, accepted and working | X1 | Owner (the App's two read permissions — B2 is closed, 2026-11-21, and E8 landed only the read; the check stays NOT RUN until a task widens `tokenPermissions`) |
 | 232 | A two-repository read-only installation token; a push with it is refused | X1 | Owner (C5b) |
 | 233 | Withdrawn in review round 1 (Cloud Run cannot vary the image per execution); reserved, unused | — | — |
 | 234 | `fugaro project sync --check` against a Bitbucket workspace | X1 | Owner (C1) |
@@ -872,7 +895,11 @@ never by an agent.
 
 ## Release actions
 
-- B2: `### For operators`: accept the GitHub App's new read permissions on each installation.
+- B2 is closed (2026-11-21, superseded by the outer loop's E8) and its `### For operators` entry
+  goes with it: E8's read needs no new grant to exist. The **App's two read permissions** are still
+  unbuilt, so the task that next widens `tokenPermissions` carries the entry (accept **Checks: read**
+  and **Commit statuses: read** on each installation) and Check 231 with it. Until then the read
+  fails closed with `ErrChecksPermission`, which is what E8's `checks.go` says.
 - C5c: `### For operators`: install the GitHub App on each repository used as context; redeploy the
   credentials service on opted-in installations.
 - E1: none in its own PR; each `fugaro user` change is applied by the operator's next `fugaro update`

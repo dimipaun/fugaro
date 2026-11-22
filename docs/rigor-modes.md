@@ -84,7 +84,9 @@ the round counts and the findings policy for a change whose only new fact is its
 paths (D1508). A `poc` or `startup` repository that touches a security path
 therefore reviews that diff adversarially and is still judged by its own row:
 today the guarantee is the level, and no mode is a floor for security-sensitive
-code. The design's own built-in floor for that tier — a set of sensitive paths
+code. A `fugaro run --mode hotfix` run that touches one goes ahead as `hotfix`
+with the adversarial pass forced on — neither raised to the path's level nor
+refused (the owner's ruling of 2026-11-20). The design's own built-in floor for that tier — a set of sensitive paths
 that resolves to `critical` whatever the run asks for — is task T1.5 and is not
 built, so a repository that wants those paths reviewed at `critical` writes the
 area rule itself (§[Choosing a mode](#choosing-a-mode)). A run whose escalation
@@ -173,15 +175,22 @@ here is the rigor mode — not the accounting mode `fugaro budget set --mode` ta
 fugaro run --mode critical "add a unique index on payments.idempotency_key"
 ```
 
-`--mode` asks for a mode for this run, and it **may raise the mode the run
-resolves from its configuration and never lower it**: a request below what the
-configuration already says has no effect, and the launcher says so. `hotfix` is
-the one exception, and the flag is its door: it is off the axis and ranks below
-every other mode, so it is taken whole rather than compared and needs no opt-in
-anywhere — from a terminal, from a coding agent's session, on a first run or on a
-follow-up (§[The hotfix mode](#the-hotfix-mode)). `--path` declares a path the run will
-touch, which is what lets `rigor.areas` rules be matched from the first moment
-rather than from the run's diff. Repeat it for each path.
+`--mode` asks for a mode for this run, and it **settles the mode the run is at**:
+the request is the narrowest rank of the order below, so it decides whether it
+asks for more or for less than the configuration says, and the launcher notes the
+one request that decides nothing — the one naming the very mode the configuration
+already resolves. What a request never goes below is a declared floor, which is a
+review level and not a mode (§[The floor](#the-floor)). A mode a launch
+**carried** from a record rather than one typed on this run is the one kind of
+request that may only raise the configuration's answer: the level a `--pr`
+follow-up keeps from its pull request, and the parent's own answer a task filed
+from a run carries (the follow-up paragraph below, and D1844). `hotfix` is the one mode
+the request takes whole rather than by rank: it is off the axis and ranks below
+every other mode, so it needs no opt-in anywhere — from a terminal, from a coding
+agent's session, on a first run or on a follow-up (§[The hotfix mode](#the-hotfix-mode)).
+`--path` declares a path the run will touch, which is what lets `rigor.areas`
+rules be matched from the first moment rather than from the run's diff. Repeat it
+for each path.
 
 **Per repository**, in its `fugaro.yaml`:
 
@@ -212,23 +221,34 @@ of the project takes, and `hotfix` is a choice about one run
 the project resolves to today is refused in a coding agent's session, with the
 command to run at the owner's own terminal.
 
-**The order** is the one rule `docs/project-layer.md` §2 states: an area rule the
-run's paths match, then the repository's `rigor.default`, then the project layer's
-`defaults.rigor.default`, then Fugaro's own default, which is `pro`. Unlike every
-other key, a narrower layer may set a **lower** mode than a wider one — this is a
-default and not a floor. Two differences worth knowing:
+**The order** is the one rule `docs/project-layer.md` §2 states, weakest first:
+Fugaro's own default, which is `pro`, then the project layer's
+`defaults.rigor.default`, then the project layer's `defaults.rigor.areas`, then
+its `defaults.rigor.repos` entry for the repository, then the repository's own
+`rigor.default`, then its own `rigor.areas`, and last the run's own request,
+which is `--mode`. A floor sits outside every layer and none of the seven moves
+it (§[The floor](#the-floor)). Unlike every other key, a narrower layer may set a
+**lower** mode than a wider one — this is a default and not a floor. Two
+differences worth knowing:
 
 - Both `areas` lists are in effect: a repository's rules and the project's are
-  unioned rather than the narrower list replacing the wider one, and the
-  **strictest matched rule** decides. Every rule that matched is recorded,
-  strictest first.
+  both read rather than the narrower list replacing the wider one, each at its
+  own rank in the order above, and within one list the **strictest matched
+  rule** decides. So the project's rule for an area holds everywhere the
+  repository writes nothing, and the repository's own rule decides for its
+  paths. Every rule that matched is recorded, strictest first.
 - A mode a run has reached never falls within that run. A run that rose to
   `critical` for one path stays there for the rest of its rounds; a later
   resolution that comes back weaker leaves the reached mode standing.
 
 **A follow-up** (`fugaro run --pr N`) keeps the mode the pull request's runs
 recorded, and may only raise it — with `--mode` or without. A follow-up is a
-continuation of the same work, so it may not review less than the run it follows.
+continuation of the same work, so it may not review less than the run it follows,
+nor less than the repository resolves today: the mode it keeps is carried rather
+than asked for, so it is raise-only, and a configuration that has risen since
+that run holds the follow-up at the higher mode. A task filed from a run's
+deferred findings carries the parent's mode the same way, and is raise-only
+against its own repository's settings for the same reason.
 A recorded `hotfix` is the one mode it does not keep: the follow-up re-resolves
 from its layers rather than reaching the mode through a launch that asked for
 nothing. Asking for it on a follow-up works exactly as it does on a first run:
@@ -266,11 +286,15 @@ subcommand.
 review in a mode whose own level set is the first-line review alone.
 
 **A request that moves the mode moves no floor.** The floor is read per mode, and
-a run whose own `--mode` took it to `hotfix` — the one mode a request takes whole
-(§[The hotfix mode](#the-hotfix-mode)) — is held to hotfix's row **and** to the
-row of the mode the layers resolved for it: a floor of `l2,l3` on `pro` holds a
-`fugaro run --mode hotfix` run of that repository too, so no flag drops the
-owner's minimum.
+a run reads the row of the mode it is at. A run whose own `--mode` asked for
+less than its layers resolve is held to the row of the mode **the layers
+resolved**: a floor of `l2,l3` on `pro` holds a run of that repository asked for
+at `poc` too, so no flag drops the owner's minimum. A `fugaro run --mode hotfix`
+run — the one mode a request takes whole
+(§[The hotfix mode](#the-hotfix-mode)) — is the exception, and reads **hotfix's
+own row alone** (the owner's ruling of 2026-11-20): a floor of `l2,l3` on `pro`
+does not reach it, and the lever over a hotfix run is a floor written for
+`hotfix` itself — `fugaro rigor floor set hotfix l2`, unset by default.
 
 ## Reading a run's mode back
 
@@ -297,8 +321,10 @@ the spec named was *dropped rather than built* by the owner's ruling of
 2026-11-13, because there is no way to predict when a hotfix will be needed (task
 R7 of `docs/rigor-command/implementation-plan.md`). The request is the whole door:
 it takes the run to `hotfix` whatever the layers below resolved, and it is the one
-request that is not compared against them — every other mode keeps the raise-only
-rule, so a launcher may raise a run's mode and never lower it.
+mode the request takes whole rather than by rank — every other mode keeps the
+request's own rank, so a launcher's request settles the mode whether it asks for
+more or for less. What a request never goes below is a declared floor, and a
+hotfix run reads hotfix's own row alone (§[The floor](#the-floor)).
 
 **The request works everywhere** (the owner's ruling of 2026-11-16): a first run,
 a `--pr` follow-up and a launch from a coding agent's session alike. Neither of

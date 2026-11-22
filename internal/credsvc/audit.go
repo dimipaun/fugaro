@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -608,19 +609,27 @@ const StatusOK = "ok"
 // (exhausted, broken, not_admitted, stopped) and its error types say why the
 // call itself was refused (exhausted_until, unverified_run_identity,
 // unverified_job_identity, state_unavailable, request_refused,
-// no_candidate_credentials, issue_gone, no_read_consumer).
+// no_candidate_credentials, issue_gone, no_read_consumer,
+// provider_not_served, provider_not_allowed).
 func ValidStatus(status string) bool {
 	return status == StatusOK || ValidReason(status) || validErrorType(status)
 }
 
 // validErrorType reports whether s is one of the refusal body's error types
-// (wire.go). It is the reader's half of a closed set the writer already owns —
-// all eight of them, the request-shape refusal included: the answer path
-// records that refusal like the rest (server.go), so this set is the wire's own
-// vocabulary and not a subset of what this service happens to answer today.
+// (wire.go, provider_wire.go). It is the reader's half of a closed set the
+// writer already owns — all ten of them, the request-shape refusal included:
+// the answer path records that refusal like the rest (server.go), so this set is
+// the wire's own vocabulary and not a subset of what this service happens to
+// answer today.
+//
+// The provider route's two are here for that reason and not because a path
+// answers them today: a set that stopped at the eight would leave a refusal of
+// either — a routed call the published policy does not allow, and one no bundle
+// entry serves (KS4, R11) — with NO line at all, which is the one state the
+// audit contract does not have.
 func validErrorType(s string) bool {
 	switch s {
-	case ErrorExhaustedUntil, ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity, ErrorStateUnavailable, ErrorRequestRefused, ErrorNoCandidateCredentials, ErrorIssueGone, ErrorNoReadConsumer:
+	case ErrorExhaustedUntil, ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity, ErrorStateUnavailable, ErrorRequestRefused, ErrorNoCandidateCredentials, ErrorIssueGone, ErrorNoReadConsumer, ErrorProviderNotServed, ErrorProviderNotAllowed:
 		return true
 	}
 	return false
@@ -1098,23 +1107,14 @@ func (a *Auditor) redact(ev AuditEvent) AuditEvent {
 }
 
 // validSlipOwner reports whether s is the owner a slip records: the launcher's
-// own `sub`, digits only and at most maxLauncherSubDigits of them. It is the
-// rule auth.go's launcherSub holds a token's claim to (DS1.2), spelled here
-// because the value a line carries is the one this service wrote into the
-// record — never a caller's text — and a field of a line is held to its rule
-// whatever its provenance. TestSlipOwnerIsTheLauncherRule keeps the two
-// spellings of the same rule from drifting.
-func validSlipOwner(s string) bool {
-	if s == "" || len(s) > maxLauncherSubDigits {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
-}
+// own `sub`, digits only and at most maxLauncherSubDigits of them. It is
+// gateway.ValidCredentialOwner — the one definition of the rule, in the package
+// both ends of the wire can see — kept as a name here because the value a line
+// carries is the one this service wrote into the record, never a caller's text,
+// and a field of a line is held to its rule whatever its provenance.
+// TestSlipOwnerIsTheLauncherRule keeps this name and auth.go's launcherSub from
+// drifting.
+func validSlipOwner(s string) bool { return gateway.ValidCredentialOwner(s) }
 
 // validAccount reports whether s is an account this line may name: the
 // printable-ASCII address rule auth.go holds the installation's configured job

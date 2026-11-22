@@ -864,25 +864,23 @@ describe('the console with no installation to read', () => {
     expect(all(tree, 'unavailable-picker')).toEqual([])
     expect(all(tree, 'unavailable-configured')).toEqual([])
     expect(one(tree, 'unavailable-install-lead').textContent).toBe(INSTALL_LEAD)
-    // How many places were searched, and never which: no path is drawn on this
-    // console -- the `path` class turns every one of them into `<path>`, and a
-    // column of `<path>` under a sentence saying the console looked somewhere
-    // tells the operator nothing. The count is the fact that survives.
+    // How many places were searched, and -- now -- which: the `path` class draws
+    // a path as it came (D3213, 2026-11-21), and a column of `<path>` under a
+    // sentence saying the console looked somewhere told the operator nothing.
+    // The count is still drawn beside the names, because "how many places" is
+    // the figure this screen is built around.
     expect(one(tree, 'unavailable-searched-count').textContent).toBe(String(state.searched.length))
     expect(one(tree, 'unavailable-searched-lead').textContent).toBe(SEARCHED_LEAD)
     const drawn = walk(tree).map((node) => node.textContent).join('\n')
-    expect(drawn).not.toContain('/opt/homebrew')
-    expect(drawn).not.toContain('/usr/local/bin')
+    expect(drawn).toContain('/usr/local/bin/fugaro')
     expect(drawn, 'the screen still invites the operator to choose a binary').not.toContain(
       'choose a different fugaro binary',
     )
-    // The resolution's own sentence is read as prose, so the paths inside it
-    // are drawn as the console's `<path>` marker -- the design's own mark for a
-    // path, and the reason the sentence is still worth drawing: it says the
-    // console looked and that nothing was there, and each place it looked is
-    // marked rather than named.
-    expect(one(tree, 'unavailable-reason').textContent).toContain('no fugaro binary was found')
-    expect(one(tree, 'unavailable-reason').textContent).toContain('<path>')
+    // The resolution's own sentence is read as prose, and the places it names
+    // are drawn as the paths they are: the sentence says the console looked and
+    // that nothing was there, and where it looked is the next thing an operator
+    // asks.
+    expect(one(tree, 'unavailable-reason').textContent).toBe(theReasons['no-binary'])
     // Not a partially drawn dashboard: no screen, no cap, no run list.
     expect(all(tree, 'live')).toEqual([])
     expect(all(tree, 'degraded-caps')).toEqual([])
@@ -984,19 +982,16 @@ describe('the console after a refused read', () => {
     expect(all(tree, 'live')).toEqual([])
   })
 
-  it('is drawn verbatim because `putText` would eat the remedy', () => {
-    // This is why the sentence does not go through the `sentence` class,
-    // asserted rather than argued: the free-text rules redact inside it, and one
-    // of the things they redact is the answer to the operator's problem. Review
-    // round 5 of PR 478 kept the assertion and changed what the screen does with
-    // it: `refusedState` runs `sanitizeRefusal`, which is the credential rules
-    // and nothing else, so the remedy survives while a token does not.
+  it('is drawn character for character, by the refusal door and by the sentence class alike', () => {
+    // This used to be a case about the two doors disagreeing: the `sentence`
+    // class ran the free-text rules, which redacted inside the remedy -- the
+    // role names, the project -- and `refusedState` runs `sanitizeRefusal`,
+    // which is the credential rules and nothing else, so the remedy survived
+    // while a token did not. The non-secret rules are gone (D3213), so the two
+    // agree on this sentence; what the screen still runs the door for is the
+    // credential half, which the case below asserts.
     const through = sanitizeText(REFUSAL_SENTENCE, 'sentence', 'the CLI sentence')
-    expect(through.ok).toBe(true)
-    const text = through.ok ? through.text : ''
-    expect(text).not.toBe(REFUSAL_SENTENCE)
-    expect(text).toContain('[redacted]')
-    expect(text).not.toContain('roles/datastore.viewer')
+    expect(through.ok && through.text).toBe(REFUSAL_SENTENCE)
     // And the door the screen actually uses draws it character for character.
     const drawn = sanitizeRefusal(REFUSAL_SENTENCE, 'the CLI refusal sentence')
     expect(drawn.ok && drawn.text).toBe(REFUSAL_SENTENCE)

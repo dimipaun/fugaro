@@ -228,7 +228,7 @@ func coordinatorReportErr(lc *localcfg.Config, err error) error {
 }
 
 // ownCoordinatorDB asks the ONE ownership question about the database the
-// coordinator writes into (docs/design/upgrade.md, "Every writer into that
+// coordinator writes into (docs/upgrade/spec.md, "Every writer into that
 // database"): the core's own refusal (fcli.RequireOwnBudgetDB, the predicate
 // `fugaro update`'s stages and every command of the audit ask through
 // budgetDBUnadopted), so this door and those cannot answer "is this database
@@ -605,7 +605,7 @@ type coordinatorOptions struct {
 // NewCoordinatorCmd is the coordinator's command tree: report, sweep, status,
 // show, intents, serve, login, logout and roadmap. Exported because ee/register
 // is what adds it to the released tree (design
-// docs/design/ee-boundary-moves.md §5.1).
+// docs/ee-reorg/boundary-moves.md §5.1).
 func NewCoordinatorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "coordinator",

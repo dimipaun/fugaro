@@ -249,6 +249,52 @@ type Selector struct {
 // Lease's: the cap can be exceeded by the number of instances selecting at once,
 // for at most one lease TTL.
 func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential) (Credential, time.Duration, error) {
+	return s.selectCredential(ctx, run, candidates, true)
+}
+
+// MayServe answers whether ONE credential may serve this run's call now, and it
+// writes NOTHING: no placement, no lease, no mark, no counter.
+//
+// It is the judgement Select makes over a list of that one credential
+// (selectCredential), and the one thing it leaves out is the recording of the
+// decision. Every rule is therefore the same rule and every refusal the same
+// error: the class rule and the provider tie (checkCandidates, D3000), the
+// credential's own mark, the room the cap leaves, and the wait a mark that will
+// lift answers with (ExhaustedUntil) — so a caller renders one sentence for one
+// state, and no credential is ever judged twice by two spellings of a rule.
+//
+// # Why a caller wants the judgement without the placement
+//
+// A call whose credential is DERIVED has no decision to record. The credentials
+// service's provider route builds its entry from the run's verified repository
+// and the provider's name the call carries, and it is the same entry for every
+// call that run makes to that provider: there is no pool for the run to be moved
+// around, no other credential this call could have been served by, and so
+// neither D154's stickiness nor D142's slot means anything for it.
+//
+// What placing it would do is the harm. A run's current credential and its lease
+// are ONE fact — where this run is (SetPlacement, take) — and a run that mixes
+// Claude calls with routed ones is on a shared subscription token for the first.
+// The routed call would move the run onto the provider's entry, which takes the
+// lease the run still holds on the account with it: the account's concurrency
+// slot (D142) is freed while the run is using it, and the next Claude call finds
+// no current credential to stay on (D154) and either re-selects off the prompt
+// cache's credential or waits on the cap. A run's placement is the cascade's to
+// write, and only for a call the cascade served.
+//
+// The judgement itself is not optional, and that is the other half: a caller
+// that skipped it and attached the credential anyway would serve an entry a mark
+// holds, or one the class rule and the provider tie refuse.
+func (s *Selector) MayServe(ctx context.Context, run Run, c Credential) error {
+	_, _, err := s.selectCredential(ctx, run, []Credential{c}, false)
+	return err
+}
+
+// selectCredential is the selection Select and MayServe share, and `place` is
+// the whole difference between them: Select records the decision (take), which
+// is D154's stickiness and D142's lease written as one placement, and MayServe
+// answers it and writes nothing.
+func (s *Selector) selectCredential(ctx context.Context, run Run, candidates []Credential, place bool) (Credential, time.Duration, error) {
 	set := s.Settings.withDefaults()
 	now := s.now()
 	if err := run.valid(); err != nil {
@@ -278,8 +324,10 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 	}
 	if found {
 		if c, ok := lookup(cs, cur); ok && reachable(c, set) && free(c, marks, leases, run, now, set) {
-			if err := s.take(ctx, run, c, now, set); err != nil {
-				return Credential{}, 0, err
+			if place {
+				if err := s.take(ctx, run, c, now, set); err != nil {
+					return Credential{}, 0, err
+				}
 			}
 			return c, 0, nil
 		}
@@ -306,8 +354,10 @@ func (s *Selector) Select(ctx context.Context, run Run, candidates []Credential)
 			if err != nil {
 				return Credential{}, 0, err
 			}
-			if err := s.take(ctx, run, c, now, set); err != nil {
-				return Credential{}, 0, err
+			if place {
+				if err := s.take(ctx, run, c, now, set); err != nil {
+					return Credential{}, 0, err
+				}
 			}
 			return c, 0, nil
 		}

@@ -210,7 +210,7 @@ func TestInstallationScopeIsTodaysBehaviour(t *testing.T) {
 // was.
 func TestARouteTheScopeDoesNotServeIsRefused(t *testing.T) {
 	t.Run("a scope that serves nothing refuses every route", func(t *testing.T) {
-		s := newSvcWith(t, func(_ *svc, cfg *Config) { cfg.Resolver = StubScopeResolver() })
+		s := newSvcWith(t, func(_ *svc, cfg *Config) { cfg.Resolver = unservedResolver{} })
 		for _, path := range []string{MessagesPath, SignPath, VerifyPath, BitbucketProxyPrefix + "acme/aurora.git/info/refs"} {
 			resp, body := s.postRaw(t, http.MethodPost, path, func(r *http.Request) {
 				r.Header.Set("Authorization", "Bearer "+s.jobToken())
@@ -225,8 +225,8 @@ func TestARouteTheScopeDoesNotServeIsRefused(t *testing.T) {
 				t.Errorf("POST %s is refused with %q, want %q", path, e.Error, ErrorUnverifiedJobIdentity)
 			}
 		}
-		// The stub scope verified no caller, so the refusal is the service's own
-		// and writes no audit line: the rule is about a refusal taken with an
+		// This scope verified no caller, so the refusal is the service's own and
+		// writes no audit line: the rule is about a refusal taken with an
 		// identity in hand (audit.go).
 		if lines := s.auditLines(t); len(lines) != 0 {
 			t.Errorf("a refusal written with no verified caller wrote %d audit lines: %v", len(lines), lines)
@@ -742,6 +742,27 @@ func (r faultResolver) Resolve(ctx context.Context, req *http.Request) (Scope, e
 	id := sc.Caller()
 	return nil, &ScopeFault{What: r.fault.What, Err: r.fault.Err, Caller: &id}
 }
+
+// unservedResolver is a deployment whose resolver serves no route and verifies
+// nobody: the answer the front door's own gate is asked about, and the one the
+// stub this package shipped while WS1 and WS2 were being written used to give
+// (I1 deletes the stub and keeps the case).
+//
+// It is deliberately not a scope of its own. The gate may ask a scope it
+// refuses two things and no more — whether it serves this route, and who the
+// caller is — so the Scope embedded below is nil on purpose: a gate that reached
+// a reader of a scope that serves nothing panics here rather than passing.
+type unservedResolver struct{}
+
+func (unservedResolver) Resolve(context.Context, *http.Request) (Scope, error) {
+	return unservedScope{}, nil
+}
+
+type unservedScope struct{ Scope }
+
+func (unservedScope) Serves(string) bool { return false }
+
+func (unservedScope) Caller() Identity { return Identity{} }
 
 // resolverWithout is an installation's resolver answering its scope with one of
 // eight answers changed, and the two groups are the two things a scope can

@@ -27,7 +27,7 @@ Read **on 2026-11-14** at `origin/main` = **`5c170e5c`**, rather than inherited 
 - **In the open work streams**, every branch that writes a decision block was fetched and read: **none writes a decision above D2399 and none reserves a check in 620–629**. The draft this plan adopts claims nothing here — a task branch writes no decision block.
 - **This work takes D2400–D2429** — **D2400–D2417 written here, every one answered by the owner on 2026-11-15 as recommended, D2418–D2429 reserved** — and **Checks 620–629**, of which **620** is the plan's one owner-run check and **621–629 are reserved**.
 
-A number reserved by a plan that has not merged is invisible to a grep, and a number reserved in a merged plan is invisible to a grep of the checklist — `docs/plans/2026-10-16-voice.md` §2 (line 58) states both, and it is why §5's fourth command reads the designs' own files and not one file. A later task that needs a number re-checks that section's facts rather than this conclusion.
+A number reserved by a plan that has not merged is invisible to a grep, and a number reserved in a merged plan is invisible to a grep of the checklist — `docs/voice/implementation-plan.md` §2 (line 58) states both, and it is why §5's fourth command reads the designs' own files and not one file. A later task that needs a number re-checks that section's facts rather than this conclusion.
 
 ## What this design does not do
 

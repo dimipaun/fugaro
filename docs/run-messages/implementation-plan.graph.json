@@ -145,8 +145,8 @@
           "SECURITY.md",
           "website/content/security.md",
           "docs/design/v1.md",
-          "docs/design/bucket-iam.md",
-          "docs/design/budget-token-channel.md"
+          "docs/bucket-iam/spec.md",
+          "docs/budget-token-channel/spec.md"
         ]
       }
     },

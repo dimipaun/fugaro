@@ -323,7 +323,7 @@ All answered (2026-10-29). D523, D531 and D533 are NOT the recommendation; the r
   choices were: (a) accept it; (b) add a one-line "refresh images to get governance" note to the notes
   without making it a required step. The owner took (b): the 0.13.0 notes carry that ONE line, it is
   **not** a required operator step, and an installation that never refreshes its images keeps refusing
-  `governance:` — today's behaviour anyway. E3.3 owns the line, placed as a plain sentence in `### Known limits` (installations on older images keep refusing governance: until images are refreshed (`fugaro update` / `fugaro image refresh`); not a required operator step); `docs/design/ee-boundary-moves.md`
+  `governance:` — today's behaviour anyway. E3.3 owns the line, placed as a plain sentence in `### Known limits` (installations on older images keep refusing governance: until images are refreshed (`fugaro update` / `fugaro image refresh`); not a required operator step); `docs/ee-reorg/boundary-moves.md`
   §12 records the same answer.
 - **O1 (D526). ANSWERED 2026-10-29 by the owner: publish the CLA Gist URL first, then release**
   (not the recommendation, which was to ask counsel and hold). The owner creates the Gist from

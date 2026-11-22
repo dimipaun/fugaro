@@ -12,7 +12,7 @@ import (
 )
 
 // The managed project's instantiation of Cover (Task 1.1 of
-// docs/plans/2026-10-16-managed-projects.md).
+// docs/managed-projects/implementation-plan.md).
 //
 // init's own cover (cover.go) answers "what does Fugaro's own installation
 // need": its resource types are the ones the embedded modules declare, and its

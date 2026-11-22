@@ -438,7 +438,7 @@ func mobileAuthCitedPaths(doc string, dirs map[string]bool) []string {
 // mobile Phase 6 tasks', and the reconciliation's §F23 names the borrowed ones
 // at once. P6.6's `internal/budget/token/device.go` left the list in the pull
 // request that landed it — the pairing plan's T2, "The phone's key, the typed
-// fingerprint and the device token" (`docs/plans/2026-10-22-mobile-pairing-cli.md`,
+// fingerprint and the device token" (`docs/mobile/pairing-cli-plan.md`,
 // 2026-10-29) — and P6.8's two, `mobile/src/pairing` and `mobile/src/overview`,
 // left it in the pull request that landed that task, which is the deletion
 // every entry owes its own pull request. The list is held here rather than
@@ -635,7 +635,7 @@ var mobileAuthProviderNames = []string{
 	"assetlinks.json", "apple-app-site-association", "google-services.json",
 	"GoogleService-Info.plist", "@privaterelay.appleid.com", "signInWithCredential",
 	"config/admin/devices/$uid", "mobile/.gitignore", "firebase.json",
-	"scripts/live-checks/check361.sh", "docs/design/project-centric.md",
+	"scripts/live-checks/check361.sh", "docs/project-centric/spec.md",
 	"docs/workspaces/spec.md", "docs/pending-workflows/",
 }
 

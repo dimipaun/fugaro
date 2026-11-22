@@ -10,11 +10,33 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
+
+// wsTokens is the snapshot's bundle as a store's own test answers it: the
+// document keys the workspace's bundle holds and, behind the accessor, their
+// values. It is C1's BundleTokens without a document — which is what lets the
+// case above ask WHICH name a store chooses without a secret being written
+// anywhere, and the values it is handed are the fixture's minted ones.
+type wsTokens map[string]string
+
+func (t wsTokens) Names() []bbtokens.Name {
+	out := make([]bbtokens.Name, 0, len(t))
+	for name := range t {
+		out = append(out, bbtokens.Name(name))
+	}
+	return out
+}
+
+func (t wsTokens) Value(name bbtokens.Name) (string, bool) {
+	value, ok := t[string(name)]
+	return value, ok
+}
 
 // The workspace's scope under test (WS2). The fixture is workspace_test.go's —
 // the two members, the frozen table, the member databases — and what this file
@@ -1137,12 +1159,56 @@ func TestWorkspaceScopeAnswersItsReaders(t *testing.T) {
 	if !s.dbs[wsMemberA].read("creds/repoauth/" + wsSlug) {
 		t.Error("the repository's own auth record was not read from the calling member's database")
 	}
-	// The forge reader is the account's repositories and no token store yet:
-	// the store a proxied call needs is built over the workspace's bundle, and
-	// handing one here would be a second read of that secret (C1's R-scope-forge
-	// is where it is wired).
-	if sc.Forge().Bitbucket() != nil {
-		t.Error("Forge().Bitbucket() is not nil: the token store is built where the bundle is loaded, and this resolver holds no bundle")
+	// The forge reader's token store is the workspace's OWN DECLARATION: the
+	// Bitbucket tokens the owner's node names, chosen for the repository the
+	// call is on, and read for a value by the route out of the snapshot it
+	// decided the call on (C1's rule 10). The fixture's node declares no
+	// Bitbucket token, so this one covers nothing — and a store that answered a
+	// name it cannot forward with would be the fallback C1 refuses.
+	store := sc.Forge().Bitbucket()
+	if store == nil {
+		t.Fatal("Forge().Bitbucket() is nil, and nil refuses every proxied call: a workspace answers the tokens its own node declares (C1's rule 10)")
+	}
+	repo, other := testCanonical(t, wsMemberRepo), testCanonical(t, wsMemberOtherRepo)
+	var refusal *bbtokens.Refusal
+	if _, err := store.Select(context.Background(), bbtokens.Snapshot{}, repo, false); !errors.As(err, &refusal) || refusal.Class != bbtokens.ClassNotCovered {
+		t.Errorf("the store of a node declaring no Bitbucket token answered %v, want the coverage refusal", err)
+	}
+	// The other half of the same claim, on a node that declares one: the token
+	// is chosen by the NAME the owner's node carries, and the value stays the
+	// route's to read — a snapshot holding that name is answered, and one
+	// holding no token at all is refused rather than served under a name.
+	declared := wsOneRepo()
+	declared.Shared = append(declared.Shared, projectpolicy.WorkspaceShared{
+		Name: config.BitbucketSecret, Kind: gitprov.KindBitbucket,
+		Projects: []string{wsMemberA, wsMemberB}, Covers: []string{repo},
+	})
+	declaredStore := newWS2Scope(t, wsPublished(declared)).served(t, MessagesPath, wsAccountA).Forge().Bitbucket()
+	held := bbtokens.Snapshot{Bundle: wsTokens{config.BitbucketSecret: fakeCred(t, "workspace-token")}}
+	choice, err := declaredStore.Select(context.Background(), held, repo, false)
+	if err != nil || choice.Name != bbtokens.Name(config.BitbucketSecret) {
+		t.Errorf("Select of a declared and held token = (%v, %v), want the name the workspace's own node carries", choice, err)
+	}
+	if _, err := declaredStore.Select(context.Background(), bbtokens.Snapshot{}, repo, false); !errors.As(err, &refusal) || refusal.Class != bbtokens.ClassNoToken {
+		t.Errorf("Select of a declared token the bundle does not hold = %v, want the store's own refusal: a name nothing can forward with is never chosen (D143)", err)
+	}
+	if _, err := declaredStore.Select(context.Background(), held, other, false); !errors.As(err, &refusal) || refusal.Class != bbtokens.ClassNotCovered {
+		t.Errorf("Select of a repository the owner's coverage does not name = %v, want the coverage refusal (C3's covers)", err)
+	}
+	// And the allow-list is a fence on this store too, which is R5's first leg
+	// and not the model route's alone: the same entry offered to the OTHER
+	// member alone is one this call is not served, however well the owner's
+	// coverage covers the repository — the store holds no entry for it, so
+	// Select falls through to the coverage refusal rather than forwarding the
+	// workspace's token on a project the owner offered it to nobody (D1298).
+	unoffered := wsOneRepo()
+	unoffered.Shared = append(unoffered.Shared, projectpolicy.WorkspaceShared{
+		Name: config.BitbucketSecret, Kind: gitprov.KindBitbucket,
+		Projects: []string{wsMemberB}, Covers: []string{repo},
+	})
+	unofferedStore := newWS2Scope(t, wsPublished(unoffered)).served(t, MessagesPath, wsAccountA).Forge().Bitbucket()
+	if _, err := unofferedStore.Select(context.Background(), held, repo, false); !errors.As(err, &refusal) || refusal.Class != bbtokens.ClassNotCovered {
+		t.Errorf("Select of a covered repository whose entry the allow-list names another member alone = %v, want the coverage refusal: the entry's projects is asked beside the member's own policy (R5, D1298)", err)
 	}
 	covered, err := sc.Forge().Covers(context.Background(), wsRepo)
 	if err != nil {

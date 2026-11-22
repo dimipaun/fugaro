@@ -50,7 +50,7 @@
 // update with keys like runs/<slug>/<run>/reserved). Writing a whole ledger,
 // or deleting a field, is denied: validation rules do not run on a delete.
 //
-// The project policy (docs/design/project-centric.md §5). config/policy is
+// The project policy (docs/project-centric/spec.md §5). config/policy is
 // readable *per child*, never on the parent, because an RTDB read grant
 // cascades to children: config/policy/shared is readable by any token of the
 // project, config/policy/repos/$slug only by the token whose fs claim is that
@@ -809,7 +809,7 @@ const reportsJobClaim = "(auth != null && auth.token.rj != null && auth.token.rj
 // coordinator's own writer (deploy/terraform/gcp/modules/firebase/iam.tf:141),
 // and every one of those reads and writes every node past these rules — the
 // fact the package comment above states for config/admin and
-// docs/design/roles.md:104 for the database as a whole. So the node is written
+// docs/roles/spec.md:104 for the database as a whole. So the node is written
 // as a refusal beside the IAM grants rather than as a grant of its own, and the
 // exposure those grants leave is not one a rule here can close: it is an open
 // item on the plan's M3 (docs/mcp-server/implementation-plan.md) for the owner

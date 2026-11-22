@@ -5,32 +5,21 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.000011936",
+     "completion": "0.000016",
      "discount": 0,
-     "input_cache_read": "0.00000021",
-     "prompt": "0.000000239"
+     "input_cache_read": "0.000000152",
+     "prompt": "0.000000153"
     },
-    "tag": "inference-net/us"
+    "tag": "wafer/fast"
    },
    {
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.000011936",
+     "completion": "0.0000106066",
      "discount": 0,
-     "input_cache_read": "0.00000021",
-     "prompt": "0.000000239"
-    },
-    "tag": "inference-net/fp4"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
-     "completion": "0.000012",
-     "discount": 0,
-     "input_cache_read": "0.00000025",
-     "prompt": "0.0000003"
+     "input_cache_read": "0.00000018",
+     "prompt": "0.0000001824"
     },
     "tag": "relace/fp4"
    },
@@ -38,43 +27,10 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.0000119",
-     "discount": 0,
-     "input_cache_read": "0.000000359",
-     "prompt": "0.00000036"
-    },
-    "tag": "wafer/us"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
-     "completion": "0.00001188",
-     "discount": 0,
-     "input_cache_read": "0.00000035",
-     "prompt": "0.0000005"
-    },
-    "tag": "inference-net/fast"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
-     "completion": "0.000015",
-     "discount": 0,
-     "input_cache_read": "0.00000023",
-     "prompt": "0.00000065"
-    },
-    "tag": "makora/fp4"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
      "completion": "0.000016",
      "discount": 0,
-     "input_cache_read": "0.00000071",
-     "prompt": "0.00000072"
+     "input_cache_read": "0.000000182",
+     "prompt": "0.000000192"
     },
     "tag": "wafer"
    },
@@ -82,32 +38,43 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.0000149",
+     "completion": "0.00001575",
      "discount": 0,
-     "input_cache_read": "0.000000539",
-     "prompt": "0.000001126"
+     "input_cache_read": "0.000000214",
+     "prompt": "0.000000245"
     },
-    "tag": "morph/fp8"
+    "tag": "inference-net/us"
    },
    {
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.0000055",
+     "completion": "0.00001575",
      "discount": 0,
-     "input_cache_read": "0.0000002",
-     "prompt": "0.0000012"
+     "input_cache_read": "0.000000214",
+     "prompt": "0.000000245"
     },
-    "tag": "sail-research/fp4/us"
+    "tag": "inference-net/fp4"
    },
    {
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.0000055",
+     "completion": "0.0000096",
      "discount": 0,
-     "input_cache_read": "0.0000002",
-     "prompt": "0.0000012"
+     "input_cache_read": "0.00000013",
+     "prompt": "0.000000276"
+    },
+    "tag": "wafer/us"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.00001658",
+     "discount": 0,
+     "input_cache_read": "0.0000001725",
+     "prompt": "0.000000345"
     },
     "tag": "sail-research/fp4"
    },
@@ -115,23 +82,56 @@
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.000014",
+     "completion": "0.000015",
      "discount": 0,
-     "input_cache_read": "0.0000012",
-     "prompt": "0.0000012"
+     "input_cache_read": "0.0000003",
+     "prompt": "0.00000045"
     },
-    "tag": "akashml/fp4"
+    "tag": "kt"
    },
    {
     "context_length": 1048576,
     "max_completion_tokens": 943718,
     "pricing": {
-     "completion": "0.00000825",
-     "discount": 0.45,
-     "input_cache_read": "0.000000165",
-     "prompt": "0.00000165"
+     "completion": "0.000018",
+     "discount": 0,
+     "input_cache_read": "0.000000363",
+     "prompt": "0.00000045"
     },
-    "tag": "decart/mxfp4"
+    "tag": "inference-net/us/fast"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000018",
+     "discount": 0,
+     "input_cache_read": "0.000000363",
+     "prompt": "0.00000045"
+    },
+    "tag": "inference-net/fast"
+   },
+   {
+    "context_length": 1048320,
+    "max_completion_tokens": 131072,
+    "pricing": {
+     "completion": "0.000014",
+     "discount": 0,
+     "input_cache_read": "0.00000015",
+     "prompt": "0.0000009"
+    },
+    "tag": "io-net/fp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.000018",
+     "discount": 0,
+     "input_cache_read": "0.0000005",
+     "prompt": "0.000001"
+    },
+    "tag": "makora/fp4"
    },
    {
     "context_length": 1048576,
@@ -143,39 +143,6 @@
      "prompt": "0.00000185"
     },
     "tag": "chutes/mxfp4"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
-     "completion": "0.0000105",
-     "discount": 0,
-     "input_cache_read": "0.00000021",
-     "prompt": "0.0000021"
-    },
-    "tag": "fireworks/spot"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
-     "completion": "0.000014519",
-     "discount": 0,
-     "input_cache_read": "0.00000035",
-     "prompt": "0.00000224"
-    },
-    "tag": "inference-net/us/fast"
-   },
-   {
-    "context_length": 1048576,
-    "max_completion_tokens": 943718,
-    "pricing": {
-     "completion": "0.00001275",
-     "discount": 0.15,
-     "input_cache_read": "0.000000255",
-     "prompt": "0.00000255"
-    },
-    "tag": "phala"
    },
    {
     "context_length": 1048576,
@@ -208,7 +175,18 @@
      "input_cache_read": "0.0000003",
      "prompt": "0.000003"
     },
-    "tag": "pareto-alpha/us"
+    "tag": "nebius/fp4"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 1048575,
+    "pricing": {
+     "completion": "0.000015",
+     "discount": 0,
+     "input_cache_read": "0.0000003",
+     "prompt": "0.000003"
+    },
+    "tag": "river"
    },
    {
     "context_length": 1048576,
@@ -221,6 +199,17 @@
      "prompt": "0.000003"
     },
     "tag": "amazon-bedrock/us-east-2"
+   },
+   {
+    "context_length": 1000000,
+    "max_completion_tokens": 900000,
+    "pricing": {
+     "completion": "0.000015",
+     "discount": 0,
+     "input_cache_read": "0.0000003",
+     "prompt": "0.000003"
+    },
+    "tag": "alibaba"
    },
    {
     "context_length": 1048576,
@@ -286,18 +275,30 @@
      "input_cache_read": "0.0000003",
      "prompt": "0.000003"
     },
-    "tag": "moonshotai/mxfp4"
+    "tag": "moonshotai"
    },
    {
     "context_length": 1048576,
-    "max_completion_tokens": 131072,
+    "max_completion_tokens": 128000,
     "pricing": {
-     "completion": "0.00001725",
+     "completion": "0.0000165",
      "discount": 0,
-     "input_cache_read": "0.000000345",
-     "prompt": "0.00000345"
+     "input_cache_read": "0.00000033",
+     "input_cache_write": "0.000004125",
+     "prompt": "0.0000033"
     },
-    "tag": "alibaba"
+    "tag": "amazon-bedrock/us-east-1"
+   },
+   {
+    "context_length": 1048576,
+    "max_completion_tokens": 943718,
+    "pricing": {
+     "completion": "0.0000225",
+     "discount": 0,
+     "input_cache_read": "0.00000045",
+     "prompt": "0.0000045"
+    },
+    "tag": "parasail/fast"
    },
    {
     "context_length": 1048576,

@@ -4,7 +4,7 @@
 (owner: "All tasks approved. Jobmax"); of them, FC1–FC8 are built on `main` and FC9 is not
 started.**
 This file reads
-[spec.md](spec.md) — a verbatim copy of `docs/design/failure-classes.md` — against the tree of `main`
+[spec.md](spec.md) — a verbatim copy of `docs/failure-classes/design.md` — against the tree of `main`
 at **`56c91f66`** (2026-11-07), path by path and symbol by symbol. Everything below was resolved
 against that tree while writing it; the two commands that read the numbers this work holds are in §7,
 and what could not be resolved at all is in §8. **`main` has moved since** — to **`4dc17549`**, 39
@@ -37,7 +37,7 @@ the design's own status now says stay the owner's, and the line records what has
 
 **The design is merged, docs only, and already pinned.** Pull request **#1746** ("a closed failure
 class on every run record, and a failures report") is **merged**; it added
-`docs/design/failure-classes.md` and extended an existing docs test file,
+`docs/failure-classes/design.md` and extended an existing docs test file,
 `internal/cli/docs_pr_state_test.go`, rather than adding one, so the count of
 `internal/cli/docs_*_test.go` files the docs-pin census reads did **not** move (F28). Three tests hold
 the design against the tree:
@@ -433,7 +433,7 @@ be held to it) or **Open** (the design leaves it to the owner).
   `branch_moved` at the site, and **FC5**'s table gains those prefixes so the reader classes the same
   sentence the same way (`TestLegacyClassFromReasonTable`).
 - **F35 — the design's §10 test name asserts the field its own §3 leaves absent.** §10's FC2 names
-  `TestUnclassifiedIsWrittenWhereNoClassIsChosen` (`docs/design/failure-classes.md`, `spec.md:653`).
+  `TestUnclassifiedIsWrittenWhereNoClassIsChosen` (`docs/failure-classes/design.md`, `spec.md:653`).
   §3 of the same design says `failure_class` "is written for every run that did not end `succeeded`"
   and that a `succeeded` run, a `mode: review` run that reviewed (`outcome: reviewed`), an artifact
   run that delivered (`outcome: artifacts`) and a row that never started carry none. Written as
@@ -446,7 +446,7 @@ be held to it) or **Open** (the design leaves it to the owner).
   `plugin/skills_lint_test.go` fails any reference file over `maxReferenceLines` 300 (`:37`) or
   `maxReferenceBytes` 16384 (`:39`, compared at `:348`) — **nine bytes of room**, against a sentence
   that costs far more than nine. The design's §10 puts its one sentence there
-  (`docs/design/failure-classes.md:752`, `spec.md:744`; the design marks it conditional on **O1**'s
+  (`docs/failure-classes/design.md:752`, `spec.md:744`; the design marks it conditional on **O1**'s
   answer), so the sentence is written by **trimming the file as much as
   it adds**: the prose it replaces leaves, or the sentence is shorter than what it displaces, and
   `go test ./plugin/` — which FC8's own gate already runs — is what says so. The precedent is the
@@ -538,7 +538,7 @@ here touches one of them, the row says so and leaves that question to the design
 | # | Question | Recommendation (and why) | Alternative | Its cost | Owner's answer |
 | --- | --- | --- | --- | --- | --- |
 | **D1450** | Does this plan keep the design's task names and its §10 order, or start its own series? | **Keep FC1–FC8 and add FC9** (F13). The design's §10 is the same work written in the same convention, and a second series is two names for one task — the failure mode `docs/catalog-build-context` F29 names for two plans of one feature | A new series (FK1…) with its own edges and levels | Two documents listing the same work under two sets of names, and a reviewer reconciling them by hand at every build | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
-| **D1451** | Is [spec.md](spec.md) a verbatim copy of the merged design, or a pointer to it? | **A verbatim copy with a dated header** (what this folder does). The convention's four files give a reader the document the reconciliation is answerable to without leaving the folder, and the header states which copy is pinned | A one-paragraph pointer to `docs/design/failure-classes.md` | The folder has no spec; the four-file shape breaks; a reader of the reconciliation follows every citation into another folder, and the *spec wins* rule has nothing to point at | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1451** | Is [spec.md](spec.md) a verbatim copy of the merged design, or a pointer to it? | **A verbatim copy with a dated header** (what this folder does). The convention's four files give a reader the document the reconciliation is answerable to without leaving the folder, and the header states which copy is pinned | A one-paragraph pointer to `docs/failure-classes/design.md` | The folder has no spec; the four-file shape breaks; a reader of the reconciliation follows every citation into another folder, and the *spec wins* rule has nothing to point at | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 | **D1452** | Where does `recordEnd` live: in `internal/runner/runner.go`, or in a file of its own? | **A file of its own, `internal/runner/recordend.go`.** The writer's rule is the one thing FC2's diff has to make reviewable, and §10's FC2 is already at 11 files against the twelve-file cap; a 4,000-line file also makes the shared-files row meaningless | `runner.go`, beside `finalize` | one 4,000-line file is the diff of record and of two other tasks (FC3, FC4), and the cap is spent before the guard test is in the list | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 | **D1453** | Does the vocabulary live in a new `internal/failure` package, or in `internal/runstore`? | **`internal/failure`.** Three packages need it (`runstore` for the field's type, `runview` for the reader, `digest` for the table) and `runstore` importing nothing new is the property its own graph is built on; the type is a wire vocabulary and belongs with the other closed ones (`"the shape `runstore.HaltReason` … has`) | `internal/runstore/failure.go` | the runner, the reader and the digest import the record's package for a value that is not a record, and the "one slice the tests read" acquires the record's dependency weight | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 | **D1454** | Where does the legacy reader live, and under which of the design's two names (F20)? | **`internal/runview.ClassOf`, exported, called by the digest** — the name FC5 gives it, not §5's `legacyClass`, because it is the one function both readers call and a reader in another package cannot call an unexported one. It cannot live in `internal/failure`, which §D1453 forbids importing `runstore` (F21) | `failure.ClassOf(status, outcome, reason string, halt string)`, taking the four scalars instead of the record | the reader's signature has to grow every time a legacy pattern needs a fifth input, and two call sites build the same four values by hand | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
@@ -685,5 +685,5 @@ answers none.
 answered: every one of D1450–D1469 takes the recommendation, 2026-11-07.** Every task in
 [implementation-plan.md](implementation-plan.md) is approved the same day (owner: "All tasks
 approved. Jobmax"), so the gates that named those rows are satisfied. The design's own §10 status
-stands unchanged beside all of it, in `docs/design/failure-classes.md`, which is the pinned copy
+stands unchanged beside all of it, in `docs/failure-classes/design.md`, which is the pinned copy
 [spec.md](spec.md) carries and is not this folder's to rewrite.

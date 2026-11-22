@@ -188,7 +188,7 @@ what it does not name. F17.
 that keep it out are not all the register's, and each is attributed to the file
 it is in: *"a reserved number is never reused or renumbered"* is the register's
 ([../../gcp-live-checklist.md](../../gcp-live-checklist.md)); *"the phase that
-ships the check writes them"* is [../../design/voice.md](../../design/voice.md)
+ships the check writes them"* is [../../voice/spec.md](../../voice/spec.md)
 §5.3's convention, the one the project-centric plan sets and the console plan
 follows; and *"A check is never run before its text is in the register"* is
 [docs/mobile/implementation-plan.md](../implementation-plan.md)'s own sentence —

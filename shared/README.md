@@ -144,4 +144,4 @@ is `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Lint' -count=1`.
 Where the reasoning lives: [implementation-plan.md](../docs/mobile/implementation-plan.md)
 (P0.1, and the "shared files" table that gives this package's manifest to this task alone),
 [reconciliation.md](../docs/mobile/reconciliation.md) (D119, and D50's amendment),
-[voice.md](../docs/design/voice.md) (D50, D53).
+[voice.md](../docs/voice/spec.md) (D50, D53).

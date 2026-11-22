@@ -2099,7 +2099,7 @@ func TestUpdateManagedPolicyStageRefusesTheTypedLoosening(t *testing.T) {
 // TestUpdateManagedPolicyStageRefusesTheAccountChoiceKeys: the account-choice
 // members are the second thing a publish can widen that is not a ceiling, and
 // the gate refuses them by the same rule. Setting one names the credential a
-// mixed run's review goes out on (docs/design/mixed-credentials.md §11), which
+// mixed run's review goes out on (docs/mixed-credentials/spec.md §11), which
 // is the project's decision and not a coding agent's session's, so the step
 // takes the Typed class (D846) and D1026 admits no plan gate's answer for it:
 // the node keeps what it had, nothing is written, and nothing is recorded.

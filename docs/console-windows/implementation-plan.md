@@ -677,7 +677,7 @@ Files: `console/src/renderer/styles/*.css` (whichever file owns the degraded scr
 `console/test/unit/theme-selectors.test.ts`.
 Red step: `theme-selectors.test.ts` pins the selectors the screens use; add the four states' selectors
 first — they fail because nothing draws them — then draw them. The one table of every state variant is
-[docs/design/console-styling.md](../design/console-styling.md) §2.7–§2.9, and the rule that survives
+[docs/console-styling/spec.md](../console-styling/spec.md) §2.7–§2.9, and the rule that survives
 the edit is §3.5's: **never colour alone**.
 Verification: `[unit]`, `[types]`. Tier A. Depends on: T-G1.
 Commit: `console: the four states' selectors, in the theme's own table`
@@ -762,7 +762,7 @@ Verification: `[pins]`, `[vet]`. Tier A. Depends on: T-H1.
 Commit: `docs(pending-workflows): say why the Windows pack does not gate the release`
 
 **T-H3 — the release text (F39, F43, D10(a)).**
-Files: `docs/release.md`, `console/README.md`, `docs/design/desktop-console.md`,
+Files: `docs/release.md`, `console/README.md`, `docs/desktop-console/spec.md`,
 `internal/cli/docs_desktop_console_test.go` (the guards that pin those sections).
 Red step: `[pins]` — the guards that pin `docs/release.md`'s console paragraphs and
 `console/README.md`'s Linux section fail the moment the sentences move, and the edit and the guard move
@@ -777,7 +777,7 @@ rather than rewriting them — and it is why the paragraph says the build is *pl
 rather than shipped: the ruling is a plan and nothing on Windows has been built (O7).
 **Landed 2026-11-10.** The four edits below are in, and `docs/windows-cli/wsl.md`'s F40 paragraph and
 its console table row with them (O1). Each place that read the sentence —
-`docs/design/desktop-console.md` §4.2, §7.6's rule 3, the owner-run table's Windows-signing row and
+`docs/desktop-console/spec.md` §4.2, §7.6's rule 3, the owner-run table's Windows-signing row and
 D10's row, and `console/README.md`'s Linux section — carries a dated note of that date saying which
 half moved, so the older, narrower sentence is no longer unqualified anywhere (O7, F43).
 `docs/release.md`'s paragraph was **re-read rather than rewritten**: by then two of its clauses were
@@ -812,7 +812,7 @@ Four edits, each a **dated note rather than a rewrite** (O7, F43):
    first real download).
 3. `console/README.md`'s Linux section gains the Windows section, opening with what the pack produces
    and that it is unsigned.
-4. `docs/design/desktop-console.md`'s §4.2, §7.6 rule 3, the owner-run table's Windows-signing row and
+4. `docs/desktop-console/spec.md`'s §4.2, §7.6 rule 3, the owner-run table's Windows-signing row and
    D10's row each gain a dated note saying **which half of "Windows stays out" moved**: the *build* is
    in 0.10.0 by the 2026-10-20 ruling; the *signing* answer is untouched and there is still no
    Authenticode identity.

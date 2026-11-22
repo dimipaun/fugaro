@@ -1773,7 +1773,7 @@ func doctorAccountsAdd(lc *localcfg.Config, account, profile string) string {
 }
 
 // claudeAccountsStoredCheck is doctor's "claude-accounts-stored" check
-// (design docs/design/named-oauth-tokens.md §6f, plan Task 8): every named
+// (design docs/named-oauth-tokens/spec.md §6f, plan Task 8): every named
 // Claude account repo may choose (config.AllowedClaudeAccounts, "default"
 // excluded, since that is the repository's existing, unconditionally
 // required secret and already covered by doctor's other checks) should have
@@ -2101,7 +2101,7 @@ func projectAccountStoredCheck(lc *localcfg.Config, project []gcp.SecretInfo, pr
 }
 
 // oauthTokenAllowedCheck is doctor's "oauth-token-allowed" check (design
-// docs/design/named-oauth-tokens.md §6f, plan Task 8): the checkout's
+// docs/named-oauth-tokens/spec.md §6f, plan Task 8): the checkout's
 // agent.oauth_token, if set, must name an account config.AllowedClaudeAccounts
 // says repo may actually use, for a workflow whose agent.auth is oauth — a
 // name the local config does not know, one whose allow_data_to omits repo,
@@ -2611,6 +2611,11 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	if c := doctorAllowListUncovered(lc, p); c != nil {
 		checks = append(checks, *c)
 	}
+	// The mobile block's own line (P6 of docs/mobile-identity-pairing, D2796):
+	// what a project that turns sync on stores in the identity project, said on
+	// the node the pairing route reads. A measurement, not a finding, and
+	// silent where the block is absent or the surface is off.
+	checks = append(checks, doctorMobileChecks(lc, p)...)
 	// The project layer's own rigor names (LD4), judged against the same node:
 	// an area's member or a per-repo entry that names a repository the published
 	// allow_repos does not admit describes a level no run of it will ever take,

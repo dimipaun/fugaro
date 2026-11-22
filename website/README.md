@@ -1589,7 +1589,7 @@ added or removed without this sentence moving fails there:
     reason;
   - **the app's reporting, held in both directions** — the page names Firebase Crashlytics and
     Firebase Analytics, so the file refuses that naming unless the repository holds the plan for
-    it (`docs/plans/2026-10-19-mobile-telemetry.md`) or `mobile/package.json` already carries the
+    it (`docs/mobile/telemetry-plan.md`) or `mobile/package.json` already carries the
     two packages, and it refuses either package being declared while the page stays silent. A
     page that names a reporter and says nothing about which version of the app carries it is
     refused while the reports are still only planned, which is why the paragraph ends on
@@ -1786,7 +1786,7 @@ Three things about those commands are worth stating rather than leaving to the t
 - **One generator per file.** `go run ./internal/clidoc` writes the security and
   subscription-terms pages from their sources, and `go run ./ee/clidoc` writes the CLI
   reference from the tagged command tree — the tree the released binary builds (design
-  `docs/design/ee-boundary-moves.md` §9). Two generators, one file each, so neither can
+  `docs/ee-reorg/boundary-moves.md` §9). Two generators, one file each, so neither can
   overwrite the other's output. Each compiles into the build cache and writes nothing into
   the tree besides its output.
 - **The costs file is the owner's to produce, and it may be absent.** The aggregation reads

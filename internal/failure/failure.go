@@ -1,5 +1,5 @@
 // Package failure is the closed vocabulary a run record's failure_class holds
-// (docs/design/failure-classes.md §3): why a run did not end succeeded, as one
+// (docs/failure-classes/design.md §3): why a run did not end succeeded, as one
 // of the nineteen names below, or nothing at all.
 //
 // It is a package of its own rather than part of internal/runstore because the

@@ -64,9 +64,14 @@ import {
   CONFIRM_WINDOW_TITLE,
   confirmChannel,
   confirmPreloadPath,
+  confirmSubjectID,
   createConfirmWindow,
 } from '../../src/main/confirm'
 import type { ConfirmWindowSeams } from '../../src/main/confirm'
+import { modelsAddConfirmID, modelsAddView } from '../../src/main/modelsview'
+import type { ModelsAddView } from '../../src/main/modelsview'
+import { imageAddConfirmID, imageAddView } from '../../src/main/imagesview'
+import type { ImageAddView } from '../../src/main/imagesview'
 import { SENDER_REFUSAL } from '../../src/main/ipc'
 import type { ConsoleEventLike, IpcMainLike, ValidatedArguments } from '../../src/main/ipc'
 import { SETTINGS_EDIT_OPERATION, argvFor } from '../../src/main/spawn'
@@ -88,6 +93,8 @@ import {
 } from '../../src/main/settingsedit'
 import type { SettingsEditDeps } from '../../src/main/settingsedit'
 import type { SettingsEntryView } from '../../src/main/settingsview'
+import { setupConfirmID, setupView } from '../../src/main/setupview'
+import type { SetupView } from '../../src/main/setupview'
 import { SETTINGS_EDIT_MOVED } from '../../src/source/source'
 import type { SettingsEditSpawn } from '../../src/source/source'
 import { displayTaskText } from '../../src/main/launchrules'
@@ -1713,6 +1720,60 @@ describe('the settings edit behind the same window', () => {
     expect(narrow.spawns[1]?.shown).not.toContain('--no-apply')
   })
 
+  it('enforces the models write’s tick, and files its window under the installation', async () => {
+    // The models write is the **second** subject that carries a widening's tick
+    // (MW1, D2903), and it is the same gate rather than a second one:
+    // `widenAnswerable` asks the subject, so a yes without the tick decides
+    // nothing here exactly as it decides nothing for a settings edit. What is
+    // pinned is both halves -- the refusal in the main process, and the identity
+    // `close` reaches the window by, which is the installation the write lands
+    // in and not the model it is about.
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const decider = recordingDecider()
+    const subject = modelsAddFixture()
+    expect(confirmSubjectID(subject)).toBe(modelsAddConfirmID(subject.project))
+    confirmer.open(subject, decider.decide)
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes', ticked: false }),
+    ).toStrictEqual({ ok: false, reason: CONFIRM_TICK_NEEDED })
+    expect(decider.calls).toStrictEqual([])
+
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes', ticked: true }),
+    ).toStrictEqual({ ok: true, data: { answered: true } })
+    expect(decider.calls).toStrictEqual([[true, undefined]])
+  })
+
+  it('decides the image write on a plain yes, and files its window under the installation', async () => {
+    // The image write is the one subject of this window that **carries no
+    // tick** (MW2, D2903): it raises no limit and MD2's document has no
+    // `widening` member, so it is a narrowing's window -- one deliberate click,
+    // as the wizard's apply is. `widenAnswerable` reads the subject, so the
+    // gate is the same one and what it answers here is the opposite of the
+    // models write's: a yes **without** the tick decides the write. The identity
+    // is the installation the entry lands in, exactly as the models write's is.
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const decider = recordingDecider()
+    const subject = imageAddFixture()
+    expect(confirmSubjectID(subject)).toBe(imageAddConfirmID(subject.project))
+    expect(subject.confirmNeedsTick).toBe(false)
+    confirmer.open(subject, decider.decide)
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    // A yes with the tick false -- which is what the window's Confirm button
+    // sends when the view carries no tick -- is the whole of the answer here.
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes', ticked: false }),
+    ).toStrictEqual({ ok: true, data: { answered: true } })
+    expect(decider.calls).toStrictEqual([[true, undefined]])
+  })
+
   it('cancels the edit, and closes no other project’s window, when the installation moves', async () => {
     const { confirmer, windows } = confirmOver()
     const source = settingsEditSource()
@@ -2077,6 +2138,59 @@ describe('the settings edit behind the same window', () => {
     confirmer.close(settingsConfirmID(PROJECT))
     expect((windows[0] as FakeWindow).closeRequested()).toBe(false)
     expect((windows[1] as FakeWindow).closeRequested()).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The same window's fourth subject: a first setup (SW3a, D2904).
+//
+// The window is one implementation for every question it is asked (D1115,
+// D2902), and the setup wizard is the subject SW3a added to `ConfirmSubject`.
+// What this describe holds is the window's **shared** half, the two things that
+// are written per subject rather than per flow: the phase rule (`phaseTakes`),
+// which says which answer the question on screen is answered with, and the
+// identity (`confirmSubjectID`), which is how a caller that knows only the
+// project closes its own window.
+//
+// What the case pins. A setup window takes a yes and refuses a submit -- the
+// form's answer arriving at a question that has no form and no dry run behind
+// it -- and the decider's empty call list is the claim that a refused answer
+// decided nothing. Asserted, not inferred from the entry form's case: the phase
+// rule is a truth table over the union, and SW3a's fourth subject is the one
+// nobody had written a row for. The identity half is the one that moves: with
+// `confirmSubjectID` left as the launch-or-settings pair it was, the close below
+// finds no window.
+// ---------------------------------------------------------------------------
+
+describe('the setup wizard behind the same window', () => {
+  it('refuses a submit on a setup window, and knows one by its project', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const decider = recordingDecider()
+    confirmer.open(setupSubject(), decider.decide)
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    // A setup window asks one question -- the operator's go to run the CLI -- and
+    // a `submit` is the entry form's answer arriving at it. It is refused by name
+    // rather than guessed at, nothing is decided, and the window stays open on
+    // the question it was actually asking.
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'submit', value: 'x' }),
+    ).toStrictEqual({ ok: false, reason: CONFIRM_PHASE_REFUSAL })
+    expect(decider.calls).toStrictEqual([])
+    expect(window.closeRequested()).toBe(false)
+
+    // The window's identity is the project its answers name, which is what the
+    // flow holds: a close by that id reaches this window and declines it, and a
+    // setup window is not closed by the run id a launch's is named by.
+    expect(setupConfirmID(PROJECT)).toBe(`setup:${PROJECT}`)
+    expect(setupConfirmID(PROJECT)).not.toBe(RUN_ID)
+    confirmer.close(RUN_ID)
+    expect(window.closeRequested()).toBe(false)
+    confirmer.close(setupConfirmID(PROJECT))
+    expect(window.closeRequested()).toBe(true)
+    expect(decider.calls).toStrictEqual([[false, undefined]])
   })
 })
 
@@ -2516,6 +2630,74 @@ function frozenLaunch(
 
 /** viewFixture is a `ConfirmView` for the cases that are about the window rather
  * than about the conversion. */
+/** modelsAddFixture is one models write's window content: the CLI's own plan
+ * document as the flow parsed it, beside the two facts main holds (the
+ * document's digest and the exact argv). */
+function modelsAddFixture(): ModelsAddView {
+  const read = modelsAddView({
+    dryRun: {
+      version: 1,
+      layer: 'local',
+      path: '/home/ana/.config/fugaro/sandbox.yaml',
+      model: 'deepseek/deepseek-v4.1-flash',
+      route: 'openrouter',
+      changed: true,
+      claim: {
+        key: 'providers.openrouter.models',
+        entry: 'deepseek/deepseek-v4.1-flash',
+        claimed_by: '',
+      },
+      allowed_models: {
+        key: 'budget.allowed_models',
+        entry: 'deepseek/deepseek-v4.1-flash',
+        present: true,
+      },
+      prices: {
+        key: 'model_prices.deepseek/deepseek-v4.1-flash',
+        input_per_m: 0.14,
+        output_per_m: 0.28,
+        source: 'typed',
+      },
+      steps: [{ name: 'publish', state: 'saved' }],
+      refusal: '',
+    },
+    project: PROJECT,
+    digest: 'a'.repeat(64),
+    argv: ['fugaro', 'models', 'add', '--no-apply', '--dry-run', '--json'],
+  })
+  if (!read.ok) throw new Error(read.because)
+  return read.view
+}
+
+/** imageAddFixture is one image write's window content (MW2, D2903): MD2's plan
+ * document as the flow parsed it, beside the two facts main holds -- the
+ * document's digest and the exact argv the confirmed write spawns. It carries
+ * **no tick**, which is the whole of what this fixture is for here: the write
+ * raises no limit, so `confirmNeedsTick` is false and `defaultButton` is
+ * `confirm`. */
+function imageAddFixture(): ImageAddView {
+  const read = imageAddView({
+    dryRun: {
+      version: 1,
+      command: 'image add',
+      project: PROJECT,
+      entry: {
+        name: 'app',
+        tags: ['node', 'redis'],
+        description: 'the app image',
+        default: false,
+        source: 'dockerfile acme/app:.fugaro/app.Dockerfile@release-1.0',
+      },
+      steps: [{ name: 'catalog-build', saved: true }],
+    },
+    project: PROJECT,
+    digest: 'a'.repeat(64),
+    argv: ['fugaro', 'image', 'add', '--no-apply', '--project', PROJECT, '--', 'app'],
+  })
+  if (!read.ok) throw new Error(read.because)
+  return read.view
+}
+
 function viewFixture(overrides: { readonly runId?: string } = {}): ConfirmView {
   return confirmView(frozenLaunch(overrides))
 }
@@ -2709,6 +2891,44 @@ async function entryShownOf(
   expect(subject.kind).toBe('settings-entry')
   if (subject.kind !== 'settings-entry') throw new Error('the window was not asked the entry form’s question')
   return subject
+}
+
+// ---------------------------------------------------------------------------
+// The fixture the setup window is opened over (SW3a).
+// ---------------------------------------------------------------------------
+
+/** SETUP_PLAN_ARGV and SETUP_APPLY_ARGV are the two command lines the window is
+ * shown for a first setup, program word included: the same two rows the setup
+ * flow spawns (`wizardrun.ts`, which rebuilds AL's allow-list entries and adds
+ * no word to them). They are written out here rather than imported from it
+ * because a window whose rows were read from the flow that spawns them could not
+ * catch the flow showing one command line and running another. */
+const SETUP_PLAN_ARGV: readonly string[] = [
+  BINARY,
+  'setup',
+  '--plan-only',
+  '--answers-file',
+  '-',
+  '--events',
+  '--json',
+]
+const SETUP_APPLY_ARGV: readonly string[] = [BINARY, 'setup', '--answers-file', '-', '--events', '--json']
+
+/** setupSubject is one setup window's subject as `setupView` builds it: the five
+ * answers main parsed, the digest of the bytes it holds and the two command
+ * lines. `bakeRepos` is answered, so the window draws the operator's own word
+ * for it rather than the CLI's default. */
+function setupSubject(): SetupView {
+  return setupView({
+    project: PROJECT,
+    region: 'europe-west1',
+    name: PROJECT,
+    rigor: 'pro',
+    bakeRepos: true,
+    digest: 'a'.repeat(64),
+    planArgv: SETUP_PLAN_ARGV,
+    applyArgv: SETUP_APPLY_ARGV,
+  })
 }
 
 /** deferred is a promise a case settles by hand, for the states that exist only

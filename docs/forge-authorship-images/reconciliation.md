@@ -60,13 +60,13 @@ The spec says "Open questions: none". This reconciliation finds **fifty** that n
 | Expand wildcards via the forge | `fugaro project sync` offers the GitHub App's installed repositories the allow-list does not admit | `internal/cli/project_enroll.go` | Exists (GitHub) |
 | `fugaro repo sync` | `fugaro project repos add|rm|ls`, `fugaro project sync` | `internal/cli/project_enroll.go` | Exists (other name) |
 | `fugaro.lock` | Nothing; nearest is the build record `builds/<slug>/<workflow>/image.json` | `internal/imagecheck/record.go` `Record` | New |
-| Repo marker | The committed `fugaro.yaml`'s `gcp_project:` already points a checkout at its project (shared config fetch) | `docs/plans/2026-10-06-shared-config.md`, `internal/localcfg/shared.go` | Exists |
-| Monorepo `.fugaro/` + `fugaro-state` orphan branch | `.fugaro/` holds recipes and Dockerfiles; the project backing folder is designed as `fugaro-project/` on branch `fugaro-project`, (D14, 2026-10-15), **not orphan** (§8's design text), not built | `docs/design/project-centric.md` §8 | Ruled otherwise |
+| Repo marker | The committed `fugaro.yaml`'s `gcp_project:` already points a checkout at its project (shared config fetch) | `docs/shared-config/implementation-plan.md`, `internal/localcfg/shared.go` | Exists |
+| Monorepo `.fugaro/` + `fugaro-state` orphan branch | `.fugaro/` holds recipes and Dockerfiles; the project backing folder is designed as `fugaro-project/` on branch `fugaro-project`, (D14, 2026-10-15), **not orphan** (§8's design text), not built | `docs/project-centric/spec.md` §8 | Ruled otherwise |
 | Developers in Firebase Auth, roles | Developers are IAM members via `launchers`/`operators`; RTDB rules admit custom tokens only; roles exist only in docs | `deploy/terraform/gcp/modules/firebase/iam.tf`, `internal/budget/rules/rules.go`, `internal/cli/init_firebase.go` `refusePublicSignUp`, `docs/mobile-auth/` | New, conflicts |
 | `fugaro user`, `join`, `token` | None. `fugaro secrets`, `fugaro creds`, `fugaro accounts` exist | `internal/cli/secrets.go`, `creds.go`, `accounts.go` | New |
 | Contributed Claude tokens, pool, failover | Named accounts `claude-oauth-token-<name>`; the cascade's Tier A pools subscription tokens with round robin and exhaustion marks | `docs/project-claude-accounts.md`, `internal/creds/select.go`, `internal/credsvc/cascade.go` | Exists |
 | Secret prefix IAM condition `user-token-` | The service holds **one** unconditioned grant on the bundle; the prefix fence was explicitly replaced (Q6, 2026-10-19) | `deploy/terraform/gcp/modules/installation/credentials.tf` | Ruled otherwise |
-| Members tab, mobile suspend | Console: one write, launch (D22); mobile: mailbox actions `cancel`, `merge`, `confirm` | `docs/design/desktop-console-v2.md`, `internal/mailbox/message.go` `Actions` | New writes |
+| Members tab, mobile suspend | Console: one write, launch (D22); mobile: mailbox actions `cancel`, `merge`, `confirm` | `docs/desktop-console-v2/spec.md`, `internal/mailbox/message.go` `Actions` | New writes |
 | Seat licence issued by the CLI | Key-minting service planned under `ee/`, deferred; D523: no licence notice for now | `docs/ee-reorg/` | Deferred |
 
 ## 3. Findings
@@ -112,13 +112,13 @@ the author falls back to the Fugaro identity when the launcher is empty or not a
 
 **F5, Gap (privacy).** An author email is personal data written into a **permanent, widely
 replicated** history. The project export design already refuses to write the operator's identity into
-a repository others read (`docs/design/project-centric.md` §8: author and committer "fixed, never the
+a repository others read (`docs/project-centric/spec.md` §8: author and committer "fixed, never the
 operator's own"). Erasure under GDPR or PIPEDA cannot remove it from forks and clones. *Consequence:*
 the owner and counsel decide (D606); the plan supports a per-person noreply override.
 
 **F6, Exists / Gap.** `Fugaro-Job:` names a **run** in this repository. A *job* here is the Cloud
 Run job, one per repository and workflow (`gcp.JobName(slug, workflow)`, `gcp.WorkflowVariant`) or
-one per profile and account for shared jobs (`docs/design/project-centric.md` §4.1); the per-execution
+one per profile and account for shared jobs (`docs/project-centric/spec.md` §4.1); the per-execution
 ID is the run ID (`task.ValidRunID`, `^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`). The model is recorded per
 stage as the **configured pin** (`StageTiming.Model`), not the served model; a commit's stage is
 knowable only if the stamp runs per stage (F2). Rigor is `Record.Rigor.Mode`. (D601, D602)
@@ -262,7 +262,7 @@ credential's `allow_data_to` does not still cannot use that credential (R4).
 `:latest`; jobs run `:latest` (`internal/infra/spec.go`), and "a job runs the repository's :latest,
 which no launch compares with ImageDigest" (`internal/imagecheck/record.go`). Pinning a digest per
 build means changing the job definition per build: "Cloud Run cannot vary the image, service
-account, CPU or memory per execution" (`docs/design/project-centric.md` §4.1). (D619)
+account, CPU or memory per execution" (`docs/project-centric/spec.md` §4.1). (D619)
 
 **F23, Differs.** Layer order: the template clones the source **before** `mise install`, the
 warm-up and `image.setup`, because they read the repository's files (lockfiles, `mise.toml`). "Source
@@ -283,7 +283,7 @@ can hurt. On the operator's machine it is their own risk; in a job or Cloud Buil
 installation credentials. Intersecting its output with `allow_repos` is the existing check (D622).
 
 **F27, Rule.** The monorepo state branch: the spec's orphan `fugaro-state` branch departs from the
-owner's D14 (2026-10-15, `docs/design/project-centric.md` §8: folder `fugaro-project/`, branch
+owner's D14 (2026-10-15, `docs/project-centric/spec.md` §8: folder `fugaro-project/`, branch
 `fugaro-project`, PR mode opt-in) and from the same section's design text that the branch is
 "bootstrapped from the default branch, not created orphan"; phase 6, not built. The spec's ".fugaro/ holds the config" also overloads `.fugaro/`, which holds recipes and
 Dockerfiles. (D626)
@@ -534,7 +534,7 @@ owner's answer (all answered 2026-10-29: every one is the recommendation except 
   hosted launch API. Not checked.
 - **U2.** Whether a GitHub App's API-created commit with a user author shows Verified.
 - **U3.** GitLab.com and self-managed signing of API and web commits.
-- **U4.** *Resolved in review round 1: no.* `docs/design/project-centric.md` §4.1: Cloud Run cannot
+- **U4.** *Resolved in review round 1: no.* `docs/project-centric/spec.md` §4.1: Cloud Run cannot
   vary the image per execution. Check 233 is withdrawn and stays reserved.
 - **U5.** `claude setup-token`'s output format and whether it is stable for parsing.
 - **U6.** Whether Claude Code reads subscription usage windows from response headers, and which

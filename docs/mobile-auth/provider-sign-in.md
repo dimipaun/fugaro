@@ -41,7 +41,7 @@ nothing else. What it buys is a **session the project's own security rules must 
 obtainable by anyone who holds the web API key the pairing QR already carries. What it costs is §2
 to §5 below, and the one property the tree's design exists to keep (§5).
 
-Fugaro is **one Firebase project per installation** (`docs/design/project-centric.md`), so every
+Fugaro is **one Firebase project per installation** (`docs/project-centric/spec.md`), so every
 "once" below means **once per project, by its owner** — and there is no mechanism in this tree that
 enables a provider in somebody's project for them: `fugaro setup` and `fugaro update` apply the
 Terraform that creates the project, and `deploy/terraform/gcp/modules/firebase/firebase.tf` says of

@@ -35,7 +35,7 @@ type unitFake struct {
 
 func (f *unitFake) Platform() string { return f.platform }
 
-func (f *unitFake) Render(func(string) string, string) (service.Unit, error) {
+func (f *unitFake) Render(func(string) string, string, string) (service.Unit, error) {
 	return service.Unit{}, errors.New("the fake renders nothing: every test comes through service.Render")
 }
 

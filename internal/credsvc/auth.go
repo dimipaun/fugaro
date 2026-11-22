@@ -61,6 +61,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -68,7 +69,7 @@ import (
 // The refusals. Each is a sentinel so a caller can answer the wire contract's
 // error type without reading a message: an unverified run identity, an
 // unverified caller, and state the service cannot read (which is a refusal
-// too — D143's "unreachable halts, never falls back").
+// too — D143's "unreachable waits, then halts, and never falls back").
 var (
 	// ErrUnverified is a run identity this service does not admit.
 	ErrUnverified = errors.New("credsvc: the run identity is not verified")
@@ -480,6 +481,32 @@ type AuthConfig struct {
 	// refused (the owner's answer of 2026-11-09 to D1938, on F31's fail-closed
 	// reading).
 	LauncherAccounts []string
+	// LauncherServiceAccounts are the roster's service accounts (LM3, D3123):
+	// the class the ticket route admits beside the person class and the
+	// orchestrator's, and the one class a person's list cannot hold. They are
+	// the `serviceAccount:` members of the roster, which a pipeline launches
+	// with today (F4) and which D3123 answers with a class of their own rather
+	// than a widening of the launcher list: that list is people, and it refuses
+	// this shape by name (G13).
+	//
+	// An entry is one bare address of the service-account shape, matched by the
+	// same ASCII fold as every other list here, and an address that is NOT a
+	// service account's is a configuration error — the launcher list's rule
+	// read from the other side, and what keeps the two lists disjoint by
+	// construction rather than by a rule that has to be checked.
+	//
+	// The class's entry point is VerifyServiceAccountLauncher and not
+	// VerifyLauncher, and that is the whole of what tells the two classes
+	// apart: a caller's class is the list and the entry point it was admitted
+	// by, never a flag read off the token. What the class is judged for is
+	// LM23's (D3137: a roster service account is admitted unscoped), and what
+	// it is admitted against is this service's own URL alone, because its token
+	// is obtained on purpose rather than minted by a person's own credentials.
+	//
+	// It is empty by default, and an empty list is a statement rather than a
+	// missing gate, like the launcher list's: an installation whose roster
+	// names no service account has a class nobody is in.
+	LauncherServiceAccounts []string
 	// OrchestratorAccounts are the identities admitted as the orchestrator
 	// daemon class (E16, D2049): the accounts that may ask this service for a
 	// gated merge token, and nothing else. They are service accounts — the
@@ -635,6 +662,14 @@ type Authenticator struct {
 	// entry point, so no branch of Verify and no read mint consults it, which
 	// is what keeps a launcher off the run routes and off the read mints.
 	launcherAccounts map[string]string
+	// launcherServiceAccounts maps a presented email, folded the same way, to
+	// the configured spelling of that roster service account (LM3, D3123). It
+	// is the class's list and it is read by VerifyServiceAccountLauncher and by
+	// nothing else: the ticket route is answered ahead of the shared parse, so
+	// no branch of Verify consults it, which is what keeps a roster service
+	// account off the run routes — and, because the launcher list refuses this
+	// shape and this list refuses the other, no address is in both.
+	launcherServiceAccounts map[string]string
 	// orchestratorAccounts maps a presented email, folded the same way, to the
 	// configured spelling of that account: the merge mint's one caller class
 	// (E16, D2049). Like verifierAccounts and personAccounts it is read by one
@@ -859,6 +894,35 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The roster's service accounts are the class beside the launcher's (LM3,
+	// D3123), read right after it because the two are the roster's two halves.
+	// The shape rule is the launcher list's turned around
+	// (foldLauncherServiceAccounts), so the two lists are disjoint by
+	// construction and an address on one can never be admitted by the other's
+	// entry point. What is left to refuse is an address that is a RUN's
+	// identity: a caller whose class would depend on which route it reached,
+	// and — at the ticket route this class serves — an account that must be
+	// refused there (R4), because a run's own job account asking for a ticket
+	// is the one ask the claim route exists to answer instead. An address that
+	// is also a verifier's or the coordinator's is deliberately none of these
+	// refusals, for the reason the orchestrator list gives: those are classes
+	// of OTHER routes, and one address admitted by two routes is not the
+	// overlap the class rule is about (G4).
+	serviceAccounts, err := foldLauncherServiceAccounts(cfg.LauncherServiceAccounts)
+	if err != nil {
+		return nil, err
+	}
+	for folded := range serviceAccounts {
+		if _, isJob := accounts[folded]; isJob {
+			return nil, errors.New("credsvc: a roster service account is also one of the installation's job service accounts, so one caller would be two classes")
+		}
+		if _, isShared := shared[folded]; isShared {
+			return nil, errors.New("credsvc: a roster service account is also a shared project job's service account, so one caller would be two classes")
+		}
+		if _, isReview := review[folded]; isReview {
+			return nil, errors.New("credsvc: a roster service account is also one of the review job accounts, so one caller would be two classes")
+		}
+	}
 	// The orchestrator list is read last and by the verifier list's rules: its
 	// entries are bare addresses, matched by the same fold, and a duplicate
 	// admits the same caller either way. It is deliberately NOT held to the
@@ -893,6 +957,9 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		if _, isLauncher := launchers[folded]; isLauncher {
 			return nil, errors.New("credsvc: an orchestrator account is also one of the launchers, and the daemon class is an automation")
+		}
+		if _, isRosterServiceAccount := serviceAccounts[folded]; isRosterServiceAccount {
+			return nil, errors.New("credsvc: an orchestrator account is also one of the roster's service accounts, so one caller would be two classes")
 		}
 		if _, isJob := accounts[folded]; isJob {
 			return nil, errors.New("credsvc: an orchestrator account is also one of the installation's job service accounts, and the daemon class is not a run")
@@ -947,6 +1014,9 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		if _, isOrchestrator := orchestrators[folded]; isOrchestrator {
 			return nil, errors.New("credsvc: a build service account is also the installation's orchestrator daemon, so one caller would be two classes")
+		}
+		if _, isRosterServiceAccount := serviceAccounts[folded]; isRosterServiceAccount {
+			return nil, errors.New("credsvc: a build service account is also one of the roster's service accounts, so one caller would be two classes")
 		}
 		if coordinator != "" && folded == coordinator {
 			return nil, errors.New("credsvc: a build service account is also the installation's coordinator, so one caller would be two classes")
@@ -1005,6 +1075,9 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		if _, isOrchestrator := orchestrators[folded]; isOrchestrator {
 			return nil, errors.New("credsvc: a repository's build service account is also the installation's orchestrator daemon, so one caller would be two classes")
 		}
+		if _, isRosterServiceAccount := serviceAccounts[folded]; isRosterServiceAccount {
+			return nil, errors.New("credsvc: a repository's build service account is also one of the roster's service accounts, so one caller would be two classes")
+		}
 		if coordinator != "" && folded == coordinator {
 			return nil, errors.New("credsvc: a repository's build service account is also the installation's coordinator, so one caller would be two classes")
 		}
@@ -1024,18 +1097,19 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		now = time.Now
 	}
 	return &Authenticator{
-		cfg:                  cfg,
-		jobAccounts:          accounts,
-		sharedAccounts:       shared,
-		reviewAccounts:       review,
-		verifierAccounts:     verifiers,
-		personAccounts:       people,
-		launcherAccounts:     launchers,
-		orchestratorAccounts: orchestrators,
-		coordinatorAccount:   coordinator,
-		buildAccounts:        builds,
-		repoBuildAccounts:    repoBuilds,
-		now:                  now,
+		cfg:                     cfg,
+		jobAccounts:             accounts,
+		sharedAccounts:          shared,
+		reviewAccounts:          review,
+		verifierAccounts:        verifiers,
+		personAccounts:          people,
+		launcherAccounts:        launchers,
+		launcherServiceAccounts: serviceAccounts,
+		orchestratorAccounts:    orchestrators,
+		coordinatorAccount:      coordinator,
+		buildAccounts:           builds,
+		repoBuildAccounts:       repoBuilds,
+		now:                     now,
 	}, nil
 }
 
@@ -1580,21 +1654,13 @@ type LauncherCaller struct {
 	Sub string
 }
 
-// maxLauncherSubDigits bounds the account id the launcher class carries, and
-// it is 21 because that is the width of a Google account id — a number above
-// 2^53, which is why internal/infra/tf's identity handling already carries the
-// same number, a service account's unique_id, as text rather than rendering it.
-// Twenty digits would be the width of a uint64, and these ids are wider than
-// one, so a bound derived from a 64-bit number refuses every launcher there is.
-//
-// The bound is a SHAPE check rather than a fence against a stranger's text: the
-// claim is inside a token Google signed, so a caller cannot choose this value
-// — what the bound keeps out of the service's own two sinks (the slip's owner
-// and the secret name fugaro_u_<id>_<name>, whose total length Secret Manager
-// bounds) is an id Google has never issued. A value the issuer widens past this
-// one day is refused rather than carried, which is the fail-closed answer, and
-// widening it would be this constant's change and the test that pins it.
-const maxLauncherSubDigits = 21
+// maxLauncherSubDigits is gateway.MaxCredentialOwnerDigits: the width of a Google account id, which
+// the run's proxy and this service both hold a value to — one definition, in the package both ends of
+// the wire can see (this service imports the gateway, and the gateway cannot import this service,
+// F26). The number's own reasoning, and why the bound is a shape check rather than a fence, is that
+// constant's doc: it is not respelled here, because a bound spelled twice is a bound that can drift
+// with nothing red.
+const maxLauncherSubDigits = gateway.MaxCredentialOwnerDigits
 
 // VerifyLauncher admits the caller of the grant route and of the intake, or
 // refuses it with ErrUnverifiedJob (the caller is not one of the
@@ -1649,9 +1715,48 @@ func (a *Authenticator) VerifyLauncher(ctx context.Context, tok string) (Launche
 	return verifyLauncherCaller(ctx, a.cfg.JobKeys, a.launcherAccounts, a.cfg.Audience, a.now(), tok)
 }
 
+// VerifyServiceAccountLauncher admits a caller of the roster's service-account
+// class, or refuses it with ErrUnverifiedJob (the caller is not one of the
+// installation's roster service accounts, its email is not verified, its token
+// is for another audience, or its `sub` is not a Google account id) or
+// ErrUnavailable (the key set could not be read). It answers the account and
+// the account id the token names, or the zero value with an error — never a
+// partially verified caller.
+//
+// It is the caller class of the ticket route's second arm (LM3, D3123): the
+// `serviceAccount:` members of the roster, which launch runs today through the
+// CLI's own gate (F4) and which D3123 answers with a class of their own at the
+// issuer rather than a widening of the launcher list. The list is
+// LauncherServiceAccounts and this entry point is the whole of what makes the
+// class: the launcher list refuses this shape and this one refuses the
+// other's, so no address can be admitted as both, and a caller's class is the
+// entry point that admitted it rather than a flag read off its token.
+//
+// The mechanism is the launcher class's, and it is deliberately not a third
+// spelling of the token check: the signature, the issuer, the email fold and
+// the token's own window are the shared code (callerClaimsFrom,
+// checkCallerToken), and the audience is this class's own line — this
+// service's URL ALONE, because a service account's token is obtained on
+// purpose with the audience asked for, and the one a person's ambient
+// credentials mint (GcloudAudience) is refused here as it is at every class
+// whose caller is not a person.
+//
+// It takes the caller's token directly for VerifyLauncher's reason: the ticket
+// route is answered ahead of RequestFromHTTP — a ticket is asked for before the
+// run exists — so a Request is the one thing its caller cannot build.
+func (a *Authenticator) VerifyServiceAccountLauncher(ctx context.Context, tok string) (LauncherCaller, error) {
+	// The body is verifyServiceAccountCaller's, because the intake's
+	// construction holds this class too (launchers.go) and the two must agree
+	// about it: one body, so a rule added to it reaches both.
+	return verifyServiceAccountCaller(ctx, a.cfg.JobKeys, a.launcherServiceAccounts, a.cfg.Audience, a.now(), tok)
+}
+
 // launcherSub reads the token's `sub` claim and holds it to the shape the
 // intake's name grammar can use: the digits of a Google account id, and no
-// more than maxLauncherSubDigits of them.
+// more than maxLauncherSubDigits of them. That check is
+// gateway.ValidCredentialOwner's — one definition of the rule for both ends of
+// the wire — so a widening here would widen what a credential's owner header
+// may name as well.
 //
 // The claim must be a JSON STRING of digits. A `sub` that is a number is
 // refused rather than stringified — the issuer writes it as a string, and a
@@ -1662,13 +1767,8 @@ func (a *Authenticator) VerifyLauncher(ctx context.Context, tok string) (Launche
 // fugaro_u_<id>_<name>.
 func launcherSub(claims map[string]any) (string, bool) {
 	sub := claimString(claims, "sub")
-	if sub == "" || len(sub) > maxLauncherSubDigits {
+	if !gateway.ValidCredentialOwner(sub) {
 		return "", false
-	}
-	for i := 0; i < len(sub); i++ {
-		if sub[i] < '0' || sub[i] > '9' {
-			return "", false
-		}
 	}
 	return sub, true
 }

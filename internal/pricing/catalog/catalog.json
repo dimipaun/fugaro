@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "checked_at": "2026-10-23",
+  "checked_at": "2026-11-21",
   "sources": [
     "https://openrouter.ai/api/v1/models",
     "https://openrouter.ai/api/v1/models/{id}/endpoints",
@@ -8,197 +8,197 @@
   ],
   "models": {
     "deepseek/deepseek-v4-flash": {
-      "context_tokens": 384000,
-      "max_output_tokens": 32768,
-      "endpoints": 15,
+      "context_tokens": 1000000,
+      "max_output_tokens": 131072,
+      "endpoints": 13,
       "zdr_endpoints": 10,
       "all": {
         "cache_read_per_m": {
-          "min": "0.014",
-          "max": "0.2",
-          "min_of": "cloudflare",
-          "max_of": "wafer/mxfp4"
+          "min": "0.002912",
+          "max": "0.07",
+          "min_of": "baidu/fp8",
+          "max_of": "mancer/fp8"
         },
         "input_per_m": {
-          "min": "0.05",
-          "max": "0.7",
+          "min": "0.0138",
+          "max": "0.21",
           "min_of": "relace/fp4",
-          "max_of": "wafer/mxfp4"
+          "max_of": "azure/us"
         },
         "output_per_m": {
-          "min": "0.14",
-          "max": "1.32",
-          "min_of": "streamlake/fp8",
-          "max_of": "cloudflare"
+          "min": "0.02912",
+          "max": "0.56",
+          "min_of": "baidu/fp8",
+          "max_of": "azure/us"
         }
       },
       "zdr": {
         "cache_read_per_m": {
-          "min": "0.014",
-          "max": "0.2",
-          "min_of": "cloudflare",
-          "max_of": "wafer/mxfp4"
+          "min": "0.0138",
+          "max": "0.07",
+          "min_of": "relace/fp4",
+          "max_of": "mancer/fp8"
         },
         "input_per_m": {
-          "min": "0.05",
-          "max": "0.7",
+          "min": "0.0138",
+          "max": "0.21",
           "min_of": "relace/fp4",
-          "max_of": "wafer/mxfp4"
+          "max_of": "azure/us"
         },
         "output_per_m": {
-          "min": "0.17",
-          "max": "1.32",
-          "min_of": "wafer/mxfp4",
-          "max_of": "cloudflare"
+          "min": "0.14",
+          "max": "0.56",
+          "min_of": "fireworks",
+          "max_of": "azure/us"
         }
       }
     },
     "deepseek/deepseek-v4-pro": {
       "context_tokens": 1000000,
-      "max_output_tokens": 16384,
-      "endpoints": 15,
-      "zdr_endpoints": 9,
+      "max_output_tokens": 262144,
+      "endpoints": 13,
+      "zdr_endpoints": 7,
       "all": {
         "cache_read_per_m": {
-          "min": "0.079605",
+          "min": "0.05474",
           "max": "0.33",
-          "min_of": "streamlake/fp8",
+          "min_of": "baidu/fp8",
           "max_of": "venice"
         },
         "input_per_m": {
-          "min": "0.9",
-          "max": "1.91",
-          "min_of": "relace/fp4",
-          "max_of": "azure/us"
+          "min": "0.66079",
+          "max": "1.95",
+          "min_of": "baidu/fp8",
+          "max_of": "deepinfra/fp8/priority"
         },
         "output_per_m": {
-          "min": "1.5",
-          "max": "3.83",
-          "min_of": "relace/fp4",
-          "max_of": "azure/us"
+          "min": "1.32158",
+          "max": "3.9",
+          "min_of": "baidu/fp8",
+          "max_of": "deepinfra/fp8/priority"
         }
       },
       "zdr": {
         "cache_read_per_m": {
-          "min": "0.1",
+          "min": "0.08",
           "max": "0.33",
-          "min_of": "deepinfra/fp8",
+          "min_of": "deepinfra/fp8/flex",
           "max_of": "venice"
         },
         "input_per_m": {
           "min": "0.9",
-          "max": "1.91",
+          "max": "1.95",
           "min_of": "relace/fp4",
-          "max_of": "azure/us"
+          "max_of": "deepinfra/fp8/priority"
         },
         "output_per_m": {
           "min": "1.5",
-          "max": "3.83",
+          "max": "3.9",
           "min_of": "relace/fp4",
-          "max_of": "azure/us"
+          "max_of": "deepinfra/fp8/priority"
         }
       }
     },
     "deepseek/deepseek-v4.1-flash": {
       "context_tokens": 1000000,
       "max_output_tokens": 131072,
-      "endpoints": 40,
-      "zdr_endpoints": 35,
+      "endpoints": 37,
+      "zdr_endpoints": 32,
       "all": {
         "cache_read_per_m": {
-          "min": "0.002",
-          "max": "0.033",
-          "min_of": "coreweave/fp8",
-          "max_of": "alibaba"
+          "min": "0.000996",
+          "max": "0.07",
+          "min_of": "baidu/fp8",
+          "max_of": "mancer/fp8"
         },
         "input_per_m": {
-          "min": "0.07",
-          "max": "0.6",
-          "min_of": "open-inference/fp4",
-          "max_of": "baseten/fast"
+          "min": "0.0498",
+          "max": "1.5",
+          "min_of": "baidu/fp8",
+          "max_of": "venice/ultrafast"
         },
         "output_per_m": {
-          "min": "0.18",
-          "max": "2.4",
-          "min_of": "decart/fp4",
-          "max_of": "baseten/fast"
+          "min": "0.1992",
+          "max": "6",
+          "min_of": "baidu/fp8",
+          "max_of": "venice/ultrafast"
         }
       },
       "zdr": {
         "cache_read_per_m": {
           "min": "0.002",
-          "max": "0.03",
+          "max": "0.07",
           "min_of": "coreweave/fp8",
-          "max_of": "google-vertex/global"
+          "max_of": "mancer/fp8"
         },
         "input_per_m": {
-          "min": "0.07",
-          "max": "0.6",
+          "min": "0.05",
+          "max": "1.5",
           "min_of": "open-inference/fp4",
-          "max_of": "baseten/fast"
+          "max_of": "venice/ultrafast"
         },
         "output_per_m": {
-          "min": "0.18",
-          "max": "2.4",
-          "min_of": "decart/fp4",
-          "max_of": "baseten/fast"
+          "min": "0.336",
+          "max": "6",
+          "min_of": "deepinfra/fp8/flex",
+          "max_of": "venice/ultrafast"
         }
       }
     },
     "moonshotai/kimi-k3": {
-      "context_tokens": 1048576,
+      "context_tokens": 1000000,
       "max_output_tokens": 65535,
       "endpoints": 29,
-      "zdr_endpoints": 27,
+      "zdr_endpoints": 25,
       "all": {
         "cache_read_per_m": {
-          "min": "0.165",
-          "max": "1.2",
-          "min_of": "decart/mxfp4",
-          "max_of": "akashml/fp4"
+          "min": "0.13",
+          "max": "0.5",
+          "min_of": "wafer/us",
+          "max_of": "makora/fp4"
         },
         "cache_write_5m_per_m": {
-          "min": "0.29875",
+          "min": "0.19125",
           "max": "5.625",
-          "min_of": "inference-net/fp4",
+          "min_of": "wafer/fast",
           "max_of": "fireworks/fast"
         },
         "input_per_m": {
-          "min": "0.239",
+          "min": "0.153",
           "max": "4.5",
-          "min_of": "inference-net/fp4",
+          "min_of": "wafer/fast",
           "max_of": "fireworks/fast"
         },
         "output_per_m": {
-          "min": "5.5",
+          "min": "9.5",
           "max": "22.5",
-          "min_of": "sail-research/fp4",
+          "min_of": "chutes/mxfp4",
           "max_of": "fireworks/fast"
         }
       },
       "zdr": {
         "cache_read_per_m": {
-          "min": "0.165",
-          "max": "1.2",
-          "min_of": "decart/mxfp4",
-          "max_of": "akashml/fp4"
+          "min": "0.13",
+          "max": "0.5",
+          "min_of": "wafer/us",
+          "max_of": "makora/fp4"
         },
         "cache_write_5m_per_m": {
-          "min": "0.29875",
+          "min": "0.19125",
           "max": "5.625",
-          "min_of": "inference-net/fp4",
+          "min_of": "wafer/fast",
           "max_of": "fireworks/fast"
         },
         "input_per_m": {
-          "min": "0.239",
+          "min": "0.153",
           "max": "4.5",
-          "min_of": "inference-net/fp4",
+          "min_of": "wafer/fast",
           "max_of": "fireworks/fast"
         },
         "output_per_m": {
-          "min": "5.5",
+          "min": "9.6",
           "max": "22.5",
-          "min_of": "sail-research/fp4",
+          "min_of": "wafer/us",
           "max_of": "fireworks/fast"
         }
       }

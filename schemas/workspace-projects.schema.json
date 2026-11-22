@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/workspace-projects.schema.json",
+  "title": "Fugaro workspace project status",
+  "description": "The document `fugaro workspace project status --json` and `fugaro workspace project ls --json` write: one row per fact that decides whether a member can run against the workspace the caller's own project owns, and then the workspace's own rows. It is a READ's own document -- both commands write nothing anywhere, on every path including this one (WU11, D2809) -- and its reader is outside this binary: the console, the mobile app and the history show it, so every key here is a contract. A key added is fine; a key whose meaning must change gets a new name, and a removal is a version bump.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "workspace",
+    "checked_credentials",
+    "members",
+    "rows"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "$comment": "wsProjectDocVersion (internal/cli/workspace_project_status.go).",
+      "description": "The document's version. A reader that meets a version it does not know refuses the document rather than reading the half of it it recognizes: a status a newer Fugaro wrote is read as a newer one."
+    },
+    "workspace": {
+      "type": "string",
+      "description": "The workspace's name: the project the caller's own config is of, which is whose member table the members below come from (spec §5). It is a project name, in the grammar config.ProjectNameRE holds a workspace name to (F21)."
+    },
+    "checked_credentials": {
+      "type": "boolean",
+      "description": "Whether the run was made with `--check-credentials`. It is written rather than inferred from the rows, because the probe's row is present only under that flag: a reader comparing two documents must be able to tell \"the probe found nothing to ask about\" from \"the probe was not asked\", and those two documents differ in no other key."
+    },
+    "members": {
+      "type": "array",
+      "description": "The workspace's members, in project-name order and each once. With a project name on the command line this holds that member alone; the flag does not change what a member's rows are, only how many members are printed.",
+      "items": {
+        "$ref": "#/$defs/member"
+      }
+    },
+    "rows": {
+      "type": "array",
+      "description": "The workspace's own rows, after every member's: the admins' live bindings against the record (D2823), how many admins there are (R1), and the workspace IAM account's own user-managed keys and the principals that can act as it. They are the workspace's rows because they are about the workspace itself and not about one member, and they are printed after the members' rows in both commands.",
+      "items": {
+        "$ref": "#/$defs/row"
+      }
+    }
+  },
+  "$defs": {
+    "level": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "warn",
+        "fail"
+      ],
+      "description": "A row's verdict, and there are exactly three. A fact the reading machine could not read is a `warn` whose sentence says so and never a `pass`: a reader must never have to tell \"fine\" from \"unread\" by the words of a detail. Only `fail` makes the command exit nonzero."
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "detail"
+      ],
+      "description": "One check's row: which fact it is, its verdict, the sentence it was read as, and, when it is not passing, the one command that puts it right.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The check's id: `reachable`, `linked`, `credentials-service`, `credentials`, `credentials-probe`, `images`, `caps`, `pending-apply`, `unlinked-grants-left`, `state-repo`, `drift`, `admin-binding`, `single-admin`, `workspace-account-keys` or `workspace-account-actas` in this build. It is NOT enumerated here on purpose: the set grows with the plan's rows, a newer CLI prints one an older reader does not know, and a reader that refused the document over an unfamiliar id would break on every release that adds a check. Enumerating the verdicts is safe for the same reason in reverse -- `pass`, `warn` and `fail` are the whole set by the acceptance, and a fourth word would be a new contract."
+        },
+        "status": {
+          "$ref": "#/$defs/level"
+        },
+        "detail": {
+          "type": "string",
+          "description": "What was read, whether the row passed or not: a passing row says what was found, which is what makes the document a report rather than a list of verdicts. Every string a member, its owner or a cloud API controls is escaped before it is written here (pluginwire.Printable), so a hostile project name or key id cannot carry a terminal escape sequence into a person's screen or into this document."
+        },
+        "fix": {
+          "type": "string",
+          "description": "The one command that puts a row that is not passing right; a row that passes carries no fix at all (the key is left out, not written empty). It names a real command -- the row is what a person runs it because of -- and a row that could not reach a member's own installation names the command on THAT machine, because nothing here is read from another installation (D2801)."
+        }
+      }
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project",
+        "worst",
+        "rows"
+      ],
+      "description": "One member of the workspace and its rows.",
+      "properties": {
+        "project": {
+          "type": "string",
+          "description": "The member's Fugaro project name: the key of the workspace's member table, which is the project the member's own installation is (its `fp`), not its Google Cloud project. It is what `ls` prints beside the verdict and what the fix sentences of the rows name."
+        },
+        "worst": {
+          "$ref": "#/$defs/level",
+          "description": "The worst verdict among this member's rows, which is what `ls` prints: one line per member with its worst row."
+        },
+        "rows": {
+          "type": "array",
+          "description": "This member's rows, in the acceptance's order: reachable, linked, credentials-service, credentials, credentials-probe (only under `--check-credentials`), images, caps, pending-apply, unlinked-grants-left (only while the member is unlinked and the record still stores grants for it), state-repo, drift. A row that does not apply to a member is absent rather than written as a pass.",
+          "items": {
+            "$ref": "#/$defs/row"
+          }
+        }
+      }
+    }
+  }
+}

@@ -227,7 +227,7 @@ finding that answers it.
 | external tools (`gcloud`, Terraform, Git, Docker, Claude Code) | `fugaro doctor` checks Terraform and cosign only, and Docker is **deliberately not one of them** — `internal/cli/doctor.go` says why in place: `preflight.Docker` is meaningful only when a local base-image build is pending, so calling it today would always report ok; it has **no git check and no gcloud-binary check at all** | F26, F27, F28 |
 | the plugin and its skills | Skills only — there is no `hooks/` and no shell hook anywhere in `plugin/` | F34 |
 | WSL | Nothing detects WSL and nothing needs to; a Linux binary inside WSL is the Linux path exactly | F39 |
-| how the console follows | `docs/design/desktop-console.md` D10, "Later" | F40 |
+| how the console follows | `docs/desktop-console/spec.md` D10, "Later" | F40 |
 | the owner-run live checks | Everything except the four checks that need a real cloud login and a real Windows shell | §6 |
 
 ---
@@ -1036,7 +1036,7 @@ Linux-only one — see F40. Cost: WSL costs documentation and no code. That is
 the whole argument for D1.
 
 **F40 — how the console follows.** Class: **Open**, out of scope.
-`docs/design/desktop-console.md`'s D10 records the ruling: Windows and Linux
+`docs/desktop-console/spec.md`'s D10 records the ruling: Windows and Linux
 packaging is "**Later**", "Keep the code cross-platform and run the Linux CI
 pass so it does not rot, but sign and distribute macOS first; two more signing
 identities is owner work with no v1 user." The console's data source is the
@@ -1520,7 +1520,7 @@ of any kind. Each is a check for §6 of the plan.
 | U10 | That `fugaro image build --local` works against Docker Desktop (F42) | run it on Windows with Docker Desktop's WSL 2 backend |
 | U11 | That `%APPDATA%\gcloud` is where a Windows gcloud puts ADC, for the version the repository's docs pin | `gcloud info --format='value(config.paths.global_config_dir)'` on Windows |
 | U12 | That a Terraform working directory under `%LOCALAPPDATA%` stays inside the long-path limit for a realistically-named project (F24) | create it on Windows and measure |
-| U13 | Anything about the desktop console on Windows | out of scope; `docs/design/desktop-console.md` D10 owns it |
+| U13 | Anything about the desktop console on Windows | out of scope; `docs/desktop-console/spec.md` D10 owns it |
 
 **Nothing in this document was verified by running Fugaro on Windows.** The
 source claims (everything in §3 that names a path and a symbol) were verified

@@ -1,7 +1,7 @@
 // Package mailbox holds the consumer side of the phone's mailbox: the Go
 // binding of the contracts both ends of the wire already agree on.
 //
-// This is task T1 of docs/plans/2026-10-18-mobile-mailbox-consumer.md (mobile
+// This is task T1 of docs/mobile/mailbox-consumer-plan.md (mobile
 // P4.1) and it lands the message binding and nothing else: the strict decoder,
 // the validator and the canonical serialisation, each held to the merged
 // shared/mailbox-schema by its committed vectors.json. The tag over those bytes
