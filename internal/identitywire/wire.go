@@ -255,9 +255,10 @@ type TicketResponse struct {
 }
 
 // ClaimRequest is the run's ask for its identity (LM2, LM7). It carries the
-// ticket and the nonce and nothing else: the uid, the claims and the account
-// are the record's (R2, R3), and the caller is the job's own Google ID token
-// on the Authorization bearer, of which nothing but the account is read.
+// ticket, the nonce and — on Batch — the attestation, and nothing else: the
+// uid, the claims and the account are the record's (R2, R3), and the caller is
+// the job's own Google ID token on the Authorization bearer, of which nothing
+// but the account is read.
 type ClaimRequest struct {
 	// Ticket is the secret the launcher asked for and put on the execution.
 	Ticket string `json:"ticket"`
@@ -267,6 +268,17 @@ type ClaimRequest struct {
 	// refused. The service keeps only its digest (Claim.NonceHash), and the
 	// nonce reaches no log line and no audit line.
 	Nonce string `json:"nonce"`
+	// Attestation is the VM identity token of the execution making the claim,
+	// in the metadata server's full format (BR4 of docs/batch-run-identity, R1,
+	// U2). It is empty for a Cloud Run launch, whose job's own ID token already
+	// names the one execution the identity is served to; the account a Batch
+	// job runs as is shared by every job the launcher creates, so a Batch claim
+	// carries its own VM's token and the service serves the identity only to a
+	// VM of the job the record names (D3114). The value is the running VM's
+	// credential: it reaches no log line, no audit line and no record (R7), and
+	// a service of the release behind refuses the field it does not know, which
+	// is the fail-closed answer (F37).
+	Attestation string `json:"attestation,omitempty"`
 }
 
 // ClaimResponse is the claim's answer: the custom token the run exchanges for

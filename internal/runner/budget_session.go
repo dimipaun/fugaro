@@ -517,6 +517,16 @@ func strayTokenNoBackend() error {
 // (plan task 3.3: the ordering is the security property, and this is the lease
 // it protects).
 func (r *run) startBudgetBackend(ctx context.Context) error {
+	// A Batch job is the one backend where the launcher always leaves an
+	// identity behind -- the ticket it asked the issuer for before it created
+	// the job, or the marker of the release behind (BR1, R7) -- so a job
+	// carrying neither is not a launch of this installation at all. It is
+	// refused here, beside the marker's own refusal and before the session and
+	// before the clone: a run that went on with no identity would spend against
+	// a ceiling nobody accounts it in.
+	if r.onBatch() && !r.d.Backend.Issued() {
+		return batchLaunchWithNoTicket()
+	}
 	// The launcher's marker says it minted this run a budget token, and the
 	// ticket says it asked an issuer for this run's identity: either way it did
 	// so only because the project has a shared budget or a published policy.
