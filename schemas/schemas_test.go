@@ -7269,6 +7269,59 @@ func TestRunsShowSchema(t *testing.T) {
 	}
 }
 
+// TestOrchestratorIDSchemaAgreesWithGo: the id rule C-ORCH fixed (D3207,
+// internal/orchestrator/naming.go) is the rule the published documents carry, so
+// every field that is an orchestrator id admits exactly what
+// orchestrator.ValidOrchestratorID admits and refuses the rest. A named
+// orchestrator's `<project>~<name>` is an id a state document, an `orchestrator
+// ls` entry and an escalation listing all carry (CG1a), and a string the rule
+// refuses is carried by none of them — a schema still holding the agent rule
+// would refuse a document this release writes.
+//
+// A work item's id is deliberately not this rule (F36): the item ids beside
+// these fields keep idRE, which admits no `~`.
+//
+// Mutation (narrow one of these patterns back to the agent rule, or widen one to
+// idRE): this test fails naming the schema, the field and the id.
+func TestOrchestratorIDSchemaAgreesWithGo(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		path []string
+	}{
+		{"orchestrator-state.schema.json", []string{"properties", "agent_id", "pattern"}},
+		{"orchestrator-output.schema.json", []string{"$defs", "id", "pattern"}},
+		{"orchestrator-output.schema.json", []string{"$defs", "ls", "properties", "orchestrators", "items", "properties", "project", "pattern"}},
+		{"escalation.schema.json", []string{"$defs", "ls", "properties", "project", "pattern"}},
+		{"escalation.schema.json", []string{"$defs", "show", "properties", "project", "pattern"}},
+	} {
+		pattern, ok := schemaAt(t, tc.file, tc.path...).(string)
+		if !ok {
+			t.Fatalf("%s: %v: not a string", tc.file, tc.path)
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			t.Fatalf("%s: %v: %q does not compile: %v", tc.file, tc.path, pattern, err)
+		}
+		for _, id := range []string{
+			// The ids the rule admits: a project's default orchestrator, a named
+			// one, and one at the longest id the rule takes (a project at its own
+			// 40-character cap, the separator, a name).
+			"fugaro", "my-project", "a1", "fugaro~night", "my-project~night-shift-2",
+			strings.Repeat("o", 40) + "~night",
+			// And the ids it refuses, the claim key and a work item's shape among
+			// them: the two that would otherwise be mistaken for an orchestrator.
+			"", "Fugaro", "fugaro_night", "fugaro~Night", "fugaro~night~x", "fugaro-",
+			"-fugaro", "fugaro night", "fugaro/night", "fugaro.night",
+			orchestrator.ClaimsKey, strings.Repeat("n", 41),
+			strings.Repeat("o", 40) + "~" + strings.Repeat("n", 41),
+		} {
+			if got, want := re.MatchString(id), orchestrator.ValidOrchestratorID(id); got != want {
+				t.Errorf("%s: %v: the pattern matches %q = %v, and orchestrator.ValidOrchestratorID says %v", tc.file, tc.path, id, got, want)
+			}
+		}
+	}
+}
+
 // TestEscalationSchemaAgreesWithGo: the escalation documents' contract, and the
 // code that contract is for. `fugaro escalation ls|show --json` prints the
 // ladder's ledger (docs/outer-loop-escalation, E13), and every member of it is
