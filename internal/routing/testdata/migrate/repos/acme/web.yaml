@@ -1,0 +1,10 @@
+# A subscription repository: one account, and a Claude model the switch routes
+# through a provider.
+auth: oauth
+accounts: [grace]
+models:
+  - id: claude-haiku-4-5
+    claude: true
+  - id: claude-sonnet-5-5
+    claude: true
+    provider: openrouter

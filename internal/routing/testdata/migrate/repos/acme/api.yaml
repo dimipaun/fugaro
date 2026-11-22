@@ -1,0 +1,7 @@
+# The paid key, and a provider key beside it.
+auth: api-key
+models:
+  - id: claude-haiku-4-5
+    claude: true
+  - id: deepseek-v4-flash
+    provider: dashscope

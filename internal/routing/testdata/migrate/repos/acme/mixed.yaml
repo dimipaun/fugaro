@@ -1,0 +1,7 @@
+# Per-stage accounts and the mix (D3171): the review stage goes out on another
+# account than the coder stage, and the two fold into the one pool.
+auth: oauth
+accounts: [ada, grace]
+models:
+  - id: claude-haiku-4-5
+    claude: true

@@ -1,0 +1,6 @@
+# The cascade: the shared pool, and the paid key where the policy's fallback is
+# auto.
+auth: cascade
+models:
+  - id: claude-haiku-4-5
+    claude: true

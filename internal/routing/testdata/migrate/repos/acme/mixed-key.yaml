@@ -1,0 +1,8 @@
+# The paid key with the mix's account beside it: the review, adversarial and
+# triage stages go out on the account (D1848), and retiring the mix folds it
+# into the pool the chain names (D3171).
+auth: api-key
+accounts: [hopper]
+models:
+  - id: claude-haiku-4-5
+    claude: true

@@ -1,0 +1,30 @@
+# The installation's own config, as MG1's fixture: what a project holds once,
+# independent of any repository. The repositories are the files under repos/.
+project: acme/widgets
+# Every account the installation names, in the order the accounts block lists
+# them (D3183: the shared pool takes them in this order).
+accounts: [ada, grace, hopper]
+# The account a repository that names none goes out on: the retired walk's
+# `default_claude_account`, then the unsuffixed `default`.
+default_account: ada
+providers:
+  # The provider route D1a added: a Claude model the switch names goes here,
+  # and only repositories in allow_data_to may send it code.
+  - name: openrouter
+    allow_data_to: [acme/web]
+  # A provider key with no allow_data_to written: every repository may use it.
+  - name: dashscope
+pools:
+  # A pool the installation already carries: kept as it is, served by the rule
+  # its strategy means.
+  - name: pair
+    members: [ada, grace]
+    strategy: round-robin
+    principal:
+      kind: project
+      id: acme/widgets
+subscription_spread: false
+fallback_auto: true
+via: openrouter
+via_models: [claude-sonnet-5-5]
+vertex_spelled: [gemini-3-pro]
