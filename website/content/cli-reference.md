@@ -7436,10 +7436,14 @@ The repos.* scalars and lists are the generic writer's (D1173):
     fugaro settings set repos.acme/app.base_branch main
     fugaro settings set repos.acme/app.workflows --add docs
 
-This write is a person's own: fugaro update publishes it, and a coding agent's
-session is refused it, in a managed project by that project's gate.
+The write and the publish are one act, as they are for the same keys through
+fugaro settings set: the keys land in this machine's project config and the
+policy node they are served from is published by this same command, so no second
+command is needed. --no-apply saves the write and leaves the publish to fugaro
+apply.
 
-Every write ends with one line: next: fugaro update.
+This write is a person's own: a coding agent's session is refused it, in a
+managed project by that project's gate.
 
 Usage: `fugaro project repos set (REPO --workflows NAME[,NAME...]) | (--job-profile NAME [members])`
 
@@ -7455,6 +7459,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--job-profile` | string | "" | no | the job profile to write, by name; with it, the members below write the block's keys |
 | `--memory` | string | "" | no | profiles.NAME.memory: the Cloud Run memory the job is deployed with, e.g. 4Gi |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--provider` | string | "" | no | profiles.NAME.provider: the git provider the profile's job holds a credential for (required for a new profile) |
 | `--secrets` | stringSlice | `[]` | no | profiles.NAME.secrets: the Secret Manager names the profile's job mounts, comma-separated; the list is written whole |
