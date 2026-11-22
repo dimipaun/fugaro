@@ -46,12 +46,14 @@ route's names are where they are. Nor does the gateway import this package — `
 `internal/budget`, which imports the gateway, so that is a cycle as well. The package the sides of
 this wire do share is `internal/creds`: `internal/credsvc`, `internal/cli` and `internal/runner` all
 import it, so the names a job's environment and a call's headers are spelled with live here, once, and
-those three sides respell none of them. The gateway is the one side that respells them, and it is a
-**mirror**: a call it builds to the workspace's service carries the slip that service granted, and the
-claim secret after the claim (R4, WC8), so the names above are declared a second time under
-`internal/gateway` — the shape `internal/gateway/providerwire.go` already has for the provider route
-and `internal/gateway/service.go` for the model wire — with an external test (`package gateway_test`,
-which may import both) holding the two spellings to each other name by name. R18 is not the reason it
+those three sides respell none of them. The gateway is the one side that will respell them, and that
+**mirror is WC8's to write**: a call WC8 builds to the workspace's service carries the slip that
+service granted, and the claim secret after the claim (R4), and `internal/gateway` can spell neither
+through this package — so WC8 declares the names above a second time under `internal/gateway`, the
+shape `internal/gateway/providerwire.go` already has for the provider route and
+`internal/gateway/service.go` for the model wire, and holds the two spellings to each other name by
+name with an external test (`package gateway_test`, which may import both). Until WC8 lands, this
+package is their only declaration. R18 is not the reason it
 could be otherwise: the slip that rule leaves off a call is a **member's**, whose claim secret would
 be handed to a service outside the member (F13 of [reconciliation.md](reconciliation.md)), and the
 slip the workspace's service grants is the workspace's own secret — the model wire's fields in
