@@ -119,9 +119,9 @@ const mergeOne = verified(
 );
 
 // P5.1g's kind, and the one record here whose whole point is what it does NOT
-// carry: a stop request is a sentence the consumer raises as a prompt, so it
-// has no action record, no verb and no confirmation — nothing a consumer could
-// execute even if it wanted to (Q10's answer (c)).
+// carry: a stop request is a sentence for a human to act on, so it has no
+// action record, no verb and no confirmation — nothing a consumer could execute
+// even if it wanted to (Q10's answer (c)).
 verified(
   'stop request',
   'the phone asking a human to stop what it is looking at: a kind of its own, signed like every other, and never executed by anything',
@@ -277,7 +277,7 @@ refused('unsigned message', 'the tag is required on every inbox and outbox messa
 refused('unsigned prompt', 'a prompt is signed like every other kind', 'message', unsigned(message({ kind: 'prompt', options: ['merge it', 'leave it'] })));
 refused('unsigned answer', 'an unsigned answer is exactly what an impostor would send to "approve the merge?"', 'message', unsigned(message({ kind: 'answer', reply_to: 'm-0000' })));
 refused('unsigned action', 'an action record without a tag is never executed', 'message', unsigned(message({ kind: 'action', action: actionCancel })));
-refused('unsigned stop', 'a stop request is signed like every other kind: an impostor could otherwise raise a prompt in the owner\'s name', 'message', unsigned(message({ kind: 'stop' })));
+refused('unsigned stop', 'a stop request is signed like every other kind: an impostor could otherwise put a stop request in the owner\'s name', 'message', unsigned(message({ kind: 'stop' })));
 refused('unsigned heartbeat', 'an unsigned heartbeat is offline, and its agent list is ignored (O7)', 'heartbeat', unsigned(heartbeat()));
 refused('short mac', 'a tag is exactly 64 hex characters: 63 is not a tag', 'message', message({ mac: 'f'.repeat(63) }));
 refused('long mac', '65 is not a tag either', 'message', message({ mac: 'f'.repeat(65) }));

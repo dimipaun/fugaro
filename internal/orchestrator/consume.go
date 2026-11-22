@@ -110,23 +110,24 @@ const consumerNotCarried = "nothing was performed: the resident orchestrator rea
 //
 // It is a sentence of its own rather than consumerNotCarried because a stop
 // request is the one record whose answer the human is waiting for: Q10's answer
-// (c) is a request that **raises a prompt** rather than a phone-writable kill
-// switch, so the honest answer says both halves — the request was read, and
-// nothing was stopped from here, because there is nothing here to stop it with
-// (the enforcement side is `config/kill/**` and `config/caps/**`, which no
-// client writes and this pass has no grant for). What it does not do is
-// pretend: it names where the stop can be made, and it names the one thing the
-// phone can always do by itself, which is to revoke its own pairing.
+// (c) is a request rather than a phone-writable kill switch, so the honest
+// answer says both halves — the request was read, and nothing was stopped from
+// here, because there is nothing here to stop it with (the enforcement side is
+// `config/kill/**` and `config/caps/**`, which no client writes and this pass
+// has no grant for). What it does not do is pretend: it names where the stop
+// can be made, the console or the laptop, where a human can act on the request,
+// and it names the one thing the phone can always do by itself, which is to
+// revoke its own pairing.
 //
 // It is deliberately not a prompt in the outbox. A prompt is a question with
 // options the phone reads aloud and answers, and the consumer would then be
 // asking the human to confirm a stop it cannot perform — D168's own rule is
 // that the resident orchestrator never treats its own prompt as answered and
 // never synthesises an owner confirmation, and a prompt here would be exactly
-// that. The request travels to the human as the outbox answer they will hear,
-// and the prompt a stop raises is the console's or the laptop's (the design's
-// section 4.8), not this pass's.
-const consumerStopRequest = "nothing was stopped: the resident orchestrator read your stop request, and this installation has no phone-writable kill switch (a stop from the phone raises a prompt on the console or the laptop). Stop the run from there, or revoke this device's pairing; the phone cannot stop a run by itself."
+// that. Nothing raises a prompt for a stop record — no console or laptop code
+// does — so the request travels to the human as the outbox answer they will
+// hear and nothing else.
+const consumerStopRequest = "nothing was stopped: the resident orchestrator read your stop request, and this installation has no phone-writable kill switch. Stop the run from the console or the laptop, or revoke this device's pairing; the phone cannot stop a run by itself."
 
 // ConsumerReader is every read one consumer pass makes, and it is the
 // deployment's own database client — the service-account one, `rtdb.Auth{Source:

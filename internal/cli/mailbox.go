@@ -135,20 +135,21 @@ const mailboxStaleReply = "nothing was performed: the message arrived outside it
 // for the same request): the request was read, and **nothing was stopped from
 // here**, because there is nothing here to stop it with — the enforcement side
 // is `config/kill/**` and `config/caps/**`, which no client writes and this
-// consumer holds no grant for. It names where the stop can be made, which is
-// the prompt the schema says a stop request raises for whoever is at the laptop
-// or the console, and the one thing the phone can always do by itself, which is
-// to revoke its own pairing. What it never does is claim a run was stopped:
-// Q10's answer (c) is a request and not a phone-writable kill switch, and an
-// answer that pretended otherwise would be the lie that answer exists to avoid.
+// consumer holds no grant for. It names where the stop can be made, the console
+// or the laptop, where a human can act on the request the phone just made, and
+// the one thing the phone can always do by itself, which is to revoke its own
+// pairing. What it never does is claim a run was stopped: Q10's answer (c) is a
+// request and not a phone-writable kill switch, and an answer that pretended
+// otherwise would be the lie that answer exists to avoid.
 //
 // It is deliberately not a prompt in the outbox either, for the reason the
 // resident pass's own note gives: a prompt is a question the phone reads out
 // and answers, and asking the human to confirm a stop this process cannot
 // perform would be exactly the confirmation of its own prompt D168 forbids the
-// consumer to synthesise. The prompt a stop raises is the console's or the
-// laptop's.
-const mailboxStopReply = "nothing was stopped: this consumer read your stop request, and this installation has no phone-writable kill switch (a stop from the phone raises a prompt on the console or the laptop). Stop the run from there, or revoke this device's pairing; the phone cannot stop a run by itself."
+// consumer to synthesise. Nothing raises a prompt for a stop record — no
+// console or laptop code does — so the request travels to the human as this
+// answer alone.
+const mailboxStopReply = "nothing was stopped: this consumer read your stop request, and this installation has no phone-writable kill switch. Stop the run from the console or the laptop, or revoke this device's pairing; the phone cannot stop a run by itself."
 
 // mailboxCodeDuplicate is the module's own word for a redelivery. §4.4 counts
 // duplicates among the refusals a pass reports — the message was read and

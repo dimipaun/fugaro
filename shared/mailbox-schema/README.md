@@ -67,7 +67,7 @@ proves nothing.
 | `answer` | — | `reply_to` | the answer to a prompt; the chosen words are `text`, because the answer is *spoken*, not selected |
 | `action` | `reply_to` | `action` | D169's destructive command |
 | `registration` | `prefs` | `token`, `platform` | P5.2.1, §3.5(b): the phone's push registration, the **only** path that writes §3.4's node |
-| `stop` | — | — | P5.1g, Q10(c): the phone's **stop request** — the phone asking a human to stop what it is looking at. The consumer raises it as a **prompt**; nothing ever executes it, and it is not an `action` record, so it carries no verb and no confirmation |
+| `stop` | — | — | P5.1g, Q10(c): the phone's **stop request** — the phone asking a human to stop what it is looking at. Nothing raises a prompt for it and nothing ever executes it — the human at the console or the laptop acts on the request — and it is not an `action` record, so it carries no verb and no confirmation |
 
 A field on the wrong kind is **`field-not-allowed`**, not an unknown field: two agents
 disagreeing about whether a message *is* an action is exactly the ambiguity this module

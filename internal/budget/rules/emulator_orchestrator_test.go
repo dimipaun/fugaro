@@ -299,12 +299,19 @@ func TestLaunchEnvelopeGrantsTheDeviceItsOwnEntry(t *testing.T) {
 	}
 
 	// A device whose node was never written reads neither the recipe nor its own
-	// entry: D166's conjunct is what ties the envelope to the pairing, so a
-	// revoked device is refused both at once.
-	unpaired := h.unpaired(mbAlice)
-	h.mustRead(unpaired, budget.PathCapsGlobal)
-	h.mustReadDenied(unpaired, recipePath)
-	h.mustReadDenied(unpaired, aliceEntry)
+	// entry, and the caps family every paired device reads is refused to it too:
+	// D166's conjunct is what ties the envelope to the pairing, so an account
+	// that was never paired is refused everywhere at once. The account is one
+	// nothing paired — alice's and bob's own nodes are written above, which is
+	// what makes their reads pass — and its entry is really there, so the
+	// refusal is the missing device node and not an absent path.
+	const neverPairedUid = "never-paired-uid"
+	neverPairedEntry := PathLaunchEnvelope + "/devices/" + neverPairedUid
+	h.set(neverPairedEntry, map[string]any{"repos": []any{"owner/one"}, "per_hour": 2, "daily_usd": 5})
+	neverPaired := h.unpaired(neverPairedUid)
+	h.mustReadDenied(neverPaired, budget.PathCapsGlobal)
+	h.mustReadDenied(neverPaired, recipePath)
+	h.mustReadDenied(neverPaired, neverPairedEntry)
 	// And deleting a live device's node takes its entry away with it, with no
 	// token expiring in between — which is `fugaro pair revoke`'s reach.
 	h.unpairDevice(mbAlice)
@@ -335,7 +342,7 @@ func TestLaunchEnvelopeGrantsTheDeviceItsOwnEntry(t *testing.T) {
 	h.mustDeny(alice, "the phone writing another device's entry", put(bobEntry, doc))
 	h.mustDeny(alice, "the phone writing the named safe recipe", put(recipePath, map[string]any{"repo": "owner/other"}))
 	h.mustDeny(run, "a run writing a device's envelope entry", put(aliceEntry, doc))
-	h.mustDeny(unpaired, "an unpaired account writing an entry", put(aliceEntry, doc))
+	h.mustDeny(neverPaired, "an unpaired account writing an entry", put(aliceEntry, doc))
 
 	// And the denials changed nothing: the device still reads its own values.
 	h.mustRead(alice, aliceEntry)

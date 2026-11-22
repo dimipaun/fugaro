@@ -295,16 +295,16 @@ const FORBIDDEN_KEY_CHARS = new Set(['%', '.', '$', '#', '[', ']', '/']);
  *            carries a `token`, and the only path by which a token can reach
  *            `config/admin/push/$uid` at all.
  *   stop     the phone's stop request (P5.1g, Q10's answer (c)): the phone
- *            asking a human to stop what it is looking at, which the consumer
- *            RAISES AS A PROMPT for whoever is at the laptop or the console. It
- *            is deliberately not an `action`: an action record is executed,
- *            while this one is never executed by anything — the owner refused a
- *            phone-writable kill switch, so no message this kind carries stops
- *            a run, lowers a cap or writes `config/kill/**`. It is a kind of
- *            its own rather than a `message` so that the consumer, the rules
- *            and the app all read the same intent from the record instead of
- *            from its prose, and so that a stop request can never be handed to
- *            a launched run's agent as free text (P5.1-Q4).
+ *            asking a human to stop what it is looking at, which the human at
+ *            the console or the laptop acts on and which nothing raises as a
+ *            prompt. It is deliberately not an `action`: an action record is
+ *            executed, while this one is never executed by anything — the owner
+ *            refused a phone-writable kill switch, so no message this kind
+ *            carries stops a run, lowers a cap or writes `config/kill/**`. It
+ *            is a kind of its own rather than a `message` so that the consumer,
+ *            the rules and the app all read the same intent from the record
+ *            instead of from its prose, and so that a stop request can never be
+ *            handed to a launched run's agent as free text (P5.1-Q4).
  *
  * This is not P1.1's own `KIND` (`command` · `prompt`), which names the two
  * ACCEPTANCE WINDOWS; P6.5 and P6.7 map a message kind to a window, and only

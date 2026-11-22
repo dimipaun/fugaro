@@ -547,7 +547,7 @@ const PolicyRulesVersion = 1
 // generation 6's reason — the registration kind's — because a phone under the
 // older document has every stop request refused at the database with no error,
 // and the record is the whole of what the owner's Q10 answer (c) built: a
-// request that raises a prompt, never a phone-writable kill switch. Nothing
+// request to a human, never a phone-writable kill switch. Nothing
 // else about the mailbox moves: the kind carries the five shared fields and no
 // others, so no field node, no tag rule and no required-field clause changes.
 //
