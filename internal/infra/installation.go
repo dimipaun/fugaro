@@ -97,7 +97,7 @@ var flagHints = []struct {
 	hint     string
 }{
 	{[]string{"module.installation.google_billing_budget."},
-		"the budget is declared only by --budget, --budget-currency and --billing-account, which nothing records: pass them again with the values it was created with"},
+		"the budget is declared by --budget, --budget-currency and --billing-account, and an installation that holds one keeps it: a run that passes none carries the amount the project's creation fact records and the billing account the alert sits on (its state), so this delete is one no such record answers — pass the trio again with the values the alert should have"},
 	{[]string{"module.installation.google_monitoring_notification_channel.", "module.installation.google_monitoring_alert_policy."},
 		"the alert is declared by --alert-email (or terraform.alert_email in the local config): pass it again"},
 	{[]string{"module.installation.google_project_iam_member.", "module.installation.google_storage_bucket_iam_member.",
@@ -111,7 +111,7 @@ var flagHints = []struct {
 	{[]string{"module.project[", "module.project_review["},
 		"a project job, its review-only variant and their accounts and grants are declared by the local config's profiles, one per profile, provider and account: a removed profile, or one whose provider or secrets changed, plans the old job's delete and its variant's; restore the profile as it was (retiring a project job is not supported yet)"},
 	{[]string{"module.installation.google_project_service."},
-		"two APIs are declared by what this run was given: the Vertex AI API by a repository the local config records as using it (repos.<repo>.vertex, which fugaro update writes), so run from a local config that records every Vertex repository; the Billing Budgets API by --budget, --budget-currency and --billing-account, so pass them again. A deleted API is never disabled, but its management would be dropped"},
+		"an API is declared by what this run was given: the Vertex AI API by a repository the local config records as using it (repos.<repo>.vertex, which fugaro update writes), so run from a local config that records every Vertex repository; the Billing Budgets API by --budget, --budget-currency and --billing-account, or by the alert the installation already holds, which a run that passes none keeps with it. A deleted API is never disabled, but its management would be dropped"},
 }
 
 // DeleteHints says, for the deletes in p that allowDelete doesn't name,

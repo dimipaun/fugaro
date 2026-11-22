@@ -53,6 +53,9 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	// The rigor mode is the one question here Enter is not an answer to (task
 	// W), so the mode is typed rather than taken.
 	typeAt("Type the project's rigor mode", 1, string(rigor.Pro)+"\n")
+	// The budget amount is the project's alert threshold, and Enter is its
+	// suggestion (T2b of docs/managed-flag-ergonomics; D2210).
+	typeAt("Type the monthly amount of the project's budget alert", 1, "\n")
 	typeAt("Bake your repos", 1, "\n") // the wizard's last question (IS7), and Enter is its suggestion
 	select {
 	case err := <-done:

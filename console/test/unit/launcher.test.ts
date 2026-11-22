@@ -165,15 +165,17 @@ describe('the person string on the text path', () => {
     expect(text).toBe(TOKEN_PLACEHOLDER)
   })
 
-  it('draws a dotted local part and a name, which the person class would refuse', () => {
-    // The reason the cell is not drawn in `person`: that class admits a bare
-    // address or a login `[A-Za-z0-9-]{1,39}` and refuses everything else, so
-    // `dana.lopez` -- the commonest corporate shape -- would be a refused cell
-    // on every row of the column the owner asked for.
+  it('draws a dotted local part and a display name, and the person class draws one too', () => {
+    // The two shapes the owner's column really carries: the dotted local part,
+    // which is the commonest corporate shape, and a display name beside an
+    // address. Neither is a value this console refuses -- `dana.lopez` is a
+    // person the `person` class draws now that it masks only secrets (D3213) --
+    // and the cell is a `label` for the bound and the single-line rule the case
+    // above pins, not for a refusal.
     expect(drawn(launcherCell('dana.lopez@example.com') ?? '')).toBe('dana.lopez')
     expect(drawn(launcherCell('Ana Lopez <ana@example.com>') ?? '')).toBe('Ana Lopez <ana')
-    const refused = sanitizeText('dana.lopez', 'person', 'runs[].launched_by')
-    expect(refused.ok).toBe(false)
+    const person = sanitizeText('dana.lopez', 'person', 'runs.[].launched_by')
+    expect(person.ok && person.text).toBe('dana.lopez')
   })
 })
 
