@@ -316,6 +316,16 @@ func initStages(e *initEngine) []initflow.Stage {
 	// (initflow.CredentialsService has the order and the window the order
 	// leaves; the owner's ruling of 2026-11-10).
 	stages = append(stages, newCredentialsStage(e))
+	// The copy of this installation's model keys into that service's bundle,
+	// immediately after the stage that deploys it and with nothing between
+	// them: what it writes a value into is the document that service reads, the
+	// guard it goes through reads the release of that service (so a service too
+	// old for the entry refuses the write rather than landing it), and the
+	// position is what leaves that refusal a state this same run has already
+	// fixed (initflow.CredentialsCopy has the window). It is registered for
+	// both doors, like the service's own stage: an installation that has not
+	// turned the service on skips it with one line.
+	stages = append(stages, newCredentialsCopyStage(e))
 	// The workspace's own project's root BEFORE the record, and both after the
 	// policy one: this stage creates the identity the workspace's own service
 	// runs as — its own service account and the one grant that reaches the
@@ -740,6 +750,15 @@ type engineStage struct {
 	did     func() string
 	applied bool
 	changes *infra.PlanCounts
+	// declined, when set and non-empty, is the one line a stage that did
+	// nothing this run says instead of "No changes": why the step is left as it
+	// is. It is the Firebase stage's, whose no-flag arm may reach its steps and
+	// find that this run may not take them (R2's project owner, billing), and
+	// it is a detail on a stage that is DONE: the rest of the run carries on,
+	// which is the whole point of the line. A stage with something only the
+	// user can give leaves it as a *initflow.NeedsYouError instead, and one
+	// that changed something says it with did.
+	declined func() string
 }
 
 func (s *engineStage) Name() string                 { return s.name }
@@ -799,6 +818,14 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{}, err
 	}
 	switch {
+	// A declined stage applied nothing at all — the line is set on the two arms
+	// that return before the first apply — so it is read FIRST: the run's own
+	// result accumulates what the stages BEFORE this one did (a `setup` from
+	// nothing applies the installation root before the Firebase stage is
+	// reached), and a declined line that waited for those counters to be empty
+	// would never be the one the stage says.
+	case s.declined != nil && s.declined() != "":
+		return initflow.Outcome{Detail: s.declined()}, nil
 	case !s.applied && s.did != nil && s.did() != "":
 		return initflow.Outcome{Changed: true, Detail: s.did()}, nil
 	case !s.applied:
@@ -1935,19 +1962,85 @@ func firebaseProjectIDWord(id string) string {
 	return quoteWord(id)
 }
 
+// historyJobOfThisRun reports whether the history job's own apply belongs to
+// this run's second installation stage. It is true where this run has read the
+// Firebase root's outputs — r.fb, which the flag's path sets and the no-flag
+// path sets when it adopted or created the database (AB7, R2) — and where the
+// flag asked for the history job, whose apply is the one that reads them.
+//
+// What it is NOT is "the installation has a budget backend": an installation
+// whose config already records the database never reaches the Firebase root in
+// a plain update (the stage is skipped, F34), and the history job for such a
+// run is composed by the FIRST apply from the recorded backend
+// (installOptionsCarrying) and deployed there.
+func (e *initEngine) historyJobOfThisRun() bool {
+	return e.r.fb != nil || e.r.o.firebase != ""
+}
+
+// budgetDatabaseKnown reports whether this machine's local config already
+// records the installation's budget database: the realtime database's address,
+// which is the whole of what "the database exists and it is ours" means on a
+// machine (F6 — the address is what a run's session is opened against, and the
+// Firebase project alone is what a config that has never seen one names). The
+// stage that adopts or creates a database is skipped where this answers true
+// (F34), which is every converged installation after this release.
+func (e *initEngine) budgetDatabaseKnown() bool {
+	return e.lc.Budget != nil && e.lc.Budget.RTDBURL != ""
+}
+
+// budgetBackendOn reports whether the installation has a budget backend at all:
+// the switch the installation root's `enable_budget` is set from — this run's
+// --firebase-project, or a config that records the backend, by its address or by
+// the project it lives in. It is one door earlier than budgetDatabaseKnown: this
+// machine may know only the project, while the installation has the database.
+//
+// It is what the budget admins' review asks (init_review.go), and it is
+// installOptionsCarrying's own expression (init.go), respelled: the two must
+// answer the same question, because one decides whether the history account is
+// applied and the other who is shown as able to change a cap on it.
+func (e *initEngine) budgetBackendOn() bool {
+	return e.r.o.firebase != "" || e.lc.Terraform.BudgetBackend ||
+		(e.lc.Budget != nil && e.lc.Budget.FirebaseProject != "")
+}
+
 // newFirebaseStage is stage 4: update --firebase-project's engine, which is two
 // confirmed applies (the installation's history account, the Firebase root)
 // and the database steps. The installation again, for the history job, is
 // the installation-2 stage, after the images stage has mirrored the image.
+//
+// With no flag it is the same engine with one decision in front of it (AB7,
+// R2, init_firebase.go's noFlagBudgetDatabase): the stage acts only to adopt the
+// database this installation already has or to create one where there is none,
+// in the installation's own project, and where this run may not create one it
+// changes nothing and says so in one line (r.declined, which the stage reports
+// as what it has to say). It is skipped where this machine already records the
+// database (F34) and where nothing would answer the confirmation a creation
+// needs (F4, cannotCreateTheDatabase), and the flag's own path — the one value
+// it could always take, the installation's own project — is untouched.
 func newFirebaseStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Firebase,
 		skip: func() string {
-			if e.r.o.firebase == "" {
-				return "no --firebase-project given"
+			if e.r.o.firebase != "" {
+				return ""
+			}
+			if e.budgetDatabaseKnown() {
+				return "the project config already records the budget database: this stage with no --firebase-project only adopts or creates one, and there is one"
+			}
+			// F4/R2's answer is asked HERE and not in the stage's own arm,
+			// because the arm is only reached by a run that can answer: the
+			// loop leaves a stage whose steps nothing can confirm to the user,
+			// which is the stop R2 replaces with one line and a run that
+			// carries on.
+			if why, yes := e.r.cannotCreateTheDatabase(); yes {
+				return why
 			}
 			return ""
 		},
 		run: func(ctx context.Context) error {
+			// This run's own answer, cleared before the stage speaks: the plan
+			// pass and the apply pass both run the engine, and a line left over
+			// from the plan would be reported for an apply that did not say it.
+			e.r.declined = ""
 			if err := e.setup(ctx); err != nil {
 				return err
 			}
@@ -1963,13 +2056,17 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			if err := e.ensureCredentialsService(ctx); err != nil {
 				return err
 			}
-			if err := e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old); err != nil {
+			// &e.spec and not e.spec: the stage sets the `enable_budget` switch
+			// on the run's own spec once the database exists, so the stages
+			// behind this one carry it too (initFirebase).
+			if err := e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, &e.spec, e.path, e.old); err != nil {
 				return err
 			}
 			_, err := e.fillCredentialsAudience(ctx)
 			return err
 		},
-		left: promptLeft(initflow.Firebase, "run the command below: it asks you nothing and each apply goes ahead", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord()),
+		declined: func() string { return e.r.declined },
+		left:     promptLeft(initflow.Firebase, "run the command below: it asks you nothing and each apply goes ahead", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord()),
 	}
 }
 
@@ -1983,14 +2080,21 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Installation2, isolate: true,
 		skip: func() string {
 			switch {
-			case e.r.o.firebase != "", e.catalogJobAwaitsItsBase(), e.reportsJobAwaitsItsBase():
+			// F29: what deploys the history job is this run having the Firebase
+			// root's outputs, not the flag that used to be the only way to get
+			// them — the no-flag update that just adopted or created the
+			// database reaches this stage with them.
+			case e.historyJobOfThisRun(), e.catalogJobAwaitsItsBase(), e.reportsJobAwaitsItsBase():
 				return ""
 			case e.catalogBaseIsMissing():
-				return "no --firebase-project given, and the project's image catalog builds its entries FROM base_images." + config.BaseKind + ", which this run does not pin: the catalog check job runs FROM that image and nothing else deploys it, so the catalog's entries are checked by nothing until a run that pins it is through"
+				return "the project's image catalog builds its entries FROM base_images." + config.BaseKind + ", which this run does not pin: the catalog check job runs FROM that image and nothing else deploys it, so the catalog's entries are checked by nothing until a run that pins it is through"
 			case infra.CatalogBuilds(e.lc):
-				return "no --firebase-project given, and the first apply already deployed the scheduled jobs from the recorded base image: this stage has nothing of its own"
+				return "the first apply already deployed the scheduled jobs from the recorded base image: this stage has nothing of its own"
 			}
-			return "no --firebase-project given: nothing to deploy the history job with"
+			if e.budgetBackendOn() {
+				return "the first apply deployed the history job from the budget backend the project config records: this stage has nothing of its own"
+			}
+			return "the installation has no budget backend, so there is no history job to deploy: run fugaro update once a project owner has created one"
 		},
 		run: func(ctx context.Context) error {
 			if err := e.setup(ctx); err != nil {
@@ -2019,7 +2123,10 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			e.spec.CatalogCheck = next.CatalogCheck
 			e.spec.Reports = next.Reports
 			e.spec.ProjectJobs = next.ProjectJobs
-			if e.r.o.firebase != "" {
+			// F29: the history job is this stage's own apply where this run has
+			// the Firebase root's outputs, whether the flag asked for them or
+			// the no-flag arm adopted or created the database.
+			if e.historyJobOfThisRun() {
 				// The resident orchestrator's block, before the apply that
 				// carries it: this is the stage that has the Firebase outputs
 				// (the module's token-minter row is bound on that root's
@@ -2068,7 +2175,7 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			return e.r.installCatalogCheck(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},
 		leftFor: func() initflow.Left {
-			if e.r.o.firebase != "" {
+			if e.historyJobOfThisRun() {
 				return promptLeft(initflow.Installation2, "run the command below: it asks you nothing and applies the history job", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord())
 			}
 			return promptLeft(initflow.Installation2, "run the command below: it asks you nothing and applies the scheduled jobs", e.r.o.doorName())

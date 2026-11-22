@@ -633,12 +633,13 @@ test.describe('the console with nothing to read', () => {
     // used to draw one draws nothing at all where it stood.
     expect(screen.text).not.toContain('choose a different fugaro binary')
     expect(screen.text).not.toContain('choose the binary')
-    // The count of places searched, and never the places: `sanitize.ts` draws
-    // every path as `<path>` -- "a path is where the operator's user name and
-    // checkout live, and neither belongs in a screenshot" -- so a list of them
-    // would be a column of placeholders. The sentence keeps the fact.
+    // The count of places searched, and -- in the resolution's own sentence --
+    // the place it really looked: `sanitize.ts` draws a path as it came (D3213,
+    // 2026-11-21), so the operator reads where the console looked instead of a
+    // column of placeholders. The candidate *list* is still not drawn, only the
+    // count and the one sentence the resolution wrote.
     expect(screen.searched).toBe(String(state.searched.length))
-    expect(screen.text).not.toContain(scratch)
+    expect(screen.text).toContain(join(scratch, 'bin', 'fugaro'))
     expect(screen.text).not.toContain('/opt/homebrew')
     expect(screen.text).toContain('no fugaro binary was found')
     // Not a partially drawn dashboard: no Live screen, no cap line, no runs.

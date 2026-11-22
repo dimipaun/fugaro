@@ -2531,7 +2531,7 @@ func launchReviewLevels(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg
 // providers rather than reaching for the config it does not have.
 func launchResolve(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, warn io.Writer) launchResolution {
 	rigorCfg := cfg.RigorConfig()
-	req := rigor.Request{Level: rigor.Rigor(spec.Rigor), Paths: spec.Paths}
+	req := spec.RigorRequest(spec.Paths)
 	mode := rigor.Resolve(rigorCfg, req).Level
 	var floor []policy.Level
 	// The node is read once for both halves of the model's own gates: its
