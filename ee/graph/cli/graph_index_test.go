@@ -42,12 +42,19 @@ const indexedRunID = "20261013-100000-aaaa"
 
 // fakeIndex is a runindex.Reader over entries a test hands it. It answers the
 // page a filter asks for — this repository's runs at or after the filter's
-// window, newest first, which is the contract's own order — and keeps every
-// question it was asked, so a test can hold both what the fallback drew and
-// that the index is where it read it.
+// window, newest first, which is the contract's own order — with the summary's
+// own completeness beside it, and keeps every question it was asked, so a test
+// can hold both what the fallback drew and that the index is where it read it.
 type fakeIndex struct {
 	entries []runindex.Entry
 	filters []runindex.Filter
+	// complete and folded are the summary's two fields as the page carries
+	// them. The zero value is an index that has folded nothing, which is
+	// exactly the state the read must never answer as a repository with no
+	// runs, so `indexing` installs a finished walk and a test that wants the
+	// other state clears it.
+	complete bool
+	folded   *time.Time
 }
 
 func (f *fakeIndex) List(_ context.Context, filter runindex.Filter) (runindex.Page, error) {
@@ -56,7 +63,7 @@ func (f *fakeIndex) List(_ context.Context, filter runindex.Filter) (runindex.Pa
 	for _, slug := range filter.Slugs {
 		slugs[slug] = true
 	}
-	page := runindex.Page{Entries: []runindex.Entry{}}
+	page := runindex.Page{Entries: []runindex.Entry{}, IndexComplete: f.complete, FoldedThrough: f.folded}
 	for _, e := range f.entries {
 		if len(slugs) > 0 && !slugs[e.Slug] {
 			continue
@@ -82,9 +89,15 @@ func (f *fakeIndex) Summary(context.Context) (runindex.Summary, error) {
 // indexing installs a fake index holding entries as what the coordinator
 // scope's runs-half fallback reads, and answers it: the questions the read
 // asked are index.filters.
+//
+// The index it installs has finished a walk, which is the steady state and the
+// state every other test in this package is about; a test that wants an index
+// still building clears index.complete (and index.folded with it) before the
+// command runs.
 func (f *graphFixture) indexing(t *testing.T, entries ...runindex.Entry) *fakeIndex {
 	t.Helper()
-	index := &fakeIndex{entries: entries}
+	folded := fcli.LsNow().UTC().Add(-time.Minute)
+	index := &fakeIndex{entries: entries, complete: true, folded: &folded}
 	previous := graphIndex
 	graphIndex = func(context.Context, *fcli.Cloud) (runindex.Reader, error) { return index, nil }
 	t.Cleanup(func() { graphIndex = previous })
@@ -137,6 +150,12 @@ func TestGraphFallbackReadsIndex(t *testing.T) {
 	if n.Kind != graph.NodeRun || n.State != string(runstore.StatusRunning) {
 		t.Errorf("the index's run is drawn as %+v, want the in-flight run node the bucket's own objects drew", n)
 	}
+	// A finished index says nothing about itself: the runs half it answered with
+	// is the whole truth it can be, and a warning here would be a line every
+	// document carries for nothing.
+	if len(doc.Warnings) != 0 {
+		t.Errorf("a finished index warned %q, want none: the runs half is the whole truth it can be", doc.Warnings)
+	}
 
 	// One List, for this repository, over the read's own window: the fallback
 	// read the index, and not something that merely agreed with it.
@@ -185,6 +204,83 @@ func TestGraphFallbackReadsIndex(t *testing.T) {
 		// rows drew (coordinator.Join).
 		if n.State != string(runstore.StatusRunning) {
 			t.Errorf("the pull request's state is %q, want the run's own status: the runs half read no host", n.State)
+		}
+	})
+}
+
+// TestGraphSaysWhenTheIndexIsStillBuilding is the other half of IR3: the read
+// answers a page short of the index's own completeness, and it says so rather
+// than drawing an empty repository.
+//
+// The state is not an edge case. IndexComplete is false from the first read
+// until a walk finishes — the wired stub says it, and after I-INDEX every
+// installation says it until its first reindex does (RI4, RI5) — and the
+// fallback is the common case, because the coordinator's sweep is off on most
+// installations (F3). Before this, `fugaro graph` drew zero nodes for such a
+// repository and nothing in the document said why, which the plan's own
+// constraint forbids (a reader never prints a silently short list while the
+// index is incomplete) and which the contract names as the stub's whole point.
+// Two things are held here: the document carries the sentence, and the sentence
+// carries the summary's other field, so a reader can tell "folded nothing yet"
+// from "folded through this morning".
+func TestGraphSaysWhenTheIndexIsStillBuilding(t *testing.T) {
+	f := newGraphFixture(t)
+	// A run the bucket holds and the index does not: the runs a bucket listing
+	// would draw, and what the empty page must not be read as.
+	f.seedRun(t)
+	index := f.indexing(t)
+	index.complete, index.folded = false, nil
+
+	out, errOut, err := execute(t, "graph", "--json")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	doc, err := graph.ParseDocument([]byte(out))
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+
+	if len(doc.Nodes) != 0 {
+		t.Errorf("an index that has folded nothing drew %d nodes: %+v", len(doc.Nodes), doc.Nodes)
+	}
+	if len(doc.Warnings) != 1 {
+		t.Fatalf("the document's warnings are %q, want the one sentence about the index", doc.Warnings)
+	}
+	line := doc.Warnings[0]
+	if !strings.Contains(line, "the run index is still building") || !strings.Contains(line, "nothing is folded yet") {
+		t.Errorf("the warning is %q, want it to say the index is still building and that nothing is folded yet", line)
+	}
+	// The table has no field for what the read could not do, so the text form
+	// carries the sentence on stderr instead of in the document (runGraph): a
+	// person reading the empty table is not left to infer why it is empty. A
+	// second read, because --json echoes nothing to stderr but the header.
+	_, textErr, err := execute(t, "graph")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, textErr)
+	}
+	if !strings.Contains(textErr, "the run index is still building") {
+		t.Errorf("the table's stderr is %q, want the sentence the document carries: a reader of the table is not left to infer it", textErr)
+	}
+
+	// A walk in progress: the page holds what it has folded so far, and the
+	// sentence names how fresh those rows are, so "the runs of this window" and
+	// "the runs folded by 09:14" do not look alike.
+	t.Run("a page short of a walk in progress", func(t *testing.T) {
+		f := newGraphFixture(t)
+		f.seedRun(t)
+		index := f.indexing(t, indexEntry(indexedRunID, fcli.LsNow().UTC().Add(-time.Hour)))
+		index.complete = false
+
+		doc := graphDocument(t, "graph", "--json")
+		if len(doc.Nodes) != 1 || doc.Nodes[0].ID != "acme/app#"+indexedRunID {
+			t.Fatalf("the half-folded index drew %+v, want the one row it has folded", doc.Nodes)
+		}
+		if len(doc.Warnings) != 1 {
+			t.Fatalf("the document's warnings are %q, want the one sentence about the index", doc.Warnings)
+		}
+		want := "folded through " + index.folded.UTC().Format(time.RFC3339)
+		if !strings.Contains(doc.Warnings[0], want) {
+			t.Errorf("the warning is %q, want it to name when the index folded through (%s)", doc.Warnings[0], want)
 		}
 	})
 }

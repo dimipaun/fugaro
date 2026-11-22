@@ -935,26 +935,84 @@ func bucketRuns(env *fcli.Cloud) RunsFallback {
 // the sweep keeps reading the runs bucket (coordinatorRunsSource). The reader
 // is passed in rather than opened here, so that this half is testable without
 // a database and the caller owns the one client it reads through.
+//
+// **A page short of the index's own completeness is never answered as a
+// repository with no runs.** IndexComplete is false until a walk has finished,
+// and on every installation until the first reindex does (RI4, RI5) — the
+// wired stub says so from the first read — so an empty runs half is the
+// ordinary state of a young index rather than a fact about the repository. The
+// read says which it is holding in the read's own warnings (indexBuildingLine),
+// which is the channel the plan's constraint asks every reader for: no reader
+// prints a silently short list while the index is incomplete.
 func IndexRuns(reader runindex.Reader) RunsFallback {
-	return func(io.Writer) coordinator.RunsReader { return indexRunsSource{reader: reader} }
+	// One warning for the pass and not one per repository: whether the index
+	// has finished a walk is the installation's fact, and the read covers every
+	// repository the project lists, so a line each would be the same sentence
+	// twenty times. It is written into whichever repository's buffer reads
+	// first, which the caller flushes in the selection's own order.
+	var once sync.Once
+	return func(warn io.Writer) coordinator.RunsReader {
+		return indexRunsSource{reader: reader, warn: warn, building: &once}
+	}
 }
 
-// indexRunsSource is IndexRuns as the reader itself: the index, and the window
-// the stored view is read over. It writes no warning, where the bucket read
-// warns about a run whose objects would not decode: an entry the fold could not
-// read is one the index does not carry, and the page says nothing about it.
-type indexRunsSource struct{ reader runindex.Reader }
+// indexRunsSource is IndexRuns as the reader itself: the index, the window the
+// stored view is read over, and where a page that may be short says so.
+//
+// The bucket read warns about a run whose objects would not decode; this one
+// warns about the half being short. An entry the fold could not read is one the
+// index does not carry, and the page says nothing about it — what the page does
+// carry is the summary's own completeness, which is the warning this read owes
+// a reader and which the bucket read has no counterpart of, because a listing
+// of the bucket is never short.
+type indexRunsSource struct {
+	reader runindex.Reader
+	warn   io.Writer
+	// building is the pass's own guard on the one line (IndexRuns), shared by
+	// the readers the pass builds and nil for a reader built by hand.
+	building *sync.Once
+}
 
 func (s indexRunsSource) Runs(ctx context.Context, repo coordinator.Repo, since time.Time) ([]coordinator.Run, error) {
 	page, err := s.reader.List(ctx, runindex.Filter{Slugs: []string{repo.Slug}, Since: since})
 	if err != nil {
 		return nil, fcli.RemoteErr(err)
 	}
+	if !page.IndexComplete {
+		s.warnBuilding(page.FoldedThrough)
+	}
 	out := make([]coordinator.Run, 0, len(page.Entries))
 	for _, e := range page.Entries {
 		out = append(out, indexRun(e))
 	}
 	return out, nil
+}
+
+// warnBuilding writes the one line a pass owes for an index that has not
+// finished a walk.
+func (s indexRunsSource) warnBuilding(folded *time.Time) {
+	line := func() { fmt.Fprint(s.warn, indexBuildingLine(folded)) }
+	if s.building == nil {
+		line()
+		return
+	}
+	s.building.Do(line)
+}
+
+// indexBuildingLine is what an index that has not finished a walk says about
+// the runs half it answered with: the one sentence that keeps a short list
+// from reading as a repository with no runs.
+//
+// It names how fresh the folded rows are when the index has folded anything at
+// all, and says that it has folded nothing when it has not: FoldedThrough is
+// absent before the first fold (the contract's own shape), and "nothing folded
+// yet" is that absence said rather than a zero timestamp drawn.
+func indexBuildingLine(folded *time.Time) string {
+	freshness := "nothing is folded yet"
+	if folded != nil {
+		freshness = "folded through " + folded.UTC().Format(time.RFC3339)
+	}
+	return fmt.Sprintf("the run index is still building (%s): a repository with no stored view is drawn from the runs it has folded so far, which may be short of the read's window\n", freshness)
 }
 
 // indexRun is one run as the view holds it, out of the index's entry for it:

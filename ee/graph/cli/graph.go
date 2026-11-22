@@ -95,7 +95,10 @@ type graphOptions struct {
 // C-INDEX's stub, which reads nothing and says the index is incomplete: a
 // repository with no stored view then draws no runs rather than a bucket
 // listing, and the scope's own state still tells a screen that the coordinator
-// has reconciled nothing.
+// has reconciled nothing. What that empty half may not do is stand unqualified:
+// the read's warnings carry the index's own completeness (coordcli.IndexRuns),
+// so a document that draws no runs because the index has folded none says so
+// rather than reporting a repository with no runs.
 var graphIndex = func(context.Context, *fcli.Cloud) (runindex.Reader, error) {
 	return runindex.NewStub(), nil
 }
