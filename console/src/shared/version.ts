@@ -435,6 +435,52 @@ export function modelsAddSupported(
 }
 
 /**
+ * IMAGE_ADD_CLI_FLOOR is the oldest CLI whose `image add` takes **`--no-apply`**
+ * -- the word that says *write this and run none of its follow-up steps*
+ * (D1565), which is the word the console's own write passes -- **and** whose
+ * `--dry-run --json` prints the plan document the confirmation window draws
+ * (`schemas/image-add-plan.schema.json`, MD2). It is the release the whole image
+ * write waits for: below it, `fugaro image add` either has no `--no-apply` (so
+ * the write would **build an image and redeploy a repository** behind the
+ * operator's back, which is the one step of this surface that bills by itself) or
+ * no document for the window to show.
+ *
+ * **It is `null` until that release exists**, which is this console's state
+ * today: the row is inert rather than absent -- it is on the surface, its argv is
+ * built and refused like every other row's, and `imageAddSupported` answers false
+ * for every version, so the screen shows the command's Copy-command instead of
+ * the action (R9's floor, and the shape every AL row has). The task that ships
+ * MD2's release sets this string in the same change, and no other change may.
+ */
+export const IMAGE_ADD_CLI_FLOOR: string | null = null
+
+/**
+ * imageAddSupported answers whether one version line may be shown the image
+ * write's action at all, by comparing it against `IMAGE_ADD_CLI_FLOOR` at the
+ * patch level.
+ *
+ * **Its caller is the renderer's**, through the compatibility facts the main
+ * process already publishes: a version below the floor is a CLI whose
+ * `image add` cannot be driven the way the row drives it, so the Manage view
+ * shows the Copy-command and no button. The main-process half of the same fact is
+ * `src/main/imageadd.ts`'s own `refuseBelowFloor`, which refuses a plan from a
+ * renderer that asked anyway -- the two read one constant, so a screen and the
+ * process behind it cannot disagree.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested: with the constant unset, every version is
+ * refused, which is the state this console is in until MD2's release lands
+ * (`version.test.ts` drives both).
+ */
+export function imageAddSupported(
+  version: string,
+  floor: string | null = IMAGE_ADD_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
  * licenceKeySupported answers whether one version line may be handed the
  * installation's licence key, by comparing it against `LICENCE_KEY_CLI_FLOOR`.
  *

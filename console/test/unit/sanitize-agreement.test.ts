@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, it } from 'vitest'
 
-import { TOKEN_PLACEHOLDER, invisibleRe, sanitizeRefusal, sanitizeText } from '../../src/shared/sanitize'
+import { TOKEN_PLACEHOLDER, URL_PLACEHOLDER, invisibleRe, sanitizeRefusal, sanitizeText } from '../../src/shared/sanitize'
 import { createRedactor } from '../../src/source/redact'
 import * as fake from '../support/fakeSecrets'
 
@@ -96,17 +96,19 @@ describe('a base64 run whose length is 1 mod 4', () => {
 })
 
 describe('a path split by a line break', () => {
-  it('is a path to the recorder as it is to the display layer', () => {
+  it('is a path to the recorder, and one line of text to the display layer', () => {
     const redactor = createRedactor(['/home/zora'])
     const first = JSON.stringify(redactor.redactDocument({ message: 'checkout /home\nzora/.ssh here' }))
     expect(first).not.toMatch(/zora/i)
     const second = JSON.stringify(redactor.redactDocument({ message: 'in /Users/Zora\nKell/src/fugaro now' }))
     expect(second).not.toContain('Kell')
     expect(redactor.problems({ message: 'checkout /home\nzora/.ssh here' })).not.toEqual([])
+    // The recorder still reads the pair as one path across the break and
+    // replaces it; this layer draws the sentence it is (D3213) with the break
+    // flattened like every other one. What the two still share is the credential
+    // that could be inside such a path -- the case below.
     for (const text of ['checkout /home\nzora/.ssh here', 'in /Users/Zora\nKell/src/fugaro now']) {
-      expect(drawn(sanitizeText(text, 'sentence'))).toBe(
-        createRedactor().redactText(text).replace(/\s+/g, ' '),
-      )
+      expect(drawn(sanitizeText(text, 'sentence'))).toBe(text.replace(/\s+/g, ' '))
     }
   })
 })
@@ -122,8 +124,10 @@ describe('a path-shaped secret', () => {
     expect(drawn(sanitizeText(text, 'sentence'))).toBe(`deploy with ${TOKEN_PLACEHOLDER} now`)
   })
 
-  it('leaves an ordinary owner/name and a rooted path to their own rules', () => {
-    expect(drawn(sanitizeText('see /home/someone/src/x for it', 'sentence'))).toBe('see <path> for it')
+  it('leaves an ordinary owner/name and a rooted path to the layer that takes them', () => {
+    const text = 'see /home/someone/src/x for it'
+    expect(drawn(sanitizeText(text, 'sentence'))).toBe(text)
+    expect(createRedactor().redactText(text)).not.toContain('/home/someone')
   })
 })
 
@@ -226,12 +230,16 @@ describe('a split token beside a match the prepared form already has', () => {
   // any reading.
   const SPLITS = ['​', '‎', '⁠', '͏', '﻿']
 
-  /** leads is one prepared-form match per rule class. */
+  /** leads is one prepared-form match per rule class the display layer still
+   * carries: the token families, the entropy net, the assignment rule and the
+   * URL rule. The path and the address were rule classes here until D3213 --
+   * neither is a rule of this layer's any more, so a lead made of one would be a
+   * case about nothing. */
   function leads(): readonly (readonly [string, string])[] {
     return [
       ['token', `token ${fake.githubToken()} and`],
-      ['path', 'see /x/y and'],
-      ['email', 'mail a@b.example and'],
+      ['url', `see https://user:${fake.githubToken()}@evil.invalid/x and`],
+      ['assignment', 'the API_KEY: hunter2 line and'],
       ['key id', `key ${fake.awsKeyId()} and`],
       ['PEM', `${fake.pemBlock()} and`],
       ['bearer', `${fake.bearerHeader()} and`],
@@ -267,8 +275,11 @@ describe('a split token beside a match the prepared form already has', () => {
     const token = fake.githubToken()
     const cases: readonly [string, string][] = [
       [`token ${token} and J​${key} was refused`, `token ${TOKEN_PLACEHOLDER} and J${TOKEN_PLACEHOLDER} was refused`],
-      [`see /x/y and J​${key} was refused`, `J${TOKEN_PLACEHOLDER} was refused`],
-      [`mail a@b.example and J​${key} was refused`, `J${TOKEN_PLACEHOLDER} was refused`],
+      [`API_KEY: hunter2 and J​${key} was refused`, `API_KEY: ${TOKEN_PLACEHOLDER} and J${TOKEN_PLACEHOLDER} was refused`],
+      [
+        `see https://user:${token}@evil.invalid/x and J​${key} was refused`,
+        `see ${URL_PLACEHOLDER} and J${TOKEN_PLACEHOLDER} was refused`,
+      ],
     ]
     for (const [value, ending] of cases) {
       const sentence = drawn(sanitizeText(value, 'sentence'))

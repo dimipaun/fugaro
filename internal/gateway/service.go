@@ -740,19 +740,37 @@ func credentialHeaders(h http.Header) (tier, name string, ok bool, err error) {
 	return tier, name, true, nil
 }
 
-// maxCredentialOwnerDigits bounds the owner a credential's answer may name:
-// credsvc's own maxLauncherSubDigits, respelled because the package exports it
-// only as the writer's rule (auth.go). It is the width of a Google account id,
-// and a value longer than it is not one.
-const maxCredentialOwnerDigits = 21
+// MaxCredentialOwnerDigits bounds the owner a credential's answer may name: the
+// width of a Google account id — a number above 2^53, which is why
+// internal/infra/tf's identity handling already carries the same number, a
+// service account's unique_id, as text rather than rendering it. Twenty digits
+// would be the width of a uint64, and these ids are wider than one, so a bound
+// derived from a 64-bit number would refuse every launcher there is.
+//
+// It is THE definition of that width, and internal/credsvc imports it (its
+// maxLauncherSubDigits, the launcher class's own spelling of the same bound):
+// the service is the writer of the owner header and this package is its reader,
+// the two ends of one contract are this repository's code, and a bound spelled
+// twice is a bound that can drift with nothing red — the shape of the drift
+// being an owner the run records that the service could not have written. The
+// bound is a SHAPE check rather than a fence against a stranger's text: the
+// owner is the launcher's `sub` claim, inside a token Google signed, so a
+// caller cannot choose it — what the bound keeps out of the service's own two
+// sinks (the slip's owner and the secret name fugaro_u_<id>_<name>, whose total
+// length Secret Manager bounds) is an id Google has never issued. A value the
+// issuer widens past this one day is refused rather than carried, which is the
+// fail-closed answer, and widening it is this constant's change and the test
+// that pins it.
+const MaxCredentialOwnerDigits = 21
 
-// validCredentialOwner reports whether s may be a credential's owner: the
-// launcher's account id the contract writes it as (credsvc's validSlipOwner),
-// digits only and at most maxCredentialOwnerDigits of them. The run records it
-// (F16), so a value the service could not have written is refused rather than
-// handed on.
-func validCredentialOwner(s string) bool {
-	if s == "" || len(s) > maxCredentialOwnerDigits {
+// ValidCredentialOwner reports whether s may be a credential's owner: the
+// launcher's account id the contract writes it as, digits only and at most
+// MaxCredentialOwnerDigits of them. The run records it (F16), so a value the
+// service could not have written is refused rather than handed on. It is the
+// one definition of the rule, and internal/credsvc's validSlipOwner delegates
+// to it for the same reason the bound is here: one rule, both ends of the wire.
+func ValidCredentialOwner(s string) bool {
+	if s == "" || len(s) > MaxCredentialOwnerDigits {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
@@ -775,7 +793,7 @@ func credentialOwner(h http.Header) (owner string, present bool, err error) {
 	if err != nil || !present {
 		return "", present, err
 	}
-	if !validCredentialOwner(owner) {
+	if !ValidCredentialOwner(owner) {
 		return "", false, errors.New("the answer's credential owner isn't one launcher's account id")
 	}
 	return owner, true, nil
