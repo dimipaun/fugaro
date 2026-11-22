@@ -130,12 +130,14 @@ func attachCheckout(t *testing.T, inputs string) {
 }
 
 // artifactAttachFixture is the common setup: the project's sizzle recipe and
-// a job image new enough for it.
+// a job image new enough for it. releaseSeal, not release080: every launch of
+// an installation with a database mints (AB4), so a launch that must succeed
+// meets the seal's gate and needs a job image at its release or later.
 func artifactAttachFixture(t *testing.T) *cloudFixture {
 	t.Helper()
 	f := newCloudFixture(t)
 	projectRecipesFixture(t, f, map[string]string{"sizzle": projectSizzle})
-	writeBuildRecord(t, f, appSlug, "web", release080)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	return f
 }
 

@@ -28,7 +28,7 @@ const release085 = "ghcr.io/dimipaun/fugaro-base:0.8.5"
 // extra flags, and returns its stored task.
 func runWithTitle(t *testing.T, f *cloudFixture, id string, extra []string, text string) *task.Spec {
 	t.Helper()
-	writeBuildRecord(t, f, appSlug, "web", release085)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	args := append([]string{"run", "--repo", "acme/app", "--run-id", id}, extra...)
 	args = append(args, text)
 	if _, _, err := execute(t, args...); err != nil {
@@ -192,7 +192,7 @@ func TestRunTitleRefusedWithRetry(t *testing.T) {
 // each falls back to the task's first line, which is the shared preamble.
 func TestRunAttemptsCarryTheTitleOnEveryAttempt(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release085)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--attempts", "2", "--title", "Ship the flaky-test fix", "--json",
 		"Read the plan first.\n\nThen fix it.")
 	if err != nil {
@@ -258,7 +258,7 @@ func TestFollowUpInheritsTheRunsTitle(t *testing.T) {
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	writeRecord(t, f, rootID, rec)
 
-	writeBuildRecord(t, f, appSlug, "web", release085)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x"); err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestFollowUpTitleFlagOverridesTheInheritedOne(t *testing.T) {
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	writeRecord(t, f, rootID, rec)
 
-	writeBuildRecord(t, f, appSlug, "web", release085)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--title", "Rename it properly", "also rename x"); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestFollowUpTitleFlagOverridesTheInheritedOne(t *testing.T) {
 func TestFollowUpWithoutATitleToInherit(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
-	writeBuildRecord(t, f, appSlug, "web", release085)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "also rename x"); err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestFollowUpWithoutATitleToInherit(t *testing.T) {
 func TestStoredFollowUpRefusesADifferentTitle(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
-	writeBuildRecord(t, f, appSlug, "web", release085)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--title", "First title", "also rename x"); err != nil {
 		t.Fatal(err)
 	}
@@ -344,9 +344,10 @@ func TestRunTitleGatesOnTheImageThatKnowsIt(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", release080)
 	wantRefused(t, f, "needs a job image whose runner knows the job title (fugaro "+titlesSince+" or later)",
 		"run", "--repo", "acme/app", "--title", "Ship the flaky-test fix", "Add a feature")
-	// The same image, a launch with no title: not gated, because the spec
-	// has no such field in it.
-	writeBuildRecord(t, f, appSlug, "web", release080)
+	// A launch with no title carries no such field and so is not gated by
+	// titlesSince at all; releaseSeal is the floor every minting launch has
+	// now (AB4), so the successful launch is judged on a current image.
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261018-120000-abcd", "Add a feature"); err != nil {
 		t.Fatalf("a launch with no --title must not be gated: %v", err)
 	}
@@ -586,7 +587,7 @@ func titlePR(title string) fake.PRState {
 // given extra flags and TEXT ("" for none), and returns its stored task.
 func launchFollowUp(t *testing.T, f *cloudFixture, extra []string, text string) *task.Spec {
 	t.Helper()
-	writeBuildRecord(t, f, appSlug, "web", release085)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	args := append([]string{"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID}, extra...)
 	if text != "" {
 		args = append(args, text)

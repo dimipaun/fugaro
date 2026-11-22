@@ -63,6 +63,15 @@ type cloudFixture struct {
 	// (noBudget, appendConfig) clears it: no helper goes looking for a line
 	// that is gone.
 	budget *testutil.Budget
+	// ledgerDB is the fake of the budget database this installation names, for
+	// the harness's fixtures: newCloudFixture gives every one of them a database
+	// (budget.DB), and the fixtures that write a block of their own name the
+	// same fake (newLaunchBudgetWith, buildBudgetWorld). It is nil where the
+	// installation names none (noBudget, dropBudgetBackend), which is the
+	// installation whose launches are refused (AB4, F7). It is what a test
+	// seeds a run's ledger node through: the figures a chain is read from are
+	// the database's (D1046), not the record's.
+	ledgerDB *gcpfake.RTDB
 	// iam is the fake IAM Credentials API the fixture's signer account is
 	// reached through: the launcher holds the only minter permission and mints
 	// every run's budget identity with it (AB4, F7), so a fixture whose
@@ -90,6 +99,7 @@ func newCloudFixture(t *testing.T, extraEndpoints ...string) *cloudFixture {
 	// job's mode and the project's published policy. A test that means the
 	// installation of a release that never had one asks for none (noBudget).
 	f.budget = testutil.NewBudget(t)
+	f.ledgerDB = f.budget.DB
 	adoptBudgetFake(f.budget.DB)
 	seedLaunchCaps(f.budget.DB)
 	// The signer account this installation's runs are minted with, and the fake
@@ -272,7 +282,7 @@ func (f *cloudFixture) noBudget(t *testing.T) {
 		t.Fatal("noBudget needs a fixture whose installation has a budget database (newCloudFixture)")
 	}
 	f.rewriteConfig(t, f.budget.ConfigBlock(), "")
-	f.budget = nil
+	f.budget, f.ledgerDB = nil, nil
 	// The jobs go with it: an installation that never created a database
 	// deployed its jobs without one, and a launch reads the job it is about to
 	// start back — the environment the fixture gave them is the database's.

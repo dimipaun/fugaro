@@ -22,6 +22,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
+// release060 is the first release whose runner reads the project layer
+// (layeredSince): the image the layer's own tests use for a job that never
+// launches — the layer copy and the build spec (image_layer_test.go, which
+// keeps this constant here) and doctor's read (doctor_layer_test.go). A
+// fixture that *launches* names releaseSeal instead: every launch of an
+// installation with a database mints a budget token, and the gate that judges
+// the image for the token (sealGate) is above this release (AB4, F7).
 const release060 = "ghcr.io/dimipaun/fugaro-base:0.6.0"
 
 // registerOtherLocally registers acme/other's provider and (implicit)
@@ -49,7 +56,7 @@ func TestRunEmbedsTheProjectLayer(t *testing.T) {
 	publishedLayer(t, f, testProjectLayer)
 	layerCheckout(t, f, minimalAnchored)
 	registerOtherLocally(t, f)
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release060)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, releaseSeal)
 	// file:// buckets always report generation 0 (internal/blobx), which
 	// would let a bug that always embeds 0 pass unnoticed (M9): layerRead is
 	// patched to report a distinct generation, the real bytes untouched.
@@ -98,7 +105,7 @@ func TestRunAnnouncesABuildOnlyProfile(t *testing.T) {
 	layerCheckout(t, f, minimalAnchored+"workflows:\n  svc: { profile: svc, commands: { test: sh test.sh } }\n")
 	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
 	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [svc] }\n")
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", release060)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
 	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +135,7 @@ func TestRunAnnouncesALintOnlyProfile(t *testing.T) {
 	layerCheckout(t, f, minimalAnchored+"workflows:\n  svc: { profile: svc, commands: { build: sh build.sh, test: sh test.sh } }\n")
 	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
 	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [svc] }\n")
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", release060)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
 	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +169,7 @@ func TestRunClonedWorkflowWithProjectLayerLaunchesWithNoBuildRecord(t *testing.T
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:0.7.5}\n")
+	f.appendConfig(t, "base_images: {base: "+releaseSeal+"}\n")
 	testutil.IsolateGit(t)
 	other := mustSlug("github", "acme/other")
 	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
@@ -185,6 +192,7 @@ func TestRunWithoutALayerEmbedsNothing(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, "")
 	recipeCheckout(t, f, "", nil)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
 	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +211,7 @@ func TestRunRepeatedRunIDToleratesLayerGenerationChange(t *testing.T) {
 	publishedLayer(t, f, testProjectLayer)
 	layerCheckout(t, f, minimalAnchored)
 	registerOtherLocally(t, f)
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release060)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, releaseSeal)
 	read := layerRead
 	t.Cleanup(func() { layerRead = read })
 	var calls int64
@@ -235,7 +243,7 @@ func TestRunRepeatedRunIDToleratesLayerRepublish(t *testing.T) {
 	publishedLayer(t, f, testProjectLayer)
 	layerCheckout(t, f, minimalAnchored)
 	registerOtherLocally(t, f)
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release060)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, releaseSeal)
 	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +291,7 @@ func TestRunAnnouncesACachedLayerNote(t *testing.T) {
 	publishedLayer(t, f, testProjectLayer)
 	layerCheckout(t, f, minimalAnchored)
 	registerOtherLocally(t, f)
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release060)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, releaseSeal)
 	lc := fileEnv(t, f).lc
 	if _, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{}, time.Now()); err != nil {
 		t.Fatal(err) // warms the cache
@@ -355,7 +363,7 @@ func TestRunFollowUpEmbedsTheCurrentProjectLayer(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	writeBuildRecord(t, f, appSlug, "web", release060)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--json")
 	if err != nil {
 		t.Fatal(err)
@@ -447,7 +455,7 @@ func TestRunAnnouncesWhenLocalResolutionFails(t *testing.T) {
 	publishedLayer(t, f, testProjectLayer)
 	layerCheckout(t, f, minimalAnchored+"bogus_key: 1\n")
 	registerOtherLocally(t, f)
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release060)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, releaseSeal)
 	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if err != nil {
 		t.Fatal(err)
@@ -529,7 +537,7 @@ func TestRunAnnouncesEachProfileLineExactlyOnce(t *testing.T) {
 	publishedLayer(t, f, testProjectLayer)
 	layerCheckout(t, f, minimalAnchored)
 	registerOtherLocally(t, f)
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release060)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, releaseSeal)
 	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
 	if err != nil {
 		t.Fatal(err)
@@ -554,7 +562,7 @@ func TestRunGatesOnTheAdoptedLayerForAnUnlaunchedStoredTask(t *testing.T) {
 	publishedLayer(t, f, testProjectLayer)
 	layerCheckout(t, f, minimalAnchored)
 	registerOtherLocally(t, f)
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release060)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, releaseSeal)
 	// The first attempt resolves and stores the layer, passes the image
 	// gate (the job image is new enough), but its launch itself fails
 	// ambiguously: task.json exists, launch.json never gets written.
@@ -602,7 +610,7 @@ func TestRunMakesOneLayerBucketRead(t *testing.T) {
 	publishedLayer(t, f, testProjectLayer)
 	layerCheckout(t, f, minimalAnchored)
 	registerOtherLocally(t, f)
-	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release060)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, releaseSeal)
 	read := layerRead
 	t.Cleanup(func() { layerRead = read })
 	var calls int
@@ -653,7 +661,7 @@ func TestRunOutsideACheckoutEmbedsTheInstallationLayer(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	writeBuildRecord(t, f, appSlug, "web", release060)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
 		t.Fatal(err)
 	}

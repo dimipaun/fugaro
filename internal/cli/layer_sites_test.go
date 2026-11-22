@@ -357,6 +357,9 @@ func TestRunMemoizesTheLayerReadThroughTheRealCommand(t *testing.T) {
 		"git: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n" +
 		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
 	t.Chdir(dir)
+	// The job image every launch of this installation needs a build record for
+	// (AB4, F7: a launch that mints is judged by the seal's image gate).
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
 
 	reads := 0
 	read := layerRead

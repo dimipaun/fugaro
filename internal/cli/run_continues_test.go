@@ -20,11 +20,15 @@ import (
 // chain a review job joins (D1058).
 //
 // The chain's own limit is read from the stored task of the run that began it
-// (D1041, D1046), and its spend from the run records when the budget is off,
-// so most of these tests need no budget database: they seed a run whose task
-// carries the limit and whose record states what it spent (seedChainRun). The
-// two that are about the ledger (D1049, and the figures a real ledger holds)
-// use the minting fixture, whose config points at the RTDB fake.
+// (D1041, D1046), and its spend from the budget database's per-run ledgers: a
+// launch exists only on an installation that has a database (AB4, F7), so the
+// chain a launch reads is the ledgers' and the record's own cost is not read at
+// all. Every fixture here carries that database, and the seeds below write the
+// record and the ledger node together (seedChainRun) — the record because it is
+// what the chain's runs are found through, the node because it is what the
+// figures come from. The tests that are about one exact ledger state (D1049,
+// and the figures a real ledger holds) set their own nodes, and the ones whose
+// subject is a node the database no longer has delete the seeded one.
 
 // chainRun is the run a chain in this file begins at, and chainFu the launch
 // that continues it. They are minted from the wall clock because that is the
@@ -36,7 +40,7 @@ var (
 )
 
 // chainUSD is the chain limit these tests write into the run that begins a
-// chain, and chainSpent the model spend its record states. It is under the
+// chain, and chainSpent the spend that run holds. It is under the
 // limits checkout's per_run_usd (5) and under what the mode scaling leaves of
 // it, so a launch that names it itself is accepted: this file is about the
 // remaining, never about the tightening refusal (run_limits_test.go).
@@ -46,10 +50,11 @@ const (
 )
 
 // seedChainRun stores id as a halted run that opened nothing: a task carrying
-// the chain limit overrides, and a record whose model spend is costUSD. It is
-// the shape a chain with no pull request is continued from — the run --continues
-// names — and, with the budget off, the record is the figure the chain reads
-// (D1046).
+// the chain limit overrides, and a spend of costUSD. It is the shape a chain
+// with no pull request is continued from — the run --continues names — and the
+// spend is written both places a chain can be read from: the record, which is
+// how the chain's runs are found, and the ledger node, which is the figure
+// (D1046, AB4).
 //
 // overrides is given as the fields a task carries rather than as the flags,
 // because this file seeds the run that began the chain: what its task holds is
@@ -62,10 +67,14 @@ func seedChainRun(t *testing.T, f *cloudFixture, id string, costUSD float64, o t
 	seedChainSpend(t, f, id, costUSD)
 }
 
-// seedChainSpend rewrites id's record with a model spend of costUSD, which is
-// the figure a chain with the budget off reads for it: a chain spends more
-// without the run being launched a second time, which is what a task already
-// written cannot express (seedChainRun's own task is CreateTask's, once).
+// seedChainSpend gives id a spend of costUSD: a chain spends more without the
+// run being launched a second time, which is what a task already written cannot
+// express (seedChainRun's own task is CreateTask's, once). The money is the
+// record's cost and the ledger's reservation with nothing released, so the two
+// state the same figure and a chain read sees costUSD whichever of them it is
+// given — and every test here reads the ledger, because its installation has a
+// database (AB4). The two tests that turn on the figures *differing* and on the
+// node being absent write their own nodes after this.
 func seedChainSpend(t *testing.T, f *cloudFixture, id string, costUSD float64) {
 	t.Helper()
 	rec := prRecord(id, "", 0, costUSD)
@@ -73,11 +82,27 @@ func seedChainSpend(t *testing.T, f *cloudFixture, id string, costUSD float64) {
 	rec.PR, rec.PushedHead = nil, ""
 	rec.FollowUp = nil
 	writeRecord(t, f, id, rec)
+	seedChainLedger(t, f, id, costUSD)
+}
+
+// seedChainLedger writes id's ledger node: the database's own figure for the
+// run, which is where a chain's spend is read from (D1046). The reservation is
+// costUSD with nothing released, so the node states the whole spend — the same
+// figure the record states, which is how the chain's runs are found. A fixture
+// whose installation names no database writes nothing and has nothing to find,
+// which is the chain read the records-only test in runs_show_test.go covers.
+func seedChainLedger(t *testing.T, f *cloudFixture, id string, costUSD float64) {
+	t.Helper()
+	if f.ledgerDB == nil {
+		return
+	}
+	f.ledgerDB.Set(budget.PathRun(appSlug, id), budget.RunLedger{Reserved: budget.Micros(costUSD * float64(usd1))})
 }
 
 // seedChainPRRoot stores id as the first run of PR pr: a task carrying the
 // chain limit o, and a record that pushed, which is what resolvePR finds a
-// --pr follow-up's previous run through.
+// --pr follow-up's previous run through. Its spend is the ledger node's, as it
+// is for the chain a --continues names (seedChainSpend).
 func seedChainPRRoot(t *testing.T, f *cloudFixture, id string, costUSD float64, o task.Overrides) {
 	t.Helper()
 	spec := firstRunSpec(id)
@@ -86,6 +111,7 @@ func seedChainPRRoot(t *testing.T, f *cloudFixture, id string, costUSD float64, 
 	rec := prRecord(id, "", 7, costUSD)
 	rec.Branch, rec.StartedAt = "fugaro/"+id, time.Now().Add(-48*time.Hour)
 	writeRecord(t, f, id, rec)
+	seedChainLedger(t, f, id, costUSD)
 }
 
 // chainTask is one run's stored task as a launch wrote it.
@@ -110,9 +136,9 @@ func chainRig(t *testing.T) *cloudFixture {
 // TestRunContinuesAHaltedChain: a run that halted with nothing to continue it
 // through — no pull request, so no --pr link — is continued by naming it
 // (D1045). The chain's limit is the one the run that began it stored, its
-// spend is what that run's record states (the budget-off fallback), and the
-// launch that continues it carries the remaining rather than the whole limit
-// again: starting from the full cap is the hole D1052 closes.
+// spend is what that run's ledger holds, and the launch that continues it
+// carries the remaining rather than the whole limit again: starting from the
+// full cap is the hole D1052 closes.
 func TestRunContinuesAHaltedChain(t *testing.T) {
 	f := chainRig(t)
 	usd := chainUSD
@@ -143,8 +169,8 @@ func TestRunContinuesAChainTheLedgerHasSpendFor(t *testing.T) {
 	limitsCheckout(t)
 	usd := chainUSD
 	// The record states a figure the ledger disagrees with (9 dollars against
-	// the 1.5 the ledger still holds): while the budget is on, the ledger is
-	// the chain's figure and the record's cost is not read at all (D1046).
+	// the 1.5 the ledger still holds): the ledger is the chain's figure and the
+	// record's cost is not read at all (D1046).
 	seedChainRun(t, f.cloudFixture, chainRun, 9, task.Overrides{MaxUSD: &usd})
 	// The run settled normally — it released what it did not spend — so it
 	// still holds 1.5 of the 2 dollars it reserved, and the chain reads 5 less
@@ -326,7 +352,10 @@ func TestRunContinuesWithAnUnreadableLedgerChargedTheCap(t *testing.T) {
 	usd := chainUSD
 	seedChainRun(t, f.cloudFixture, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
 	// No ledger node for the run at all, and no release either: the read finds
-	// nothing, and the figure the chain holds is unknown.
+	// nothing, and the figure the chain holds is unknown. The node the seed
+	// wrote goes, which is the rollover's own case — an old chain's node pruned
+	// while its record stays (D1049).
+	f.db.Set(budget.PathRun(appSlug, chainRun), nil)
 	_, _, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "A task")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want the chain charged its full per-run cap and the launch refused", err)
@@ -370,9 +399,11 @@ func TestRunContinuesWithAnUnmeasuredLedgerAndNoCapReportsIt(t *testing.T) {
 	limitsCheckout(t)
 	// A chain that limits the token dimension alone, whose run has no ledger
 	// node at all: the dollars of the chain are not limited, so nothing else
-	// answers this launch.
+	// answers this launch. The node the seed wrote goes: the database no longer
+	// holds this run's ledger, which is what the rollover leaves behind.
 	tokens := int64(900_000)
 	seedChainRun(t, f.cloudFixture, chainRun, chainSpent, task.Overrides{MaxTokens: &tokens})
+	f.db.Set(budget.PathRun(appSlug, chainRun), nil)
 	_, errOut, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "A task")
 	if err != nil {
 		t.Fatal(err)
@@ -471,7 +502,10 @@ func TestRunContinuesWithAPerRunTokenCapChargedTheCap(t *testing.T) {
 	tokens := int64(900_000)
 	seedChainRun(t, f.cloudFixture, chainRun, chainSpent, task.Overrides{MaxTokens: &tokens})
 	// The run's ledger node is absent, so it is charged the installation's cap
-	// and the chain reads 100000 of its 900000 tokens used.
+	// and the chain reads 100000 of its 900000 tokens used. The node the seed
+	// wrote goes: a run whose ledger the database no longer holds is the case
+	// D1049 charges the cap for.
+	f.db.Set(budget.PathRun(appSlug, chainRun), nil)
 	_, errOut, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "A task")
 	if err != nil {
 		t.Fatal(err)

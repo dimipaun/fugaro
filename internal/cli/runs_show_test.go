@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -280,14 +281,22 @@ func TestRunsShowSanitizesTheRecordsText(t *testing.T) {
 	}
 }
 
-// TestRunsShowMarksABudgetOffChainUnenforced: with the budget off there is no
-// ledger, so the chain's dollar figure is the records' and the token dimension
-// has no figure at all — the record carries no whole-run token total, and the
-// cache sums it does carry are not one (D1046, D1051, T10). The command marks
-// the chain UNENFORCED and prints the token dimension as unmeasured rather than
-// approximating it or reading the limit as unspent.
-func TestRunsShowMarksABudgetOffChainUnenforced(t *testing.T) {
+// TestRunsShowMarksAChainWithNoDatabaseUnenforced: an installation with no
+// budget database has no ledger, so the chain's dollar figure is the records'
+// and the token dimension has no figure at all — the record carries no
+// whole-run token total, and the cache sums it does carry are not one (D1046,
+// D1051, T10). The command marks the chain UNENFORCED and prints the token
+// dimension as unmeasured rather than approximating it or reading the limit as
+// unspent.
+//
+// This is the installation of a release that never created a database, and
+// `runs show` is the only command left that reads a chain there: every launch
+// of one is refused, with the fix, because every run has a budget identity
+// (AB4, F7). The state is asked for rather than assumed — the harness gives
+// every fixture a database (noBudget).
+func TestRunsShowMarksAChainWithNoDatabaseUnenforced(t *testing.T) {
 	f := newCloudFixture(t)
+	f.noBudget(t)
 	seedChain(t, f)
 
 	out, errOut, err := execute(t, "runs", "show", showTip)
@@ -295,13 +304,42 @@ func TestRunsShowMarksABudgetOffChainUnenforced(t *testing.T) {
 		t.Fatalf("runs show: %v (%s)", err, errOut)
 	}
 	if !strings.Contains(out, "UNENFORCED") {
-		t.Errorf("runs show does not mark a budget-off chain UNENFORCED:\n%s", out)
+		t.Errorf("runs show does not mark a chain no database can answer for UNENFORCED:\n%s", out)
 	}
 	if got, want := showRow(t, out, "usd"), "4 dollars 2.25 dollars 1.75 dollars chain"; got != want {
 		t.Errorf("usd row = %q, want the records' own figure %q\n%s", got, want, out)
 	}
 	if got, want := showRow(t, out, "tokens"), "800000 tokens unmeasured unmeasured chain"; got != want {
 		t.Errorf("tokens row = %q, want %q\n%s", got, want, out)
+	}
+}
+
+// TestRunsShowJSONMarksAChainWithNoDatabaseUnenforced is the same report as the
+// document a machine reads: the JSON `runs show` prints is one document with a
+// launch's reply (D1056), so the ENFORCED member and the unmeasured token row
+// are the same facts in both, and they are pinned here because a launch's reply
+// can no longer carry them — the launch an unenforced chain would have to be
+// read from is refused (AB4, F7). The unmeasured dimension stays absent rather
+// than becoming a zero the chain never spent (D1051, F8, T10).
+func TestRunsShowJSONMarksAChainWithNoDatabaseUnenforced(t *testing.T) {
+	f := newCloudFixture(t)
+	f.noBudget(t)
+	seedChain(t, f)
+
+	res := jsonRunsShow(t, showTip)
+	if res.Enforced {
+		t.Errorf("runs show --json = %+v, want a chain no database can answer for marked UNENFORCED", res)
+	}
+	if res.Chain != showRoot {
+		t.Errorf("chain = %q, want %q", res.Chain, showRoot)
+	}
+	if want := jsonLimitRows(false); !reflect.DeepEqual(res.Limits, want) {
+		t.Errorf("limits = %+v, want %+v", res.Limits, want)
+	}
+	for _, row := range res.Limits {
+		if row.Dimension == runstore.Tokens && (row.Used != nil || row.Remaining != nil) {
+			t.Errorf("the token row = %+v, want it unmeasured rather than a figure the records do not hold", row)
+		}
 	}
 }
 

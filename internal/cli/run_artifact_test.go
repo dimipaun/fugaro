@@ -44,7 +44,9 @@ const projectSizzle = "version: 1\nname: sizzle\nmode: artifact\nsteps:\n  - ren
 func TestArtifactLaunchWritesTheModeIntoTheTask(t *testing.T) {
 	f := newCloudFixture(t)
 	projectRecipesFixture(t, f, map[string]string{"sizzle": projectSizzle})
-	writeBuildRecord(t, f, appSlug, "web", release080)
+	// releaseSeal, not release080: both launches here must succeed, so the
+	// record has to clear the seal's gate, which every minting launch meets (AB4).
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261015-100000-abcd", "--recipe", "sizzle", "Render the nightly bundle")
 	if err != nil {
 		t.Fatal(err)

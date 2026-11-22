@@ -23,7 +23,10 @@ import (
 
 // releaseSeal is a release base image whose runner reads the sealed token
 // (sealSince): the budget fixtures' build record, so a launch that mints is
-// not refused by the seal's image gate.
+// not refused by the seal's image gate. Every launch of an installation with a
+// database mints (AB4, F7), so it is also the ordinary job image of every
+// fixture that launches: a test that means "a current image" and names an older
+// release is refused by this gate and no longer tests what it means to.
 const releaseSeal = "ghcr.io/dimipaun/fugaro-base:" + sealSince
 
 // nodeRelease is the release that introduced the policy node's current version
