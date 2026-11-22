@@ -157,6 +157,18 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // promise has to fail in. `waiting_until`, the other 0.10.0 key, is not here:
   // it is a stamp, and it is in `NON_TEXT_STRING_KEYS`.
   credential: 'label',
+  // The routing table's answer for a live run (model-credentials-routing CS9):
+  // what the running stage goes out on -- `budget.AgentEntry.Source`, the kind
+  // of source that served and, when the kind names one, its name after a colon
+  // (`pool:team`, `anthropic`). A **label**, the class `job`, `profile`,
+  // `provider` and `credential` above carry: the kind is a word of the routing
+  // table's own vocabulary and the name is one a project's table wrote, so
+  // nothing here is prose -- and never a value, which the class's free-text
+  // rules are what refuse. It is classified although no screen draws it yet:
+  // the Live screen's replacement for the auth column is the visibility plan's
+  // VS1, and a string a screen *may* draw is a string that goes through the
+  // sanitizer when it does.
+  source: 'label',
   branch: 'branch',
   log_url: 'url',
   // A pull request's URL. It is *text* -- design section 4.3's gap 7 is that
@@ -1107,6 +1119,23 @@ export const REPO_KEYS = [
  * present: a run under rules that predate them writes `-`, which is "not
  * recorded", never a mode this build picked.
  *
+ * **`source` arrived with the routing table** (model-credentials-routing CS9):
+ * what the run's running stage goes out on, as the project's table answered it
+ * -- `budget.AgentEntry.Source`, the live half of the record's `stages[].source`
+ * (the record keeps the `SourceName` object, this row keeps the one string a
+ * cell has room for: the kind, and the name after a colon when the kind names
+ * one, `pool:team` or `anthropic`). It is accepted and not read yet -- no
+ * Live-screen column draws it, and the screen that replaces the auth column
+ * with it is the visibility plan's VS1 -- and classified as a **label**, the
+ * class `job`, `profile`, `provider` and `credential` carry: an identifier a
+ * policy wrote, never a value. It sits after `from` in `JSONRun`, as the struct
+ * writes it, and it is always present: `-` is "not recorded" -- a run the
+ * project's table does not serve, and a run under rules that predate the member,
+ * which the run then goes without (the rules' `$other` refuses the whole entry
+ * for a child they do not know). For a run the table serves, `auth` is written
+ * as nothing and every view prints `-` for it (D3070): `auth` keeps its member
+ * and its meaning, and this key is what says what the run goes out on instead.
+ *
  * Exported so `schema.test.ts` can pin it against the struct, as it pins
  * `RECORD_KEYS` and `REPO_KEYS`. */
 export const RUN_KEYS = [
@@ -1122,6 +1151,7 @@ export const RUN_KEYS = [
   'auth',
   'mode',
   'from',
+  'source',
   'notional',
   'spent_usd',
   'age_seconds',

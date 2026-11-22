@@ -940,6 +940,17 @@ func (r *rend) detail(run RunRow) []string {
 	if run.Recipe != "" {
 		models += " · " + run.Recipe
 	}
+	// The source the running stage goes out on (model-credentials-routing CS9,
+	// D3070): a kind and a name, never a value, and the dash for a run the
+	// project's table does not serve — which is "not recorded", like every other
+	// dash here. FALLBACK rides the same line rather than taking one of its own:
+	// it is not a second fact but the source's own qualifier, saying the run is
+	// paying on something other than the first of its chain, and the detail is
+	// where the table's FLAGS column has no room for it.
+	src := run.Source
+	if run.Fallback {
+		src += " FALLBACK"
+	}
 	// The launcher is shown whole here, where the BY column of the run table
 	// and of the plain frames holds only the part before an address's @: the
 	// detail has the room, and the whole value is what tells a person from an
@@ -960,6 +971,7 @@ func (r *rend) detail(run RunRow) []string {
 		// (C1.21), and the dash for a run that has reported none — which is
 		// "not recorded", not "no credential" (RunRow.Credential).
 		{"credential", dashIfEmpty(run.Credential)},
+		{"source", src},
 		{"deadline", dl},
 		{"models", models},
 	}

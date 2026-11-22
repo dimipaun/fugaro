@@ -162,8 +162,23 @@ type RunRow struct {
 	// entry has neither — a run under rules that predate the children writes its
 	// entry without them, which is "not recorded", never a mode this package
 	// picked.
-	Mode     string
-	From     string
+	Mode string
+	From string
+	// Source is what the run's running stage goes out on, as the routing table
+	// answered it — the kind of the source that served the stage, and its name
+	// after a colon when the kind names one (`pool:team`, `anthropic`)
+	// (budget.AgentEntry.Source, D3070, model-credentials-routing CS9). "-" when
+	// the entry has none: a run the project's table does not serve, or one whose
+	// rules predate the member and whose entry therefore goes without it. The
+	// dash is "not recorded", never "no source".
+	//
+	// Fallback is true when that stage was served by a source that is not the
+	// first of its chain (budget.AgentEntry.Fallback): the run is paying on what
+	// comes after its first source, which is the one thing a person watching the
+	// row has to see. It is false for an entry that carries no flag, which is
+	// the same "not recorded" the dash spells for Source.
+	Source   string
+	Fallback bool
 	Notional bool // auth is oauth: Spent is notional dollars
 	Spent    budget.Micros
 	HasSpent bool
@@ -595,6 +610,8 @@ func runRow(slug, run string, e budget.AgentEntry, now time.Time) RunRow {
 		Recipe:     clean(e.Recipe),
 		Mode:       dash(e.Mode),
 		From:       dash(e.From),
+		Source:     dash(e.Source),
+		Fallback:   e.Fallback,
 		StartedAt:  e.StartedAt,
 		PRURL:      prURL,
 		PRNumber:   prNumberOf(prURL),

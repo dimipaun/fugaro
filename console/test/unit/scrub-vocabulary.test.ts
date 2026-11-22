@@ -542,6 +542,10 @@ describe('the scrub: the keys the live run shapes write', () => {
     // CLI 0.23.0 (rigor-modes plan T1.7): the mode a live run resolved and
     // the layer that decided it, both words of the CLI's own tables.
     mode: 'pro', from: 'repo',
+    // model-credentials-routing CS9: what the run's running stage goes out on,
+    // the kind of source the routing table served it with and the name after a
+    // colon when the kind names one.
+    source: 'pool:example-pool',
     status: 'succeeded', outcome: 'ready', failed: false,
     pr_url: 'https://example.invalid/example-owner/example-repo/pull/1', pr_number: 1,
   }
