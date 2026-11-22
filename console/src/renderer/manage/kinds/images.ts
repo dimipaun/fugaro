@@ -82,10 +82,13 @@ export const IMAGE_ADD_FIELDS: readonly WriteField[] = Object.freeze([
 
 /** IMAGE_ADD_BELOW_FLOOR is the sentence the Copy-command is drawn with when
  * this CLI cannot be shown the write. It is the console's own words, and the
- * second half is the fact that matters here: `--no-apply` is what keeps the
- * entry's build off this machine. */
+ * second half is the fact that matters here: what keeps the entry's build off
+ * this machine is the write's own saved-steps word, which the release that
+ * shows the write carries. **It names no flag**, for the models kind's reason:
+ * a CLI below this floor has no `--no-apply` either, so the sentence names the
+ * release rather than a word that CLI would refuse. */
 export const IMAGE_ADD_BELOW_FLOOR =
-  'this console needs a newer fugaro to show this write; add --no-apply so the build it owes is saved for `fugaro apply`'
+  'this console needs a newer fugaro to show this write; the release that carries it keeps the build it owes saved for `fugaro apply` rather than running it'
 
 /** IMAGE_ADD_BELOW_FLOOR_ARGV is the command the below-floor Copy-command
  * carries: `fugaro image add` and no values at all, for the reason the models

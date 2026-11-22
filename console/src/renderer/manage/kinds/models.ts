@@ -124,9 +124,16 @@ export const MODELS_ADD_FIELDS: readonly WriteField[] = Object.freeze([
 /** MODELS_ADD_BELOW_FLOOR is the sentence the Copy-command is drawn with when
  * this CLI cannot be shown the write. It is the console's own words and it says
  * two things the operator needs: why there is no button, and that the write's
- * own follow-up steps are saved rather than run. */
+ * own follow-up steps are saved rather than run.
+ *
+ * **It names no flag**, and `--no-apply` not least: a CLI below this floor has
+ * no `--no-apply` either (the comment above the floor), so a sentence telling
+ * the operator to type one would hand out a word their CLI refuses -- the same
+ * hazard `NO_APPLY_CLI_FLOOR` exists to keep the console from handing a child
+ * (`src/shared/version.ts`), and the shape AP8's test pins. What the sentence
+ * names instead is the release that carries the word. */
 export const MODELS_ADD_BELOW_FLOOR =
-  'this console needs a newer fugaro to show this write; add --no-apply so the steps that publish the model are saved for `fugaro apply`'
+  'this console needs a newer fugaro to show this write; the release that carries it keeps the steps that publish the model saved for `fugaro apply` rather than running them'
 
 /** MODELS_ADD_BELOW_FLOOR_ARGV is the command the below-floor Copy-command
  * carries. It is `fugaro models add` and **no values at all**: the model, the

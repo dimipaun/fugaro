@@ -224,6 +224,12 @@ export const MANAGE_CELL_CLASS = 'manage-cell'
 export const MANAGE_ACTIONS_CLASS = 'manage-actions'
 export const MANAGE_COPY_CLASS = 'manage-copy'
 export const MANAGE_VIEW_CLASS = 'manage-view'
+/** MANAGE_COPY_BOX_CLASS and MANAGE_COPY_CONSEQUENCE_CLASS are the Copy-command
+ * that states a consequence: the pair the command is drawn in -- the button, and
+ * the sentence under it (`CopyCommandAction`'s `consequence`). A command with no
+ * consequence is the bare button, with neither of these drawn. */
+export const MANAGE_COPY_BOX_CLASS = 'manage-copy-box'
+export const MANAGE_COPY_CONSEQUENCE_CLASS = 'manage-copy-consequence'
 /** MANAGE_WRITE_CLASS is the control a write action is drawn as -- the button
  * the operator presses to open the form, and the button that submits it -- and
  * MANAGE_WRITE_BOX_CLASS, MANAGE_WRITE_FORM_CLASS, MANAGE_WRITE_FIELD_CLASS,
@@ -482,7 +488,18 @@ function actionControl(
     const copy = literal(make(factory, 'button', MANAGE_COPY_CLASS), text)
     copy.setAttribute('type', 'button')
     copy.addEventListener('click', () => deps.copy(text))
-    return copy
+    // **The sentence travels with the command** (`CopyCommandAction`'s
+    // `consequence`): what the command does that a person has to read before
+    // running it is drawn beside the button rather than left in the descriptor.
+    // It is the case for the below-floor copy-commands above all, where the
+    // sentence is the whole of why there is no write button and what the CLI
+    // still needs. A command that states nothing draws nothing but itself, so a
+    // kind whose command destroys nothing keeps the bare button it had.
+    if (action.consequence === '') return copy
+    const box = make(factory, 'div', MANAGE_COPY_BOX_CLASS)
+    box.append(copy)
+    box.append(literal(make(factory, 'p', MANAGE_COPY_CONSEQUENCE_CLASS), action.consequence))
+    return box
   }
   if (action.kind === 'write') return writeControl(factory, action, deps)
   const view = literal(
@@ -587,8 +604,14 @@ function writeControl(
         () => {
           // The window main opened from the dry run's document is what the
           // operator reads next, and it is main's: this box has nothing to add
-          // and nothing to redraw. The form stays where it is, so a refusal
-          // below leaves the values typed and one press away from another try.
+          // and nothing to redraw. **A sentence an earlier press drew is cleared
+          // here**, because a refusal that no longer holds must not stand beside
+          // a window main has just opened: the second press of a form whose
+          // first was refused (`a window is already waiting for an answer`) ends
+          // with main waiting on an answer and the box saying nothing. The form
+          // stays where it is, so a refusal below leaves the values typed and
+          // one press away from another try.
+          status.textContent = ''
           submit.disabled = false
           back.disabled = false
         },

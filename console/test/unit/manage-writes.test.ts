@@ -61,6 +61,9 @@ import { GATE_ACTIONS, gateFrom } from '../../src/renderer/gating'
 import type { GateAction, GateDecision } from '../../src/renderer/gating'
 import {
   MANAGE_ACTIONS_CLASS,
+  MANAGE_COPY_BOX_CLASS,
+  MANAGE_COPY_CLASS,
+  MANAGE_COPY_CONSEQUENCE_CLASS,
   MANAGE_REFUSAL_CLASS,
   MANAGE_WRITE_CANCEL_CLASS,
   MANAGE_WRITE_CLASS,
@@ -483,7 +486,10 @@ const MODELS_PLAN: unknown = {
   model: 'deepseek-v4.1-flash',
   route: 'gateway',
   path: 'fugaro.yaml',
-  layer: 'project',
+  // `local` and never another: the command edits the selected installation's own
+  // file (contract section 6.33, D780), and `settingsLayerLocal` is what
+  // `internal/cli/models_add.go` writes.
+  layer: 'local',
   changed: true,
   claim: { entry: 'deepseek-v4.1-flash', claimed_by: '' },
   allowed_models: { entry: 'deepseek-v4.1-flash', present: true },
@@ -493,7 +499,9 @@ const MODELS_PLAN: unknown = {
     output_per_m: 0.28,
     source: 'catalog',
   },
-  steps: [{ name: 'publish the model', state: 'saved' }],
+  // The apply chain's own step name, which section 6.33 pins as `policy` today,
+  // and the state `--no-apply` leaves it in.
+  steps: [{ name: 'policy', state: 'saved' }],
 }
 
 /** IMAGE_PLAN is `fugaro image add --dry-run --json` (contract section 6.34). */
@@ -513,23 +521,39 @@ const IMAGE_PLAN: unknown = {
 
 const PROJECT = 'sandbox'
 const DIGEST = 'a3f1c0d9e5b74f2a8c6d1e0b9a7f4c2d8e6b0a3f5c1d9e7b4a2f0c8d6e4b2a0f'
+/** MODELS_ARGV and IMAGE_ARGV are the argvs main re-runs, word for word as
+ * `argvFor` builds them (`console/src/main/spawn.ts`): the row's own words, then
+ * one `--flag=value` word per argument the renderer sent, then the installation's
+ * flags, then the row's `--` and the positional behind it. They are the **write's**
+ * argv and not the dry run's -- the window shows the command the yes spawns
+ * (`src/main/modelsadd.ts`) -- so neither carries `--dry-run --json`, and the
+ * rows the design pins (§5.1: `--route=<route>`, `--project <name>`, `-- <ID>`)
+ * are the shape a case here has to exercise. */
 const MODELS_ARGV: readonly string[] = Object.freeze([
   '/usr/local/bin/fugaro',
   'models',
   'add',
-  'deepseek-v4.1-flash',
-  '--route',
-  'gateway',
   '--no-apply',
+  '--route=gateway',
+  '--price-in=0.14',
+  '--price-out=0.28',
+  '--project',
+  PROJECT,
+  '--',
+  'deepseek-v4.1-flash',
 ])
 const IMAGE_ARGV: readonly string[] = Object.freeze([
   '/usr/local/bin/fugaro',
   'image',
   'add',
-  'ci-runner',
-  '--dockerfile',
-  'owner/repo:images/ci.Dockerfile',
   '--no-apply',
+  '--dockerfile=owner/repo:images/ci.Dockerfile',
+  '--tags=node,redis',
+  '--description=the repository’s own image',
+  '--project',
+  PROJECT,
+  '--',
+  'ci-runner',
 ])
 
 /** modelsWindow builds the models window's subject the way main does, refusing
@@ -572,10 +596,37 @@ describe('the floor a Manage write waits on', () => {
       const [copy] = under
       if (copy === undefined || copy.kind !== 'copy-command') throw new Error('not a copy-command')
       expect(copyCommandText(copy), one_.name).toBe(one_.below)
-      // The sentence says why there is no button, and the half of it the
-      // operator acts on is the word that keeps the follow-up steps off this
-      // machine.
-      expect(copy.consequence, one_.name).toContain('--no-apply')
+      // The sentence says why there is no button, and that the follow-up steps
+      // stay saved for `fugaro apply` rather than running here. **It names no
+      // flag**: a CLI below this floor has no `--no-apply` either (the kind's
+      // comment above its floor), so a sentence telling the operator to add one
+      // would hand out a word their CLI refuses -- the hazard
+      // `NO_APPLY_CLI_FLOOR` keeps the console from handing a child.
+      expect(copy.consequence, one_.name).toContain('fugaro apply')
+      expect(copy.consequence, one_.name).not.toContain('--no-apply')
+    }
+  })
+
+  it('draws that sentence beside the command, which is the below-floor state’s whole meaning', async () => {
+    // Below the floor the sentence is the only thing that tells the operator why
+    // there is no Add button and what their CLI still needs, so it is drawn with
+    // the command rather than left in the descriptor (`shell.ts`'s copy arm).
+    for (const one_ of CASES) {
+      const { root } = await drawSection(one_.under, one_.group)
+      const action = one_.under.actions[0]
+      if (action === undefined || action.kind !== 'copy-command') throw new Error('not a copy-command')
+      const box = one(root, MANAGE_COPY_BOX_CLASS)
+      const copy = one(root, MANAGE_COPY_CLASS)
+      expect(copy.textContent, one_.name).toBe(one_.below)
+      expect(one(root, MANAGE_COPY_CONSEQUENCE_CLASS).textContent, one_.name).toBe(action.consequence)
+      // The command and its sentence are one control: the button is inside the
+      // box, so the reason travels with what it is about.
+      expect(box.nodes.map((child) => child.textContent), one_.name).toEqual([
+        one_.below,
+        action.consequence,
+      ])
+      // And the write itself is not offered at all -- no control, no form.
+      expect(all(root, MANAGE_WRITE_CLASS), one_.name).toHaveLength(0)
     }
   })
 })
@@ -741,6 +792,35 @@ describe('the form a write action opens', () => {
     expect(one(root, MANAGE_WRITE_CLASS).textContent).toBe(IMAGE_ADD_LABEL)
   })
 
+  it('clears the sentence an earlier press drew when a later plan lands', async () => {
+    // The sequence the review found: one press is refused (`a window is already
+    // waiting for an answer`, main's sentence for the press behind a window), the
+    // operator presses again, and **this** press opens the window. The refusal
+    // that no longer holds must not stand beside it -- main has a window waiting
+    // for an answer while the box would say the plan was refused.
+    const { section, root } = await drawSection(CASES[0].kind, CASES[0].group)
+    one(root, MANAGE_WRITE_CLASS).fire('click')
+    const form = formOf(root)
+    form.boxes[0]!.value = 'deepseek-v4.1-flash'
+    form.boxes[0]!.fire('input')
+    form.boxes[1]!.value = 'gateway'
+    form.boxes[1]!.fire('input')
+    form.submit.fire('click')
+    await settled()
+    section.refuse(1, new Error('a window is already waiting for an answer'))
+    await settled()
+    expect(form.status.textContent).toBe('a window is already waiting for an answer')
+    form.submit.fire('click')
+    await settled()
+    section.answer(2, modelsWindow())
+    await settled()
+    expect(form.status.textContent).toBe('')
+    expect(section.calls[2]).toEqual({
+      operation: 'models.add.plan',
+      args: { id: 'deepseek-v4.1-flash', route: 'gateway' },
+    })
+  })
+
   it('draws the console’s own sentence when the refusal carried none', async () => {
     const { section, root } = await drawSection(CASES[0].kind, CASES[0].group)
     one(root, MANAGE_WRITE_CLASS).fire('click')
@@ -773,7 +853,9 @@ describe('the models write’s window', () => {
       { label: 'Model', values: ['deepseek-v4.1-flash'] },
       { label: 'Route', values: ['gateway'] },
       { label: 'Config file', values: ['fugaro.yaml'] },
-      { label: 'Written at', values: ['project'] },
+      // The document's own layer word, drawn as it arrived: `local`, the one
+      // layer this write ever lands in (contract section 6.33).
+      { label: 'Written at', values: ['local'] },
       // The console's own words for a boolean: a document sent `true` and a
       // window that drew it would be one an operator reads a value out of.
       { label: 'Would change the file', values: [YES_WORD] },
@@ -782,7 +864,7 @@ describe('the models write’s window', () => {
       { label: 'Price entry', values: ['model_prices.deepseek-v4.1-flash'] },
       { label: 'Price $/M (in / out)', values: ['0.14 USD per million tokens / 0.28 USD per million tokens'] },
       { label: 'Price source', values: ['catalog'] },
-      { label: 'Steps this saves', values: ['publish the model: saved'] },
+      { label: 'Steps this saves', values: ['policy: saved'] },
       { label: 'SHA-256 of the answers', values: [DIGEST] },
       { label: 'Command', values: [...MODELS_ARGV] },
     ])
