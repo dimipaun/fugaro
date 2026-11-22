@@ -1607,7 +1607,7 @@ func securityRequestRaiseOnly(cfg *config.Config, task *config.ReviewLevels) (*c
 // inherits a mode rather than asking for one (T5.2): both readings are the
 // spec's, which is the only thing the job reads.
 func asksForRigor(spec *task.Spec) bool {
-	return spec.Rigor != "" || len(spec.Paths) > 0
+	return spec.Rigor != "" || len(spec.Paths) > 0 || spec.Promote != nil
 }
 
 // rigorGateSubject is what the rigorRequestSince gate calls the field it
@@ -1621,7 +1621,14 @@ func asksForRigor(spec *task.Spec) bool {
 // that passed no flag and carries paths alone — a stored task, launched again
 // by --retry — is described by the flags: it carries no mode to name, and
 // "(rigor: )" would report the field's absence as the thing the gate judged.
+//
+// A promote launch is described by its own block: the fields a runner older
+// than rigorRequestSince refuses are the block's (task.Promote), and the
+// refusal has to name the flag that wrote them.
 func rigorGateSubject(o *runOptions, spec *task.Spec) string {
+	if spec.Promote != nil {
+		return fmt.Sprintf("the promote run's own block (--promote %s, which names the area and its paths)", spec.Promote.Area)
+	}
 	if o.rigor == "" && len(o.paths) == 0 && spec.IsFollowUp() && spec.Rigor != "" {
 		return fmt.Sprintf("the mode a follow-up keeps from its PR (rigor: %s)", spec.Rigor)
 	}
