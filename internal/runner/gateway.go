@@ -1414,6 +1414,11 @@ func (r *run) recordLedgerCost(led gateway.Ledger) {
 	// subscription part of them (C1.16, D140). The stages' own reports are
 	// what the splits (model_by, route_by) are built from.
 	r.gwUsed, r.gwNotional = led.Used, led.Notional
+	// And the part of that money a fallback bought (C1, CS8, D140), which is
+	// the ledger's alone for the same reason: a fallback call that settled
+	// after its stage's report was taken is in the run's figure and in no
+	// stage's.
+	r.gwFallback = led.FallbackUSD
 	r.gwCacheRead, r.gwCacheWrite = led.CacheReadTokens, led.CacheWriteTokens
 	// The run's token counts by model are the ledger's, like the totals
 	// beside them and for the same reason: a call that settled after its

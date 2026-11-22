@@ -689,6 +689,7 @@ var liveCheckScripts = []struct {
 	{"check610.sh", "check610_test.sh"},
 	{"check611.sh", "check611_test.sh"},
 	{"check640.sh", "check640_test.sh"},
+	{"check640-queue-probe.sh", "check640-queue-probe_test.sh"},
 	{"check770.sh", "check770_test.sh"},
 	{"check771.sh", "check771_test.sh"},
 	{"check772.sh", "check772_test.sh"},
@@ -786,10 +787,11 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 315 items on one runner (105 scripts, three shards each) and under
-// a minute each; a split that dropped one, ran one twice or fell back to
-// everything would show up as a green run that tested less, which is the failure
-// this pins.
+// The suite is one item per script per shard -- every liveCheckScripts entry on
+// each of liveCheckShards shards, and under a minute each, so the figures are
+// derived from those two lists rather than spelled here; a split that dropped
+// one, ran one twice or fell back to everything would show up as a green run
+// that tested less, which is the failure this pins.
 func TestLiveCheckCIShardCoversTheSuiteOnce(t *testing.T) {
 	var items []liveCheckShard
 	for _, c := range liveCheckScripts {

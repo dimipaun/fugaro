@@ -48,6 +48,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -442,6 +443,23 @@ type run struct {
 	gwClosed       bool
 	gwUsed         pricing.Micros
 	gwNotional     pricing.Micros
+	// gwFallback is the part of gwUsed that bought a fallback: the calls the
+	// credentials service served from a source that is not its chain's first
+	// and a metered source paid for (C1, CS8, D140). It is the ledger's
+	// figure and not a sum of the stages' (recordLedgerCost), and it is a
+	// part of the run's model money -- cost.fallback_usd -- where a fallback
+	// a subscription served is notional and counted nowhere.
+	gwFallback pricing.Micros
+	// chainSource and chainFallback are what the credentials service's
+	// answers have said about the stage running now (C1's ChainAnswer, CS8):
+	// the source of the last call it answered -- nil when it answered none of
+	// them -- and whether any call of the stage came from a source that is
+	// not the chain's first. The gateway calls the hook once per answered
+	// call, from its own goroutines, so both are guarded by mu; a stage's row
+	// takes them and clears them (cost.go's stageTiming, stephook.go's
+	// stepTiming), which is what makes them the stage's own.
+	chainSource   *routing.SourceName
+	chainFallback bool
 	// direct is the model spend of the stages a stage-scoped Claude OAuth
 	// account served -- a mixed run's review and adversarial stages
 	// (docs/mixed-credentials/spec.md §11). The gateway saw none of their

@@ -485,6 +485,16 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // comes back as a **declaration** -- the string a writer put in its own
   // record -- never as an identity this process establishes.
   ['coordinator.intents', 'coordinatorIntents'],
+  // The orchestrator map (the console-fixes plan's CG7a, D3221): `fugaro
+  // orchestrator map --json`, the project's active orchestrators, the
+  // connections between them and the coordinator's heartbeat. One row here for
+  // the same reason as every other, and this row is the declarations read's
+  // shape exactly: the operation has no argument at all, so the row declares
+  // none and every word of the argv is the main process's own. The document is
+  // the one the Coordinator tab draws, and the read sits behind
+  // `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`) -- a CLI below it is
+  // asked for nothing, and the tab names the version it needs.
+  ['orchestrator.map', 'orchestratorMap'],
   // The record's move (the dependency-graph plan's GV3.2): one task of the
   // project's roadmap record into a release box, or out of one --
   // `coordinator roadmap move <plan>/<task> --to <release> --expect <release>

@@ -33,7 +33,7 @@ An assumption that no finding contradicts and no decision rests on stays in this
 | the agent refusal | `agentMarker` + `initflow.AgentRefusal` at each writer's door |
 | a typed confirmation | `confirmTyped` and `confirmTypedStrict` (`internal/cli/budget.go`); `removalWarning` (`project_enroll.go`) |
 | whether a run is going | `runsInFlight(ctx, db, lc)`, already called on the `rm` path |
-| the local `repos:` entry | `fugaro project repos set` (`internal/cli/project_repos_set.go`, D1173), writing through `applySettingsEdit` (`internal/cli/project_repos_set.go:485`) |
+| the local `repos:` entry | `fugaro project repos set` (`internal/cli/project_repos_set.go`, D1173), writing through `applySettingsEdit` (`internal/cli/project_repos_set.go:510`) |
 | the image map entry | `runImageMapSet` / `imageMapWith` / `userSave` (`internal/cli/image_map.go`), with the D1906 keep rule in `localcfg.ImageMapEffective` |
 | which catalog entry a workflow gets | `catalog.JobImage` / `ImageRequest` / `Selection` (`internal/catalog/select.go`) |
 | the repository's cloud resources | the `Repository` stage of `internal/initflow` → `repoEngine` (`internal/cli/init.go`) → `deploy/terraform/gcp/roots/repo`, `modules/repo`, `modules/workflow` |

@@ -801,8 +801,19 @@ var consoleReadCases = []string{"fugaro version"}
 // anything (extend.go), so there is no outcome of one to hold to the rule.
 const consoleReadEE = "the command is the Subscription Edition's, and this package builds the core tree, where the name answers with the paid stub (extend.go), a command that parses no flag and refuses before it does anything: there is no run of it here"
 
+// consoleReadEESubcommand is the same fact about a name the core tree does not
+// stub: `orchestrator map` is registered **under a family the released tree
+// builds** (`RegisterSubcommand`), so a core build carries no stub for it
+// (extend.go's paidSubcommands says why) and cobra answers for the name as it
+// does for one no build has. There is therefore no run of it here either, and
+// the console's own floor argues the same way from the other side: the console
+// refuses the read before it spawns anything until a release carries the
+// command (the console's `ORCHESTRATOR_MAP_CLI_FLOOR`).
+const consoleReadEESubcommand = "the command is the Subscription Edition's, registered under the core tree's own `orchestrator` family (RegisterSubcommand, ee/orchestrator/cli), so this package's core build holds no stub for it and no run of the name exists here"
+
 // consoleReadExempt are the console reads this package has no run of, with the
-// reason each has none: the Subscription Edition's five, and nothing else --
+// reason each has none: the Subscription Edition's five and its one such
+// subcommand, and nothing else --
 // `watch` is the one other read the pin cannot run, and its reason is the one
 // its jsonCases entry already carries, so that one table stays the only place a
 // reader has to look. What keeps this list honest is
@@ -815,6 +826,10 @@ var consoleReadExempt = map[string]string{
 	"fugaro coordinator status":  consoleReadEE,
 	"fugaro graph":               consoleReadEE,
 	"fugaro report":              consoleReadEE,
+	// The console-fixes plan's CG7a: the Coordinator tab's map read, the one
+	// entry here that is a subcommand of a family the released tree builds
+	// rather than a paid name at the root.
+	"fugaro orchestrator map": consoleReadEESubcommand,
 }
 
 // jsonCommandPaths walks the tree the released binary builds and returns every
