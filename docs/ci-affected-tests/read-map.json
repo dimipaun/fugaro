@@ -16714,6 +16714,18 @@
       "any": true
     },
     {
+      "package": "./internal/routing",
+      "reads": [
+        "*",
+        "*.yaml",
+        "internal/routing/*",
+        "internal/routing/testdata/**",
+        "internal/routing/testdata/migrate/installation.yaml",
+        "internal/routing/testdata/migrate/repos/*/*.yaml",
+        "testdata/**"
+      ]
+    },
+    {
       "package": "./internal/rtdb",
       "reads": [
         "cmd/fugaro/**",
