@@ -613,6 +613,32 @@ func budgetBlockOf(t *testing.T, r *initRig) string {
 	return string(b)
 }
 
+// TestCreatingSetupRefusesABudgetWithoutAnAccount: the carry that lets an
+// explicit --budget take the account from the installation's state (R7) has
+// nothing to take it from on a run that creates the project — the state is
+// what the run is about to make. The refusal is at the door, before the
+// project stage, and not at the installation stage's own state read: by then
+// the project, its Firebase link, its billing and its APIs are all made, and a
+// run that ended there would have changed cloud for nothing.
+func TestCreatingSetupRefusesABudgetWithoutAnAccount(t *testing.T) {
+	r := newProjectRig(t)
+	out, errOut, err := r.run(t, true, "", "--create-project", "--budget", "7", "--budget-currency", "USD")
+	if err == nil {
+		t.Fatalf("a creating run took a budget with no account to carry it from:\n%s", refusalText(out, errOut, nil))
+	}
+	said := refusalText(out, errOut, err)
+	if code := ExitCode(err); code != ExitUserError {
+		t.Errorf("exit %d, want %d:\n%s", code, ExitUserError, said)
+	}
+	if !strings.Contains(said, "--billing-account") {
+		t.Errorf("the refusal does not name the flag that completes the block:\n%s", said)
+	}
+	r.nothingDone(t, "a creating run refused for a budget with no account")
+	if n := r.posts(t); n != 0 {
+		t.Errorf("%d write call(s) were sent", n)
+	}
+}
+
 // TestUpdateCarriesTheBudget is R5's acceptance: `fugaro update` with no budget
 // flag carries the block from the installation's own records, so the plan it
 // makes from these variables holds the alert rather than deleting it. The
