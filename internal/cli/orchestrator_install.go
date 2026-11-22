@@ -286,18 +286,6 @@ func runOrchestratorInstall(cmd *cobra.Command, o *orchestratorUnitOptions) erro
 	if err != nil {
 		return userErr("%v", err)
 	}
-	// A named orchestrator this release cannot address is refused before the unit
-	// exists, and this command is where it is refused: install is the one of the
-	// three that writes code a service manager restarts forever, so a daemon the
-	// release cannot run is a login loop and not a refusal a person ever sees.
-	// uninstall and status are about the file and not about the node, and a named
-	// unit — one a person wrote by hand, or one a later release installs — stays
-	// theirs to remove and to read. The name rule is asked first, one line up, so
-	// that a name it refuses is refused as the name it is and not as one this
-	// release cannot run.
-	if o.name != "" && !orchestrator.NamedIDsAreAddressable() {
-		return userErr("`--name %s` names one of the project's orchestrators, and this release cannot run it: a named orchestrator's node cannot be built from the paths under `orchestrator/`, so the daemon this unit would start would be refused at its first lease and restarted at every beat after it. Nothing is installed", safetext.Field(o.name))
-	}
 	m, err := orchestratorService()
 	if err != nil {
 		return userErr("%v", err)
