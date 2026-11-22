@@ -280,9 +280,14 @@ export interface ModelsAddStepFields {
  * classify it by -- so its yes is one deliberate click. `confirmNeedsTick` is
  * spelled `false` rather than left out so that this document reads the same
  * member on every view it draws.
+ *
+ * `command` is carried because this shape mirrors main's view member for member
+ * and is not drawn: it is the constant the reader already held the plan's own
+ * `command` to, and `drawImageAdd`'s header says why it is no row.
  */
 export interface ImageAddFields {
   readonly kind: 'image-add'
+  /** the CLI's own name for the operation the plan is for (`image add`). */
   readonly command: string
   readonly project: string
   readonly name: string
@@ -1054,10 +1059,15 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
    * `image ls` prints -- whether it is the entry a job naming nothing runs, the
    * steps `--no-apply` saves, the plan's digest and the exact argv the yes
    * spawns. Every document string goes through `drawn` under the class the
-   * catalog table draws the same column with. */
+   * catalog table draws the same column with.
+   *
+   * The document's `command` member -- the CLI's own name for the operation --
+   * is not a row: main's reader refuses a plan for another command before this
+   * window exists (`imagesview.ts`), so the row could only ever draw one
+   * constant, and the title above already says which write this is in the
+   * console's own words. */
   const drawImageAdd = (add: ImageAddFields): void => {
     if (title !== null) title.textContent = TITLE_IMAGE_ADD
-    safeRow(FIELDS.command, add.command, 'label', 'image_add.command')
     safeRow(FIELDS.project, add.project, 'project', 'image_add.project')
     safeRow(FIELDS.entry, add.name, 'label', 'image_add.name')
     safeRow(FIELDS.builtFrom, add.source, 'label', 'image_add.source')
