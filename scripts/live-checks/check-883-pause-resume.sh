@@ -24,10 +24,11 @@
 #               that does not hold is a STOP (exit 2), not a finding: the rows
 #               below would be about something else.
 #   launch      ONE real run of the repository, with the task this check writes,
-#               launched with `fugaro run --pool <name>`, whose document names
-#               the run. It is a real run on a real repository: it spends model
-#               money under the repository's and the installation's own caps and
-#               may open a pull request. A dry run commits none of it.
+#               launched with `fugaro run --pool <name> --project <name>`, whose
+#               document names the run. It is a real run on a real repository: it
+#               spends model money under the repository's and the installation's
+#               own caps and may open a pull request. A dry run commits none of
+#               it.
 #   pause       that run's row in `fugaro runs ls --json` reads `paused` within
 #               the bound this check waits (the policy's own minimum pause plus
 #               room): the run suspended itself rather than failing or running
@@ -64,7 +65,11 @@
 #                              you are entitled to and whose members are out of
 #                              room, or the run finishes instead of pausing.
 #             --installation   the installation's Fugaro project name; read from
-#                              `fugaro doctor --json` when it is not given.
+#                              `fugaro doctor --json` when it is not given. When
+#                              it IS given, doctor is asked for that project and
+#                              the launch and every listing name it too, so the
+#                              whole check is about that installation and not
+#                              about whichever one the checkout resolves.
 #             --bucket         the runs bucket; `fugaro-runs-<gcp_project>` when
 #                              it is not given.
 #             --task-file      the task to launch with; this check writes one in
@@ -296,15 +301,15 @@ Check 883 plan (nothing is called: no fugaro, no gcloud, no run is launched)
 
 What it would do, in order:
 
-  premise   fugaro doctor --json                       -> the installation must have a resident
+  premise   fugaro doctor --json [--project <installation>]   -> the installation must have a resident
             fugaro project policy show --json --project <name>   orchestrator (its orchestrator-identity row)
             fugaro accounts pool ls --project <name>             and a policy carrying the pause block,
                                                                  and the pool must be defined. Otherwise STOP.
-  launch    fugaro run --repo $where_repo --pool $where_pool --task-file <file> --json
+  launch    fugaro run --repo $where_repo --pool $where_pool --task-file <file> --project <installation> --json
             -> ONE real run, on a real repository: it spends model money under the repository's and the
                installation's own caps and may open a pull request.
-  pause     fugaro runs ls --repo $where_repo --json, polled -> the run's row must read 'paused'
-  resume    fugaro runs ls --repo $where_repo --json, polled -> a row must name the run that resumed it
+  pause     fugaro runs ls --repo $where_repo --project <installation> --json, polled -> the run's row must read 'paused'
+  resume    fugaro runs ls --repo $where_repo --project <installation> --json, polled -> a row must name the run that resumed it
   pool      gcloud storage cat gs://<bucket>/runs/<slug>/<resumed run>/result.json
             -> the resumed run's stages must carry a source of kind launcher-pool on $where_pool
   restore   the check's own scratch directory is removed.
@@ -496,13 +501,16 @@ print("none")
 PY
 }
 
-# resumed_by FILE prints, for the first row of a `runs ls --json` document that
-# names a run other than the paused one in a member about resuming, the member
-# and its value as `member=value`. It looks for the members a reader of a pause
-# meets — any member whose name mentions `resum`, and `continues` or
-# `previous_run` — on every row, so a listing that carries the resuming run on
-# the paused row (the design's own place for it) and one that carries it on the
-# resumed run's row are both read.
+# resumed_by FILE [the paused run id] prints, as `member=value`, the run that
+# resumed the paused one: the value is the RESUMED run's own id (the caller
+# reads it as such), and it comes from either place a listing can hold it. A row
+# that NAMES the paused run in a member about resuming (`resumes`, `resumed`,
+# `previous_run`, `continues`, ...) is the paused row, and the value is the
+# resuming run. A row whose own run id is not the paused one and which carries
+# such a member EQUAL to the paused id is the RESUMED row itself — `previous_run`
+# pointing back at the pause — and the run that resumed it is that row's own
+# run. Both are read, because the design fixes the member's place ("the run that
+# resumed it" on the paused row, plan C3) and not its name.
 resumed_by() { # resumed_by <file> [the paused run id]
   python3 - "$1" "${2:-}" <<'PY'
 import json, sys
@@ -512,15 +520,20 @@ except Exception:
     sys.exit(0)
 paused = sys.argv[2]
 for r in doc.get("runs") or []:
+    rid = r.get("run_id") or r.get("run") or ""
     for name, value in r.items():
         low = name.lower()
         if not value or isinstance(value, (dict, list)):
             continue
-        if "resum" in low or low in ("continues", "previous_run"):
-            if str(value) == paused:
-                continue
-            print("%s=%s" % (name, value))
-            sys.exit(0)
+        if not ("resum" in low or low in ("continues", "previous_run")):
+            continue
+        if paused and str(value) == paused:
+            if rid and rid != paused:
+                print("run=%s" % rid)
+                sys.exit(0)
+            continue
+        print("%s=%s" % (name, value))
+        sys.exit(0)
 PY
 }
 
@@ -591,16 +604,32 @@ pool_defined() { # pool_defined <file> <name>
 # ------------------------------------------------------------------- the check
 
 step_premise() {
-  say "reading the installation: fugaro doctor --json"
   local rc=0 first
-  fugaro doctor --json >"$SCRATCH/doctor.out" 2>"$SCRATCH/doctor.err" || rc=$?
-  if [ "$rc" -ne 0 ] || [ "$(json_ok "$SCRATCH/doctor.out")" = no ]; then
+  # doctor's own exit status is NOT the answer to which installation this is: it
+  # writes its whole document and then exits 1 whenever any of its checks failed
+  # (doctor.go's emitDoctor returns an ExitError for !o.OK, any check of default
+  # severity), which is a separate reading this check does not make. Only an
+  # answer that is not a document this check can read is no answer.
+  local doctor_args=()
+  if [ -n "$INSTALLATION" ]; then doctor_args=(--project "$INSTALLATION"); fi
+  say "reading the installation: fugaro doctor --json${INSTALLATION:+ --project ${INSTALLATION}}"
+  fugaro doctor --json ${doctor_args[@]+"${doctor_args[@]}"} >"$SCRATCH/doctor.out" 2>"$SCRATCH/doctor.err" || rc=$?
+  if [ "$(json_ok "$SCRATCH/doctor.out")" = no ]; then
     first=$(head -1 "$SCRATCH/doctor.err" 2>/dev/null || true)
     fact premise FAIL "fugaro doctor --json did not answer with a document this check reads (exit ${rc})${first:+: ${first}}. The check is about the pause of a real installation, and doctor is how it says which installation and whether that installation has a resident orchestrator at all"
     stop "fugaro doctor --json did not answer"
   fi
   GCP_PROJECT=$(jget "$SCRATCH/doctor.out" project.gcp_project)
-  [ -n "$PROJECT" ] || PROJECT=$(jget "$SCRATCH/doctor.out" project.name)
+  local named
+  named=$(jget "$SCRATCH/doctor.out" project.name)
+  if [ -n "$INSTALLATION" ]; then
+    if [ -n "$named" ] && [ "$named" != "$INSTALLATION" ]; then
+      fact premise FAIL "'fugaro doctor --json --project ${INSTALLATION}' answered about the project '${named}' and not the installation this check was pointed at. Every row below reads the policy, the pools and the runs of the project doctor names, so a check that was pointed at ${INSTALLATION} and reads ${named} is measuring another installation. Point --installation at ${named}, or run the check where ${INSTALLATION} is the project fugaro resolves"
+      stop "doctor answered about another project"
+    fi
+    PROJECT=$INSTALLATION
+  fi
+  [ -n "$PROJECT" ] || PROJECT=$named
   [ -n "$BUCKET" ] || BUCKET="fugaro-runs-${GCP_PROJECT}"
   if [ -z "$PROJECT" ] || [ -z "$GCP_PROJECT" ]; then
     fact premise FAIL "fugaro doctor --json named no project (name=${PROJECT:-none}, gcp_project=${GCP_PROJECT:-none}), so this check cannot say which installation, which policy or which runs bucket it is reading"
@@ -683,7 +712,7 @@ step_launch() {
     stop "the task file cannot be read"
   }
   local rc=0 first
-  fugaro run --repo "$REPO" --pool "$POOL" --task-file "$TASK_FILE" --json \
+  fugaro run --repo "$REPO" --pool "$POOL" --task-file "$TASK_FILE" --project "$PROJECT" --json \
     >"$SCRATCH/launch.out" 2>"$SCRATCH/launch.err" || rc=$?
   first=$(head -1 "$SCRATCH/launch.err" 2>/dev/null || true)
   if [ "$rc" -ne 0 ]; then
@@ -702,11 +731,14 @@ step_launch() {
   fact launch PASS "ONE real run of ${REPO} was launched on the pool ${POOL}: ${RUN_REF:-$RUN_ID} (${RUN_ID}). It spends model money under the repository's and the installation's own caps and it is NOT cancelled by this check; every row below is that one run"
 }
 
-# read_runs OUT runs `fugaro runs ls --repo <repo> --json` into OUT and prints
-# its exit status. It is the one listing every row below reads.
+# read_runs OUT runs `fugaro runs ls --repo <repo> --project <name> --json` into
+# OUT and prints its exit status. It is the one listing every row below reads,
+# and it names the installation this check resolved rather than letting the
+# checkout decide: a listing of another project's runs is not a reading of this
+# one.
 read_runs() { # read_runs <out> [err]
   local out=$1 err=${2:-$SCRATCH/runs.err} rc=0
-  fugaro runs ls --repo "$REPO" --json --limit 50 >"$out" 2>"$err" || rc=$?
+  fugaro runs ls --repo "$REPO" --project "$PROJECT" --json --limit 50 >"$out" 2>"$err" || rc=$?
   printf '%s' "$rc"
 }
 

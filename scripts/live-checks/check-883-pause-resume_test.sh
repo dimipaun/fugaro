@@ -37,6 +37,11 @@ expect_contains() { # haystack needle what
   *) fail "$3: expected to contain '$2'; got: $(printf '%s' "$1" | head -c "${CHECK883_TEST_HEAD:-1600}")" ;;
   esac
 }
+expect_not_contains() { # haystack needle what
+  case "$1" in
+  *"$2"*) fail "$3: expected NOT to contain '$2'" ;;
+  esac
+}
 expect_status() { # status want what
   [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1"
 }
@@ -59,7 +64,15 @@ printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"${FAKE883_LOG:?}"
 dir=${FAKE883_DIR:?}
 case "${1:-}" in
 doctor)
+  # doctor writes its whole document and THEN exits 1 whenever any of its checks
+  # failed (emitDoctor returns an ExitError for !o.OK), so a case bends the exit
+  # status on its own: the document is the answer, the status is not.
+  status=$(cat "$dir/doctor-status" 2>/dev/null || printf 0)
   cat "$dir/doctor.json"
+  if [ "$status" != 0 ]; then
+    printf 'fugaro doctor found a problem; see above\n' >&2
+    exit "$status"
+  fi
   ;;
 project)
   status=$(cat "$dir/policy-status" 2>/dev/null || printf 0)
@@ -248,7 +261,7 @@ test_the_happy_path() {
   expect_contains "$(cat "$CALLS")" "fugaro project policy show --json --project test" "the happy path: the premise read the pause settings"
   expect_contains "$(cat "$CALLS")" "fugaro accounts pool ls --project test" "the happy path: the premise read the pool"
   expect_contains "$(cat "$CALLS")" "fugaro run --repo acme/sub-app --pool team-a" "the happy path: the launch named the pool"
-  expect_contains "$(cat "$CALLS")" "fugaro runs ls --repo acme/sub-app --json" "the happy path: the pause and the resume were read from runs ls"
+  expect_contains "$(cat "$CALLS")" "fugaro runs ls --repo acme/sub-app --project test --json" "the happy path: the pause and the resume were read from runs ls"
   expect_contains "$(cat "$GCLOUD_CALLS")" "gcloud storage cat gs://$BUCKET/runs/$SLUG/$RESUMED/result.json" \
     "the happy path: the pool row read the resumed run's own record"
 }
@@ -434,6 +447,81 @@ test_a_record_that_cannot_be_read_leaves_the_row_unverified() {
   expect_contains "$out" "could not be read" "a record that cannot be read"
 }
 
+test_a_doctor_that_exits_one_with_its_document_is_still_read() {
+  case_dir doctor_not_ok
+  # doctor writes its whole document and then exits 1 whenever any of its checks
+  # failed (emitDoctor's ExitError for !o.OK): the document is the answer to
+  # which installation this is, and the status is another reading this check
+  # does not make. Reading the status as no answer would call an installation
+  # with any unrelated problem an installation this check cannot read.
+  printf 1 >"$answers/doctor-status"
+  run883
+  expect_status "$status" 0 "a doctor that exits 1 with its document"
+  expect_row "$out" premise PASS "a doctor that exits 1 with its document"
+  expect_not_contains "$out" "did not answer with a document" "a doctor that exits 1 with its document"
+}
+
+test_a_doctor_that_answers_no_document_stops_the_check() {
+  case_dir doctor_no_document
+  : >"$answers/doctor.json"
+  printf 1 >"$answers/doctor-status"
+  run883
+  expect_status "$status" 2 "a doctor that answers no document"
+  expect_row "$out" premise FAIL "a doctor that answers no document"
+  expect_contains "$out" "did not answer with a document this check reads" "a doctor that answers no document"
+  case "$(cat "$CALLS" 2>/dev/null)" in
+  *"fugaro run"*) fail "a doctor that answers no document: it launched a run anyway" ;;
+  esac
+}
+
+test_the_installation_flag_names_the_project_every_call_is_about() {
+  case_dir installation_named
+  run883 --installation test
+  expect_status "$status" 0 "an installation that is named"
+  expect_row "$out" premise PASS "an installation that is named"
+  expect_contains "$(cat "$CALLS")" "fugaro doctor --json --project test" "an installation that is named: doctor was asked for it"
+  expect_contains "$(cat "$CALLS")" "fugaro run --repo acme/sub-app --pool team-a --task-file" "an installation that is named: the launch"
+  expect_contains "$(cat "$CALLS")" "--project test --json" "an installation that is named: the launch and every listing name it"
+  expect_contains "$(cat "$CALLS")" "fugaro runs ls --repo acme/sub-app --project test --json" "an installation that is named: the listings name it"
+  expect_contains "$(cat "$CALLS")" "fugaro project policy show --json --project test" "an installation that is named: the policy is read for it"
+}
+
+test_an_installation_flag_whose_project_is_another_stops_the_check() {
+  case_dir installation_other_project
+  # doctor answers about the project it resolved: a check pointed at one
+  # installation that reads another installation's policy, pools and runs would
+  # measure the wrong thing, and launch a real run of the wrong project.
+  python3 - "$answers/doctor.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+doc["project"]["name"] = "other"
+json.dump(doc, open(sys.argv[1], "w"))
+PY
+  run883 --installation test
+  expect_status "$status" 2 "an installation flag whose project is another"
+  expect_row "$out" premise FAIL "an installation flag whose project is another"
+  expect_contains "$out" "answered about the project 'other'" "an installation flag whose project is another"
+  case "$(cat "$CALLS" 2>/dev/null)" in
+  *"fugaro run"*) fail "an installation flag whose project is another: it launched a run anyway" ;;
+  esac
+}
+
+test_a_resumed_row_that_points_back_at_the_pause_is_read() {
+  case_dir resumed_row_placement
+  # The design fixes the member's place (the paused row) and not its name, so a
+  # listing that links the two from the OTHER side — a row whose own run is the
+  # resumed one and whose `previous_run` is the pause — is the same reading.
+  printf '{"runs":[%s]}\n' "$(row paused ',"paused_until":"2026-11-22T06:00:00Z"')" >"$answers/runs-2.json"
+  printf '{"runs":[%s,{"run":"%s/%s","repo":"acme/sub-app","run_id":"%s","status":"running","previous_run":"%s"}]}\n' \
+    "$(row paused ',"paused_until":"2026-11-22T06:00:00Z"')" "$SLUG" "$RESUMED" "$RESUMED" "$LAUNCHED" \
+    >"$answers/runs-3.json"
+  run883
+  expect_status "$status" 0 "a resumed row that points back at the pause"
+  expect_row "$out" resume PASS "a resumed row that points back at the pause"
+  expect_row "$out" pool PASS "a resumed row that points back at the pause"
+  expect_contains "$out" "run=$RESUMED" "a resumed row that points back at the pause: the row's own run is the resumer"
+}
+
 test_a_pool_that_is_not_the_launchers_is_refused_before_anything_runs() {
   case_dir bad_pool_name
   run883_raw --repo acme/sub-app --pool 'team a' --dry-run
@@ -470,6 +558,10 @@ t test_a_missing_pool_is_refused
 t test_an_agent_session_is_refused
 t test_a_traced_shell_is_refused
 t test_an_installation_with_no_resident_orchestrator_stops_the_check
+t test_a_doctor_that_exits_one_with_its_document_is_still_read
+t test_a_doctor_that_answers_no_document_stops_the_check
+t test_the_installation_flag_names_the_project_every_call_is_about
+t test_an_installation_flag_whose_project_is_another_stops_the_check
 t test_a_policy_without_pause_settings_stops_the_check
 t test_a_policy_read_that_does_not_answer_stops_the_check
 t test_a_pool_the_installation_does_not_define_stops_the_check
@@ -481,6 +573,7 @@ t test_a_resumed_run_on_another_pool_is_a_finding
 t test_a_record_that_names_the_pool_as_name_passes
 t test_a_record_whose_kind_is_not_the_launchers_leaves_the_row_unverified
 t test_a_record_that_cannot_be_read_leaves_the_row_unverified
+t test_a_resumed_row_that_points_back_at_the_pause_is_read
 t test_a_pool_that_is_not_the_launchers_is_refused_before_anything_runs
 t test_an_unknown_argument_is_refused
 
