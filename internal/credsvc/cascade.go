@@ -203,7 +203,54 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	if err != nil {
 		return nil, creds.StrategyFailover, nil, err
 	}
+	// R7's candidate goes in FRONT, and it goes in here rather than through any
+	// narrowing above: what entitles a call to a person's own token is the slip
+	// its owner was granted, and neither the project's crafts, the tier's
+	// admission nor the repository's recorded auth has anything to say about it
+	// (personal_workspace.go says why). A refusal is the call's own and not a
+	// dropped candidate: a slip naming a personal token is served that token or
+	// refused, and the shared entries are never served in its place (D2974).
+	if personal, ok, err := s.personalCandidate(ctx, sc); err != nil {
+		return nil, creds.StrategyFailover, nil, err
+	} else if ok {
+		out = append([]creds.Credential{personal}, out...)
+	}
 	return out, strategy, append(skipped, dropped...), nil
+}
+
+// personalCandidate is R7's candidate for one call: the person's own token,
+// when the call carries a slip naming one and the member's switch serves it.
+//
+// It is asked of the SCOPE and never of the bundle, and only where the scope is
+// a workspace's (PersonScope): an installation's scope does not implement that
+// interface, so an installation answers no candidate here and its path is
+// exactly what it was (C2, WC5's A3). The slip handed over is the call's
+// VERIFIED binding — the one the fence above reads, and never anything the call
+// says — which is the whole of what C2's reader is given.
+//
+// A failure here is the reader's own refusal and it travels as this call's
+// (the switch off, a policy or a roster that could not be read, R11): it is
+// returned rather than swallowed, because a call under a slip that names a
+// personal token must be refused where the token cannot be served.
+func (s *Server) personalCandidate(ctx context.Context, sc Scope) (creds.Credential, bool, error) {
+	ps, ok := sc.(PersonScope)
+	if !ok {
+		return creds.Credential{}, false, nil
+	}
+	r := ps.Personal()
+	if r == nil {
+		// A workspace scope that holds no reader serves no personal candidate,
+		// which is the zero configuration C2 says must serve nothing rather
+		// than fail (PersonScopeConfig).
+		return creds.Credential{}, false, nil
+	}
+	b, ok := callSlipOf(ctx)
+	if !ok {
+		// No verified slip: a call of the personal half is under one, and a
+		// call without one has no personal candidate at all (R8).
+		return creds.Credential{}, false, nil
+	}
+	return r.Personal(ctx, creds.Slip{ID: b.id, Owner: b.owner, Allowed: b.allowed})
 }
 
 // ownNamedEntries adds this repository's own named entries to the list the
@@ -824,6 +871,29 @@ func (s *Server) resolveEntry(ctx context.Context, b *Bundle, c creds.Credential
 	return e, ok, nil
 }
 
+// perSecretSentence is what a run is told when resolveEntry answered the
+// failure class, and it is the only place the two sentences of that class are
+// told apart: a read that FAILED (ErrPerSecretUnreadable and everything else)
+// is perSecretRefusal, and R7's absence of a person's own token is
+// ErrPersonalTokenAbsent's own (D2974).
+//
+// The second is a sentence of its own because the two are different acts for
+// the run: a rotation the service could not read is a retry, and a personal
+// token that is not there is a person who must run `fugaro secrets user set`
+// before their runs can be served at all. It is not a fall to the bundle's
+// entry — the name decided that in the read (dynamicsecrets.go) — and the run
+// is answered the command rather than the workspace's shared token.
+//
+// The class is matched by errors.Is rather than by the message: the read
+// returns the sentinel unwrapped, and a sentence compared as text would drift
+// from the constant the moment either is edited.
+func perSecretSentence(err error) string {
+	if errors.Is(err, ErrPersonalTokenAbsent) {
+		return ErrPersonalTokenAbsent.Error()
+	}
+	return perSecretRefusal
+}
+
 // unsent is the candidates this call has not already sent to. The mark a
 // usage limit writes does not always hold its credential — a reset already in
 // the past, on a tier whose D142 window is off, leaves a mark that has
@@ -1002,9 +1072,11 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// here would serve, for every run at once, exactly what an operator
 			// rotated away — silently, and with no line that says so. The
 			// sentence is the class and nothing else: no container and no value
-			// is in it.
+			// is in it. A person's own token is the one candidate of the
+			// grammar whose absence is this class too (perSecretSentence), and
+			// its sentence is the command that sets one.
 			s.refuseCallCause(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable,
-				perSecretRefusal, labelRead(readSecret, err))
+				perSecretSentence(err), labelRead(readSecret, err))
 			return
 		}
 		if !ok {
