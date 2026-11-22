@@ -1204,17 +1204,16 @@ function isPathShapedSecret(run: string): boolean {
 /**
  * CREDENTIAL_RULES are the first two of them, and they are the whole pass a
  * value whose *key* declares what it is goes through. Running the whole list over
- * such a value would be wrong in both directions: `fixture-owner/fixture-repo` is
- * a repository path, so a pattern class for free text could rewrite the very value
- * the `repository` class exists to validate, and the class would then refuse a
- * document the recorder wrote. The recorder makes the same split -- a field class
- * short-circuits, and the pattern classes are for free text -- and the credential
- * rules stay on for the validating classes because a token is a shape a validating
- * pattern can accept: a Google access token, dots and all, is a legal git branch
- * name, and so is a forge token with no underscore in it. The two entropy rules
- * are deliberately not here: they answer "is this run a secret" about a string
- * with no key in front of it, and a class that draws its own value whole asks
- * `holdsCredential` instead (`person`, `branch`).
+ * such a value would be wrong in both directions: the two entropy rules answer
+ * "is this run a secret" about a string with no key in front of it, so a
+ * validating class would rewrite or refuse a long random-looking name the
+ * recorder drew, and disagree with the fixture about a document it wrote. The
+ * recorder makes the same split -- a field class short-circuits, and the pattern
+ * classes are for free text -- and the credential rules stay on for the validating
+ * classes because a token is a shape a validating pattern can accept: a Google
+ * access token, dots and all, is a legal git branch name, and so is a forge token
+ * with no underscore in it. A class that draws its own value whole asks
+ * `holdsCredential` instead of the two entropy rules (`person`, `branch`).
  */
 const CREDENTIAL_RULES: readonly OneRule[] = Object.freeze(FREE_TEXT_RULES.slice(0, 2))
 
@@ -1228,9 +1227,9 @@ const CREDENTIAL_RULES: readonly OneRule[] = Object.freeze(FREE_TEXT_RULES.slice
  * Every rule of the free-text path is a credential rule since D3213 (2026-11-21),
  * so this filter selects the whole of that list. It is kept as a filter rather
  * than an alias so that the door's rule set is stated rather than inherited: the
- * pattern classes that rewrite a remedy (a role, a project, a path, a host) are
- * the ones `sanitizeRefusal` leaves out, and a non-credential rule added to the
- * free-text list must not reach the door by being added to it.
+ * non-credential classes that used to rewrite a remedy here (a role, a project, a
+ * path, a host) are gone, and a non-credential rule added to the free-text list
+ * must not reach the door by being added to it.
  */
 const REFUSAL_RULES: readonly OneRule[] = Object.freeze(
   FREE_TEXT_RULES.filter(
@@ -1894,8 +1893,8 @@ function maskCovered(prepared: string, covered: Uint8Array, sequences: boolean):
  * rule finds something is drawn from the prepared form, because that is the form
  * the rule rewrote. The form as written is tried as well, for the rare match that
  * only it shows. The classes that *validate* a grammar -- a repository, a branch,
- * a slug -- run the credential rules only: a pattern class for free text must not
- * rewrite the value the class exists to check.
+ * a slug -- run the credential rules only: the entropy net must not rewrite a
+ * long random-looking name the class exists to check.
  */
 function freeText(
   text: string,
@@ -2080,9 +2079,9 @@ const IMAGE_REF_RE =
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,126}$/
 
 /** WHOLE_BRANCH_RE is a git branch or ref: the characters git allows, with the
- * spellings git refuses (`..`, `@{`, a leading `-`, `.lock` at the end). It is
- * not the free-text `BRANCH_RE` above, which finds a branch by its conventional
- * prefix inside a sentence. */
+ * spellings git refuses (`..`, `@{`, a leading `-`, `.lock` at the end). The
+ * free-text `BRANCH_RE` that used to find a branch by its conventional prefix
+ * inside a sentence is gone (D3213), so this is the only branch grammar left. */
 const WHOLE_BRANCH_RE = /^(?!-)(?!.*\.\.)(?!.*@\{)(?!.*\/\/)[A-Za-z0-9._/-]{1,255}$/
 
 /** PROJECT_RE is a Fugaro project name, or a GCP project id. */
@@ -2764,31 +2763,25 @@ export function sanitizeText(
  * `roles/datastore.viewer` and `roles/serviceusage.serviceUsageConsumer`, and a
  * screen that redacted them would leave the operator with a refusal and no fix.
  *
- * `sentence` is the wrong class for it. `FREE_TEXT_RULES` runs the pattern
- * classes, which are for text whose *shape* the console cannot vouch for, and
- * two of them eat the remedy: `roles/datastore.viewer` is two long segments
- * around a slash, so `REPO_TOKEN_RE` draws it `[redacted]`, and `project
- * sandbox-db` is a GCP name in a sentence, so `GCP_CONTEXT_RE` draws it
- * `<project>`. Meanwhile refusing to draw stderr at all would be the opposite
- * error: stderr is not a document, but it is not the console's own text either,
- * and a credential a child echoed into it must not reach a screen.
+ * `sentence` was the wrong class for it while the free-text path carried the
+ * pattern classes: `roles/datastore.viewer` is two long segments around a slash,
+ * so `REPO_TOKEN_RE` drew it `[redacted]`, and `project sandbox-db` is a GCP name
+ * in a sentence, so `GCP_CONTEXT_RE` drew it `<project>`. Those rules are gone
+ * (D3213, 2026-11-21), so the two doors now agree on a sentence that holds no
+ * credential; this door stays because refusing to draw stderr at all would be the
+ * opposite error: stderr is not a document, but it is not the console's own text
+ * either, and a credential a child echoed into it must not reach a screen.
  *
- * So this pass is `REFUSAL_RULES` and only those -- a URL, a percent-encoded
- * or base64-wrapped run decoded, the token families, an assignment, an
- * address, a path-shaped secret, the entropy net -- read, as every class reads them, on
- * the **prepared** form (NFKC, so a fullwidth token is a token: review round 2
- * of PR 494), plus this layer's own two: the invisible characters go (a value a screen is made to
- * misspell is not a value), and the display bound applies. A refusal sentence
- * that echoes a token is redacted, and so is one that names an address: a
- * person or a service account in a sentence about permissions is an identifier
- * of someone, and the design redacts those on every other channel. A refusal
- * sentence that names a role, a project or a path is drawn as the CLI printed
- * it, which is what the design asks for and what makes the screen useful -- an
- * address is none of those three, because the remedy is the role or the
- * project, never who asked. The last of those is the trade the
- * design makes deliberately: `sentence` would draw `/home/zora/checkout` as
- * `<path>`, and this does not, because the operator's own refusal is the one
- * message on this console the console may not paraphrase.
+ * So this pass is `REFUSAL_RULES` and only those -- the URL rule for a URL that
+ * carries a credential, the credential pass, a path-shaped secret, the entropy
+ * net -- read, as every class reads them, on the **prepared** form (NFKC, so a
+ * fullwidth token is a token: review round 2 of PR 494), plus this layer's own
+ * two: the invisible characters go (a value a screen is made to misspell is not a
+ * value), and the display bound applies. A refusal sentence that echoes a token is
+ * redacted; everything else is drawn as the CLI printed it, a role, a project, a
+ * path and an address alike, which is what the design asks for and what makes the
+ * screen useful: the operator's own refusal is the one message on this console the
+ * console may not paraphrase.
  *
  * The whole of the `console` side is expected to reach this through one helper
  * per screen, so that "the CLI's sentence is drawn verbatim" is one rule in two
