@@ -504,11 +504,10 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// writes. It refuses nothing, asks nothing and cannot fail the update.
 	e.announceBudgetStops(ctx)
 	// And the word that is not a budget mode any more leaves this machine's own
-	// config here, in place and said out loud (D3022, F22): the loader folds it
-	// before the decode, so this write is the file catching up with what every
-	// reader of this run already answers, and it is before the first stage for
-	// the reason the catalog guard above is — every stage of this run reads the
-	// config this run writes.
+	// config here, in place and said out loud (D3022, F22): the loader lets the
+	// file that says it load, so this write is where the word goes, and it is
+	// before the first stage for the reason the catalog guard above is — every
+	// stage of this run reads the config this run writes.
 	e.rewriteLocalBudgetMode()
 	// The door's note about the runs that are running while it converges, and
 	// the last thing the run prints before its own confirmation and before any
