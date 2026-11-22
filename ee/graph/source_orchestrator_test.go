@@ -13,9 +13,20 @@ package graph
 //   - TestOrchestratorTasksAndEdges: a work item is a `task` node keyed
 //     `<source>:<id>`, its phase is the node's state, and its `depends_on` are
 //     the document's edges (F14, F18) — the source whose graph has edges at all.
-//   - TestDependsOnEdgesStayInsideOneOrchestrator: a dependency the node does
-//     not carry draws nothing, because an edge to a node the document does not
-//     hold is not one a reader can draw (contract §6.22).
+//   - TestEdgesJoinNodesOfTheDocument: a dependency the node does not carry
+//     draws nothing, because an edge to a node the document does not hold is not
+//     one a reader can draw (contract §6.22) — and two orchestrators that each
+//     carry a `wi-1` are two keys, so no edge reaches across namespaces by
+//     accident (D1356).
+//   - TestCrossOrchestratorDependencyEdges: a `depends_on` naming another
+//     orchestrator's item draws an edge to the peer's node, keyed under the
+//     scope the document draws the peer in, and a peer the document does not
+//     draw draws nothing (D3208, F17).
+//   - TestCrossOrchestratorDependencyFromAStoredState: the same edge drawn from
+//     a node a daemon wrote rather than one built here — the end-to-end case
+//     I-ORCH runs. It is gated on the two halves of D3208 this task does not
+//     carry: an id of `<project>~<name>` (CG1a) and a state whose validator
+//     accepts a cross reference (CG3).
 //   - TestLocalScopeFallsBackToTheCache: a local scope whose node cannot be read
 //     answers with the cached brief's own stamp as its age and no nodes — a
 //     brief is not a graph (D1358, T5(a)).
@@ -208,18 +219,19 @@ func TestOrchestratorTasksAndEdges(t *testing.T) {
 	}
 }
 
-// TestDependsOnEdgesStayInsideOneOrchestrator: every edge a scope draws has
-// both of its ends among the nodes that same scope carries, and an edge never
-// reaches into another orchestrator's key space — the ids are the node's own
+// TestEdgesJoinNodesOfTheDocument: an edge this source draws has both of its
+// ends among the nodes the document carries, and a dependency reaches into
+// another orchestrator's key space only where the reference names one
+// (TestCrossOrchestratorDependencyEdges) — the ids are the node's own
 // namespace, so two orchestrators can each carry a `wi-1` and their keys are
 // still two keys (D1356, §6.22).
 //
-// A `depends_on` naming an item the node does not carry never reaches this
+// A bare `depends_on` naming an item the node does not carry never reaches this
 // reader at all: the state's own validator refuses a state whose item waits on
 // an item it does not hold (ValidateState), so what this test holds is the
 // property a reader relies on — both ends are keys of the document it is
 // reading — rather than a shape the writer cannot produce.
-func TestDependsOnEdgesStayInsideOneOrchestrator(t *testing.T) {
+func TestEdgesJoinNodesOfTheDocument(t *testing.T) {
 	itemOf := func(id, waitOn string) orchestrator.WorkItem {
 		if waitOn == "" {
 			return item(id, "the item everything waits on", "acme/app")
@@ -259,6 +271,125 @@ func TestDependsOnEdgesStayInsideOneOrchestrator(t *testing.T) {
 	}
 	if otherNodes[0].Key == nodes[0].Key {
 		t.Errorf("two orchestrators' items share the key %q: the keys are unique within one source and never across (D1356)", otherNodes[0].Key)
+	}
+}
+
+// TestCrossOrchestratorDependencyEdges: a `depends_on` naming another
+// orchestrator's item — `<orchestrator>/<item>`, D3208 — is an edge to that
+// peer's node, keyed under the scope this document draws the peer in (F17).
+//
+// Which scope that is, is the document's fact and not this source's, and the
+// local half below is what holds it: the same reference keyed `local:<peer>`
+// ends at `local:aurora~night:wi-7` where the central one ends at
+// `orchestrator:aurora~night:wi-7`, and a source that mirrored its own kind
+// would draw the far end as a key no node of the document has.
+//
+// The four references that draw nothing are the other half: a bare id this node
+// does not carry (the §6.22 rule), a reference to this very orchestrator, one to
+// an orchestrator this document does not draw, and one whose item half is no
+// item id — a node's own namespace answers to exactly its own ids, and a peer
+// that is not on the map has no node here to point at.
+func TestCrossOrchestratorDependencyEdges(t *testing.T) {
+	const peer = "aurora~night"
+	state := orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion,
+		AgentID:       "aurora",
+		Role:          orchestrator.RoleOrchestrator,
+		WorkItems: []orchestrator.WorkItem{
+			item("wi-1", "wait on the other orchestrator", "acme/app", peer+"/wi-7"),
+			item("wi-2", "wait on an item this node does not carry", "acme/app", "wi-9"),
+			item("wi-3", "wait on this very orchestrator", "acme/app", "aurora/wi-3"),
+			item("wi-4", "wait on an orchestrator this document does not draw", "acme/app", "elsewhere/wi-1"),
+			item("wi-5", "wait on something that is not an item", "acme/app", "Aurora~Night/wi-1"),
+		},
+	}
+	peers := map[string]string{"aurora": "orchestrator:aurora", peer: "orchestrator:" + peer}
+	_, edges, err := orchestratorNodes("orchestrator:aurora", state, peers)
+	if err != nil {
+		t.Fatalf("reading the state: %v", err)
+	}
+	want := []Edge{{From: "orchestrator:aurora:wi-1", To: "orchestrator:" + peer + ":wi-7", Kind: DependsOnEdge}}
+	if len(edges) != len(want) || edges[0] != want[0] {
+		t.Fatalf("the state drew %+v, want the one cross-orchestrator dependency and nothing else", edges)
+	}
+
+	// The peer this machine runs rather than the database alone: the same
+	// reference, and the far end is the scope the document draws the peer in.
+	local := map[string]string{"aurora": "local:aurora", peer: "local:" + peer}
+	_, localEdges, err := orchestratorNodes("local:aurora", state, local)
+	if err != nil {
+		t.Fatalf("reading the state under a local scope: %v", err)
+	}
+	if len(localEdges) != 1 || localEdges[0] != (Edge{From: "local:aurora:wi-1", To: "local:" + peer + ":wi-7", Kind: DependsOnEdge}) {
+		t.Errorf("the local scope drew %+v, want its item waiting on the peer under the peer's own scope", localEdges)
+	}
+}
+
+// TestCrossOrchestratorDependencyFromAStoredState: the same edge read from the
+// nodes a daemon wrote, with the two orchestrators keyed as the read that
+// enumerated them keys them — the end-to-end shape I-ORCH's run draws, where
+// both ends of the edge are nodes of one document.
+//
+// It is gated on the two halves of D3208 this task does not carry, and it skips
+// rather than fails until they land: an orchestrator id of `<project>~<name>`
+// (CG1a) and a state whose own validator accepts a cross reference (CG3). The
+// skip is the honest state of the tree; the test is what says the two halves of
+// this edge meet when they are there.
+func TestCrossOrchestratorDependencyFromAStoredState(t *testing.T) {
+	const peer = "aurora~night"
+	waiting := orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion,
+		AgentID:       "aurora",
+		Role:          orchestrator.RoleOrchestrator,
+		WorkItems:     []orchestrator.WorkItem{item("wi-1", "wait on the other orchestrator", "acme/app", peer+"/wi-7")},
+	}
+	if _, err := orchestrator.EncodeState(orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion,
+		AgentID:       peer,
+		Role:          orchestrator.RoleOrchestrator,
+		WorkItems:     []orchestrator.WorkItem{item("wi-7", "the item the other waits on", "acme/app")},
+	}); err != nil {
+		t.Skipf("the store does not address a named orchestrator yet, so two orchestrators of one project cannot be written: %v", err)
+	}
+	if _, err := orchestrator.EncodeState(waiting); err != nil {
+		t.Skipf("a dependency on another orchestrator's item is not a document this release writes, so no node can carry the edge: %v", err)
+	}
+
+	peers := map[string]string{"aurora": "orchestrator:aurora", peer: "orchestrator:" + peer}
+	waiter := OrchestratorSource{ID: "aurora", Peers: peers,
+		Node: stateOf(t, "aurora", item("wi-1", "wait on the other orchestrator", "acme/app", peer+"/wi-7"))}
+	waited := OrchestratorSource{ID: peer, Peers: peers,
+		Node: stateOf(t, peer, item("wi-7", "the item the other waits on", "acme/app"))}
+	nodes, edges, _, err := waiter.Nodes()
+	if err != nil {
+		t.Fatalf("reading the orchestrator that waits: %v", err)
+	}
+	peerNodes, peerEdges, _, err := waited.Nodes()
+	if err != nil {
+		t.Fatalf("reading the orchestrator that is waited on: %v", err)
+	}
+	want := Edge{From: "orchestrator:aurora:wi-1", To: "orchestrator:" + peer + ":wi-7", Kind: DependsOnEdge}
+	if len(edges) != 1 || edges[0] != want {
+		t.Fatalf("the scope drew %+v, want %+v", edges, want)
+	}
+	if len(peerEdges) != 0 {
+		t.Errorf("the orchestrator that is waited on drew %+v, want no edge: an item nothing waits on has none", peerEdges)
+	}
+
+	// The two sources as one document, which is what a screen draws: the far end
+	// of the edge is a node of it, keyed the way that peer's own nodes are.
+	doc := Document{Version: DocumentVersion, Nodes: append(nodes, peerNodes...), Edges: edges}
+	if err := doc.Sanitise(); err != nil {
+		t.Fatalf("the document the two scopes filled is not fit to print: %v", err)
+	}
+	keys := map[string]bool{}
+	for _, n := range doc.Nodes {
+		keys[n.Key] = true
+	}
+	for _, e := range doc.Edges {
+		if !keys[e.From] || !keys[e.To] {
+			t.Errorf("the edge %+v has an end that is not a node of the document: %v", e, keys)
+		}
 	}
 }
 
@@ -851,7 +982,7 @@ func TestTheEndpointStreamFeedsTheWatch(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- LocalLive{Client: client, ID: "o1"}.Watch(ctx, func(s orchestrator.State, tick time.Time) error {
-			nodes, edges, err := orchestratorNodes("local:o1", s)
+			nodes, edges, err := orchestratorNodes("local:o1", s, nil)
 			if err != nil {
 				return err
 			}

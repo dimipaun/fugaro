@@ -6069,6 +6069,7 @@ Subcommands:
 - `fugaro orchestrator import` -- Load a plan's graph, or the one-time session dump, into the orchestrator
 - `fugaro orchestrator install` -- Install or re-render the login unit that runs the daemon
 - `fugaro orchestrator ls` -- List the installation's orchestrators
+- `fugaro orchestrator map` -- Print the project's active orchestrators
 - `fugaro orchestrator patch` -- Apply one typed patch document to the orchestrator's state
 - `fugaro orchestrator run` -- Run the project's orchestrator daemon in the foreground
 - `fugaro orchestrator state` -- Print the orchestrator's state: the generated summary of its live node
@@ -6233,6 +6234,55 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator map`
+
+Print the project's active orchestrators
+
+Print the orchestrators that are being driven right now: one node per
+orchestrator whose lease is fresh, the edges between them, and the
+coordinator's heartbeat. It is the read the console's Coordinator tab draws.
+
+An orchestrator nobody is beating is not a node with empty figures but no node
+at all: a node is on the map because a credential is driving it, and what a
+node carries is the principal its driver node names, how many of its items are
+still being worked, how many runs it has going and how long ago its holder last
+beat. Freshness, and that age, are measured against the database's own clock
+rather than this machine's (D1230).
+
+Two edges join two of those nodes. A dependency is one orchestrator's item
+waiting on another's, read from its depends_on and drawn from the one that waits
+to the one it waits on (D3208); an overlap is two orchestrators on the same
+work, which is a collision the coordinator stored or a pull request two of them
+have runs on, joined through the run id an item committed (D3211, D3222). Every
+edge joins two nodes of this document: an orchestrator nobody drives is not
+drawn, and neither is an edge to it.
+
+With the coordinator's sweep off for this project there is no heartbeat and no
+stored collision to read, and the health says so: the absence of an overlap edge
+then means nobody has looked, and never that nothing overlaps (F23).
+
+--json prints the document the console reads: its version, the project, when it
+was assembled, the nodes, the edges and the health. Without it, a short table.
+
+Exit codes: 1 for a project with no database, 2 for a failure of the database.
+
+Usage: `fugaro orchestrator map`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for map |
+| `--json` | bool | `false` | no | print the map document as JSON |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
