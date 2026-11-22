@@ -361,7 +361,7 @@ describe('the seats section', () => {
     expect(controls(section)).toHaveLength(0)
   })
 
-  it('draws every identity through its own door: a person redacted, a member whole, a reason in this module’s words', () => {
+  it('draws every identity through its own door: a person as itself, a member whole, a reason in this module’s words', () => {
     const { drawn: section } = drawnSection({
       ...ABOVE_THE_FLOOR,
       raw: A_SEATS_DOC,
@@ -369,14 +369,13 @@ describe('the seats section', () => {
       because: null,
     })
     // One row per person, in the order the document carried them, with the
-    // sources that named them. An address is drawn as the console's marker for
-    // one (`person`), never as itself.
+    // sources that named them. A person is drawn as the identity it names
+    // (D3213, 2026-11-21), an address included: who is over the floor is the
+    // question this section answers.
     expect(all(section, SEATS_PERSON_CLASS)).toHaveLength(3)
     const names = all(section, SEATS_PERSON_NAME_CLASS).map((cell) => cell.textContent)
-    expect(names).toEqual(['redacted@example.invalid', 'redacted@example.invalid', 'cyd'])
-    expect(drawn(section), 'an address reached the screen').not.toContain('ada@acme.example')
-    // A login is not an address: it is drawn whole, which is what the class
-    // says a person may be.
+    expect(names).toEqual(['ada@acme.example', 'bob@acme.example', 'cyd'])
+    expect(drawn(section)).toContain('ada@acme.example')
     expect(drawn(section)).toContain('cyd')
     expect(drawn(section)).toContain('launcher, requester')
     // The member the estimate lists and does not count is drawn as the label it
@@ -384,15 +383,15 @@ describe('the seats section', () => {
     // for why, never the document's code.
     const notCounted = all(section, SEATS_NOTCOUNTED_CLASS)
     expect(notCounted).toHaveLength(1)
-    // The row is drawn and not refused -- `person` would have refused this
-    // member outright, and the row it would have hidden is the one the ruling
-    // asks to be shown -- and the `label` it takes runs the free-text rules, so
-    // an address inside a member is the console's marker for one, exactly as
-    // free text is drawn everywhere else.
+    // The row is drawn and not refused -- `person` would refuse this member
+    // outright, because a group is not a person, and the row it would hide is
+    // the one the ruling asks to be shown -- and the `label` it takes draws the
+    // group's own address as the words it is (D3213), exactly as free text is
+    // drawn everywhere else.
     const member = one(section, SEATS_MEMBER_CLASS)
     expect(member.textContent).toContain('group:')
     expect(member.textContent).not.toBe('n/a')
-    expect(drawn(section), 'an address reached the screen').not.toContain('eng@acme.example')
+    expect(drawn(section)).toContain('group:eng@acme.example')
     expect(one(section, SEATS_WHY_CLASS).textContent).toBe(SEATS_WHY_WORDS['unknown_size'])
     expect(drawn(section)).not.toContain('unknown_size')
     // One sources cell per row, named as the document named them.
