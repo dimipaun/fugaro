@@ -543,3 +543,369 @@ func copyBundleSeed(t *testing.T) []byte {
 	t.Helper()
 	return []byte(config.AnthropicSecret + ": " + credsValue(t, "served") + "\n")
 }
+
+// copyEntryDoc is one entry of the bundle's document as the service's loader
+// reads it: the three fields a value is served with under the entry's own key,
+// and the copy's marker when the entry carries one (the zero Source is the entry
+// a person's own write leaves). It is spelled as the document spells it rather
+// than built through a writer, because what these tests put in front of the
+// decision is an entry that is already there.
+func copyEntryDoc(key, value, baseURL, auth string, marker credsvc.ProviderKeySource) string {
+	doc := key + ":\n  key: \"" + value + "\"\n  base_url: \"" + baseURL + "\"\n  auth: \"" + auth + "\"\n"
+	if !marker.IsZero() {
+		doc += "  source:\n    container: \"" + marker.Container + "\"\n    version: \"" + marker.Version + "\"\n"
+	}
+	return doc
+}
+
+// copyDecision is copyDecide over one document, read the way the stage reads it: the
+// document goes through the loader the SERVICE reads it with, so the two cannot
+// disagree about what an entry says.
+func copyDecision(t *testing.T, pair keyCopy, doc, value, version string) (copyRowState, string) {
+	t.Helper()
+	held, err := credsvc.ParseBundle([]byte(doc))
+	if err != nil {
+		t.Fatalf("the document this test puts in front of the decision is not one the loader reads: %v", err)
+	}
+	return copyDecide(held, pair, []byte(value), version)
+}
+
+// The decision's own table (copyDecide, R4, D3014): one named test per branch.
+// The stage's tests above pin four of the answers end to end — an entry written
+// where there was none, an entry already saying what the run would write, a
+// container that moved on since, and an entry the copy did not write — and the
+// tests below pin the branches those four do not reach, plus the two absences
+// the read answers with.
+
+// TestTheCopyWritesNothingUnderANameC1CannotRead: a name C1's rule cannot read
+// back is a name this tree built wrongly, and the loader refuses the WHOLE
+// document over it (the same strictness the guard exists for) — so the copy
+// leaves the pair alone and says so rather than writing under it or failing the
+// run over the copy's own mistake.
+func TestTheCopyWritesNothingUnderANameC1CannotRead(t *testing.T) {
+	pair := copyPair(t)
+	// The family's prefix with a half that is not a slug: not a name
+	// RepoCredentialKey builds, and therefore not one RepoCredentialByKey reads
+	// back.
+	pair.entry = credsvc.RepoCredentialPrefix + "Acme-Web--openrouter"
+	value := credsValue(t, "unreadable")
+
+	// The bundle as the loader reads it, holding an entry of another family
+	// and nothing under the pair's name: the name the decision is about is the
+	// pair's own, and the document never has to hold it for it to be judged.
+	state, why := copyDecision(t, pair, config.AnthropicSecret+": "+value+"\n", value, "1")
+	if state != copyLeft {
+		t.Errorf("a pair whose entry name C1 cannot read back answers %v, want left as it is: the loader refuses the whole document over such a name, so writing under it halts every caller of the service", state)
+	}
+	if !strings.Contains(why, pair.entry) || !strings.Contains(why, "not one C1's rule builds") {
+		t.Errorf("the line does not name the entry %s and the rule it fails: %q", pair.entry, why)
+	}
+	assertNoValue(t, why, value)
+}
+
+// TestTheCopyLeavesAnEntryThatSaysWhatTheContainerSays: an entry the copy did
+// not write — no marker at all — which already holds exactly what this run would
+// write is not replaced. There is nothing to write, and adding a version for it
+// would move the bundle on every run, which every reader of it — every run of
+// the project — would see change for nothing.
+func TestTheCopyLeavesAnEntryThatSaysWhatTheContainerSays(t *testing.T) {
+	pair := copyPair(t)
+	value := credsValue(t, "same")
+	doc := copyEntryDoc(pair.entry, value, pair.baseURL, pair.auth, credsvc.ProviderKeySource{})
+
+	state, why := copyDecision(t, pair, doc, value, "1")
+	if state != copyUnchanged {
+		t.Errorf("an entry a person wrote holding exactly what the container and the declaration say answers %v, want unchanged: a version written for it would move the document every run reads", state)
+	}
+	if !strings.Contains(why, pair.container) || !strings.Contains(why, "carries no marker") {
+		t.Errorf("the line does not name the container %s and that the entry carries no marker of this copy: %q", pair.container, why)
+	}
+	assertNoValue(t, why, value)
+}
+
+// TestTheCopyLeavesAnEntryCopiedFromAnotherContainer: the marker names a
+// container other than the one this run reads — an installation that moved a key
+// from one container to another holds one — so the entry is not this pair's, and
+// the copy does not overwrite it. It names both containers, which is the whole
+// of what a person reading the line needs to tell which move happened.
+func TestTheCopyLeavesAnEntryCopiedFromAnotherContainer(t *testing.T) {
+	pair := copyPair(t)
+	value := credsValue(t, "elsewhere")
+	doc := copyEntryDoc(pair.entry, value, pair.baseURL, pair.auth,
+		credsvc.ProviderKeySource{Container: "openrouter-key-old", Version: "1"})
+
+	state, why := copyDecision(t, pair, doc, value, "1")
+	if state != copyLeft {
+		t.Errorf("an entry whose marker names another container answers %v, want left as it is: it is not this pair's entry, whatever it holds", state)
+	}
+	for _, want := range []string{"openrouter-key-old", pair.container} {
+		if !strings.Contains(why, want) {
+			t.Errorf("the line does not name %s, and the two containers are how a person tells one move from another: %q", want, why)
+		}
+	}
+	assertNoValue(t, why, value)
+}
+
+// TestTheCopyDoesNotFollowAMarkerBackwards: the marker names a version the
+// container no longer holds and the container's newest version is OLDER than it
+// — a rotation since undone — so the entry stays as it is. Both versions are the
+// copy's own, and the entry's is the newer of the two: following the container
+// there would copy a retired value over the one the service is served.
+func TestTheCopyDoesNotFollowAMarkerBackwards(t *testing.T) {
+	pair := copyPair(t)
+	value := credsValue(t, "undone")
+	doc := copyEntryDoc(pair.entry, value, pair.baseURL, pair.auth,
+		credsvc.ProviderKeySource{Container: pair.container, Version: "4"})
+
+	state, why := copyDecision(t, pair, doc, value, "2")
+	if state != copyLeft {
+		t.Errorf("an entry copied from version 4 of a container that holds version 2 answers %v, want left as it is: the entry's version is the newer of the two", state)
+	}
+	for _, want := range []string{"version 4", "newer than"} {
+		if !strings.Contains(why, want) {
+			t.Errorf("the line does not say %q, which is how a person sees that the marker is ahead of the container: %q", want, why)
+		}
+	}
+	assertNoValue(t, why, value)
+}
+
+// TestTheCopyFollowsTheDeclarationUnderTheSameVersion: an entry the copy wrote
+// from the version the container still holds, whose two routing facts the
+// credential's own declaration has changed since, is written AGAIN with the
+// declaration's facts (F45, D1418: where a routed call goes and how the key is
+// sent are the config's and never a caller's). The value being the same is not
+// enough for the entry to be right, and this is the branch a copy that only
+// compared values would leave a run calling the old address.
+func TestTheCopyFollowsTheDeclarationUnderTheSameVersion(t *testing.T) {
+	value := credsValue(t, "declared")
+	h := newCopyRig(t, nil, value)
+	// The entry as the copy wrote it last time: the container it read and the
+	// version it read, and the two facts the declaration had then.
+	h.sm.Seed(h.bundle, map[string]string{gcp.LabelManaged: gcp.ManagedValue}, []byte(
+		copyEntryDoc(h.pair.entry, value, "https://previous.example.com/v1", providerAuthXAPIKey,
+			credsvc.ProviderKeySource{Container: h.pair.container, Version: "1"})))
+
+	status, err := h.check(t)
+	if err != nil {
+		t.Fatalf("the copy over an entry whose declaration moved failed: %v", err)
+	}
+	if status.State != initflow.Todo {
+		t.Errorf("the copy answers %v when the entry holds the address and the auth shape the declaration has changed since, want work to do: %+v", status.State, status)
+	}
+
+	oc, out, err := h.apply(t)
+	if err != nil {
+		t.Fatalf("the copy of a moved declaration failed: %v", err)
+	}
+	assertNoValue(t, out, value)
+	if !oc.Changed {
+		t.Errorf("the copy reports no change over an entry whose declaration moved: %+v", oc)
+	}
+	if n := h.adds(); n != 1 {
+		t.Errorf("the copy added %d version(s) of the bundle, want one: the entry is the copy's own and it no longer says what the declaration says\n%q", n, out)
+	}
+	if !strings.Contains(out, "declaration in the config has changed") {
+		t.Errorf("the run does not say the credential's own declaration moved, which is the whole of why it wrote: %q", out)
+	}
+	entry := h.entry(t)
+	if entry.BaseURL != h.pair.baseURL || entry.Auth != h.pair.auth {
+		t.Errorf("the entry holds %q/%q and the credential's declaration states %q/%q: the address and the auth shape are what every routed call on this key is sent with",
+			entry.BaseURL, entry.Auth, h.pair.baseURL, h.pair.auth)
+	}
+	if entry.Value() != value {
+		t.Errorf("the entry holds %d bytes and the container holds %d: the value did not land", len(entry.Value()), len(value))
+	}
+	if want := "1"; entry.Source.Version != want {
+		t.Errorf("the entry's marker names version %q of the container, want %q: the value was read from that version", entry.Source.Version, want)
+	}
+}
+
+// TestTheCopySaysNothingToCopyWithAContainerHoldingNoVersion: the pair's
+// container holds no version this run can read, so there is nothing to copy out
+// of it — and neither shape of that is a failure. A container nobody has created
+// is answered by Secret Manager with a 404 (the pair is one the installation
+// stage has just created, or one a config names and Terraform has not applied
+// yet), and a version somebody DISABLED deliberately is refused with a 400: the
+// bytes are there and retired, and a value an operator retired is not one the
+// copy may resurrect or report as this run's fault.
+func TestTheCopySaysNothingToCopyWithAContainerHoldingNoVersion(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		shape func(*testing.T, *copyRig)
+	}{
+		{"a container nobody has created", func(t *testing.T, h *copyRig) {
+			t.Helper()
+			pair := h.pair
+			pair.secretID = gcp.ProjectSecretID(initProjectName, "not-created")
+			withCopySources(t, pair)
+		}},
+		{"a container whose only version is disabled", func(t *testing.T, h *copyRig) {
+			t.Helper()
+			h.sm.DisableVersions(h.pair.secretID)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			value := credsValue(t, "absent")
+			h := newCopyRig(t, copyBundleSeed(t), value)
+			tc.shape(t, h)
+
+			status, err := h.check(t)
+			if err != nil {
+				t.Fatalf("a container with no version this run can read is this run's failure and not an answer: %v", err)
+			}
+			if status.State != initflow.Done {
+				t.Errorf("the copy answers %v when its container holds no version to read, want done: there is nothing a person finishes by hand", status.State)
+			}
+			if !strings.Contains(status.Detail, "no version to copy") {
+				t.Errorf("the line does not say the container had no version to copy out of it: %q", status.Detail)
+			}
+
+			oc, out, err := h.apply(t)
+			if err != nil {
+				t.Fatalf("the apply over a container with no version to read failed: %v", err)
+			}
+			assertNoValue(t, out, value)
+			if oc.Changed {
+				t.Errorf("the copy reports a change over a container holding no version this run can read: %+v", oc)
+			}
+			if n := h.adds(); n != 0 {
+				t.Errorf("the copy added %d version(s) of the bundle over a container it could read nothing out of, want none", n)
+			}
+		})
+	}
+}
+
+// TestTheCopySaysWhatItDidWithNothingToCopy: the pairs are enumerated by
+// copySources, which the provider-key and repository-key chunks of KS12 complete
+// — so what this release's copy may say when it was handed none is what the RUN
+// did, and not what the installation holds. A line claiming the installation
+// holds no model key outside the bundle is a statement about a read this release
+// does not make, and an owner who believed it would stop looking for the key a
+// run is no longer served.
+func TestTheCopySaysWhatItDidWithNothingToCopy(t *testing.T) {
+	h := newCopyRig(t, copyBundleSeed(t), credsValue(t, "nothing"))
+	withCopySources(t)
+
+	status, err := h.check(t)
+	if err != nil {
+		t.Fatalf("an installation the copy has nothing to do for got a failure: %v", err)
+	}
+	if status.State != initflow.Skipped {
+		t.Errorf("the copy answers %v with nothing to copy, want a skip", status.State)
+	}
+	if !strings.Contains(status.Detail, "nothing was copied") {
+		t.Errorf("the skip does not say what this run did, which is the one thing it knows here: %q", status.Detail)
+	}
+	if strings.Contains(status.Detail, "holds no model key") {
+		t.Errorf("the skip claims this installation holds no model key outside the bundle, and whether it does is what this release cannot yet read: %q", status.Detail)
+	}
+	if status.Undone {
+		t.Errorf("the copy reports work owed for an installation it was handed no pair for: there is nothing a person finishes by hand here (%+v)", status)
+	}
+}
+
+// TestTheCopyIsWrittenOnlyWhereTheServiceReadsWhatItWrites is the guard every
+// writer of the bundle goes through (refuseAnEntryTheServiceCannotRead, F22,
+// F26) read for every answer it can give to the COPY. The entry the copy writes
+// is one of C1's family, and a deployed service below repoCredentialSince
+// refuses the WHOLE document — halting every caller of it, coding runs included
+// — so the write is refused there and admitted wherever the document is one the
+// service reads. The guard is the same one `fugaro creds set` goes through
+// (creds_skew_test.go holds that writer's table); what is pinned here is that
+// the copy keeps the same rule, and that what decides is what is DEPLOYED and
+// not what an installation's own record says is coming.
+func TestTheCopyIsWrittenOnlyWhereTheServiceReadsWhatItWrites(t *testing.T) {
+	// asked is the guard over one installation, shaped before it is asked: the
+	// whole of what decides is the deployed service (the Cloud Run fake's) and
+	// the installation's own pin (the state directory's).
+	asked := func(t *testing.T, shape func(*runServiceSkew, *projectFixture)) error {
+		t.Helper()
+		f, _, svc := copyFixture(t)
+		lc, err := localcfg.Load(f.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shape(svc, f)
+		return refuseAnEntryTheServiceCannotRead(context.Background(), lc, repoCredentialFamily, repoCredentialSince)
+	}
+	// pinned writes the installation record `fugaro update` leaves: the image a
+	// service is coming at, for an installation with none deployed yet.
+	pinned := func(t *testing.T, rel string) {
+		t.Helper()
+		state := t.TempDir()
+		t.Setenv("XDG_STATE_HOME", state)
+		writeInstallationServiceImage(t, state, "proj-1234", rel)
+	}
+	refuses := func(t *testing.T, err error, wants ...string) {
+		t.Helper()
+		if err == nil || ExitCode(err) != ExitUserError {
+			t.Fatalf("the guard = %v, want a user error: the document it would let through halts every caller of the service", err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name %q, and naming it is the half a person acts on: %v", want, err)
+			}
+		}
+	}
+
+	t.Run("a service at the family's release is written", func(t *testing.T) {
+		err := asked(t, func(svc *runServiceSkew, _ *projectFixture) {
+			svc.deployedService(credentialsImage(repoCredentialSince), credentialsImage(repoCredentialSince))
+		})
+		if err != nil {
+			t.Fatalf("the guard refused a copy over a service at %s, which reads the family it writes: %v", repoCredentialSince, err)
+		}
+	})
+
+	t.Run("a service older than the family is refused", func(t *testing.T) {
+		err := asked(t, func(svc *runServiceSkew, _ *projectFixture) {
+			svc.deployedService(credentialsImage("0.18.0"), credentialsImage("0.18.0"))
+		})
+		refuses(t, err, credsvc.RepoCredentialPrefix, repoCredentialSince, "fugaro update")
+	})
+
+	t.Run("the release that decides is the one that serves", func(t *testing.T) {
+		err := asked(t, func(svc *runServiceSkew, _ *projectFixture) {
+			// A roll-out that never became ready: the template names a newer
+			// image and Cloud Run is still serving the old revision, which is
+			// the only reader the document has.
+			svc.deployedService(credentialsImage("0.28.0"), credentialsImage("0.18.0"))
+		})
+		refuses(t, err, "0.18.0")
+		if err != nil && strings.Contains(err.Error(), "0.28.0") {
+			t.Errorf("the refusal judged the template's image rather than the revision that serves the bundle: %v", err)
+		}
+	})
+
+	t.Run("a pin behind what serves does not decide", func(t *testing.T) {
+		err := asked(t, func(svc *runServiceSkew, _ *projectFixture) {
+			pinned(t, "0.18.0")
+			svc.deployedService(credentialsImage(repoCredentialSince), credentialsImage(repoCredentialSince))
+		})
+		if err != nil {
+			t.Fatalf("the guard judged the installation's pin over the service that is deployed and serving the bundle: %v", err)
+		}
+	})
+
+	t.Run("nothing serves the bundle and nothing is coming", func(t *testing.T) {
+		err := asked(t, func(*runServiceSkew, *projectFixture) {})
+		if err != nil {
+			t.Fatalf("the guard refused a copy on an installation with no service deployed and none recorded as coming, where there is no service to halt: %v", err)
+		}
+	})
+
+	t.Run("a pin below the family is refused", func(t *testing.T) {
+		err := asked(t, func(_ *runServiceSkew, _ *projectFixture) { pinned(t, "0.18.0") })
+		refuses(t, err, "0.18.0", "fugaro update")
+	})
+
+	t.Run("a pin carrying no release is refused", func(t *testing.T) {
+		err := asked(t, func(_ *runServiceSkew, _ *projectFixture) { pinned(t, "") })
+		refuses(t, err, "carries no release version", "fugaro update")
+	})
+
+	t.Run("a read that cannot be made is refused", func(t *testing.T) {
+		err := asked(t, func(svc *runServiceSkew, _ *projectFixture) { svc.serviceErr = true })
+		refuses(t, err, "the read of the service that serves this bundle failed", "fugaro update")
+	})
+}
