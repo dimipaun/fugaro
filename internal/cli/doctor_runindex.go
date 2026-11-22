@@ -28,13 +28,13 @@ import (
 // the document's own: a Reader merges the RTDB overlay in and so answers a
 // different question (D3202).
 //
-// The document absent, or the summary complete with a stamp inside the budget
-// database's own retention, is silence -- and that is the state of every
-// installation this release reaches, since nothing writes the summary until the
-// history job's fold and reindex land (RI4, RI5). It is why the fix may name
-// `fugaro runs reindex` while that command is newer than this file: the line
-// cannot be reached before the release that fills the summary, and the release
-// that fills it is the one that ships the command.
+// A document that is absent, or a summary that is complete with a stamp inside
+// the budget database's own retention, is silence -- and that is the state of
+// every installation this release reaches, since nothing writes the summary
+// until the history job's fold and reindex land (RI4, RI5). It is why the fix
+// may name `fugaro runs reindex` while that command is newer than this file:
+// the line cannot be reached before the release that fills the summary, and the
+// release that fills it is the one that ships the command.
 //
 // A read that did not answer is an info line carrying the unread marker, never
 // silence: whether the index is complete is then unknown, and "unknown" is not
