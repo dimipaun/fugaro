@@ -28,7 +28,8 @@
 #     pull request N>` — that run's id, found independently from
 #     `fugaro runs ls --pr N --json` (see step_pr_opened; the launcher's own
 #     answer is never taken as the evidence for it).
-#   o `fugaro review --pr <M> --unmet-pr` on a SECOND pull request, a Fugaro run
+#   o `fugaro review --pr <M>` — M named to THIS check as `--unmet-pr <M>`, which
+#     is no flag of `fugaro review` — on a SECOND pull request, a Fugaro run
 #     opened one whose head deliberately leaves out one item of its brief: that
 #     task is YOURS to arrange, because a pull request that misses an item of
 #     its brief is not something this script can make. Its review must list an
@@ -1231,9 +1232,10 @@ What the check will do, in this order:
      of its own — wait for its row to read terminal ('fugaro runs ls --json'), and
      read the line 'fugaro review show <run>' prints: it must be exactly
      'against: run <the run step 3 found>';
-  6. launch the SECOND review — 'fugaro review --pr <M> --json' with --unmet-pr <M> —
-     on the pull request whose head deliberately leaves out one item of its brief, and
-     read its artifact ('fugaro review show <run> --json'): it must list an issue with
+  6. launch the SECOND review, 'fugaro review --pr <M> --json' — M is this check's
+     --unmet-pr, no flag of 'fugaro review' — on the pull request whose head
+     deliberately leaves out one item of its brief, and read its artifact
+     ('fugaro review show <run> --json'): it must list an issue with
      scope 'unmet' and its verdict must be 'fix first'. Without --unmet-pr this
      reading is NOT taken and the row reads UNVERIFIED;
   7. launch the THIRD review, 'fugaro review --pr ${PR} --code-only --json', and read
