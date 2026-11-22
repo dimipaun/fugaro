@@ -2,8 +2,8 @@
 
 The spec ([spec.md](spec.md)) as amended against the code. **Where this document disagrees with
 the spec, this document wins.** Checked against `origin/main` at `dfe066618` on 2026-11-21. The
-owner (Dimi Paun) answered D3170–D3190 on 2026-11-21; D3174 and D3176 were amended the same
-day, the first after review round 1.
+owner (Dimi Paun) answered D3170–D3193 on 2026-11-21. Four answers were amended the same day: D3176 by the owner,
+and D3174, D3179 and D3190 after review, each confirmed by him.
 
 Modules, approved by the owner on 2026-11-21 (the capability map): `routing-table`, `pools`,
 `chain-serving`, `pause-resume`, `visibility`, `migration`. Every finding, decision and task
@@ -129,7 +129,8 @@ names one.
   D2970 serve only its owner's runs). That plan's D3141 (a project credential shadows the personal
   token), D3142 (used automatically), D3144 (exhausted, move to the shared entries) and D2974 (a
   missing personal token is refused, never a fall-through) are each a fixed answer to what the
-  chain now decides. → D3179, D3180.
+  chain would decide. → D3179 (amended after review: personal pools live in the project, so that
+  plan is left as it is), D3180.
 - **F16 (Rule).** D2976: "a run launched by a service account (the coordinator, the
   orchestrator) never holds a personal token". The spec gives such a run a pool of its own.
   → D3181.
@@ -176,7 +177,9 @@ names one.
 - **F26 (Exists, Rule).** A paid fallback is already money against the caps (D140), and D152
   requires `credentials.fallback: auto` with `budget.mode: enforce` and a per-run cap before a
   subscription run may reach a key. `credentials.wait_threshold` (D153) decides wait-or-switch.
-  A chain says both things in its own order. → R4, R17.
+  A chain says the first in its own order. It does not say the second: a `fallback: auto`
+  project waits up to 15 minutes for a reset before it pays, and a strict chain pays at once.
+  → R4, R17, D3192.
 - **F27 (Gap).** No "fallback" mark exists in the run record. `StageTiming.Credential` names one
   credential per stage; nothing says whether it was the chain's first source. → D3188.
 
@@ -249,12 +252,16 @@ names one.
 
 ### Found by review round 1
 
-- **F46 (Gap, migration).** A grade is a second place a repository names a credential:
-  `model_grades.<grade>.access` (`internal/config/scope.go`, the `grade` command in
-  `internal/cli/accounts_craft.go`). It is retired with craft access. → MG1, MG4, X2.
-- **F47 (Gap, chain-serving).** A run calls models that are not a craft's: the pinned background,
-  vision and diagnose models (`internal/config/pins.go`) and a grade's model. Shared project
-  jobs (`internal/runner/projectjob.go`), the review job (`internal/credsvc/review.go`) and the
+- **F46 (Exists, migration).** A grade is a second place a repository names a credential:
+  `model_grades.<grade>.access` (the `grade` command in `internal/cli/accounts_craft.go`). It,
+  `agent.auth`, craft access and `agent.oauth_token` are already retired rows in
+  `internal/config/scope.go` (credentials-belong-to-models CM3); their notes send the reader to a
+  craft's access and must now name the table. → MG1, MG4, MG5, X2.
+- **F47 (Gap, chain-serving).** A run calls models that are not a craft's: the rungs
+  (`craft.ModelRungs`) also choose by the task's grade, a level's model, a pinned role of
+  `agent.models` (coder, reviewer, background, vision; `internal/config/pins.go`) and
+  `agent.model`, and `--model` overrides them. Shared project jobs
+  (`internal/runner/projectjob.go`), the review job (`internal/credsvc/review.go`) and the
   diagnose agent (`internal/diagnoseagent/creds.go`) also reach a model by account or auth mode.
   Each needs an entry and the same path. → R22, RT3, CS10, CS13.
 - **F48 (Gap, migration).** A named account derives a job, an account and a secret of its own
@@ -267,9 +274,11 @@ names one.
 - **F50 (Rule, all).** `website/content/cli-reference.md` is pinned to every command and flag
   (`TestCliReferenceNamesEveryCommandAndFlag`), so every task that adds one writes that file and
   the plan orders them.
-- **F51 (Rule, pools).** Workspace-credentials D2970 chose the workspace's own grant route as the
-  launcher the workspace can trust, because a database admin can forge a project slip. A personal
-  pool therefore cannot be served on a project slip's word. → R7, R8.
+- **F51 (Rule, pools).** A project database admin can forge a project slip (D1943 of
+  secrets-brokering's dynamic delivery), which is why workspace-credentials D2970 gave the
+  workspace its own grant route. With personal pools in the project (D3179 as amended), a
+  person's pool rests on the project slip, as every per-user secret of a project does today. That
+  is an accepted risk of the project, said in `SECURITY.md` (DOC1). → R7, R8, R23.
 - **F52 (Rule, pause-resume).** Launcher-does-not-mint D3136 lets the issuer serve the
   orchestrator only an attempt on its own record. A resume derived from a record a job wrote
   would widen that. → D3189, R19.
@@ -277,6 +286,30 @@ names one.
   `timeouts.total` and a subscription call is notional. → D3190.
 - **F54 (Gap, visibility).** The console's status set is closed; what a release-behind console
   does with `paused` is not known. → O8, PR7.
+
+### Found by review round 2
+
+- **F55 (Rule, pools).** A chain cannot span two services. The workspace plan fixes one model
+  route per run (workspace-service D2989; workspace-credentials D3141, "it follows the route"),
+  its service refuses a project slip, and the project's service cannot read a workspace value.
+  "Launcher's pool, then shared pool, then key" with the first at the workspace and the rest in
+  the project has no design. → D3179 (amended).
+- **F56 (Rule, chain-serving).** A call an agent builds itself and posts straight to the service
+  is served under the policy's rules and is not counted against the run's cap: the service does
+  not price, reserve or settle (`SECURITY.md`, D3003). So "the service calls Vertex" caps Vertex
+  exactly as far as a key is capped, and while a job's account still holds the Vertex permission
+  the direct route of F23 stays open. → D3174 (amended again), R23, CS11, X8.
+- **F57 (Rule, chain-serving).** A release-behind gateway decodes the service's refusal strictly
+  (`DisallowUnknownFields` in `internal/gateway/service.go`) and strips response headers by an
+  explicit list (`dropResponseHeaders`). `fugaro update` deploys the service at once and job
+  images lag, so a new member would halt an older run and a new header would reach its agent.
+  → R24, CS1.
+- **F58 (Wrong, chain-serving).** The spec's `gemini-* → Vertex` does not run on what exists:
+  the Vertex path speaks Anthropic's publisher only, with the model in the URL path
+  (`internal/gateway/vertex.go`), and the spelling map holds Claude ids only. → D3193, CS4, GV1
+  to GV4.
+- **F59 (Rule, pause-resume).** A resume is launched by the orchestrator's service account and
+  must draw on a person's pool, against D2976 as written. → D3191.
 
 ### Completeness of the spec
 
@@ -296,13 +329,13 @@ All answered by the owner on 2026-11-21.
 | D3171 | routing-table | Keep a different credential for two crafts on one model (D3068)? | Drop it: one chain per model | **As recommended.** Per-stage accounts and the mix are retired; `update` folds them into one pool |
 | D3172 | routing-table | Precedence when several patterns match (the spec's open question) | The existing grammar; the most specific wins (exact beats prefix, longer prefix beats shorter); identical patterns refused | **As recommended** |
 | D3173 | routing-table | What becomes of `routing.claude.via` and a provider's `models` | The table replaces `via`; a provider's `models` stays as what it can serve | **As recommended** |
-| D3174 | chain-serving | A chain naming Vertex on an `enforce` project | Cap Vertex in this plan, so it is an ordinary paid source | **As recommended** when first asked. **Amended after review, and confirmed by the owner on 2026-11-21:** the premise that the gateway can cap Vertex was wrong (F23: the job's account can call Vertex itself). The intent is kept and the caller changes: the credentials service calls Vertex on its own identity, as it serves a key, and the job's account loses the Vertex permission in release 2. Amends D3066 |
+| D3174 | chain-serving | A chain naming Vertex on an `enforce` project | Cap Vertex in this plan, so it is an ordinary paid source | **As recommended** when first asked. **Amended after review round 1, confirmed by the owner:** the gateway cannot cap Vertex on the job's identity (F23), so the credentials service calls Vertex on its own identity, as it serves a key. Amends D3066. **Amended after review round 2, confirmed by the owner:** Vertex is then capped as far as a key is and no further (F56); a hand-built call straight to the service is the same accepted risk as for a key (D3003), and a job's account loses its Vertex permission in release 1 wherever no run in flight can hold it (an `enforce` project), in release 2 elsewhere |
 | D3175 | chain-serving | May the service rewrite the `model` field when a call moves down the chain? | Yes, from a checked-in map extended to Vertex; an unmapped source is refused at validation; a written downgrade is the same rewrite | **As recommended** |
 | D3176 | pools | `fugaro run --token` (D3069) | Retire it; `update` wraps each lone account in a pool of one | **As recommended** when first asked: retire it. **Amended by the owner, 2026-11-21**, in his words: "Maybe --token should become --pool, wdyt?" So: `--token` is rejected with a fix naming `--pool`, and `fugaro run --pool <name>` makes "the launcher's pool" resolve, for that run, to the named pool the launcher owns or is allowed on. The chain is unchanged; the flag is refused where no chain of the run's models names the launcher's pool; the service checks the entitlement; a resumed run keeps the pool its launch named. Reverses D3069 |
 | D3177 | pools | The `subscription_spread` switch | Retire it | **As recommended.** The owner's to confirm as to the provider's terms; answered. Reverses D1622 and D1636 |
 | D3178 | pools | The usage-threshold rule | Behind an owner-run check; round robin and fixed order ship now | **As recommended** |
-| D3179 | pools | Where personal pools live | On workspace-credentials; its D3141, D3142, D3144 and D2974 amended by a documents task | **As recommended** |
-| D3180 | pools | The launcher has designated no pool | Skip to the next source, flagged as a fallback; a chain of only the launcher's pool is refused with the fix | **As recommended.** Amends D2974 |
+| D3179 | pools | Where personal pools live | On workspace-credentials; its D3141, D3142, D3144 and D2974 amended by a documents task | **As recommended** when first asked: at the workspace. **Amended after review round 2, by the owner's answer to the question it raised: in the project.** A chain cannot span two services (F55), so a personal pool uses the project's per-user containers and one service walks the whole chain. Cost, as told to him: a person stores tokens once per project, and a project database admin can forge a grant, as for any project secret today. Workspace-credentials is left unchanged |
+| D3180 | pools | The launcher has designated no pool | Skip to the next source, flagged as a fallback; a chain of only the launcher's pool is refused with the fix | **As recommended.** (First recorded as amending D2974; with D3179 amended it touches no decision of the workspace plan) |
 | D3181 | pools | A service account's pool | A project pool owned by that principal, filled by an admin; a resumed or reissued run keeps its original launcher's pool | **As recommended.** D2976 stands |
 | D3182 | routing-table | Per-repository admission | Keep it, written in the project, for every source kind | **As recommended.** Nothing moves on upgrade |
 | D3183 | migration | Whose pools existing accounts become | The shared pool, same members and order; each person moves their own token later | **As recommended.** Not per-user on day one |
@@ -311,11 +344,13 @@ All answered by the owner on 2026-11-21.
 | D3186 | pause-resume | Who starts the fresh job | The resident orchestrator; a project without it fails fast with the fix | **As recommended** |
 | D3187 | pause-resume | The default maximum wait | 6 hours | **As recommended** |
 | D3188 | visibility | What the console shows (the spec's open question) | The source per step, a fallback badge, the switch log with reason and cache cost, the paid amount spent on fallback, and a pools screen | **As recommended** |
-
 | D3189 | pause-resume | May the issuer serve the orchestrator a resume, which is not an attempt on its own record (D3136)? | Yes, for a pause the credentials service itself recorded | **As recommended** (asked after review round 1). Widens D3136 by that one case |
-| D3190 | pause-resume | What bounds repeated pauses of one chain | Three pauses per chain | **Not the recommendation: total paused time only.** A chain's paused time may not pass `pause.max_pause`; there is no count |
+| D3190 | pause-resume | What bounds repeated pauses of one chain | Three pauses per chain | **Not the recommendation: total paused time only.** A chain's paused time may not pass `pause.max_pause`; there is no count. **Amended after review round 2, by the owner's answer:** a pause is never shorter than `pause.min_pause` (30 minutes by default), so at most 12 resumes in the default 6 hours |
+| D3191 | pause-resume | A resume is launched by a service account but must draw on a person's pool (D2976) | A resume is still the person's run | **As recommended.** D2976 is amended by that one case |
+| D3192 | migration | A `fallback: auto` project waits up to 15 minutes before paying; a strict chain pays at once | Pay at once; `update` says so | **As recommended** |
+| D3193 | chain-serving | Non-Claude models on Vertex (the spec's `gemini-*` example) | Out of this plan | **Not the recommendation: add Gemini on Vertex.** The service translates to and from Vertex's Google-publisher wire (GV1 to GV4) |
 
-D3191–D3199 are reserved and unused.
+D3194–D3199 are reserved and unused.
 
 ## Resolutions
 
@@ -341,21 +376,22 @@ One defensible answer each; stated, not asked.
   number on the pool (D3178).
 - **R6 (pause-resume).** The paused mark lives in the Realtime Database, with the durable record
   in the runs bucket. Not Firestore (D136 stands).
-- **R7 (pools).** "The launcher" is a verified principal and never display text
-  (`requested_by`, `launched_by`). For a project pool it is the principal on the run's slip: a
-  person's Google subject or a verified service account. For a personal pool it is the person
-  the workspace's own grant names (D2970 stands, F51): a project slip is never enough for one.
+- **R7 (pools).** "The launcher" is the verified principal on the run's slip (a person's Google
+  subject, or a verified service account) and never display text (`requested_by`,
+  `launched_by`). A personal pool is served on that slip, as a per-user secret is today (F51).
 - **R8 (pause-resume).** The launcher of a paused run, and the pool its launch named, are the
-  service's own record of the run's grant (the workspace's, for a personal pool), and the resumed
-  run is bound to them. The job's word about who launched it is never read.
+  service's own record of the run's grant, and the resumed run is bound to them (D3191). The
+  job's word about who launched it is never read.
 - **R9 (pools).** Contributing a token to the shared pool is the token holder's own command,
   from their own session. Nobody contributes another person's token; an admin can remove one.
 - **R10 (pause-resume).** A hotfix run never pauses and never waits: when every source is
-  exhausted it halts with `HaltNoCredential`. The rule is the runner's, which knows the mode.
-- **R11 (pause-resume).** Two new project settings under one new top-level policy key, `pause`
+  exhausted it halts with `HaltNoCredential`. This one rule is the runner's, which knows the
+  mode; every other choice between waiting, pausing and halting is the service's (R19).
+- **R11 (pause-resume).** Three new project settings under one new top-level policy key, `pause`
   (F49): `pause.wait_in_job` (default 5 minutes; a reset nearer than this is waited out in the
-  job, D3184) and `pause.max_pause` (default 6 hours, D3187, which also bounds a chain's total
-  paused time, D3190). A reset between the two suspends; one beyond `max_pause` halts at once.
+  job, D3184), `pause.min_pause` (default 30 minutes; a pause is never shorter, D3190) and
+  `pause.max_pause` (default 6 hours, D3187, which also bounds a chain's total paused time). A
+  reset beyond `max_pause` halts at once.
 - **R12 (pause-resume).** Paused time counts against no timeout: each execution has its own
   `timeouts.total`. The budget carries along the chain as it does today (D1045–D1047), and the
   suspended execution releases its lease on exit.
@@ -389,9 +425,18 @@ One defensible answer each; stated, not asked.
   reader: the table, the admissions and the pools in their new shape travel under one new
   top-level policy key; a pool's principal and rule are new members, and `owner` keeps its
   meaning (F49).
-- **R22 (chain-serving).** "A model a run can call" means every craft's model, every pinned
-  role's and every grade's (F47). Each needs an entry; a run or a project job whose model has
-  none is refused at launch, not mid-run.
+- **R22 (chain-serving).** "A model a run can call" means every model the rungs can choose and a
+  `--model` override (F47). Each needs an entry; a run or a project job whose model has none is
+  refused at launch, not mid-run.
+- **R23 (chain-serving).** Two residual risks are accepted and said in `SECURITY.md`, not hidden
+  behind the word "capped": a hand-built call straight to the service is served under the
+  policy's rules and escapes the run's cap, for Vertex as for a key (D3003, F56); and a project
+  database admin can forge a slip, a designation or a paused node, as for any project state
+  (D1943, F51).
+- **R24 (chain-serving).** The service sends a new answer member or header only to a caller that
+  sent the stage header, so a release-behind gateway meets exactly today's answer (F57).
+- **R25 (migration).** Release 2 removes published policy members, so it bumps the policy's
+  format version, behind the image-age gate, and `update` migrates the node in place.
 
 ## What this changes in other plans
 
@@ -401,8 +446,10 @@ One defensible answer each; stated, not asked.
   drafted. Reversed or amended: D3060 (access per craft), D3068 (per-stage accounts), D3069
   (`--token`, now a narrow `--pool`), D3064 (the cascade pool becomes the shared pool and the generated chain). The
   task-by-task table is in the plan; its first task amends that plan's documents.
-- **workspace-credentials** (D3179, D3180). D3141, D3142, D3144 and D2974 are amended; D2970 and
-  D2976 stand. A documents task of this plan amends that plan.
+- **workspace-credentials.** Unchanged (D3179 as amended). Its D2976 is amended by one case in
+  a project: a run that resumes a person's paused run draws on that person's pool (D3191). A
+  documents task of this plan (A2) notes it there and in secrets-brokering's dynamic delivery.
+- **workspace-service.** D2989 (no fall-through between services) stands.
 - **keys-through-service.** Serving every key from the service is what the chain needs and is
   unchanged. Its Check 50 gates OpenRouter for Claude (R3).
 - **credentials-service.** D138 is replaced for waits beyond the floor (D3184); C3.1 is
@@ -436,9 +483,13 @@ None. No two answers pull against each other.
   go. CS11 leaves it; retiring it with `agent.auth` in release 2 needs that go.
 - **O8.** What a release-behind console does with the status `paused` (F54). PR7 tests it and,
   if that parser refuses the word, bumps the version of the formats that carry a status.
-- **O9.** D3190 was answered against the recommendation: there is no count of pauses.
-- **O10.** The workspace plan's store is not built. PL9 (a personal pool as a set of tokens with
-  a rule) assumes it can hold one; if it cannot, the contract change R-designation is raised.
+- **O9.** D3190 was answered against the recommendation: there is no count of pauses. With the
+  minimum pause he then added, one chain resumes at most 12 times in the default 6 hours.
+- **O10.** Withdrawn: personal pools no longer rest on the workspace plan's store (D3179).
+- **O11.** D3193 was answered against the recommendation. Whether the agent's harness works
+  acceptably on a Gemini model through a translated wire is not known (U8); GV4's end-to-end test
+  and Check 876 are what will say.
+- **O12.** Review round 2's fixes are the last commit before round 3.
 
 ## UNVERIFIED
 
@@ -453,3 +504,7 @@ None. No two answers pull against each other.
   credentials-belong-to-models) was not re-read symbol by symbol at `dfe066618`.
 - **U7.** Whether a limit found inside a streamed answer can be retried at all. Today it is not
   (F21); the plan keeps that and the step's next call moves on.
+- **U8.** Vertex's Google-publisher request and answer for a Gemini model, and how faithfully
+  tool calls and streaming map to what the agent's harness expects. Not in this repository.
+  Settled by the provider's current documentation, which GV1 and GV2 cite field by field, and by
+  the owner's run of Check 876.

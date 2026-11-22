@@ -17,12 +17,12 @@ supersedes the last one's craft access (D3170).
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec, as received from the owner on 2026-11-21. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: the capability map (six modules), assumptions A1–A9, findings F1–F54, decisions D3170–D3190 with the owner's answers, resolutions R1–R22, open items O1–O10, UNVERIFIED U1–U7 (U2 withdrawn). **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contracts C1 to C3, documents tasks A1 to A3, 61 tasks in six modules, integrations I1 and I2 (69 runs over two releases, and three contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 870 to 875 |
+| [reconciliation.md](reconciliation.md) | The amended spec: the capability map (six modules), assumptions A1–A9, findings F1–F59, decisions D3170–D3193 with the owner's answers, resolutions R1–R25, open items O1–O12, UNVERIFIED U1–U8 (U2 withdrawn). **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Contracts C1 to C3, documents tasks A1 to A3, 70 tasks in six modules, integrations I1 and I2 (78 runs over two releases, and three contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 870 to 876 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
-**Numbers reserved:** decisions **D3170–D3199** (D3170–D3190 used), checks **870–879** (870 to
-875 used). Read on 2026-11-21: the highest decision on `main` was D3160, in the block
+**Numbers reserved:** decisions **D3170–D3199** (D3170–D3193 used), checks **870–879** (870 to
+876 used). Read on 2026-11-21: the highest decision on `main` was D3160, in the block
 D3160–D3169 of managed-flag-ergonomics, which also holds checks 860–869; no diff of the open
 pull requests wrote a decision at or above D3170 or a check at or above 870.
 
@@ -31,18 +31,20 @@ pull requests wrote a decision at or above D3170 or a check at or above 870.
 owner's that supersedes part of it, so it has its own folder, and the plan's first task (A1)
 writes into that folder what this one replaces.
 
-**Owner answers of 2026-11-21:** D3170–D3190. Nineteen were answered as recommended and two were
-not: D3184 (a short wait inside the job is kept under a floor, where the recommendation was
-always to suspend) and D3190 (a chain's pauses are bounded by total paused time, not by a count).
-Two were amended the same day: D3176 by the owner (`--token` becomes a narrow `--pool` instead of
-going) and D3174 after review round 1, confirmed by the owner (the credentials service calls
-Vertex itself, because a cap in the job's gateway cannot bind an agent that holds the job's
-identity). D3189 and D3190 were asked after that round. The answers that reverse or amend an
-earlier ruling say so in their row or in "What this changes in other plans": D3170 and D3171
-(D3060 and D3068 of credentials belong to models), D3174 (D3066), D3175 (D1637), D3176 (D3069),
-D3177 (D1622 and D1636 of model crafts), D3179 and D3180 (D3141, D3142, D3144 and D2974 of
-workspace credentials), D3183 (D3064), D3184 (D138 of the credentials service) and D3189 (D3136
-of launcher does not mint). The capability map was approved the same day.
+**Owner answers of 2026-11-21:** D3170–D3193. Twenty-one were answered as recommended and three
+were not: D3184 (a short wait inside the job is kept under a floor, where the recommendation was
+always to suspend), D3190 (a chain's pauses are bounded by total paused time, not by a count)
+and D3193 (Gemini on Vertex is added, where the recommendation was to leave it out). Four were
+amended the same day, each by the owner's own answer: D3176 (`--token` becomes a narrow `--pool`
+instead of going); D3174, twice after review (the credentials service calls Vertex itself, and
+Vertex is then capped as far as a key is and no further); D3179 after review (personal pools
+live in the project, not at the workspace); and D3190 after review (a minimum pause of 30
+minutes). The answers that reverse or amend an earlier ruling say so in their row or in "What
+this changes in other plans": D3170 and D3171 (D3060 and D3068 of credentials belong to
+models), D3174 (D3066), D3175 (D1637), D3176 (D3069), D3177 (D1622 and D1636 of model crafts),
+D3183 (D3064), D3184 (D138 of the credentials service), D3189 (D3136 of launcher does not mint)
+and D3191 (D2976 of workspace credentials, by one case). The capability map was approved the same
+day.
 
 **Review round 1** (a fresh independent reviewer) confirmed about 60 code claims and found that a
 gateway cap cannot bind Vertex on the job's identity (F23, so D3174 was amended), that a personal
@@ -52,15 +54,23 @@ that nothing bounded repeated pauses (F53, D3190). It added F46 to F54, six task
 CS12, CS13, CK2, X6), an ordering of every writer of the pinned CLI reference, and tests for
 each trust boundary it probed.
 
+**Review round 2** (another fresh reviewer) confirmed the graph, the counts and the quoted
+decisions, and found that a chain cannot span the project's and the workspace's services (F55,
+so D3179 was amended and the plan no longer waits on workspace credentials), that a hand-built
+call escapes the run's cap for Vertex as for a key (F56, D3174 amended again, R23), that a
+release-behind gateway would choke on a new answer member (F57, R24), that the spec's Gemini
+example could not run (F58, D3193) and that a resume crossed D2976 (F59, D3191). It added F55
+to F59, nine tasks (CS14, PR10, PR11, GV1 to GV4, X7, X8) and D3191 to D3193.
+
 **What it changes in the plans before it** (reconciliation, "What this changes in other plans"):
 every not-merged task of credentials belong to models is withdrawn and carried by a task here,
-and its contract C1 (draft #3460) is withdrawn; four decisions of workspace credentials are
-amended; D138, D152 to D154 of the credentials service are replaced, re-keyed or amended; D3136
+and its contract C1 (draft #3460) is withdrawn; workspace credentials is unchanged but for one
+case of D2976; D138, D152 to D154 of the credentials service are replaced, re-keyed or amended; D3136
 of launcher does not mint is widened by one case. None
 of those plans' own documents is edited by this pull request: the plan's tasks A1, A2 and A3 do
 it.
 
 **What a reader should not take from here:** no task is approved; each needs the owner's go by
 name. The withdrawn tasks of credentials belong to models are stopped by the owner, by hand,
-before any launches (O1). Release 2 (X1 to X6) is not launched before release 1 is cut. Checks
-870 to 875 are owner-run.
+before any launches (O1). Release 2 (X1 to X8) is not launched before release 1 is cut. Checks
+870 to 876 are owner-run.
