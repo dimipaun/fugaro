@@ -24,15 +24,20 @@
 # prints before you type.
 #
 # Usage:      bash scripts/live-checks/check640-queue-probe.sh \
-#               [--project <name>] [--dry-run]
+#               [--project <name>] [--suffix <word>] [--dry-run]
 #             --project  the project whose orchestrator is written (default
 #                        `fugaro`); `belong` is refused by name.
+#             --suffix   a word (a-z0-9, 1 to 12 characters) appended to the item
+#                        id as `-<word>`: chk640-probe-20261122-b. The id is one
+#                        per day, and an item that has left `queued` is spent, so
+#                        a second probe of the same day needs a suffix. A suffix
+#                        whose id is already in the state and spent is refused.
 #             --dry-run  reads the state and prints the item, its digest and the
 #                        two patches' shape; it writes nothing.
 #             Run it from a checkout of Fugaro's own repository (it runs
 #             `go run ./scripts/orchdigest`).
 # Needs:      bash, mktemp, python3, go, fugaro.
-# Costs:      nothing from this script. The task it queues is one trivial run
+# Costs:      nothing from this script. The task it queues is one small run
 #             once the daemon launches it; the gateway enforces the run's cap
 #             and the brief names none.
 # Runs:       by YOU, at your own terminal. An agent session (CLAUDECODE and the
@@ -41,8 +46,12 @@
 # Cleanup:    its scratch directory (mode 0700, patch files mode 0600) is
 #             removed on exit, Ctrl-C included. A re-run is safe: the item id is
 #             one per day, and an upsert that changes nothing changes nothing.
+#             A re-run whose id is already spent (the item left `queued`) is
+#             refused, and says to pass --suffix.
 # Then:       run `bash scripts/live-checks/check640.sh --installation fugaro`
-#             once the daemon has launched the item (a few minutes).
+#             once the daemon has launched the item (a few minutes) and WHILE it
+#             is `running`: a run that ends first leaves only the settled rows
+#             measurable.
 #
 # No secret is read or printed: every value here is a project name, an item id,
 # a revision or a digest.
@@ -63,6 +72,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$here/../.." && pwd)
 
 PROJECT=${CHECK640_PROBE_PROJECT:-fugaro}
+SUFFIX=${CHECK640_PROBE_SUFFIX:-}
 DRY_RUN=${CHECK640_PROBE_DRY_RUN:-no}
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -73,6 +83,15 @@ while [ $# -gt 0 ]; do
     ;;
   --project=*)
     PROJECT=${1#--project=}
+    shift
+    ;;
+  --suffix)
+    [ $# -ge 2 ] || die "--suffix needs a word"
+    SUFFIX=$2
+    shift 2
+    ;;
+  --suffix=*)
+    SUFFIX=${1#--suffix=}
     shift
     ;;
   --dry-run)
@@ -96,6 +115,11 @@ done
 case "$(printf '%s' "$PROJECT" | tr '[:upper:]' '[:lower:]')" in
 belong) die "the project 'belong' is refused by name: this probe is for the dogfood installation" ;;
 esac
+case "$SUFFIX" in
+"") ;;
+*[!a-z0-9]*) die "the suffix '$SUFFIX' must be only a-z and 0-9" ;;
+*) [ "${#SUFFIX}" -le 12 ] || die "the suffix '$SUFFIX' is over 12 characters" ;;
+esac
 case "$PROJECT" in
 "" | *[!a-zA-Z0-9._-]*) die "the project name '$PROJECT' is not a name" ;;
 esac
@@ -112,12 +136,17 @@ umask 077
 
 DAY=${CHECK640_PROBE_DATE:-$(date +%Y%m%d)}
 ITEM_ID="chk640-probe-$DAY"
+[ -z "$SUFFIX" ] || ITEM_ID="$ITEM_ID-$SUFFIX"
 TITLE="Check 640 probe: one tiny docs fix"
 REPO="dimipaun/fugaro"
 RECIPE="default"
-TIER="trivial"
+# small, not trivial: the trivial tier expects $0.25 and a run that passes it
+# halts `expected_exceeded` before the check can read the running label. Small
+# expects $1 and 30 minutes, the smallest tier that lets a one-line docs run
+# with a reviewer finish.
+TIER="small"
 SPEC="forge-labels"
-BRIEF="Fix one true typo, or add one clarifying sentence, in docs/forge-labels/implementation-plan.md. Keep it tiny: one line of the file, no other file, no reformatting. If you find no true typo, add one sentence that states a fact the file already implies. This task exists only so that a pull request is opened and labelled."
+BRIEF="Change exactly one line of docs/forge-labels/implementation-plan.md: fix one true typo, or, if you find none, add one sentence that states a fact the file already implies. Exactly one line changes, no other file, no reformatting. This task exists only so that a pull request is opened and labelled."
 
 read_rev() { # read_rev FILE: the state's revision, read from the live node
   local out=$SCRATCH/state.json
@@ -130,6 +159,23 @@ if not isinstance(rev, int) or isinstance(rev, bool) or d.get("source", "node") 
     sys.exit(1)
 print(rev)
 PY
+}
+
+refuse_spent() { # refuse_spent: an item of this id that left queued is spent
+  local phase
+  phase=$(python3 - "$SCRATCH/state.json" "$ITEM_ID" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for it in d.get("items") or []:
+    if isinstance(it, dict) and it.get("id") == sys.argv[2]:
+        print(it.get("phase") or "unknown")
+        break
+PY
+  ) || die "the state's items could not be read, so nothing was written"
+  case "$phase" in
+  "" | queued) ;;
+  *) die "the item $ITEM_ID is already in the state in phase $phase, so it is spent and a new run needs a new id: pass --suffix <word> (a-z0-9, up to 12 characters) that makes an id not in the state" ;;
+  esac
 }
 
 write_upsert() { # write_upsert REV FILE
@@ -155,6 +201,7 @@ PY
 }
 
 REV=$(read_rev)
+refuse_spent
 say "project $PROJECT, state revision $REV"
 UPSERT=$SCRATCH/upsert.json
 write_upsert "$REV" "$UPSERT"

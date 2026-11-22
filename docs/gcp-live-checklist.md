@@ -21725,14 +21725,25 @@ bash scripts/live-checks/check640.sh --installation fugaro
 approved task of its own. `bash scripts/live-checks/check640-queue-probe.sh` (its test:
 `scripts/live-checks/check640-queue-probe_test.sh`) queues that task with one command run at **your**
 terminal: it reads the state's revision, upserts a docs-only probe item (`chk640-probe-<date>`, repository
-`dimipaun/fugaro`, recipe `default`, spec `forge-labels`, a brief asking for one true typo or one clarifying
-sentence in `docs/forge-labels/implementation-plan.md`; no cap is named, the gateway enforces it), computes the
+`dimipaun/fugaro`, recipe `default`, rigor `small`, spec `forge-labels`, a brief asking for exactly one changed line
+in `docs/forge-labels/implementation-plan.md`; no cap is named, the gateway enforces it), computes the
 item's spec digest with `go run ./scripts/orchdigest` (through the state's own `Apply`, so it is the digest
 the daemon computes), and runs `fugaro orchestrator patch -f` on the approve patch, where **you** type the
 project's name: that typed confirmation is the approval, and the script neither types it nor goes around it.
-It takes `--project` (default `fugaro`; `belong` is refused by name) and `--dry-run`, refuses an agent's
+It takes `--project` (default `fugaro`; `belong` is refused by name), `--suffix <word>` and `--dry-run`, refuses an agent's
 session, writes its patch files mode 0600 into a scratch directory it removes, and ends by printing the
 command above, to run once the daemon has launched the item (a few minutes).
+
+**The id, the tier and the timing.** The item id is one per day, and an item that has left `queued` is spent, so
+a second probe the same day needs `--suffix <word>` (`a-z0-9`, 1 to 12 characters), which makes the id
+`chk640-probe-<date>-<word>`; the script refuses an id that is already in the state and spent. The rigor is
+`small`, not `trivial`: the trivial tier expects 0.25 USD, and a run that passes it halts `expected_exceeded`
+before the check can read the running label, while `small` expects 1 USD and 30 minutes, the smallest tier
+that lets a one-line docs run with a reviewer finish. **Run Check 640 while the item is `running`.** A run that
+ends first leaves only the settled rows measurable (the settled label, the spec label and the colours), and the
+check says so in its item row, naming the ended item, its phase and its run id. The check reads the item from
+the `items` array of `fugaro orchestrator state --json` (id, phase, run id, attempts, repository, spec), never
+from the capped `brief`, which lists running items first and says how many it left out.
 
 **What the check settles.** The labels an orchestrator run's pull request carries are written by the
 **daemon** at its ticks, through the **credentials service's label route**, with a token the service mints
