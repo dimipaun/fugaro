@@ -30,7 +30,26 @@ import (
 // directory). The record is the machine's own — nothing here goes through a
 // management command, because what those queue is internal/apply's test: this
 // file is about what runs the steps.
+//
+// The project is a managed one, because `fugaro apply` writes to it: D2217's
+// fence refuses an unmanaged project before the record is read, so a world
+// without the marks is a world no step here is ever reached in
+// (applyWorldUnmanaged is that world, and managed_require_test.go is the file
+// about the refusal it answers with).
 func applyWorld(t *testing.T) (*initRig, *gcpfake.RTDB) {
+	t.Helper()
+	r, db := applyWorldUnmanaged(t)
+	r.managedRuns(t, initProjectName, initProject)
+	// A managed project's step is judged and recorded under the account the
+	// credentials in force belong to (D1014), and a test binary has none.
+	actingAccount(t)
+	return r, db
+}
+
+// applyWorldUnmanaged is applyWorld in a project whose marks say nothing: the
+// same installation, the same record and the same steps, and the fence's
+// refusal in front of all of them.
+func applyWorldUnmanaged(t *testing.T) (*initRig, *gcpfake.RTDB) {
 	t.Helper()
 	r, db := updateBudgetRig(t)
 	updating(t, r)
@@ -238,12 +257,19 @@ func TestApplyFailureKeepsPending(t *testing.T) {
 	}
 }
 
-// TestApplyUnderAgentMarker: a coding agent's session applies nothing. The
-// cloud-writing steps answer with the session's own refusal — the one every
-// door's steps answer with — and they stay owed, because a refusal is not an
-// answer (D1571).
+// TestApplyUnderAgentMarker: a coding agent's session applies nothing, and on
+// a project that is not managed neither does a person: the run is stopped at
+// the door, before the first step is reached (D2217). What the steps answer
+// with on the way here is the session's own refusal, and this command is
+// refused before it is any step's turn — so what the run says is the fence's,
+// and what the record says is that the step is still owed, because a refusal
+// is not an answer (D1571).
+//
+// The world is asked for by name (applyWorldUnmanaged) rather than reached
+// through applyWorld: a managed project is where every other test in this file
+// runs, and this is the refusal that world cannot reach.
 func TestApplyUnderAgentMarker(t *testing.T) {
-	_, db := applyWorld(t)
+	_, db := applyWorldUnmanaged(t)
 	before := db.Value(projectpolicy.PathShared())
 	t.Setenv("CLAUDECODE", "1")
 	owed(t, initflow.Policy, apply.Change{Kind: apply.Setting, Key: "layer.defaults.agent.model"})
@@ -252,10 +278,10 @@ func TestApplyUnderAgentMarker(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a coding agent's session ran the policy step:\n%s", out+errOut)
 	}
-	got := out + errOut + ErrorText(err)
-	if !strings.Contains(got, initflow.AgentRefusal("CLAUDECODE")) {
-		t.Errorf("the refusal is not the session's own:\n%s", got)
-	}
+	// The one sentence every fenced command prints, checked the way the fence's
+	// own tests check it: this run is refused by the same door, in the same
+	// words, with a session's marker set and without one.
+	checkFenceRefusal(t, err, "apply")
 	// The node is the one that was there: the session published nothing. The
 	// config states a ceiling of 5 and the node carries 9, so a publish would
 	// show.
@@ -536,6 +562,13 @@ func TestApplyKeepsAStepOwedWhenItsStageSkipsWithoutDoingTheWork(t *testing.T) {
 func TestApplyKeepsAWorkspaceStepOwedWhenItsStageSkipsWithoutDoingTheWork(t *testing.T) {
 	r := updateRig(t)
 	updating(t, r)
+	// The project's two marks, and the account its steps are recorded under
+	// (D1014): a project that is not managed is refused at the door (D2217), and
+	// a step that never ran is not the state this test is about. The config
+	// itself stays as the fixture wrote it — this arm is a config that names no
+	// database to publish the record in.
+	r.managedRuns(t, initProjectName, initProject)
+	actingAccount(t)
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 	owed(t, initflow.Workspace, apply.Change{Kind: apply.Setting, Key: "workspace_cap.monthly"})
 

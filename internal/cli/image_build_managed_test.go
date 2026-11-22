@@ -869,76 +869,55 @@ func TestImageBuildManagedAnAgentSessionIsRefusedAVerdictThatDoesNotCome(t *test
 	}
 }
 
-// An installation whose marks do not say managed builds and records nothing:
-// the gate has no verdict to give, the lease bounds the build exactly as it
-// bounds a managed project's, and no question is asked either way (T4 removed
-// the typed prompt from this arm too). The mutation this catches is the prompt
-// surviving for the arm the managed gate does not cover.
-func TestImageBuildUnmanagedBuildsUnderTheLease(t *testing.T) {
-	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
-	w := unmanagedBuildWorld(t, f)
-	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
-	noAgentSession(t)
-	fakeTerminal(t)
-	stdin := &unreadStdin{}
-
-	out, errOut, err := executeStdinReader(t, stdin, "image", "build", "alpha", "--base", "b:1")
-	if err != nil {
-		t.Fatalf("%v\n%s%s", err, out, errOut)
-	}
-	if strings.Contains(errOut, "Type "+initProjectName+" to submit the build: ") {
-		t.Errorf("a project that is not managed was asked the question T4 removed:\n%s", errOut)
-	}
-	if strings.Contains(errOut, initflow.GateProceeded()) {
-		t.Errorf("a project that is not managed read the gate's own sentence:\n%s", errOut)
-	}
-	if stdin.read {
-		t.Error("a project that is not managed read the person's own stdin, so a question was asked")
-	}
-	if buildPosts(fb) != 1 {
-		t.Errorf("submitted %d builds, want the one the lease paid for\n%s%s", buildPosts(fb), out, errOut)
-	}
-	if got := w.audits(t); len(got) != 0 {
-		t.Errorf("a project that is not managed left %d records (%+v)", len(got), got)
-	}
-}
-
-// The same installation, in a coding agent's session: the door's read answers
-// "nothing to judge" exactly as it does for a person, the agent is judged by
-// nothing and refused nothing, and the build goes out under its lease.
+// A project whose marks do not say managed is refused the build itself
+// (D2217): the fence stands in front of the command, so the submission never
+// reaches the lease below it and nothing is recorded either way. It is the arm
+// this file's gate tests are not: there the marks admit the build and the
+// question is what the gate does with it, and here there is no gate to have a
+// verdict, because the command was stopped before its clients existed.
 //
-// It is the direction the agent's branch must not widen. The verdict is what a
-// MANAGED project's gate replaces the confirmation with (D55), so a project that
-// is not managed has no verdict to reach and none to withhold — the fence the
-// policy puts around an agent's build is the cap its owner set (D1542), and a
-// command that refused the session here would be asking for the prompt the
-// policy took away in the one project where nothing stands in for it.
-func TestImageBuildUnmanagedAnAgentSessionBuildsUnderTheLease(t *testing.T) {
-	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
-	w := unmanagedBuildWorld(t, f)
-	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
-	fakeTerminal(t)
-	t.Setenv(agentMarkers[0], "1")
-	stdin := &unreadStdin{}
+// A coding agent's session is refused with the same sentence, and that is the
+// point of running both: the fence is what an unmanaged project meets, and the
+// session's own door (D1542's cap, the agent's refusals) is never reached, so
+// there is no arm in which an unmanaged project builds quietly for an agent.
+func TestImageBuildUnmanagedIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		session bool
+	}{
+		{"a person's run", false},
+		{"a coding agent's session", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
+			w := unmanagedBuildWorld(t, f)
+			stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+			fakeTerminal(t)
+			if tc.session {
+				t.Setenv(agentMarkers[0], "1")
+			}
+			stdin := &unreadStdin{}
 
-	out, errOut, err := executeStdinReader(t, stdin, "image", "build", "alpha", "--base", "b:1")
-	if err != nil {
-		t.Fatalf("a coding agent's session in a project that is not managed was refused: %v\n%s%s", err, out, errOut)
-	}
-	if strings.Contains(errOut, initflow.AgentRefusal(agentMarkers[0])) {
-		t.Errorf("the session read the refused-step sentence, and a project that is not managed has no verdict to refuse it with:\n%s", errOut)
-	}
-	if strings.Contains(errOut, initflow.AgentProceeded(agentMarkers[0])) || strings.Contains(errOut, initflow.GateProceeded()) {
-		t.Errorf("a project that is not managed printed a sentence that claims a verdict:\n%s", errOut)
-	}
-	if stdin.read {
-		t.Error("a project that is not managed read the session's own stdin, so a question was asked")
-	}
-	if buildPosts(fb) != 1 {
-		t.Errorf("submitted %d builds, want the one the lease paid for\n%s%s", buildPosts(fb), out, errOut)
-	}
-	if got := w.audits(t); len(got) != 0 {
-		t.Errorf("a project that is not managed left %d records (%+v)", len(got), got)
+			out, errOut, err := executeStdinReader(t, stdin, "image", "build", "alpha", "--base", "b:1")
+			if err == nil {
+				t.Fatalf("a project that is not managed submitted a build:\n%s%s", out, errOut)
+			}
+			said := out + errOut + err.Error()
+			for _, want := range []string{initProject, "is not managed", "`" + managedFlagCommand() + "`, run by its owner at their own terminal"} {
+				if !strings.Contains(said, want) {
+					t.Errorf("the refusal does not say %q:\n%s", want, said)
+				}
+			}
+			if stdin.read {
+				t.Error("the refusal read the caller's own stdin, so a question was asked")
+			}
+			if buildPosts(fb) != 0 {
+				t.Errorf("submitted %d builds on a project that is not managed", buildPosts(fb))
+			}
+			if got := w.audits(t); len(got) != 0 {
+				t.Errorf("a project that is not managed left %d records (%+v)", len(got), got)
+			}
+		})
 	}
 }
 

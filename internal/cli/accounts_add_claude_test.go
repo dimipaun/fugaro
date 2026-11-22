@@ -388,7 +388,10 @@ func TestAccountsAddClaudeRefusesAHostileClaude(t *testing.T) {
 func TestAccountsAddClaudeRefusedInEveryAgentSession(t *testing.T) {
 	for _, marker := range agentenv.AgentMarkers {
 		t.Run(marker, func(t *testing.T) {
-			path := accountsAddFixture(t, accountsAddLocal)
+			// The ordinary installation: the login's own fence answers before
+			// anything reads the project, and D2217's fence is what a managed
+			// one answers with in its place.
+			path := ordinaryInstallationRig(t, accountsAddLocal).cfg
 			unsetClaudeLoginCredentials(t)
 			before := readFileString(t, path)
 			loginFindable(t)

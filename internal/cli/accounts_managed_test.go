@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	managed "github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
@@ -101,6 +102,17 @@ func newManagedAddRig(t *testing.T, local string, marks managedAddMarks) *addRig
 		r.gcs.Put(initRunsBucket, managed.MarkerObject, managedAddMarker())
 	}
 	return r
+}
+
+// ordinaryInstallationRig is the same fixture in an installation that is not
+// managed: a project with neither mark, which is the world the refusals that
+// stand before any cloud read are tested in — the marker's own fence, the
+// login's, the token step's terminal rule. D2217's fence is what a managed
+// project answers with instead, one layer further in (managed_require_test.go),
+// and accounts_managed.go's gate with it.
+func ordinaryInstallationRig(t *testing.T, local string) *addRig {
+	t.Helper()
+	return newAddRigMarks(t, local, false)
 }
 
 // managedAddMarks is which of the two marks a rig's project carries. The
@@ -199,11 +211,41 @@ func fakeOutputTerminal(t *testing.T) {
 
 // ownerAtTheTerminal is the owner's own session: no coding agent's marker, a
 // real terminal on the run's input and on its output.
+//
+// A test that stands here and then READS the run's account — its step lines,
+// its closing line — sets NO_COLOR beside it (plainAccount): a terminal writer
+// has the reporter draw the step in flight on the terminal's own line, and the
+// carriage return and erase sequence that leaves inside the line are the
+// fixture's artefact rather than the command's behaviour. The door itself does
+// not change: it is the terminal on both streams the gate reads
+// (accounts_managed.go), and colour is not one of its facts.
 func ownerAtTheTerminal(t *testing.T) {
 	t.Helper()
 	noAgentSession(t)
 	fakeTerminal(t)
 	fakeOutputTerminal(t)
+}
+
+// plainAccount turns the reporter's colour off for a test that reads the run's
+// account rather than the sentences inside it. The account itself is the same
+// one a coloured terminal is shown — the marks keep their glyphs (an ASCII
+// account is --ascii's, not colour's) — so the lines these tests parse are the
+// lines the reporter wrote.
+func plainAccount(t *testing.T) {
+	t.Helper()
+	t.Setenv("NO_COLOR", "1")
+}
+
+// actingAccount names the account a managed project's step is judged and
+// recorded under (D1014): the gate reads the credentials in force, and a test
+// binary has none. The name is the fixtures' own, as it is in every other
+// managed rig, so no record a test reads names an address that was on the
+// machine.
+func actingAccount(t *testing.T) {
+	t.Helper()
+	old := authenticatedUser
+	authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return managedGateUser, nil }
+	t.Cleanup(func() { authenticatedUser = old })
 }
 
 // ownerAddStdin is what the owner types at this command's one read: the token.

@@ -654,6 +654,7 @@ func TestAccountsAddTypeRefusesToRetypeACredential(t *testing.T) {
 // beside it.
 func TestAccountsAddTypeKeepsASameTypedCredential(t *testing.T) {
 	path := accountsAddFixture(t, accountsPoolTypedLocalSameType)
+	ownerAtTheTerminal(t)
 
 	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "key-one", "--repos", "owner/repo-a", "--type", "claude-oauth")
 	if err != nil {
@@ -679,6 +680,7 @@ func TestAccountsAddTypeKeepsASameTypedCredential(t *testing.T) {
 // (TestAccountsAddKeepsCommentsAndOrder's own reading).
 func TestAccountsAddTypeWritesTheCredentialEntry(t *testing.T) {
 	accountsAddFixture(t, accountsAddLocal)
+	ownerAtTheTerminal(t)
 
 	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app", "--type", "claude-oauth")
 	if err != nil {

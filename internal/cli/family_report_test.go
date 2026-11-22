@@ -373,6 +373,8 @@ func TestAccountsAddDefaultIsShort(t *testing.T) {
 	isolateState(t)
 	r := newAddRig(t)
 	noisyTerraform(t, r.initRig)
+	ownerAtTheTerminal(t)
+	plainAccount(t)
 	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a")
 	lines := reportLines(errOut)
 	for _, stage := range []string{"policy", "installation", "repository"} {
@@ -448,6 +450,8 @@ func TestAccountsAddDefaultIsShort(t *testing.T) {
 func TestAccountsAddClosesOnItsOwnStepsAndNotTheLoops(t *testing.T) {
 	isolateState(t)
 	newAddRig(t)
+	ownerAtTheTerminal(t)
+	plainAccount(t)
 	// executeStdin's invocation with one writer for both streams, so the order
 	// the two are written in is the order they appear in.
 	cmd := NewRootCmd()
@@ -478,6 +482,7 @@ func TestAccountsAddWritesALog(t *testing.T) {
 	isolateState(t)
 	r := newAddRig(t)
 	noisyTerraform(t, r.initRig)
+	ownerAtTheTerminal(t)
 	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a")
 	log := familyLog(t, "accounts-add")
 	if !strings.Contains(log, convergeNoise) {
@@ -522,6 +527,8 @@ func TestAccountsAddLogHoldsNoValueTheRunRead(t *testing.T) {
 func TestAccountsRmDefaultIsShort(t *testing.T) {
 	isolateState(t)
 	r := newAddRig(t)
+	ownerAtTheTerminal(t)
+	plainAccount(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
 	out, errOut, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if err != nil {

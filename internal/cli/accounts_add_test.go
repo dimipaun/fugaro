@@ -143,6 +143,7 @@ func accountsAddCheckout(t *testing.T, repo string) {
 // nothing at all.
 func TestAccountsAddKeepsCommentsAndOrder(t *testing.T) {
 	path := accountsAddFixture(t, accountsAddLocal)
+	ownerAtTheTerminal(t)
 
 	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app")
 	if err != nil {
@@ -153,11 +154,17 @@ func TestAccountsAddKeepsCommentsAndOrder(t *testing.T) {
 	// carries the two-space marker — and the sentence that names what this run
 	// writes follows it, where the confirmation block used to be (D1540).
 	// Everything the stages print is on stderr, under the run's own writer.
+	//
+	// The diff is found where the path stands rather than assumed to be the
+	// output's first line: at the owner's own terminal the run states which
+	// repositories the token may reach before it reads it, and that statement
+	// is printed ahead of everything else.
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) == 0 || lines[0] != path {
+	start := slices.Index(lines, path)
+	if start < 0 {
 		t.Fatalf("the command did not print the diff of its own write to %s:\n%s", path, out)
 	}
-	rest := lines[1:]
+	rest := lines[start+1:]
 	var added, removed []string
 	end := len(rest)
 diff:
@@ -217,6 +224,7 @@ diff:
 // the profile's own allow_repos and every other account are left alone.
 func TestAccountsAddWritesTheDeclarationAndTheProfile(t *testing.T) {
 	path := accountsAddFixture(t, accountsAddLocal)
+	ownerAtTheTerminal(t)
 
 	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app,acme/lib", "--profile", "standard")
 	if err != nil {
@@ -256,6 +264,7 @@ func TestAccountsAddConfirmsTheWideningItMakes(t *testing.T) {
 	t.Run("beyond this checkout", func(t *testing.T) {
 		accountsAddCheckout(t, "acme/other")
 		accountsAddFixture(t, accountsAddLocal)
+		ownerAtTheTerminal(t)
 		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "acme/app")
 		if err != nil {
 			t.Fatalf("accounts add: %v", err)
@@ -273,6 +282,7 @@ func TestAccountsAddConfirmsTheWideningItMakes(t *testing.T) {
 	t.Run("this checkout only", func(t *testing.T) {
 		accountsAddCheckout(t, "acme/app")
 		accountsAddFixture(t, accountsAddLocal)
+		ownerAtTheTerminal(t)
 		out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a")
 		if err != nil {
 			t.Fatalf("accounts add: %v", err)
@@ -294,6 +304,7 @@ func TestAccountsAddConfirmsTheWideningItMakes(t *testing.T) {
 func TestAccountsAddConfirmsTheRotationItMakes(t *testing.T) {
 	accountsAddCheckout(t, "acme/app")
 	path := accountsAddFixture(t, accountsAddLocalExistingAccount)
+	ownerAtTheTerminal(t)
 
 	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "legacy", "--repos", "acme/other")
 	if err != nil {
@@ -486,6 +497,7 @@ func TestSettingsRefusesAPerStageAccountTheProjectDoesNotAllow(t *testing.T) {
 // gets a new version). What may never be printed is the value, in any spelling.
 func TestAccountsAddPrintsNoValueShape(t *testing.T) {
 	accountsAddFixture(t, accountsAddLocal)
+	ownerAtTheTerminal(t)
 	root := NewRootCmd()
 	cmd, _, err := root.Find([]string{"accounts", "add"})
 	if err != nil {

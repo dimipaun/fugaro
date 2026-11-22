@@ -450,6 +450,7 @@ func TestAccountsAddReportNamesTheProfileTheRunResolved(t *testing.T) {
 // the Left and the stage list the run reports.
 func TestAccountsAddFailsWhenAStageIsLeftForTheOwner(t *testing.T) {
 	r := newAddRigWith(t, addRigLocal)
+	ownerAtTheTerminal(t)
 	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(checkoutYAML("github", "oauth", "aurora", "")+"# edited\n"), 0o644); err != nil {

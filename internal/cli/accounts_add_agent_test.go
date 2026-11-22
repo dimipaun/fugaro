@@ -29,7 +29,7 @@ func TestAccountsAddRefusesInAnAgentSession(t *testing.T) {
 			// managed one answers with (accounts_managed.go's gate, and
 			// TestAccountsAddManaged* for its sentences), and this row is the
 			// refusal that stands before the cloud is reached at all.
-			path := newManagedAddRig(t, accountsAddLocal, addMarksNone).cfg
+			path := ordinaryInstallationRig(t, accountsAddLocal).cfg
 			before := readFileString(t, path)
 			t.Setenv(marker, "1")
 
@@ -118,7 +118,7 @@ func TestAccountsAddRotationRerunRefusesInAnAgentSession(t *testing.T) {
 		t.Run(marker, func(t *testing.T) {
 			// The ordinary installation, as above: the marker's own fence
 			// answers here, before the converge's cloud is reached.
-			r := newManagedAddRig(t, rotationLocal(t), addMarksNone)
+			r := ordinaryInstallationRig(t, rotationLocal(t))
 			writes := r.secretWrites(t)
 			before := readFileString(t, r.cfg)
 			t.Setenv(marker, "1")

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -159,14 +158,7 @@ func newAddRigMarks(t *testing.T, local string, marked bool) *addRig {
 	r.writeMarker(t, bucket, lc.Name, lc.GCPProject)
 	if marked {
 		r.markManaged(t, lc.GCPProject)
-		// The account a managed project's step is judged and recorded under
-		// (D1014): the gate reads the credentials in force, and a test binary
-		// has none. The name is the fixtures' own, as it is in every other
-		// managed rig, so no record a test reads names an address that was on
-		// the machine.
-		old := authenticatedUser
-		authenticatedUser = func(context.Context, *localcfg.Config) (string, error) { return managedGateUser, nil }
-		t.Cleanup(func() { authenticatedUser = old })
+		actingAccount(t)
 	}
 	r.managed = marked
 	return r
