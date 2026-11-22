@@ -14405,7 +14405,9 @@
         "internal/mailbox/*",
         "internal/mailbox/**",
         "internal/mailbox/keychain/**",
+        "internal/mailbox/parity_test.go",
         "internal/mailbox/testdata/lease-parity.json",
+        "internal/mailbox/testdata/parity.json",
         "internal/managed/**",
         "internal/mirror/**",
         "internal/mobileauth/**",
@@ -14464,6 +14466,7 @@
         "shared/mailbox-schema/vectors.bounds.json",
         "shared/mailbox-schema/vectors.json",
         "shared/mailbox/index.js",
+        "shared/mailbox/parity.generate.mjs",
         "testdata/fixture-repo/**"
       ],
       "any": true
