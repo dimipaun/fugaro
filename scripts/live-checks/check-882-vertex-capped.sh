@@ -1067,19 +1067,21 @@ TASK
   # Follow each run to its end, bounded, and read its own record out of the
   # runs bucket: the record is what says which source served each step and what
   # it cost, and no view prints those members.
-  local line model2 id2 ref2 waited outcome answered
+  local line model2 id2 ref2 waited outcome terminal answered
   local summary=""
   while IFS='|' read -r model2 id2 ref2; do
     [ -n "$id2" ] || continue
     say "following the run ${id2} (up to ${WAIT_SECONDS}s)"
     waited=0
     outcome=""
+    terminal=""
     answered=no
     while :; do
       if (cd "$CHECKOUT" && "$FUGARO_BIN" runs ls --json) >"$SCRATCH/runs.json" 2>"$SCRATCH/runs.err"; then
         answered=yes
         local prc=0
-        outcome=$(python3 - "$SCRATCH/runs.json" "$id2" <<'PY'
+        local got
+        got=$(python3 - "$SCRATCH/runs.json" "$id2" <<'PY'
 import json, sys
 try:
     doc = json.load(open(sys.argv[1]))
@@ -1093,7 +1095,7 @@ for r in rows:
         continue
     ref = r.get("run") or ""
     if r.get("run_id") == sys.argv[2] or ref.endswith("/" + sys.argv[2]):
-        print(r.get("outcome") or "")
+        print("%s|%s" % ("true" if r.get("terminal") is True else "false", r.get("outcome") or ""))
         break
 PY
 ) || prc=$?
@@ -1101,13 +1103,20 @@ PY
           unmeasured runs "fugaro runs ls --json answered something this check cannot read as a run list, so the run ${id2} (${model2}) was not followed to its end: $(head -c 200 "$SCRATCH/runs.json" | oneline)"
           stop "the run list is not a document this check can read"
         fi
-        if [ -n "$outcome" ]; then break; fi
+        terminal=${got%%|*}
+        outcome=${got#*|}
+        # The ended signal is the row's `terminal` (runview.Row.Terminal), not
+        # its outcome: a run in flight already answers an outcome — `none`,
+        # written at bootstrap — so breaking on a non-empty outcome reads the
+        # record while the run is still spending and prints a false FAIL. The
+        # outcome is only what the rows below print.
+        if [ "$terminal" = true ]; then break; fi
       fi
       if [ "$waited" -ge "$WAIT_SECONDS" ]; then break; fi
       sleep "$POLL_SECONDS"
       waited=$((waited + POLL_SECONDS))
     done
-    if [ -z "$outcome" ]; then
+    if [ "$terminal" != true ]; then
       if [ "$answered" = no ]; then
         unmeasured runs "fugaro runs ls --json never answered in $CHECKOUT, so the run ${id2} (${model2}) was not followed to its end and its record was not read: $(head -c 300 "$SCRATCH/runs.err" | oneline)"
       else
@@ -1120,11 +1129,11 @@ PY
     gcloud storage cat "gs://${BUCKET}/runs/${ref2}/result.json" --project="$GCP_PROJECT" \
       >"$SCRATCH/record-${id2}.json" 2>"$SCRATCH/record-${id2}.err" || rc=$?
     if [ "$rc" != 0 ]; then
-      unmeasured runs "the run ${id2} (${model2}) ended as '${outcome}' and its record could not be read from gs://${BUCKET}/runs/${ref2}/result.json (exit $rc): $(head -c 300 "$SCRATCH/record-${id2}.err" | oneline). Every row below is read off that record, so none of them is measured"
+      unmeasured runs "the run ${id2} (${model2}) ended as '${outcome:-unknown}' and its record could not be read from gs://${BUCKET}/runs/${ref2}/result.json (exit $rc): $(head -c 300 "$SCRATCH/record-${id2}.err" | oneline). Every row below is read off that record, so none of them is measured"
       stop "a run's record could not be read"
     fi
-    RUNS="${RUNS}${RUNS:+$'\n'}${model2}|${id2}|${ref2}|${outcome}"
-    summary="${summary}${summary:+, }${model2} → ${id2} (${outcome})"
+    RUNS="${RUNS}${RUNS:+$'\n'}${model2}|${id2}|${ref2}|${outcome:-unknown}"
+    summary="${summary}${summary:+, }${model2} → ${id2} (${outcome:-unknown})"
   done <<<"$RUN_IDS"
   RUN_COUNT=$(printf '%s\n' "$RUNS" | grep -c . || true)
   fact runs PASS "${RUN_COUNT} run(s) launched, one per measured model, followed to their end, and each one's own record read out of the runs bucket: ${summary}"

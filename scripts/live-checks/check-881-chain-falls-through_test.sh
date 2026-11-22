@@ -123,7 +123,18 @@ project)
   cat "$answers/policy.json"
   ;;
 runs)
-  cat "$answers/runs.json"
+  # A case may model a run that is still going when the check first polls it:
+  # with answers/runs.inflight present the FIRST poll answers that row and every
+  # later poll answers runs.json. The real CLI answers a run in flight with
+  # outcome "none" and terminal false — the runner writes OutcomeNone at
+  # bootstrap — so the ended signal a reader may stop on is `terminal`.
+  polls=$(grep -c . "$FAKE881_LOG/runs.calls" 2>/dev/null || true)
+  printf 'poll\n' >>"$FAKE881_LOG/runs.calls"
+  if [ -f "$answers/runs.inflight" ] && [ "${polls:-0}" -eq 0 ]; then
+    cat "$answers/runs.inflight"
+  else
+    cat "$answers/runs.json"
+  fi
   ;;
 run)
   case "$mode" in
@@ -220,7 +231,7 @@ JSON
 {"run":"${run_ref}","run_id":"${run_id}"}
 JSON
   cat >"$a/runs.json" <<JSON
-[{"run":"${run_ref}","run_id":"${run_id}","outcome":"ready"}]
+[{"run":"${run_ref}","run_id":"${run_id}","outcome":"ready","terminal":true,"settled":true}]
 JSON
   cat >"$a/record.json" <<JSON
 {"repo":"acme/chk881","run":"${run_id}","status":"succeeded",
@@ -248,6 +259,7 @@ run_check() { # run_check DIR [K=V ...] [-- ARGS...]
   mkdir -p "$dir/logs" "$dir/home" "$dir/tmp"
   : >"$dir/logs/fugaro.calls"
   : >"$dir/logs/gcloud.calls"
+  : >"$dir/logs/runs.calls"
   status=0
   # `-x` is bash's own flag, so it goes BEFORE the script: the check refuses an
   # argument it does not know, and the case that measures the tracing refusal is
@@ -728,13 +740,36 @@ test_a_record_that_cannot_be_read_is_not_measured() {
 test_a_run_that_never_ends_is_not_measured() {
   local dir=$work/neverends
   setup_case "$dir"
+  # The shape the real CLI answers for a run that has bootstrapped but not
+  # ended: outcome "none", terminal false.
   cat >"$dir/answers/runs.json" <<JSON
-[{"run":"${run_ref}","run_id":"${run_id}","outcome":""}]
+[{"run":"${run_ref}","run_id":"${run_id}","outcome":"none","terminal":false,"settled":false}]
 JSON
   run_check "$dir" CHECK881_WAIT_SECONDS=1 CHECK881_POLL_SECONDS=1 -- $(default_args "$dir")
   expect_status "$status" 2 "a run that never ends"
   expect_contains "$out" "FACT run: FAIL" "a run that never ends: the row"
   expect_contains "$out" "still not terminal" "a run that never ends: what it saw"
+}
+
+test_a_run_still_going_is_not_read_as_ended() {
+  # A run in flight already answers an outcome — `none`, written at bootstrap —
+  # so a check that stops on the first non-empty outcome reads the record while
+  # the run is still spending and prints a false FAIL. The ended signal is
+  # `terminal`, and the row it prints carries the run's PR outcome.
+  local dir=$work/inflight
+  setup_case "$dir"
+  cat >"$dir/answers/runs.inflight" <<JSON
+[{"run":"${run_ref}","run_id":"${run_id}","outcome":"none","terminal":false,"settled":false}]
+JSON
+  run_check "$dir" CHECK881_POLL_SECONDS=1 -- $(default_args "$dir")
+  expect_status "$status" 0 "a run still going at the first poll"
+  expect_contains "$out" "FACT run: PASS" "a run still going at the first poll: the row"
+  local row
+  row=$(printf '%s\n' "$out" | grep -m1 '^FACT run:' || true)
+  expect_contains "$row" "ended as 'ready'" "a run still going at the first poll: the outcome it waited for"
+  expect_absent "$row" "none" "a run still going at the first poll: the in-flight outcome is not reported as the run's"
+  [ "$(grep -c . "$dir/logs/runs.calls")" -ge 2 ] ||
+    fail "a run still going at the first poll: the check polled once, so it read the in-flight answer as the end"
 }
 
 test_a_model_the_table_does_not_match_stops() {
@@ -807,6 +842,7 @@ t test_fallback_dollars_of_zero_are_a_finding
 t test_a_record_with_no_source_is_a_finding
 t test_a_record_that_cannot_be_read_is_not_measured
 t test_a_run_that_never_ends_is_not_measured
+t test_a_run_still_going_is_not_read_as_ended
 t test_a_model_the_table_does_not_match_stops
 t test_an_unknown_argument_is_refused
 t test_kept_scratch_is_reported

@@ -849,11 +849,12 @@ TASK
 
 step_run() {
   say "following the run to its end: fugaro runs ls --json, up to ${WAIT_SECONDS}s"
-  local waited=0 outcome="" answered=no
+  local waited=0 outcome="" terminal="" answered=no
   while :; do
     if (cd "$CHECKOUT" && "$FUGARO_BIN" runs ls --json) >"$SCRATCH/runs.json" 2>"$SCRATCH/runs.err"; then
       answered=yes
-      outcome=$(python3 - "$SCRATCH/runs.json" "$RUN_ID" <<'PY'
+      local got
+      got=$(python3 - "$SCRATCH/runs.json" "$RUN_ID" <<'PY'
 import json, sys
 try:
     doc = json.load(open(sys.argv[1]))
@@ -865,17 +866,24 @@ for r in rows:
         continue
     ref = r.get("run") or ""
     if r.get("run_id") == sys.argv[2] or ref.endswith("/" + sys.argv[2]):
-        print(r.get("outcome") or "")
+        print("%s|%s" % ("true" if r.get("terminal") is True else "false", r.get("outcome") or ""))
         break
 PY
 )
-      if [ -n "$outcome" ]; then break; fi
+      terminal=${got%%|*}
+      outcome=${got#*|}
+      # The ended signal is the row's `terminal` (runview.Row.Terminal), not its
+      # outcome: a run in flight already answers an outcome — `none`, written at
+      # bootstrap — so breaking on a non-empty outcome reads the record while the
+      # run is still spending and prints a false FAIL. The outcome is only what
+      # the rows below print.
+      if [ "$terminal" = true ]; then break; fi
     fi
     if [ "$waited" -ge "$WAIT_SECONDS" ]; then break; fi
     sleep "$POLL_SECONDS"
     waited=$((waited + POLL_SECONDS))
   done
-  if [ -z "$outcome" ]; then
+  if [ "$terminal" != true ]; then
     if [ "$answered" = no ]; then
       unmeasured run "fugaro runs ls --json never answered in $CHECKOUT, so the run ${RUN_ID} was not followed to its end and its record was not read: $(head -c 300 "$SCRATCH/runs.err" | oneline)"
     else
@@ -888,10 +896,10 @@ PY
   gcloud storage cat "gs://${BUCKET}/runs/${RUN_REF}/result.json" --project="$GCP_PROJECT" \
     >"$SCRATCH/record.json" 2>"$SCRATCH/record.err" || rc=$?
   if [ "$rc" != 0 ]; then
-    unmeasured run "the run ${RUN_ID} ended as '${outcome}' and its record could not be read from gs://${BUCKET}/runs/${RUN_REF}/result.json (exit $rc): $(head -c 300 "$SCRATCH/record.err" | oneline). Every row below is read off that record, so none of them is measured"
+    unmeasured run "the run ${RUN_ID} ended as '${outcome:-unknown}' and its record could not be read from gs://${BUCKET}/runs/${RUN_REF}/result.json (exit $rc): $(head -c 300 "$SCRATCH/record.err" | oneline). Every row below is read off that record, so none of them is measured"
     stop "the run's record could not be read"
   fi
-  fact run PASS "the run ${RUN_ID} ended as '${outcome}' and its own record was read out of gs://${BUCKET}/runs/${RUN_REF}/result.json: the rows below are what it holds"
+  fact run PASS "the run ${RUN_ID} ended as '${outcome:-unknown}' and its own record was read out of gs://${BUCKET}/runs/${RUN_REF}/result.json: the rows below are what it holds"
 }
 
 step_served_by_the_paid_source() {

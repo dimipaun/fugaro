@@ -122,10 +122,20 @@ PY
   fi
   ;;
 runs)
-  if [ -f "$answers/runs.json" ]; then
+  # A case may model a run that is still going when the check first polls it:
+  # with answers/runs.inflight present the FIRST poll answers that row and every
+  # later poll answers the launched runs. The real CLI answers a run in flight
+  # with outcome "none" and terminal false — the runner writes OutcomeNone at
+  # bootstrap — so the ended signal a reader may stop on is `terminal`, and the
+  # rows a launched run answers carry it true.
+  polls=$(grep -c . "$FAKE882_LOG/runs.calls" 2>/dev/null || true)
+  printf 'poll\n' >>"$FAKE882_LOG/runs.calls"
+  if [ -f "$answers/runs.inflight" ] && [ "${polls:-0}" -eq 0 ]; then
+    cat "$answers/runs.inflight"
+  elif [ -f "$answers/runs.json" ]; then
     cat "$answers/runs.json"
   else
-    awk -F'|' 'NR>1{printf ","} {printf "{\"run\":\"%s\",\"run_id\":\"%s\",\"outcome\":\"ready\"}", $1, $2}' \
+    awk -F'|' 'NR>1{printf ","} {printf "{\"run\":\"%s\",\"run_id\":\"%s\",\"outcome\":\"ready\",\"terminal\":true,\"settled\":true}", $1, $2}' \
       "$FAKE882_LOG/launches" | sed 's/^/[/;s/$/]/'
     printf '\n'
   fi
@@ -361,6 +371,7 @@ run_check() { # run_check DIR [K=V ...] [-- ARGS...]
   : >"$dir/logs/gcloud.calls"
   : >"$dir/logs/curl.calls"
   : >"$dir/logs/launches"
+  : >"$dir/logs/runs.calls"
   status=0
   # `-x` is bash's own flag, so it goes BEFORE the script: the check refuses an
   # argument it does not know, and the case that measures the tracing refusal is
@@ -957,13 +968,39 @@ PY
 test_a_run_that_never_ends_is_not_measured() {
   local dir=$work/neverends
   setup_case "$dir"
+  # The shape the real CLI answers for a run that has bootstrapped but not
+  # ended: outcome "none", terminal false.
   cat >"$dir/answers/runs.json" <<JSON
-[{"run":"chk882/20261122090000-b882-1","run_id":"20261122090000-b882-1","outcome":""}]
+[{"run":"chk882/20261122090000-b882-1","run_id":"20261122090000-b882-1","outcome":"none","terminal":false,"settled":false}]
 JSON
   run_check "$dir" CHECK882_WAIT_SECONDS=1 CHECK882_POLL_SECONDS=1 -- $(default_args "$dir")
   expect_status "$status" 2 "a run that never ends"
   expect_contains "$out" "FACT runs: FAIL" "a run that never ends: the row"
   expect_contains "$out" "still not terminal" "a run that never ends: what it saw"
+}
+
+test_a_run_still_going_is_not_read_as_ended() {
+  # A run in flight already answers an outcome — `none`, written at bootstrap —
+  # so a check that stops on the first non-empty outcome reads the record while
+  # the run is still spending and prints a false FAIL. The ended signal is
+  # `terminal`, and the row it prints carries the run's own outcome.
+  local dir=$work/inflight
+  setup_case "$dir"
+  cat >"$dir/answers/runs.inflight" <<JSON
+[{"run":"chk882/20261122090000-b882-1","run_id":"20261122090000-b882-1","outcome":"none","terminal":false,"settled":false}]
+JSON
+  run_check "$dir" CHECK882_POLL_SECONDS=1 -- $(default_args "$dir")
+  expect_status "$status" 0 "a run still going at the first poll"
+  expect_contains "$out" "FACT runs: PASS" "a run still going at the first poll: the row"
+  local row
+  row=$(printf '%s\n' "$out" | grep -m1 '^FACT runs:' || true)
+  expect_contains "$row" "(ready)" "a run still going at the first poll: the outcome it waited for"
+  expect_absent "$row" "none" "a run still going at the first poll: the in-flight outcome is not reported as the run's"
+  # The in-flight answer is the first of three polls: one that reads it, then one
+  # per launched run that finds it terminal. Fewer means the first answer was
+  # taken for the end.
+  [ "$(grep -c . "$dir/logs/runs.calls")" -ge 3 ] ||
+    fail "a run still going at the first poll: the check polled $(grep -c . "$dir/logs/runs.calls") time(s), so it read the in-flight answer as the end"
 }
 
 test_a_record_that_cannot_be_read_is_not_measured() {
@@ -993,26 +1030,17 @@ test_kept_scratch_is_reported() {
 }
 
 # ------------------------------------------------------------------- the run
+# Sharding, so the Go test can run these side by side: CHECK_TEST_SHARD="i/n"
+# runs every n-th test starting at i, CHECK_TEST_ONLY=name runs that one alone.
+test_index=0
 t() { # t NAME
-  case "${CHECK882_TEST_ONLY:-}" in
-  "") ;;
-  *) case " $CHECK882_TEST_ONLY " in *" $1 "*) ;; *) return 0 ;; esac ;;
-  esac
-  case "${CHECK882_TEST_SHARD:-}" in
-  "") ;;
-  1) case "$1" in
-    test_help | test_dry_run | test_happy_path | test_the_block_never_carries_a_value | test_an_agent_session_is_refused | test_xtrace_refused | test_belong_is_refused_by_name | test_a_belong_installation_in_the_checkout_is_refused | test_a_region_that_disagrees_with_the_installation_stops | test_the_region_is_the_installations_own | test_no_region_anywhere_stops | test_a_checkout_with_no_origin_remote_stops | test_a_checkout_that_is_not_a_work_tree_stops | test_a_missing_checkout_is_refused) ;;
-    *) return 0 ;;
-    esac ;;
-  2) case "$1" in
-    test_an_observe_project_stops | test_no_per_run_cap_stops | test_the_cap_read_is_the_checkouts_own | test_another_repositorys_cap_is_not_this_ones | test_a_table_with_no_vertex_source_stops | test_a_model_the_table_does_not_match_stops | test_a_model_whose_chain_names_no_vertex_stops | test_no_job_stops | test_every_job_is_probed | test_a_token_that_cannot_be_minted_is_not_measured | test_an_authorized_account_fails_the_refusal_row | test_a_model_with_no_vertex_spelling_is_its_own_finding | test_a_status_that_is_not_the_refusal_is_unverified) ;;
-    *) return 0 ;;
-    esac ;;
-  3) case "$1" in
-    test_a_granted_predefined_role_is_a_finding | test_a_custom_role_with_the_permission_is_a_finding | test_a_refused_launch_is_not_measured | test_a_run_served_by_a_key_fails_the_served_row | test_a_stage_that_was_not_priced_is_a_finding | test_a_run_over_its_cap_is_a_finding | test_a_run_that_never_ends_is_not_measured | test_a_record_that_cannot_be_read_is_not_measured | test_an_unknown_argument_is_refused | test_kept_scratch_is_reported) ;;
-    *) return 0 ;;
-    esac ;;
-  esac
+  local i=$test_index
+  test_index=$((test_index + 1))
+  if [ -n "${CHECK_TEST_ONLY:-}" ]; then
+    [ "$1" = "$CHECK_TEST_ONLY" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
   "$1"
 }
 
@@ -1050,6 +1078,7 @@ t test_a_run_served_by_a_key_fails_the_served_row
 t test_a_stage_that_was_not_priced_is_a_finding
 t test_a_run_over_its_cap_is_a_finding
 t test_a_run_that_never_ends_is_not_measured
+t test_a_run_still_going_is_not_read_as_ended
 t test_a_record_that_cannot_be_read_is_not_measured
 t test_an_unknown_argument_is_refused
 t test_kept_scratch_is_reported
