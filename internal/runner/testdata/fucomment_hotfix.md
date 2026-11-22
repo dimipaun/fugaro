@@ -19,7 +19,7 @@
 
 **Tests:** passed on <sha> (3 tests, 0 failures)
 
-**Cost:** model $1.50 (compute not estimated)
+**Cost:** model $0.00 (compute not estimated)
 
 #### Follow-up
 

@@ -62,25 +62,23 @@ const sidecarStopTimeout = 10 * time.Second
 // loopback URL, which does not exist before that -- and before the agent's
 // environment is built, which needs the sidecar's URL in the same breath.
 //
-// It is the one place the budget-gateway requirement is enforced: the
+// The mode used to be read here as the sidecar's own condition (P9): the
 // effective budget mode is the tightest of the installation's ceiling, the
-// default branch's file and the run's own, so no config layer can answer it
-// (P9). A run that asks for compression with the gateway off is refused
-// here, at bootstrap, before any stage.
+// default branch's file and the run's own, so no config layer could answer for
+// it. That refusal is gone with the mode (AB1b, F15): every run whose
+// credential the gateway can carry has one, so a compression run has the
+// gateway its sidecar chains to.
 func (r *run) startCompression(ctx context.Context) error {
 	if r.cfg.Agent.Compression == "" {
 		return nil
 	}
-	if !r.gatewayOn() {
-		return errors.New("agent.compression needs the budget gateway on (budget.mode: observe or enforce): the sidecar holds no credential of its own")
-	}
 	gw := r.gateway()
 	if gw == nil {
-		// Belt and braces: gatewayOn means startGateway ran and returned, so
-		// this cannot fire today -- but the URL below is what the sidecar
-		// would be told to forward to, and a nil gateway has no URL to give
-		// it.
-		return errors.New("agent.compression is on and the budget gateway is on, but no gateway is running")
+		// Belt and braces: gatewayOn means startGateway ran and returned, and
+		// this run's credential is one the gateway carries, so this cannot
+		// fire today -- but the URL below is what the sidecar would be told to
+		// forward to, and a nil gateway has no URL to give it.
+		return errors.New("agent.compression is on, but no gateway is running")
 	}
 	tail := logtail.New(logtail.DefaultLines, logtail.DefaultLineBytes)
 	p, err := r.startSidecar(ctx, headroomproc.Options{

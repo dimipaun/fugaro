@@ -77,11 +77,14 @@ func TestStopTimeThresholdEndsTheReviewBeforeAFix(t *testing.T) {
 // would have merged as-is once its rounds were gone.
 func TestStopStartupWithLevel3IsNoStricterThanWithoutIt(t *testing.T) {
 	// Level 3 is asked for by the task, which every level below reads as a
-	// request for its own rounds and never as a change of mode (item 6).
+	// request for its own rounds and never as a change of mode (item 6). The
+	// model it names is a priced one: every run has a gateway now (AB1b,
+	// D3009), and a run behind one prices the models it pins (CheckPins,
+	// D3020), so a name no price table knows is refused at bootstrap.
 	spec := func() *task.Spec {
 		return &task.Spec{
 			Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature",
-			ReviewLevels: &config.ReviewLevels{L3: &config.LevelSetting{Model: "adversarial-model"}},
+			ReviewLevels: &config.ReviewLevels{L3: &config.LevelSetting{Model: haiku}},
 		}
 	}
 	cfg := func() string {
@@ -805,10 +808,11 @@ func TestStopDoesNotAcceptTheCatastrophicFindingABouncedCheapRoundLeft(t *testin
 // has no block for and the mode did not make.
 func TestStopWithdrawsItsAcceptanceForALevelTheStopDoesNotTake(t *testing.T) {
 	// Level 3 is asked for by the task, which is how a run below Critical gets
-	// the highest level it enables (item 6).
+	// the highest level it enables (item 6), on a model the price table knows
+	// for the reason the case above gives (AB1b, D3020).
 	spec := &task.Spec{
 		Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature",
-		ReviewLevels: &config.ReviewLevels{L3: &config.LevelSetting{Model: "adversarial-model"}},
+		ReviewLevels: &config.ReviewLevels{L3: &config.LevelSetting{Model: haiku}},
 	}
 	// One adversarial round, so the round it leaves is the last the level has
 	// and the stop ends the run on it rather than on a fix it would have bought.

@@ -18,7 +18,7 @@ project: aurora
 gcp_project: proj-1234
 defaults:
   git: { provider: github }
-  agent: { auth: api-key, review_rounds: 2 }
+  agent: { auth: api-key, review_rounds: 2, models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5, background: claude-haiku-4-5 } }
 profiles:
   app:
     commands:
@@ -141,7 +141,7 @@ project: aurora
 gcp_project: proj-1234
 defaults:
   git: { provider: github }
-  agent: { auth: api-key, review_rounds: 4 }
+  agent: { auth: api-key, review_rounds: 4, models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5, background: claude-haiku-4-5 } }
 profiles:
   app:
     commands:
