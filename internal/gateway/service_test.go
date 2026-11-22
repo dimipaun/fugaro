@@ -231,19 +231,20 @@ func TestServiceDeclarationIsNeverTheAgents(t *testing.T) {
 	noHalt(t, h)
 }
 
-// TestServiceUpstreamReadsTierAndCredential: the tier, the credential's name
-// and the switch are read off the service's answer and handed to the runner's
-// hook -- and dropped before the answer is copied on, so the agent never
-// learns its project's credentials.
+// TestServiceUpstreamReadsTierAndCredential: the tier, the credential's name,
+// the owner of the token that served the call and the switch are read off the
+// service's answer and handed to the runner's hook -- and dropped before the
+// answer is copied on, so the agent never learns its project's credentials.
 func TestServiceUpstreamReadsTierAndCredential(t *testing.T) {
 	var answers []ServiceAnswer
 	h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
 		return anthropicfake.Reply{
 			Status: http.StatusOK,
 			Header: http.Header{
-				HeaderTier:       []string{TierB},
-				HeaderCredential: []string{"repo-shared-b"},
-				HeaderSwitch:     []string{`{"from":"repo-a","to":"repo-shared-b","reason":"exhausted"}`},
+				HeaderTier:            []string{TierB},
+				HeaderCredential:      []string{"repo-shared-b"},
+				HeaderCredentialOwner: []string{"104329501182774832335"},
+				HeaderSwitch:          []string{`{"from":"repo-a","to":"repo-shared-b","reason":"exhausted"}`},
 			},
 			Body: anthropicfake.MessageOK(sonnet, smallUsage).Body,
 		}
@@ -265,6 +266,9 @@ func TestServiceUpstreamReadsTierAndCredential(t *testing.T) {
 	if got.Tier != TierB || got.Credential != "repo-shared-b" {
 		t.Errorf("the answer read back as tier %q credential %q, want B and repo-shared-b", got.Tier, got.Credential)
 	}
+	if got.CredentialOwner != "104329501182774832335" {
+		t.Errorf("the answer read back as owner %q, want the launcher's sub the service named", got.CredentialOwner)
+	}
 	if got.Switch != `{"from":"repo-a","to":"repo-shared-b","reason":"exhausted"}` {
 		t.Errorf("the switch read back as %q", got.Switch)
 	}
@@ -273,7 +277,7 @@ func TestServiceUpstreamReadsTierAndCredential(t *testing.T) {
 	}
 	// The agent is told nothing about the credential set (D143): not in the
 	// headers, not in the body, not in a log line.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch} {
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderCredentialOwner, HeaderSwitch} {
 		if vs := resp.Header.Values(k); len(vs) > 0 {
 			t.Errorf("the agent's answer carries %s: %q", k, vs)
 		}
@@ -1208,6 +1212,7 @@ func TestServiceUnreadableAnswerSettlesAtItsReservation(t *testing.T) {
 		{"no tier at all", nil},
 		{"a tier the contract would not write", http.Header{HeaderTier: []string{"D"}, HeaderCredential: []string{"repo-a"}}},
 		{"a credential name that is not one", http.Header{HeaderTier: []string{TierB}, HeaderCredential: []string{"repo\nb"}}},
+		{"a credential owner that is not one", http.Header{HeaderTier: []string{TierB}, HeaderCredential: []string{"repo-a"}, HeaderCredentialOwner: []string{"launcher@example.invalid"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _ := newServiceStub(t, func(*http.Request, []byte) anthropicfake.Reply {
