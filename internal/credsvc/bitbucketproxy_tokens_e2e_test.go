@@ -230,6 +230,13 @@ func proxyTokensWorldOf(t *testing.T, node string, doc []byte, values map[string
 	// before any token is minted or any call is made — is what makes the two
 	// agree, so the mark a 429 leaves is a mark the next request meets.
 	s.now = time.Now().UTC().Truncate(time.Second)
+	// The run id goes with it. It is a launch stamp, and the ticket route dates
+	// it against the service's own clock: an id left at the fixture's ground
+	// while the clock is the process's names a launch the day the fixture was
+	// written, which from maxRunDays later is a run the route answers as over
+	// (identity_ticket.go's ticketRunEnded) — every fetch refused as an
+	// unverified identity, on a calendar date and for no reason in this build.
+	s.run = s.now.Format("20060102-150405") + "-ab12"
 
 	w := &proxyTokensWorld{t: t, s: s, up: up, db: db, store: store, values: values, clock: s.now}
 	// The bundle loader's own clock, and not the service's: a test that rotates
