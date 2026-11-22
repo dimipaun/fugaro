@@ -207,7 +207,7 @@ func (s *Server) serveVertex(ctx context.Context, w http.ResponseWriter, id Iden
 	// call is where the model is written.
 	s.withMeter(ctx, cl, id)
 	ans, err := s.sendRequest(ctx, cl, sentRequest{
-		dest:       vertexDestination(location, path, cl),
+		dest:       vertexDestination(location, path),
 		body:       body,
 		header:     hdr,
 		credential: key,
@@ -302,21 +302,30 @@ func vertexPath(callPath, project, location, spelling string, stream bool) (stri
 }
 
 // vertexDestination is the URL one Vertex call goes to: the host the location
-// decides, the path the translation built, and the caller's query when it
-// carries none of the caller's own tokens (destination's own rule over the same
-// member).
+// decides and the path the translation built, and nothing of the caller's own
+// query.
+//
+// The query is DROPPED, which is the opposite of what the other sources of this
+// service do with it, and deliberately: this call is made on the SERVICE's own
+// identity, and Google binds a query parameter to whoever sends it. `userProject`
+// and `quotaUser` bill or attribute the call to a project the CALLER named —
+// the same address as the X-Goog-User-Project header internal/gateway's
+// dropRequestHeaders already refuses to forward, one layer down — `key` carries
+// a credential of the caller's, and `alt`/`fields` choose what Google answers
+// with. None of that is a fact a caller may set on a call this service pays for
+// with its own identity. The Messages query the harness does send (`beta=true`)
+// is not a member of this wire either: Vertex's publisher takes what it needs
+// from the path and the body, and a parameter Google's front end cannot bind is
+// a request it rejects.
 //
 // The host rule is internal/gateway's vertexBase, respelled here because that
 // function is unexported and this service may not import a rule it cannot read;
 // the two must agree, and the test that a call goes to the regional host is
 // what holds them together.
-func vertexDestination(location, path string, cl *call) string {
+func vertexDestination(location, path string) string {
 	base := "https://" + location + "-aiplatform.googleapis.com"
 	if location == vertexGlobalLocation {
 		base = "https://aiplatform.googleapis.com"
-	}
-	if cl.query != "" && !carriesAny(cl.query, cl.scrubs) {
-		return base + path + "?" + cl.query
 	}
 	return base + path
 }

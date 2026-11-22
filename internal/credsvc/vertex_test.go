@@ -222,22 +222,35 @@ func vertexMark(t *testing.T, s *svc) (creds.Mark, bool) {
 // this service serves as it serves a key, and the identity it is served on is
 // the SERVICE's — the account this process runs as — and never the caller's.
 //
-// The caller's own run token is pasted where a leak would land (the body) and
-// presented where it always is (the headers), and neither placement reaches
-// Vertex: the body is scrubbed by the service's reader and every header
-// carrying it is dropped before the call goes out. What Vertex sees is one
+// A real call carries two of the run's own tokens (its identity and its job's
+// identity), so both are pasted where a leak would land (the body) and
+// presented where tokens are read (the headers), one of them on a header that
+// is not Authorization. Nothing of either reaches Vertex: the body is scrubbed
+// by the service's reader, and every header carrying ANY of the caller's tokens
+// is deleted before the call goes out — the rule that matters most where a
+// source is served on the service's identity, because a leaked token there is
+// the run's own credential handed to a third party. What Vertex sees is one
 // Bearer token, and it is the service's own.
 //
-// Mutation (run, restore): build the token source from the caller's credential
-// instead of the service's, or drop the scrub, and this test is red on the
-// Authorization header it reads.
+// The assertion is over EVERY header Vertex received and not over Authorization
+// alone: that one is overwritten by the upstream build whatever happens, so a
+// scrub that had stopped working would leave the caller's token in any other
+// header and this test would still be green. The second token is what pins the
+// loop that drops them: the first is scrubbed by the header build itself, and
+// only the loop reaches the rest.
+//
+// Mutation (run, restore): drop sendRequest's header-scrub loop, and the token
+// planted on the second header reaches Vertex; build the token source from the
+// caller's credential instead of the service's, and the Authorization header is
+// the caller's. Either one is red here.
 func TestVertexIsServedOnTheServicesIdentity(t *testing.T) {
-	caller := fakeCred(t, "caller-run")
+	caller, callerJob := fakeCred(t, "caller-run"), fakeCred(t, "caller-job")
 	s, _, service := vertexFixture(t, anthropicfake.MessageOK(testModel, testUsage))
 
-	body := strings.Replace(vertexBodyDoc("vertex-identity"), "vertex-identity", "vertex-identity "+caller, 1)
-	cl := vertexCall(t, MessagesPath, body, caller)
+	body := strings.Replace(vertexBodyDoc("vertex-identity"), "vertex-identity", "vertex-identity "+caller+" "+callerJob, 1)
+	cl := vertexCall(t, MessagesPath, body, caller, callerJob)
 	cl.header.Set("Authorization", "Bearer "+caller)
+	cl.header.Set("X-Caller-Job-Token", callerJob)
 
 	done, tried, rec, _ := serveVertexCall(t, s, vertexIdentity(s, testProject), cl, testVertexSource())
 	if !done {
@@ -259,14 +272,27 @@ func TestVertexIsServedOnTheServicesIdentity(t *testing.T) {
 	if n := s.up.Count(); n != 1 {
 		t.Fatalf("Vertex saw %d requests, want 1", n)
 	}
-	if got := s.up.Seen()[0].Header.Get("Authorization"); got != "Bearer "+service {
+	seen := s.up.Seen()[0]
+	if got := seen.Header.Get("Authorization"); got != "Bearer "+service {
 		t.Errorf("Vertex's Authorization = %q, want the service's own credential: the source is served on this service's identity and on nobody else's", got)
 	}
-	if raw := string(s.up.Body(0)); strings.Contains(raw, caller) {
-		t.Error("the call Vertex received carries the caller's own token")
+	for name, values := range seen.Header {
+		for _, v := range values {
+			for _, tok := range []string{caller, callerJob} {
+				if strings.Contains(v, tok) {
+					t.Errorf("the %s header Vertex received carries one of the caller's own tokens: every header carrying one is deleted before the call goes out, not only the Authorization header", name)
+				}
+			}
+		}
 	}
-	if !strings.Contains(string(s.up.Body(0)), redactedValue) {
-		t.Error("the body Vertex received was not scrubbed of the caller's own token")
+	raw := string(s.up.Body(0))
+	for _, tok := range []string{caller, callerJob} {
+		if strings.Contains(raw, tok) {
+			t.Error("the call Vertex received carries one of the caller's own tokens")
+		}
+	}
+	if !strings.Contains(raw, redactedValue) {
+		t.Error("the body Vertex received was not scrubbed of the caller's own tokens")
 	}
 }
 
@@ -275,14 +301,15 @@ func TestVertexIsServedOnTheServicesIdentity(t *testing.T) {
 // in the body, and the harness that has always built such a request is the
 // agent's own — nothing in this repository translated one before this file
 // (internal/gateway/vertex.go only validates a path that already looks like
-// this). So the four facts are pinned one by one: where the model is written,
+// this). So the five facts are pinned one by one: where the model is written,
 // which of the two methods the body's stream member selects, which host the
-// location decides, and that every other member of the caller's body arrives
-// exactly as it was written.
+// location decides, that every other member of the caller's body arrives
+// exactly as it was written, and that no query parameter of the caller's rides
+// on the URL of a call made on the service's identity.
 //
 // Mutation (run, restore): send the caller's body as it came (leaving `model`
-// in it and `anthropic_version` at the Messages version), and every assertion
-// below is red.
+// in it and `anthropic_version` at the Messages version), or let the caller's
+// query ride on the URL again, and the assertions below are red.
 func TestVertexWireIsTranslated(t *testing.T) {
 	prefix := "/v1/projects/" + testVertexProject + "/locations/" + testVertexRegion +
 		"/publishers/anthropic/models/"
@@ -339,6 +366,18 @@ func TestVertexWireIsTranslated(t *testing.T) {
 		}
 		if got, want := vertexSentDoc(t, s.up.Body(0))["model"], testVertexSpelling; got != want {
 			t.Errorf("model = %v, want %q: the counting endpoint is the one place of this wire where the model is not in the path", got, want)
+		}
+	})
+
+	t.Run("nothing of the caller's query is carried", func(t *testing.T) {
+		s, watch, _ := vertexFixture(t, anthropicfake.MessageOK(testModel, testUsage))
+		cl := vertexCall(t, MessagesPath+"?beta=true&userProject=another-project&key=not-a-key", vertexBodyDoc("wire-query"))
+		done, _, _, _ := serveVertexCall(t, s, vertexIdentity(s, testProject), cl, testVertexSource())
+		if !done {
+			t.Fatal("the call was refused")
+		}
+		if got, want := watch.sawURL(t, 0), "https://"+testVertexRegion+"-aiplatform.googleapis.com"+prefix+testVertexSpelling+":rawPredict"; got != want {
+			t.Errorf("the call went to %q, want %q: this call is made on the SERVICE's identity, so no query parameter of the caller's — a project to bill it to, a key, or an answer shape — may ride on it", got, want)
 		}
 	})
 
