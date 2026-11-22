@@ -642,6 +642,18 @@ func runMailbox(cmd *cobra.Command, o *mailboxOptions) error {
 	if err != nil {
 		return err
 	}
+	// This machine's mailbox state has one writer at a time (§6), and it is taken
+	// before the ledger is opened: this pass keeps what it reads there in memory
+	// for the life of the process, so a `fugaro mailbox sweep` that rewrote the
+	// same two files under it would drop a delivery this consumer has already
+	// accepted and replied to. The lock is **shared**, so a second consumer is
+	// let through: two of them are the store's lease to refuse (M1, and check
+	// 83's step 7 records that refusal at the store), not a file here.
+	stateLock, err := mailbox.LockState(mailbox.StateLockOptions{Project: lc.Name, Holder: "fugaro mailbox", Shared: true})
+	if err != nil {
+		return userErr("%v", err)
+	}
+	defer func() { _ = stateLock.Release() }()
 	pairings, err := mailboxKeyring(ctx, lc, mailboxClock(db))
 	if err != nil {
 		return err
@@ -1922,6 +1934,13 @@ func newMailboxSweepCmd() *cobra.Command {
 			"state: the ledger records and prompt entries a retention window already\n" +
 			"allows, which it lets go of through the consumer's own two rules.\n" +
 			"\n" +
+			"This machine's state has **one writer at a time**, and this command is not a\n" +
+			"second one: while the consumer that keeps those two files is running, the\n" +
+			"sweep leaves them alone and says so, naming the process to stop, and the\n" +
+			"consumer in turn refuses to start while a sweep is in its own half. The store\n" +
+			"half is not fenced by that: a stored prompt past the TTL is deleted whether a\n" +
+			"consumer is running or not.\n" +
+			"\n" +
 			"It also reports, for each mailbox, what the stored heartbeat says about the\n" +
 			"presence of the consumer that wrote it — live, stale, offline, or a clock\n" +
 			"that differs — and writes nothing for that verdict.\n" +
@@ -1980,6 +1999,13 @@ type mailboxSweepLocal struct {
 	// nothing to let go of writes nothing, so a reader can tell "I swept this
 	// machine" from "I rewrote it".
 	Wrote bool `json:"wrote"`
+	// Refused says why this machine's half was **not** performed, when another
+	// writer holds the state — the consumer, or a second sweep — and is empty
+	// otherwise. It is the one fact that tells "there was nothing to let go of"
+	// from "this sweep was not allowed to look", which the empty id lists and
+	// `wrote: false` alone cannot (the same distinction `deleted` and `kept` draw
+	// for a mailbox).
+	Refused string `json:"refused,omitempty"`
 }
 
 // mailboxSweepPresence is the presence verdict (§4.2, `shared/presence`): what
@@ -2090,8 +2116,10 @@ func (s *mailboxSweeper) sweep(ctx context.Context, uids []string) error {
 	if err != nil {
 		return err
 	}
-	if findings := mailbox.SweepRefusals(localKeys(local)); len(findings) > 0 {
-		return userErr("this sweep's delete set names something it does not own, so nothing was deleted: %s", strings.Join(findings, "; "))
+	if local.Refused == "" {
+		if findings := mailbox.SweepRefusals(localKeys(local)); len(findings) > 0 {
+			return userErr("this sweep's delete set names something it does not own, so nothing was deleted: %s", strings.Join(findings, "; "))
+		}
 	}
 	doc.Local = local
 	for _, uid := range uids {
@@ -2102,7 +2130,17 @@ func (s *mailboxSweeper) sweep(ctx context.Context, uids []string) error {
 		doc.Mailboxes = append(doc.Mailboxes, one)
 		doc.Warnings = append(doc.Warnings, warnings...)
 	}
-	return s.report(doc)
+	if err := s.report(doc); err != nil {
+		return err
+	}
+	// The refusal comes last and still exits 1: the store half is not fenced by
+	// this machine's lock (§4.2 — it touches no file of the consumer's), so what
+	// this sweep owed the operator is both the deletions it made and the reason
+	// its own half did not happen.
+	if local.Refused != "" {
+		return userErr("this machine's own mailbox state was not swept: %s", local.Refused)
+	}
+	return nil
 }
 
 // localKeys is every key a local sweep names: the two files and the ids it let
@@ -2124,7 +2162,43 @@ func localKeys(sweep mailboxSweepLocal) []string {
 // consumer's next pass reads as its own. With `--dry-run` it writes nothing at
 // all and reports the same set, which is why the plan is read one pass earlier
 // than the state it plans over.
+//
+// **It is not a second writer.** §6 names the consumer as the writer of both
+// files and the consumer holds what it read in memory for the life of its
+// process, so a sweep that committed a set read before a delivery the consumer
+// accepted in between would drop that delivery from disk — and a restart would
+// re-read the never-deleted inbox node and run the action again. The sweep
+// therefore takes this machine's state lock (exclusive; the consumer holds it
+// shared — `internal/mailbox`'s statelock.go has the rule) around the whole of
+// its local half, and a lock somebody else holds is a refusal with the process
+// to wait for rather than a sweep that writes anyway. The store half is not
+// fenced by it: it touches no file of the consumer's, and P6.13's reason for it —
+// the consumer expires the question from its own copy when it comes back — holds
+// whether a consumer is running or not.
 func (s *mailboxSweeper) local(nowMs int64) (mailboxSweepLocal, error) {
+	if s.dryRun {
+		// A plan writes nothing, so it takes no lock and creates no file. A plan
+		// that showed a set the sweep would refuse to perform would be a plan
+		// about a different thing, so the lock is read rather than taken —
+		// StateLockHeld creates and writes nothing.
+		holder, pid, held, err := mailbox.StateLockHeld(s.lc.Name)
+		if err != nil {
+			return mailboxSweepLocal{}, userErr("this machine's mailbox state could not be read for the writer that holds it (%v); nothing was written", err)
+		}
+		if held {
+			return refusedLocal(s.lc.Name, &mailbox.StateBusyError{Project: s.lc.Name, Holder: holder, PID: pid})
+		}
+	} else {
+		lock, err := mailbox.LockState(mailbox.StateLockOptions{Project: s.lc.Name, Holder: "fugaro mailbox sweep"})
+		if err != nil {
+			var busy *mailbox.StateBusyError
+			if errors.As(err, &busy) {
+				return refusedLocal(s.lc.Name, busy)
+			}
+			return mailboxSweepLocal{}, userErr("this machine's mailbox state could not be locked (%v); nothing was written", err)
+		}
+		defer func() { _ = lock.Release() }()
+	}
 	ledger, err := mailbox.OpenLedger(mailbox.LedgerOptions{Project: s.lc.Name, PromptTtlMs: mailboxPromptTtlMs})
 	if err != nil {
 		return mailboxSweepLocal{}, userErr("this machine's mailbox ledger could not be read (%v); it is the consumer's own dedupe memory at $XDG_STATE_HOME/fugaro/mailbox/%s/ledger.json, and a sweep that could not read it would delete out of a state it does not know", err, s.lc.Name)
@@ -2162,6 +2236,30 @@ func (s *mailboxSweeper) local(nowMs int64) (mailboxSweepLocal, error) {
 		LedgerIDs: ids(sweep.LedgerIDs),
 		PromptIDs: ids(sweep.PromptIDs),
 		Wrote:     !s.dryRun && !sweep.Empty(),
+	}, nil
+}
+
+// refusedLocal is this machine's half when another writer holds its state: the
+// two files, named so a reader can tell "this sweep reached this machine's state
+// and left it alone" from "this sweep never looked", no ids — it let go of
+// nothing — and the refusal that says which process to wait for. What it carries
+// is the fix: the state has one writer at a time, so stopping the process it
+// names (or waiting for it) and rerunning is what makes a sweep possible again.
+func refusedLocal(project string, busy error) (mailboxSweepLocal, error) {
+	ledger, err := mailbox.LedgerPath(project)
+	if err != nil {
+		return mailboxSweepLocal{}, userErr("%v", err)
+	}
+	prompts, err := mailbox.ConfirmMemoryPath(project)
+	if err != nil {
+		return mailboxSweepLocal{}, userErr("%v", err)
+	}
+	return mailboxSweepLocal{
+		Ledger:    ledger,
+		Prompts:   prompts,
+		LedgerIDs: []string{},
+		PromptIDs: []string{},
+		Refused:   busy.Error(),
 	}, nil
 }
 
@@ -2295,6 +2393,9 @@ func (s *mailboxSweeper) report(doc mailboxSweepDocument) error {
 		}
 	}
 	fmt.Fprintf(s.out, "local state: %d ledger record(s) and %d prompt memory entr(ies) past the retention window%s\n", len(doc.Local.LedgerIDs), len(doc.Local.PromptIDs), writtenWord(doc.Local, doc.DryRun))
+	if doc.Local.Refused != "" {
+		fmt.Fprintf(s.out, "  refused: %s\n", doc.Local.Refused)
+	}
 	for _, id := range doc.Local.LedgerIDs {
 		fmt.Fprintf(s.out, "  %s %s\n", verb, id)
 	}
@@ -2329,6 +2430,8 @@ func presenceReason(p mailboxSweepPresence) string {
 // dry run must be able to tell from a sweep that wrote.
 func writtenWord(l mailboxSweepLocal, dryRun bool) string {
 	switch {
+	case l.Refused != "":
+		return " (refused: another writer holds this machine's state, so nothing was written)"
 	case dryRun:
 		return " (a dry run: nothing was written)"
 	case l.Wrote:

@@ -172,6 +172,10 @@ type sweepDocument struct {
 		LedgerIDs []string `json:"ledger_ids"`
 		PromptIDs []string `json:"prompt_ids"`
 		Wrote     bool     `json:"wrote"`
+		// Refused is why this machine's half did not happen, when another writer
+		// holds its state: the same fields and `wrote: false` alone cannot tell
+		// "nothing to let go of" from "not allowed to look".
+		Refused string `json:"refused"`
 	} `json:"local"`
 	Mailboxes []struct {
 		Mailbox string `json:"mailbox"`
@@ -205,6 +209,12 @@ func sweepJSON(t *testing.T, out string) sweepDocument {
 // the consumer's half alone. The sweeper deletes store nodes and nothing else,
 // so a file it touched or made would be a write the consumer's next pass reads
 // as its own.
+//
+// The state lock is skipped, and it is the one file that is not the consumer's
+// state: it is the arbitration between the two writers that may touch the other
+// two (`internal/mailbox`'s statelock.go), its contents are a courtesy for a
+// refusal's wording, and no reader decides anything from it. A sweep that leaves
+// nothing to let go of still takes it — a lock taken is not a state rewritten.
 func localState(t *testing.T) map[string]string {
 	t.Helper()
 	root := os.Getenv("XDG_STATE_HOME")
@@ -213,7 +223,7 @@ func localState(t *testing.T) map[string]string {
 	}
 	files := map[string]string{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil || d.IsDir() || d.Name() == mailbox.StateLockFile {
 			return err
 		}
 		data, err := os.ReadFile(path)
@@ -803,6 +813,131 @@ func TestMailboxSweepLetsGoOfTheConsumersExpiredState(t *testing.T) {
 	}
 	if findings := mailbox.SweepRefusals(keys); len(findings) != 0 {
 		t.Fatalf("the local delete set is one the sweep's own fence refuses: %v", findings)
+	}
+}
+
+// TestMailboxSweepRefusesTheConsumersStateWhileTheConsumerRuns is the review's
+// finding as a case: the sweep is **not a second writer** of the ledger and the
+// prompt memory.
+//
+// §6 names the consumer as their writer, and the consumer holds what it read in
+// memory for the life of its process — so a sweep that committed a set read
+// before a delivery the consumer accepted in between would drop that delivery
+// from disk, and a restart would re-read the never-deleted inbox node and run
+// the action a second time. Here the consumer is running (its shared lock is
+// held, which is the state it puts this machine in), the state holds exactly
+// what a sweep would otherwise let go of, and the sweep must therefore refuse
+// its own half — reporting the process to stop — while the store half, which
+// touches no file of the consumer's, still runs.
+//
+// The control is the last step: with the lock given back, the same state is
+// swept, so the refusal above is a refusal and not an empty state passing
+// quietly.
+func TestMailboxSweepRefusesTheConsumersStateWhileTheConsumerRuns(t *testing.T) {
+	const safe = "carry on"
+	const deviceUID = "m~AAAAAAAAAAAAAAAAAAAAAA"
+	f := newMailboxFixture(t, "")
+	now := f.sweepClock(t)
+	past := now.UnixMilli() - mailboxPromptRetentionMs() - 1_000
+
+	// This machine's state, the way the consumer leaves it: a settled prompt and
+	// a spent id past the retention window, which a sweep would let go of.
+	f.holdPrompt(t, mailbox.ConfirmPrompt{
+		ID: "p-settled", At: past, Mailbox: mailboxUID, Safe: safe,
+	}, now.UnixMilli())
+	memory := f.promptMemory(t)
+	if _, ok, err := memory.AnswerPrompt(mailboxUID, "p-settled", safe, past); err != nil || !ok {
+		t.Fatalf("settling the prompt: ok=%v err=%v", ok, err)
+	}
+	f.seedSpent(t, mailbox.ConfirmLedgerUtterance, "u-old", past)
+	// And one stored prompt past D118's TTL, so the store half has work to do
+	// whether or not the consumer is up.
+	f.announce(t, "p-old", now.Add(-mailboxSweepTTL()-time.Second).UnixMilli())
+
+	// The consumer is running: the lock it holds for the life of its process.
+	held, err := mailbox.LockState(mailbox.StateLockOptions{Project: "aurora", Holder: "fugaro mailbox", Shared: true})
+	if err != nil {
+		t.Fatalf("taking the consumer's lock: %v", err)
+	}
+	beforeLocal := localState(t)
+
+	// A dry run is a reader: it writes nothing, it takes no lock, and it says
+	// the sweep would be refused rather than showing a set it will not perform.
+	out, _, err := execute(t, "mailbox", "sweep", "--dry-run", "--json")
+	if err == nil {
+		t.Fatal("the dry run beside a running consumer exited 0, want the refusal (exit 1)")
+	}
+	doc := sweepJSON(t, out)
+	if doc.Local.Refused == "" || !strings.Contains(doc.Local.Refused, "another fugaro mailbox is running") {
+		t.Fatalf("the dry run's local half reads %+v, want the refusal naming the consumer", doc.Local)
+	}
+	if len(doc.Local.LedgerIDs) != 0 || len(doc.Local.PromptIDs) != 0 || doc.Local.Wrote {
+		t.Fatalf("a refused local half reported a delete set: %+v", doc.Local)
+	}
+
+	// The sweep itself: its own half refused, the store's half performed.
+	out, _, err = execute(t, "mailbox", "sweep", "--json")
+	if err == nil {
+		t.Fatal("the sweep beside a running consumer exited 0, want the refusal (exit 1)")
+	}
+	doc = sweepJSON(t, out)
+	if doc.Local.Refused == "" {
+		t.Fatalf("the refused sweep reports no refusal: %+v", doc.Local)
+	}
+	if len(doc.Local.LedgerIDs) != 0 || len(doc.Local.PromptIDs) != 0 || doc.Local.Wrote {
+		t.Fatalf("the refused sweep reported a delete set it must not have written: %+v", doc.Local)
+	}
+	if doc.Local.Ledger == "" || doc.Local.Prompts == "" {
+		t.Fatalf("the refused sweep named no files: %+v, want the two it left alone", doc.Local)
+	}
+	if after := localState(t); !reflect.DeepEqual(beforeLocal, after) {
+		t.Fatalf("the refused sweep rewrote this machine's state:\n%v\nwant\n%v", after, beforeLocal)
+	}
+	if got := doc.Mailboxes[0].Deleted; len(got) != 1 || got[0] != "p-old" {
+		t.Fatalf("deleted = %v, want the stored prompt deleted: the store half touches no file of the consumer's, so a running consumer does not fence it", got)
+	}
+
+	// The control: with the consumer stopped, the same state is let go of.
+	if err := held.Release(); err != nil {
+		t.Fatalf("releasing the consumer's lock: %v", err)
+	}
+	out, _, err = execute(t, "mailbox", "sweep", "--json")
+	if err != nil {
+		t.Fatalf("the sweep after the consumer stopped: %v", err)
+	}
+	doc = sweepJSON(t, out)
+	if doc.Local.Refused != "" {
+		t.Fatalf("the sweep after the consumer stopped is still refused: %+v", doc.Local)
+	}
+	if !holdsID(doc.Local.PromptIDs, "p-settled") || !holdsID(doc.Local.PromptIDs, "u-old") {
+		t.Fatalf("the sweep after the consumer stopped let go of %v, want the settled prompt and the spent id", doc.Local.PromptIDs)
+	}
+	if _, _, held := f.promptMemory(t).Prompt(mailboxUID, "p-settled"); held {
+		t.Fatal("the settled prompt survived the sweep that was allowed to run")
+	}
+}
+
+// TestMailboxConsumerRefusesToStartUnderASweep is the other direction of the
+// same lock: the consumer holds it shared for the life of its process, and a
+// sweep holds it exclusively across its local half — so a consumer that starts
+// inside that half is refused rather than let through to read a state the sweep
+// is about to commit over.
+func TestMailboxConsumerRefusesToStartUnderASweep(t *testing.T) {
+	f := newMailboxFixture(t, "")
+	offers := f.offers(t)
+	sweepLock, err := mailbox.LockState(mailbox.StateLockOptions{Project: "aurora", Holder: "fugaro mailbox sweep"})
+	if err != nil {
+		t.Fatalf("taking the sweep's lock: %v", err)
+	}
+	defer func() { _ = sweepLock.Release() }()
+
+	if _, _, err := execute(t, "mailbox", "--once"); err == nil {
+		t.Fatal("the consumer started while a sweep held this machine's state, want the refusal")
+	} else if !strings.Contains(err.Error(), "another fugaro mailbox sweep is running") {
+		t.Fatalf("the consumer's refusal reads %q, want the sweep it met", err.Error())
+	}
+	if len(*offers) != 0 {
+		t.Fatalf("the refused consumer acted on %d deliveries, want none", len(*offers))
 	}
 }
 
