@@ -310,7 +310,7 @@ func (s *Server) identityTicket(ctx context.Context, w http.ResponseWriter, call
 	// digest (identitywire.Digest): the value itself is answered to the launcher
 	// and written NOWHERE — not on the record, not in a log line, not in an
 	// audit line (R3, and the one rule audit.go exists for).
-	ticket, err := newTicket()
+	ticket, err := newTicket(req.Slug, req.Run)
 	if err != nil {
 		s.log.Error("credsvc: a ticket could not be drawn", "error", err)
 		s.refuseTicket(ctx, w, caller, StatusUnavailable, ErrorStateUnavailable, ErrorStateUnavailable,
@@ -427,20 +427,31 @@ func (s *Server) refuseTicket(ctx context.Context, w http.ResponseWriter, caller
 	s.refuse(w, status, typ, message)
 }
 
-// newTicket draws one ticket: ticketBytes from crypto/rand, in hex, which is the
-// alphabet these values are spelled in everywhere else in this service.
+// newTicket draws one ticket for the slug and run the record is written under:
+// ticketBytes from crypto/rand, in hex, which is the alphabet these values are
+// spelled in everywhere else in this service, carried beside the record's own
+// two names.
+//
+// The two names are part of the ticket and not decoration: the claim's caller
+// holds no run identity — the claim is a run's first call, made before it has
+// one (R2) — so C1's ClaimRequest carries the ticket and the nonce and nothing
+// else, and the ticket is the ONLY thing that can tell the claim which record to
+// read. The spelling that carries them is joinIdentityTicket's and not this
+// file's (identity_claim.go): one function spells the ticket for the mint and
+// reads it back at the claim, so the two cannot come apart into a ticket no run
+// could claim.
 //
 // It returns an error and never a fallback, for newSlipID's reason: a ticket
 // another caller could predict is a ticket it could claim, and the only thing
 // standing between it and the record would be the account the claim checks —
 // which is a fence this service must not lean on when it can simply draw a
 // secret.
-func newTicket() (string, error) {
+func newTicket(slug, run string) (string, error) {
 	raw := make([]byte, ticketBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("credsvc: drawing a ticket failed: %w", err)
 	}
-	return hex.EncodeToString(raw), nil
+	return joinIdentityTicket(slug, run, hex.EncodeToString(raw))
 }
 
 // ticketExpiry is when a ticket stops being claimable, read off the record it
