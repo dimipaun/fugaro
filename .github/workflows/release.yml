@@ -65,6 +65,7 @@ jobs:
       contents: write # create the release and upload its assets
       id-token: write # cosign keyless signing
       checks: read # the gate reads the commit's check-runs
+      actions: read # the gate lists the tag's workflow runs and reads their titles
     # One release at a time; GitHub keeps a single pending run per group, so
     # tags pushed in quick succession can drop the middle one (re-push it).
     concurrency:
