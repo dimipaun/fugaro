@@ -95,8 +95,9 @@ by the task named.
 ## What becomes of the earlier plan (D3170)
 
 `docs/credentials-belong-to-models` keeps what is merged and its two-release shape. Every task
-of it that is not merged is withdrawn and carried here. A1 writes this table into that plan's
-own documents. **The owner stops the withdrawn tasks by hand before any launches (O1)**; C1's
+of it that is not merged is withdrawn and carried here, except CM2 (per-repository crafts), which
+is not replaced: one table per project, and RT2 carries admission. A1 writes this table into that
+plan's own documents. **The owner stops the withdrawn tasks by hand before any launches (O1)**; C1's
 draft pull request #3460 is closed unmerged.
 
 | Earlier task | State | Here |
