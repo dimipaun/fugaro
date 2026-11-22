@@ -131,6 +131,18 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		// update owes (TestMobileServiceIsOffUntilTheSwitchIsOn: the tfvars
 		// hand no account over, and the signer does not exist).
 		"firebase-mobile": {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
+		// The Firebase root with the installation's credentials account handed
+		// over as issuer_account (launcher-does-not-mint plan task LM13; D3121,
+		// F7): the ONE row this design adds is planned here — the root's own
+		// fugaroTokenMinter on the RUNS' signer account of this Firebase project,
+		// held by the credentials account the installation root creates — and the
+		// cover reads it by account and role rather than by the cell alone
+		// (issuerMinterGrant; TestIssuerMinterGrantIsCovered reads the refusals).
+		// It is a golden of its own and not `firebase` carrying the key because a
+		// fresh setup's first apply creates no credentials service: its Firebase
+		// root is handed no account and the plan names no row (U9, and
+		// internal/cli's TestFreshSetupPlansNoRowForAMissingAccount).
+		"firebase-issuer": {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := goldenPlan(t, name)
