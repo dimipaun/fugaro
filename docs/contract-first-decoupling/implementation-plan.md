@@ -43,7 +43,7 @@ runs (D1812), rigor mode plus one on/off setting (D1813), change requests record
 | One integration node per contract; every broken edge has an integration node depending on both endpoints (D1817) | CD2 `TestDecouplingNeedsIntegrationOverBothEndpoints` |
 | A contract's files appear in no other task's footprint except the contract and its change nodes (F10) | CD2 `TestContractFilesBelongToTheContractAndItsChanges` |
 | The skill never parses the graph; the CLI does (D1821) | CD1/CD5 `TestParallelismSkillNamesTheCLIForTheGraph` |
-| Contract tasks launch with `--mode` at least the highest consumer mode; raise-only is the resolver's own rule (D1819) | CD1 `TestParallelismSkillContractTaskRigor` |
+| Contract tasks launch with `--mode` at least the highest consumer mode; the request is the narrowest rank of the resolver's order, so the mode it names is the run's (LD3, D1819) | CD1 `TestParallelismSkillContractTaskRigor` |
 | Hotfix skips the pass; Critical needs fully specified contracts and a named end-to-end test (D1818) | CD1 and CD5 skill-text tests, CD5 `TestSkillRigorTableMatchesInternalRigor` |
 | The skill's text carries no repository-specific or organisation-specific wording (spec: generic) | CD1/CD5 `TestParallelismSkillIsGeneric` |
 | A launched dependent learns of an amendment through a follow-up run that names the contract file and never pastes text (D1812; `followup.md` ground rules) | CD1 `TestFollowupInstructionsNameTheContractFile`, check 480 |

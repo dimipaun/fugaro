@@ -460,7 +460,7 @@ test('the client is frozen, and so are the paths it writes to', async () => {
   }, TypeError);
 });
 
-test('the client object is exactly its eight names, and nothing else is on it', async () => {
+test('the client object is exactly its nine names, and nothing else is on it', async () => {
   // `index.test.js` pins the DOOR's export set; the object the builder returns
   // is the other half of the same rule, and it is the one a screen holds. A
   // `raw(path, value)` added here "for one screen" would be a second write path
@@ -469,9 +469,13 @@ test('the client object is exactly its eight names, and nothing else is on it', 
   // refused, which nothing here will ever send. `licenceRefusal` is S6.3's
   // addition and it is a read too -- the refusal the licence would make for one
   // write, which a screen with a refusal of its own asks before it makes one.
+  // `register` is P5.2.8's (§3.5 (b)): the push registration is a mailbox
+  // message like any other, so it goes through THIS object and the key handling
+  // stays here -- a `push/` module that signed and wrote its own record would be
+  // the second write path D113 forbids.
   const h = await harness();
   assert.deepEqual(Object.keys(h.client).sort(),
-    ['flush', 'licenceRefusal', 'ok', 'paths', 'pending', 'poll', 'send', 'unsent']);
+    ['flush', 'licenceRefusal', 'ok', 'paths', 'pending', 'poll', 'register', 'send', 'unsent']);
   for (const name of ['raw', 'write', 'read', 'store', 'keys', 'key', 'mac', 'database', 'ref']) {
     assert.equal(name in h.client, false, name);
   }
@@ -1614,12 +1618,14 @@ test('nothing in the module reads a clock, a random source, a file or a global',
   // ... and the count of Date constructions, which is what makes the anchor
   // above exactly as strong as it should be: **every** `Date` this module builds
   // is over the moment it was handed (`at`, D117's clock), and over nothing
-  // else. There are two -- `send`'s and the licence question's (S6.3: a screen
-  // asks the licence at its own moment, and the port takes a `Date`) -- and each
-  // one is read by this line: a third over anything but `at` is a flagged change.
+  // else. There are three -- `send`'s, the licence question's (S6.3: a screen
+  // asks the licence at its own moment, and the port takes a `Date`) and the
+  // registration's (P5.2.8), which asks the licence the same way at its own
+  // moment -- and each one is read by this line: a fourth over anything but
+  // `at` is a flagged change.
   const built = [...code(readFileSync(new URL('client.js', import.meta.url), 'utf8'))
     .matchAll(/\bnew Date\s*\(([^)]*)\)/g)].map((match) => match[1].trim());
-  assert.deepEqual(built, ['at', 'at'], 'the client builds its Dates from the clock it was given');
+  assert.deepEqual(built, ['at', 'at', 'at'], 'the client builds its Dates from the clock it was given');
 });
 
 /**
@@ -2213,6 +2219,109 @@ test('after the grace the configuration change is refused too', async () => {
   assert.equal(refused.code, LICENCE_STATE_CODES.LAPSED);
   assert.deepEqual(h.store.writes(), []);
   assert.deepEqual(h.client.unsent().map((entry) => entry.text), ['make it quieter']);
+});
+
+// --- the registration (mobile plan, Task P5.2.8; P5.2.1's kind) --------------
+//
+// `register` is the app's registration write: one `registration` message
+// carrying the push token, the platform and §3.8's switches. P5.2.8's own suite
+// (`src/push/registration.test.js`) asserts the whole path -- the token, the
+// switches, the schema, the tag -- and what is tested HERE is what belongs to
+// the write path itself: that it is the same one write path (D113), that it
+// queues nothing, and that the two refusers it shares with `send` -- the lapse
+// and the connection -- answer it the same way. **It does not ask for
+// presence**: push exists for the times the consumer is away, so a phone whose
+// orchestrator is offline is exactly the phone that has to be able to register.
+
+/** §3.8's switches, as the app's controls door hands them over. */
+const PREFS = Object.freeze({
+  kill_switch: true,
+  cap_reached: true,
+  consumer_offline: true,
+  cap_near: false,
+  prompt: true,
+});
+
+test('a registration is one signed message in the inbox, and it queues nothing', async () => {
+  const h = await harness({ observe: false });
+  const written = await h.client.register({ token: 'not-a-real-token', platform: 'ios', prefs: PREFS });
+  assert.equal(written.ok, true);
+  assert.equal(typeof written.id, 'string');
+  assert.equal(written.at, T0);
+  // One write, to this mailbox's inbox: the path set D113 fences is unchanged.
+  assert.deepEqual(h.store.writes().map((entry) => entry.path), [h.paths.inboxMessage(written.id)]);
+  const record = h.valueAt(h.paths.inboxMessage(written.id));
+  assert.equal(record.kind, 'registration');
+  assert.equal(record.token, 'not-a-real-token');
+  assert.equal(record.platform, 'ios');
+  assert.deepEqual({ ...record.prefs }, { ...PREFS });
+  assert.equal(record.mac, macOf({ ...record, mac: undefined }, MAC_KEY, 'inbox'), 'the tag is this pairing’s');
+  // Nothing is remembered for a retry: §3.5 (b) registers "on next open" and §6
+  // recovers by the same act, so a registration in the outbox would only give
+  // `flush` an older registration to deliver after a newer one. And nothing is
+  // said out loud: `unsent` is D167's text the OWNER resends, and the speaker is
+  // for their utterances.
+  assert.deepEqual(h.client.pending(), []);
+  assert.deepEqual(h.client.unsent(), []);
+  assert.deepEqual(h.speaker.spoken(), []);
+});
+
+test('a registration the schema refuses is refused before the key is touched', async () => {
+  const h = await harness({ observe: false, keys: countingKeys(new SecretStore(new MemorySecureStore())) });
+  // The field the schema blames is the CALLER's: an empty token is the case
+  // P5.2.8's verification names, and it never reaches the store.
+  const empty = await h.client.register({ token: '', platform: 'ios', prefs: PREFS });
+  assert.equal(empty.ok, false);
+  assert.equal(empty.code, SCHEMA_REFUSALS.EMPTY_STRING);
+  assert.equal(empty.field, 'token');
+  const platform = await h.client.register({ token: 'not-a-real-token', platform: 'web', prefs: PREFS });
+  assert.equal(platform.code, SCHEMA_REFUSALS.UNKNOWN_PLATFORM);
+  const prefs = await h.client.register({ token: 'not-a-real-token', platform: 'ios', prefs: {} });
+  assert.equal(prefs.code, SCHEMA_REFUSALS.MISSING_FIELD);
+  // A field the kind does not carry, and a registration missing one it requires,
+  // are the schema's answers too.
+  const undeclared = await h.client.register({ token: 'not-a-real-token', platform: 'ios', prefs: { ...PREFS, extra: true } });
+  assert.equal(undeclared.code, SCHEMA_REFUSALS.UNKNOWN_FIELD);
+  const missing = await h.client.register({ platform: 'ios', prefs: PREFS });
+  assert.equal(missing.code, SCHEMA_REFUSALS.MISSING_FIELD);
+  assert.equal(missing.field, 'token');
+  assert.deepEqual(h.store.writes(), [], 'nothing was written, and no id was recorded as used');
+  assert.deepEqual(h.keys.asked(), [], 'and the pairing key was never asked for');
+});
+
+test('after the grace a registration is refused, silently and unqueued', async () => {
+  // A registration changes the installation's configuration, and `writeOf`
+  // names that class `config` -- which T12's kept set does not carry. The
+  // refusal is a CODE and not a sentence: nothing here is spoken, because the
+  // registration is not an utterance (the push screen renders the code).
+  const lapse = licenceIn(LICENCE_STATES.LAPSED);
+  const h = await harness({ observe: false, licence: lapse.port });
+  const askedOfTheConnection = h.connection.asked().length;
+  const refused = await h.client.register({ token: 'not-a-real-token', platform: 'ios', prefs: PREFS });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, LICENCE_STATE_CODES.LAPSED);
+  assert.equal(refused.field, 'licence');
+  assert.deepEqual(h.store.writes(), []);
+  assert.deepEqual(h.client.unsent(), [], 'there is no owner sentence to resend');
+  assert.deepEqual(h.speaker.spoken(), []);
+  assert.equal(h.connection.asked().length, askedOfTheConnection, 'the lapse is asked first');
+  assert.deepEqual(lapse.read(), [new Date(T0)]);
+});
+
+test('a registration with no connection is refused, and the retry is the next call', async () => {
+  const h = await harness({ observe: false, connection: new MemoryConnection({ online: false }) });
+  const refused = await h.client.register({ token: 'not-a-real-token', platform: 'ios', prefs: PREFS });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, GATE_CODES.NO_CONNECTION);
+  assert.deepEqual(h.store.writes(), [], 'the SDK is never handed a write D167 says it would hold');
+  assert.deepEqual(h.client.pending(), [], 'and the record is not kept for a flush to deliver later');
+  // A store that says no is reported as it is, and the id is not reused: the
+  // next call mints a new one.
+  const failing = await harness({ observe: false, db: new MemoryMailboxStore({ failWrites: true }) });
+  const failed = await failing.client.register({ token: 'not-a-real-token', platform: 'ios', prefs: PREFS });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, STORE_CODES.WRITE_FAILED);
+  assert.deepEqual(failing.client.pending(), [], 'a failed registration is not queued either');
 });
 
 test('after the grace a merge is refused, and a confirm of one, while a cancel is written', async () => {

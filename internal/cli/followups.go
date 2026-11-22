@@ -578,9 +578,14 @@ func followUpsFiledBy(filed map[string]string, g followUpGroup) (string, bool) {
 // `fugaro run --mode hotfix`.
 //
 // The mode is carried as it is and nothing beside it: the paths are the ones the
-// parent's own diff measured, and the request the runner applies is raise-only
-// (rigor.Resolve), so a repository whose floors are higher than the parent's
-// recorded mode resolves them again for this run and a lower mode never wins.
+// parent's own diff measured, and the run's request is a mode it carried rather
+// than one it asked for (task.Spec.RigorCarried, D1844), so the resolver holds
+// it to raise-only (rigor.Request.Carried, LF5 §3a) — the work left behind
+// starts where it was left and never below what the repository resolves today.
+// A repository whose own answer has risen since the parent ran, or an area rule
+// the child's own paths match, therefore decides its level, exactly as it would
+// for a task filed by hand; the floors and the mode both come from the run's own
+// layers.
 func followUpsParentMode(r *runstore.RigorRecord) rigor.Rigor {
 	b := r.Bounded()
 	if b == nil || b.LevelOf() == rigor.Hotfix {

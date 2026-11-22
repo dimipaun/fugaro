@@ -843,8 +843,8 @@ describe('the spend controls', () => {
     expect(drawnText(off)).not.toContain('ada')
 
     // On: the same document, and the rows are the document's own keys. The one
-    // address is drawn as the console's own marker for it, and the note beside
-    // the knob says what turning it on costs.
+    // address is drawn as the identity it is (D3213), and the note beside the
+    // knob says what turning it on costs.
     const on = renderSpend(
       factory,
       buildSpendModel(PERSON_DOCUMENT, null, { persons: true }),
@@ -856,8 +856,8 @@ describe('the spend controls', () => {
     expect(texts(on, 'spend-persons-state')).toEqual(['on'])
     expect(texts(on, 'spend-persons-note')[0]).toContain('is on for this session')
     expect(all(on, 'spend-row')).toHaveLength(2)
-    expect(drawnText(on)).toContain('redacted@example.invalid')
-    expect(drawnText(on)).not.toContain('ada')
+    expect(drawnText(on)).toContain('ada@example.com')
+    expect(drawnText(on)).not.toContain('redacted@example.invalid')
     // The switch's own word for the grouping is drawn from the document: the
     // knob and the switch agree about what this screen is grouped by.
     expect(texts(on, 'spend-key')).toContain('unknown')

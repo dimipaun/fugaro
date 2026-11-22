@@ -35,6 +35,23 @@ package credsvc
 // CLI is served the bundle's value after a rotation (D1945, accepted:
 // `update` prompts the upgrade).
 //
+// **The one exception is KS12's copy** (internal/cli/update_keys.go, D3001,
+// R4), and it is an exception to the rule above in the direction the rule is
+// about and not around it: the same project owner, with the IAM that already
+// reads both containers, reads a container of this installation's OWN and
+// writes the value into the bundle entry the service serves, once, behind the
+// confirmation of their own `fugaro update`. Nothing a rotation does is that —
+// a rotation is a person's new value landing in the container the intake
+// writes, and this file's read is what serves it, unchanged. What the copy
+// exists for is the end of the mount: a key that is only in a container is a
+// key no released run is served, so the owner moves it into the document their
+// service reads. Three things keep it inside the rule: it never overwrites an
+// entry it did not write (it records the container and the version it read on
+// every entry it does write, and an entry without that marker is left alone and
+// named), it reads nothing the service could not have served, and it is
+// unreachable from this file — no line of the read below writes anything, and
+// no value it reads is copied anywhere.
+//
 // A read that FAILED is neither an absence nor a fallback: the call is refused
 // (D143, R7). A service that answered the bundle's value because Secret Manager
 // was unreachable would serve — silently, with no line an operator could act on

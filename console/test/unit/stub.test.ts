@@ -70,6 +70,20 @@ describe('the stub’s command keys', () => {
       // key here whose command path is also a group the never table refuses,
       // so `models ls` is the whole of what the stub may be asked for.
       'models ls',
+      // The models write's two phases (MW1, D2903): `models.add.plan` is the
+      // dry run and `models.add` is the write, so `--dry-run` is the mode word
+      // that tells the two apart -- the same shape `setup`'s `--plan-only` and
+      // the three `--stream` reads have. The model ID behind `--` and the three
+      // `=`-form values are the rows' own arguments and never words of the key.
+      'models add --dry-run',
+      'models add',
+      // The image write's two phases (MW2, D2903), the models write's shape one
+      // group over: `image.add.plan` is the dry run and `image.add` is the
+      // write, and `--dry-run` is the mode word that tells the two apart. The
+      // entry's name behind `--` and the three `=`-form values are the rows' own
+      // arguments and never words of the key.
+      'image add --dry-run',
+      'image add',
       // The settings-edit plan's C1 (`settings.read` / `readSettings`): the
       // Project tab's third read. Its key is the command alone -- the group's
       // other words are not on the spawn table at all -- and the scenario
@@ -143,8 +157,10 @@ describe('the stub’s command keys', () => {
       'report --stream',
       'budget show --stream',
       'user ls --me',
-      // ...and four that are a group's first: the image catalog's one read
-      // (`image ls`, the group's writers being on the never table) and the
+      // ...and four that are a group's first: the image catalog's one *read*
+      // (`image ls`; the group's writers -- `image rm`, `image promote`, `image
+      // build`, `image gate`, `image record`, `image refresh` -- are on the
+      // never table, and `image add` is a row of its own above) and the
       // recipes (`recipes ls`; `recipes publish` and `recipes validate` are
       // not rows). Both carry no argument, so no scenario key can name one.
       'image ls',

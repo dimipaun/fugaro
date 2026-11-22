@@ -25,6 +25,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -1208,7 +1209,7 @@ func TestInstallationSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Exactly the installation root's variables.
-	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "fugaro_project", "launcher_accounts", "launcher_bucket_condition", "launchers", "log_bucket_description", "manage_apis",
+	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "fugaro_project", "launcher_accounts", "launcher_bucket_condition", "launchers", "log_bucket_description", "log_bucket_location", "manage_apis",
 		"names", "operators", "project", "region", "registry_cleanup", "reports", "runs_bucket", "state_bucket"}
 	if got := slices.Sorted(maps.Keys(doc)); !slices.Equal(got, want) {
 		t.Errorf("keys = %v, want %v", got, want)
@@ -1217,6 +1218,12 @@ func TestInstallationSpec(t *testing.T) {
 	// carry no labels.
 	if doc["log_bucket_description"] != LogBucketDescription || !strings.Contains(LogBucketDescription, "fugaro") {
 		t.Errorf("log_bucket_description = %v", doc["log_bucket_description"])
+	}
+	// And where the bucket a NEW installation creates is: the mapping's
+	// answer for the region, which for us-east5 is the US multi-region (a
+	// region Cloud Logging offers no bucket in, LP6, D3082).
+	if doc["log_bucket_location"] != place.For(s.Region).LogBucket.Where {
+		t.Errorf("log_bucket_location = %v, want %v", doc["log_bucket_location"], place.For(s.Region).LogBucket.Where)
 	}
 	if doc["budget"] != nil {
 		t.Errorf("budget = %v", doc["budget"])

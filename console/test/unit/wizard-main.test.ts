@@ -102,7 +102,7 @@ import {
   SETUP_RIGOR_MODES,
 } from '../../src/shared/new-ops'
 import { SourceRefusal } from '../../src/source/source'
-import { LITERAL_PLACEHOLDER, PATH_PLACEHOLDER, URL_PLACEHOLDER } from '../../src/shared/sanitize'
+import { LITERAL_PLACEHOLDER } from '../../src/shared/sanitize'
 import { UNREADABLE_VERSION } from '../../src/shared/version'
 import {
   CANCEL_LABEL,
@@ -673,7 +673,8 @@ describe('the bytes the child is given', () => {
     try {
       expect(path.startsWith(base)).toBe(true)
       expect(path).toContain('fugaro-setup-')
-      expect(statSync(path).mode & 0o777).toBe(SETUP_DIR_MODE)
+      // Windows keeps no POSIX permission bits: stat reports 0o666 for a directory there, so the mode is read only where one exists.
+      if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(SETUP_DIR_MODE)
       expect(SETUP_DIR_MODE).toBe(0o700)
       expect(readdirSync(path)).toEqual([])
     } finally {
@@ -1244,7 +1245,7 @@ describe('setup.apply', () => {
 // ---------------------------------------------------------------------------
 
 describe('the events the console answers with', () => {
-  it('puts every named field through its class, and never the raw value', async () => {
+  it('puts every named field through its class, and rebuilds the document it arrived in', async () => {
     // A `left_for_you` line is the CLI's own sentence and it can carry anything
     // a cloud project put in it. Every field the contract names goes through
     // `NEW_OPERATION_TEXT_CLASSES` before it reaches the renderer.
@@ -1273,11 +1274,12 @@ describe('the events the console answers with', () => {
     const lines = answer.document.lines as readonly JSONObject[]
     expect(lines).toHaveLength(3)
     const drawnHostile = lines[1] as JSONObject
-    expect(drawnHostile['text']).toBe(
-      `run it: ${URL_PLACEHOLDER} now ${PATH_PLACEHOLDER}`,
-    )
-    expect(drawnHostile['text']).not.toContain('evil.invalid')
-    expect(drawnHostile['text']).not.toContain('/Users/ana')
+    // The URL and the path are drawn as written: neither carries a credential,
+    // and this layer replaces a value only for the credential in it (D3213), so
+    // the sentence the CLI wrote reaches the window whole.
+    expect(drawnHostile['text']).toBe('run it: https://evil.invalid/x now /Users/ana/plan.md')
+    expect(drawnHostile['text']).toContain('evil.invalid')
+    expect(drawnHostile['text']).toContain('/Users/ana')
     // A field with no class is carried as it arrived (`kind` is not in the
     // table), and the walk still rebuilt the document: nothing the renderer
     // reads is the object the child printed.
@@ -1327,8 +1329,14 @@ describe('the events the console answers with', () => {
       expect(lines.map((line) => line['type'])).toEqual(done.map((line) => line['type']))
       expect(lines.at(-1)).toMatchObject({ type: 'done' })
       expect(finished.confirmer.opened).toHaveLength(1)
-      // ...and the golden's own bucket name is not what reaches a screen.
-      expect(JSON.stringify(answer)).not.toContain('gs://fugaro-runs-proj-1234')
+      // ...and every sentence the golden wrote is drawn as the CLI's own words:
+      // a bucket is the operator's own resource and not a credential (D3213), so
+      // the layer line that names `gs://fugaro-runs-proj-1234` arrives whole
+      // rather than masked, and so does every other line an operator reads.
+      for (const [at, line] of done.entries()) {
+        if (line['type'] !== 'stage') continue
+        expect(lines[at]?.['detail'], JSON.stringify(line['detail'])).toBe(line['detail'])
+      }
     }
 
     // The third run ends in `error`, and that is the plan's own refusal: the
