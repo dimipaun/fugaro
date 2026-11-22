@@ -152,7 +152,9 @@ func (f *claimIssuance) Get(_ context.Context, slug, run string) (identitywire.R
 // Claim is the fence (R5) and the retry rule (R2), in one atomic step as the
 // real store's is: a record claimed by this account with THIS nonce digest is
 // the same claim answered again, and every other claim on a claimed record is
-// refused.
+// refused. The account is compared folded, as the real store's is
+// (identity_record.go, sameAccount), so this double cannot pass a claim the real
+// store would refuse or refuse one it would serve.
 func (f *claimIssuance) Claim(_ context.Context, slug, run string, claim identitywire.Claim) (identitywire.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -169,7 +171,7 @@ func (f *claimIssuance) Claim(_ context.Context, slug, run string, claim identit
 		rec.Claimed = claim
 		f.records[issuanceNode(slug, run)] = rec
 		return rec, nil
-	case rec.Claimed.Account == claim.Account && rec.Claimed.NonceHash == claim.NonceHash:
+	case sameAccount(rec.Claimed.Account, claim.Account) && rec.Claimed.NonceHash == claim.NonceHash:
 		return rec, nil
 	default:
 		return identitywire.Record{}, identitywire.ErrClaimed
@@ -604,6 +606,59 @@ func TestClaimOfATicketTheTicketRouteMinted(t *testing.T) {
 	}
 	if want := identitywire.Digest(issued.Ticket); held.TicketHash != want {
 		t.Errorf("the record's ticket digest is not the digest of the ticket the route answered")
+	}
+}
+
+// TestClaimOfATicketThatNamedTheAccountInAnotherCase is the review of LM2's
+// finding held end to end: the ticket route admits the account an ask names
+// folded and writes the ask's OWN spelling on the record
+// (ticketAccountAdmitted, identity_ticket.go), while the claim's account is the
+// CONFIGURED spelling the verifier answers (auth.go's verifyJob) — so the two
+// spellings of one account reach the claim's match and it has to see them as
+// one. The route's check folds (sameAccount) and so does the real store's floor
+// (TestTicketRecordClaimFoldsTheAccount, identity_record_test.go); a
+// byte-for-byte comparison in either would refuse a ticket the route itself
+// admitted, which is a run that could never claim its identity.
+func TestClaimOfATicketThatNamedTheAccountInAnotherCase(t *testing.T) {
+	f := newClaimFixture(t)
+	ask := identitywire.TicketRequest{
+		Slug:              f.slug,
+		Run:               f.run,
+		Account:           strings.ToUpper(testJobSA),
+		Launcher:          testLauncherAccount,
+		Branch:            "fugaro/" + f.run,
+		MaxRuntimeSeconds: int(testAskRuntime / time.Second),
+	}
+	body, err := json.Marshal(ask)
+	if err != nil {
+		t.Fatalf("building the ask: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, identitywire.TicketPath, strings.NewReader(string(body)))
+	f.server.identityTicket(context.Background(), rec, IdentityCaller{Address: testLauncherAccount, Class: identitywire.ClassPerson}, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the ticket ask is answered %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var issued identitywire.TicketResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &issued); err != nil {
+		t.Fatalf("the ticket's answer is not one this contract reads: %v", err)
+	}
+
+	// The record holds the ASK's spelling and not the configured one, which is
+	// the value the claim's match is made against.
+	if held := f.issuance.record(t, f.slug, f.run); held.ExpectedAccount != strings.ToUpper(testJobSA) {
+		t.Fatalf("the record's expected account is %q, want the ask's own spelling %q", held.ExpectedAccount, strings.ToUpper(testJobSA))
+	}
+
+	// The claim's account is the configured spelling the verifier answers, so a
+	// byte-for-byte match would refuse this ticket.
+	ans := f.claimOK(t, identityClaimBody(t, issued.Ticket, testNonce))
+	if ans.Token == "" {
+		t.Fatal("the claim answered no token")
+	}
+	held := f.issuance.record(t, f.slug, f.run)
+	if !sameAccount(held.Claimed.Account, testJobSA) {
+		t.Errorf("the record is claimed by %q, want the job's own account %q", held.Claimed.Account, testJobSA)
 	}
 }
 
@@ -1071,6 +1126,42 @@ func TestClaimOnAServiceWithNoIssuerAnswersNotServed(t *testing.T) {
 	if s.audit.Len() != 0 {
 		t.Errorf("a service with no issuer wrote an audit line, and it verified no caller: %s", s.audit.String())
 	}
+}
+
+// TestClaimWithNoStoreRefusesOnlyAVerifiedCaller is the audit rule's floor on
+// the wiring-fault path. A service with a signer and no issuance store refuses
+// every claim as its own failure — the store is not one that answers "no
+// record" — but the refusal's audit line belongs to a VERIFIED caller, so the
+// store check sits after the bearer and the job's own token were read
+// (identityClaim). Run before them, as the review of LM2 found, an
+// unauthenticated caller was answered through refuseIdentityCall and wrote a
+// line naming an act by a caller this service never admitted.
+func TestClaimWithNoStoreRefusesOnlyAVerifiedCaller(t *testing.T) {
+	f := newClaimFixture(t)
+	f.server.cfg.Identity.Store = nil
+	ticket := f.ticket(t, f.slug, f.run)
+
+	// No bearer at all: refused as the caller's own, with no line, and the store
+	// is never reached.
+	resp, body := f.claimCall(t, identityClaimBody(t, ticket, testNonce), func(r *http.Request) {
+		r.Header.Del("Authorization")
+	})
+	wantRefusal(t, resp, body, StatusUnverified, identitywire.RefusalCallerNotAdmitted)
+	if f.audit.Len() != 0 {
+		t.Errorf("an unauthenticated claim on a store-less service wrote an audit line, and it verified no caller: %s", f.audit.String())
+	}
+
+	// The job's own verified account: the missing store is still the service's
+	// own failure, and the verified caller's refusal owes the one line the rule
+	// gives it — with no run and no repository, because no record was read.
+	resp, body = f.claimCall(t, identityClaimBody(t, ticket, testNonce))
+	wantRefusal(t, resp, body, StatusUnavailable, ErrorStateUnavailable)
+	lines := f.identityLines(t)
+	if len(lines) != 1 {
+		t.Fatalf("the verified caller's refusal wrote %d audit lines, want exactly one", len(lines))
+	}
+	wantIdentityLine(t, lines[0], "", "", ErrorStateUnavailable)
+	f.wantNothingSigned(t)
 }
 
 // ---------------------------------------------------------------------------
