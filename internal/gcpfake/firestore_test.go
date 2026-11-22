@@ -135,8 +135,8 @@ func TestFakeRunQueryMatchesOrder(t *testing.T) {
 	if ids := fakeQueryIDs(t, f, query(desc, 2, "")); !reflect.DeepEqual(ids, []string{"run-b", "run-c"}) {
 		t.Fatalf("first page = %v", ids)
 	}
-	// The page after it starts after the last row read, exclusively: a
-	// startAt on the same position would answer run-c again.
+	// The page after it starts after the last row read: a startAfter is
+	// exclusive, so run-c is not answered twice.
 	after := `,"startAfter":{"values":[{"timestampValue":"2026-11-22T10:00:00.000000Z"},` +
 		`{"referenceValue":"projects/p-1234/databases/(default)/documents/runIndex/run-c"}]}`
 	if ids := fakeQueryIDs(t, f, query(desc, 2, after)); !reflect.DeepEqual(ids, []string{"run-a"}) {

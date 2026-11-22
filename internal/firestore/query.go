@@ -60,17 +60,15 @@ func (c *Client) RunQuery(ctx context.Context, q Query) ([]Doc, error) {
 		default:
 			return nil, fmt.Errorf("firestore: %q is not an order direction", o.Direction)
 		}
-		order = append(order, map[string]any{
-			"field":     map[string]any{"fieldPath": FieldPath(o.Field)},
-			"direction": o.Direction,
-		})
+		clause := map[string]any{"field": map[string]any{"fieldPath": FieldPath(o.Field)}}
+		if o.Direction != "" {
+			clause["direction"] = o.Direction
+		}
+		order = append(order, clause)
 		fields = append(fields, o.Field)
 	}
 	if len(fields) == 0 || fields[len(fields)-1] != "__name__" {
-		order = append(order, map[string]any{
-			"field":     map[string]any{"fieldPath": "__name__"},
-			"direction": "ASCENDING",
-		})
+		order = append(order, map[string]any{"field": map[string]any{"fieldPath": "__name__"}})
 		fields = append(fields, "__name__")
 	}
 	sq := map[string]any{
