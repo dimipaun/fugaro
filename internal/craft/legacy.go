@@ -106,8 +106,15 @@ type LegacyInput struct {
 	// agent.oauth_token, and under api-key it is the one Claude account a run's
 	// mix stages may go out on (mixedStageAccount).
 	DefaultAccount string
-	// Accesses is the file's own agent.crafts block, the retired per-craft
-	// access included.
+	// Accesses is the crafts block IN FORCE for this run: the run's own
+	// agent.crafts — every layer's answer already resolved into it, and the task's
+	// grade already written into the crafts that carry one (internal/runner's
+	// applyGrade) — and the rule reads inheritance INSIDE that one block
+	// (config.Crafts.Inherited), because the run's own resolution walks the same
+	// chain: the first-line review and the merge judge follow the coder, the
+	// security review the senior review (craft.Resolve, config.CraftParent). A
+	// block lifted from a single layer, or one no applyGrade has written, would
+	// answer a craft that follows another one an access the run never uses.
 	Accesses config.Crafts
 	// Grades is model_grades in force for this run: a grade's access as the
 	// project's config writes it, and where a repository's file still writes one
@@ -141,18 +148,24 @@ func LegacyAccess(in LegacyInput, stage, grade string) (Access, bool) {
 	if name == "" {
 		return Access{}, false
 	}
-	// The grade's access reaches the coder's craft and the merge judge's, and no
-	// other: that is what applyGrade writes it into today (Crafts.Coder and
-	// Crafts.MergeJudge, internal/runner/routing.go), so a graded task's reviews
-	// keep their own crafts' accesses. Taking the grade for every craft would
-	// move the reviews onto the coder's credential, which is the move a
+	// The grade is READ for the coder's craft and the merge judge's, and for no
+	// other craft outright: those are the two applyGrade writes it into today
+	// (Crafts.Coder and Crafts.MergeJudge, internal/runner/routing.go). A craft
+	// that follows one of them and sets no access of its own is served it anyway,
+	// because the block the caller hands carries the written grade and the read
+	// below inherits inside that block — the move the run's own resolution makes
+	// (craft.Resolve), not one this rule makes. Reading the grade for every craft
+	// outright would take a craft that has an access of its own — a senior review
+	// on a pool of its own — onto the coder's credential, which is the move a
 	// migration may not make (R3).
 	if grade != "" && (name == config.CraftCoder || name == config.CraftMergeJudge) {
 		if written := in.Grades.Of(grade).Access; written != "" {
 			return in.resolve(written)
 		}
 	}
-	if written := in.Accesses.Of(name).Access; written != "" {
+	// Inherited, not Of: a craft that sets no access of its own goes out on the
+	// one it follows, which is what the run does today for the same block.
+	if written := in.Accesses.Inherited(name).Access; written != "" {
 		return in.resolve(written)
 	}
 	switch in.Auth {

@@ -302,15 +302,39 @@ func TestTheLegacyRuleAnswersEveryOldAuthValue(t *testing.T) {
 			ok: true,
 		},
 		{
-			// applyGrade writes a grade's access into the coder's craft and the
-			// merge judge's alone (Crafts.Coder, Crafts.MergeJudge,
-			// internal/runner/routing.go), so a graded task's review keeps its
-			// own craft's access: taking the grade here would move every review
-			// of a graded task onto the coder's credential (R3).
-			name: "a grade's access does not reach a review stage, which keeps its own craft's",
+			// The crafts block is read WITH inheritance (Inherited), because the
+			// run's own resolution walks the same chain: the first-line review
+			// follows the coder, so a repository whose coder's craft names a pool
+			// serves its first-line review on that pool today. Answering the
+			// retired auth chain here would drop the owner's pool and send the
+			// review wherever agent.auth points, which is the move a migration
+			// may not make (R3).
+			name: "a craft that follows the coder goes out on the access the coder's craft names (Inherited)",
 			edit: func(in *LegacyInput) {
 				in.Auth = "oauth"
 				in.DefaultAccount = "bob"
+				in.Pools = append(in.Pools, config.Pool{Name: "review-pool", Members: []string{"alice"}})
+				in.Accesses.Coder.Access = "review-pool"
+			},
+			stage: "review_first",
+			want: Access{
+				Kind: AccessPool, Name: "review-pool",
+				Members: []config.PoolMember{{Name: "alice", Type: config.CredentialTypeClaudeOAuth, Path: config.CredentialPathCredsvc}},
+				Chosen:  true,
+			},
+			ok: true,
+		},
+		{
+			// The other half of the same chain: a craft that follows nobody is
+			// served no other craft's access, and the senior review is one — the
+			// grade is written into no craft it runs, so the retired keys answer
+			// it as they answer every other craft of a block that sets nothing.
+			name: "a craft that follows nobody keeps the retired keys: the senior review is not moved onto the coder's pool",
+			edit: func(in *LegacyInput) {
+				in.Auth = "oauth"
+				in.DefaultAccount = "bob"
+				in.Pools = append(in.Pools, config.Pool{Name: "review-pool", Members: []string{"alice"}})
+				in.Accesses.Coder.Access = "review-pool"
 				in.Grades.Strong = &config.Craft{Access: "alice"}
 			},
 			stage: "review",
@@ -386,13 +410,17 @@ func TestTheLegacyRuleAnswersEveryOldAuthValue(t *testing.T) {
 		},
 	}
 
-	// A grade's access is written into the coder's craft and the merge judge's
-	// alone (Crafts.Coder, Crafts.MergeJudge, internal/runner/routing.go), so it
-	// reaches plan, implement, fix and merge_judge and no review: taking it for
-	// every craft would move a graded task's reviews onto the coder's credential
-	// (R3, F38). The shape is checked here with auth vertex, where the grade's
-	// arm stands in front of the repository's own access, so a review answering
-	// Vertex is the whole of "the grade did not reach it".
+	// A grade's access is READ for the coder's craft and the merge judge's — the
+	// two crafts applyGrade writes it into (Crafts.Coder, Crafts.MergeJudge,
+	// internal/runner/routing.go) — and for no craft outright. A craft that
+	// follows one of them is served it anyway, because the block the caller hands
+	// carries the written grade and the read below inherits inside that block:
+	// reading the grade for every craft outright would take a senior review on a
+	// pool of its own onto the coder's credential (R3, F38).
+	//
+	// The shape is checked with auth vertex, where the grade's arm stands in
+	// front of the repository's own access: a craft answering Vertex is the whole
+	// of "no grade was read for it, and nothing it follows sets one".
 	graded := func() LegacyInput {
 		in := legacyHero()
 		in.Auth = "vertex"
@@ -408,10 +436,43 @@ func TestTheLegacyRuleAnswersEveryOldAuthValue(t *testing.T) {
 		})
 	}
 	for _, stage := range []string{"review", "review_first", "adversarial", "triage"} {
-		t.Run("a grade's access does not reach "+stage+", which keeps its craft's", func(t *testing.T) {
+		t.Run("a craft "+stage+" runs is read no grade, and follows nothing that sets one", func(t *testing.T) {
 			got, ok := LegacyAccess(graded(), stage, config.GradeStrong)
 			if !ok || got.Name != config.CredentialVertex {
 				t.Fatalf("LegacyAccess(%q, %q) = %+v, ok=%v; want the repository's own access, Vertex", stage, config.GradeStrong, got, ok)
+			}
+		})
+	}
+
+	// The block a graded run really hands: applyGrade has written the grade into
+	// the coder's craft, so the craft that follows the coder is served it too.
+	// That is the run's own answer today — a graded craft.Resolve answers the
+	// first-line review the grade's access, inherited from the coder — and the
+	// rule reproduces it rather than adding to it.
+	written := func() LegacyInput {
+		in := legacyHero()
+		in.Auth = "vertex"
+		in.Grades.Strong = &config.Craft{Access: "alice"}
+		in.Accesses.Coder.Access = "alice"
+		return in
+	}
+	for _, tc := range []struct {
+		stage string
+		want  string
+	}{
+		{"plan", "alice"},
+		{"implement", "alice"},
+		{"fix", "alice"},
+		{"merge_judge", "alice"},
+		{"review_first", "alice"},
+		{"review", config.CredentialVertex},
+		{"triage", config.CredentialVertex},
+		{"adversarial", config.CredentialVertex},
+	} {
+		t.Run("with the grade written into the coder's craft, "+tc.stage+" goes out on its craft's access", func(t *testing.T) {
+			got, ok := LegacyAccess(written(), tc.stage, config.GradeStrong)
+			if !ok || got.Name != tc.want {
+				t.Fatalf("LegacyAccess(%q, %q) = %+v, ok=%v; want %q", tc.stage, config.GradeStrong, got, ok, tc.want)
 			}
 		})
 	}

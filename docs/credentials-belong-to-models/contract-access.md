@@ -121,7 +121,7 @@ whether or not the credentials block declares it, and such a repository runs on 
 name a retired `access` key wrote is different: a name no layer holds is a problem the config reports
 at the key that wrote it, and the rule answers nothing rather than inventing a type.
 
-Four more rules the table depends on:
+Five more rules the table depends on:
 
 - A stage account is a **stage's** key, and the caller hands the two account sources in as two fields:
   `LegacyInput.StageAccounts` holds `stages.<stage>.claude_account` alone, and
@@ -136,11 +136,23 @@ Four more rules the table depends on:
   and every other stage keeps the project's key. The stage's own key is served as written; the mix's
   account beyond the config's own keys — the review model, the coder's provider route, the budget
   mode, the allow-list — is the launch's to judge (CM14), never this rule's.
-- A grade's access reaches the **coder's craft and the merge judge's**, and no other: those are the two
-  crafts `applyGrade` writes it into today (`Crafts.Coder` and `Crafts.MergeJudge`,
-  `internal/runner/routing.go`), so a graded task's reviews keep their own crafts' accesses. Reading the
-  grade for every stage would move a graded task's reviews onto the coder's credential, which is the
-  move a migration may not make (R3).
+- The **crafts block the caller hands is the run's own**: `LegacyInput.Accesses` is the run's
+  `agent.crafts` with every layer's answer already resolved into it and with `applyGrade` already
+  having written the task's grade where it belongs, and the rule reads inheritance **inside that one
+  block** (`config.Crafts.Inherited`). That chain is the run's own — the first-line review and the
+  merge judge follow the coder, the security review the senior review (`craft.Resolve`,
+  `config.CraftParent`) — so a repository whose coder's craft names a pool serves its first-line
+  review on that pool today and the rule answers the same. A block lifted from a single layer, or one
+  `applyGrade` has not written, would answer a craft that follows another one an access the run never
+  uses.
+- A grade's access is read for the **coder's craft and the merge judge's**, and for no other craft
+  outright: those are the two `applyGrade` writes it into today (`Crafts.Coder` and
+  `Crafts.MergeJudge`, `internal/runner/routing.go`). A craft that follows the coder and sets no access
+  of its own — the first-line review — is still served it, because the block the caller hands carries
+  the written grade and inheritance inside that block reads it, exactly as the run's own resolution
+  does. Reading the grade for every craft outright would take a craft that has an access of its own — a
+  senior review on a pool of its own — onto the coder's credential, which is the move a migration may
+  not make (R3).
 - `Chosen` is F35's second condition and nothing else: it is false **only** for the unsuffixed default
   account reached without a choice. Vertex, the project's key, a **mix** account a project named and
   the cascade's pool have no walk to be walked on and are chosen.
