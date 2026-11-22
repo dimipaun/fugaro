@@ -474,16 +474,24 @@ def update(argv):
                        "left": ("○", "33")}[state]
         sep = " " if state == "done" else ": "
         reason = msg if state == "failed" else REASONS[s]
-        # fail-bare: the failed step line keeps no error text on the screen
-        # either, so nothing a person sees names what failed or where its log
-        # is; the log itself still holds the text, as a run's own log does.
-        human_reason = "" if MODE == "fail-bare" and state == "failed" else reason
-        human.write(paint(glyph, code, colour) + " " + s + sep + human_reason + "\n")
-        log.write(paint(glyph, code, MODE == "log-ansi") + " " + s + sep + reason + "\n")
-        if state == "failed" and MODE not in ("fail-no-context", "fail-bare"):
-            for line in context:
-                human.write("    " + line + "\n")
-                log.write("    " + line + "\n")
+        # A failed step's own line is its name alone: the message it failed with
+        # is the block's "Error:" line under it, two spaces in with the rest of
+        # the block (report.Step.Failed). fail-bare is a screen that keeps
+        # nothing -- the step line and no block under it at all, so nothing a
+        # person sees names what failed or where its log is.
+        if state == "failed":
+            human.write(paint(glyph, code, colour) + " " + s + "\n")
+            log.write(paint(glyph, code, MODE == "log-ansi") + " " + s + "\n")
+            if MODE != "fail-bare":
+                human.write("Error: " + msg + "\n")
+                log.write("Error: " + msg + "\n")
+            if MODE not in ("fail-bare", "fail-no-context"):
+                for line in context:
+                    human.write("  " + line + "\n")
+                    log.write("  " + line + "\n")
+        else:
+            human.write(paint(glyph, code, colour) + " " + s + sep + reason + "\n")
+            log.write(paint(glyph, code, MODE == "log-ansi") + " " + s + sep + reason + "\n")
 
     if failing:
         if MODE != "fail-screen":
@@ -491,14 +499,14 @@ def update(argv):
         if MODE in ("fail-screen", "fail-both"):
             human.write(shim_out)
         if MODE not in ("fail-no-full-output", "fail-bare"):
-            human.write("    full output: " + path + "\n")
-            log.write("    full output: " + path + "\n")
-        if MODE != "fail-no-diagnose":
+            human.write("  Log:  " + path + "\n")
+            log.write("  Log:  " + path + "\n")
+        if MODE not in ("fail-no-diagnose", "fail-bare"):
             ident = os.path.basename(path)[:-len(".log")]
             if MODE == "fail-wrong-id":
                 ident = "update-19990101000000-1"
-            human.write("    Something went wrong. Run: fugaro troubleshoot " + ident + "\n")
-            log.write("    Something went wrong. Run: fugaro troubleshoot " + ident + "\n")
+            human.write("  Help: fugaro troubleshoot " + ident + "\n")
+            log.write("  Help: fugaro troubleshoot " + ident + "\n")
 
     if failing:
         closing, code = "Failed in 1.2s, 5 steps", 2
