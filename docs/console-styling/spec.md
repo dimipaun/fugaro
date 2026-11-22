@@ -715,7 +715,7 @@ a query that matches nothing draws `p.projects-settings-none` and never a second
 | Repositories | `projects-repos`, `projects-repo-card`, `projects-repo-card-title`, `projects-repo-list`, `projects-repo-enrolled`, `projects-repo-card-none` |
 | Accounts | `projects-accounts`, `projects-accounts-repo`, `projects-account-list`, `projects-account`, `projects-account-none`, `projects-accounts-note` |
 | Secrets | `projects-secrets`, `projects-secret-list`, `projects-secret`, `projects-secret-name`, `projects-secret-scope`, `projects-secret-versions`, `projects-secret-latest`, `projects-secret-label`, `projects-secret-label-key`, `projects-secret-label-value`, `projects-secret-allowed`, `projects-secret-bound`, `projects-secret-bound-word`, `projects-secrets-managed` |
-| Settings | `projects-settings`, `projects-settings-search`, `projects-settings-group`, `projects-settings-group-title`, `projects-settings-label`, `projects-settings-none`, `projects-settings-list`, `projects-settings-row`, `projects-settings-key`, `projects-settings-scope`, `projects-settings-value`, `projects-settings-wins`, `projects-settings-state`, `projects-settings-owner-word`, `projects-settings-owner`, `projects-settings-owner-generic`, `projects-settings-pencil`, `projects-settings-editor`, `projects-settings-editor-outcome` |
+| Settings | `projects-settings`, `projects-settings-search`, `projects-settings-group`, `projects-settings-group-title`, `projects-settings-label`, `projects-settings-none`, `projects-settings-list`, `projects-settings-row`, `projects-settings-key`, `projects-settings-scope`, `projects-settings-value`, `projects-settings-wins`, `projects-settings-state`, `projects-settings-owner-word`, `projects-settings-owner`, `projects-settings-owner-generic`, `projects-settings-pencil`, `projects-settings-editor-outcome` |
 | Models | `projects-models`, `projects-models-body`, `projects-models-heading`, `projects-models-route-list`, `projects-models-route`, `projects-models-route-name`, `projects-models-route-kind`, `projects-models-route-host`, `projects-models-route-fee`, `projects-models-claims`, `projects-models-claims-word`, `projects-models-claim`, `projects-models-to`, `projects-models-to-word`, `projects-models-to-every`, `projects-models-to-none`, `projects-models-allow`, `projects-models-route-base`, `projects-models-route-note`, `projects-models-list`, `projects-models-row`, `projects-models-id`, `projects-models-route-of`, `projects-models-input`, `projects-models-output`, `projects-models-catalog`, `projects-models-catalog-checked`, `projects-models-catalog-age`, `projects-models-catalog-stale` |
 | Managed state | `projects-managed`, `projects-managed-marks`, `projects-managed-marks-head`, `projects-managed-marks-list`, `projects-managed-trail`, `projects-managed-trail-head`, `projects-managed-trail-list`, `projects-managed-trail-state`, `projects-managed-term`, `projects-managed-value`, `projects-managed-word`, `projects-managed-number` |
 | Account keys | `projects-account-keys`, `projects-account-keys-title`, `projects-account-keys-state`, `projects-account-keys-source`, `projects-account-keys-because`, `projects-account-keys-body`, `projects-account-keys-list`, `projects-account-keys-row`, `projects-account-keys-key`, `projects-account-keys-stage`, `projects-account-keys-value` |
@@ -802,19 +802,22 @@ document wrote — and the panel has no control of any kind: nothing under
 
 **The settings section is the tab's third section, and it is the one of the three that
 writes** (console 0.120.0, the settings-edit plan's C2 and C3; `../desktop-console/spec.md` §5.1
-rule 12 is the fence). The pencil is the row's only control, and pressing it draws the row's
-own editor into the row: `span.projects-settings-editor` holds the labelled box, the hint
-that an empty box removes the key, `Review and write` and `Cancel`, and the editor's
-sentence is `span.projects-settings-editor-outcome`, marked `aria-live` so a refusal is
-spoken when it lands. **The editor is the row's state and not a second control beside the
-pencil**: it carries `aria-busy="true"` while an edit is in flight with its one control
-disabled then, and once a write happened the box and that control are both disabled, because
-the row behind them is stale until the section is read again. Every outcome — a refusal, a
-sentence, a write — carries `Read again`, and it **reads the section** rather than repeating
-the write: the write's own compare-and-swap refuses an edit built on bytes of the target file that moved (it does not re-measure the dry run's classification), and a
-console that retried it silently would be deciding what it was told not to. A refusal is the
-CLI's own sentence and never a tone; a successful write shows the CLI's own
-`next: fugaro update` line as text.
+rule 12 is the fence). The pencil is the row's only control, and pressing it **opens main's one
+window** rather than drawing anything into the row (D2902): the press hands the row's own key to
+`settings.editor.open`, and main does the entry, the dry run's diff, the confirmation and the
+write (`bindSettingsPencils`, `console/src/main/settingsedit.ts`). **What the row draws is that
+window's answer and no control of its own**: `span.projects-settings-editor-outcome`, marked
+`aria-live` so a refusal is spoken when it lands — the CLI's refusal verbatim and never a tone,
+or a successful write's own `next: fugaro update` line as text. The inline editor that was drawn
+into the row is deleted with the window that replaced it (the console improvements plan's SU2b):
+there is no box to type a value into, no second button beside the pencil, and no `aria-busy` on
+the row. **A write reads the section again at once** (R2): the figures behind the row it wrote
+are stale the moment it lands, so the entry invalidates the tab's own cache and re-reads it
+rather than leaving a value the project no longer has on the screen. **Nothing repeats a write**:
+the write's own compare-and-swap refuses an edit built on bytes of the target file that moved (it
+does not re-measure the dry run's classification), and a console that retried it silently would
+be deciding what it was told not to (D1112) — asking again is a **second pencil press**, which
+opens the window on a read made for that press.
 
 **The confirmation window is §2.13's, with a settings subject, and it has two shapes.**
 `confirm.ts` and `confirm.html` are one implementation for both questions, so this window
@@ -3342,12 +3345,13 @@ deliberately not shared with the console's own token test: that one is TypeScrip
    keys in 6.5 — because a design that describes a region and a plan whose tasks do not name
    it is a region nobody builds. It reads the plan as text for the same boundary reason the
    rest of this file does.
-14. a **settings-section test** over §2.5, the fourteenth: it reads the Settings row for the two
-   hooks the entry draws and a rule selects — `projects-settings-editor` and
-   `projects-settings-editor-outcome`, since a hook this table does not name is a hook no rule may
-   select — and it requires the section to describe the pencil's editor and the confirmation
-   window's **two shapes**: "Review and write", "Read again", the widening tick's words "I
-   understand this raises a limit", the names `widening` and `narrowing`, and the §2.13 pointer
+14. a **settings-section test** over §2.5, the fourteenth: it reads the Settings row for the
+   hook the entry draws and a rule may select — `projects-settings-editor-outcome`, since a hook
+   this table does not name is a hook no rule may select — and it **refuses the deleted hook**
+   `projects-settings-editor`, which the inline editor went with (the console improvements plan's
+   SU2b), and it requires the section to describe the pencil's window and the confirmation
+   window's **two shapes**: the widening tick's words
+   "I understand this raises a limit", the names `widening` and `narrowing`, and the §2.13 pointer
    that says the window is the launch's own document rather than a second one beside it. The
    settings section is the one part of the Project tab that writes (console 0.120.0), and a shape
    a reader cannot find in this document is a shape no review checks the code against.
