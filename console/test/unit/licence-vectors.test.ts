@@ -31,7 +31,7 @@
 // **The ring is the file's, spelled the way the console holds it.** The file
 // carries each public half as the 32 raw bytes of an Ed25519 key in unpadded
 // base64url, which is what the app's verifier takes; the console's ring holds
-// a PEM, the shape S2.9 hand-edits. The id is not translated: the key text the
+// a PEM, the shape the console's own ring holds. The id is not translated: the key text the
 // file carries is read verbatim, because one minted key text has to verify in
 // the CLI, the console and the app alike.
 //

@@ -93,16 +93,18 @@ const licenceMaxAnswerBytes = 16 << 10
 var licenceServerURL = "https://keys.fugaro.dev"
 
 // licenceRing is the keyring these commands verify a key against. It is empty
-// here and stays empty until S2.9 publishes the owner's production public keys
-// in ee/licence's own table, which is where the halves belong: a key nothing in
-// the ring can verify is refused by `set` rather than installed, and `status`
-// answers the refusal rather than reading it as Free.
+// here and holds the published production ring once a release may: the halves
+// belong in ee/licence's own table, and this variable becomes that same ring,
+// which is what keeps one build's trusted keys one list.
 //
-// **Until then no key is accepted by a released build**, and that is the honest
-// answer rather than a gap: the production ring is empty today (ee/licence's
-// productionKeyring), so there is nothing a key could be verified against. S2.9
-// has one line to add here — this variable has to become that same ring, which
-// is what keeps one build's trusted keys one list. It is a variable so that a
+// **What holds it empty is the order the publication owes K4.2**
+// (`TestTheRenewalContainerIsCreatedBeforeTheRingIsPublished`): a valid key with
+// its renewal secret reaches a refusal that names `fugaro update` when the
+// installation has no renewal secret container, and nothing creates that
+// container until K4.2's Terraform lands. So the ring is published in the
+// release that creates it, not before — the production half itself is already
+// published (S2.9, `ee/licence/keys/production.pub`) and ee/licence's ring is
+// built from it, which is where a key is verified. It is a variable so that a
 // test can install the ring of a keypair it minted at run time.
 var licenceRing = licence.Keyring{}
 

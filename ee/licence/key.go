@@ -129,10 +129,12 @@ const productionKeyID = "fugaro-licence-production"
 
 // The production public half, published as a file and compiled in from it
 // (S2.9). **The file is the one copy of the bytes**: the ring below is built
-// from it rather than from a second literal, and the console's ring and the
-// app's are held to the same file by their own suites, so one minted key text
-// verifies in all three or the three are held apart by a failing test rather
-// than by a reader noticing.
+// from it rather than from a second literal, the app's ring holds the same
+// bytes and its suite derives them from this file, and the console's suite holds
+// the file too -- its own ring ships empty until a CLI release takes a handed key
+// back out of its environment (`PRODUCTION_KEYRING`) -- so one minted key text
+// verifies everywhere the ring holds it or the suites are held apart by a
+// failing test rather than by a reader noticing.
 //
 // It is public and only public: a signing key's private half never enters a
 // file, a test or a run (.claude/rules/ee.md), and this file carries the public

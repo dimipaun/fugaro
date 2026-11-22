@@ -86,7 +86,8 @@ var licenceTestObjectPath = filepath.FromSlash(project.Object)
 
 // The two keyring entry names the tests mint under: the fixture's own, and one
 // no ring in this package holds, which is how a test gets a key that does not
-// verify. Neither is a production id, and the production keyring is empty.
+// verify. Neither is a production id, and the production keyring holds the
+// production id alone (S2.9).
 const (
 	licenceTestKeyID   = "licence-register-test-v1"
 	licenceStrangerKey = "licence-register-test-stranger-v1"

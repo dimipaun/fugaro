@@ -23532,9 +23532,10 @@ wrong.
 
 **Why the build is the released CLI.** The production build this check drives is the released `fugaro`, the
 verifier a person's own installation really runs (`ee/register`'s `licenceRing`, the ring `licence set` and
-`licence status` both verify with). Its ring is empty in a build of P9.4 and stays empty until S2.9
-publishes the owner's production public keys in `ee/licence`'s own table — which is why every key is
-refused by its id today, and why the check **reads the state of that ring rather than assuming it**.
+`licence status` both verify with). Its ring is empty in a build of P9.4 and stays empty until the release that
+creates the renewal secret container publishes it (K4.2; the production half itself is published in
+`ee/licence/keys/production.pub`, S2.9) — which is why every key is refused by its id today, and why
+the check **reads the state of that ring rather than assuming it**.
 
 **What it settles.**
 

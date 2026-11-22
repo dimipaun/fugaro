@@ -45,10 +45,11 @@
 // security-sensitive and has its own review. What this file holds instead is
 // the shape that half rests on: the verifier reads **no environment at all**,
 // so a key can only arrive as an argument. The production keyring's *contents*
-// are S2.9's, once the owner has created the keys (S3.8) -- so what is held
-// here is the rule that survives that task: no test id is in it, and every
-// entry it does hold is an Ed25519 public key. And one set of vectors for all
-// three verifiers is S2.6's.
+// are S2.9's: they are the PEM in `ee/licence/keys/production.pub`, held to that
+// file by `TestKeyringMatchesThePublishedKey`, and the ring ships empty while no
+// CLI takes a key back out of its own environment (`LICENCE_KEY_CLI_FLOOR`,
+// `spawn.test.ts`). Every entry it does hold is an Ed25519 public key, no test
+// id is in it, and one set of vectors for all three verifiers is S2.6's.
 //
 // **No key material is in this file.** Every key below is generated at run
 // time, and a signature is computed from it; the design admits a public key and
@@ -574,7 +575,7 @@ describe('the negative vectors', () => {
   })
 
   it('a ring entry that is not an Ed25519 public key is refused, and never thrown from', () => {
-    // The ring is the build's own and S2.9 hand-edits it, so an entry that is
+    // The ring is the build's own, hand-edited from the published file, so an entry that is
     // not an Ed25519 public key is a defect in the console rather than in the
     // key -- and it still has to be an answer, because the module's contract is
     // that it throws nothing. X25519 is the shape that makes the difference:

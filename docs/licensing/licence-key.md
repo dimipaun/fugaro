@@ -6,7 +6,9 @@ the claim set of [the licence-key-v2 plan](../licence-key-v2/implementation-plan
 tensions TN1–TN5 — and the text the tasks that build it are written against: the Go verifier (K1.1,
 `ee/licence/key.go`), the mint tool (K1.3), the console's verifier (K1.4), the project store (K3.1),
 the commands (K3.2–K3.4), the renewal job (K4.1, K4.2) and the key service (K2). The production keyring
-is empty, so no key exists in the field and the replacement orphans nothing (D2130). The Go verifier of
+holds the owner's one published production key since S2.9 (`ee/licence/keys/production.pub`), and no key
+of this format is known to have been issued in the field, so the replacement orphans nothing (D2130).
+The Go verifier of
 the old `<key id>.<payload>.<signature>` format went with K7.3, and the console's and the app's readers
 of that format remain, with `ee/licence/testdata/vectors.json`, until the tasks that remove those
 readers remove the file too.
