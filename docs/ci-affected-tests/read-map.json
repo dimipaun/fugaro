@@ -17985,6 +17985,7 @@
         "internal/rtdb/**",
         "internal/runcache/**",
         "internal/runindex/contract.go",
+        "internal/runindex/firestore.go",
         "internal/runmsg/**",
         "internal/runner/**",
         "internal/runner/discovered.go",
