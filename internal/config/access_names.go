@@ -29,15 +29,27 @@ const (
 	// means (C1 (c), R7): the one credential whose value the platform holds and
 	// every run of the project may be served, at tier B of the bundle.
 	//
-	// It is spelled as config.CredentialTypeAnthropic spells the type, which is
-	// the provider's own name, so a project declares ONE key credential and the
-	// retired arm, the migration and the access record all name it the same way.
+	// It is spelled as config.AnthropicSecret spells it, which is the bundle's
+	// own name for the key: CredentialKey answers it under that name, the entry
+	// a Lookup finds is indexed by it, and the service identifies the key among
+	// a call's candidates by it (internal/credsvc), so the retired arm, the
+	// migration, the access record and the service all name ONE credential.
+	//
+	// It is deliberately NOT the type's spelling (config.CredentialTypeAnthropic,
+	// "anthropic"). A craft's access names a name and not a type, and "anthropic"
+	// is a name a project may define a credential of its own under
+	// (credentialNameProblem admits it): an access answered as "anthropic" would
+	// name no entry the bundle holds — the readiness check and the per-call
+	// lookup would both miss it — and would mean two credentials at once, which
+	// is what the bundle's own refusal to index one name twice exists to stop
+	// (R5).
+	//
 	// It is deliberately not AnthropicKeyAccount: that is the account axis's
 	// sentinel, in a different vocabulary (an account's name), and
 	// credentialNameProblem refuses exactly that value as a credential's name —
 	// a credential is declared once for the models it reaches and is not the
 	// project's account.
-	CredentialAnthropicKey = CredentialTypeAnthropic
+	CredentialAnthropicKey = AnthropicSecret
 
 	// PoolCascade is the name the migration gives the pool a cascade becomes
 	// (D3064 as amended, R7), and the access the retired `agent.auth: cascade`
