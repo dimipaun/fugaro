@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/followup"
@@ -397,6 +398,14 @@ type run struct {
 	// because the beat's own goroutine runs while the run goes on.
 	slip   *slipHold
 	slipMu sync.Mutex
+	// credRoute is the run's read of its own credential route record — read
+	// once for the whole run (gateway.go's credentialRoute) and asked at least
+	// twice: for the service the run's forge traffic goes to (WS18) and for the
+	// gateway's upstream (WS11). Guarded by mu, and routeRead says the read is
+	// done, so the route and the error beside it are the answer.
+	credRoute    creds.Route
+	routeReadErr error
+	routeRead    bool
 	// workspaceBeat is the keep-warm beat this run sends to its workspace's
 	// credentials service, or nil for a run whose route record serves no kind
 	// there, a run whose agent.workspace_beat is off, and a local run — which
@@ -1516,9 +1525,27 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	// and because it carries the identity set the published node names (T16).
 	// providers.Proxied refuses every kind but Bitbucket, so a proxied run
 	// cannot open another provider by asking for one.
+	// A forge credential this run's route serves from a workspace's service is
+	// the workspace's and not the job's (WS18, D2979), so the provider is
+	// opened the way a service-held credential is: no token and no key of the
+	// job's own is read, whatever the environment carries, and the runner
+	// installs the service's tokens below (C2.2, D145).
+	//
+	// The two arms are the two providers, and each is the same fact seen once:
+	// bitbucket's requests go to this run's forwarder, which is pointed at the
+	// service the route named -- the same one the model path's upstream calls
+	// when the model kind is served there -- and github's provider is opened
+	// keyless, its tokens coming from the mint below.
+	forgeService, fromWorkspace, err := r.forgeService(ctx, forgeKind(kind))
+	if err != nil {
+		return err
+	}
 	open := r.d.OpenProvider
-	if r.proxied {
-		open = r.proxiedOpener(ctx)
+	switch {
+	case r.proxied || (fromWorkspace && kind == gitprov.KindBitbucket):
+		open = r.proxiedOpener(ctx, forgeService)
+	case fromWorkspace && kind == gitprov.KindGitHub:
+		open = providers.ServiceHeldGitHub(r.d.Env, nil, func(msg string) { r.d.Log.Warn(r.redact(msg)) })
 	}
 	p, secrets, err := open(ctx, kind, r.spec.Repo)
 	for _, s := range secrets {
@@ -1535,7 +1562,7 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 	// first GitAuth below, and it is not optional -- a provider that took
 	// ServiceHeldKey refuses every token until one is installed, so a run
 	// that skipped this would stop rather than mint in-job.
-	src, err := r.serviceTokens()
+	src, err := r.serviceTokens(ctx)
 	if err != nil {
 		return err
 	}
@@ -1804,11 +1831,16 @@ func (r *run) unstampedCommits(ctx context.Context) (total, unstamped int, err e
 	return len(shas), unstamped, nil
 }
 
-// serviceTokens returns the installation's credentials service as the source
-// of this run's installation tokens, or nil when the installation has not
-// opted into one (providers.EnvCredentialsServiceURL unset): with the
-// service off the App's key is the job's own and its provider mints tokens
-// itself, as it always did.
+// serviceTokens returns the credentials service this run's github kind is
+// served by as the source of its installation tokens, or nil when there is
+// none: the project's own, which the job's environment names and which is
+// every run with no record, or the workspace's, whose address the run's own
+// route record carries (WS18, D2979). A run whose route serves the github kind
+// from the workspace has a mint to make even where its own installation names
+// no service, and the route's answer is what says so.
+//
+// nil is left for a run with no service at all: with the service off the App's
+// key is the job's own and its provider mints tokens itself, as it always did.
 //
 // A LOCAL run whose environment names a service is refused rather than
 // served, in the words serviceUpstream refuses the same situation in (D149):
@@ -1824,8 +1856,11 @@ func (r *run) unstampedCommits(ctx context.Context) (total, unstamped int, err e
 //
 // It is built per provider, so each provider has the cache ServiceTokens
 // documents -- one mint per hour per provider, not one per API call.
-func (r *run) serviceTokens() (*github.ServiceTokens, error) {
-	url := envLookup(r.d.Env, providers.EnvCredentialsServiceURL)
+func (r *run) serviceTokens(ctx context.Context) (*github.ServiceTokens, error) {
+	url, _, err := r.forgeService(ctx, creds.KindGitHub)
+	if err != nil {
+		return nil, err
+	}
 	if url == "" {
 		return nil, nil
 	}
@@ -1917,7 +1952,16 @@ func (r *run) branchClaim() string {
 // the installation's token. Nothing here is a credential, so nothing here is
 // redacted.
 func (r *run) startProxiedGit(ctx context.Context) error {
-	if !r.proxied {
+	// The route decides which service this run's git traffic reaches (WS18,
+	// D2979): the project's own, which is where it goes for every run with no
+	// record and every run whose record serves the Bitbucket kind from its
+	// project -- and the workspace's, at the address the record carries, for a
+	// run whose forge credential of that kind is the workspace's.
+	service, fromWorkspace, err := r.forgeService(ctx, creds.KindBitbucket)
+	if err != nil {
+		return err
+	}
+	if !r.proxied && !fromWorkspace {
 		// Not proxied is the ordinary state of a per-repository job whose
 		// published block does not admit its repository -- it carries its own
 		// mounted token, and nothing about it changed (G9) -- and of every
@@ -1926,12 +1970,15 @@ func (r *run) startProxiedGit(ctx context.Context) error {
 		// and sharedJobNeedsTheProxy is what says so in one clear sentence.
 		return r.sharedJobNeedsTheProxy(ctx)
 	}
-	service := envLookup(r.d.Env, providers.EnvCredentialsServiceURL)
-	if service == "" {
+	if !fromWorkspace && service == "" {
 		// Belt and braces: admissionCheck decides proxied-ness from this same
 		// variable, so a run that is proxied carries one. Refusing rather
 		// than starting a forwarder with no service keeps the failure here,
-		// where the reason is known, instead of at the first git command.
+		// where the reason is known, instead of at the first git command. A
+		// run whose route serves the kind from the workspace carries the
+		// address there and needs no variable of its own: the record is what
+		// says where a credential is served (R3), and it is the address a
+		// workspace's service is called at.
 		return fmt.Errorf("this run's Bitbucket access goes through the installation's credentials service, and this job names no service (%s is not set): the run stops before anything is cloned", providers.EnvCredentialsServiceURL)
 	}
 	// A challenger arm is exempt for the same reason the three run kinds
@@ -1940,14 +1987,22 @@ func (r *run) startProxiedGit(ctx context.Context) error {
 	// upgrade a launcher -- when what is true of it is that a Bitbucket
 	// repository is never a challenger at all (A2.1, mintGitAuth).
 	if !r.review && !r.artifact && !r.evaluate && !r.shadow && r.branchClaim() == "" {
-		return fmt.Errorf("this run's Bitbucket access goes through the installation's credentials service (the published policy admits %s with proxy: true), and that service admits a push only for the branch the run's identity names (fb): this identity names none, so the launcher that started this run is older than fugaro %s. Upgrade Fugaro on the machine that launches this repository's runs (brew upgrade dimipaun/tap/fugaro), run 'fugaro update' to bring the installation and the job images to it, and launch it again — the run stops before anything is cloned, and nothing was pushed or changed",
-			r.spec.Repo, branchClaimSince)
+		// Which service this run's proxy chain ends at is the message's own
+		// first clause: a run routed to the workspace was not admitted by its
+		// project's published block, and telling its operator to look there
+		// would name a record that says the opposite.
+		where := fmt.Sprintf("the installation's credentials service (the published policy admits %s with proxy: true)", r.spec.Repo)
+		if fromWorkspace {
+			where = fmt.Sprintf("the workspace's credentials service (this repository's own credential route serves its Bitbucket credential there, %s)", r.spec.Repo)
+		}
+		return fmt.Errorf("this run's Bitbucket access goes through %s, and that service admits a push only for the branch the run's identity names (fb): this identity names none, so the launcher that started this run is older than fugaro %s. Upgrade Fugaro on the machine that launches this repository's runs (brew upgrade dimipaun/tap/fugaro), run 'fugaro update' to bring the installation and the job images to it, and launch it again — the run stops before anything is cloned, and nothing was pushed or changed",
+			where, branchClaimSince)
 	}
 	job, err := r.jobName()
 	if err != nil {
 		return errors.New(r.redact(err.Error()))
 	}
-	f, err := gateway.StartGitForward(ctx, gateway.GitForwardOptions{
+	o := gateway.GitForwardOptions{
 		Service: service,
 		Identity: gateway.Service{
 			Job:        job,
@@ -1955,7 +2010,20 @@ func (r *run) startProxiedGit(ctx context.Context) error {
 			IDToken:    func(ctx context.Context) (string, error) { return metadataIDToken(ctx, r.d.Env, service) },
 		},
 		Log: r.d.Log,
-	})
+	}
+	if fromWorkspace {
+		// The record's address, and the identity this run presents there: a
+		// workspace upstream and not the project's service (WS11's second
+		// upstream, WS18). The project's own Service and Identity stay beside
+		// it, because a run's proxy chain has one end and this is the route's
+		// answer to which (R3).
+		ws, err := r.workspaceUpstream(service)
+		if err != nil {
+			return fmt.Errorf("starting the Bitbucket forwarder: %w", err)
+		}
+		o.Workspace = ws
+	}
+	f, err := gateway.StartGitForward(ctx, o)
 	if err != nil {
 		return fmt.Errorf("starting the Bitbucket forwarder: %w", err)
 	}

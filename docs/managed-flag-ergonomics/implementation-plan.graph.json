@@ -1,0 +1,359 @@
+{
+  "schema_version": 3,
+  "plan": "docs/managed-flag-ergonomics/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "T0",
+      "title": "carry the budget block between runs",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/tfvars.go",
+          "internal/infra/budgetcarry_test.go",
+          "internal/infra/installation.go",
+          "internal/cli/init.go",
+          "internal/cli/init_budget_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T1",
+      "title": "the budget defaults, and rewriting a recorded amount",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/managed/defaults.go",
+          "internal/infra/managed/marker.go",
+          "internal/infra/managed/marker_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T2a",
+      "title": "setup's budget defaults and the creation fact",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init.go",
+          "internal/cli/init_budget_test.go",
+          "internal/cli/init_managed_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "T2b",
+      "title": "the wizard's budget question and the answers-file members",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/setup.go",
+          "internal/cli/wizard_stage.go",
+          "internal/cli/setup_answers.go",
+          "schemas/setup-answers.schema.json",
+          "internal/cli/setup_wizard_test.go",
+          "internal/cli/setup_answers_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "T3",
+      "title": "update stops on an unmanaged installation; an explicit budget rewrites",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_selfflag.go",
+          "internal/cli/update_selfflag_test.go",
+          "internal/cli/update_in_flight_test.go",
+          "internal/cli/update_converge_test.go",
+          "internal/cli/init_stages.go",
+          "internal/cli/update_managed.go",
+          "internal/cli/managed_gate.go",
+          "internal/cli/init.go",
+          "docs/design/update-in-flight.md",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "T4",
+      "title": "managed flag takes the project from the installation",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/managed_flag.go",
+          "internal/cli/managed_flag_test.go",
+          "internal/managed/budget.go",
+          "internal/managed/budget_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "T7a",
+      "title": "the fence's mechanism and classification",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/root.go",
+          "internal/cli/managed_require.go",
+          "internal/cli/cloud.go",
+          "internal/cli/managed_require_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T7b",
+      "title": "the fence on accounts, delete-list, apply, policy and repository commands",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/accounts_managed.go",
+          "internal/cli/accounts_rm.go",
+          "internal/cli/allow_delete.go",
+          "internal/cli/managed_apply.go",
+          "internal/cli/project_policy_managed.go",
+          "internal/cli/project_repos_rm.go",
+          "internal/cli/accounts_managed_test.go",
+          "internal/cli/accounts_rm_test.go",
+          "internal/cli/allow_delete_test.go",
+          "internal/cli/managed_apply_test.go",
+          "internal/cli/project_policy_managed_test.go",
+          "internal/cli/project_repos_rm_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T7c",
+      "title": "the fence on image, workspace and publish commands",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/image_build_managed.go",
+          "internal/cli/image_refresh_managed.go",
+          "internal/cli/image_refresh_steps.go",
+          "internal/cli/workspace_memberops.go",
+          "internal/cli/write_publish.go",
+          "internal/cli/image_build_managed_test.go",
+          "internal/cli/image_refresh_managed_test.go",
+          "internal/cli/workspace_memberops_test.go",
+          "internal/cli/write_publish_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T2c",
+      "title": "drop fugaro setup --managed",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init.go",
+          "internal/cli/init_project.go",
+          "internal/cli/restore.go",
+          "internal/cli/setup.go",
+          "internal/cli/update.go",
+          "internal/cli/managed_unflag.go",
+          "internal/cli/recipes_skew.go",
+          "internal/**/*_test.go",
+          "plugin/skills/setup/SKILL.md",
+          "plugin/skills/setup/reference/managed.md",
+          "website/content/cli-reference.md",
+          "internal/cli/rewrite_callsites_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T5",
+      "title": "the skills, SECURITY.md and the website say what ships",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/setup/reference/managed.md",
+          "plugin/skills/update/SKILL.md",
+          "plugin/skills/update/reference/states.md",
+          "SECURITY.md",
+          "website/content/security.md",
+          "internal/cli/docs_security_test.go",
+          "internal/cli/docs_managed_deployer_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T6",
+      "title": "the console's first-run wizard asks for the budget",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/wizardrun.ts",
+          "console/src/renderer/entry.ts",
+          "console/src/shared/version.ts",
+          "console/test/unit/onboarding.test.ts"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "T2a",
+      "needs": "T0",
+      "reason": "the same file init.go, and the carry the default alert needs"
+    },
+    {
+      "task": "T2a",
+      "needs": "T1",
+      "reason": "the default constants"
+    },
+    {
+      "task": "T2b",
+      "needs": "T1",
+      "reason": "the default constant"
+    },
+    {
+      "task": "T4",
+      "needs": "T1",
+      "reason": "the constants and the rewrite's behaviour"
+    },
+    {
+      "task": "T3",
+      "needs": "T1",
+      "reason": "the rewrite's behaviour"
+    },
+    {
+      "task": "T3",
+      "needs": "T2a",
+      "reason": "the same file init.go"
+    },
+    {
+      "task": "T2c",
+      "needs": "T2a",
+      "reason": "behaviour: dropping --managed first would stop creations recording an amount; init.go"
+    },
+    {
+      "task": "T2c",
+      "needs": "T3",
+      "reason": "the same file init.go"
+    },
+    {
+      "task": "T2c",
+      "needs": "T2b",
+      "reason": "setup.go and setup_wizard_test.go"
+    },
+    {
+      "task": "T2c",
+      "needs": "T4",
+      "reason": "shared test files"
+    },
+    {
+      "task": "T5",
+      "needs": "T2c",
+      "reason": "the same skill file"
+    },
+    {
+      "task": "T5",
+      "needs": "T3",
+      "reason": "describes its behaviour"
+    },
+    {
+      "task": "T5",
+      "needs": "T4",
+      "reason": "describes its behaviour"
+    },
+    {
+      "task": "T6",
+      "needs": "T2b",
+      "reason": "the answers-file members, in a tagged CLI release"
+    },
+    {
+      "task": "T7a",
+      "needs": "T4",
+      "reason": "the bare command the refusal names must work"
+    },
+    {
+      "task": "T7b",
+      "needs": "T7a",
+      "reason": "requireManaged, from a small task"
+    },
+    {
+      "task": "T7c",
+      "needs": "T7a",
+      "reason": "requireManaged, from a small task"
+    },
+    {
+      "task": "T2c",
+      "needs": "T7b",
+      "reason": "shared test files (managed_apply_test.go)"
+    },
+    {
+      "task": "T2c",
+      "needs": "T7c",
+      "reason": "shared test files"
+    },
+    {
+      "task": "T5",
+      "needs": "T7a",
+      "reason": "describes its behaviour"
+    },
+    {
+      "task": "T5",
+      "needs": "T7b",
+      "reason": "describes its behaviour"
+    },
+    {
+      "task": "T5",
+      "needs": "T7c",
+      "reason": "describes its behaviour"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}
