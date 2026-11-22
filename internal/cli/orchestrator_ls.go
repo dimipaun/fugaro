@@ -39,13 +39,18 @@ func newOrchestratorLsCmd() *cobra.Command {
 		Use:   "ls",
 		Short: "List the installation's orchestrators",
 		Long: "List the orchestrators this installation has: every id whose node exists in\n" +
-			"the project's database, with the holder of its lease and when that holder last\n" +
-			"beat, and every cached brief this machine holds, with the time the daemon wrote\n" +
-			"it. An orchestrator this machine runs — one with a cached brief — is `local`;\n" +
-			"one only the database holds is `central`. A cached brief of an id nothing is\n" +
-			"beating any more is marked stale: the daemon that wrote it has stopped driving\n" +
-			"the id, so no cycle is rewriting it. --json prints a versioned document\n" +
-			"(schemas/orchestrator-output.schema.json).\n\n" +
+			"the project's database — the project's own, and a named one as\n" +
+			"`<project>~<name>` — with the principal driving it, the holder of its lease\n" +
+			"and when that holder last beat, and every cached brief this machine holds,\n" +
+			"with the time the daemon wrote it. An orchestrator this machine runs — one\n" +
+			"with a cached brief — is `local`; one only the database holds is `central`.\n" +
+			"A cached brief of an id nothing is beating any more is marked stale: the\n" +
+			"daemon that wrote it has stopped driving the id, so no cycle is rewriting\n" +
+			"it. --json prints a versioned document\n" +
+			"(schemas/orchestrator-output.schema.json), whose entries carry the id's name\n" +
+			"half (`name`, empty for the project's own orchestrator) and its driver\n" +
+			"beside the fields the table prints — an empty driver is an id with no\n" +
+			"driver node to read, which is unknown and not \"nobody drives this\".\n\n" +
 			"There is no registry of processes and no port: the node and the cache file are\n" +
 			"the two things the daemon writes, and a run or a token may not read either.",
 		Args: cobra.NoArgs,
@@ -82,13 +87,39 @@ type orchestratorLsDoc struct {
 // cached brief says and are absent for an orchestrator it does not run.
 // `cache_stale` answers "is anything still rewriting that brief" from the lease
 // and not from the brief's own age: nobody is beating the id.
+//
+// `project` carries the id as the tree keys it — `<project>` for the project's
+// own orchestrator and `<project>~<name>` for a named one (C-ORCH, D3206,
+// D3207) — and `name` is that id's name half, "" for the project's own. The two
+// are written on every entry: the field name `project` is from when an id was
+// always a project's name, and a consumer that wants the project reads the part
+// before `~`. `driver` is the principal of the credential driving the id, read
+// from its sibling driver node, and is written on every entry too — "" is "no
+// driver node, or one this release cannot read", which the contract's own
+// reading refuses to draw as "nobody drives this" (D3218, F18;
+// contract-orchestrators.md, "what each side may rely on" 2), and a consumer
+// needs the empty string to say "unknown" rather than to guess.
 type orchestratorLsEntry struct {
 	Kind        string `json:"kind"`
 	Project     string `json:"project"`
+	Name        string `json:"name"`
+	Driver      string `json:"driver"`
 	LeaseHolder string `json:"lease_holder,omitempty"`
 	UpdatedAt   string `json:"updated_at,omitempty"`
 	CachedAt    string `json:"cached_at,omitempty"`
 	CacheStale  bool   `json:"cache_stale,omitempty"`
+}
+
+// orchestratorLsEntryOf is one entry as the id itself decides it: the id is the
+// project's own orchestrator's name or `<project>~<name>`, so `name` is its name
+// half — the slug for a named one, and "" for the project's own, which is what a
+// screen draws as the project's own orchestrator and could not tell from an
+// absent field. An id the rule does not admit has no name half and cannot arrive
+// here: the ids come from NodeIDs and the cache, both of which build their
+// entries with that rule.
+func orchestratorLsEntryOf(id string) orchestratorLsEntry {
+	_, name, _ := orchestrator.ParseOrchestratorID(id)
+	return orchestratorLsEntry{Kind: orchestratorKindCentral, Project: id, Name: name}
 }
 
 func runOrchestratorLs(cmd *cobra.Command, o *orchestratorLsOptions) error {
@@ -127,7 +158,16 @@ func runOrchestratorLs(cmd *cobra.Command, o *orchestratorLsOptions) error {
 		if err != nil {
 			return dbErr(lc, err, false)
 		}
-		e := orchestratorLsEntry{Kind: orchestratorKindCentral, Project: id, LeaseHolder: lease.Holder}
+		// The driver node is read beside the lease and for the same ids: it is
+		// the state's, the lease's and the audit's sibling, so it belongs to an
+		// id the database holds and to no id only this machine's cache names.
+		driver, err := orchestrator.ReadDriverNode(ctx, db, id)
+		if err != nil {
+			return dbErr(lc, err, false)
+		}
+		e := orchestratorLsEntryOf(id)
+		e.LeaseHolder = lease.Holder
+		e.Driver = driver.Principal
 		if !lease.At.IsZero() {
 			e.UpdatedAt = lease.At.UTC().Format(time.RFC3339)
 		}
@@ -135,9 +175,15 @@ func runOrchestratorLs(cmd *cobra.Command, o *orchestratorLsOptions) error {
 		byID[id] = e
 	}
 	for _, c := range caches {
-		e := byID[c.ID]
+		e, ok := byID[c.ID]
+		if !ok {
+			// An id only this machine's cache names: it has no node in the
+			// database, so it has no lease and no driver either — the loop above
+			// read both for the ids the database holds and for no other — and its
+			// entry is the id's own.
+			e = orchestratorLsEntryOf(c.ID)
+		}
 		e.Kind = orchestratorKindLocal
-		e.Project = c.ID
 		e.CachedAt = c.At.UTC().Format(time.RFC3339)
 		// Whether the cached brief is being kept current is the lease's
 		// question and not the cache's own age: a daemon beats its lease every
@@ -167,7 +213,7 @@ func runOrchestratorLs(cmd *cobra.Command, o *orchestratorLsOptions) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "ORCHESTRATOR\tKIND\tLEASE HOLDER\tLEASE BEAT\tCACHE")
+	fmt.Fprintln(tw, "ORCHESTRATOR\tKIND\tDRIVER\tLEASE HOLDER\tLEASE BEAT\tCACHE")
 	for _, e := range doc.Orchestrators {
 		cache := "not on this machine"
 		if e.CachedAt != "" {
@@ -184,7 +230,17 @@ func runOrchestratorLs(cmd *cobra.Command, o *orchestratorLsOptions) error {
 		if beat == "" {
 			beat = "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", safetext.Field(e.Project), e.Kind, safetext.Field(holder), beat, cache)
+		// "unknown" and not "nobody": an empty driver is an id with no driver node
+		// — the node is written by whoever holds the lease (D3218, F18), so an id
+		// nothing has driven since it existed has none — or one this release
+		// cannot read, and the two are one field. The contract's own reading is
+		// that neither is "nobody drives this", which the id's lease is the answer
+		// to (contract-orchestrators.md, "what each side may rely on" 2).
+		driver := e.Driver
+		if driver == "" {
+			driver = "unknown"
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", safetext.Field(e.Project), e.Kind, safetext.Field(driver), safetext.Field(holder), beat, cache)
 	}
 	return tw.Flush()
 }
