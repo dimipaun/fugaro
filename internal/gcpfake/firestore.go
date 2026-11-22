@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/firestore"
+	"github.com/dimipaun/fugaro/internal/place"
 )
 
 // Firestore is a fake of the Cloud Firestore v1 REST API the history client
@@ -55,12 +56,17 @@ type fsDoc struct {
 }
 
 // firestoreLocations is the fake's idea of the locations a native database
-// accepts. The real list is Google's; this is an assumption (plan A1).
-var firestoreLocations = map[string]bool{
-	"nam5": true, "nam7": true, "eur3": true, "eur5": true,
-	"us-central1": true, "us-east1": true, "us-east4": true, "us-east5": true, "us-west1": true,
-	"europe-west1": true, "europe-west3": true, "asia-northeast1": true,
-}
+// accepts: every location the mapping can choose (place.FirestoreLocations),
+// plus Firestore's multi-regions, which a database fugaro adopts where it
+// finds it can be in (D3091). The real list is Google's; this is an
+// assumption (plan A1).
+var firestoreLocations = func() map[string]bool {
+	locs := map[string]bool{"nam5": true, "nam7": true, "eur3": true, "eur5": true}
+	for _, loc := range place.FirestoreLocations {
+		locs[loc] = true
+	}
+	return locs
+}()
 
 // NewFirestore starts a fake that lives until the test ends, with a native
 // database in us-east5 (see RemoveDatabase and SetDatabase).

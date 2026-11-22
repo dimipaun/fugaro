@@ -236,7 +236,7 @@
             "areas": {
               "type": ["array", "null"],
               "maxItems": 100,
-              "description": "Named path rules: the level a run resolves to when the paths it touches match one. Both layers' lists are in effect (a union, not a replacement), the strictest matched rule decides, and a rule is matched with the same doublestar globs workflows.*.rebuild.paths uses. Needs fugaro 0.11.0.",
+              "description": "Named path rules: the level a run resolves to when the paths it touches match one. Both layers' lists are in effect (a union, not a replacement), and they are read at two ranks of the order the level resolves by (docs/project-layer.md §2, D20 as amended): the strictest rule that matched in a list says what that list sets, and this repository's list is the narrower rank of the two, so its answer stands for the paths it matches — a lower level than the project's area sets, where it names one, because the level is a default and not a floor. A rule is matched with the same doublestar globs workflows.*.rebuild.paths uses. Needs fugaro 0.11.0.",
               "items": { "$ref": "#/$defs/rigorArea" }
             }
           }

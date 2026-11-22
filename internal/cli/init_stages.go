@@ -316,6 +316,16 @@ func initStages(e *initEngine) []initflow.Stage {
 	// (initflow.CredentialsService has the order and the window the order
 	// leaves; the owner's ruling of 2026-11-10).
 	stages = append(stages, newCredentialsStage(e))
+	// The copy of this installation's model keys into that service's bundle,
+	// immediately after the stage that deploys it and with nothing between
+	// them: what it writes a value into is the document that service reads, the
+	// guard it goes through reads the release of that service (so a service too
+	// old for the entry refuses the write rather than landing it), and the
+	// position is what leaves that refusal a state this same run has already
+	// fixed (initflow.CredentialsCopy has the window). It is registered for
+	// both doors, like the service's own stage: an installation that has not
+	// turned the service on skips it with one line.
+	stages = append(stages, newCredentialsCopyStage(e))
 	// The workspace's own project's root BEFORE the record, and both after the
 	// policy one: this stage creates the identity the workspace's own service
 	// runs as — its own service account and the one grant that reaches the

@@ -18,7 +18,7 @@ is that plan's CM6. The entries they touch are marked in place.
 **Amended 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)
 (D3170).** Credentials belong to models is itself superseded in part: every task of it that is not
 merged is withdrawn, its I1 among them, so **KS13 now waits on model credentials routing's I1**
-(its F50), which puts the work of the withdrawn CM6, CM9, CM15 and CM16 in the tree. The entries
+(its A1), which puts the work of the withdrawn CM6, CM9, CM15 and CM16 in the tree. The entries
 below that named the earlier plan's I1 are marked in place.
 
 ## 1. What the spec asks for, and what the repository already has
@@ -356,7 +356,7 @@ models is itself superseded in part by
 [model credentials routing](../model-credentials-routing/README.md), which withdraws its I1 with
 every other task of it that is not merged, so the rule stands and the wait moves — **KS13 waits on
 model credentials routing's I1**, that plan's release 1 integration, and no longer on a task that
-can never merge (its F50).
+can never merge (its A1).
 
 **F50 — Rule: C1's second fact is not needed.** C1 named R12's two facts, "provider keys are
 served" and "the stage account is served" (F44, U6). With a stage's account the access of that

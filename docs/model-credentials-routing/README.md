@@ -81,8 +81,9 @@ reviewed again** (O17).
 
 **What it changes in the plans before it** (reconciliation, "What this changes in other plans"):
 every not-merged task of credentials belong to models is withdrawn and carried by a task here,
-and its contract C1 (draft #3460) is withdrawn; workspace credentials is unchanged but for one
-case of D2976; D138, D152 to D154 of the credentials service are replaced, re-keyed or amended; D3136
+except CM2 (per-repository crafts), which is not replaced: one table per project, and RT2 carries
+admission; its contract C1 (draft #3460) is withdrawn; workspace credentials is unchanged but for
+one case of D2976; D138, D152 to D154 of the credentials service are replaced, re-keyed or amended; D3136
 of launcher does not mint is widened by one case. None
 of those plans' own documents is edited by this pull request: the plan's tasks A1, A2 and A3 do
 it.

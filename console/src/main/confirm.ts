@@ -18,7 +18,8 @@
 // same window, the same gate and the same keyboard: what differs is the
 // *subject* -- `ConfirmSubject`, the union of a frozen launch's view, a settings
 // edit's entry form, the diff that replaces it in the same window, a setup's own
-// view and a models write's own view (MW1) -- and the gates a question carries:
+// view, a models write's own view (MW1) and an image write's own view (MW2) --
+// and the gates a question carries:
 // the tick a widening needs (D1109, `CONFIRM_TICK_NEEDED`, which the settings
 // edit and the models write are the two of), the entry form's answer being a
 // **value** rather than a yes, and a setup's yes being the go for a run whose
@@ -83,6 +84,7 @@ import type { SettingsEditorAnswer, SettingsEditorConfirmer } from './settingsed
 import { settingsConfirmID } from './settingsedit'
 import type { SettingsEntryView } from './settingsview'
 import { settingsConfirmAnswerable } from './settingsview'
+import { imageAddConfirmID } from './imagesview'
 import { modelsAddConfirmAnswerable, modelsAddConfirmID } from './modelsview'
 import { APP_ORIGIN } from './protocol'
 import {
@@ -218,15 +220,16 @@ export function confirmSubjectID(subject: ConfirmSubject): string {
   if (subject.kind === 'launch') return subject.runId
   if (subject.kind === 'setup') return setupConfirmID(subject.project)
   if (subject.kind === 'models-add') return modelsAddConfirmID(subject.project)
+  if (subject.kind === 'image-add') return imageAddConfirmID(subject.project)
   return settingsConfirmID(subject.project)
 }
 
 /** widenAnswerable is the tick's one rule, for the two subjects that carry a
  * tick: a settings edit's widening and the models write's (D1109, D2903). A
- * question with no tick -- a launch, an entry form, a setup -- is answerable on
- * its own, which is why this is a function over the subject rather than a second
- * `if` at the call site: a fifth subject that grows a tick is one line here and
- * a check that cannot be forgotten in the handler. */
+ * question with no tick -- a launch, an entry form, a setup, an image write --
+ * is answerable on its own, which is why this is a function over the subject
+ * rather than a second `if` at the call site: a subject that grows a tick is one
+ * line here and a check that cannot be forgotten in the handler. */
 function widenAnswerable(subject: ConfirmSubject, ticked: boolean): boolean {
   if (subject.kind === 'settings') return settingsConfirmAnswerable(subject, ticked)
   if (subject.kind === 'models-add') return modelsAddConfirmAnswerable(subject, ticked)
@@ -473,12 +476,13 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): ConfirmWindowSeams
     if (answer.answer === 'no') return true
     if (subject.kind === 'settings-entry') return answer.answer === 'submit'
     // Every other subject -- a launch, a diff, a setup (SW3a), a models write
-    // (MW1) -- is answered with a yes and nothing else, written per subject
-    // rather than as the entry form's complement. The biconditional this replaces
+    // (MW1), an image write (MW2) -- is answered with a yes and nothing else,
+    // written per subject rather than as the entry form's complement. The
+    // biconditional this replaces
     // (`(kind === 'settings-entry') === (answer === 'submit')`) refuses the same
-    // answers for these five subjects, so this is not a fix to it: what the
+    // answers for these six subjects, so this is not a fix to it: what the
     // spelling buys is a rule that reads one line per subject, which is what a
-    // sixth subject, or one that takes both a yes and a submit, needs and what a
+    // seventh subject, or one that takes both a yes and a submit, needs and what a
     // complement cannot say.
     return answer.answer === 'yes'
   }

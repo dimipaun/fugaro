@@ -550,9 +550,10 @@ describe('the stub’s settings arms', () => {
     expect(answered.stdout).toContain('next: fugaro update')
     expect(settingsArgvs(directory)).toEqual([`${join(directory, 'fugaro')} ${asked.join(' ')}`])
     // An `unset` carries no value and no terminator, and this stub answers it
-    // too: the console sends the same subcommand for an empty box
-    // (`openSettingsEdit`), so the arm's second spelling is reachable without a
-    // second stub.
+    // too: the console sends the same subcommand for an empty box (the entry
+    // form's Reset to default, `createSettingsEditor` in
+    // `src/main/settingsedit.ts`), so the arm's second spelling is reachable
+    // without a second stub.
     const unset = ['settings', 'unset', 'agent.review_rounds', '--layer', 'project', '--project', 'e2e']
     expect(run(directory, unset).status).toBe(0)
     expect(settingsArgvs(directory)).toHaveLength(2)
