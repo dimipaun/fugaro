@@ -106,6 +106,38 @@ func TestResolveRefusesTwinPatterns(t *testing.T) {
 		}
 	})
 
+	t.Run("a more specific entry decides the call whatever order the twins are in", func(t *testing.T) {
+		// The tie that refuses is the WINNER's, so twins under a pattern a more
+		// specific entry beats decide nothing: refusing where the tie is found
+		// would make the answer depend on where the twins were written, and
+		// {claude-*, claude-*, claude-sonnet-*} would disagree with
+		// {claude-sonnet-*, claude-*, claude-*} on one model.
+		narrow := pooled("claude-sonnet-*")
+		for _, table := range []routing.Table{
+			{first, second, narrow},
+			{narrow, first, second},
+			{first, narrow, second},
+		} {
+			got, err := routing.Resolve(table, "claude-sonnet-5-5")
+			if err != nil {
+				t.Fatalf("a table of %d entries whose winner is not tied was refused: %v", len(table), err)
+			}
+			if want := pooled("claude-sonnet-*"); !reflect.DeepEqual(got, want) {
+				t.Errorf("claude-sonnet-5-5 resolves to %+v, want %+v", got, want)
+			}
+		}
+		// A model the narrow entry does not claim is the twins' own call, and
+		// there the tie is the answer's however the three are ordered.
+		for _, table := range []routing.Table{
+			{first, second, narrow},
+			{narrow, first, second},
+		} {
+			if got, err := routing.Resolve(table, "claude-haiku-4-5"); err == nil {
+				t.Errorf("a model only the twins claim resolved to %+v beside a more specific entry", got)
+			}
+		}
+	})
+
 	t.Run("a model the twins do not claim is answered", func(t *testing.T) {
 		// The refusal is about the model asked for: a tie over `claude-*` says
 		// nothing about a `deepseek-*` call, and refusing that call too would be

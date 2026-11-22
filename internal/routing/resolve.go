@@ -27,33 +27,45 @@ import (
 // resolve is the resolver's body: the entry that routes model, the most specific
 // match winning, or ErrNoEntry when no entry claims it.
 //
-// Two entries that claim the model with the SAME pattern are refused, and
-// precedence is exactly what cannot decide them: an exact id outranks a prefix
-// and a longer prefix outranks a shorter one, so two matches tie only when they
-// are one pattern written twice (D3172). Answering would serve whichever entry
-// the project happened to write first — a chain nobody chose — so the refusal
-// names the pattern and the fix is "keep one entry per pattern". The refusal is
-// about the model asked for and not about the table at rest: twins that claim no
-// model this call names leave this call's answer alone, which is what keeps the
-// resolver reporting "I cannot pick between these two" rather than "this table is
-// broken", a judgement RT3's checks make.
+// A winning pattern written twice is refused, and precedence is exactly what
+// cannot decide it: an exact id outranks a prefix and a longer prefix outranks a
+// shorter one, so two matches tie only when they are one pattern written twice
+// (D3172). Answering would serve whichever entry the project happened to write
+// first — a chain nobody chose — so the refusal names the pattern and the fix is
+// "keep one entry per pattern".
+//
+// The tie that refuses is the winner's, which is why the loop carries it to the
+// end instead of refusing where it is found: twins under a pattern a more
+// specific entry beats decide nothing, and refusing there would answer by entry
+// order — {claude-*, claude-*, claude-sonnet-*} and {claude-sonnet-*, claude-*,
+// claude-*} would disagree on a model both routes to claude-sonnet-*. The refusal
+// is about the model asked for and not about the table at rest either: twins that
+// claim no model this call names leave this call's answer alone, which is what
+// keeps the resolver reporting "I cannot pick between these two" rather than
+// "this table is broken", a judgement RT3's checks make.
 func resolve(table Table, model string) (Entry, error) {
 	best := -1
+	tied := false
 	for i, entry := range table {
 		if !config.PatternMatches(entry.Match, model) {
 			continue
 		}
 		switch {
 		case best < 0:
-			best = i
+			best, tied = i, false
 		case moreSpecific(entry.Match, table[best].Match):
-			best = i
+			// A new winner decides the call, so a tie under the pattern it
+			// replaced is no longer the answer's.
+			best, tied = i, false
 		case entry.Match == table[best].Match:
-			return Entry{}, fmt.Errorf("routing: %q is written twice in the table, so neither entry is the more specific one for %q: keep one entry per pattern", entry.Match, model)
+			tied = true
 		}
 	}
 	if best < 0 {
 		return Entry{}, fmt.Errorf("%w: %q", ErrNoEntry, model)
+	}
+	if tied {
+		return Entry{}, fmt.Errorf("routing: %q is written twice in the table, so neither entry is the more specific one for %q: keep one entry per pattern", table[best].Match, model)
 	}
 	return table[best], nil
 }
