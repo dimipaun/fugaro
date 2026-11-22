@@ -412,7 +412,7 @@ step_signin() {
     unmeasured signin "fugaro licence login ended with exit ${LOGIN_STATUS} rather than 0: a refusal or a sign-in that expired leaves nothing written, so the installation holds whatever it held before. Sign in again as the account that holds the licence — the key is bound to the account whose verified address bought it. What it printed is in $SCRATCH/login.out and $SCRATCH/login.err"
     stop "the sign-in ended with a refusal or expired"
   fi
-  if grep -q 'fgk_' "$SCRATCH/login.out" 2>/dev/null; then
+  if grep -q 'fgk_' "$SCRATCH/login.out" "$SCRATCH/login.err" 2>/dev/null; then
     fact signin FAIL "fugaro licence login's own output carries a key-shaped string ('fgk_'): no line of the command's output may carry the key (K3.3, F5). The value is not printed here"
     stop "fugaro licence login's output carries a key-shaped string"
   fi

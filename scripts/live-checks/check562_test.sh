@@ -142,7 +142,7 @@ sys.stdout.write(
     "Opening the licence site in your browser. Sign in there, and pick the licence this installation should run on.\n\n  %s\n\nIf the browser did not open, visit that address yourself.\n" % addr)
 sys.stdout.flush()
 
-if mode == "happy":
+if mode in ("happy", "key-on-stdout", "key-on-stderr"):
     def browser():
         time.sleep(2.0)
         try:
@@ -152,6 +152,15 @@ if mode == "happy":
     threading.Thread(target=browser, daemon=True).start()
 
 srv.serve_forever()
+
+# The two key modes finish the sign-in and then say what no line of the command's
+# own output may say, one on each stream: the check reads both.
+if mode == "key-on-stdout":
+    sys.stdout.write("the licence key fgk_fake562keyvalue is installed\n")
+    sys.stdout.flush()
+elif mode == "key-on-stderr":
+    sys.stderr.write("the licence key fgk_fake562keyvalue is installed\n")
+    sys.stderr.flush()
 PY
 }
 
@@ -305,6 +314,32 @@ case_never_finished() {
   assert_no_leak
 }
 
+case_key_on_stdout() {
+  new_case keystdout
+  printf 'key-on-stdout\n' >"$bin/login.mode"
+  run_check keystdout -- --sandbox "$case_dir/sandbox" --wait 30
+  expect_status 1
+  expect_row "$last_out" signin FAIL
+  expect_contains "$last_out" "carries a key-shaped string"
+  expect_absent "$last_out" "fgk_fake562keyvalue"
+  expect_absent "$last_out" "CHECK 562 RESULT END (exit 0)"
+  assert_scratch_removed
+  assert_no_leak
+}
+
+case_key_on_stderr() {
+  new_case keystderr
+  printf 'key-on-stderr\n' >"$bin/login.mode"
+  run_check keystderr -- --sandbox "$case_dir/sandbox" --wait 30
+  expect_status 1
+  expect_row "$last_out" signin FAIL
+  expect_contains "$last_out" "carries a key-shaped string"
+  expect_absent "$last_out" "fgk_fake562keyvalue"
+  expect_absent "$last_out" "CHECK 562 RESULT END (exit 0)"
+  assert_scratch_removed
+  assert_no_leak
+}
+
 case_prod_refused() {
   new_case prod
   run_check prod -- --sandbox "$case_dir/sandbox" --project fugaro-prod
@@ -363,6 +398,8 @@ t no_workspace
 t wrong_state_accepted
 t ended_by_wrong_state
 t never_finished
+t key_on_stdout
+t key_on_stderr
 t prod_refused
 t belong_refused
 t agent_session
