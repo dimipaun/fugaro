@@ -34,6 +34,15 @@ variable "skip_apis" {
   nullable = false
 }
 
+# Whether the FP's Firestore (default) database is there, as `fugaro update`
+# reads it before this root is applied; the module's variables.tf states what it
+# gates (the run index's composite indexes, RI2) and why its default is false.
+variable "firestore_database_exists" {
+  type     = bool
+  default  = false
+  nullable = false
+}
+
 variable "launchers" {
   type     = list(string)
   default  = []

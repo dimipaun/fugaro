@@ -889,6 +889,84 @@ func TestInitFirebaseIdempotent(t *testing.T) {
 	}
 }
 
+// TestTheRunIndexIndexesWaitForTheDatabase is RI2's own gate at this level:
+// the Firebase root is applied with the answer its composite indexes need, and
+// it is an answer about the database as it will be when that apply runs.
+//
+// The root is applied BEFORE this stage ensures the Firestore database (D3027,
+// init_firebase.go), so the answer read here is the one from the plan made
+// before the apply. Without the gate, the eleven creates in
+// deploy/terraform/gcp/modules/firebase/firestore_indexes.tf would be planned
+// against a database that is not there yet: the create is refused, the apply
+// fails, the run never reaches the step that creates the database, and every
+// later `fugaro update` fails the same way. What the answer DOES to the plan is
+// the other half of this fact and lives where the plan is real:
+// TestFirebaseModulePlansNoIndexWithoutTheDatabase (tag `terraform`,
+// internal/infra/firebase_indexes_test.go).
+func TestTheRunIndexIndexesWaitForTheDatabase(t *testing.T) {
+	// A fresh installation: the run applies the Firebase root and then creates
+	// the database itself, so the root is applied with false — no index in a
+	// plan that would be refused (the history's arm below is this one's other
+	// name and is asserted by the run ending, not by a Terraform error).
+	r := newFBRig(t)
+	r.historyImage()
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe"); err != nil {
+		t.Fatalf("a fresh setup did not converge: %v\n%s", err, out)
+	}
+	if v := r.fbVars(t)["firestore_database_exists"]; v != false {
+		t.Errorf("a fresh installation's Firebase root is applied with firestore_database_exists = %v, want false: the database does not exist yet, and an index under it is refused (RI2)", v)
+	}
+	if loc, _ := r.fs.Database(); loc == "" {
+		t.Fatalf("the run did not create the Firestore database at all, so what it applied the root with says nothing about a database that is not there")
+	}
+
+	// The next run meets the database the first one made, and says so. It is
+	// the update door with the flag, because a plain `update` skips a stage
+	// whose database this machine already records (F34) and would leave the
+	// root unplanned.
+	r.script["plan"] = map[string]any{"exit": 0}
+	r.save(t)
+	if out, err := updateRun(t, r.initRig, "update", "--firebase-project", fpID); err != nil {
+		t.Fatalf("the second run did not converge: %v\n%s", err, out)
+	}
+	if v := r.fbVars(t)["firestore_database_exists"]; v != true {
+		t.Errorf("the run after the database was created is applied with firestore_database_exists = %v, want true: this is the update that gains the run index's composite indexes (RI2)", v)
+	}
+}
+
+// The other arm is an installation whose Firestore location was left for a
+// person: the database is not there when the root is applied either, and what
+// such a run must do is converge everything else and leave the location — the
+// failing apply the gate exists to prevent is exactly what it must not do. A
+// managed project in a coding agent's session is the state where the applies
+// happen and the location still cannot be confirmed (D3028, R11), which is why
+// the gate is the Firebase root's own input and not a step of its own.
+func TestALeftFirestoreLocationPlansNoIndexAndConverges(t *testing.T) {
+	r := alwaysRig(t)
+	mayCreate(t, r)
+	noDatabaseYet(t, r)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	t.Setenv("CLAUDECODE", "1")
+	updating(t, r.initRig)
+
+	out, err := updateRun(t, r.initRig, "update")
+	noStepLeftBehind(t, err)
+	if v := r.fbVars(t)["firestore_database_exists"]; v != false {
+		t.Errorf("a run whose Firestore location is left applies the Firebase root with firestore_database_exists = %v, want false: the database this run waited for a person to place is not there (RI2)", v)
+	}
+	if got := r.applies(t); !slices.Contains(got, "firebase") {
+		t.Fatalf("the Firebase root was not applied at all (%v): this run is about an apply that carries the gate's answer", got)
+	}
+	if loc, _ := r.fs.Database(); loc != "" {
+		t.Errorf("the Firestore database was created in %s, and this run left its location for a person", loc)
+	}
+	if !strings.Contains(out, "⚠ CONFIRM (project ") {
+		t.Errorf("the run does not print the location's note, so the step this test is about was never reached:\n%s", out)
+	}
+}
+
 // The local config records the Firebase outputs, and jobs get them only when
 // asked; the history job waits for its image.
 func TestInitFirebaseWritesConfigAndHistoryJob(t *testing.T) {

@@ -13,7 +13,8 @@
 # fugaro update applies these as the operator, and nothing else can: the
 # history job, the index's only writer (D3201), holds datastore.user, which may
 # write documents and may not change an index (iam.tf), and the CLI reads the
-# index as the person who runs it (D3216).
+# index as the person who runs it (D3216). WHEN they are applied is the gate
+# below: only once the database they belong to is there.
 locals {
   # One entry per row of contract-index.md's table, in its order: the fields in
   # the order the query orders by them, each with the direction Firestore is
@@ -85,23 +86,34 @@ locals {
   }
 }
 
+# THE GATE: nothing here is planned until the database is there. `fugaro update`
+# reads the FP's Firestore database before it applies this root and passes the
+# answer in var.firestore_database_exists (internal/infra's FirestoreStep.
+# DatabaseExists), and it ensures that database as the LAST step of the stage
+# that applies this root (D3027). Without the gate, a fresh installation would
+# plan eleven creates against a database that does not exist yet — the create is
+# refused, the apply fails, the run never reaches the step that creates the
+# database, and every later update fails the same way: `fugaro update` could
+# never converge, which is the one thing it must always do. With it, such an
+# installation plans no index, converges, and gains the indexes on the next
+# update, which reads the database it has by then. An installation that already
+# has its database — every one that has completed a setup — gets them in one
+# update.
 resource "google_firestore_index" "run" {
-  for_each = local.run_index_indexes
+  for_each = var.firestore_database_exists ? local.run_index_indexes : {}
 
   project = var.project
   # The installation's one Firestore database: `fugaro update` ensures it (its
   # creation is an idempotent REST step, H8), and its name is fixed — the
   # index's own database field names where the index is built, and an index in
   # another database would serve no read this file is about.
-  #
-  # That ensure is the LAST step of the stage that applies this root (D3027), so
-  # this root is applied to an installation that must already have its database:
-  # every installation `fugaro update` meets has one, and a project whose
-  # database does not exist yet cannot have these applied to it at all —
-  # CreateIndex refuses a database that is not there, and this file carries no
-  # gate on the order the CLI applies the two steps in.
   database   = "(default)"
   collection = "runIndex"
+
+  # The same dependency every other resource in this module takes: the API that
+  # serves the call is enabled by the apply this resource is planned in, and the
+  # index is created after it.
+  depends_on = [google_project_service.this]
 
   dynamic "fields" {
     for_each = each.value

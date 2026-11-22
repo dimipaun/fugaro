@@ -132,6 +132,21 @@ func (s *FirestoreStep) CreatesDatabase() bool { return s.createDB }
 // not create it and the location is permanent (D3091).
 func (s *FirestoreStep) AdoptedLocation() string { return s.adoptedDB }
 
+// DatabaseExists reports whether Plan found a database.
+//
+// It is the run index's own gate (RI2): the Firebase root's composite indexes
+// can only be created under a database that is there, and this stage applies
+// that root BEFORE this step creates the database (D3027), so the run has to
+// ask here and hand the answer to the root's tfvars. A run that planned the
+// indexes against a project without a database would fail its apply and never
+// reach this step — and every run after it would fail the same way.
+//
+// A read that could not be made at all answers false: the Firestore API is
+// enabled by the apply in between, and a permission problem reads the same. The
+// indexes are then applied by the next run that can read the database, which is
+// the direction that costs a read and never a failed apply.
+func (s *FirestoreStep) DatabaseExists() bool { return s.planned && !s.createDB }
+
 func fsErr(what string, err error) error {
 	if errors.Is(err, firestore.ErrPermission) {
 		return fmt.Errorf("%w: %s: %v (the Firestore API is enabled by the Firebase root, and fugaro needs a project owner, editor or budget admin; role changes take a few minutes to apply)", ErrFirestoreUnreadable, what, err)

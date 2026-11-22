@@ -54,12 +54,17 @@ func firebasePlanAgainst(t *testing.T, spec FirebaseSpec, state func(vars map[st
 }
 
 // firebaseDBSpec is the Firebase root's spec for an installation in region,
-// with the one project-wide account shape the module requires.
+// with the one project-wide account shape the module requires, and with its
+// Firestore database there: that is the answer `fugaro update` reads before it
+// applies this root on an installation that has completed a setup, and what the
+// run index's composite indexes are planned against (RI2). The specs of this
+// package are the plan of such an installation; a test about the other answer
+// sets FirebaseSpec.FirestoreDatabaseExists to false itself.
 func firebaseDBSpec(t *testing.T, region string, fp string) FirebaseSpec {
 	t.Helper()
 	spec, err := Firebase(InstallationSpec{
 		Project: "proj-1234", FugaroProject: "aurora", Region: region, RunsBucket: "fugaro-runs-proj-1234",
-	}, FirebaseInputs{FP: fp, HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com"})
+	}, FirebaseInputs{FP: fp, HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com", FirestoreDatabaseExists: true})
 	if err != nil {
 		t.Fatal(err)
 	}

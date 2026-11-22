@@ -376,6 +376,14 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 			fmt.Fprintf(r.w, "  %s\n", l)
 		}
 	}
+	// Whether the FP has its Firestore database, for the Firebase root's tfvars
+	// (RI2, FirestoreStep.DatabaseExists). It is read from the plan made BEFORE
+	// the apply below, which is the only one that says anything about the
+	// database the apply will meet: the root's composite indexes are refused
+	// under a database that is not there, and this stage creates the database
+	// LAST, long after that apply (D3027). The step is planned again after the
+	// apply and that second plan is the one deployFirestore acts on.
+	dbExists := fsStep.DatabaseExists()
 
 	// 1. The installation root.
 	outs, stop, err := r.installRoot(ctx, c, t, wd, lc, spec)
@@ -404,7 +412,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return err
 	}
-	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount})
+	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount, FirestoreDatabaseExists: dbExists})
 	if err != nil {
 		return initErr(err)
 	}

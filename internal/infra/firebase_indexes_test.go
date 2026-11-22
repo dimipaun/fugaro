@@ -113,6 +113,43 @@ func plannedIndexes(t *testing.T, planned map[string]plannedResource, project st
 	return out
 }
 
+// TestFirebaseModulePlansNoIndexWithoutTheDatabase is the gate's own test: an
+// installation whose Firestore database is not there plans no index at all.
+//
+// Two installations reach the root with that answer, and they are one case
+// here: a fresh one, whose own run creates the database after this root is
+// applied (D3027), and one whose location step was left for a person, so the
+// database is not there either. What both would meet without the gate is the
+// same: a create refused for a database that does not exist, an apply that
+// fails, and a run that never reaches the step that creates the database — so
+// `fugaro update` could never converge. With it, such a run plans no index,
+// converges, and the next update — which reads the database it has by then —
+// plans the contract's indexes.
+func TestFirebaseModulePlansNoIndexWithoutTheDatabase(t *testing.T) {
+	spec := firebaseDBSpec(t, "us-east5", "aurora-fp")
+	spec.FirestoreDatabaseExists = false
+	_, planned := firebasePlanAgainst(t, spec, nil)
+	if got := plannedIndexes(t, planned, spec.Project); len(got) != 0 {
+		t.Errorf("the Firebase root plans %v with no database to put them in: CreateIndex is refused for a database that is not there, and the apply that carried it could never converge (RI2)", got)
+	}
+
+	// The gate is the whole difference: with the database there the same root
+	// plans everything the gated plan does, and the indexes besides. A root
+	// that dropped or changed another resource only for an installation without
+	// a database would be a change nobody asked for, in the one plan that runs
+	// before the database exists.
+	spec.FirestoreDatabaseExists = true
+	_, with := firebasePlanAgainst(t, spec, nil)
+	for addr := range planned {
+		if _, ok := with[addr]; !ok {
+			t.Errorf("%s is planned only when the database is missing: the gate is about the run index's composite indexes and nothing else", addr)
+		}
+	}
+	if len(with) <= len(planned) {
+		t.Errorf("the plan with the database there holds %d resources and the gated one %d: the indexes are missing from the plan that has the database", len(with), len(planned))
+	}
+}
+
 // TestFirebaseModulePlansRunIndexes plans the Firebase root with the tfvars
 // `fugaro update` writes and holds its `google_firestore_index` resources to
 // contract-index.md's list: every index the contract names is planned, in the
