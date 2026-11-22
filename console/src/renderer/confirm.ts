@@ -53,6 +53,17 @@
 // old, new, the layer written, the layer that decides today, the CLI's own
 // `why`, the exact argv, and the second button, which is the one that writes.
 //
+// **The two Manage writes are the same window with two more subjects** (MW1's
+// `models add` and MW2's `image add`; the plan's MWR draws them here). Each draws
+// the CLI's own `--dry-run --json` document as **main parsed it**
+// (`modelsview.ts`, `imagesview.ts`) -- the claim or the entry the write would
+// make, the steps `--no-apply` saves, the plan's digest and the exact argv the
+// yes spawns -- and nothing this document invents: the values the operator typed
+// reached main as a payload, and what the window shows is the document main
+// asked the CLI for and then re-checked against that payload. The models write is
+// a **widening** and wears the tick the settings edit wears; the image write is a
+// narrowing and has none.
+//
 // **R5's validation is the shared module's, not a second copy here.**
 // `settingsEntryError` (SU1's red line: "a number outside `min..max` leaves OK
 // disabled") is imported from `src/shared/settingsentry.ts`, which is where the
@@ -191,14 +202,108 @@ export interface SetupFields {
   readonly notes: readonly string[]
 }
 
-/** ConfirmSubjectFields is what the window is shown: one of the four subjects
- * (D1115, D2902, SW3a). One window, one question at a time, and one document that
- * draws all of them. */
+/** ConfirmSubjectFields is what the window is shown: one of the six subjects
+ * (D1115, D2902, SW3a; MW1's and MW2's writes are the last two). One window, one
+ * question at a time, and one document that draws all of them. */
 export type ConfirmSubjectFields =
   | ConfirmFields
   | SettingsFields
   | SettingsEntryFields
   | SetupFields
+  | ModelsAddFields
+  | ImageAddFields
+
+/**
+ * ModelsAddFields is what the window is shown for a **models write** (MW1,
+ * D2903), mirrored from `ModelsAddView` in `src/main/modelsview.ts` the way the
+ * other subjects are mirrored from their own main-process modules.
+ *
+ * Three things about it are the point rather than the drawing:
+ *
+ *   - **the document is the CLI's own dry run**, read member by member by
+ *     `modelsview.ts` before this window existed. Nothing here decides what the
+ *     write changes: the claim, the entry `budget.allowed_models` would gain,
+ *     the price entry and the steps are the document's own members, and a
+ *     document the reader could not vouch for was a refused window rather than a
+ *     coerced one;
+ *   - **`argv` is the write's, not the dry run's** -- what the operator agrees to
+ *     is the command line the yes spawns -- and `digest` is the plan document's
+ *     own, which is what main re-checks before it runs that argv;
+ *   - **it is a widening, and the tick is how the window says so**: the write
+ *     appends to the project's allowed models and writes a price, so it changes
+ *     what every run of the project may name and spend on. The tick's words are
+ *     the console's own constant (`modelsview.ts`), drawn from the view rather
+ *     than from this file, and a yes without it is refused by main.
+ */
+export interface ModelsAddFields {
+  readonly kind: 'models-add'
+  readonly model: string
+  readonly route: string
+  readonly path: string
+  readonly layer: string
+  readonly changed: boolean
+  readonly claimEntry: string
+  readonly claimedBy: string
+  readonly allowEntry: string
+  readonly allowPresent: boolean
+  readonly priceKey: string
+  readonly priceIn: number
+  readonly priceOut: number
+  readonly priceSource: string
+  readonly steps: readonly ModelsAddStepFields[]
+  readonly project: string
+  readonly digest: string
+  readonly argv: readonly string[]
+  readonly widening: true
+  readonly defaultButton: 'cancel' | 'confirm'
+  readonly tick: string
+  readonly confirmNeedsTick: boolean
+}
+
+/** ModelsAddStepFields is one follow-up step of the document: the CLI's own name
+ * for it and the state it would be left in -- `saved`, under `--no-apply`, which
+ * is the whole of what this console's write does with it. */
+export interface ModelsAddStepFields {
+  readonly name: string
+  readonly state: string
+}
+
+/**
+ * ImageAddFields is what the window is shown for an **image write** (MW2,
+ * D2903), mirrored from `ImageAddView` in `src/main/imagesview.ts` for the
+ * reasons `ModelsAddFields` is mirrored from its own: the entry, its tags, its
+ * description and the line `image ls` would print are the dry run document's
+ * members, and the digest and the argv are main's.
+ *
+ * **It carries no tick and that is a decision, not an omission**: this write
+ * raises no limit -- the document has no `widening` member for a window to
+ * classify it by -- so its yes is one deliberate click. `confirmNeedsTick` is
+ * spelled `false` rather than left out so that this document reads the same
+ * member on every view it draws.
+ */
+export interface ImageAddFields {
+  readonly kind: 'image-add'
+  readonly command: string
+  readonly project: string
+  readonly name: string
+  readonly tags: readonly string[]
+  readonly description: string
+  readonly entryDefault: boolean
+  readonly source: string
+  readonly steps: readonly ImageAddStepFields[]
+  readonly digest: string
+  readonly argv: readonly string[]
+  readonly defaultButton: 'cancel' | 'confirm'
+  readonly confirmNeedsTick: boolean
+}
+
+/** ImageAddStepFields is one follow-up step of the image document: the CLI's own
+ * name for it, and whether `--no-apply` saves it -- which is what every one of
+ * them is on this surface, the build included. */
+export interface ImageAddStepFields {
+  readonly name: string
+  readonly saved: boolean
+}
 
 /** CONFIRM_LABEL and CANCEL_LABEL are the two buttons' words. Cancel is the
  * default and the one a keyboard reaches; the confirming button takes a
@@ -227,6 +332,14 @@ export const ENTRY_OK_LABEL = 'OK'
  * without reading which question they were answering.
  */
 export const SETUP_LABEL = 'Run setup'
+
+/** ADD_MODEL_LABEL and ADD_ENTRY_LABEL are the two Manage writes' confirming
+ * buttons (MW1's `models add`, MW2's `image add`). Each names what it adds,
+ * because the two windows are one window and an operator who arrived at it from
+ * a Manage table is owed the word that says which row of that table they are
+ * about to write. */
+export const ADD_MODEL_LABEL = 'Add the model'
+export const ADD_ENTRY_LABEL = 'Add the entry'
 
 /** ENTRY_RESET_LABEL is R6's reset: it submits the empty answer, which main
  * sends to the dry run as `settings unset` (F8: a reset writes no value at
@@ -290,17 +403,58 @@ const FIELDS = Object.freeze({
   planCommand: 'Plan command',
   applyCommand: 'Apply command',
   setupNotes: 'What this does',
+  // The two Manage writes' own rows (MW1, MW2).
+  model: 'Model',
+  route: 'Route',
+  configFile: 'Config file',
+  changed: 'Would change the file',
+  claimEntry: 'Route entry',
+  coveredBy: 'Already covered by',
+  allowedModels: 'Allowed models',
+  price: 'Price $/M (in / out)',
+  priceKey: 'Price entry',
+  priceSource: 'Price source',
+  steps: 'Steps this saves',
+  entry: 'Entry',
+  builtFrom: 'Built from',
+  tags: 'Tags',
+  defaultEntry: 'Default entry',
 })
+
+/** YES_WORD, NO_WORD, SAVED_WORD and UNSAVED_WORD are the console's own words
+ * for the four booleans the two Manage documents carry: whether the write would
+ * change the file, whether the project's allowed-models key is set at all,
+ * whether an entry is the one a job naming nothing runs, and whether a step is
+ * saved rather than run. They are drawn through `row` because they are the
+ * console's vocabulary and not a document's string -- a document sent `true`, and
+ * a window that drew `true` would be one an operator reads a value out of. */
+export const YES_WORD = 'yes'
+export const NO_WORD = 'no'
+export const SAVED_WORD = 'saved'
+export const UNSAVED_WORD = 'not saved'
 
 /** TITLE_LAUNCH, TITLE_SETTINGS, TITLE_ENTRY and TITLE_SETUP are the questions'
  * headings, and TASK_HEADING is the launch's own subtitle. The settings and
  * setup windows have none: the `<pre>` below holds the command line for a launch
  * and nothing for an edit or a setup, and a heading over an empty box is a field
  * an operator would look for a value in. */
+/** TITLE_LAUNCH, TITLE_SETTINGS, TITLE_ENTRY and TITLE_SETUP are the questions'
+ * headings, and TASK_HEADING is the launch's own subtitle. The settings and
+ * setup windows have none: the `<pre>` below holds the command line for a launch
+ * and nothing for an edit or a setup, and a heading over an empty box is a field
+ * an operator would look for a value in. */
+/** TITLE_LAUNCH, TITLE_SETTINGS, TITLE_ENTRY, TITLE_SETUP, TITLE_MODELS_ADD and
+ * TITLE_IMAGE_ADD are the six questions' headings, and TASK_HEADING is the
+ * launch's own subtitle. The settings, setup and Manage windows have none: the
+ * `<pre>` below holds the command line for a launch and nothing for an edit, a
+ * setup or a write, and a heading over an empty box is a field an operator would
+ * look for a value in. */
 export const TITLE_LAUNCH = 'Confirm this run'
 export const TITLE_SETTINGS = 'Confirm this settings change'
 export const TITLE_ENTRY = 'Edit this setting'
 export const TITLE_SETUP = 'Confirm this setup'
+export const TITLE_MODELS_ADD = 'Confirm this models write'
+export const TITLE_IMAGE_ADD = 'Confirm this image write'
 export const TASK_HEADING = 'The task, as submitted'
 
 /** TICK_ID is the checkbox's id. It exists so that its `<label for=…>` names it
@@ -530,12 +684,14 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
   }
 
   /** drawWrite is the button that writes, and it is the same button for the
-   * launch and for the settings confirmation: it is out of the tab order, it
-   * answers only a pointer click, and the tick is the only thing that ever
-   * starts it disabled. It carries no answer of its own beyond `yes` and the
-   * tick: which argv that yes spawns is the main process's, frozen before this
-   * window existed. */
-  const drawWrite = (subject: SettingsFields | ConfirmFields | SetupFields): void => {
+   * launch, the settings confirmation, the setup and the two Manage writes: it is
+   * out of the tab order, it answers only a pointer click, and the tick is the
+   * only thing that ever starts it disabled. It carries no answer of its own
+   * beyond `yes` and the tick: which argv that yes spawns is the main process's,
+   * frozen before this window existed. */
+  const drawWrite = (
+    subject: SettingsFields | ConfirmFields | SetupFields | ModelsAddFields | ImageAddFields,
+  ): void => {
     const confirm = document.createElement('button')
     confirm.setAttribute('type', 'button')
     // Out of the tab order, so no amount of tabbing reaches the button that
@@ -544,12 +700,25 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     // is not.
     confirm.tabIndex = -1
     confirm.textContent =
-      subject.kind === 'settings' ? SAVE_LABEL : subject.kind === 'setup' ? SETUP_LABEL : CONFIRM_LABEL
+      subject.kind === 'settings'
+        ? SAVE_LABEL
+        : subject.kind === 'setup'
+          ? SETUP_LABEL
+          : subject.kind === 'models-add'
+            ? ADD_MODEL_LABEL
+            : subject.kind === 'image-add'
+              ? ADD_ENTRY_LABEL
+              : CONFIRM_LABEL
     confirm.disabled = false
 
     let tick: ConfirmElement | null = null
     let tickLabel: ConfirmElement | null = null
-    if (subject.kind === 'settings' && subject.confirmNeedsTick) {
+    // The tick is the widening's, and the two subjects that carry one are the
+    // settings edit and the models write: both change what every run of the
+    // project may name and spend on, and both views say so with their own words
+    // (`settingsview.ts`, `modelsview.ts`). The image write is a narrowing and
+    // carries no tick at all -- its view has no words for one.
+    if ((subject.kind === 'settings' || subject.kind === 'models-add') && subject.confirmNeedsTick) {
       // The tick is a real checkbox beside its own words (D1109), and Confirm is
       // disabled until it is set. It is the console's extra confirmation and not
       // an argv word -- the write's one word is `--no-apply`, and the main
@@ -827,6 +996,106 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     for (const note of setup.notes) detail(note)
   }
 
+  /** drawModelsAdd is the models write's set of rows (MW1): what the write
+   * claims, the entry the route's own list would gain or the pattern that already
+   * covers it, whether the project's allowed-models key is set at all, the price
+   * entry the document would write and where its two rates come from, the steps
+   * `--no-apply` saves, the plan's digest and the exact argv the yes spawns.
+   *
+   * Every document string goes through `drawn` under the class the Manage table
+   * draws the same kind of value with -- the model and the route are `label`, the
+   * config file is a `path`, a price entry's key is a `branch` -- and the two
+   * booleans are the console's own words, because a document sent `true` and a
+   * window that drew it would be one an operator reads a value out of. The digest
+   * and the argv are main's own, drawn as the setup window draws its own two. */
+  const drawModelsAdd = (add: ModelsAddFields): void => {
+    if (title !== null) title.textContent = TITLE_MODELS_ADD
+    safeRow(FIELDS.project, add.project, 'project', 'models_add.project')
+    safeRow(FIELDS.model, add.model, 'label', 'models_add.model')
+    safeRow(FIELDS.route, add.route, 'label', 'models_add.route')
+    safeRow(FIELDS.configFile, add.path, 'path', 'models_add.path')
+    safeRow(FIELDS.layer, add.layer, 'label', 'models_add.layer')
+    row(FIELDS.changed, add.changed ? YES_WORD : NO_WORD)
+    // The document carries one of the two and never both: the entry the route's
+    // list would gain, or the pattern that already admits the model.
+    if (add.claimedBy !== '') safeRow(FIELDS.coveredBy, add.claimedBy, 'label', 'models_add.claim.covered_by')
+    else safeRow(FIELDS.claimEntry, add.claimEntry, 'label', 'models_add.claim.entry')
+    // An absent `budget.allowed_models` stays absent (D786), and that is a fact
+    // about the project the operator should read rather than an empty line.
+    if (add.allowPresent && add.allowEntry !== '') {
+      safeRow(FIELDS.allowedModels, add.allowEntry, 'label', 'models_add.allowed_models.entry')
+    } else row(FIELDS.allowedModels, NONE)
+    if (add.priceKey !== '') {
+      code(FIELDS.priceKey, drawn(add.priceKey, 'branch', 'models_add.prices.key'))
+      row(FIELDS.price, `${priceText(add.priceIn)} / ${priceText(add.priceOut)}`)
+      safeRow(FIELDS.priceSource, add.priceSource, 'label', 'models_add.prices.source')
+    }
+    if (add.steps.length > 0) {
+      term(FIELDS.steps)
+      for (const step of add.steps) {
+        detail(
+          `${drawn(step.name, 'label', 'models_add.steps[].name')}: ${drawn(step.state, 'sentence', 'models_add.steps[].state')}`,
+        )
+      }
+    }
+    code(FIELDS.digest, add.digest)
+    command(add.argv)
+    drawWrite(add)
+  }
+
+  /** priceText is one rate of the price entry, as the window draws it: the
+   * document's own number, spelled by this console because a `dd` holds a string.
+   * The number reached here only through the document's reader, which refuses a
+   * member that is not a finite number (`modelsview.ts`). */
+  const priceText = (rate: number): string => `${String(rate)} USD per million tokens`
+
+  /** drawImageAdd is the image write's set of rows (MW2): the entry the catalog
+   * would gain -- its name, its tags, what it is for and the one-line definition
+   * `image ls` prints -- whether it is the entry a job naming nothing runs, the
+   * steps `--no-apply` saves, the plan's digest and the exact argv the yes
+   * spawns. Every document string goes through `drawn` under the class the
+   * catalog table draws the same column with. */
+  const drawImageAdd = (add: ImageAddFields): void => {
+    if (title !== null) title.textContent = TITLE_IMAGE_ADD
+    safeRow(FIELDS.command, add.command, 'label', 'image_add.command')
+    safeRow(FIELDS.project, add.project, 'project', 'image_add.project')
+    safeRow(FIELDS.entry, add.name, 'label', 'image_add.name')
+    safeRow(FIELDS.builtFrom, add.source, 'label', 'image_add.source')
+    // The tags are a list of document strings, so each is drawn on its own before
+    // the console joins them: the join is this window's punctuation and never a
+    // value that slipped through unsanitized inside another.
+    if (add.tags.length > 0) {
+      row(
+        FIELDS.tags,
+        add.tags.map((tag) => drawn(tag, 'label', 'image_add.tags[]')).join(', '),
+      )
+    } else row(FIELDS.tags, NONE)
+    if (add.description !== '') safeRow(FIELDS.description, add.description, 'sentence', 'image_add.description')
+    else row(FIELDS.description, NONE)
+    row(FIELDS.defaultEntry, add.entryDefault ? YES_WORD : NO_WORD)
+    if (add.steps.length > 0) {
+      term(FIELDS.steps)
+      for (const step of add.steps) {
+        detail(
+          `${drawn(step.name, 'label', 'image_add.steps[].name')}: ${step.saved ? SAVED_WORD : UNSAVED_WORD}`,
+        )
+      }
+    }
+    code(FIELDS.digest, add.digest)
+    command(add.argv)
+    drawWrite(add)
+  }
+
+  if (subject.kind === 'models-add') {
+    if (heading !== null) heading.textContent = ''
+    drawModelsAdd(subject)
+    return
+  }
+  if (subject.kind === 'image-add') {
+    if (heading !== null) heading.textContent = ''
+    drawImageAdd(subject)
+    return
+  }
   if (subject.kind === 'setup') {
     if (heading !== null) heading.textContent = ''
     drawSetup(subject)

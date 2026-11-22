@@ -28,9 +28,9 @@
 import type { CliCompatibility } from '../../../shared/version'
 import type { ManageKind } from '../types'
 import { budgetKindFor } from './budget'
-import { imagesKind } from './images'
+import { imagesKindFor } from './images'
 import { KEYS_KIND } from './keys'
-import { MODELS_KIND } from './models'
+import { modelsKindFor } from './models'
 import { PEOPLE_KINDS } from './people'
 import { recipesKind } from './recipes'
 import { reposKind, reposStatusKind } from './repos'
@@ -46,13 +46,20 @@ export function KINDS(compatibility: CliCompatibility): readonly ManageKind[] {
   // trusting it: a list written in another order would still group correctly,
   // and this is the order the plan gives the kinds within a group -- the two
   // repository reads before the catalog, the catalog before the recipes.
+  //
+  // Three of the kinds are **built for this installation** rather than declared
+  // once: the Budget kind's reduced-mode gate and the two writes' floors (the
+  // image catalog's and the models'), each asked of the version line this
+  // console read. A kind that asked no floor would offer a write to a CLI that
+  // cannot be driven the way it drives it, which is the failure the constants
+  // exist for.
   return [
     ...PEOPLE_KINDS,
     reposKind,
     reposStatusKind,
-    imagesKind,
+    imagesKindFor(compatibility.cliVersion),
     recipesKind,
-    MODELS_KIND,
+    modelsKindFor(compatibility.cliVersion),
     KEYS_KIND,
     budgetKindFor(compatibility),
   ]
