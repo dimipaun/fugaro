@@ -520,10 +520,13 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 	// A Batch job is the one backend where the launcher always leaves an
 	// identity behind -- the ticket it asked the issuer for before it created
 	// the job, or the marker of the release behind (BR1, R7) -- so a job
-	// carrying neither is not a launch of this installation at all. It is
-	// refused here, beside the marker's own refusal and before the session and
-	// before the clone: a run that went on with no identity would spend against
-	// a ceiling nobody accounts it in.
+	// carrying neither is not a launch of this installation at all. The state
+	// is the one budgetClient's markless arm reads as "this installation has
+	// published nothing": that answer is right for a Cloud Run launch whose
+	// launcher minted nothing, and it is never right here, because on Batch a
+	// launcher that minted nothing launched nothing. Read either way the run
+	// would go on with no identity, no session, no cap and no kill switch, so
+	// it is refused here, where the marker's own refusal is met below.
 	if r.onBatch() && !r.d.Backend.Issued() {
 		return batchLaunchWithNoTicket()
 	}
