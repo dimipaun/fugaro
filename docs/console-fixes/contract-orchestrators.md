@@ -92,10 +92,19 @@ orchestrator id: `fugaro/Fugaro` is a valid reference — a work item id is case
 
 ## The claim path
 
-`ClaimPath(item)` is `orchestrator/~claims/<item>`, with the item escaped the way every key of this tree is
-(`budget.Key`), so a plan task's `/` and `.` reach the database as **one key** rather than as a path (D3209). The claim
-is **project-wide and not one per orchestrator**: the path names the item and nothing about the claim's holder, so two
-orchestrators of one project that mean the same plan task write the same node and the ETag decides which of them lands.
+`ClaimPath(ref)` takes an `ItemRef` and is one node under `orchestrator/~claims`, keyed by the **kind of item** —
+because a plan task and a work item id are not the same kind of identity:
+
+| Item | Path | Why |
+| --- | --- | --- |
+| a plan task (`<plan>/<task>`) | `orchestrator/~claims/<plan task>` | its identity is the plan's folder and the task, and the folder is the one the import read (D2704) — so two orchestrators of one project that imported the same plan mean **the same task** when they name it. That is what makes the claim **project-wide** (D3209): the ETag decides which of them launches the task, and the others skip it and may depend on it. |
+| a work item id | `orchestrator/~claims/<orchestrator>/<item>` | a work item id is minted **inside one node** — a backlog node mints `<day>-<n>` off its own work list (`backlogItemID`, D26) — so the same id in two orchestrators is **two different items**. Keying it project-wide would let one orchestrator's backlog item block another's, and the two would then read as one item. |
+
+The item half is escaped the way every key of this tree is (`budget.Key`), so a plan task's `/` and `.` reach the
+database as **one key** rather than as a path; an orchestrator id needs no escaping and none is left to chance.
+Neither shape can take the other's key: a plan task's key is **one** segment under the claims node, with its separator
+escaped, and a work item's is **two**, under the orchestrator that minted it — and a plan task's elements never carry
+a `~` (`task.PlanTaskElemRE`), so no plan task can spell an orchestrator's own segment.
 
 `~claims` (`orchestrator.ClaimsKey`, with `ClaimsRoot` the node itself) is a child of `orchestrator/` that **no
 orchestrator id can take**: an id begins with a lower-case letter or a digit. That is the whole of what keeps the
@@ -182,8 +191,11 @@ each is a test in `naming_test.go`.
 7. **A document this release does not model is refused, not carried.** The decode is strict and the version is checked
    exactly: an unknown field, a field of the wrong kind, and a version this release does not write are each a refusal,
    and the console draws the decoder's sentence rather than a partial map.
-8. **The claim key is reserved.** `~claims` is not an orchestrator id and no orchestrator can be named it, so a reader
-   listing the subtree's ids may skip it and a writer may keep a claim there without colliding with any id.
+8. **The claim key is reserved, and a claim is keyed by the kind of item.** `~claims` is not an orchestrator id and no
+   orchestrator can be named it, so a reader listing the subtree's ids may skip it and a writer may keep a claim there
+   without colliding with any id. Under it, a plan task is one project-wide node and a work item id is one node per
+   orchestrator: two orchestrators' `20261122-01` are two items and must not share a claim, while one plan task named
+   by two orchestrators is one item and must.
 9. **An item reference splits at the first `/`.** The item may carry `/` of its own, so a consumer that split at the
    last one would read a plan item's reference as a different item.
 10. **The scope grammar and the id rule are one rule.** A scope a console admits is an id the tree accepts, and vice

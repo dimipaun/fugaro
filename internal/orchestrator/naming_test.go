@@ -253,23 +253,22 @@ func TestParseItemRef(t *testing.T) {
 		}
 	})
 
-	t.Run("a claim is project-wide and keyed by the item", func(t *testing.T) {
-		// One node under the subtree for every item of the project, whatever
-		// orchestrator claims it: the path names the item and nothing else, so
-		// two orchestrators meaning the same plan task write the same node and
-		// the ETag decides which lands (D3209).
-		for _, item := range []string{"G1", "docs.plan/T-1", "a/b"} {
-			path, err := orchestrator.ClaimPath(item)
+	t.Run("a claim is one node of the subtree, keyed by the item", func(t *testing.T) {
+		// A plan task is claimed under itself: its identity is the plan's folder
+		// and the task, so two orchestrators that imported the same plan mean
+		// the same task, and the ETag decides which of them launches it (D3209).
+		for _, item := range []string{"docs.plan/T-1", "a/b"} {
+			ref := orchestrator.ItemRef{Orchestrator: "fugaro~night", Item: item}
+			path, err := orchestrator.ClaimPath(ref)
 			if err != nil {
-				t.Errorf("ClaimPath(%q): %v", item, err)
+				t.Errorf("ClaimPath(%q): %v", ref, err)
 				continue
 			}
-			want := orchestrator.ClaimsRoot + "/" + budget.Key(item)
-			if path != want {
-				t.Errorf("ClaimPath(%q) = %q, want %q", item, path, want)
+			if want := orchestrator.ClaimsRoot + "/" + budget.Key(item); path != want {
+				t.Errorf("ClaimPath(%q) = %q, want %q", ref, path, want)
 			}
 			if !strings.HasPrefix(path, orchestrator.SubtreeRoot+"/") {
-				t.Errorf("ClaimPath(%q) = %q, and a claim lives under %s", item, path, orchestrator.SubtreeRoot)
+				t.Errorf("ClaimPath(%q) = %q, and a claim lives under %s", ref, path, orchestrator.SubtreeRoot)
 			}
 		}
 		// The key the claims hang from is no orchestrator id, which is what
@@ -279,7 +278,7 @@ func TestParseItemRef(t *testing.T) {
 		}
 		// A plan task's separator reaches the database as one key, as every key
 		// of this tree does.
-		path, err := orchestrator.ClaimPath("docs.plan/T-1")
+		path, err := orchestrator.ClaimPath(orchestrator.ItemRef{Orchestrator: "fugaro", Item: "docs.plan/T-1"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -289,16 +288,77 @@ func TestParseItemRef(t *testing.T) {
 		// An item is not an orchestrator id: an item's id is case-sensitive and
 		// a plan task may be deep, where an orchestrator's name is a lower-case
 		// slug of one element.
-		if _, err := orchestrator.ClaimPath("Fugaro"); err != nil {
-			t.Errorf("ClaimPath(Fugaro): %v, and a work item id may carry upper case", err)
+		if _, err := orchestrator.ClaimPath(orchestrator.ItemRef{Orchestrator: "fugaro", Item: "Fugaro"}); err != nil {
+			t.Errorf("ClaimPath of an upper-case work item id: %v", err)
 		}
-		if _, err := orchestrator.ClaimPath("a/b/c/d/e"); err != nil {
+		if _, err := orchestrator.ClaimPath(orchestrator.ItemRef{Orchestrator: "fugaro", Item: "a/b/c/d/e"}); err != nil {
 			t.Errorf("ClaimPath of a deep plan task: %v", err)
 		}
-		for _, item := range []string{"", "G 1", ".hidden"} {
-			if _, err := orchestrator.ClaimPath(item); err == nil {
-				t.Errorf("ClaimPath(%q) built a path, and the item rule refuses it", item)
+		for _, ref := range []orchestrator.ItemRef{
+			{Orchestrator: "fugaro", Item: ""},
+			{Orchestrator: "fugaro", Item: "G 1"},
+			{Orchestrator: "fugaro", Item: ".hidden"},
+			{Orchestrator: "Fugaro", Item: "G1"},
+			{Orchestrator: "", Item: "G1"},
+			{Orchestrator: "fugaro~Night", Item: "G1"},
+		} {
+			if _, err := orchestrator.ClaimPath(ref); err == nil {
+				t.Errorf("ClaimPath(%q) built a path, and the rule refuses one half", ref)
 			}
+		}
+	})
+
+	t.Run("two orchestrators do not collide on one item key", func(t *testing.T) {
+		// The finding this pins: a work item id is minted inside one node — a
+		// backlog node mints `<day>-<n>` off its own work list (D26) — so the
+		// same id in two orchestrators is two different items, and a claim
+		// keyed project-wide would let one block the other. The two paths must
+		// differ, and the two orchestrators must still be able to claim their
+		// own.
+		day := "20261122-01"
+		first, err := orchestrator.ClaimPath(orchestrator.ItemRef{Orchestrator: "fugaro", Item: day})
+		if err != nil {
+			t.Fatalf("ClaimPath: %v", err)
+		}
+		second, err := orchestrator.ClaimPath(orchestrator.ItemRef{Orchestrator: "fugaro~night", Item: day})
+		if err != nil {
+			t.Fatalf("ClaimPath: %v", err)
+		}
+		if first == second {
+			t.Errorf("both orchestrators' %s claim %q, and they are two different items", day, first)
+		}
+		if want := orchestrator.ClaimsRoot + "/fugaro~night/" + budget.Key(day); second != want {
+			t.Errorf("the named orchestrator's claim is %q, want %q", second, want)
+		}
+		// And the other direction: the same plan task in two orchestrators is
+		// one item, so it is one node, and the second claim is refused by the
+		// ETag rather than landing somewhere else.
+		a, err := orchestrator.ClaimPath(orchestrator.ItemRef{Orchestrator: "fugaro", Item: "docs.plan/T-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := orchestrator.ClaimPath(orchestrator.ItemRef{Orchestrator: "fugaro~night", Item: "docs.plan/T-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a != b {
+			t.Errorf("the same plan task claimed as %q and %q, and one task is one claim (D3209)", a, b)
+		}
+		// Neither shape can take the other's key: a plan task's key is one
+		// segment under the claims node — its separator is escaped — and a work
+		// item's is two, under the orchestrator that minted it.
+		asTask, err := orchestrator.ClaimPath(orchestrator.ItemRef{Orchestrator: "fugaro", Item: "night/" + day})
+		if err != nil {
+			t.Fatal(err)
+		}
+		segments := func(path string) int {
+			return strings.Count(strings.TrimPrefix(path, orchestrator.ClaimsRoot+"/"), "/")
+		}
+		if segments(asTask) != 0 || segments(second) != 1 {
+			t.Errorf("a plan task's claim %q and a work item's %q are not told apart by their segments", asTask, second)
+		}
+		if !strings.Contains(asTask, budget.Key("/")) {
+			t.Errorf("a plan task's claim %q carries its separator escaped", asTask)
 		}
 	})
 
@@ -308,7 +368,7 @@ func TestParseItemRef(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseItemRef(fugaro/%s): %v", item, err)
 			}
-			if _, err := orchestrator.ClaimPath(ref.Item); err != nil {
+			if _, err := orchestrator.ClaimPath(ref); err != nil {
 				t.Errorf("an item the reference admits, %q, is refused by ClaimPath: %v", ref.Item, err)
 			}
 		}

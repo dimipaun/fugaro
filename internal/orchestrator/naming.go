@@ -196,19 +196,37 @@ func validItem(item string) bool {
 	return idRE.MatchString(item) || task.PlanTaskProblem(item) == ""
 }
 
-// ClaimPath is the path of one item's claim, `orchestrator/~claims/<item>`.
-// item is the item's own identity — the `<plan>/<task>` a plan item is keyed
-// by, or a work item id — and it is escaped the way every key of this tree is
-// (budget.Key), so a plan task's `/` and `.` reach the database as one key
-// rather than as a path.
+// ClaimPath is the path of one item's claim, under the node of the subtree no
+// orchestrator id can take (`orchestrator/~claims`). The two kinds of item are
+// keyed differently, because their identities are not the same kind of thing:
 //
-// The claim is project-wide and not one per orchestrator (D3209): the path
-// names the item and nothing about the claim's holder, so two orchestrators of
-// one project that mean the same plan task write the same node and the ETag
-// decides which of them lands.
-func ClaimPath(item string) (string, error) {
-	if !validItem(item) {
-		return "", fmt.Errorf("%w: %q is not a work item id or a plan task, so it names no item to claim", ErrInvalid, safetext.OneLine(item))
+//   - a **plan task** is claimed under itself, `~claims/<plan task>`, because
+//     its identity is the plan's folder and the task — and the folder is the
+//     one the import read (D2704), so two orchestrators of one project that
+//     imported the same plan mean the same task when they name it. That is what
+//     makes the claim project-wide (D3209): the ETag decides which of them
+//     launches the task, and the others skip it and may depend on it.
+//   - a **work item id** is claimed under its orchestrator,
+//     `~claims/<orchestrator>/<item>`, because a work item id is minted inside
+//     one node: a backlog node mints `<day>-<n>` off its own work list (D26),
+//     so the same id in two orchestrators is two different items. Keying it
+//     project-wide would let one orchestrator's backlog item block another's,
+//     and the two would then be one item to every reader of the claims.
+//
+// The item half is escaped the way every key of this tree is (budget.Key), so a
+// plan task's `/` and `.` reach the database as one key rather than as a path;
+// an orchestrator id needs no escaping and none is left to chance. Neither
+// shape can take the other's key: a plan task's key always carries an escaped
+// `/` and an orchestrator id never carries a `%`.
+func ClaimPath(ref ItemRef) (string, error) {
+	if !ValidOrchestratorID(ref.Orchestrator) {
+		return "", fmt.Errorf("%w: %q is not an orchestrator id", ErrInvalid, safetext.OneLine(ref.Orchestrator))
 	}
-	return ClaimsRoot + "/" + budget.Key(item), nil
+	if !validItem(ref.Item) {
+		return "", fmt.Errorf("%w: %q is not a work item id or a plan task, so it names no item to claim", ErrInvalid, safetext.OneLine(ref.Item))
+	}
+	if task.PlanTaskProblem(ref.Item) == "" {
+		return ClaimsRoot + "/" + budget.Key(ref.Item), nil
+	}
+	return ClaimsRoot + "/" + budget.Key(ref.Orchestrator) + "/" + budget.Key(ref.Item), nil
 }
