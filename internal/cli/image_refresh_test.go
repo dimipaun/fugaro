@@ -1134,7 +1134,7 @@ func TestImageRefreshStoppedAtStepKeepsItsSentence(t *testing.T) {
 	}
 	// G8: the failure prints the log's path, and the run closes on the failure
 	// rather than on a done.
-	if !strings.Contains(out, "full output: ") {
+	if !strings.Contains(out, "Log:  ") {
 		t.Errorf("the failed run points at no log:\n%s", out)
 	}
 	if lines := reportLines(out); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {

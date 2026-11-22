@@ -136,7 +136,7 @@ func TestUpdateMigratesCacheReadKey(t *testing.T) {
 	if n := strings.Count(out, "the override undercuts the catalog"); n != 1 {
 		t.Errorf("fugaro update printed %d undercut warning(s), want the one the cache read is:\n%s", n, out)
 	}
-	if want := "warning: model_prices.deepseek/deepseek-v4.1-flash.cache_read_per_m is $0.000588 per million tokens and the cheapest endpoint the built-in price catalog prices for it on the zdr tier is $0.002 per million tokens"; !strings.Contains(out, want) {
+	if want := "Warning: model_prices.deepseek/deepseek-v4.1-flash.cache_read_per_m is $0.000588 per million tokens and the cheapest endpoint the built-in price catalog prices for it on the zdr tier is $0.002 per million tokens"; !strings.Contains(out, want) {
 		t.Errorf("fugaro update did not print %q:\n%s", want, out)
 	}
 }

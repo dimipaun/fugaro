@@ -24,11 +24,16 @@ func topLevelLine(err error) string {
 	return buf.String()
 }
 
-// failureLine is the sentence a failed logged command prints, up to the run ID
-// the line ends with. It is spelled here rather than read out of the reporter:
-// a test that took the words from the package would pass with any of them
-// wrong, and this is the sentence the spec and the plan pin.
-const failureLine = "Something went wrong. Run: fugaro troubleshoot "
+// failureLine is the line a failed logged command prints about the command
+// that explains it, up to the run ID it ends with. It is spelled here rather
+// than read out of the reporter: a test that took the words from the package
+// would pass with any of them wrong, and this is the line the spec and the plan
+// pin.
+//
+// The label is "Help:", the same width as the log's own "Log:  " above it, so
+// the two paths a failure hands over start at one column and the block under
+// the step reads as one thing (the owner's layout of 2026-11-22).
+const failureLine = "Help: fugaro troubleshoot "
 
 // TestFailureLineNamesTheTroubleshootCommand: the failure block names the
 // command that explains the run, and it names it by the ID of the log under
@@ -59,7 +64,7 @@ func TestFailureLineNamesTheTroubleshootCommand(t *testing.T) {
 	if _, err := cmdlog.ParseID(printed); err != nil {
 		t.Errorf("the run ID the failure prints is not one `fugaro troubleshoot` takes: %v", err)
 	}
-	if !strings.Contains(all, "full output: "+path) {
+	if !strings.Contains(all, "Log:  "+path) {
 		t.Errorf("the failure block lost the log's path:\n%s", all)
 	}
 }
@@ -80,7 +85,7 @@ func TestFailureLineIsPrintedOnlyUnderALog(t *testing.T) {
 			t.Fatalf("the apply failed, yet the run succeeded:\n%s%s", out, errOut)
 		}
 		all := out + errOut
-		if strings.Contains(all, "Something went wrong") {
+		if strings.Contains(all, failureLine) {
 			t.Errorf("a run that opened no log named a run ID it has none of:\n%s", all)
 		}
 		if !strings.Contains(all, "Error: quota exceeded") {
@@ -129,7 +134,7 @@ func TestFailureLineIsPrintedOnlyUnderALog(t *testing.T) {
 		if line := topLevelLine(err); !strings.Contains(line, "quota exceeded") {
 			t.Errorf("the failed plan-only run printed no top-level line: %q", line)
 		}
-		if all := out + errOut; strings.Contains(all, "Something went wrong") {
+		if all := out + errOut; strings.Contains(all, failureLine) {
 			t.Errorf("a plan-only run printed a failure block for a step it never opened:\n%s", all)
 		}
 		if !strings.Contains(newestLog(t, "update"), "quota exceeded") {
@@ -153,7 +158,7 @@ func TestFailureLineIsPrintedOnlyUnderALog(t *testing.T) {
 		if err == nil {
 			t.Fatalf("the installation's project does not match the config, yet runs ls succeeded:\n%s%s", out, errOut)
 		}
-		if all := out + errOut + err.Error(); strings.Contains(all, "Something went wrong") {
+		if all := out + errOut + err.Error(); strings.Contains(all, failureLine) {
 			t.Errorf("a read command keeps no log and its failure is printed as it always was:\n%s", all)
 		}
 	})

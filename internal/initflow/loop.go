@@ -1244,6 +1244,13 @@ func (l *loop) finish() {
 		// borrowed reporter, whose owner prints the line where its own run
 		// ends (ReportBorrowed).
 		l.o.Report.Summary()
+	} else if f := l.res.Failed; f != nil {
+		// The account a reporter is not drawing a closing line for — the
+		// loop's own, a plan-only run, a refusal, a borrowed reporter — says
+		// the step and the fix itself, where it always has: there is no
+		// closing line to resume from, so the fix is on no other one.
+		// The error itself is the caller's to print (the CLI returns it).
+		fmt.Fprintf(l.o.Out, "stopped at %s; fix: %s\n", f.Stage, f.Fix)
 	}
 }
 

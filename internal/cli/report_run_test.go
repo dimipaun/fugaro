@@ -201,7 +201,7 @@ func TestBacklogAddFailureIsAFailedStep(t *testing.T) {
 		t.Errorf("the refusal is not the step that failed:\n%s", out)
 	}
 	path, _ := onlyLog(t, "backlog-add")
-	if !strings.Contains(out, "full output: "+path) {
+	if !strings.Contains(out, "Log:  "+path) {
 		t.Errorf("the failure does not name the log this run's output is in:\n%s", out)
 	}
 	if lines := reportLines(out); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {

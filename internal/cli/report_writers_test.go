@@ -301,7 +301,7 @@ func TestAllowDeleteAFailedWriteIsAFailedStep(t *testing.T) {
 		t.Errorf("the refused write is not a failed step:\n%s%s", out, errOut)
 	}
 	reported(t, out, "delete-list")
-	if !strings.Contains(out, "full output: ") {
+	if !strings.Contains(out, "Log:  ") {
 		t.Errorf("the failure does not say where the run's own output is:\n%s", out)
 	}
 	// And the log is the run the screen shows: the same failed step and the

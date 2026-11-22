@@ -75,12 +75,28 @@ func reportLines(out string) []string {
 	return lines
 }
 
+// waitsRE is the collapsed waiting line: the count of the steps a stop left
+// unrun and what they need (report.Waits). It carries a step's own dim mark and
+// names no stage, which is the whole of what it is for.
+var waitsRE = regexp.MustCompile(`^\d+ steps? not run \(`)
+
+// waitsFor is whether the run says the steps behind a stop wait for target, in
+// either number: "16 steps not run (they need project)" or "1 step not run (it
+// needs project)".
+func waitsFor(got, target string) bool {
+	return strings.Contains(got, "steps not run (they need "+target+")") ||
+		strings.Contains(got, "step not run (it needs "+target+")")
+}
+
 // stepName is the stage a step line names, or "" for a line that is not one.
 func stepName(line string) string {
 	for _, m := range []string{markDone, markFailed, markLeft, markSkipped} {
 		rest, ok := strings.CutPrefix(line, m+" ")
 		if !ok {
 			continue
+		}
+		if waitsRE.MatchString(rest) {
+			return ""
 		}
 		name, _, _ := strings.Cut(rest, ":")
 		if i := strings.IndexByte(name, ' '); i >= 0 {
@@ -109,13 +125,18 @@ func stepLineOf(account []string, name string) string {
 // rig — the plain run and the same run with one flag's line — normalises
 // exactly these and nothing else, because two runs never agree on them.
 var (
-	elapsedRE    = regexp.MustCompile(`(?m)^(Done|Left for you|Failed) in [0-9.]+s,`)
-	fullOutputRE = regexp.MustCompile(`(?m)^ +full output: .*\n`)
+	elapsedRE    = regexp.MustCompile(`(?m)^(Done|Left for you|Failed) in [0-9.]+s[,.]`)
+	fullOutputRE = regexp.MustCompile(`(?m)^ +Log:  .*\n`)
+	// helpRE is the line under a failure that names the command explaining it:
+	// the run's ID is the log's own name, so two runs never agree on it either
+	// (report.Style's Help label).
+	helpRE = regexp.MustCompile(`(?m)^ +Help: fugaro troubleshoot .*\n`)
 )
 
 // withoutRunOwn is s with those taken out.
 func withoutRunOwn(s string) string {
 	s = elapsedRE.ReplaceAllString(s, "$1 in <the run's own>,")
+	s = helpRE.ReplaceAllString(s, "")
 	return fullOutputRE.ReplaceAllString(s, "")
 }
 
@@ -243,7 +264,7 @@ func TestUpdateDefaultOutputIsShort(t *testing.T) {
 	if !strings.Contains(log, convergeNoise) {
 		t.Errorf("the log does not hold Terraform's output:\n%s", log)
 	}
-	if strings.Contains(out, "full output: "+path) {
+	if strings.Contains(out, "Log:  "+path) {
 		t.Errorf("a run that succeeded printed a log path:\n%s", out)
 	}
 }
@@ -370,7 +391,7 @@ func TestUpdateWithoutALogKeepsItsWholeAccount(t *testing.T) {
 	if strings.Contains(all, "…") {
 		t.Errorf("a run with no log cut a reason it had nowhere to keep whole:\n%s", all)
 	}
-	if strings.Contains(all, "full output: ") {
+	if strings.Contains(all, "Log:  ") {
 		t.Errorf("a run that opened no log printed a path to one:\n%s", all)
 	}
 }
@@ -378,8 +399,8 @@ func TestUpdateWithoutALogKeepsItsWholeAccount(t *testing.T) {
 // TestUpdateFailurePrintsContextAndLogPath: a failed step prints its name, the
 // error, the lines of context behind it and the path of the log the rest is in
 // — on the screen, because an agent's session with a read-only home cannot
-// open the log at all (G8) — and the run still names the stage it stopped at
-// and the fix.
+// open the log at all (G8) — and the closing line names the stage it stopped
+// at, which is where the next command resumes.
 func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 	r := applyingRig(t)
 	r.script["apply"] = map[string]any{"exit": 1, "stderr": "Error: quota exceeded\n  with google_project_service.quota\n"}
@@ -394,8 +415,8 @@ func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 		markFailed + " installation",
 		"Error: quota exceeded",
 		"with google_project_service.quota",
-		"full output: " + path,
-		"stopped at installation",
+		"Log:  " + path,
+		"to resume at installation.",
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("the failure block does not print %q:\n%s", want, all)
@@ -429,7 +450,7 @@ func TestUpdateWithoutALogKeepsTheStreamOnScreen(t *testing.T) {
 	if !strings.Contains(all, markDone+" installation") {
 		t.Errorf("the run with no log lost its account too:\n%s", all)
 	}
-	if strings.Contains(all, "full output: ") {
+	if strings.Contains(all, "Log:  ") {
 		t.Errorf("a run that opened no log printed a path to one:\n%s", all)
 	}
 	// The run's workdir lives under the same state directory and is none of
@@ -939,7 +960,7 @@ func namedLog(t *testing.T, out string) string {
 	if m == "" {
 		t.Fatalf("the run names no log, so a reason it shortened is out of reach:\n%s", out)
 	}
-	b, err := os.ReadFile(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(m), "full output:")))
+	b, err := os.ReadFile(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(m), "Log:")))
 	if err != nil {
 		t.Fatal(err)
 	}

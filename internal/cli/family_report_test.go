@@ -201,7 +201,7 @@ func TestSecretsRmFailureIsACrossAndALog(t *testing.T) {
 		t.Errorf("the step does not carry the error the command returns: %q", step)
 	}
 	log, _ := onlyLog(t, "secrets-rm")
-	if !strings.Contains(out, "full output: "+log) {
+	if !strings.Contains(out, "Log:  "+log) {
 		t.Errorf("the failure does not name the log the rest of it is in:\n%s", out)
 	}
 	if last := reportLines(out); !strings.HasPrefix(last[len(last)-1], "Failed in ") {
@@ -334,7 +334,7 @@ func TestCredsSetFailureIsACrossAndALog(t *testing.T) {
 		t.Errorf("the step does not carry the error the command returns: %q", step)
 	}
 	log, _ := onlyLog(t, "creds-set")
-	if !strings.Contains(out, "full output: "+log) {
+	if !strings.Contains(out, "Log:  "+log) {
 		t.Errorf("the failure does not name the log the rest of it is in:\n%s", out)
 	}
 	if last := reportLines(out); !strings.HasPrefix(last[len(last)-1], "Failed in ") {
