@@ -117,10 +117,11 @@ func publishSharedValue(ctx context.Context, lc *localcfg.Config, optIn string, 
 	}
 	if len(data) > localcfg.SharedMaxBytes && published != nil {
 		// A writer bloated the published object (model_prices) to just under
-		// the cap, so every merge goes over: replace it with the local view.
-		// That view carries the opt-in value this publish was given and never a
-		// value read off the machine's block, the same rule as the merge above
-		// (R15, O18).
+		// the cap, so every merge goes over: replace it with the local view, a
+		// copy this large being no more usable than an absent one. The opt-in
+		// fact in it is the caller's where a writer passed one, and this
+		// machine's own block's otherwise — a replaced copy carries none of the
+		// installation's for an ordinary publish to keep (R15, O18).
 		warn("the published shared config was too large to merge; replacing it with this machine's view")
 		merged = localcfg.MergeSharedOptIn(nil, src, optIn)
 		if data, err = merged.Marshal(); err != nil {
