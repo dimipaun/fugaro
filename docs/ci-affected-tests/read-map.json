@@ -18091,6 +18091,7 @@
         "internal/runcache/**",
         "internal/runindex/**",
         "internal/runindex/contract.go",
+        "internal/runindex/fold.go",
         "internal/runmsg/**",
         "internal/runner/**",
         "internal/runner/discovered.go",
