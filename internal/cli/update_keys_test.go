@@ -35,10 +35,11 @@ import (
 // is print one.
 
 // copyFixture is the installation these tests run on. The Cloud Run fake is
-// this file's own (runServiceSkew) with no service deployed: gcpfake.Run fails
-// a test on a service get, deliberately, and the guard's read is exactly that
-// call.
-func copyFixture(t *testing.T) (*projectFixture, *gcpfake.Secrets) {
+// this file's own (runServiceSkew), deployed by the test that needs a service
+// and by no other: with no service deployed it answers Cloud Run's 404, which
+// is what gcpfake.Run fails a test on if a stage asks it instead — the guard's
+// read is exactly that call, and the fake is here so it is answered.
+func copyFixture(t *testing.T) (*projectFixture, *gcpfake.Secrets, *runServiceSkew) {
 	t.Helper()
 	// This process may itself be a coding agent's session, and a stage that
 	// refuses one is a different run than the one under test.
@@ -53,7 +54,7 @@ func copyFixture(t *testing.T) (*projectFixture, *gcpfake.Secrets) {
 	t.Cleanup(func() { selfCommand = realSelf })
 	f := newProjectFixture(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	rewriteConfigLine(t, "no_auth: true", "no_auth: true, secret_manager: "+sm.URL+"/, run: "+svc.url+"/")
-	return f, sm
+	return f, sm, svc
 }
 
 // copyPair is the one pair this file puts in front of the machinery: a model
@@ -85,6 +86,7 @@ func copyPair(t *testing.T) keyCopy {
 type copyRig struct {
 	f   *projectFixture
 	sm  *gcpfake.Secrets
+	svc *runServiceSkew
 	s   *copyStage
 	cmd *cobra.Command
 	out *syncBuf
@@ -102,7 +104,7 @@ type copyRig struct {
 // proves the mechanics before the enumeration exists.
 func newCopyRig(t *testing.T, doc []byte, value string) *copyRig {
 	t.Helper()
-	f, sm := copyFixture(t)
+	f, sm, svc := copyFixture(t)
 	pair := copyPair(t)
 	bundle := bundleFixtureFor(t, sm, initProjectName, doc)
 	sm.Seed(pair.secretID, nil, []byte(value))
@@ -122,7 +124,7 @@ func newCopyRig(t *testing.T, doc []byte, value string) *copyRig {
 	cmd.SetIn(strings.NewReader(""))
 	run := newInitRun(cmd, &initOptions{door: updateDoor.name})
 	run.setProject(lc)
-	return &copyRig{f: f, sm: sm, s: newCredentialsCopyStage(&initEngine{r: run, lc: lc, path: f.path}),
+	return &copyRig{f: f, sm: sm, svc: svc, s: newCredentialsCopyStage(&initEngine{r: run, lc: lc, path: f.path}),
 		cmd: cmd, out: out, pair: pair, bundle: bundle}
 }
 
@@ -479,6 +481,56 @@ func TestACodingAgentsSessionCopiesNothing(t *testing.T) {
 				t.Errorf("a coding agent's session added %d version(s) of the bundle, want none", n)
 			}
 		})
+	}
+}
+
+// TestTheCopyIsRefusedOverAServiceThatCannotReadTheFamily: the entry the copy
+// writes is one of C1's, and the credentials service deployed here is at a
+// release older than the one that reads that family (repoCredentialSince) — so
+// the copy is refused rather than written (F22, F26). The service's loader
+// refuses the WHOLE document for a key it does not know, so a copy that landed
+// under that service would halt every caller of it, coding runs included, until
+// `fugaro update` moved it. The guard stands ahead of the document and of every
+// container, so the refusal is the whole of what happened here.
+func TestTheCopyIsRefusedOverAServiceThatCannotReadTheFamily(t *testing.T) {
+	value := credsValue(t, "older")
+	h := newCopyRig(t, copyBundleSeed(t), value)
+	// The release before the family's reader, deployed and serving the bundle:
+	// a service that reads the tier-B key-credential family and not C1's.
+	h.svc.deployedService(credentialsImage(keyCredentialSince), credentialsImage(keyCredentialSince))
+
+	status, err := h.check(t)
+	if err != nil {
+		t.Fatalf("the copy over a service that cannot read the family got a failure rather than a skip: %v", err)
+	}
+	if status.State != initflow.Skipped {
+		t.Errorf("the copy answers %v when the deployed service predates the family it writes, want a skip: the write would leave a document that service refuses whole", status.State)
+	}
+	if !status.Undone {
+		t.Errorf("the copy reports itself settled over a service too old to read the document: the work is owed, and the service stage of the next fugaro update is what settles it (%+v)", status)
+	}
+	for _, want := range []string{"older than the entries", "fugaro update"} {
+		if !strings.Contains(status.Detail, want) {
+			t.Errorf("the skip does not say %q, and the command it names is the whole of what a person does about it: %s", want, status.Detail)
+		}
+	}
+	if got := h.sm.Accessed(); len(got) != 0 {
+		t.Errorf("the copy read %v over a service too old to read the document: the guard stands ahead of the document and of every container (F26)", got)
+	}
+
+	oc, out, err := h.apply(t)
+	if err != nil {
+		t.Fatalf("the apply of a copy the guard refused failed: %v", err)
+	}
+	assertNoValue(t, out, value)
+	if oc.Changed {
+		t.Errorf("the copy reports a change over a service too old to read the document: %+v", oc)
+	}
+	if n := h.adds(); n != 0 {
+		t.Errorf("the copy added %d version(s) of the bundle over a service too old to read it, want none: that document halts every caller of the service until fugaro update moves it", n)
+	}
+	if !strings.Contains(oc.Detail, "fugaro update") {
+		t.Errorf("the apply of a refused copy does not name the one command that moves the service: %q", oc.Detail)
 	}
 }
 
