@@ -505,10 +505,10 @@ func workspaceProjectGrant(p *Plan, rc ResourceChange, project, wantAccount, own
 	if unknown(ch, "role") {
 		return "a grant whose role terraform knows only at apply, in a root that writes both of its roles as the names it was given"
 	}
-	switch got := str(ch.After["role"]); got {
-	case WorkspaceDatabaseRole(project):
+	switch got := str(ch.After["role"]); {
+	case strings.HasSuffix(got, "/roles/"+WorkspaceDatabaseRoleID):
 		return workspaceGrant(p, rc, project, wantAccount, own)
-	case WorkspaceBundleAccessorRole:
+	case got == WorkspaceBundleAccessorRole:
 		return workspacePersonAccessor(p, rc, project, wantAccount, own, bundleSecret)
 	default:
 		return fmt.Sprintf("a grant of %q, and the workspace's own project carries two project grants and no third: its own service account holds %s on that project's database, and %s on the ONE personal name the workspace serves, under %s", safetext.Field(got), safetext.Field(WorkspaceDatabaseRole(project)), safetext.Field(WorkspaceBundleAccessorRole), gcp.WorkspacePersonTokenConditionTitle)
@@ -516,10 +516,12 @@ func workspaceProjectGrant(p *Plan, rc ResourceChange, project, wantAccount, own
 }
 
 // workspaceGrant says why the member resource that binds the workspace's
-// database role is not the workspace's one grant: another project, or another
-// principal. The role is the dispatch's own business (workspaceProjectGrant
-// reads it before either rule runs), so this rule is reached only for the role
-// the root writes.
+// database role is not the workspace's one grant: another project, another role
+// path, or another principal. The role ID is the dispatch's own business
+// (workspaceProjectGrant reads it before either rule runs) and the whole path is
+// this rule's: the root writes the role as the literal path
+// projects/<project>/roles/<id>, so a grant whose role carries another project
+// is a role that does not exist in this one, and the two are held apart here.
 //
 // A member the plan does not know is the root's own shape — terraform computes
 // the address the account will have — and it is accepted only while the same
@@ -538,6 +540,9 @@ func workspaceGrant(p *Plan, rc ResourceChange, project, wantAccount, own string
 	}
 	if got := str(ch.After["project"]); got != project {
 		return fmt.Sprintf("a grant in project %q, and the workspace's own database is %s's", safetext.Field(got), safetext.Field(project))
+	}
+	if got := str(ch.After["role"]); got != WorkspaceDatabaseRole(project) {
+		return fmt.Sprintf("a grant of role %q, and the workspace's own database role is %s: the root writes it as the literal path projects/<project>/roles/<id>, and a role path that carries another project is a role this project does not have", safetext.Field(got), safetext.Field(WorkspaceDatabaseRole(project)))
 	}
 	if unknown(ch, "member") {
 		if own == "" {
