@@ -375,7 +375,8 @@ func TestPlanStatusRunningNodeShowsRecordPR(t *testing.T) {
 // What this pins is the claim: the run joins nothing, so its stage is never read
 // at all. TestPlanStatusSanitisesAJoinedStage is the one that pins safetext.Field
 // on the stage of a run that does join. Mutation caught: opening launch.json
-// here rather than reading the row the run reader already sanitised.
+// here rather than reading the id the row or the index entry already had
+// shape-checked.
 func TestPlanStatusIgnoresAMisshapenPlanTask(t *testing.T) {
 	testutil.FakeCommand(t, "gh", "echo OPEN\n")
 	f := planStatusRig(t, statusGraphOne)
@@ -479,8 +480,8 @@ func TestPlanStatusSumsEveryPlan(t *testing.T) {
 // that claims no task of any plan here — one with no plan task at all, and one
 // claiming another plan — is never looked up, so the cost of a command the
 // console calls to draw a graph follows the plans rather than the repository's
-// whole run history. Mutation caught: handing planMerges every row the listing
-// produced instead of plan.JoinedRuns.
+// whole run history. Mutation caught: handing planMerges every run the index
+// answered with instead of plan.JoinedRuns.
 func TestPlanStatusLooksUpOnlyJoinedRuns(t *testing.T) {
 	calls := mergedGH(t)
 	f := planStatusRig(t, statusGraphOne)
