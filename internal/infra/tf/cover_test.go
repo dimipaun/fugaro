@@ -3,6 +3,7 @@ package tf
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -2069,7 +2070,23 @@ func orchestratorServicePlan(r ResourceChange) *Plan {
 // orchestratorTickURL is the URL the module's own tick calls, as a later plan
 // reads it back out of state: the service's name, the project number Cloud Run
 // appends, this run's region, and the process's single route.
-const orchestratorTickURL = "https://fugaro-orchestrator-123456789012.us-east5.run.app" + orchestratorTickPath
+const orchestratorTickURL = orchestratorTickOrigin + orchestratorTickPath
+
+// orchestratorTickOrigin is the service's URL without the route, which is the
+// audience the tick's ID token carries (Cloud Run names the service's URL, not
+// a route on it).
+const orchestratorTickOrigin = "https://fugaro-orchestrator-123456789012.us-east5.run.app"
+
+// orchestratorOriginOf is a URL without its path, query and fragment: the
+// audience a row of the tick's table carries when the row is about the URL and
+// not the token.
+func orchestratorOriginOf(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	return u.Scheme + "://" + u.Host
+}
 
 // orchestratorTick is the tick as orchestrator.tf writes it: a POST to the
 // service's own URL on the tick's path, authenticated with an OIDC ID token
@@ -2291,21 +2308,42 @@ func TestCoverRefusesAnOrchestratorTickThatIsNotTheModules(t *testing.T) {
 		plan    func() *Plan
 		covered bool
 	}{
-		"the apply that creates the service": {create, true},
-		"a later apply, the URL read back":   {func() *Plan { return later(orchestratorTick(orchestratorTickURL, orchestratorTickURL, sched)) }, true},
+		"the apply that creates the service":  {create, true},
+		"a later apply, the URL read back":    {func() *Plan { return later(orchestratorTick(orchestratorTickURL, orchestratorTickOrigin, sched)) }, true},
+		"the audience written with the route": {func() *Plan { return later(orchestratorTick(orchestratorTickURL, orchestratorTickURL, sched)) }, false},
+		// The URL Cloud Run's own uri attribute returns, <service>-<hash>-<region
+		// code>.a.run.app: the host names no project number and no region this
+		// cover can read, so it is refused and the module writes the
+		// deterministic form instead (orchestrator.tf).
+		"the service's a.run.app form": {func() *Plan {
+			u := "https://fugaro-orchestrator-yucii735xa-ul.a.run.app" + orchestratorTickPath
+			return later(orchestratorTick(u, "https://fugaro-orchestrator-yucii735xa-ul.a.run.app", sched))
+		}, false},
+		"another service in this region and project": {func() *Plan {
+			o := "https://fugaro-credentials-123456789012.us-east5.run.app"
+			return later(orchestratorTick(o+orchestratorTickPath, o, sched))
+		}, false},
+		"a service whose name only starts with the orchestrator's": {func() *Plan {
+			o := "https://fugaro-orchestrator-evil-123456789012.us-east5.run.app"
+			return later(orchestratorTick(o+orchestratorTickPath, o, sched))
+		}, false},
+		"a plain http URL": {func() *Plan {
+			o := "http://fugaro-orchestrator-123456789012.us-east5.run.app"
+			return later(orchestratorTick(o+orchestratorTickPath, o, sched))
+		}, false},
 		// The URL: a tick pointed anywhere else runs, fails and logs every
 		// minute forever, which is a service nobody measures.
 		"another host": {func() *Plan {
-			return later(orchestratorTick("https://evil.example"+orchestratorTickPath, "https://evil.example"+orchestratorTickPath, sched))
+			return later(orchestratorTick("https://evil.example"+orchestratorTickPath, "https://evil.example", sched))
 		}, false},
 		"another region": {func() *Plan {
 			u := "https://fugaro-orchestrator-123456789012.us-east4.run.app" + orchestratorTickPath
-			return later(orchestratorTick(u, u, sched))
+			return later(orchestratorTick(u, orchestratorOriginOf(u), sched))
 		}, false},
 		// The region has to be a label of its own: a host that merely ends in
 		// the same words is not this region's service URL.
 		"a host that only ends in the region's words": {func() *Plan {
-			return later(orchestratorTick("https://evil-us-east5.run.app"+orchestratorTickPath, "https://evil-us-east5.run.app"+orchestratorTickPath, sched))
+			return later(orchestratorTick("https://evil-us-east5.run.app"+orchestratorTickPath, "https://evil-us-east5.run.app", sched))
 		}, false},
 		// ... and the host has to be <service>-<project number>: a run.app URL
 		// that names no project is not a service URL at all. Which SERVICE it
@@ -2315,23 +2353,23 @@ func TestCoverRefusesAnOrchestratorTickThatIsNotTheModules(t *testing.T) {
 		// region, the domain and the path.
 		"a run.app URL with no project number": {func() *Plan {
 			u := "https://fugaro-orchestrator.us-east5.run.app" + orchestratorTickPath
-			return later(orchestratorTick(u, u, sched))
+			return later(orchestratorTick(u, orchestratorOriginOf(u), sched))
 		}, false},
 		"the service's root and not the tick's path": {func() *Plan {
 			u := "https://fugaro-orchestrator-123456789012.us-east5.run.app"
-			return later(orchestratorTick(u, u, sched))
+			return later(orchestratorTick(u, orchestratorOriginOf(u), sched))
 		}, false},
 		"the tick's path with something after it": {func() *Plan {
 			u := orchestratorTickURL + "/later"
-			return later(orchestratorTick(u, u, sched))
+			return later(orchestratorTick(u, orchestratorOriginOf(u), sched))
 		}, false},
 		"the tick's path with a query": {func() *Plan {
 			u := orchestratorTickURL + "?x=1"
-			return later(orchestratorTick(u, u, sched))
+			return later(orchestratorTick(u, orchestratorOriginOf(u), sched))
 		}, false},
 		"the run API's own URL, with an ID token": {func() *Plan {
 			u := "https://run.googleapis.com/v2/projects/proj-1/locations/us-east5/jobs/fugarohist:run"
-			return later(orchestratorTick(u, u, sched))
+			return later(orchestratorTick(u, orchestratorOriginOf(u), sched))
 		}, false},
 		"no URL that is not known and no service created with it": {func() *Plan {
 			return later(orchestratorTick("", "", sched))
@@ -2340,19 +2378,19 @@ func TestCoverRefusesAnOrchestratorTickThatIsNotTheModules(t *testing.T) {
 		// admitted by Cloud Run's front end, so the job would fail every minute
 		// with nothing in the installation's own records to say why.
 		"an audience that is not the URL it calls": {func() *Plan {
-			return later(orchestratorTick(orchestratorTickURL, "https://fugaro-orchestrator-123456789012.us-east5.run.app", sched))
+			return later(orchestratorTick(orchestratorTickURL, "https://fugaro-credentials-123456789012.us-east5.run.app", sched))
 		}, false},
 		"an audience that is not known while the URL is": {func() *Plan {
 			return later(orchestratorTick(orchestratorTickURL, "", sched))
 		}, false},
 		"a caller that is not a Fugaro account": {func() *Plan {
-			return later(orchestratorTick(orchestratorTickURL, orchestratorTickURL, "evil@proj-1.iam.gserviceaccount.com"))
+			return later(orchestratorTick(orchestratorTickURL, orchestratorTickOrigin, "evil@proj-1.iam.gserviceaccount.com"))
 		}, false},
 		"a caller of another project": {func() *Plan {
-			return later(orchestratorTick(orchestratorTickURL, orchestratorTickURL, "fugaro-scheduler@other.iam.gserviceaccount.com"))
+			return later(orchestratorTick(orchestratorTickURL, orchestratorTickOrigin, "fugaro-scheduler@other.iam.gserviceaccount.com"))
 		}, false},
 		"a caller that is not known and no account created with it": {func() *Plan {
-			r := orchestratorTick(orchestratorTickURL, orchestratorTickURL, "")
+			r := orchestratorTick(orchestratorTickURL, orchestratorTickOrigin, "")
 			ht := r.Change.After["http_target"].([]any)[0].(map[string]any)
 			ht["oidc_token"].([]any)[0].(map[string]any)["service_account_email"] = "computed later"
 			r.Change.AfterUnknown = map[string]any{"http_target": []any{map[string]any{"oidc_token": []any{map[string]any{"service_account_email": true}}}}}

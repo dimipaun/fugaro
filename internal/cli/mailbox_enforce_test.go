@@ -1204,13 +1204,81 @@ func TestMailboxKindThatDoesNotTravelIsRefused(t *testing.T) {
 	}
 }
 
+// TestMailboxStopRequestIsAnswered is the phone's stop request through this
+// consumer (mobile plan task P5.1g, the owner's answer Q10(c)): the kind is one
+// a phone sends, so the run switch **answers** it rather than refusing it — a
+// refusal is an answer the phone never hears, and an unanswered record is one
+// its own at-least-once rule keeps owing (M2), so the human's stop request would
+// sit in the app as a pending utterance with nothing to say about it — and what
+// the answer says is what actually happened: nothing was stopped from here,
+// because there is nothing here to stop it with.
+//
+// The other half is what the answer does **not** claim, and it is the half Q10's
+// answer (c) exists for: no run is touched, nothing is handed to the
+// orchestrator, and `config/kill/**` — the enforcement side, which no client
+// writes — is not written. The sentence names where the stop can be made, which
+// is the prompt the schema says a stop request raises on the console or the
+// laptop, and the one thing the phone can always do by itself, which is to
+// revoke its own pairing. The resident orchestrator answers one it reads out of
+// the same inbox with the same two halves (its consumerCarries and
+// consumerStopRequest); this command's sentence is its own, as every sentence
+// this file writes is.
+func TestMailboxStopRequestIsAnswered(t *testing.T) {
+	f := newMailboxFixture(t, "")
+	offers := f.offers(t)
+	f.writeRecord(t, "msg-1", map[string]any{"kind": "stop"}, mailboxNowMs(), mailboxKeyMaterial)
+
+	out, _, err := execute(t, "mailbox", "--once", "--json")
+	if err != nil {
+		t.Fatalf("err = %v, want exit 0: a stop request is a record this consumer reads and answers, not a failure to run", err)
+	}
+	doc := mailboxJSON(t, out)
+	if got := mailboxCount(t, doc, "read"); got != 1 {
+		t.Fatalf("read = %d, want 1: a stop request is read like any other message", got)
+	}
+	if refused, _ := doc["refused"].([]any); len(refused) != 0 {
+		t.Fatalf("refused = %v, want none: a stop request is answered rather than refused, so the phone is not left owing it", refused)
+	}
+	if len(*offers) != 0 {
+		t.Fatalf("a stop request was handed to the orchestrator: %v: nothing this consumer can do stops a run, and an offer would hand an agent a sentence it was never meant to receive", *offers)
+	}
+	replied, _ := doc["replied"].([]any)
+	if len(replied) != 1 {
+		t.Fatalf("replied = %v, want the one answer a stop request is owed", doc["replied"])
+	}
+	entry, _ := replied[0].(map[string]any)
+	if entry["id"] != "r-msg-1" || entry["for"] != "msg-1" {
+		t.Fatalf("replied[0] = %v, want the answer to msg-1 under mailbox.ReplyID's own id", entry)
+	}
+	value := f.db.Value("mailbox/" + mailboxUID + "/outbox/r-msg-1")
+	node, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("the outbox holds %T at r-msg-1, want the answer this consumer wrote", value)
+	}
+	if node["kind"] != "answer" || node["reply_to"] != "msg-1" {
+		t.Fatalf("the answer = %v, want kind answer with reply_to msg-1: the outbox is where a phone reads what became of what it sent", node)
+	}
+	if node["mac"] == nil {
+		t.Fatal("the answer carries no tag: M4b signs every outbound value, and an unsigned one is one no phone can verify")
+	}
+	text, _ := node["text"].(string)
+	for _, want := range []string{"nothing was stopped", "no phone-writable kill switch", "revoke this device's pairing"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the answer to a stop request does not carry %q: %q", want, text)
+		}
+	}
+	if strings.Contains(out, text) {
+		t.Error("the document printed a message's text: §4.3 says an id may appear in this command's output and a message's text never does")
+	}
+}
+
 // TestMailboxInboxKindsAndVerbsAreTheSchemas holds this file's own kind names
 // and the verbs it runs to `shared/mailbox-schema`'s: the kind constants are
 // bound here rather than imported because the module declares none for them, and
 // a kind or a verb the schema renames would otherwise be a branch nothing
 // reaches — or, for a verb, a record this consumer would try to run.
 func TestMailboxInboxKindsAndVerbsAreTheSchemas(t *testing.T) {
-	for _, kind := range []string{mailboxKindAction, mailboxKindAnswer, mailboxKindPrompt, mailboxKindRegistration} {
+	for _, kind := range []string{mailboxKindAction, mailboxKindAnswer, mailboxKindPrompt, mailboxKindRegistration, mailboxKindStop} {
 		if !slices.Contains(mailbox.Kinds, kind) {
 			t.Errorf("this file reads %q out of an inbox, and shared/mailbox-schema does not name it: %v", kind, mailbox.Kinds)
 		}
@@ -1279,4 +1347,80 @@ func TestMailboxHeartbeatWithoutAgentsCarriesNoField(t *testing.T) {
 	if _, present := record["agents"]; present {
 		t.Fatalf("an empty agent list was written: %v", record)
 	}
+}
+
+// TestRefusalPrecedesTheSpawn is T6's second named test and its second Red step:
+// the fence is evaluated **before** anything is spawned, so a refused action
+// never reaches the runner.
+//
+// The spawn recorder is the seam the cancel path goes through, and the test
+// holds both sides of it, because "never called" over a seam no pass could fill
+// would pass for the wrong reason: two refused records leave it empty — one the
+// schema's own closed verb set refuses before a record can even name it, and one
+// that decodes, names a run and carries an action id, and is refused by the
+// fence the runner sits behind — and the admitted cancel fills it exactly once.
+//
+// The second is the case the Red step names: everything about that record is
+// what a spawn needs, so a spawn moved in front of the fence would be seen here.
+func TestRefusalPrecedesTheSpawn(t *testing.T) {
+	t.Run("a verb the ruling refuses is not a record at all", func(t *testing.T) {
+		f := newMailboxFixture(t, "")
+		cancelled := f.cancels(t)
+		offers := f.offers(t)
+		at := mailboxNowMs()
+		f.writeRecord(t, "msg-1", mailboxActionExtra(mailboxActionRecord(
+			"kill-switch", map[string]any{"run": mailboxRunID}, "act-1", "conf-1", at-mailboxConfirmationLag.Milliseconds(),
+		)), at, mailboxKeyMaterial)
+
+		out, _, err := execute(t, "mailbox", "--once", "--json")
+		if err != nil {
+			t.Fatalf("err = %v, want exit 0: a record the schema refuses is a per-message refusal", err)
+		}
+		if code := mailboxRefusedCode(t, mailboxJSON(t, out), 0); code != string(mailbox.CodeUnknownVerb) {
+			t.Fatalf("refused[0].code = %q, want %q: an action record's verb set is the ruling's three, so a refused verb cannot be written as one", code, mailbox.CodeUnknownVerb)
+		}
+		if len(*cancelled) != 0 {
+			t.Fatalf("the runner was spawned for %v: a refused verb never reaches it", *cancelled)
+		}
+		if len(*offers) != 0 {
+			t.Fatalf("offers = %v: a refused action record is not a delivery either", *offers)
+		}
+	})
+
+	t.Run("a refused confirmation is refused before the spawn", func(t *testing.T) {
+		f := newMailboxFixture(t, "")
+		cancelled := f.cancels(t)
+		offers := f.offers(t)
+		at := mailboxNowMs()
+		old := at - 7*60*60*1_000
+		f.writeRecord(t, "msg-1", mailboxActionExtra(mailboxActionRecord("cancel",
+			map[string]any{"run": mailboxRunID}, "act-1", "conf-1", old)), at, mailboxKeyMaterial)
+
+		out, _, err := execute(t, "mailbox", "--once", "--json")
+		mailboxNothingRan(t, err)
+		if code := mailboxRefusedCode(t, mailboxJSON(t, out), 0); code != string(mailbox.CodeReplay) {
+			t.Fatalf("refused[0].code = %q, want %q", code, mailbox.CodeReplay)
+		}
+		if len(*cancelled) != 0 {
+			t.Fatalf("the runner was spawned for %v: this record decodes, names a run and carries an action id, so what stopped it is the fence — and it must be evaluated before the spawn", *cancelled)
+		}
+		if len(*offers) != 0 {
+			t.Fatalf("offers = %v: a refused action record is not a delivery either", *offers)
+		}
+	})
+
+	t.Run("an admitted record does reach the spawn", func(t *testing.T) {
+		f := newMailboxFixture(t, "")
+		cancelled := f.cancels(t)
+		f.offers(t)
+		at := mailboxNowMs()
+		f.writeRecord(t, "msg-1", mailboxActionExtra(mailboxCancelAction("act-1", "conf-1", at)), at, mailboxKeyMaterial)
+
+		if _, _, err := execute(t, "mailbox", "--once", "--json"); err != nil {
+			t.Fatalf("err = %v, want exit 0: a confirmed cancel is a completed pass", err)
+		}
+		if len(*cancelled) != 1 || (*cancelled)[0] != mailboxRunID {
+			t.Fatalf("the runner was spawned for %v, want exactly [%s]: the recorder sees a spawn when the fence admits one", *cancelled, mailboxRunID)
+		}
+	})
 }

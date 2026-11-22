@@ -415,13 +415,16 @@ func TestOrchestratorServiceIsTheDesignsShape(t *testing.T) {
 		`time_zone = "Etc/UTC"`,
 		"retry_count = 0",
 		`http_method = "POST"`,
-		`uri         = "${google_cloud_run_v2_service.orchestrator[0].uri}${local.orchestrator_tick_path}"`,
+		`uri         = "${local.orchestrator_url}${local.orchestrator_tick_path}"`,
 		`service_account_email = google_service_account.scheduler.email`,
-		`audience              = google_cloud_run_v2_service.orchestrator[0].uri`,
+		`audience              = local.orchestrator_url`,
 	} {
 		if !strings.Contains(tick, need) {
 			t.Errorf("%s: the tick does not carry %q:\n%s", orchestratorTF, need, tick)
 		}
+	}
+	if !strings.Contains(src, `orchestrator_url = local.orchestrator_on ? "https://${var.orchestrator.service}-${data.google_project.this[0].number}.${var.region}.run.app" : ""`) {
+		t.Errorf("%s: the tick's URL is not the service's deterministic <service>-<project number>.<region>.run.app: the `.uri` attribute is the a.run.app form, which internal/infra/tf's cover cannot tie to this project and refuses", orchestratorTF)
 	}
 	// The token is an ID token and not an access token: Cloud Run's front end
 	// admits a run.app caller by the ID token whose audience is the service,

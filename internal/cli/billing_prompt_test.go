@@ -134,11 +134,13 @@ func withoutPlacement(out string) string {
 // pickerAnswers is the stdin that answers the wizard's questions before the
 // billing one — the GCP project (there is none to suggest here, so Enter is
 // not an answer), the region (Enter), the name (Enter), the rigor mode (the
-// one question with no suggestion, so a mode is typed; task W) and the bake
-// switch (Enter, which is the suggestion an installation that never answers it
-// reads as anyway; IS7) — with answer answering the billing question.
+// one question with no suggestion, so a mode is typed; task W), the budget
+// amount (Enter, which is the default the alert is created with; T2b of
+// docs/managed-flag-ergonomics) and the bake switch (Enter, which is the
+// suggestion an installation that never answers it reads as anyway; IS7) —
+// with answer answering the billing question.
 func pickerAnswers(answer string) string {
-	return "proj-1234\n" + "\n" + "\n" + string(rigor.Pro) + "\n" + "\n" + answer + "\n"
+	return "proj-1234\n" + "\n" + "\n" + string(rigor.Pro) + "\n" + "\n" + "\n" + answer + "\n"
 }
 
 // billingListCalls is how many times the account list was asked for: the
@@ -801,8 +803,21 @@ func TestPickerStoresNothing(t *testing.T) {
 	if answered.linkBilling != picked {
 		t.Fatalf("the picker recorded %q, want %q", answered.linkBilling, picked)
 	}
+	// The pick carries exactly one thing with it (T2b of
+	// docs/managed-flag-ergonomics; D2216, settleBudget): the account the
+	// project's budget alert is on is the account the run linked, and a run that
+	// linked none carries no budget at all. Both are this question's doing, and
+	// neither is the account list kept anywhere.
+	if answered.billingAccount != picked || answered.budget == 0 || answered.budgetCurrency == "" {
+		t.Errorf("the account the pick linked is not the budget's own: %q, budget %d %s", answered.billingAccount, answered.budget, answered.budgetCurrency)
+	}
+	if control.billingAccount != "" || control.budget != 0 || control.budgetCurrency != "" {
+		t.Errorf("a run whose question linked nothing carries a budget: %q, %d %s", control.billingAccount, control.budget, control.budgetCurrency)
+	}
 	got, want := *answered, *control
-	got.linkBilling, want.linkBilling = "", ""
+	for _, o := range []*initOptions{&got, &want} {
+		o.linkBilling, o.billingAccount, o.budget, o.budgetCurrency = "", "", 0, ""
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("the question changed more than --link-billing:\n%+v\nwant\n%+v", got, want)
 	}

@@ -485,6 +485,16 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // comes back as a **declaration** -- the string a writer put in its own
   // record -- never as an identity this process establishes.
   ['coordinator.intents', 'coordinatorIntents'],
+  // The orchestrator map (the console-fixes plan's CG7a, D3221): `fugaro
+  // orchestrator map --json`, the project's active orchestrators, the
+  // connections between them and the coordinator's heartbeat. One row here for
+  // the same reason as every other, and this row is the declarations read's
+  // shape exactly: the operation has no argument at all, so the row declares
+  // none and every word of the argv is the main process's own. The document is
+  // the one the Coordinator tab draws, and the read sits behind
+  // `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`) -- a CLI below it is
+  // asked for nothing, and the tab names the version it needs.
+  ['orchestrator.map', 'orchestratorMap'],
   // The record's move (the dependency-graph plan's GV3.2): one task of the
   // project's roadmap record into a release box, or out of one --
   // `coordinator roadmap move <plan>/<task> --to <release> --expect <release>
@@ -637,6 +647,18 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // words of the rows' command paths (`src/main/spawn.ts`).
   ['models.add.plan', 'planModelsAdd'],
   ['models.add', 'addModel'],
+  // **The image write** (the console improvements plan's MW2, D2903), the two
+  // rows of the Manage view's images write: the CLI's own dry run, which prints
+  // the plan document the window draws, and the write itself. They are appended
+  // here for the models write's reason -- the rows a plan adds are one diff --
+  // and both are inert until used: `IMAGE_ADD_CLI_FLOOR` is `null` until the CLI
+  // release that carries `--no-apply` on `image add` and the plan document (MD2),
+  // and the handlers in `src/main/index.ts` answer 'not available in this build'
+  // until the task that wires the window registers the real ones. No flag either
+  // row carries is a caller's: `--no-apply`, `--dry-run` and `--json` are fixed
+  // words of the rows' command paths (`src/main/spawn.ts`).
+  ['image.add.plan', 'planImageAdd'],
+  ['image.add', 'addImage'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**

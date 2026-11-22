@@ -222,7 +222,7 @@ coordinator stores, the console sees it only if a `fugaro` command can read it. 
 
 **#8 — There is no MCP server, no MCP dependency, and one loopback HTTP server in the whole repository. — Gap.**
 `internal/gateway/gateway.go:1-7` is the only HTTP server: *"a loopback proxy between
-Claude Code and the model API"*, started at `:620 Start`, bound at `:640` to
+Claude Code and the model API"*, started at `:657 Start`, bound at `:677` to
 `127.0.0.1:0`. Its routes are `HEAD /api/hello`, `POST /v1/messages`,
 `POST /v1/messages/count_tokens`. Nothing else in the tree serves a request.
 The spec's own claims about the protocol also need care: **MCP authorization is
@@ -547,8 +547,8 @@ operation and a new ruling. → **Q8**.
 `docs/desktop-console/spec.md` §5.1 rule 7 — *"Job-written text is text"* — and the code
 follows it: `console/src/renderer/app.ts` writes through `element.textContent`
 (`:124,138,159,174`), never `innerHTML`; the sanitizers are
-`console/src/shared/sanitize.ts` (`sanitizeText:2544`, `sanitizeRefusal:2855`,
-`safeUrl:2887`); navigation and window-open are denied
+`console/src/shared/sanitize.ts` (`sanitizeText:2493`, `sanitizeRefusal:2790`,
+`safeUrl:2822`); navigation and window-open are denied
 (`console/src/main/window.ts:231 denyNavigation`, `:242 denyWindowOpen`), and there is
 exactly one validated `shell.openExternal`.
 A coordinator answering *"what's holding up the payments release?"* produces free text that

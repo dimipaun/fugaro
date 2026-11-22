@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -146,6 +148,11 @@ type Plan struct {
 	// to unless AllowReplace is set by the caller.
 	DestDigest   string
 	AllowReplace bool
+	// OwnEarlier is the release version whose published image is exactly what
+	// the destination tag holds, when it holds one: set by the caller from
+	// OwnEarlier, and the proof that a tag which is not the release's image is
+	// still an image this source published, so moving it replaces nothing foreign.
+	OwnEarlier string
 	// TotalBytes is every blob, TransferBytes the ones missing at the
 	// destination. They inform; whether there is something to do is
 	// decided by Present alone (a copy may be the manifest alone).
@@ -304,6 +311,90 @@ func (m *Mirror) Copy(ctx context.Context, p *Plan) (Result, error) {
 	res.Changed = true
 	res.Description = fmt.Sprintf("copied %s as %s, digest %s (%d blobs sent, %d already there)", p.Source, p.Dest, p.Digest, res.BlobsSent, res.BlobsKept)
 	return res, nil
+}
+
+// maxEarlierReleases bounds how many of the source's older release tags
+// OwnEarlier reads: a destination more releases behind than this is left to
+// the person's own --replace-image.
+const maxEarlierReleases = 40
+
+var releaseTagRE = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// OwnEarlier says whether the destination tag the plan found (DestDigest)
+// is the image of an earlier release the plan's own source published, and
+// returns that release's version. It rests on the anchor the copy itself
+// rests on, the source's release tags, and on nothing else: the digest of
+// each older X.Y.Z tag is read from the source (the linux/amd64 image a copy
+// of it would write) and compared. A destination that matches none is a
+// customised or foreign image, and a source that cannot be listed or read
+// proves nothing, so both answer "" and the caller keeps its refusal.
+func (m *Mirror) OwnEarlier(ctx context.Context, p *Plan) string {
+	if p.DestDigest == "" || p.Present {
+		return ""
+	}
+	resp, err := m.srcGet(ctx, p.Source, "/tags/list", "")
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	raw, err := readCapped(resp.Body, m.limits().Manifest)
+	if err != nil {
+		return ""
+	}
+	var list struct {
+		Tags []string `json:"tags"`
+	}
+	if json.Unmarshal(raw, &list) != nil {
+		return ""
+	}
+	var older []string
+	for _, t := range list.Tags {
+		if releaseTagRE.MatchString(t) && t != p.Source.Tag {
+			older = append(older, t)
+		}
+	}
+	sort.Slice(older, func(i, j int) bool { return releaseNewer(older[i], older[j]) })
+	if len(older) > maxEarlierReleases {
+		older = older[:maxEarlierReleases]
+	}
+	for _, t := range older {
+		ref := p.Source
+		ref.Tag = t
+		if d, err := m.imageDigest(ctx, ref); err == nil && d == p.DestDigest {
+			return t
+		}
+	}
+	return ""
+}
+
+func releaseNewer(a, b string) bool {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < 3; i++ {
+		x, _ := strconv.Atoi(pa[i])
+		y, _ := strconv.Atoi(pb[i])
+		if x != y {
+			return x > y
+		}
+	}
+	return false
+}
+
+// imageDigest is the digest of the image manifest a copy of ref would write:
+// the tag's own, or the linux/amd64 entry of an index (Plan's rule).
+func (m *Mirror) imageDigest(ctx context.Context, ref Ref) (string, error) {
+	top, digest, mt, err := m.getManifest(ctx, ref, ref.Tag)
+	if err != nil {
+		return "", err
+	}
+	if !isIndex(mt) {
+		return digest, nil
+	}
+	child, err := amd64Entry(top)
+	if err != nil {
+		return "", err
+	}
+	_, d, _, err := m.getChild(ctx, ref, child)
+	return d, err
 }
 
 func (m *Mirror) checkSource(r Ref) error {

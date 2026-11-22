@@ -453,7 +453,22 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	// decides which of the repository's keys the service serves a routed
 	// call with (R2, KS5), so it is set here from the route the gateway
 	// routed to and never taken from a header the agent wrote.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderCredentialOwner, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount, HeaderProvider} {
+	//
+	// The chain wire's four names go the same way (chainwire.go). The stage
+	// header is dropped whatever this gateway's ChainServed says and is then
+	// set from the run's own stage: it is the whole of R24's guard against
+	// answering in full a caller that is not a gateway of this contract, and
+	// the service cannot tell the gateway's own from one the agent wrote, so
+	// the drop is what makes it the gateway's (contract-table.md, "What the
+	// guard is not": a gateway built before this rule has no drop, and no
+	// later task may assume the window is closed for one). The three answer
+	// members are dropped for the reason every answer header above is, and
+	// the served model (HeaderModel) with them: they are the service's own
+	// answer and mean nothing in a request, so a client that sent them must
+	// not have them arrive as if the service had answered with them. No
+	// header naming a model is ever SET here: the service reads the model a
+	// call is for from the request's body (chainwire.go).
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderCredentialOwner, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount, HeaderProvider, HeaderStage, HeaderSource, HeaderFallback, HeaderModel} {
 		h.Del(k)
 	}
 	h.Set("Authorization", "Bearer "+id)
@@ -468,6 +483,21 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	if slipID != "" {
 		h.Set(HeaderSlip, slipID)
 		h.Set(HeaderSlipClaim, slipClaim)
+	}
+	if s.o.ChainServed {
+		// The run's current stage, from the run's own stage and never from a
+		// header (the drop above): a caller that sends it is answered with the
+		// chain's own accounting, which is what lets a step's record name the
+		// source that served it (ChainAnswerFunc, CS8). A call with no stage
+		// running carries the header not at all — the service then reads the
+		// caller as one of this contract answering for no step, which is the
+		// pre-contract answer — and a Messages call of a run is never one:
+		// handleMessages refuses a call with no stage before it is forwarded.
+		// A token count needs no stage (forwardFree), so one made with none
+		// running meets that same pre-contract answer and records nothing.
+		if stage := s.stageName(); stage != "" {
+			h.Set(HeaderStage, stage)
+		}
 	}
 	return h, nil
 }
@@ -740,19 +770,37 @@ func credentialHeaders(h http.Header) (tier, name string, ok bool, err error) {
 	return tier, name, true, nil
 }
 
-// maxCredentialOwnerDigits bounds the owner a credential's answer may name:
-// credsvc's own maxLauncherSubDigits, respelled because the package exports it
-// only as the writer's rule (auth.go). It is the width of a Google account id,
-// and a value longer than it is not one.
-const maxCredentialOwnerDigits = 21
+// MaxCredentialOwnerDigits bounds the owner a credential's answer may name: the
+// width of a Google account id — a number above 2^53, which is why
+// internal/infra/tf's identity handling already carries the same number, a
+// service account's unique_id, as text rather than rendering it. Twenty digits
+// would be the width of a uint64, and these ids are wider than one, so a bound
+// derived from a 64-bit number would refuse every launcher there is.
+//
+// It is THE definition of that width, and internal/credsvc imports it (its
+// maxLauncherSubDigits, the launcher class's own spelling of the same bound):
+// the service is the writer of the owner header and this package is its reader,
+// the two ends of one contract are this repository's code, and a bound spelled
+// twice is a bound that can drift with nothing red — the shape of the drift
+// being an owner the run records that the service could not have written. The
+// bound is a SHAPE check rather than a fence against a stranger's text: the
+// owner is the launcher's `sub` claim, inside a token Google signed, so a
+// caller cannot choose it — what the bound keeps out of the service's own two
+// sinks (the slip's owner and the secret name fugaro_u_<id>_<name>, whose total
+// length Secret Manager bounds) is an id Google has never issued. A value the
+// issuer widens past this one day is refused rather than carried, which is the
+// fail-closed answer, and widening it is this constant's change and the test
+// that pins it.
+const MaxCredentialOwnerDigits = 21
 
-// validCredentialOwner reports whether s may be a credential's owner: the
-// launcher's account id the contract writes it as (credsvc's validSlipOwner),
-// digits only and at most maxCredentialOwnerDigits of them. The run records it
-// (F16), so a value the service could not have written is refused rather than
-// handed on.
-func validCredentialOwner(s string) bool {
-	if s == "" || len(s) > maxCredentialOwnerDigits {
+// ValidCredentialOwner reports whether s may be a credential's owner: the
+// launcher's account id the contract writes it as, digits only and at most
+// MaxCredentialOwnerDigits of them. The run records it (F16), so a value the
+// service could not have written is refused rather than handed on. It is the
+// one definition of the rule, and internal/credsvc's validSlipOwner delegates
+// to it for the same reason the bound is here: one rule, both ends of the wire.
+func ValidCredentialOwner(s string) bool {
+	if s == "" || len(s) > MaxCredentialOwnerDigits {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
@@ -775,7 +823,7 @@ func credentialOwner(h http.Header) (owner string, present bool, err error) {
 	if err != nil || !present {
 		return "", present, err
 	}
-	if !validCredentialOwner(owner) {
+	if !ValidCredentialOwner(owner) {
 		return "", false, errors.New("the answer's credential owner isn't one launcher's account id")
 	}
 	return owner, true, nil
@@ -1038,6 +1086,28 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		// believes, and a call the service did not pay for carries no
 		// number and changes nothing.
 		s.noteWorkspaceHeadroom(resp.Header)
+		if s.o.ChainServed {
+			// The answer's chain members (chainwire.go), read here where the
+			// service's other answer headers are and before any of it reaches
+			// the agent: which source served this call, whether it was the
+			// chain's first, and which model served. They are read for every
+			// served call of this gateway — a token count, a provider route's
+			// relayed answer and a Messages call alike — because the step's
+			// record folds the fallback flag over the whole stage (CS8), and
+			// an answer that names one and not the others is a halt rather
+			// than a value the run records a guess from.
+			a, present, err := chainAnswerHeaders(resp.Header)
+			if err != nil {
+				return s.haltService(w, stateDetailUnreadable), true, "", nil
+			}
+			if present {
+				// An answer of a service built before this contract carries
+				// none of the three and is not an error: this gateway sent the
+				// stage header, and a service that does not read it answers in
+				// the shape it always did.
+				s.answerChain(a)
+			}
+		}
 		if !needTier {
 			return resp.StatusCode, false, "", nil
 		}
@@ -1530,5 +1600,16 @@ var serviceUnreachableBound = 5 * time.Minute
 func (s *Server) answer(a ServiceAnswer) {
 	if s.o.OnServiceAnswer != nil {
 		s.o.OnServiceAnswer(a)
+	}
+}
+
+// answerChain hands one served call's chain answer to the step's record hook,
+// if the run has one (chain_names.go): the source that served the call, the
+// fallback flag and the model that served. Like answer it is called with no
+// lock of this package's held, and a nil hook is not an error — a run whose
+// repository has not migrated has no record member to fill.
+func (s *Server) answerChain(a ChainAnswer) {
+	if s.o.OnChainAnswer != nil {
+		s.o.OnChainAnswer(a)
 	}
 }

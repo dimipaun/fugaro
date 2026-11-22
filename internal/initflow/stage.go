@@ -142,6 +142,24 @@ const (
 	// and no shorter gap exists, because the node is one database write and the
 	// service's replacement is a Terraform apply of the installation root.
 	CredentialsService = "credentials-service"
+	// CredentialsCopy is the copy of this installation's model keys into the
+	// credentials service's bundle (internal/cli/update_keys.go, KS12 of
+	// docs/keys-through-service, D3001, R4): for each model key the
+	// installation holds outside the bundle, the newest version of its
+	// container is read in memory and written under C1's name for the
+	// repository it is for, with the container and the version it came from
+	// recorded on the entry.
+	//
+	// It comes immediately AFTER the credentials service's own stage, and
+	// that position is the whole of it: what it writes a value INTO is the
+	// service's bundle, and a document holding an entry the deployed service
+	// does not know is a document that service refuses WHOLE (the loader's
+	// strictness, F22/F26) — halting every caller of it, coding runs included.
+	// The copy goes through the same guard as every other writer of the
+	// family, so a service too old for the entry refuses the write rather than
+	// landing it; the stage's position is what makes the guard's answer a
+	// state the same run has already fixed.
+	CredentialsCopy = "credentials-copy"
 	// Workspace is the workspace OWNER's published record
 	// (internal/cli/update_workspace.go, D1292): `workspaces/<name>` in the
 	// workspace's own database, built from the record this installation
@@ -300,6 +318,12 @@ var order = []slot{
 	// the process that reads it is replaced (CredentialsService's own comment,
 	// the owner's ruling of 2026-11-10).
 	{name: CredentialsService, needs: []string{Policy}},
+	// The copy of the installation's model keys, immediately after the service
+	// whose bundle it writes them into and with nothing between them: the
+	// document it leaves must be one the service that reads it can load, and
+	// the stage before this one is the run's one move of that service's image
+	// (CredentialsCopy's own comment has the window).
+	{name: CredentialsCopy, needs: []string{CredentialsService}},
 	// The workspace's own project's root, before the record it serves: what it
 	// creates is the identity the workspace's own service runs as, and the
 	// record stage publishes the node that service reads. It needs the

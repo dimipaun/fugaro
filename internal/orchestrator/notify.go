@@ -47,10 +47,17 @@ const (
 	// ceiling that merges and tells somebody (D2030): the work landed without
 	// a person reading it, and the line says how much it left behind.
 	NotifyMergedNeedsReview Kind = "merged-needs-review"
+	// NotifyCycleBlocked is the escalation of an item the cycle set blocked
+	// because it sits on a dependency cycle that crosses orchestrators (D3220):
+	// the cycle is on the item's note, and the line says the daemon stopped the
+	// item rather than waiting on it for ever. Nothing in the loop can break a
+	// cycle — only a person edits a dependency — so this is the one reading of
+	// a deadlock a person gets.
+	NotifyCycleBlocked Kind = "cycle-blocked"
 )
 
 // Kinds is the whole vocabulary.
-var Kinds = []Kind{NotifyRunFinished, NotifyDecisionNeeded, NotifyMergedNeedsReview}
+var Kinds = []Kind{NotifyRunFinished, NotifyDecisionNeeded, NotifyMergedNeedsReview, NotifyCycleBlocked}
 
 // Notification is one thing a tick says. Subject is the id the event is
 // about — the run's id, or the decision's — and Text is the line a person

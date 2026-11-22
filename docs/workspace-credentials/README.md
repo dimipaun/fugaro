@@ -46,7 +46,13 @@ project; there is no `--workspace` flag), answered the same day as recommended. 
 far the replay of F24 reaches, narrowed the accessor of R6 to the one name served, and gave C2
 the configuration WC14 fills. Its fixes are the last commit and were not reviewed again.
 
+**WC0's review, answered 2026-11-22.** An independent security review of the threat model found
+eight things, and the owner answered each (O1, answered): a claim deadline counted from the grant for
+a workspace slip (WC4), a grant bound to the members the person is a launcher of, which reopens D3145
+(WC4, WC5), the intake's address read from a source only the workspace's admins write (WC9), a new
+residual risk 10, and wording corrections. See [threat-model.md](threat-model.md) §11. The personal
+tasks, WC2 onward, are launchable by their plan edges.
+
 **What a reader should not take from here:** no task is approved; each needs the owner's go by
-name. No personal task is launched before the owner has answered the review of the threat model
-(WC0). Checks 850 and 851 are owner-run after the release that carries the personal half. A
+name. Checks 850 and 851 are owner-run after the release that carries the personal half. A
 project in no workspace is unchanged (D2966).

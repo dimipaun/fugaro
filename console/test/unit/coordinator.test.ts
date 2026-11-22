@@ -139,7 +139,7 @@ import type {
 } from '../../src/renderer/screens/coordinator'
 import { BUSY_SLOT_CLASS } from '../../src/renderer/section'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
-import { PATH_PLACEHOLDER, TOKEN_PLACEHOLDER, sanitizeText, type TextClass } from '../../src/shared/sanitize'
+import { TOKEN_PLACEHOLDER, sanitizeText, type TextClass } from '../../src/shared/sanitize'
 import {
   decodeCoordinatorIntents,
   decodeCoordinatorStatus,
@@ -994,9 +994,9 @@ describe('the Coordinator screen in the Flight Deck look (console redesign, step
     expect(textOf(callout, 'coordinator-collision-a')).toBe('#7')
     expect(textOf(callout, 'coordinator-collision-word')).toBe(COORDINATOR_COLLISION_WORD)
     expect(textOf(callout, 'coordinator-collision-b')).toBe('20261027-030000-aa01')
-    // A path is drawn as the placeholder and never as the path itself: this
-    // console has no reason to draw one (design section 5.1 rule 3).
-    expect(all(callout, 'coordinator-file').map((path) => path.textContent)).toEqual([PATH_PLACEHOLDER])
+    // The path is the document's own, drawn as written: a path is not a
+    // credential, and this console replaces only a secret inside one (D3213).
+    expect(all(callout, 'coordinator-file').map((path) => path.textContent)).toEqual(['src/a.go'])
   })
 
   it('cuts a shared path list at the console’s own cap and draws the count it left off', () => {
@@ -1710,18 +1710,17 @@ describe('the job list (K4)', () => {
     expect(body.getAttribute('hidden'), 'the expanded body is open before the press').toBe('')
     expect(textOf(body, 'coordinator-job-stage')).toBe('implement')
     expect(textOf(body, 'coordinator-job-branch')).toBe('feat/a-thing')
-    // The plan task is a `label` on the wire, and a label shaped like a path is
-    // masked by that class: the console draws the masked value, which is what
-    // keeps a document from using this cell to spell a real path.
-    expect(textOf(body, 'coordinator-job-plan')).toBe('plans<path>')
+    // The plan task is a `label` on the wire, and a label is a name: it is drawn
+    // as the document wrote it, a path in it included (D3213).
+    expect(textOf(body, 'coordinator-job-plan')).toBe('plans/2026-10-01-a/task-one')
     expect(textOf(body, 'coordinator-job-by')).toBe('person-1')
     expect(textOf(body, 'coordinator-job-created')).toBe('2026-11-01T09:00:00Z')
     expect(textOf(body, 'coordinator-job-pr')).toBe('1459')
     expect(figureOf(body, 'coordinator-job-cost')).toEqual([COORDINATOR_JOBS_SPENT_WORD, '$1.25'])
-    // The path class masks a repository-relative path in a document the recorder
-    // did not redact, which is the class's whole job: what is drawn is the
-    // placeholder and never a directory of the operator's machine.
-    expect(textOf(body, 'coordinator-job-file')).toBe(PATH_PLACEHOLDER)
+    // A changed file's path is drawn as written: the `path` class replaces a
+    // secret inside a path and nothing else (D3213), so the cell is the
+    // document's own string.
+    expect(textOf(body, 'coordinator-job-file')).toBe('src/a.go')
     // The set's own `total` is the document's: three paths, one drawn, two left
     // off -- a figure this screen subtracted but did not invent.
     expect(one(body, 'coordinator-job-more').textContent).toBe('2')
@@ -1941,11 +1940,12 @@ describe('the pull request description (K3)', () => {
     // element of the tag it names exists under the block.
     expect(written[0]?.textContent).toContain('<script>alert(1)</script>')
     expect(walk(host).every((node) => node.tag !== 'script')).toBe(true)
-    // The address is the class's own marker and never the URL the author wrote,
-    // and neither string reaches an attribute: the harness throws on the
-    // attributes a screen may not set, so a screen that built a link out of this
-    // would have failed at the call rather than at this assertion.
-    expect(written[0]?.textContent).not.toContain('evil.test')
+    // The URL is drawn as written: it carries no credential, and this console
+    // replaces a URL only for what is inside one (D3213). What the author wrote
+    // still reaches no attribute -- the harness throws on the attributes a screen
+    // may not set, so a screen that built a link out of this would have failed at
+    // the call rather than at this assertion.
+    expect(written[0]?.textContent).toContain('https://evil.test')
     expect(
       walk(host).every((node) =>
         [...node.attributes.values()].every(
@@ -2306,10 +2306,10 @@ describe('the read-only transcript pane (K5)', () => {
     expect(textOf(first, 'coordinator-transcript-declaration')).toBe('person-1')
     expect(said(first)).toContain('2026-11-02T08:00:00Z')
     expect(said(first)).toContain('feat/a-thing')
-    // A path is a path: the console draws none at all, and the pane is not an
-    // exception to that rule (sanitize.ts's `path` class replaces it with the
-    // placeholder wherever it is drawn).
-    expect(said(first)).toContain(PATH_PLACEHOLDER)
+    // The declared files are drawn as written: a path is not a credential, so
+    // the pane draws the document's own strings (D3213).
+    expect(said(first)).toContain('a/b.ts')
+    expect(said(first)).toContain('c/d.ts')
     expect(textOf(second, 'coordinator-transcript-declaration')).toBe('person-2')
     expect(said(second)).toContain('api')
     expect(said(second)).toContain('0.118.0')

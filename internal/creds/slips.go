@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/routing"
 )
 
 // Slips are the service's grant to one run: what a launcher asked for on a
@@ -64,6 +66,15 @@ type Slip struct {
 	// operator can see who asked for a run, and it is never the caller's own
 	// text.
 	Owner string `json:"owner"`
+	// Launcher is the verified PRINCIPAL that asked, kind and id (R7, plan
+	// constraint row 67): a person's Google subject, or a verified service
+	// account's address (D3123). It is the pool a run is served from that is
+	// resolved from it (PL6), and it is a member of its own rather than a
+	// reading of Owner, because Owner cannot say which of the two a run's
+	// launcher is: a service account's id is its address and a person's is
+	// digits, and D2976 turns exactly on that difference — a service account's
+	// run never draws on a person's pool.
+	Launcher routing.Principal `json:"launcher"`
 	// Slug and Run are the run this slip is for, as the service verified them
 	// from the run identity (D134). They are the whole of the binding: a claim,
 	// and every call after it, must present a verified identity for this pair.
@@ -87,7 +98,19 @@ type Slip struct {
 	// Pool is the pool the granted credentials belong to, empty when the grant
 	// names no pool. The pool's owner and allowed users are checked at the grant
 	// (DS3.2, G8), so this records which pool decided the grant.
+	//
+	// It is NOT the pool a launch named with `--pool`: that is NamedPool below,
+	// and the two are separate facts (a launch that named no pool still has a
+	// pool if its credentials are served from one, and a launch may name a pool
+	// none of its credentials come from).
 	Pool string `json:"pool"`
+	// SlipChain is the grant's two own members (C2, CS14): `sources`, the
+	// sources this grant covers, and `named_pool`, the pool the launch asked
+	// for. They are embedded rather than written out here so that the two names
+	// are declared once, in the file that is the contract for them
+	// (slip_chain.go), and so that a later member of the grant's chain is a
+	// member of one shape rather than a fourth field on this record.
+	SlipChain
 	// MaxRuntime is how long the run may be served, measured from the claim, and
 	// it is the service's capped answer to what the launcher asked for (R10): the
 	// slip cannot outlive the run it was granted for, whatever the job does.

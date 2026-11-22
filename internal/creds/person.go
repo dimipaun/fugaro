@@ -29,10 +29,25 @@ import (
 // (person_stub.go) and wires the real sides.
 //
 // **Why the names are here and not in the service.** internal/credsvc is the service and
-// internal/gateway is the run's proxy, and the two cannot import each other's wire constants for the
-// reason F26 of docs/keys-through-service states for the provider route: the gateway holds no service
-// binary. This package is the one both already import (creds.Route is why), so the names a job's
-// environment and a call's headers are spelled with live here, once, and neither side respells them.
+// internal/gateway is the run's proxy, and the gateway cannot import the service's wire constants for
+// the reason F26 of docs/keys-through-service states for the provider route: the service imports the
+// gateway (its provider route forwards with the gateway's helpers and its `Route`), so the dependency
+// cannot run the other way. It imports no constant of this package either — internal/creds imports
+// internal/budget, which imports the gateway, so that too is a cycle. What the sides of this wire do
+// share is this package — internal/credsvc, internal/cli and internal/runner all import it — so the
+// names a job's environment and a call's headers are spelled with live here, once, and those three
+// sides respell none of them. **The gateway is the one side that will respell them, and that mirror
+// is WC8's to write.** A call WC8 builds to the workspace's service carries the slip that service
+// granted, and the claim secret after the claim (R4), and internal/gateway can spell neither through
+// this package — so WC8 declares these names a second time under internal/gateway, the shape
+// internal/gateway/providerwire.go already has for the provider route (F26) and
+// internal/gateway/service.go for the model wire, and holds the two spellings to each other name by
+// name with an external test (package gateway_test, which may import both). Until WC8 lands, this
+// package is their only declaration. R18 is not a way out of it: the slip that rule leaves off a call
+// is a *member's*, whose claim secret would be handed to a service outside the member (F13 of
+// docs/workspace-credentials/reconciliation.md), and the slip the workspace's service grants is the
+// workspace's own secret — the model wire's fields in internal/gateway/gateway.go say the same of
+// their own.
 //
 // **What it never carries.** No credential value, no claim secret and no person's identity: the
 // grant's answer is a slip's id or the fact that no token is held, the claim secret is the claim
@@ -208,9 +223,10 @@ type PersonGrant struct {
 	Slip string `json:"slip,omitempty"`
 }
 
-// ParsePersonGrantRequest reads a grant's request body, strictly: a key this contract does not name
-// is refused rather than decoded past, and a body missing a field of the shape is refused rather
-// than read as a zero value. The caller supplies the bound on the body's size — the service's own
+// ParsePersonGrantRequest reads a grant's request body, strictly: a body that is not one JSON object
+// is refused before it is read at all, a key this contract does not name is refused rather than
+// decoded past, and a body missing a field of the shape is refused rather than read as a zero value.
+// The caller supplies the bound on the body's size — the service's own
 // route reads a bounded body before this (credsvc's maxMintRequestBytes) — and everything the
 // request's FIELDS must be beyond their presence (a slug of task.Slug's shape, an account of the
 // job's) is the route's, which holds them to the same rules the member's grant's fields are held to.
@@ -242,9 +258,10 @@ func ParsePersonGrantRequest(raw []byte) (PersonGrantRequest, error) {
 	return req, nil
 }
 
-// ParsePersonGrant reads a grant's answer, strictly: a key this contract does not name is refused
-// rather than decoded past, and an answer whose two fields disagree is refused rather than read as
-// whichever of the two the caller looks at first.
+// ParsePersonGrant reads a grant's answer, strictly: a body that is not one JSON object is refused
+// before it is read at all, a key this contract does not name is refused rather than decoded past,
+// and an answer whose two fields disagree is refused rather than read as whichever of the two the
+// caller looks at first.
 //
 // A body that spells `held:false` and a body that spells neither field are ONE answer — no token
 // held, the state a run starts on as before — because there is no third state for a missing key to
@@ -273,8 +290,8 @@ func ParsePersonGrant(raw []byte) (PersonGrant, error) {
 	return g, nil
 }
 
-// decodePersonShape decodes one body of this contract's shapes, refusing any key it does not name
-// and any byte after the JSON value.
+// decodePersonShape decodes one body of this contract's shapes, refusing any body that is not one
+// JSON object, any key it does not name, and any byte after the JSON value.
 //
 // It is not the package's decodeStrict, which reads a NODE this package owns: the two agree on
 // refusing an unknown member, and they differ where the medium differs. A wire body is one value
@@ -284,6 +301,17 @@ func ParsePersonGrant(raw []byte) (PersonGrant, error) {
 // reads it from a launcher's own line.
 func decodePersonShape[T any](raw []byte) (T, error) {
 	var v T
+	// The body must be one JSON OBJECT, and it is checked before it is decoded: `null` decodes
+	// into a Go value of any shape without an error, so without this a body the contract never
+	// writes would be read as the shape's zero value — for a grant's answer, "no token held",
+	// the benign state, which is exactly the reading the contract's "a body that is not one JSON
+	// object is refused" forbids. Every other non-object is refused by the decode below.
+	first := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := first.Token(); err != nil {
+		return v, err
+	} else if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return v, errors.New("the body is not one JSON object")
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&v); err != nil {

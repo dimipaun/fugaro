@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -749,11 +750,18 @@ func TestStatusShowsNotionalForOAuth(t *testing.T) {
 	if !strings.Contains(body, "notional $1.50 (not billed)") || strings.Contains(body, "model cost") {
 		t.Fatalf("oauth body:\n%s", body)
 	}
+	// The api-key half's model figure is its gateway's ledger, so the stage
+	// makes the one call it is charged for: $0.04 for 4,000 output tokens on
+	// sonnet (out4k). A stage's own report does not reach the record beside it
+	// (AB1b, D3009, C1.16).
+	var statuses []int
+	_, up := anthropicfake.New(t, out4k())
 	h2 := prHarness(t, prCfg(t, 2, ""))
-	if rec, err := h2.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Outcome != runstore.OutcomeReady {
+	h2.deps.GatewayUpstream = up.URL
+	if rec, err := h2.run(t, calling(&statuses, implement("feature"), call{sonnet, 4096}), review("ship", 0)); err != nil || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	if body := onlyPR(t, h2.provider).Body; !strings.Contains(body, "model cost $1.50") || strings.Contains(body, "notional") {
+	if body := onlyPR(t, h2.provider).Body; !strings.Contains(body, "model cost $0.04") || strings.Contains(body, "notional") {
 		t.Fatalf("api-key body:\n%s", body)
 	}
 }

@@ -2,12 +2,13 @@
 # administrators and users. Creating it needs billing-account permissions.
 #
 # The project's own record is read here for the budget's filter and for the
-# front door's URL (coordinator.tf, which needs the project NUMBER: Cloud Run's
-# deterministic service URL is built from it), so it is read when either of the
-# two is on and not otherwise — an installation that has neither makes no call
+# front door's URL and the resident orchestrator's tick (coordinator.tf and
+# orchestrator.tf, which need the project NUMBER: Cloud Run's deterministic
+# service URL is built from it), so it is read when any of the three is on and
+# not otherwise — an installation that has neither makes no call
 # for it, which is what keeps a plan with no network a plan.
 data "google_project" "this" {
-  count = var.budget == null && !local.mcp_server_on ? 0 : 1
+  count = var.budget == null && !local.mcp_server_on && !local.orchestrator_on ? 0 : 1
 
   project_id = var.project
 

@@ -74,6 +74,11 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 	// version (releasedVersionDocs), so the fixture carries both, at the shape
 	// the real files have.
 	writeReleasedVersionDocs(t, seed, "0.11.4")
+	// And the compatibility matrix's "as of" stamp, which the release's own PR
+	// moves with the notes file: the seed's names the version before the one
+	// these tests release, as a tree that has not been through the release's PR
+	// does.
+	writeCompatibility(t, seed, "0.11.4")
 	// Releases from 0.4.0 need docs/releases/vX.Y.Z.md on main and an entry in
 	// website/data/release-summaries.yaml; give the versions these tests release
 	// both by default.
@@ -376,6 +381,15 @@ func releaseProcs(pgid int) string {
 func fakeBinDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	fakeBinDirAt(t, dir)
+	return dir
+}
+
+// fakeBinDirAt writes those three fakes into a directory the caller owns, so a
+// test can put one of its own beside them (runReleaseFrom takes such a
+// directory).
+func fakeBinDirAt(t *testing.T, dir string) {
+	t.Helper()
 	for _, name := range []string{"gh", "docker", "fugaro"} {
 		src, err := os.ReadFile(filepath.Join(testutil.ModuleRoot(), "scripts", "testdata", "fake-"+name+".sh"))
 		if err != nil {
@@ -385,7 +399,6 @@ func fakeBinDir(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	return dir
 }
 
 // streamsBin is the compiled internal/streams/cmd/streams, the helper
@@ -510,7 +523,15 @@ func (r runResult) requireFailureContaining(t *testing.T, substr string) {
 // g's state, stdin, and extra arguments.
 func runRelease(t *testing.T, r *releaseRepo, g *ghState, stdin string, args ...string) runResult {
 	t.Helper()
-	bin := fakeBinDir(t)
+	return runReleaseFrom(t, r, g, fakeBinDir(t), stdin, args...)
+}
+
+// runReleaseFrom is runRelease with the directory that goes in front of PATH
+// named by the test, for the one case that needs a fake of its own beside the
+// three: a `git` wrapper, which fakes a checkout with no `main` ref
+// (TestAtNeedsNoLocalMainRef).
+func runReleaseFrom(t *testing.T, r *releaseRepo, g *ghState, bin, stdin string, args ...string) runResult {
+	t.Helper()
 	cmd := exec.Command("bash", append([]string{filepath.Join(r.local, "scripts", "release.sh")}, args...)...)
 	cmd.Dir = r.local
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1", "RELEASE_RETRY_SECONDS=0",
@@ -750,7 +771,7 @@ func TestPreconditionFailures(t *testing.T) {
 			name:    "FEATURES.md without the release's stamp",
 			version: "0.12.10",
 			mutate:  func(t *testing.T, r *releaseRepo, g *ghState) {},
-			want:    "FEATURES.md on origin/main does not carry v0.12.10's stamp",
+			want:    "FEATURES.md on main does not carry v0.12.10's stamp",
 		},
 		{
 			// The stamp is right and the file is on main, but nothing has
@@ -762,7 +783,7 @@ func TestPreconditionFailures(t *testing.T) {
 				stampFeatures(t, r, "0.12.10")
 				testutil.Git(t, r.local, "tag", "-a", "v0.12.9", "-m", "x")
 			},
-			want: "FEATURES.md on origin/main carries v0.12.10's stamp but has no commit to it since v0.12.9",
+			want: "FEATURES.md on main carries v0.12.10's stamp but has no commit to it since v0.12.9",
 		},
 	}
 	for _, c := range cases {
@@ -1156,6 +1177,473 @@ func TestHappyPathAnsweringYes(t *testing.T) {
 	}
 	if mainSHA == initialMain {
 		t.Errorf("main did not advance past the merge")
+	}
+}
+
+// ---- --at: a release cut at a given commit of main -------------------------
+//
+// A console release tags an exact commit whose checks are green, and the owner
+// asked for the same on the CLI (2026-11-21): scripts/release.sh X.Y.Z --at SHA
+// tags SHA itself. SHA has to be an ancestor of origin/main that already carries
+// the release's whole bump -- plugin version and skill headers, the notes, the
+// summary line, the cli stream's current, the two doc lines, the compatibility
+// stamp and FEATURES.md's -- and the run opens no branch, no commit and no pull
+// request of its own. The gate is read on SHA by sha and nothing is dispatched on
+// it, the rehearsal builds SHA's own tree, and the tag is pushed where it is and
+// verified the same way. These tests hold the flag to that, and to the ordinary
+// path's being untouched by it (its own tests, unchanged, say so).
+
+// atBump lands on the fixture's main the commit the ordinary path's step 2 would
+// make, and returns its sha: the plugin version and every skill header, the cli
+// stream's current, the two doc lines and the compatibility stamp. The rest of
+// what --at requires the commit to carry is already in the seed for the version
+// these tests release (docs/releases/v0.12.0.md, its summary line, FEATURES.md's
+// stamp), so this is the whole bump for it. leaveOut names the pieces to leave
+// out, one per test that holds --at to a missing one.
+func atBump(t *testing.T, r *releaseRepo, version string, leaveOut ...string) string {
+	t.Helper()
+	skip := func(name string) bool {
+		for _, l := range leaveOut {
+			if l == name {
+				return true
+			}
+		}
+		return false
+	}
+	if !skip("plugin") {
+		bump := exec.Command("bash", filepath.Join(r.local, "scripts", "bump-plugin-version.sh"), version)
+		bump.Dir = r.local
+		if out, err := bump.CombinedOutput(); err != nil {
+			t.Fatalf("bumping the fixture plugin to %s: %v\n%s", version, err, out)
+		}
+	}
+	if !skip("stream") {
+		set := exec.Command(streamsHelper(t), "set", "cli", version)
+		set.Dir = r.local
+		if out, err := set.CombinedOutput(); err != nil {
+			t.Fatalf("recording %s as the cli stream's current: %v\n%s", version, err, out)
+		}
+	}
+	if !skip("docs") {
+		writeReleasedVersionDocs(t, r.local, version)
+	}
+	if !skip("compat") {
+		writeCompatibility(t, r.local, version)
+	}
+	if skip("notes") {
+		if err := os.Remove(filepath.Join(r.local, "docs", "releases", "v"+version+".md")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if skip("summary") {
+		writeSummaries(t, r.local, map[string]string{version: ""})
+	}
+	testutil.Git(t, r.local, "add", "-A")
+	testutil.Git(t, r.local, "commit", "--quiet", "-m", "release: v"+version)
+	testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
+	return testutil.Git(t, r.local, "rev-parse", "HEAD")
+}
+
+// advanceMainPastCommit pushes a commit of its own onto main, so origin/main's
+// tip is no longer the commit a test is releasing: the shape --at is for (the tip
+// is red, or its checks are still running, while an earlier commit of main
+// carries the whole bump and its own green checks).
+func advanceMainPast(t *testing.T, r *releaseRepo) string {
+	t.Helper()
+	testutil.Git(t, r.local, "commit", "--quiet", "--allow-empty", "-m", "after the bump")
+	testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
+	return testutil.Git(t, r.bare, "rev-parse", "main")
+}
+
+// rehearsalRecordFor reads the pre-tag rehearsal's record and holds it to the
+// commit it was written for, which is the only way a test sees which tree the
+// rehearsal built the CLI from (the record is what the tag waits on).
+func rehearsalRecordFor(t *testing.T, r *releaseRepo, sha string, res runResult) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(r.recordDir, "record"))
+	if err != nil {
+		t.Fatalf("the rehearsal wrote no record: %v\n%s", err, res.out)
+	}
+	record := string(b)
+	if !strings.Contains(record, "commit="+sha+"\n") {
+		t.Errorf("the rehearsal's record is not for %s:\n%s", sha, record)
+	}
+	if !strings.Contains(record, "verdict=pass\n") {
+		t.Errorf("the rehearsal's record is not green:\n%s", record)
+	}
+	return record
+}
+
+// TestAtTagsTheCommitItNames: --at cuts the release at the commit it names rather
+// than at main's tip. The tag goes on that commit and no other, no branch, commit
+// or pull request of the run's own is made, nothing is dispatched (a
+// workflow_dispatch runs a workflow at a ref's tip, and the commit being tagged
+// is not one), and the checkout, which is main's tip, is never moved. The gate is
+// read on the named commit: its sha has the full run and main's tip has none at
+// all, so a gate that read the tip could not have passed. And the rehearsal,
+// which refuses a checkout that is not at the commit it records, built the named
+// commit's tree.
+func TestAtTagsTheCommitItNames(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := atBump(t, r, "0.12.0")
+	tip := advanceMainPast(t, r)
+
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, sha+"\tci (full)\t"+sha)
+
+	res := runRelease(t, r, g, "", "0.12.0", "--at", sha)
+	res.requireSuccess(t)
+
+	if got := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}"); got != sha {
+		t.Errorf("tag v0.12.0 is on %s, want the commit --at named (%s)", got, sha)
+	}
+	if got := testutil.Git(t, r.bare, "rev-parse", "main"); got != tip {
+		t.Errorf("main is %s, want the tip the run left alone (%s)", got, tip)
+	}
+	if !strings.Contains(res.out, "--at: the release is cut at "+sha) {
+		t.Errorf("the release does not say which commit it is cut at:\n%s", res.out)
+	}
+	if n := countLog(t, g, "pr "); n != 0 {
+		t.Errorf("--at makes no pull request of its own:\n%s", g.log(t))
+	}
+	if out := testutil.Git(t, r.bare, "branch", "--list", "release/v0.12.0"); out != "" {
+		t.Errorf("--at created a release branch: %s", out)
+	}
+	if dispatched := workflowRunLines(t, g); len(dispatched) != 0 {
+		t.Errorf("--at dispatches no ci run, and the commit carries one already: %q", dispatched)
+	}
+	if got := currentBranch(t, r); got != "main" {
+		t.Errorf("--at left the checkout on %s; it is cut from main and never moves it", got)
+	}
+	if out := testutil.Git(t, r.local, "status", "--porcelain"); out != "" {
+		t.Errorf("--at left the checkout dirty:\n%s", out)
+	}
+	rehearsalRecordFor(t, r, sha, res)
+}
+
+// gateRanName is the file a replaced release-gate.sh writes when it runs. It
+// sits beside the fixture's checkout rather than in it: a release refuses a
+// dirty tree, and an untracked file inside `work/` would be that refusal instead
+// of the one under test.
+const gateRanName = "gate-ran"
+
+// TestAtStillNeedsACleanMain: --at changes which commit the tag goes on and
+// nothing else -- the release is still cut from a checkout on main equal to
+// origin/main, because release.sh, scripts/release-gate.sh,
+// scripts/release-policy.sh and scripts/verify-release.sh all run from it: an
+// agent's task branch carrying a stale or altered gate would otherwise decide
+// whether the named commit is green, and no other tree's files are released on
+// the --at path. Both halves of that precondition refuse before the worktree,
+// the gate or the tag, and the commit named is a perfectly good one.
+func TestAtStillNeedsACleanMain(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		mutate func(t *testing.T, r *releaseRepo)
+		want   string
+		// gateRan is where a case that replaces the checkout's own
+		// release-gate.sh would have that gate leave its mark, so the run can
+		// be caught running it (empty for the cases that leave the scripts be).
+		gateRan string
+	}{
+		{
+			name: "the checkout's gate is not origin/main's",
+			mutate: func(t *testing.T, r *releaseRepo) {
+				loosened := fmt.Sprintf("#!/bin/sh\n: > '%s'\nexit 0\n", filepath.Join(filepath.Dir(r.local), gateRanName))
+				if err := os.WriteFile(filepath.Join(r.local, "scripts", "release-gate.sh"), []byte(loosened), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				testutil.Git(t, r.local, "add", "scripts/release-gate.sh")
+				testutil.Git(t, r.local, "commit", "--quiet", "-m", "a gate that approves anything")
+			},
+			want:    "is not origin/main",
+			gateRan: gateRanName,
+		},
+		{
+			name: "the checkout is on another branch",
+			mutate: func(t *testing.T, r *releaseRepo) {
+				testutil.Git(t, r.local, "switch", "--quiet", "-c", "elsewhere")
+			},
+			want: "not main",
+		},
+		{
+			name: "main is ahead of origin/main",
+			mutate: func(t *testing.T, r *releaseRepo) {
+				testutil.Git(t, r.local, "commit", "--quiet", "--allow-empty", "-m", "local only")
+			},
+			want: "is not origin/main",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			sha := atBump(t, r, "0.12.0")
+			c.mutate(t, r)
+			g := newGHState(t, r, greenChecks())
+			ciRuns(t, g, sha+"\tci (full)\t"+sha)
+
+			res := runRelease(t, r, g, "", "0.12.0", "--at", sha)
+
+			res.requireFailureContaining(t, c.want)
+			requireNoTag(t, r, res)
+			if n := countLog(t, g, "pr "); n != 0 {
+				t.Errorf("a refused --at must not touch a pull request:\n%s", g.log(t))
+			}
+			if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
+				t.Errorf("a refused --at was rehearsed (stat: %v)\n%s", err, res.out)
+			}
+			if c.gateRan != "" {
+				if _, err := os.Stat(filepath.Join(filepath.Dir(r.local), c.gateRan)); !os.IsNotExist(err) {
+					t.Errorf("a refused --at ran the checkout's own release-gate.sh: the scripts a release is decided with are origin/main's, not the tree's (stat: %v)\n%s", err, res.out)
+				}
+			}
+		})
+	}
+}
+
+// TestAtNeedsNoLocalMainRef: --at is cut from a checkout whose tree is
+// origin/main's, and the `main` ref is not part of that question. The branch is
+// still main (the check above, pinned by TestAtStillNeedsACleanMain even when
+// the tree's own scripts are not origin's), and what is compared with
+// origin/main is HEAD's commit, the one that check has tied to main. A run that
+// asks the bare ref instead ends in git's own `fatal:` line the moment it does
+// not resolve -- no refusal, no tag -- which is the abort the wrapper below makes
+// real. The wrapper is what says the run asked that ref at all, and the control
+// just after it is what says the wrapper bites.
+func TestAtNeedsNoLocalMainRef(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := atBump(t, r, "0.12.0")
+	tip := advanceMainPast(t, r)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, sha+"\tci (full)\t"+sha)
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	fakeBinDirAt(t, bin)
+	asked := filepath.Join(bin, "asked-for-main")
+	// Every call but one is the real git's, `git rev-parse refs/remotes/origin/main`
+	// included: only the local ref by its bare name is refused, which is the call
+	// release.sh used to make.
+	wrapper := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = rev-parse ]; then
+  for a in "$@"; do
+    if [ "$a" = main ]; then
+      echo "$a" >> '%s'
+      echo "fatal: not a valid object name: '$a'" >&2
+      exit 128
+    fi
+  done
+fi
+exec '%s' "$@"
+`, asked, realGit)
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The control: asked directly, the wrapper refuses, so a run that gets past
+	// it has really not asked.
+	if out, err := exec.Command(filepath.Join(bin, "git"), "rev-parse", "main").CombinedOutput(); err == nil {
+		t.Fatalf("the git wrapper answered `rev-parse main`, so this test would pass whatever release.sh did: %s", out)
+	}
+	if err := os.Remove(asked); err != nil {
+		t.Fatal(err)
+	}
+
+	res := runReleaseFrom(t, r, g, bin, "", "0.12.0", "--at", sha)
+	res.requireSuccess(t)
+
+	if _, err := os.Stat(asked); !os.IsNotExist(err) {
+		t.Errorf("--at resolved a local `main` ref: the commit a cut is held to origin/main by is HEAD's, which the branch check has already tied to main, and the bare ref is a second question whose only other answer is git's own fatal: line ending the script (stat: %v)\n%s", err, res.out)
+	}
+	if got := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}"); got != sha {
+		t.Errorf("tag v0.12.0 is on %s, want the commit --at named (%s)", got, sha)
+	}
+	if got := testutil.Git(t, r.bare, "rev-parse", "main"); got != tip {
+		t.Errorf("main is %s, want the tip the run left alone (%s)", got, tip)
+	}
+}
+
+// TestAtReadsTheChecksOnTheCommitItNames: the gate is the named commit's own
+// checks, read by sha, never main's tip's. A commit whose only `ci` run is a
+// selected one is refused at once with the command that puts a full run on it --
+// and that command names a ref of the person's own, because the commit is not
+// main's tip and the gate invents none. main's tip carries a full, green run
+// throughout, so a gate that read the tip would have released this.
+func TestAtReadsTheChecksOnTheCommitItNames(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := atBump(t, r, "0.12.0")
+	advanceMainPast(t, r)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, mainFullyGreen(t, r), sha+"\tci (selected)\t"+sha+"-selected")
+
+	res := runRelease(t, r, g, "", "0.12.0", "--at", sha)
+
+	res.requireFailureContaining(t, "no ci run on that commit is a full one")
+	res.requireFailureContaining(t, "gh workflow run ci --ref <a ref pointing at "+sha+"> -f full=true")
+	requireNoTag(t, r, res)
+	if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
+		t.Errorf("a commit the gate refused was rehearsed (stat: %v)\n%s", err, res.out)
+	}
+}
+
+// TestAtRefusesACommitWithoutTheBump: --at makes no commit and opens no pull
+// request, so the commit it names has to carry every piece the ordinary path's
+// release commit would have written -- the notes, their summary line, the plugin
+// version and skill headers, the cli stream's current, the two doc lines, the
+// compatibility stamp and FEATURES.md's. Each missing piece is refused before the
+// gate, the rehearsal or the tag. The pieces --at's own checks read carry the
+// sentence that says where the bump gets landed instead (through a PR on main),
+// because this run writes nothing itself; the notes and their summary line are
+// the checks the ordinary path shares, and they name the re-run command.
+func TestAtRefusesACommitWithoutTheBump(t *testing.T) {
+	// hint says whether the refusal carries --at's own sentence about where the
+	// bump gets landed instead; the notes and the summary line are the two
+	// checks the ordinary path shares, and they point at the re-run command.
+	for _, c := range []struct {
+		name, leave, want string
+		hint              bool
+	}{
+		{"no plugin version", "plugin", "does not carry every 0.12.0 plugin version stamp", true},
+		{"no stream current", "stream", "says the cli stream's current is '0.0.0', not 0.12.0", true},
+		{"no doc lines", "docs", "the doc lines that name the released version at ", true},
+		{"no compatibility stamp", "compat", "says the compatibility matrix was last read as of 'v0.11.4', not v0.12.0", true},
+		{"no release notes", "notes", "docs/releases/v0.12.0.md does not exist at ", false},
+		{"no summary line", "summary", "website/data/release-summaries.yaml at ", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			sha := atBump(t, r, "0.12.0", c.leave)
+			g := newGHState(t, r, greenChecks())
+
+			res := runRelease(t, r, g, "", "0.12.0", "--at", sha)
+
+			res.requireFailureContaining(t, c.want)
+			if c.hint {
+				// --at's own sentence: the bump lands on main through a PR, and
+				// the sha to re-run with is that commit's, which only the person
+				// landing it knows.
+				res.requireFailureContaining(t, "already carries v0.12.0's bump")
+			} else {
+				// The two shared checks re-run this release, and --at is given
+				// the commit to land the piece at rather than the one it was.
+				res.requireFailureContaining(t, "scripts/release.sh 0.12.0 --at <the commit that carries it>")
+			}
+			requireNoTag(t, r, res)
+			if n := countLog(t, g, "pr "); n != 0 {
+				t.Errorf("a refused --at must not touch a pull request:\n%s", g.log(t))
+			}
+			if out := testutil.Git(t, r.bare, "branch", "--list", "release/v0.12.0"); out != "" {
+				t.Errorf("a refused --at created a branch: %s", out)
+			}
+			if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
+				t.Errorf("a refused --at was rehearsed (stat: %v)\n%s", err, res.out)
+			}
+		})
+	}
+
+	t.Run("a commit that is not in this checkout", func(t *testing.T) {
+		r := newReleaseRepo(t)
+		g := newGHState(t, r, greenChecks())
+
+		res := runRelease(t, r, g, "", "0.12.0", "--at", strings.Repeat("0", 39)+"1")
+
+		res.requireFailureContaining(t, "is not a commit in this checkout")
+		requireNoTag(t, r, res)
+	})
+}
+
+// TestAtRefusesACommitThatIsNotOnMain: a CLI release is tagged on a commit of
+// main. A commit that is not one -- a shape only --hotfix cuts, from the
+// maintenance branch -- is refused before the worktree, the gate, the tag or
+// anything else, and the refusal names the flag that path belongs to.
+func TestAtRefusesACommitThatIsNotOnMain(t *testing.T) {
+	r := newReleaseRepo(t)
+	atBump(t, r, "0.12.0")
+	// A commit of the fixture's own that main does not have: the bump is whole
+	// and the commit is still no ancestor of origin/main. It is made on a branch
+	// of its own and the checkout goes back to main, which the release demands of
+	// every path.
+	testutil.Git(t, r.local, "switch", "--quiet", "-c", "side")
+	testutil.Git(t, r.local, "commit", "--quiet", "--allow-empty", "-m", "not on main")
+	off := testutil.Git(t, r.local, "rev-parse", "HEAD")
+	testutil.Git(t, r.local, "switch", "--quiet", "main")
+	g := newGHState(t, r, greenChecks())
+
+	res := runRelease(t, r, g, "", "0.12.0", "--at", off)
+
+	res.requireFailureContaining(t, "which is not an ancestor of origin/main")
+	res.requireFailureContaining(t, "--hotfix")
+	requireNoTag(t, r, res)
+	if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
+		t.Errorf("a refused --at was rehearsed (stat: %v)\n%s", err, res.out)
+	}
+}
+
+// TestAtDryRunPlansNoBranchAndNoDispatch: --at combines with --dry-run, and the
+// plan says what this path does not do -- no branch, no commit, no pull request,
+// no dispatch -- and that the plugin budget check did not run, because the commit
+// already carries the bump and its own `test` check ran the plugin tests on that
+// tree (the gate reads that check). Nothing is created, and no rehearsal is run.
+func TestAtDryRunPlansNoBranchAndNoDispatch(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := atBump(t, r, "0.12.0")
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, sha+"\tci (full)\t"+sha)
+
+	res := runRelease(t, r, g, "", "0.12.0", "--at", sha, "--dry-run")
+
+	res.requireSuccess(t)
+	for _, want := range []string{
+		"Dry run for v0.12.0 (Dolphin) at " + sha,
+		"2. be skipped: --at tags a commit that already carries the bump",
+		"3. be skipped: with --at there is no release pull request to wait for",
+		"4. dispatch no ci run",
+		"5. create and push the tag v0.12.0 on " + sha,
+		"with the CLI built from " + sha + ", the commit --at names",
+	} {
+		if !strings.Contains(res.out, want) {
+			t.Errorf("the plan does not say %q:\n%s", want, res.out)
+		}
+	}
+	if strings.Contains(res.out, "the plugin tests pass on a tree with the") {
+		t.Errorf("the plan claims the plugin budget check, which --at does not run:\n%s", res.out)
+	}
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v0.12.0"); out != "" {
+		t.Errorf("the dry run created a tag: %s", out)
+	}
+	if out := testutil.Git(t, r.bare, "branch", "--list", "release/v0.12.0"); out != "" {
+		t.Errorf("the dry run created a branch: %s", out)
+	}
+	if n := countLog(t, g, "pr "); n != 0 {
+		t.Errorf("the dry run touched a pull request:\n%s", g.log(t))
+	}
+	if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
+		t.Errorf("the dry run rehearsed (stat: %v)\n%s", err, res.out)
+	}
+}
+
+// TestAtWithSkipRehearsal: the flag combines with --skip-rehearsal too, and the
+// owner's own words are what the summary carries -- no rehearsal was run for the
+// commit being tagged, and it is owed. The release still tags the named commit:
+// the skip is the owner's, never a default.
+func TestAtWithSkipRehearsal(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := atBump(t, r, "0.12.0")
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, sha+"\tci (full)\t"+sha)
+
+	res := runRelease(t, r, g, "", "0.12.0", "--at", sha, "--skip-rehearsal")
+
+	res.requireSuccess(t)
+	if !strings.Contains(res.out, "--skip-rehearsal: no rehearsal was run for "+sha) {
+		t.Errorf("the release does not say the rehearsal was skipped for the commit it tags:\n%s", res.out)
+	}
+	if got := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}"); got != sha {
+		t.Errorf("tag v0.12.0 is on %s, want the commit --at named (%s)", got, sha)
+	}
+	if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
+		t.Errorf("--skip-rehearsal wrote a rehearsal record (stat: %v)\n%s", err, res.out)
 	}
 }
 
@@ -1956,6 +2444,13 @@ func TestArgumentErrors(t *testing.T) {
 		{"unknown short flag", []string{"-y", "0.12.0"}, "unknown flag: -y"},
 		{"two versions", []string{"0.12.0", "0.12.1"}, "unexpected argument"},
 		{"no version", nil, "usage:"},
+		// --at is a commit, and one the person types: a bare flag is refused at
+		// once, naming what it wants, rather than reading the next flag as one.
+		{"--at without a commit", []string{"0.12.0", "--at"}, "--at needs a commit"},
+		{"--at followed by a flag", []string{"0.12.0", "--at", "--dry-run"}, "--at needs a commit"},
+		// The two cuts are exclusive: --at tags a commit of origin/main and
+		// --hotfix builds and tags the maintenance branch's own tip.
+		{"--at with --hotfix", []string{"0.12.0", "--at", "HEAD", "--hotfix"}, "--at tags a commit of origin/main"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -2812,6 +3307,18 @@ func writeReleasedVersionDocs(t *testing.T, dir, version string) {
 	for i, d := range releasedVersionDocs {
 		writeDoc(t, dir, d.path, releasedVersionDoc(i, version))
 	}
+}
+
+// writeCompatibility writes the fixture's website/data/compatibility.yaml with
+// the cli half of the matrix's "as of" stamp at version, which is the one value
+// release.sh reads out of the file (the release's own PR moves it with the notes
+// file, and website/test/compatibility.mjs refuses a stamp behind the newest
+// notes file). The console half is a version the CLI never releases, so a read
+// that took the wrong half is a failure rather than a pass.
+func writeCompatibility(t *testing.T, dir, version string) {
+	t.Helper()
+	writeDoc(t, dir, "website/data/compatibility.yaml",
+		"version: 1\nas_of:\n  cli: v"+version+"\n  console: v0.125.0\n")
 }
 
 // writeDoc writes content at dir/name, creating its directory, and commits

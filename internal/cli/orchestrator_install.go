@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/orchestrator/service"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -23,10 +24,14 @@ import (
 // The three are the person's own commands and nothing else's. They read no
 // project, reach no network and open no database: a unit names one program and
 // one argument and carries nothing from a project's state or policy, and the
-// daemon reads all of that itself. That is also why uninstall works on a
+// daemon reads all of that itself. A unit is per orchestrator — the project's
+// own, or one of its named ones with --name (D3206, D3207) — and that is why
+// what these three take is a name and not an id: the project half of the id is
+// the daemon's to read, and a machine may run the project's own orchestrator and
+// any number of named ones at once. That is also why uninstall works on a
 // machine whose local config is gone — which is the machine most likely to need
 // it — and why the unit's path is the same one the converge's steps use
-// (service.Render is the only renderer, and `~`/XDG decide where it goes).
+// (service.RenderNamed is the only renderer, and `~`/XDG decide where it goes).
 //
 // Nothing here touches a system path, needs root or asks for sudo: the unit
 // lives under the person's own home and the service manager is asked at the
@@ -70,19 +75,48 @@ func orchestratorBinaryPath() (string, error) {
 	return stableBinaryPath(exe), nil
 }
 
-// orchestratorUnit is the unit this release would install on this machine: the
-// platform's template, rendered for the stable path of the binary this process
-// is running.
-func orchestratorUnit() (service.Unit, error) {
+// orchestratorUnit is the unit this release would install on this machine for
+// the project's own orchestrator: the platform's template, rendered for the
+// stable path of the binary this process is running. It is the one the setup and
+// update steps of `fugaro setup` and `fugaro update` write.
+func orchestratorUnit() (service.Unit, error) { return orchestratorUnitNamed("") }
+
+// orchestratorUnitNamed is that unit for one of the project's orchestrators: the
+// project's own when name is empty, and the named one `--name` gives when it is
+// not — one file per name, so a machine runs the project's own orchestrator and
+// any number of named ones side by side, each holding its own orchestrator's
+// lease (D3206, D3207).
+//
+// The name is checked here, before anything is written or asked of the service
+// manager, because it becomes a file name as well as a daemon's argument. The
+// rule is C-ORCH's and is not spelled again: orchestrator.ValidOrchestratorName
+// is the whole of it.
+func orchestratorUnitNamed(name string) (service.Unit, error) {
+	if name != "" && !orchestrator.ValidOrchestratorName(name) {
+		return service.Unit{}, fmt.Errorf("--name names one of the project's orchestrators: a name is 1 to %d characters of a-z, 0-9 and -, starting with a letter or a digit, and %s is not one",
+			orchestrator.MaxOrchestratorNameLength, safetext.Field(name))
+	}
 	binary, err := orchestratorBinaryPath()
 	if err != nil {
 		return service.Unit{}, err
 	}
-	u, err := service.Render(os.Getenv, orchestratorGOOS, binary)
+	u, err := service.RenderNamed(os.Getenv, orchestratorGOOS, binary, name)
 	if err != nil {
 		return service.Unit{}, err
 	}
 	return u, nil
+}
+
+// orchestratorUnitOptions is the flag install, uninstall and status share: which
+// of the project's orchestrators the unit is for (D3206, D3207). The three
+// commands take no project and reach no network, so this is a name and never a
+// whole id: a unit carries nothing from a project, and the daemon it starts
+// reads the project half itself.
+type orchestratorUnitOptions struct {
+	// name is --name: the named orchestrator whose login unit this command is
+	// about. Empty is the project's own orchestrator, whose unit `fugaro update`
+	// writes on a machine that has none.
+	name string
 }
 
 // stableBinaryPath is the path a login unit may name: the package manager's
@@ -159,7 +193,11 @@ func writeUnit(u service.Unit) error {
 // It is idempotent in the sense the command documents: writing the file again
 // is a re-render from the current template, and the reload is what replaces the
 // daemon that is running with the one that file names.
-func installUnit(ctx context.Context, m service.Manager, u service.Unit) error {
+// name is the orchestrator the unit is about, which is the empty string for the
+// project's own: it is the `--name` of the command the failure below names, and
+// a message spelling the bare command for a named unit would send the person to
+// the project's orchestrator instead of the one whose unit did not load.
+func installUnit(ctx context.Context, m service.Manager, u service.Unit, name string) error {
 	if err := writeUnit(u); err != nil {
 		return err
 	}
@@ -169,8 +207,8 @@ func installUnit(ctx context.Context, m service.Manager, u service.Unit) error {
 		// the text, finds it current, and reloads nothing (a reload with nothing
 		// to reload would make every run noisy). The failure names the command
 		// that loads the file regardless of its text, which is the way out.
-		return fmt.Errorf("%w (the unit's file is written at %s; `%s orchestrator install` loads it again)",
-			err, safetext.Field(u.Path), selfCommand())
+		return fmt.Errorf("%w (the unit's file is written at %s; `%s` loads it again)",
+			err, safetext.Field(u.Path), orchestratorUnitCommand("install", name))
 	}
 	return nil
 }
@@ -194,10 +232,20 @@ func removeUnit(ctx context.Context, m service.Manager, u service.Unit) error {
 }
 
 // unitActWords is what an install does, in the words the confirmation is over:
-// the file, and the fact that what it runs runs again at every login.
-const unitActWords = "writes the login unit that runs the orchestrator daemon: it starts the daemon at every login, restarts it when it stops, and the daemon drives this project's orchestrator until it is uninstalled"
+// the file, and the fact that what it runs runs again at every login. A named
+// orchestrator's install is the same act about one of the project's other
+// orchestrators, and the name is the only thing the sentence adds for it —
+// which is the thing a person typing the word over it has to be able to read.
+func unitActWords(name string) string {
+	whose := "this project's orchestrator"
+	if name != "" {
+		whose = "the orchestrator named " + name
+	}
+	return "writes the login unit that runs the orchestrator daemon: it starts the daemon at every login, restarts it when it stops, and the daemon drives " + whose + " until it is uninstalled"
+}
 
 func newOrchestratorInstallCmd() *cobra.Command {
+	var o orchestratorUnitOptions
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install or re-render the login unit that runs the daemon",
@@ -216,22 +264,29 @@ func newOrchestratorInstallCmd() *cobra.Command {
 			"machine that has none too, at your own terminal and asking nothing, so no\n" +
 			"release needs this command as an operator step. It writes no state and\n" +
 			"migrates none: the daemon's own start-up does that.\n\n" +
+			"One unit is one orchestrator: this writes the project's own unless --name\n" +
+			"names one of its named ones, whose unit runs `orchestrator run --name\n" +
+			"<name>` and whose file is a file of its own. Installing one leaves the\n" +
+			"others running, so a machine may keep the project's own orchestrator and\n" +
+			"any number of named ones side by side (D3206, D3207); `fugaro update`\n" +
+			"writes the project's own and never touches a named one.\n\n" +
 			"A unit is code that runs at every login, so this command asks you to type\n" +
 			"the word install at a real terminal, has no flag that stands in for it,\n" +
 			"and refuses in a coding agent's session. Running it yourself, without the\n" +
 			"marker, is the way to do it: whoever can do that can write the file by\n" +
 			"hand anyway.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorInstall(cmd) },
+		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorInstall(cmd, &o) },
 	}
+	addOrchestratorNameFlag(cmd, &o.name)
 	return cmd
 }
 
-func runOrchestratorInstall(cmd *cobra.Command) error {
+func runOrchestratorInstall(cmd *cobra.Command, o *orchestratorUnitOptions) error {
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return userErr("this is a coding agent's session (%s is set), and a login unit is code that runs at every login: nothing is installed here; run `%s orchestrator install` in your own terminal window", safetext.Field(m), selfCommand())
 	}
-	u, err := orchestratorUnit()
+	u, err := orchestratorUnitNamed(o.name)
 	if err != nil {
 		return userErr("%v", err)
 	}
@@ -252,14 +307,26 @@ func runOrchestratorInstall(cmd *cobra.Command) error {
 	default:
 		fmt.Fprintf(out, "re-renders the login unit %s: the template or the binary path changed\n", safetext.Field(u.Path))
 	}
-	if err := confirmUnitInstall(cmd, u); err != nil {
+	if err := confirmUnitInstall(cmd, u, o.name); err != nil {
 		return err
 	}
-	if err := installUnit(cmd.Context(), m, u); err != nil {
+	if err := installUnit(cmd.Context(), m, u, o.name); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Installed %s and loaded it with %s. Uninstall it with `%s orchestrator uninstall`.\n", safetext.Field(u.Path), u.Platform, selfCommand())
+	fmt.Fprintf(out, "Installed %s and loaded it with %s. Uninstall it with `%s`.\n", safetext.Field(u.Path), u.Platform, orchestratorUnitCommand("uninstall", o.name))
 	return nil
+}
+
+// orchestratorUnitCommand is `fugaro orchestrator <verb>` about one unit, with
+// the name it is about. A named orchestrator's unit is one of as many as the
+// machine has, so a message naming the bare command would send the person to the
+// project's own.
+func orchestratorUnitCommand(verb, name string) string {
+	cmd := selfCommand() + " orchestrator " + verb
+	if name == "" {
+		return cmd
+	}
+	return cmd + " --name " + name
 }
 
 // confirmUnitInstall is this command's own confirmation: the word install typed
@@ -268,12 +335,12 @@ func runOrchestratorInstall(cmd *cobra.Command) error {
 // --yes for it to be given by, which is what "no flag stands in for it" means.
 // The refusal without a terminal names the command to run somewhere a person
 // is, rather than a flag that does not exist.
-func confirmUnitInstall(cmd *cobra.Command, u service.Unit) error {
+func confirmUnitInstall(cmd *cobra.Command, u service.Unit, name string) error {
 	out := cmd.OutOrStdout()
 	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("%s: `%s orchestrator install` %s", initflow.NeedsTerminal("the typed confirmation of this step"), selfCommand(), unitActWords)
+		return userErr("%s: `%s orchestrator install` %s", initflow.NeedsTerminal("the typed confirmation of this step"), selfCommand(), unitActWords(name))
 	}
-	fmt.Fprintf(out, "⚠ CONFIRM: %s\n", unitActWords)
+	fmt.Fprintf(out, "⚠ CONFIRM: %s\n", unitActWords(name))
 	fmt.Fprintf(out, "Type install to confirm: ")
 	// restore.go's readConfirmLine, which stops at the newline and returns an
 	// input that ended as the line it read: an EOF is a word that is not the
@@ -290,6 +357,7 @@ func confirmUnitInstall(cmd *cobra.Command, u service.Unit) error {
 }
 
 func newOrchestratorUninstallCmd() *cobra.Command {
+	var o orchestratorUnitOptions
 	cmd := &cobra.Command{
 		Use:   "uninstall",
 		Short: "Remove the login unit that runs the daemon",
@@ -298,18 +366,22 @@ func newOrchestratorUninstallCmd() *cobra.Command {
 			"unit takes away code that runs at every login rather than adding it, and\n" +
 			"`fugaro orchestrator install` writes it back after its own typed\n" +
 			"confirmation.\n\n" +
+			"One unit per orchestrator, so --name removes the unit of one of the\n" +
+			"project's named orchestrators and no --name removes the project's own;\n" +
+			"the others are left running either way.\n\n" +
 			"Nothing else is touched: the project's orchestrator state, its lease and\n" +
 			"its audit log are in the database and not in the unit, `fugaro orchestrator\n" +
 			"run` still runs in the foreground without a unit, and a machine with no\n" +
 			"unit installed is not an error — it says so and returns.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorUninstall(cmd) },
+		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorUninstall(cmd, &o) },
 	}
+	addOrchestratorNameFlag(cmd, &o.name)
 	return cmd
 }
 
-func runOrchestratorUninstall(cmd *cobra.Command) error {
-	u, err := orchestratorUnit()
+func runOrchestratorUninstall(cmd *cobra.Command, o *orchestratorUnitOptions) error {
+	u, err := orchestratorUnitNamed(o.name)
 	if err != nil {
 		return userErr("%v", err)
 	}
@@ -327,11 +399,12 @@ func runOrchestratorUninstall(cmd *cobra.Command) error {
 	if err := removeUnit(cmd.Context(), m, u); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Removed %s and unloaded it with %s. The daemon is not started at login any more; `%s orchestrator install` writes the unit back.\n", safetext.Field(u.Path), u.Platform, selfCommand())
+	fmt.Fprintf(out, "Removed %s and unloaded it with %s. The daemon is not started at login any more; `%s` writes the unit back.\n", safetext.Field(u.Path), u.Platform, orchestratorUnitCommand("install", o.name))
 	return nil
 }
 
 func newOrchestratorStatusCmd() *cobra.Command {
+	var o orchestratorUnitOptions
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Report the login unit that runs the daemon",
@@ -339,32 +412,48 @@ func newOrchestratorStatusCmd() *cobra.Command {
 			"daemon, where its file is, and whether it is what this release's template\n" +
 			"would write. It changes nothing and reads no project: the file is the\n" +
 			"whole of what it looks at, and `fugaro doctor` reports the same drift as\n" +
-			"an update being due.",
+			"an update being due.\n\n" +
+			"--name reports the unit of one of the project's named orchestrators rather\n" +
+			"than the project's own; `fugaro doctor` and `fugaro update` know the\n" +
+			"project's own alone.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorStatus(cmd) },
+		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorStatus(cmd, &o) },
 	}
+	addOrchestratorNameFlag(cmd, &o.name)
 	return cmd
 }
 
-func runOrchestratorStatus(cmd *cobra.Command) error {
-	u, err := orchestratorUnit()
+func runOrchestratorStatus(cmd *cobra.Command, o *orchestratorUnitOptions) error {
+	u, err := orchestratorUnitNamed(o.name)
 	if err != nil {
 		return userErr("%v", err)
 	}
 	out := cmd.OutOrStdout()
+	// The command that re-renders this unit, which for a named orchestrator is
+	// the only one that does: `fugaro update` writes the project's own unit and
+	// never touches a named one (D3206, D3207).
+	installCmd := orchestratorUnitCommand("install", o.name)
 	was, ok, err := unitTextOnDisk(u)
 	switch {
 	case err != nil:
 		return userErr("reading %s: %v", u.Path, err)
 	case !ok:
 		fmt.Fprintf(out, "the login unit is not installed: %s does not exist\n", safetext.Field(u.Path))
-		fmt.Fprintf(out, "  `%s orchestrator install` writes it (fugaro setup does it as one of its steps, and `fugaro update` installs it at your terminal)\n", selfCommand())
+		if o.name == "" {
+			fmt.Fprintf(out, "  `%s` writes it (fugaro setup does it as one of its steps, and `fugaro update` installs it at your terminal)\n", installCmd)
+		} else {
+			fmt.Fprintf(out, "  `%s` writes it; `fugaro update` writes the project's own orchestrator's unit and never a named one\n", installCmd)
+		}
 		return nil
 	case was == u.Text:
 		fmt.Fprintf(out, "the login unit at %s is installed and current (%s)\n", safetext.Field(u.Path), u.Platform)
 		return nil
 	}
 	fmt.Fprintf(out, "the login unit at %s is out of date: it was rendered from an older template or another binary path (%s)\n", safetext.Field(u.Path), u.Platform)
-	fmt.Fprintf(out, "  `%s update` re-renders it, or `%s orchestrator install` does it on its own\n", selfCommand(), selfCommand())
+	if o.name == "" {
+		fmt.Fprintf(out, "  `%s update` re-renders it, or `%s` does it on its own\n", selfCommand(), installCmd)
+	} else {
+		fmt.Fprintf(out, "  `%s` re-renders it\n", installCmd)
+	}
 	return nil
 }

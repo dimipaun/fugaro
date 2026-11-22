@@ -51,6 +51,20 @@ import (
 // versions are the record's and the launch's.
 const Version = 1
 
+// The two collections the index lives in, named as contract-index.md fixes
+// them. They are declared here because a reader and the writer are not always
+// the same release -- the history job's image may lag the CLI a person runs --
+// and a collection name one of them spells differently is a reader that finds
+// nothing where the writer put it.
+const (
+	// EntryCollection holds one Entry per run, the document id being the run id.
+	EntryCollection = "runIndex"
+	// SummaryCollection and SummaryDocument name the installation's one summary
+	// document, `runIndexMeta/summary`.
+	SummaryCollection = "runIndexMeta"
+	SummaryDocument   = "summary"
+)
+
 // Entry is one run's document, `runIndex/<run id>`.
 //
 // The document id is the run id, which is what makes the index one collection
@@ -203,7 +217,7 @@ type Summary struct {
 	// absent when no run's compute is known: "not estimated" is not "free".
 	// ComputeRuns says how many runs the figure covers, and
 	// ComputeNotEstimated how many carry no figure at all.
-	ComputeMicros       *int64 `json:"compute_micros"`
+	ComputeMicros       *int64 `json:"compute_micros,omitempty"`
 	ComputeRuns         int64  `json:"compute_runs"`
 	ComputeNotEstimated int64  `json:"compute_not_estimated"`
 	// Estimate is the table `plan status` reads instead of scanning history

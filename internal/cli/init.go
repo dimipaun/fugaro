@@ -599,7 +599,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringSliceVar(&o.baseKinds, "base", nil, "copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it "+d.name+" trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
-	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing)")
+	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let the converge replace that image's tag in your registry when it names an image the release source never published (a customised or hand-pushed history:latest needs it once; the image of an earlier release needs no flag, and is moved on its own). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing)")
 	// The bake switch (IS7, D1901). Its usage is read on both doors, so it
 	// names no door: what it says about where the question is asked is about
 	// the run that creates the installation, which is the one whose answer is
@@ -3015,6 +3015,85 @@ func (r *initRun) managedProject(ctx context.Context, c *infra.Clients) (bool, e
 	return ok, nil
 }
 
+// carriedBudget is the alert the installation already holds, for a run whose own
+// flags and wizard answered no budget: the amount and the currency from the
+// project's creation fact — the record a rewrite by `fugaro managed flag` moves,
+// so a rewrite reaches the alert on the next update — and the billing account
+// from the alert's own resource in the installation root's state, which is the
+// one copy of it a machine that never ran the apply can read. Neither comes
+// from the local work directory, which a new machine, a cleaned one or a
+// console on another host does not have (F19, R7 of
+// docs/managed-flag-ergonomics).
+//
+// A run that answered the budget itself carries nothing: its own figures stand,
+// which is D2215's rule — a default never overwrites a recorded amount — seen
+// from the other side. An installation whose creation fact records no amount,
+// or whose state holds no alert, carries nothing either, and that is the answer
+// for every installation that has neither.
+//
+// The account is read FIRST, and the amount only for an installation that has
+// one. The alert's own resource in the state is the one record that says
+// whether this installation holds an alert at all, and an installation that
+// holds none has nothing to carry — so the creation fact, which is a read of
+// the runs bucket and the one both the run's own gate and this carry consult,
+// is not read for it. That is most runs: every unmanaged project, and every
+// managed one whose alert was never applied.
+//
+// A read that fails is this run's warning and not its answer: the carry is what
+// keeps the alert, and a run that cannot make it plans the alert's deletion,
+// which the guard refuses by name with the flags that declare one — the loud
+// direction, and the one that never plans a document that forgot the alert on a
+// read this program could not make.
+func (r *initRun) carriedBudget(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) (infra.InstallationSpec, error) {
+	if spec.Budget != nil {
+		return r.explicitBudgetAccount(ctx, c, spec)
+	}
+	account, found, err := infra.InstallationBudgetAccount(ctx, c, spec.StateBucket)
+	if err != nil {
+		r.warn(fmt.Sprintf("the billing account of %s's budget alert could not be read from the installation's state, so this run carries no alert: %s", safetext.Field(spec.FugaroProject), safetext.Field(err.Error())))
+		return spec, nil
+	}
+	if !found {
+		return spec, nil
+	}
+	budget, ok, _, err := managed.ReadBudget(ctx, c.Storage, c.CRM, spec.FugaroProject, spec.Project)
+	if err != nil {
+		r.warn(fmt.Sprintf("the budget %s's creation fact records could not be read while this installation was being planned, so this run carries no alert: %s", safetext.Field(spec.FugaroProject), safetext.Field(err.Error())))
+		return spec, nil
+	}
+	if !ok {
+		return spec, nil
+	}
+	spec.CarriedBudget = &infra.Budget{BillingAccount: account, Amount: budget.Amount, CurrencyCode: budget.Currency}
+	r.budgetAccount = account
+	return spec, nil
+}
+
+// explicitBudgetAccount completes a run's own budget: a --budget with no
+// --billing-account takes the account the installation's state records for its
+// alert (R7), so the owner changes the amount without knowing the account by
+// heart. A whole trio reads nothing. Unlike the implicit carry, a failed read
+// here stops the run: the figures were asked for and the run cannot declare
+// them without the account, so there is no alert to fall back to keeping.
+func (r *initRun) explicitBudgetAccount(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) (infra.InstallationSpec, error) {
+	if spec.Budget.BillingAccount != "" {
+		r.budgetAccount = spec.Budget.BillingAccount
+		return spec, nil
+	}
+	account, found, err := infra.InstallationBudgetAccount(ctx, c, spec.StateBucket)
+	if err != nil {
+		return spec, initErr(fmt.Errorf("the installation's state bucket gs://%s could not be read for the billing account of the budget: %s", safetext.Field(spec.StateBucket), safetext.Field(err.Error())))
+	}
+	if !found {
+		return spec, userErr("--budget %d %s names no --billing-account, and the installation's state records no budget alert to take one from: pass --billing-account", spec.Budget.Amount, spec.Budget.CurrencyCode)
+	}
+	with := *spec.Budget
+	with.BillingAccount = account
+	spec.Budget = &with
+	r.budgetAccount = account
+	return spec, nil
+}
+
 // managedScope is whether the installation uses managed projects, decided from
 // the project's own creation fact: the module's managed_deployer_scoped, which
 // is what creates the managed deployer's seven scoped roles and their seven
@@ -3041,93 +3120,6 @@ func (r *initRun) managedScope(ctx context.Context, c *infra.Clients) (bool, err
 		return false, initErr(fmt.Errorf("whether %s is a managed project could not be read while this installation was being planned: %s", safetext.Field(r.projectName), safetext.Field(err.Error())))
 	}
 	return ok, nil
-}
-
-// carriedBudget is the budget block this run's variables get: the installation's
-// own records where the run was given no budget flag (R5,
-// docs/managed-flag-ergonomics/reconciliation.md), and the billing account an
-// explicit --budget without one takes (R7). It is called by the two paths that
-// write the installation root's tfvars before a plan — installRoot, and
-// readOutputs, whose document a later stage of the same run rewrites — and by
-// neither of the two that do not carry: --print-vars reads no cloud by design,
-// and --forget is the rollback.
-//
-// It runs HERE, before prepare writes the variables, and not through
-// terraform's own read of the state: tf.ShowState needs an Init, and prepare is
-// what writes the backend an Init is given.
-//
-// A run given the whole trio reads nothing: the explicit flags replace what is
-// carried, and there is nothing left to take.
-//
-// The account the block is on is recorded on the run (budgetAccount) as well as
-// in the spec it returns: the review screen and the plan cover are built off
-// the run's own facts, and the spec this returns is installRoot's copy.
-func (r *initRun) carriedBudget(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) (infra.InstallationSpec, error) {
-	if spec.Budget != nil && spec.Budget.BillingAccount != "" {
-		r.budgetAccount = spec.Budget.BillingAccount
-		return spec, nil
-	}
-	carried, err := r.budgetCarry(ctx, c, spec)
-	if err != nil {
-		return spec, err
-	}
-	block, err := carried.Block(spec.Budget)
-	if err != nil {
-		return spec, userErr("%v", err)
-	}
-	spec.Budget = block
-	if block != nil {
-		r.budgetAccount = block.BillingAccount
-	}
-	return spec, nil
-}
-
-// budgetCarry reads the two records the carry is made of (R7): the installation
-// root's state object for the billing account, and the project's creation fact
-// for the amount and the currency. Neither is the local work directory, which is
-// empty on a fresh machine, after a clean, or for a console on another host
-// (F19) — so a run there carries the alert exactly as one whose workdir holds
-// it.
-//
-// The state is read first, and the creation fact only when it records an
-// account: the account is what says the installation has an alert at all, and a
-// fact read for a project that has none would be a read of the marker for a
-// block nothing declares (which is what an installation created without a
-// linked account is, D2216: the amount is recorded and no alert is created).
-//
-// A read that fails is the run's own failure and never "nothing carried": the
-// plan a dropped block produces is the alert's deletion, and the answer for a
-// read this program could not make is to stop rather than to plan that (Global
-// Constraint 3). A project whose name this run does not know has no creation
-// fact to read — the read proves the fact is about that name — and carries the
-// account alone, which is a run that reaches no plan of this root anyway
-// (--config-only recovering a config it has no name for).
-func (r *initRun) budgetCarry(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) (infra.CarriedBudget, error) {
-	// This read is the first one this run makes out of the state bucket — the
-	// carry is resolved before prepare, and the bucket's own check comes after
-	// it — so a bucket that cannot be read at all surfaces here. The sentence
-	// names the state bucket for the same reason that check's does: what the
-	// operator has to reach is the bucket, whether a disabled Storage API, a
-	// revoked role or a bucket of another project is why.
-	account, ok, err := infra.ReadInstallationBudgetAccount(ctx, c, spec.StateBucket)
-	if err != nil {
-		return infra.CarriedBudget{}, initErr(fmt.Errorf("the installation's state bucket gs://%s could not be read while this run's variables were being written: %s", safetext.Field(spec.StateBucket), safetext.Field(err.Error())))
-	}
-	if !ok {
-		return infra.CarriedBudget{}, nil
-	}
-	var amount int64
-	var currency string
-	if r.projectName != "" {
-		answer, err := managed.ReadBudgetAnswer(ctx, c.Storage, c.CRM, r.projectName, r.gcpProject)
-		if err != nil {
-			return infra.CarriedBudget{}, initErr(fmt.Errorf("the budget this installation's variables carry could not be read from the creation fact of %s: %s", safetext.Field(r.projectName), safetext.Field(err.Error())))
-		}
-		if answer.OK {
-			amount, currency = answer.Budget.Amount, answer.Budget.Currency
-		}
-	}
-	return infra.CarriedBudget{Amount: amount, CurrencyCode: currency, BillingAccount: account}, nil
 }
 
 // prepare writes the root's tfvars, imports and backend configuration.
@@ -3329,6 +3321,19 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
+	// And the alert the installation already holds, the one carry whose figures
+	// are not in a document at all: the amount and the currency come from the
+	// project's creation fact and the billing account from the alert's own
+	// resource in the root's state, so the carry reaches the installation from
+	// any machine (R5, R7 of docs/managed-flag-ergonomics). The run reads them
+	// before this call (carriedBudget) and hands them over in the spec; a
+	// spec of its own — a run whose flags or wizard answered the budget — is
+	// never touched, and neither is a run whose document already names one.
+	if spec.CarriedBudget != nil {
+		if vars, err = infra.CarriedBudget(vars, spec.CarriedBudget); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
 	if err := wd.WriteVars(vars); err != nil {
 		return nil, userErr("writing the tfvars: %v", err)
 	}
@@ -3393,6 +3398,9 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		return outs, false, err
 	}
 	if spec, err = r.licenceJob(lc, spec); err != nil {
+		return outs, false, err
+	}
+	if spec, err = r.carriedBudget(ctx, c, spec); err != nil {
 		return outs, false, err
 	}
 	im, err := infra.DiscoverInstallation(ctx, c, spec)
@@ -3480,14 +3488,6 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// field and no other (RefreshProjectJobCredentialsService, G17), and it is
 	// a no-op for every run whose records have not moved.
 	spec.ProjectJobs = infra.RefreshProjectJobCredentialsService(spec.ProjectJobs, lc)
-	// The budget block this run's variables get, read from the installation's own
-	// two records and never from the workdir: the alert of a project created by
-	// --managed is what a later plain `fugaro update` carries, so that run plans
-	// no change to it (R5). Resolved here, immediately before prepare, whose
-	// document it is one key of.
-	if spec, err = r.carriedBudget(ctx, c, spec); err != nil {
-		return outs, false, err
-	}
 	backend, err := prepare(wd, spec, im, verifiers, false)
 	if err != nil {
 		return outs, false, err
@@ -3624,7 +3624,18 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// one (a condition is ForceNew); exactly that replace is allowed, and
 		// named (bucket-iam.md H5).
 		upgrade := infra.LauncherGrantUpgrade(plan, spec.RunsBucket, spec.Launchers, spec.Operators)
-		allowed := append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...)
+		// The launcher-does-not-mint switch turns off the minter rows this
+		// binary's own update removes once the credentials service signs as the
+		// runs' signer (LM14, R8); exactly those deletes are allowed, and named
+		// (LM20). Without the list the guard would refuse the update's own plan
+		// and point at --allow-delete, the step the hard rule about `fugaro
+		// update` forbids. It is the switch-off plan's own list and no other's:
+		// with the switch on, the same delete at the same address is a member
+		// dropped from the roster or an orchestrator turned off, and the guard
+		// keeps judging it as it always did. The Firebase root is not given this
+		// list here: LM14 wires that root's guard at its level (F32).
+		identity := infra.IdentityAllowDelete(plan, infra.PeopleMinter(plan))
+		allowed := append(append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...), identity...)
 		counts := infra.CountPlan(plan)
 		// The managed gate judges the plan BEFORE the guard and the
 		// confirmation, and replaces both when it admits it (D1016,
@@ -3632,7 +3643,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// what the gate refused rather than the guard's advice, which is what
 		// a managed project's refusal is about. Everything the guard's own
 		// path prints or records stays where it was, on the path that runs it.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade)
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade, identity)
 		if err != nil {
 			return plan, err
 		}
@@ -6319,7 +6330,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		// does not admit this plan (D1016, update_managed.go). A repository root
 		// is one of Fugaro's own too, so it is judged by the same cover and the
 		// same guard the installation's roots are.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil)
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil, nil)
 		if err != nil {
 			return plan, err
 		}

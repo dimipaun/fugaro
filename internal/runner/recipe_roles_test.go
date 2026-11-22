@@ -16,7 +16,7 @@ func TestRecipeClaudeSolo(t *testing.T) {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 	c := h.agent.calls
-	if len(c) != 2 || c[1].Model != "coder-model" || c[1].SessionID == c[0].SessionID || c[1].JSONSchema == "" {
+	if len(c) != 2 || c[1].Model != sonnet || c[1].SessionID == c[0].SessionID || c[1].JSONSchema == "" {
 		t.Fatalf("calls = %+v (the coder's model reviews, in a fresh session, with the verdict schema)", c)
 	}
 }
@@ -122,7 +122,7 @@ func TestCoderIsReviewerPinsTheReviewerModel(t *testing.T) {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 	c = h.agent.calls
-	if len(c) != 2 || c[0].Model != "senior-model" || c[1].Model != "senior-model" {
+	if len(c) != 2 || c[0].Model != opus || c[1].Model != opus {
 		t.Fatalf("calls = %+v (both implement and review run on the reviewer's model)", c)
 	}
 }

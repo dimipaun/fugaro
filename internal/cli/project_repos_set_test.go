@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -21,6 +22,11 @@ import (
 //   - a repository's workflow selection, written whole rather than one item at
 //     a time (TestProjectReposSetWritesAWorkflowSelection), which is the shape
 //     the generic writer's --add/--remove cannot express;
+//   - the chain both shapes end on: the keys a write makes are the ones the
+//     table declares a step for, so the command runs that step rather than
+//     handing the reader to a second command
+//     (TestProjectReposSetRunsTheStepItOwes), and --no-apply is the one word
+//     that saves the write and leaves the step to `fugaro apply`;
 //   - the other half of D1173: the repos.* scalars and lists are the GENERIC
 //     writer's (TestSettingsSetReposScalarWritesTheReposBlock);
 //   - the fence the SEC marking is about: a job profile carries secrets and
@@ -70,18 +76,26 @@ func projectReposConfig(t *testing.T) (string, *localcfg.Config) {
 // subcommand does not exist before it. The block is created under the name
 // --job-profile addresses, with the seven keys the flags name, and both the
 // profile and the repository the file already held are left alone.
+//
+// --no-apply, because this test's subject is the write and not the chain (AP9,
+// D1565): the keys are `job_profiles.*` ones, so the write owes the policy
+// stage, and this fixture's project cannot have that publish — it declares a
+// github job profile with no App ID recorded, which is a step this machine
+// cannot run. What the command owes is asserted in the test below and in the
+// settings family's own test beside this one.
 func TestProjectReposSetWritesAJobProfileBlock(t *testing.T) {
 	settingsWriteHomeWith(t, projectReposLocalConfig)
 	path := os.Getenv("FUGARO_CONFIG")
 
 	out, _, err := execute(t, "project", "repos", "set", "--job-profile", "gpu",
 		"--provider", "github", "--cpu", "4", "--memory", "8Gi", "--timeout-class", "12h",
-		"--secrets", "acme-db,acme-queue", "--allow-repos", "acme/app", "--claude-accounts", "team-a")
+		"--secrets", "acme-db,acme-queue", "--allow-repos", "acme/app", "--claude-accounts", "team-a",
+		"--no-apply")
 	if err != nil {
 		t.Fatalf("project repos set --job-profile: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "next: fugaro update") {
-		t.Errorf("the write does not end with the next step every settings write names:\n%s", out)
+	if !strings.Contains(out, "saved, not live yet: "+initflow.Policy+" still owed") {
+		t.Errorf("--no-apply does not say the write is saved and the publish is owed:\n%s", out)
 	}
 	after := readFileString(t, path)
 	// The write splices the profile into the file's own `profiles:` block, so
@@ -125,16 +139,21 @@ func TestProjectReposSetWritesAJobProfileBlock(t *testing.T) {
 // entry's other members are untouched. A repository the project's config does
 // not list is refused before the file is read, because a selection stored under
 // a name nothing looks up is a line the operator would never see fail.
+//
+// The writes carry --no-apply for the reason the profile test's does: the entry
+// owes the policy stage, and this fixture's project cannot have that publish.
+// TestProjectReposSetRunsTheStepItOwes is the other half — the same write
+// without the flag, where the step is what stops it.
 func TestProjectReposSetWritesAWorkflowSelection(t *testing.T) {
 	settingsWriteHomeWith(t, projectReposLocalConfig)
 	path := os.Getenv("FUGARO_CONFIG")
 
-	out, _, err := execute(t, "project", "repos", "set", "acme/app", "--workflows", "web,docs")
+	out, _, err := execute(t, "project", "repos", "set", "acme/app", "--workflows", "web,docs", "--no-apply")
 	if err != nil {
 		t.Fatalf("project repos set acme/app --workflows: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "next: fugaro update") {
-		t.Errorf("the write does not end with the next step every settings write names:\n%s", out)
+	if !strings.Contains(out, "saved, not live yet: "+initflow.Policy+" still owed") {
+		t.Errorf("--no-apply does not say the write is saved and the publish is owed:\n%s", out)
 	}
 	_, lc := projectReposConfig(t)
 	if want := []string{"web", "docs"}; !slices.Equal(lc.Repos["acme/app"].Workflows, want) {
@@ -143,7 +162,7 @@ func TestProjectReposSetWritesAWorkflowSelection(t *testing.T) {
 	if r := lc.Repos["acme/app"]; r.Provider != "github" || r.BaseBranch != "main" {
 		t.Errorf("the write changed a member of the entry it was not asked about: %+v", r)
 	}
-	if _, _, err := execute(t, "project", "repos", "set", "acme/app", "--workflows", "docs"); err != nil {
+	if _, _, err := execute(t, "project", "repos", "set", "acme/app", "--workflows", "docs", "--no-apply"); err != nil {
 		t.Fatalf("the second selection: %v", err)
 	}
 	_, lc = projectReposConfig(t)
@@ -161,6 +180,46 @@ func TestProjectReposSetWritesAWorkflowSelection(t *testing.T) {
 	}
 	if readFileString(t, path) != before {
 		t.Errorf("a refused write left the file changed:\n%s", readFileString(t, path))
+	}
+}
+
+// TestProjectReposSetRunsTheStepItOwes is the composite rule this command owes
+// (spec rule 1, AP9): the keys it writes are settings keys the table declares a
+// step for, so the command runs that step itself instead of telling the reader
+// to run a second command. `settings set` on the same document and the same key
+// runs the same step (settingsChain), and the audit's own question is whether a
+// user-facing message sends the reader off by hand — one that ends on "next:
+// fugaro update" says yes.
+//
+// The step is the policy node's publish and this fixture's project cannot have
+// it (the github job profile with no App ID recorded), so the run stops there:
+// the exit is non-zero, the write stays, and the step is owed in this machine's
+// own record — which is what makes the sentence naming `fugaro apply` true. A
+// command that printed a hand-off instead would leave no record at all.
+func TestProjectReposSetRunsTheStepItOwes(t *testing.T) {
+	settingsWriteHomeWith(t, projectReposLocalConfig)
+	old := selfCommand
+	selfCommand = func() string { return "fugaro" }
+	t.Cleanup(func() { selfCommand = old })
+
+	out, errOut, err := execute(t, "project", "repos", "set", "acme/app", "--workflows", "web,docs")
+	all := out + errOut
+	if err == nil {
+		t.Fatalf("a write whose publish did not run reported the change live:\n%s", all)
+	}
+	all += err.Error()
+	if strings.Contains(all, "next: fugaro update") {
+		t.Errorf("the command hands the reader to a second command:\n%s", all)
+	}
+	if !strings.Contains(all, "saved and is not live yet") || !strings.Contains(all, "fugaro apply") {
+		t.Errorf("the run does not say the change is saved and not live yet and name the command that finishes it:\n%s", all)
+	}
+	_, lc := projectReposConfig(t)
+	if want := []string{"web", "docs"}; !slices.Equal(lc.Repos["acme/app"].Workflows, want) {
+		t.Errorf("repos.acme/app.workflows = %v, want the %v the write left behind", lc.Repos["acme/app"].Workflows, want)
+	}
+	if got := workspaceOwedFor(t, lc.Name, lc.GCPProject); !slices.Equal(got, []string{initflow.Policy}) {
+		t.Errorf("this machine owes %v after the run, want the %s step the write could not finish", got, initflow.Policy)
 	}
 }
 

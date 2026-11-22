@@ -15,9 +15,11 @@
 //     connection, cap, burn or kill half at all.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { STATE, isFigure, measured, shown, unavailable } from './availability.js';
+import { NODE_CODES, readPause } from './nodes.js';
 import {
   CONNECTION_STATES,
   DOCUMENT_CODES,
@@ -288,11 +290,133 @@ test('a kill switch\'s strings are cleaned the way the CLI cleans them', () => {
 test('the runs bucket is not the phone\'s, and an empty array is not a run title', () => {
   for (const key of ['runs', 'finished', 'ready']) {
     assert.equal(validateDocument(wire({ [key]: [] })).ok, true, `${key}: [] is "no rows"`);
+  }
+  // `finished` and `ready` are the bucket's whole and have no row this app may
+  // draw, so content in either is refused at the field itself. A row of `runs`
+  // is judged row by row instead (VS4, below) and the fence is the row's own
+  // member list: a bucket row carries a title, and a title is what it refuses.
+  for (const key of ['finished', 'ready']) {
     const refused = validateDocument(wire({ [key]: [{ run: 'run-1', title: 'a run title' }] }));
     assert.equal(refused.ok, false, key);
     assert.equal(refused.code, DOCUMENT_CODES.NOT_GRANTED, key);
-    assert.equal(refused.field, key);
+    assert.equal(refused.field, key, key);
   }
+});
+
+/** VS4's recording: a paused run that fell back, its node and its record
+ * (`docs/model-credentials-routing`, contract-pause.md C3 and contract-table.md
+ * C1). Read from the file rather than built here, so the shapes in it are the
+ * ones a recording replaces at I2. */
+const PAUSED = JSON.parse(readFileSync(new URL('./fixtures/paused.json', import.meta.url), 'utf8'));
+/** The paused run's own node: `paused/<slug>/<run>` (`runstore.PauseNodePath`). */
+const PAUSED_PATH = `paused/${PAUSED.slug}/${PAUSED.run}`;
+/** The recording's second path: a run that never paused, which the database
+ * answers with nothing. */
+const NEVER_PAUSED_PATH = `paused/${PAUSED.slug}/20261121-090000-ffff`;
+
+test('a paused run is read from its node, and its resume time reaches the row (VS4)', () => {
+  // C3's node, read the way every launcher reads it: `resume_at` is epoch
+  // milliseconds on the wire, and a run's row spells every instant RFC 3339
+  // (`watch`'s `waiting_until`), so the reader converts once and the row below
+  // carries the instant the reader produced.
+  const read = readPause(PAUSED.nodes[PAUSED_PATH]);
+  assert.equal(read.ok, true);
+  assert.equal(read.pause.resumeAt, '2026-11-23T04:02:00.000Z');
+  assert.equal(read.pause.cancelled, false);
+  // The node's own other members -- the launcher and pool a resume is bound to
+  // (an identifier, never display text), the chain and the chain's paused time
+  // -- are deliberately not read: no screen of this app draws one, and a figure
+  // carried with nothing to check it is a meaning nobody agreed on.
+  assert.deepEqual(Object.keys(read.pause).sort(), ['cancelled', 'resumeAt']);
+  // A run that never paused has no node at all, and that is not a pause.
+  assert.equal(readPause(PAUSED.nodes[NEVER_PAUSED_PATH]).pause, null);
+  assert.equal(PAUSED.nodes[NEVER_PAUSED_PATH], null, 'the recording keeps the absent path, as fixtures/nodes.js does');
+
+  // C1's fallback mark is the stage's: the run fell back when any of its stages
+  // did, which is the record's own rule (`stages[].fallback`, CS8). The record
+  // is the runs bucket's and the phone cannot read it -- the test reads the
+  // member's meaning from the recording, and the row carries the fact.
+  const fellBack = PAUSED.record.stages.some((stage) => stage.fallback === true);
+  assert.equal(fellBack, true, 'the recording is a run that fell back');
+  const judged = validateDocument(
+    wire({
+      runs: [
+        {
+          run: PAUSED.run,
+          fallback: fellBack,
+          resume_at: read.pause.resumeAt,
+          cancelled: read.pause.cancelled,
+        },
+      ],
+    }),
+  );
+  assert.equal(judged.ok, true, JSON.stringify(judged));
+  assert.deepEqual(judged.document.runs, [
+    { run: PAUSED.run, fallback: true, resumeAt: '2026-11-23T04:02:00.000Z', cancelled: false },
+  ]);
+  // A row is not a figure: the document's figures are still the total's eight
+  // and the repositories' own, so nothing here can be added to a spend.
+  assert.equal(figures(judged.document).length, 8);
+  assert.equal(JSON.stringify(judged.document).includes('a run title'), false);
+});
+
+test('a pause node this reader cannot read is still a pause, and its instant is never the epoch (VS4)', () => {
+  // The node is there and the pause is real: believing the run is running again
+  // because its instant could not be read is the unsafe direction, so the pause
+  // is read with no instant rather than dropped -- the opposite of the kill
+  // switch's direction, where an unreadable node is believed ON.
+  for (const bad of ['2026-11-23T04:02:00Z', 1795406520000.5, 0, -1, 8_640_000_000_000_001, null]) {
+    const read = readPause({ chain: 'r1', resume_at: bad });
+    assert.equal(read.ok, true, String(bad));
+    assert.equal(read.pause.resumeAt, null, String(bad));
+  }
+  const cancelled = readPause({ chain: 'r1', resume_at: 1795406520000, cancelled: true });
+  assert.equal(cancelled.pause.cancelled, true, 'a cancelled pause is still a pause to draw');
+  assert.equal(cancelled.pause.resumeAt, '2026-11-23T04:02:00.000Z');
+  // A value that is not a node at all is refused, as every reader here refuses
+  // one: the caller asked for a pause and got something it cannot read.
+  assert.equal(readPause('nonsense').code, NODE_CODES.NOT_AN_OBJECT);
+  assert.equal(readPause(['nonsense']).code, NODE_CODES.NOT_AN_OBJECT);
+});
+
+test('a feed without the new members reads as today (VS4)', () => {
+  // The document `nodes.js` assembled before this task: no `runs` member at
+  // all, and nothing else about the validated document moved.
+  const before = validateDocument(wire());
+  assert.equal(before.ok, true);
+  assert.equal(before.document.runs, null, 'a document that carries no row says nothing, so it is unavailable');
+  const empty = validateDocument(wire({ runs: [] }));
+  assert.equal(empty.ok, true);
+  assert.deepEqual(empty.document.runs, [], 'the contract\'s [] is "none"');
+  assert.equal(before.document.project, 'fugaro');
+  assert.equal(before.document.total.counted.value, 12.5);
+});
+
+test('a run row carries the four members the feed may read, and a bucket row is still refused (VS4)', () => {
+  // The fence is the member list: everything the runs bucket's own row carries
+  // beside the id is the grant's, and it is refused at the member it arrived
+  // in, so no screen can draw a title, a repository or a linked pull request.
+  for (const key of ['title', 'repo', 'slug', 'status', 'stage', 'cost', 'pr_url', 'pr_number']) {
+    const refused = validateDocument(wire({ runs: [{ run: PAUSED.run, [key]: 'anything' }] }));
+    assert.equal(refused.ok, false, key);
+    assert.equal(refused.code, DOCUMENT_CODES.NOT_GRANTED, key);
+    assert.equal(refused.field, `runs[0].${key}`, key);
+  }
+  // A row with no id is not a row, and an id that is not an id is a value from
+  // some other shape (`paths.js`'s own run-key judgement, restated here).
+  assert.equal(validateDocument(wire({ runs: [{ fallback: true }] })).code, DOCUMENT_CODES.MISSING_FIELD);
+  assert.equal(validateDocument(wire({ runs: [{ run: 'a run title' }] })).code, DOCUMENT_CODES.BAD_TYPE);
+  assert.equal(validateDocument(wire({ runs: ['run-1'] })).code, DOCUMENT_CODES.BAD_TYPE);
+  assert.equal(validateDocument(wire({ runs: 'run-1' })).code, DOCUMENT_CODES.BAD_TYPE);
+  // The members it does carry are held to their types: `fallback` is a bool
+  // whose absence means false (the record's `omitempty`), `resume_at` is the
+  // RFC 3339 spelling and never the wire's epoch, and `cancelled` is a bool.
+  assert.equal(validateDocument(wire({ runs: [{ run: PAUSED.run, fallback: 'yes' }] })).code, DOCUMENT_CODES.BAD_TYPE);
+  assert.equal(validateDocument(wire({ runs: [{ run: PAUSED.run, resume_at: 1795406520000 }] })).code, DOCUMENT_CODES.BAD_TYPE);
+  assert.equal(validateDocument(wire({ runs: [{ run: PAUSED.run, cancelled: 'yes' }] })).code, DOCUMENT_CODES.BAD_TYPE);
+  const bare = validateDocument(wire({ runs: [{ run: PAUSED.run }] }));
+  assert.equal(bare.ok, true);
+  assert.deepEqual(bare.document.runs, [{ run: PAUSED.run, fallback: false, resumeAt: null, cancelled: false }]);
 });
 
 test('the degraded shape is its own shape, recognised by its own key', () => {
