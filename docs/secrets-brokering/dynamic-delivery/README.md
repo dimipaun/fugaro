@@ -1,6 +1,6 @@
 # Dynamic secret delivery
 
-**Status: every task has merged except DS3.4 (token ownership on the run record); DS4.3, the docs, is this sweep.** The owner answered D1930–D1946 on 2026-11-09, all as recommended (D1938–D1940 after review round 1, D1941–D1943 after round 2, D1944–D1946 after round 3). No item is open.
+**Status: every task has merged — DS4.3, the docs, as #3521 and DS3.4, token ownership on the run record, as #3522, its last two.** The owner answered D1930–D1946 on 2026-11-09, all as recommended (D1938–D1940 after review round 1, D1941–D1943 after round 2, D1944–D1946 after round 3). No item is open.
 
 **Spec owner:** the Fugaro owner. **Date:** 2026-11-09. **Base:** `main` at `934bb23f8`.
 

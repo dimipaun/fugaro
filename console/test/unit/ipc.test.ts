@@ -902,7 +902,8 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * one fixed `--json`, and the whole argv is what the `spawn.test.ts` pins hold.
  * **`settings.editor.open` is the one operation of the nine that adds no row
  * here at all**: its `command` is `null` (`licence.read`'s shape), because the
- * editor is a window rather than a child.
+ * editor is a window rather than a child -- and the child behind it is
+ * `settings.edit`'s, which is the row it drives (`drivesOperation`).
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -1945,6 +1946,53 @@ describe('the never-reachable table', () => {
       },
     ]
     expect(() => assertReachableSurface(spawner)).not.toThrow()
+  })
+
+  it('refuses the lapse\'s column on a window that drives a row the lapse keeps', () => {
+    // The third shape of the same check (SU2b): a row that spawns no command of
+    // its own belongs to the refused class **only** through one the lapse refuses
+    // (`drivesOperation`), because the window spawns whatever the row it drives
+    // spawns and nothing else. A window pointed at a read would be refused after
+    // a lapse while every child behind it is one the design keeps -- a capability
+    // taken away on a row that grants none -- and a window whose column named no
+    // row of the table at all would be admitted with no child to refuse:
+    const windowOnARead: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS,
+      {
+        name: 'settings.window',
+        method: 'openSettingsWindow',
+        command: null,
+        flags: [],
+        summary: 'a window whose column points at a read a lapse keeps',
+        args: [],
+        drivesOperation: 'settings.read',
+        refusedAfterLapse: true,
+      },
+    ]
+    expect(() => assertReachableSurface(windowOnARead)).toThrow(/settings\.window/)
+    expect(() => assertReachableSurface(windowOnARead)).toThrow(/does not take away/)
+    // And a window that drives a row which is not on the surface at all: the
+    // column names nothing to refuse, so the window would be in the class with
+    // every child behind it admitted. The write is taken out of the table, and
+    // the real window with it, so the mutation is the only row that carries the
+    // column and there is nowhere else for the guard to fail first.
+    const windowWithNoWrite: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS.filter(
+        (operation) => operation.name !== 'settings.edit' && operation.name !== 'settings.editor.open',
+      ),
+      {
+        name: 'settings.window',
+        method: 'openSettingsWindow',
+        command: null,
+        flags: [],
+        summary: 'a window whose column names no row at all',
+        args: [],
+        drivesOperation: 'settings.edit',
+        refusedAfterLapse: true,
+      },
+    ]
+    expect(() => assertReachableSurface(windowWithNoWrite)).toThrow(/settings\.window/)
+    expect(() => assertReachableSurface(windowWithNoWrite)).toThrow(/not an operation of this surface/)
   })
 
   it('refuses a target installation the row\'s own payload does not carry', () => {
@@ -4009,14 +4057,21 @@ describe('the spend read’s arguments', () => {
  *   - **`setup.apply` is the surface's fourth write** and the only one of the
  *     nine with `refusedAfterLapse`, which is what makes a lapsed console refuse
  *     it while `setup.plan` -- the same command as a read -- keeps answering.
- *   - **`settings.editor.open` is the one operation of the nine that spawns
- *     nothing** (`command: null`, `licence.read`'s shape), so the surface's
- *     no-command count goes from eleven to twelve.
+ *   - **`settings.editor.open` is the one operation of the nine that adds no row
+ *     of its own** (`command: null`, `licence.read`'s shape), so the surface's
+ *     no-command count goes from eleven to twelve. What it drives is
+ *     `settings.edit`'s row and not one of its own, which its row says
+ *     (`drivesOperation`) -- that is also why it is in the lapse's class with the
+ *     write: the dry run and the write behind the window are that row's children.
  *   - **Every one of them is inert until the CLI release that carries its
  *     flags**: each floor in `src/shared/version.ts` is `null` today, and the
  *     handler behind each answers 'not available in this build' until I-OPS
- *     registers the real one. The rows are here rather than in a later task
- *     because the allow-list is the thing the whole console spawns through.
+ *     registers the real one -- **except `settings.editor.open`, whose handler
+ *     the console improvements plan's SU2b registered** (`settingsEditorRunner`
+ *     in `src/main/index.ts`), because the pencil that presses it is on screen
+ *     and a stub behind it would make the Project tab's only write dead. The
+ *     rows are here rather than in a later task because the allow-list is the
+ *     thing the whole console spawns through.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -5505,21 +5560,13 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // the operation is not in `REDUCED_VIEW_OPERATIONS`, and the mode withholds
     // figures rather than writes -- whether a converge may be offered at all is
     // the lapse's own gate (`refusedAfterLapse`, tested below), not this one.
-    // `settings.editor.open` reaches no child at all, for `licence.read`'s
-    // reason, and its answer is the outcome object the settings write answers
-    // with.
+    // `settings.editor.open` is on this list for `licence.read`'s reason -- it
+    // fixes no command of its own, and the children behind its window are the
+    // settings write's (`drivesOperation`) -- and its answer is the outcome
+    // object the settings write answers with.
     //
-    // **The two writes' four halves are the forty-fourth to forty-seventh**
-    // (MW1 and MW2, D2903): `models.add.plan` and `models.add`, then
-    // `image.add.plan` and `image.add`. Each pair is here for `settings.edit`'s
-    // reason -- neither write is in `REDUCED_VIEW_OPERATIONS`, and the mode
-    // withholds figures rather than writes, so whether a write may be offered at
-    // all is the lapse's own gate (`refusedAfterLapse`, tested below) rather
-    // than this one -- and for `apply.pending`'s: what a reduced console holds
-    // when it asks for one of these is a **plan**, whose dry run reaches a child
-    // that writes nothing and prints a document of the repository's own state.
-    // Withholding either pair would take the write away from a console that can
-    // still read the catalog it edits.
+    // The two writes' four halves are the forty-fourth to forty-seventh (MW1
+    // and MW2, D2903), each pair open for `settings.edit`'s reason.
     expect(THE_OPEN_OPERATIONS.length).toBe(47)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {

@@ -3,6 +3,7 @@ package credsvc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/identitywire"
@@ -10,14 +11,13 @@ import (
 
 // IdentityConfig is the service's identity configuration (C1): what
 // `credentials serve` reads out of its environment into it (LM22) and what the
-// five identity routes are served from (identitywire, R2).
+// identity routes are served from (identitywire, R2).
 //
 // Its zero value is an installation that has not been given an issuer yet, and
-// that is a state of its own and not an error: from this release on the five
-// routes are mounted in every service, and one with no signer answers the
-// contract's "not served" (R7, I1) — the answer a CLI of this release bridges
-// on and signs a run's identity locally with, as long as the people's grant is
-// still there.
+// that is a state of its own and not an error: from this release on the routes
+// are mounted in every service, and one with no signer answers the contract's
+// "not served" (R7, I1) — the answer a CLI of this release bridges on and signs
+// a run's identity locally with, as long as the people's grant is still there.
 type IdentityConfig struct {
 	// Signer is the service account the runs' identities are signed as: the
 	// account the installation's Firebase root holds the one minter row for
@@ -45,6 +45,53 @@ type IdentityConfig struct {
 	// Scope is the launch-scope check (R16, LM23), with the orchestrator's
 	// class judged by LM24 behind this same hook.
 	Scope ScopeCheck
+	// VMIdentity is the link from a claiming VM to the Batch job the record
+	// names (C1, BR3): the one question the claim cannot answer itself, and the
+	// interface BR3 implements from the fact Check 830 recorded (R1, U1, D3102).
+	//
+	// A nil link is an installation whose link is not wired, and that is a state
+	// of its own and not an error, exactly as an empty Signer is: the claim is
+	// then answered the contract's "not served" (identitywire.RefusalNotServed,
+	// R7), because a VM nothing proved is no VM of any job and a claim the
+	// service cannot judge must not be served on the account check alone
+	// (D3114). Nothing falls back, and no deployment is configured with a
+	// permissive link.
+	VMIdentity identitywire.VMIdentity
+}
+
+// ErrClaimAttestation is the refusal C1's rule is about (D3114, R18): a record
+// that names a Batch job is served only to a VM of that job, and a claim on it
+// that carries no attestation — or carries something that is no identity token
+// at all — is refused before the installation is read at all.
+//
+// It is one sentinel for both spellings of the same fault, and it never carries
+// the attestation: what the claim sent is a credential of the VM and reaches no
+// error, no log line and no audit line (R7).
+var ErrClaimAttestation = errors.New("credsvc: a claim on a record that names a job must carry the claiming VM's attestation")
+
+// CheckClaimAttestation judges the claim's own shape against the record it is
+// made on, and it is asked BEFORE anything of the installation is read: the
+// record's job decides whether an attestation is needed at all (D3114), and a
+// claim that failed here is the ask's own fault and not a read that failed.
+//
+// A record that names no job is a Cloud Run run's and passes: its claim is the
+// claim of the release behind, and the account check is the whole of it (R18).
+// Where a job IS named, the attestation must be there and must be shaped like
+// the metadata server's identity token (Attestation.WellFormed), which is a
+// spelling check and not a proof: which VM it names and which job that VM
+// belongs to are the link's (IdentityConfig.VMIdentity), and nothing here
+// decides them.
+func CheckClaimAttestation(rec identitywire.Record, attestation identitywire.Attestation) error {
+	if !rec.NamesAJob() {
+		return nil
+	}
+	switch {
+	case attestation == "":
+		return fmt.Errorf("%w: this record names a job and the claim carries no attestation field", ErrClaimAttestation)
+	case !attestation.WellFormed():
+		return fmt.Errorf("%w: what this claim carries is not an identity token of the metadata server's shape", ErrClaimAttestation)
+	}
+	return nil
 }
 
 // IdentityCaller is a caller the service verified (LM3): the address its own
@@ -107,9 +154,9 @@ type ScopeCheck interface {
 
 // ErrStubIdentity is what the identity stub decides, which is nothing: every
 // answer of it is this error, so that a route built on it refuses rather than
-// serving a caller, a run or a ticket the stub invented. It is the rule the
-// scope stub already follows (errStubScope): a stub that answered a question
-// would be a decision nothing made.
+// serving a caller, a run or a ticket the stub invented. It is the rule every
+// stub of this package follows: a stub that answered a question would be a
+// decision nothing made.
 var ErrStubIdentity = errors.New("credsvc: the identity stub decides nothing")
 
 // stubIdentityStore is the issuance store of a side built before LM1 exists.

@@ -127,6 +127,24 @@ func TestContractShapes(t *testing.T) {
 		})
 	})
 
+	t.Run("summary omits the compute figure when none is known", func(t *testing.T) {
+		// contract-index.md says `compute_micros` is *absent* when no run's
+		// compute is known, and the zero value of the field is exactly that
+		// state: a write that spelled it `null` would be a shape the document
+		// does not describe, and "not estimated" read as a figure.
+		data, err := json.Marshal(Summary{Version: Version, States: map[string]int64{}})
+		if err != nil {
+			t.Fatalf("marshalling a summary with no compute figure: %v", err)
+		}
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatalf("unmarshalling the summary as a document: %v", err)
+		}
+		if _, ok := doc["compute_micros"]; ok {
+			t.Errorf("a summary with no compute figure carries %q: %s", "compute_micros", data)
+		}
+	})
+
 	t.Run("cursor", func(t *testing.T) {
 		for _, want := range []Cursor{
 			{UpdatedAt: &updated, RunID: "20261120-093000-a1b2"},

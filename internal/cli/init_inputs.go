@@ -45,10 +45,10 @@ import (
 // LP1). The region is the one setting an installation stores; the place is
 // derived from it (D3080), and a region typed in full (--region) settles both.
 //
-// It is not the Firestore database's location (infra.FirestoreLocation, C1),
-// which is permanent and is confirmed by typing it: the two hold the same
-// value because us-east5 is where the mapping puts a US installation's
-// history database (D3085), and neither is derived from the other.
+// It is not the Firestore database's location (C1), which is permanent and is
+// the person's own confirmation at the terminal: us-east5 is where the mapping
+// puts a US installation's history database (D3085), which is the same value
+// this holds, and neither is derived from the other.
 var defaultRegion = place.DefaultRegion(place.US)
 
 // regionRE is the shape of a Google Cloud region (us-east5, europe-west4).
