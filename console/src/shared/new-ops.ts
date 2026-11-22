@@ -43,9 +43,9 @@
 // them. Everything a screen reads -- the rows, the `end`, the failure -- is
 // derived from those lines here, in one place, rather than by each reader
 // slicing an array of its own. A one-shot read's `document` is the CLI's own
-// document, unchanged, which is what makes I-OPS's job possible: a stub fixture
-// for a feed is the golden's own lines, and a stub fixture for a read is the
-// golden's own document.
+// document, unchanged, which is what makes I-OPS's job possible: a fixture for a
+// feed is the golden's own lines, and a fixture for a read is the golden's own
+// document.
 //
 // **The answer envelope.** Every operation's reply is the console's ordinary one
 // (`ConsoleReply`, `src/main/ipc.ts`): `{ok: true, data}` or

@@ -4170,8 +4170,8 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // nine with `refusedAfterLapse`) and the settings editor's window -- the one
   // operation of the nine whose `command` is `null`. Every one of them is inert
   // until the CLI release that carries its flags, which is why the floors in
-  // `src/shared/version.ts` are `null` and the handlers answer 'not available in
-  // this build' until I-OPS registers the real ones.
+  // `src/shared/version.ts` are `null` and the real handler behind each (I-OPS's
+  // `src/main/handlers.ts`) refuses in its own flow's words.
   ['runs.stream', 'streamRuns'],
   ['spend.stream', 'streamSpend'],
   ['budget.stream', 'streamBudget'],

@@ -6434,8 +6434,8 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
 
   it('draws the operation’s own gap sentence for a bridge that cannot answer, and no claim about a write', async () => {
     // `newOpsFrom` turns a bridge with no member for the operation into the
-    // contract's own `not-available` gap (`new-ops.ts`): a console whose
-    // operation is unregistered -- AL's stub, until I-OPS swaps it -- draws a
+    // contract's own `not-available` gap (`new-ops.ts`): a console whose row is
+    // not there -- an older preload, a build with no such operation -- draws a
     // read this build cannot make, and the row never says a write happened.
     const { bridge, calls } = fakeBridge({
       replies: {
