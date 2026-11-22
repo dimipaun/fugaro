@@ -166,6 +166,8 @@ import {
   COORDINATOR_TASKS_BUSY,
   COORDINATOR_TASKS_CLASS,
   COORDINATOR_TASKS_EMPTY_CLASS,
+  COORDINATOR_TASKS_EMPTY_WORD,
+  COORDINATOR_TASKS_NOT_UP_WORD,
   COORDINATOR_TITLE,
   COORDINATOR_TITLE_CLASS,
 } from '../../src/renderer/screens/coordinator'
@@ -7999,5 +8001,39 @@ describe('the Coordinator’s map read, above its version floor', () => {
     second.release({ ok: true, data: { document: tasksDocument('the answer for repo-a~auth') } })
     await flush()
     expect(holdsText(panelOf(document), 'the answer for repo-a~auth'), 'the open panel drew no tasks').toBe(true)
+  })
+
+  it('says an orchestrator whose own source is not up, and never that it holds nothing', async () => {
+    // The read answered and the document's own `sources[]` row for the scope is
+    // not `up`: an empty `nodes[]` there is a stream nobody could read, and the
+    // empty sentence would report it as an orchestrator doing nothing (H3).
+    const map = holding()
+    const tasks = holding()
+    const { document } = await openCoordinator({
+      orchestratorMap: () => map.reply(),
+      graphRead: () => tasks.reply(),
+    })
+    map.release({ ok: true, data: { document: COORDINATOR_MAP } })
+    await flush()
+
+    boxFor(document, 'repo-a').click()
+    await flush()
+    tasks.release({
+      ok: true,
+      data: {
+        document: {
+          ...graphDocument(),
+          nodes: [],
+          sources: [
+            { source: 'orchestrator:repo-a', state: 'down', as_of: null, reason: 'the stream was withdrawn' },
+          ],
+        },
+      },
+    })
+    await flush()
+    expect(textIn(panelOf(document), COORDINATOR_TASKS_EMPTY_CLASS)).toBe(
+      `${COORDINATOR_TASKS_NOT_UP_WORD}: down — the stream was withdrawn`,
+    )
+    expect(holdsText(panelOf(document), COORDINATOR_TASKS_EMPTY_WORD)).toBe(false)
   })
 })

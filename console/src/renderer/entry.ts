@@ -7268,13 +7268,18 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    *
    * The selection is checked again after the await, because the operator can
    * open a second box while the first read is out: an answer for a panel that is
-   * no longer open is dropped rather than drawn over the one that is. */
+   * no longer open is dropped rather than drawn over the one that is.
+   *
+   * The scope is handed to `coordinatorTasks` as well as to the read, because
+   * the document's own `sources[]` row for it is what tells an orchestrator
+   * holding nothing from one whose stream could not be read (H3). */
   const loadCoordinatorTasks = async (
     screen: CoordinatorScreen,
     mine: number,
     id: string,
   ): Promise<void> => {
-    const answer = documentOf(await bridge.graphRead({ source: `orchestrator:${id}` }))
+    const scope = `orchestrator:${id}`
+    const answer = documentOf(await bridge.graphRead({ source: scope }))
     if (stale(mine) || screen.current.selected !== id) return
     if (!answer.ok) {
       drawCoordinator(screen, mine, screen.tasksRefused(answer.sentence))
@@ -7285,7 +7290,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       drawCoordinator(screen, mine, screen.tasksRefused(decoded.skew.because))
       return
     }
-    drawCoordinator(screen, mine, screen.tasksDrawn(coordinatorTasks(decoded.value)))
+    const read = coordinatorTasks(decoded.value, scope)
+    drawCoordinator(
+      screen,
+      mine,
+      read.kind === 'refused' ? screen.tasksRefused(read.sentence) : screen.tasksDrawn(read.tasks),
+    )
   }
 
   /** openCoordinatorTasks opens one orchestrator's panel: the press is answered

@@ -96,6 +96,7 @@ import {
   COORDINATOR_TASKS_CLOSE_WORD,
   COORDINATOR_TASKS_EMPTY_CLASS,
   COORDINATOR_TASKS_EMPTY_WORD,
+  COORDINATOR_TASKS_NOT_UP_WORD,
   COORDINATOR_TASKS_WORD,
   COORDINATOR_TASKS_WORD_CLASS,
   COORDINATOR_THEMES,
@@ -119,6 +120,7 @@ import {
 import type {
   CoordinatorModel,
   CoordinatorPicture,
+  CoordinatorTask,
   CoordinatorTheme,
   ScreenElement,
   ScreenFactory,
@@ -353,6 +355,32 @@ function itemsDecoded(raw: unknown): GraphView {
   return result.value
 }
 
+/** scopeOf is the graph scope the drill-down reads one orchestrator through,
+ * spelled as the entry spells it for the read itself: the scope is what the
+ * document's own `sources[]` row is matched against, so a case that spelled it
+ * another way would be asking about a scope the read never named. */
+function scopeOf(id: string): string {
+  return `orchestrator:${id}`
+}
+
+/** tasksOf is one document's rows through `coordinatorTasks`, for the cases
+ * whose scope answered `up` (or listed no source of its own): the rows are the
+ * whole answer there, and a refusal is a case of its own below. */
+function tasksOf(view: GraphView): readonly CoordinatorTask[] {
+  const read = coordinatorTasks(view, scopeOf('repo-a~auth'))
+  if (read.kind === 'refused') throw new Error(read.sentence)
+  return read.tasks
+}
+
+/** withSource is one orchestrator document with its own `sources[]` row set: the
+ * scope the drill-down read, in the state and with the reason a case is about. */
+function withSource(raw: unknown, state: string, reason: string): unknown {
+  return {
+    ...(raw as Record<string, unknown>),
+    sources: [{ source: scopeOf('repo-a~auth'), state, as_of: null, reason }],
+  }
+}
+
 /** positionsFor is a layout covering a model: every node placed in a row, every
  * edge routed. The ids are the screen's own (`coordinatorLayout`'s), so a case
  * about the drawing is not also a case about the worker's id format. */
@@ -500,10 +528,45 @@ describe('the Coordinator tab as a graph (CG7b, D3210)', () => {
     })
 
     it('reads one orchestrator document as the drill-down rows, in its own order', () => {
-      const tasks = coordinatorTasks(itemsDecoded(ITEMS))
+      const tasks = tasksOf(itemsDecoded(ITEMS))
       expect(tasks).toEqual([
         { key: 'plan-1/task-1', title: 'a task being worked', state: 'running', repo: 'owner/repo-a' },
       ])
+    })
+
+    it('says the source is not up, and why, instead of calling a stream nobody read a quiet one', () => {
+      // H3 and json-contract §6.22: a scope whose own source is not `up` answers
+      // with no item for a reason of its own. Drawn as the empty sentence it
+      // would report a stream nobody could read as an orchestrator doing
+      // nothing, which is the one reading a reader acts on by doing nothing.
+      const view = itemsDecoded(withSource(ITEMS, 'down', 'the stream was withdrawn'))
+      const read = coordinatorTasks(view, scopeOf('repo-a~auth'))
+      expect(read).toEqual({
+        kind: 'refused',
+        sentence: `${COORDINATOR_TASKS_NOT_UP_WORD}: down — the stream was withdrawn`,
+      })
+      const tree = renders(pictureOf(MAP, { selected: 'repo-a~auth', tasks: read }))
+      expect(textOf(tree, COORDINATOR_TASKS_EMPTY_CLASS)).toBe(
+        `${COORDINATOR_TASKS_NOT_UP_WORD}: down — the stream was withdrawn`,
+      )
+      expect(drawn(tree)).not.toContain(COORDINATOR_TASKS_EMPTY_WORD)
+
+      // The state word is drawn whatever it is -- this build has no vocabulary
+      // for the whole set -- and a source that gave no reason draws none.
+      const silent = itemsDecoded(withSource(ITEMS, 'unreadable', ''))
+      expect(coordinatorTasks(silent, scopeOf('repo-a~auth'))).toEqual({
+        kind: 'refused',
+        sentence: `${COORDINATOR_TASKS_NOT_UP_WORD}: unreadable`,
+      })
+
+      // A scope the document lists as `up`, and one it does not list at all,
+      // are read exactly as they were: the rows, and the empty sentence when
+      // there are none.
+      expect(coordinatorTasks(itemsDecoded(withSource(ITEMS, 'up', '')), scopeOf('repo-a~auth'))).toEqual({
+        kind: 'drawn',
+        tasks: [{ key: 'plan-1/task-1', title: 'a task being worked', state: 'running', repo: 'owner/repo-a' }],
+      })
+      expect(coordinatorTasks(itemsDecoded(ITEMS), scopeOf('repo-a~auth')).kind).toBe('drawn')
     })
   })
 
@@ -833,7 +896,7 @@ describe('the Coordinator tab as a graph (CG7b, D3210)', () => {
       const tree = renders(
         pictureOf(MAP, {
           selected: 'repo-a~auth',
-          tasks: { kind: 'drawn', tasks: coordinatorTasks(itemsDecoded(ITEMS)) },
+          tasks: { kind: 'drawn', tasks: tasksOf(itemsDecoded(ITEMS)) },
         }),
       )
       const rows = all(tree, COORDINATOR_TASK_CLASS)
@@ -943,7 +1006,7 @@ describe('the Coordinator tab as a graph (CG7b, D3210)', () => {
       await screen.load(mapDecoded(MAP))
       const opened = screen.change('repo-a')
       expect(textOf(opened as ScreenElement, COORDINATOR_TASKS_EMPTY_CLASS)).toBe(COORDINATOR_TASKS_BUSY)
-      const drawn = screen.tasksDrawn(coordinatorTasks(itemsDecoded(ITEMS)))
+      const drawn = screen.tasksDrawn(tasksOf(itemsDecoded(ITEMS)))
       expect(all(drawn as ScreenElement, COORDINATOR_TASK_CLASS)).toHaveLength(1)
       const closed = screen.change(null)
       expect(all(closed as ScreenElement, COORDINATOR_TASKS_CLASS)).toHaveLength(0)

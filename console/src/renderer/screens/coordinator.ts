@@ -168,6 +168,19 @@ export const COORDINATOR_UNKNOWN_DRIVER_WORD = 'driver unknown'
 export const COORDINATOR_TASKS_WORD = 'live tasks'
 export const COORDINATOR_TASKS_EMPTY_WORD = 'this orchestrator holds no live task'
 
+/** COORDINATOR_TASKS_NOT_UP_WORD is what the drill-down says when the read
+ * answered, and the orchestrator's own row in the document's `sources[]` says
+ * that source is not `up`: `down`, `stale`, `unreadable`, or a word this build
+ * has no vocabulary for. The document's own state word and the reason it gave
+ * are drawn beside this sentence.
+ *
+ * **A source that is not up is not an orchestrator holding nothing** (H3, and
+ * `console/docs/json-contract.md` §6.22): a stream nobody could read answers
+ * with no item for a reason of its own, and the empty sentence would report it
+ * as a quiet one -- the one reading of this panel a reader would act on by
+ * doing nothing. */
+export const COORDINATOR_TASKS_NOT_UP_WORD = 'this orchestrator’s own source is not up'
+
 /** COORDINATOR_TASKS_CLOSE_WORD is the panel's one control: a node press opens
  * the panel, and this closes it. It is the console's own word, so `literal` is
  * the only writer it needs. */
@@ -397,18 +410,55 @@ export interface CoordinatorTask {
   readonly repo: string
 }
 
+/** CoordinatorAnswer is what one orchestrator's own read is drawn as: the rows
+ * its document holds, or the sentence for a scope whose own source is not up.
+ * It is narrower than `CoordinatorTasks` because a read that answered is never
+ * `reading` and never `closed`. */
+export type CoordinatorAnswer =
+  | { readonly kind: 'drawn'; readonly tasks: readonly CoordinatorTask[] }
+  | { readonly kind: 'refused'; readonly sentence: string }
+
+/** COORDINATOR_SOURCE_UP is the one state a scope's `sources[]` row can carry
+ * that means its answer is this document's own. Every other word -- `down`,
+ * `stale`, `unreadable`, and any word this build has no vocabulary for -- is a
+ * source that is not answering now, and the contract deliberately leaves the set
+ * open (`schema.ts`). It is a copy of `graph/model.ts`'s private `SOURCE_UP`
+ * rather than an import: this screen draws from the document and not from the
+ * Graph screen's model, and the two are siblings that own neither each other nor
+ * the CLI's word. */
+const COORDINATOR_SOURCE_UP = 'up'
+
 /** coordinatorTasks reads one `graph.read --source orchestrator:<id>` document
- * as the drill-down's rows, in the document's own order. Every node that
+ * as the drill-down's own state, in the document's own order. Every node that
  * document holds is one of the orchestrator's items: the scope read is that
  * orchestrator's own state node, so the console filters nothing out of it and
- * adds no row of its own. */
-export function coordinatorTasks(view: GraphView): readonly CoordinatorTask[] {
-  return view.nodes.map((node) => ({
-    key: node.key,
-    title: node.title,
-    state: node.state,
-    repo: node.repo,
-  }))
+ * adds no row of its own.
+ *
+ * **`scope` is the scope the read was made with**, and the document's `sources[]`
+ * row carrying it is what decides whether an empty `nodes[]` means "no live
+ * task" or "nobody could read this stream": a row whose `state` is not `up` is
+ * drawn as its state word and reason, and never as the empty sentence. A
+ * document that lists no row for the scope is read as it always was -- this
+ * build knows no reason to doubt a scope the CLI answered about, and inventing
+ * one would draw a doubt the document never stated. */
+export function coordinatorTasks(view: GraphView, scope: string): CoordinatorAnswer {
+  const source = view.sources.find((entry) => entry.source === scope)
+  if (source !== undefined && source.state !== COORDINATOR_SOURCE_UP) {
+    const reason = source.reason === '' ? '' : ` — ${source.reason}`
+    return {
+      kind: 'refused',
+      sentence: `${COORDINATOR_TASKS_NOT_UP_WORD}: ${source.state}${reason}`,
+    }
+  }
+  return {
+    kind: 'drawn',
+    tasks: view.nodes.map((node) => ({
+      key: node.key,
+      title: node.title,
+      state: node.state,
+      repo: node.repo,
+    })),
+  }
 }
 
 /** CoordinatorTasks is the drill-down's own state: closed, reading, drawn, or
