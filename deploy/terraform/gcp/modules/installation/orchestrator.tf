@@ -109,6 +109,15 @@ locals {
   # because the URI is composed from the service's own URL, and it is pinned in
   # internal/infra/tf's cover_test.go against the route the case accepts.
   orchestrator_tick_path = "/tick"
+
+  # The service's deterministic URL, <service>-<project number>.<region>.run.app,
+  # which Cloud Run answers on beside the `.uri` attribute's
+  # <service>-<hash>-<region code>.a.run.app form and accepts as an ID token's
+  # audience. The tick is written from this one rather than from `.uri` because
+  # the managed gate's cover can read a project number and a region out of this
+  # form and nothing out of the hash (internal/infra/tf's orchestratorTickURI).
+  # The audience is the URL without the route.
+  orchestrator_url = local.orchestrator_on ? "https://${var.orchestrator.service}-${data.google_project.this[0].number}.${var.region}.run.app" : ""
 }
 
 # The identity itself. Nothing is granted actAs on it: executing the service
@@ -541,15 +550,12 @@ resource "google_cloud_run_v2_service_iam_member" "orchestrator_credentials_invo
 #
 # It is an HTTP target on the service's own URL, not the run API: a Cloud Run
 # *service* is invoked through its URL, and that URL is what Cloud Run's IAM
-# check reads `roles/run.invoker` against. `.uri` is a computed attribute, so
-# this is the one place in this module where a scheduler job's URI is read off
-# the resource it calls rather than written from var.project and the resource's
-# name — and it is deliberate: the URL is assigned by Cloud Run and no expression
-# can spell it (coordinator.tf writes the run API's path because a job's location
-# and name ARE knowable), so writing it out would be a second spelling of a name
-# only Cloud Run has. The audience is that same URL and not a second copy of it:
-# Cloud Run refuses an ID token whose audience is not the service's own URL, so
-# the two are one expression or the job authenticates against nothing.
+# check reads `roles/run.invoker` against. The URL is the deterministic one
+# (local.orchestrator_url, whose comment says why it is not the `.uri`
+# attribute). The audience is that same URL without the route and not a second
+# spelling of it: Cloud Run refuses an ID token whose audience is not the
+# service's own URL, so the two come from one expression or the job
+# authenticates against nothing.
 #
 # The token is an OIDC ID token, where every other tick in this tree carries an
 # OAuth access token: the run API takes an access token, and a run.app URL takes
@@ -581,11 +587,11 @@ resource "google_cloud_scheduler_job" "orchestrator_tick" {
 
   http_target {
     http_method = "POST"
-    uri         = "${google_cloud_run_v2_service.orchestrator[0].uri}${local.orchestrator_tick_path}"
+    uri         = "${local.orchestrator_url}${local.orchestrator_tick_path}"
 
     oidc_token {
       service_account_email = google_service_account.scheduler.email
-      audience              = google_cloud_run_v2_service.orchestrator[0].uri
+      audience              = local.orchestrator_url
     }
   }
 

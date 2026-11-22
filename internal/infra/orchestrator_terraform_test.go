@@ -354,6 +354,20 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		}
 	}
 
+	// The tick is written from the service's deterministic URL, and the cover
+	// holds it by the service's name (tf.orchestratorServiceName), so the name
+	// the module renders is the one the installation's block carries. A value
+	// the plan cannot read yet is the project number's own read at apply.
+	if ht, _ := on[tickAddr].After["http_target"].([]any); len(ht) == 1 {
+		m, _ := ht[0].(map[string]any)
+		if uri, ok := m["uri"].(string); ok {
+			prefix := "https://" + OrchestratorServiceName + "-"
+			if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, ".run.app/tick") || strings.Contains(uri, ".a.run.app") {
+				t.Errorf("%s: uri is %q, want %s<project number>.<region>.run.app/tick — the form the managed gate's cover reads, not Cloud Run's own .uri", tickAddr, uri, prefix)
+			}
+		}
+	}
+
 	// And the run's one confirmation: `fugaro update` may not turn an
 	// installation's own opt-in into a question the owner has to answer item by
 	// item. Other rows of this plan may legitimately be refused (the store's own
