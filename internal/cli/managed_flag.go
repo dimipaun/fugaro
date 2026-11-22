@@ -130,12 +130,11 @@ with --budget and --budget-currency. Both have defaults — 100 USD — so the
 command with no flags records a figure rather than asking for one (design
 D2212 and D2211). The amount is the budget ALERT amount the installation's
 Terraform creates and nothing else — this command does not create or change a
-budget, and it makes no billing call. The alert follows what the installation's
-update is given and not this object: nothing reads the recorded amount back for
-the alert, so a figure this command records or rewrites reaches the alert only
-when the update is given the same one — fugaro update --budget N
---budget-currency CCC --billing-account ID. Nothing else is a question: the
-bound on
+budget, and it makes no billing call. The alert itself is the installation's
+own Terraform and belongs to the fugaro update that applies it, not to this
+object — fugaro update --budget N --budget-currency CCC --billing-account ID
+applies the amount this command records. Nothing else is a question: the bound
+on
 billable image builds this object used to record (D1013) is gone (D1543), so
 there is no count to ask the owner for and none to write, exactly as fugaro
 setup asks for none.
@@ -502,14 +501,14 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	fmt.Fprintf(out, "%s, and its applies no longer stop for the typed confirmation; the gate, the owner's delete list and the recorded budget %d %s are what replace it\n",
 		wrote, budget.Amount, safetext.Field(budget.Currency))
 	if fact.Ours {
-		// The alert is the installation's own Terraform, and nothing reads a
-		// recorded amount back for it, so a plain update applies the
-		// installation with no budget and the figure printed above is carried
-		// by the update's own flags and by nothing else. The sentence names
-		// them — with this figure — because a person who changed the amount has
-		// to be told what sets it, and it is printed on this path alone, so a
-		// creation is not told about a change it did not make.
-		fmt.Fprintf(out, "the budget ALERT is not changed here: it is the installation's own Terraform, and no run reads this object back for it, so the alert is whatever the installation's next `fugaro update` is given — `fugaro update --budget %d --budget-currency %s --billing-account ID` sets it to the figure above\n",
+		// The alert is the installation's own Terraform, and what sets it is
+		// the update that applies the installation — not this object. The
+		// sentence names that invocation with this figure, because a person who
+		// changed the amount has to be told what sets it; it says nothing about
+		// what an update reads for itself, which is the update's business. It is
+		// printed on this path alone, so a creation is not told about a change
+		// it did not make.
+		fmt.Fprintf(out, "the budget ALERT is not changed here: it is the installation's own Terraform, and the `fugaro update` that applies the installation is what sets it — `fugaro update --budget %d --budget-currency %s --billing-account ID` applies the figure above\n",
 			budget.Amount, safetext.Field(budget.Currency))
 	}
 	// The undo names both marks, because this command writes both (Task 3.0):
