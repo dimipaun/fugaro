@@ -537,7 +537,10 @@ kills the process mid-loop and restarts it.
   deletion-set test, and it is the rule this ruling exists to state rather than leave implied.
   **And the sweeper never answers**: expiring a prompt and delivering its safe answer is the
   consumer's, on its own clock, because a sweep can run while the consumer is down (P6.13's reason,
-  P6.7's work — M3).
+  P6.7's work — M3). **And it is not a second writer of the state §6 gives the consumer**: the two
+  files have one writer at a time, so the local half is **refused** — naming the process to wait for
+  and exiting 1 — while a consumer holds them, and a consumer starting inside that half is refused in
+  turn; the store half is not fenced by it, because it touches no file of the consumer's.
   Hidden because it is internal — and because a hidden command is not user documentation, which is
   exactly what `internal/clidoc`'s skip rule is for.
 
@@ -812,8 +815,8 @@ subcommand of it, so it needs no line of its own. What that line drags with it, 
 | The lease, and presence | `mailbox/$mb/heartbeat` = `{at, boot, mac}` (and `agents`, which is P6.7's to advertise — D161) | the consumer, under the **operator's ADC** (C0) — the phone **reads** it, and the consumer's own read of the ETag is an **ADC** read for the same reason: no grant admits it | ETag conditional write (M1); `boot` names the holder; **signed** with direction `heartbeat` (M4b) |
 | The consumer's answers | `mailbox/$mb/outbox/$msg` = `{id, sender, text, at, mac}` (+ `kind`, `reply_to`, `agent` as the message needs) | the consumer, under the same ADC | create-only **in code** (C0: an ADC write is not fenced by the grant); **signed** with direction `outbox` (M4b) |
 | The phone's receipt that an answer was spoken | `mailbox/$mb/outbox/$msg/acked` | **the phone** (`MAILBOX`) | not this command's (C2) |
-| The dedupe ledger, the actions performed, the window state | `$XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json` | the consumer | tmp+rename, `0o600` — the *prefix* and the discipline are `internal/watch/acks.go`'s (`AckPath` is the single file `…/fugaro/watch-acks.json`); the `<project>` level is **new here** (M7) |
-| Prompts waiting for an answer | `$XDG_STATE_HOME/fugaro/mailbox/<project>/pending.json`, holding `shared/prompts`'s queue | the consumer | same; the entry's shape is P6.5's (M3, M7) |
+| The dedupe ledger, the actions performed, the window state | `$XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json` | the consumer — and `fugaro mailbox sweep`'s local half, **only** while no consumer holds this machine's state | tmp+rename, `0o600` — the *prefix* and the discipline are `internal/watch/acks.go`'s (`AckPath` is the single file `…/fugaro/watch-acks.json`); the `<project>` level is **new here** (M7). The two writers exclude each other by the state lock beside both files — the consumer holds it shared for the life of its process and the sweep takes it exclusive across its own half, so each is **refused** (with the process to wait for) rather than allowed to commit a set read before the other's write, which would drop a delivery the consumer had already accepted |
+| Prompts waiting for an answer | `$XDG_STATE_HOME/fugaro/mailbox/<project>/pending.json`, holding `shared/prompts`'s queue | the consumer — and `fugaro mailbox sweep`'s local half, **only** while no consumer holds this machine's state | same; the entry's shape is P6.5's (M3, M7); the same state lock fences the two writers (see the ledger's row) |
 | The keychain **item name** | the project's local config block (`internal/localcfg`) | the operator | plain config, **not secret**, and it may be printed (M5) |
 | The **pairing key** | the OS keychain, read by that item name (P6.6 generates it there) | the OS, then never written | read once per pairing, memory only, never printed (M5) |
 | The **presence verdict** | **nowhere** — computed, never written | — | `shared/presence`'s `evaluatePresence` is a pure function and **no node and no grant** is designated for its output; the sweeper prints it and writes nothing (§4.2) |
@@ -1258,7 +1261,8 @@ table that can be walked around is not a fence.
 ### Task T7: The hidden sweeper, D118's TTL and the reported presence verdict
 
 **Files.** `internal/cli/mailbox.go`'s hidden `sweep` command + `internal/cli/mailbox_sweep_test.go`;
-`internal/mailbox/expiry.go` (new) + `expiry_test.go` (new).
+`internal/mailbox/expiry.go` (new) + `expiry_test.go` (new); `internal/mailbox/statelock.go` (new,
+added by review — see the paragraph below) + `statelock_test.go`.
 **Depends on.** T4; T5 (the surface and the hidden-command rule); **M3** (`shared/prompts`' number),
 **M8** and **§6** (the remit and the delete set); D118, D168 as amended, D173; `shared/presence`;
 `shared/prompts` (**merged**). The store-side half of the sweeper is **P6.13's** and is not built
@@ -1271,6 +1275,12 @@ nothing stored for this command to delete and the deletion of a stored prompt is
 and it **never answers a conversation** (P6.13's own rule): the consumer expires a prompt and
 delivers its safe answer, the sweeper reads and deletes. It computes and **reports** the presence
 verdict and writes nothing for it, because no node and no grant is designated for one (§4.2).
+**And it is not a second writer of that state** (added by review): §6 gives the consumer both files
+and it holds what it read in memory for the life of its process, so the sweep takes this machine's
+state lock around the whole of its local half — the consumer holds it shared for the life of its
+process, so the store's lease stays the fence between two consumers (M1), and a sweep takes it
+exclusive — and is **refused**, with the process to wait for, while a consumer holds it. The store
+half is not fenced: it touches no file of the consumer's.
 **Verification.** `GOFLAGS=-p=2 go test ./internal/cli ./internal/mailbox -run 'Sweep|Expiry' -count=1`:
 `fugaro mailbox sweep` is **absent** from `website/content/cli-reference.md` (asserted, its own
 test, the `newBudgetHistoryCmd` precedent); the expiry boundary is exact and the Go constant
@@ -1285,7 +1295,10 @@ that records every deletion, and the record is empty — and the set it would de
 name **no `m~…` and no `r~…` key**, so the `m~` rule P6.6 owns (in `internal/budget/sweep.go`,
 approved and not built) is **refused and reported** if it ever appears, never performed (M8);
 **`TestSweeperNeverAnswers`** asserts no outbox write and no "answered" ledger row from a sweep
-whose set held an expired prompt.
+whose set held an expired prompt; and the **one writer at a time** rule is asserted both ways —
+a sweep whose local half has work refuses it (exit 1, naming the process) while a consumer's lock
+is held, leaves both files byte for byte as they were, and still deletes the stored prompt past
+the TTL, while a consumer that starts inside a sweep's half is refused in turn.
 **Red step.** (a) Change the TTL to 6 hours and watch `TestPromptExpiresAt72h` fail (the assertion
 is against `PROMPT_TTL_MS`, not against a literal — this is M3's mutation, and it is what proves
 the plan did not declare the number of its own); (b) unhide the sweeper and watch the reference
