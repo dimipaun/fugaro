@@ -41,6 +41,19 @@ func haltAfter(b *handleBox, s step) step {
 	}
 }
 
+// oauthPRHarness is prHarness on the credential whose stages' own reports are
+// the run's model figure: the halt report says what the run spent when it
+// stopped, and a run behind a gateway takes that figure from its ledger, which
+// a scripted agent — one that makes no call — leaves at zero (AB1b, D3009,
+// C1.16). The stop, the draft pull request and the checkpoint are the same
+// whatever credential served the stages.
+func oauthPRHarness(t *testing.T, cfg string) *harness {
+	t.Helper()
+	h := prHarness(t, oauthCfg(t, cfg))
+	oauthEnv(h)
+	return h
+}
+
 // leaveFile writes a file and leaves it uncommitted.
 func leaveFile(name string) step {
 	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
@@ -60,8 +73,14 @@ func lastComment(t *testing.T, h *harness) string {
 
 func TestHaltMidImplementOpensDraft(t *testing.T) {
 	b := newHandleBox(t)
-	h := newHarness(t, "", nil)
-	rec, err := h.run(t, haltAfter(b, leaveFile("partial.txt")))
+	// The halt line names what the run spent, which a subscription run's line
+	// leaves out (haltLines): this one is an api-key run, so the stage makes
+	// the call its ledger charges it for — $0.04 for 4,000 output tokens on
+	// sonnet (out4k, AB1b, D3009, C1.16).
+	var statuses []int
+	g := newGW(t, "", "observe", "", out4k())
+	h := g.harness
+	rec, err := h.run(t, haltAfter(b, calling(&statuses, leaveFile("partial.txt"), call{sonnet, 4096})))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +97,7 @@ func TestHaltMidImplementOpensDraft(t *testing.T) {
 		t.Fatal("PR is not a draft")
 	}
 	lines := strings.Split(lastComment(t, h), "\n")
-	if !strings.HasPrefix(lines[0], "### Fugaro run `"+task.ShortRun(runID)+"`") || lines[1] != "" || !strings.HasPrefix(lines[2], "**Halted:** the per-run dollar cap was reached (run spent $5.00 of $5.00) at 2026-09-30 10:00:00 UTC — this run spent $1.00.") {
+	if !strings.HasPrefix(lines[0], "### Fugaro run `"+task.ShortRun(runID)+"`") || lines[1] != "" || !strings.HasPrefix(lines[2], "**Halted:** the per-run dollar cap was reached (run spent $5.00 of $5.00) at 2026-09-30 10:00:00 UTC — this run spent $0.04.") {
 		t.Fatalf("report starts:\n%s", strings.Join(lines[:4], "\n"))
 	}
 	if !strings.Contains(lastComment(t, h), "budget.per_run_usd") || !strings.Contains(lastComment(t, h), "fugaro run --pr 1") {
@@ -98,7 +117,7 @@ func TestHaltMidImplementOpensDraft(t *testing.T) {
 // the report is on the pull request before the halted stage has returned.
 func TestGovernanceHaltWritesCheckpoint(t *testing.T) {
 	b := newHandleBox(t)
-	h := prHarness(t, prCfg(t, 2, ""))
+	h := oauthPRHarness(t, prCfg(t, 2, ""))
 	var during string
 	halt := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		if !b.h.GovernanceHalt(ctx, runstore.HaltFanout, "review spawned 7 sub-agents of 5") {
@@ -161,7 +180,7 @@ func TestGovernanceHaltWritesCheckpoint(t *testing.T) {
 // stopped is still unwinding, and the run's final one, which replaces it.
 func TestGovernanceHaltDraftsPR(t *testing.T) {
 	b := newHandleBox(t)
-	h := prHarness(t, prCfg(t, 2, ""))
+	h := oauthPRHarness(t, prCfg(t, 2, ""))
 	halt := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		if !b.h.GovernanceHalt(ctx, runstore.HaltFanout, "review spawned 7 sub-agents of 5") {
 			t.Error("GovernanceHalt was refused")
@@ -220,7 +239,7 @@ func TestGovernanceHaltDraftsPR(t *testing.T) {
 // assertion made after the run, which is why this one is made here.
 func TestGovernanceHaltOpensTheDraft(t *testing.T) {
 	b := newHandleBox(t)
-	h := prHarness(t, prCfg(t, 2, ""))
+	h := oauthPRHarness(t, prCfg(t, 2, ""))
 	h.provider.FailEnsure = runner.PRAttempts // the boundary's open fails; the halt's succeeds
 	var during runstore.PRRef
 	halt := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
@@ -686,10 +705,13 @@ func TestViolationReasonNamesModel(t *testing.T) {
 	}
 }
 
-// tokenCfg is the fixture config with agent.max_run_tokens set.
+// tokenCfg is the fixture config with agent.max_run_tokens set, and the pins
+// every run behind a gateway needs: the policy tests write it to a branch
+// themselves, so they never pass through the harness's own call
+// (withFixturePins).
 func tokenCfg(t *testing.T, limit string) string {
 	t.Helper()
-	cfg := testutil.FixtureFiles(t)["fugaro.yaml"]
+	cfg := withFixturePins(testutil.FixtureFiles(t)["fugaro.yaml"])
 	out := strings.Replace(cfg, "  review_rounds: 2\n", "  review_rounds: 2\n  max_run_tokens: "+limit+"\n", 1)
 	if out == cfg {
 		t.Fatal("fixture has no review_rounds line")
