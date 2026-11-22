@@ -23,24 +23,26 @@ func TestTableShapesAreStable(t *testing.T) {
 			Chain: []Source{
 				{Kind: KindLauncherPool},
 				{Kind: KindPool, Pool: "team"},
-				{Kind: KindProvider, Provider: "openrouter", Admit: []string{"fugaro", "website"}},
+				{Kind: KindProvider, Provider: "openrouter", Model: "claude-haiku-4-5", Admit: []string{"fugaro", "website"}},
 				{Kind: KindAnthropic, Admit: []string{"fugaro"}},
-				{Kind: KindVertex, Model: "claude-sonnet-5@20260101"},
+				{Kind: KindVertex},
 			},
 		},
 		{Match: "claude-*", Chain: []Source{{Kind: KindAnthropic, Admit: []string{"fugaro"}}}},
 	}
 
 	// What the shapes write. Every member of every shape appears once, and the
-	// two members that may be absent are absent: a source names one of a pool,
-	// a provider and a model, and an admit list no source carries is not
+	// members that may be absent are absent: a source names one of a pool and a
+	// provider, a source that serves a model other than the one the call asked
+	// for names it in model (the written downgrade — never a spelling, which is
+	// the checked-in map's alone), and an admit list no source carries is not
 	// written at all rather than written empty.
 	const written = `[{"match":"claude-sonnet-5-5","chain":[` +
 		`{"kind":"launcher-pool"},` +
 		`{"kind":"pool","pool":"team"},` +
-		`{"kind":"provider","provider":"openrouter","admit":["fugaro","website"]},` +
+		`{"kind":"provider","provider":"openrouter","model":"claude-haiku-4-5","admit":["fugaro","website"]},` +
 		`{"kind":"anthropic","admit":["fugaro"]},` +
-		`{"kind":"vertex","model":"claude-sonnet-5@20260101"}]},` +
+		`{"kind":"vertex"}]},` +
 		`{"match":"claude-*","chain":[{"kind":"anthropic","admit":["fugaro"]}]}]`
 
 	got, err := json.Marshal(table)
@@ -59,9 +61,9 @@ func TestTableShapesAreStable(t *testing.T) {
     "chain": [
       {"kind": "launcher-pool"},
       {"kind": "pool", "pool": "team"},
-      {"kind": "provider", "provider": "openrouter", "admit": ["fugaro", "website"]},
+      {"kind": "provider", "provider": "openrouter", "model": "claude-haiku-4-5", "admit": ["fugaro", "website"]},
       {"kind": "anthropic", "admit": ["fugaro"]},
-      {"kind": "vertex", "model": "claude-sonnet-5@20260101"}
+      {"kind": "vertex"}
     ]
   },
   {"match": "claude-*", "chain": [{"kind": "anthropic", "admit": ["fugaro"]}]}

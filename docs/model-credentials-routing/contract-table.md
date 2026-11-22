@@ -58,19 +58,34 @@ byte, and that is what `SentStage` decides in one place for the whole contract. 
 CALLER and not about the member, so every member this contract gains later — including any new
 refusal-body member CS1 adds — is covered by it without a second reading of the header.
 
+**What the guard is not: a boundary between the gateway and the agent.** The service reads the stage
+header; it cannot tell a gateway's own from one the agent wrote, because the request-side rule that
+makes the header the gateway's own is CS2's. So a gateway built before CS2 — which is exactly the
+release-behind gateway this rule keeps working — forwards the agent's own `X-Fugaro-Stage` like any
+other header, the service answers it in full, and the gateway passes the three answer headers on to
+the agent. An agent that sends the header therefore reads which credential source served, whether the
+call fell back and which model served, for every call it makes — and D143 is the rule that says it
+must not. Two things bound that and neither removes it: the members carry a name and never a value (a
+pool's name, a provider's name, the served model's canonical id), and the window is the interval
+between a release-behind gateway meeting a service of this contract and that run's image reaching
+CS2. `fugaro update` is the whole of the fix, because CS2's gateway sets the header itself and drops
+the caller's copy, so a gateway of this contract is not one the guard has to protect. Until then the
+guard buys the ordinary case and only that: a release-behind gateway sends no stage header — none of
+them does, unless an agent sends it one — and so meets the answer it meets today. No later task may
+assume the disclosure is closed for a run whose gateway predates CS2.
+
 `model` is not always the model the agent asked for: a source entry may name a model (a written
 downgrade) and a route's own spelling may differ from the canonical one (CS3). Pricing by the
 requested model would charge the wrong model's price, so the served model travels on the answer. The
 agent is shown the model it asked for and never this one.
 
-**The agent never sees any of the three through the gateway.** They are the run's own accounting, they
-join the explicit list in `internal/gateway/forward.go`'s `dropResponseHeaders` (CS2), and they are
-read into the step's record hook below. "Through the gateway" is the whole of it, and the qualifier is
-not hedging: a gateway built before this contract drops the answer headers it knows and passes the
-rest through, so what keeps the agent from reading a `source` is not the drop list but the rule that
-no agent can make the service answer in full at all — the stage header is the gateway's own, and an
-agent's copy of it is dropped before the gateway sets it (*The stage header is the gateway's own*,
-below).
+**The agent never sees any of the three through a gateway of this contract.** They are the run's own
+accounting, they join the explicit list in `internal/gateway/forward.go`'s `dropResponseHeaders`
+(CS2), and they are read into the step's record hook below. The qualifier is "a gateway of this
+contract" and not "the gateway" because the drop list is CS2's and a gateway built before CS2 has
+neither it nor the request-side rule that makes the stage header the gateway's own — so an agent that
+sends the header to one of those reads all three, which *What the guard is not* states in full and
+does not soften. CS2 closes it for the gateway it builds; the image update closes it for the rest.
 
 ## The gateway's half
 
@@ -99,11 +114,16 @@ cannot run the other way — and the two halves of this contract split according
   that list (CS2). The model path drops nothing by prefix — unlike the git paths' forwarding — so a
   header that is not on the list reaches the service exactly as the agent wrote it, which is why
   this is a requirement and not a tidy-up: the R24 guard is worth precisely what it costs an agent
-  to pass, and an agent that could send `X-Fugaro-Stage` itself would make the service answer in
-  full. That is the disclosure the guard exists to prevent, and a release-behind gateway is the one
-  gateway it exists to protect — the gateway that passes an answer header it does not know straight
-  to the agent. CS2's mirror test carries the request side with the names: the test that pins the
-  wire's names pins the rule that the gateway's own headers are its own.
+  to pass, and an agent that can send `X-Fugaro-Stage` makes the service answer in full and reads
+  the source, the fallback and the served model of its own calls. **The drop ships with the guard, and
+  it closes the disclosure for the gateway CS2 builds — it does not reach a gateway built before
+  CS2, which is the gateway the guard exists to keep working** (*What the guard is not*). So on a
+  release-behind gateway the guard is a compatibility rule and not a boundary: a call that sends no
+  stage header meets today's answer, and a call an agent gave a stage header is answered in full and
+  read out through that gateway's own pass-through of an unknown answer header. Nothing in this
+  contract, and no later task, may assume that window is closed; the image update is what ends it.
+  CS2's mirror test carries the request side with the names: the test that pins the wire's names pins
+  the rule that the gateway's own headers are its own.
 
 ## The shapes, and what each reader may rely on
 
@@ -116,11 +136,23 @@ decoder and the checks that must both refuse a sixth kind read one list.
 | --- | --- | --- |
 | `Table` | a list of `Entry`, in the order the project wrote them | the resolver, the checks, the migration, the service |
 | `Entry` | `match` (a model or a pattern), `chain` (the sources, first usable one wins) | the same |
-| `Source` | `kind`, and at most one of `pool`, `provider`, `model`; `admit` for the kinds that are a single credential of the project | the service's walk, the checks |
+| `Source` | `kind`; `pool` or `provider` names which credential of that kind, one member per kind; `model` names the model this source serves when it is not the one the call asked for; `admit` for the kinds that are a single credential of the project | the service's walk, the checks |
 | `SourceName` | `kind`, `name` (always written, empty for the two kinds that name nothing) | the answer, the record, the registry entry, the console |
 
 The five kinds are `launcher-pool`, `pool`, `anthropic`, `provider` and `vertex`, and they are a
 closed set: a sixth is a change to `internal/routing/table.go` and to every reader's switch.
+
+**Which model is sent, and how it is written.** `model` is a written downgrade and **never a
+spelling**: it names the model this source serves when that is not the model the call asked for,
+which spec.md requires to be explicit ("then Sonnet via OpenRouter") because nothing is downgraded
+silently. It may be set on a source of any kind, and it is orthogonal to `pool` and `provider` — the
+one names the credential, the other the model. Which model is sent is `model` when the source sets it
+and the requested model otherwise; how **that** model is written on the source is the checked-in
+map's answer alone (`pricing.SpellingFor`, D3175), per kind and per model. The precedence is therefore
+total and needs no tie-break: the map is the only authority for a spelling, and no member of the table
+is ever read as one. That is what keeps CS1's walk, CS4's Vertex translation and RT3's checks from
+disagreeing about the model id a live call carries — a source whose model the map does not spell is
+refused at validation (RT3) rather than sent as something nobody measured.
 
 **The admissions.** `admit` is a list of repositories, per SOURCE and not per kind, because the same
 provider key may be admitted to one repository and not another (D3182). It is carried on the kinds
@@ -195,10 +227,21 @@ It answers the sources the old record `creds/repoauth/<slug>` stands for, and wh
 has one at all — two answers, because "no record" and "a record naming nothing" are different
 situations and the walk treats them differently. It answers `routing.Source` values rather than a
 mode and an account name, because the point of the bridge is that an older run's call lands on the
-same sources the table would send it to: the record is derived from the table on every write of
-either, so it can never be wider than the table (D3196, R25). The walk reads the table FIRST and
-consults the bridge only for a run whose image predates it; **X4** removes the bridge and this seam
-together.
+sources that repository's runs go out on today.
+
+**What the record may hold, and what it may not** (D3196, R25). It is derived from the table on every
+write of either — `update`, `routing set`, an admission change — so it never gains a source the table
+does not have. It is **not** a subset of the table, and "never wider than the table" is the wrong
+rule to write code by: an entry the table's checks REFUSE is in no table at all and is left on the
+record, which is exactly what D3196 decides — a Claude model through a provider before Check 50 is
+recorded as passed, a Vertex model with no checked-in spelling. Dropping such an entry would move a
+run the migration's whole promise is not to move, so the record is wider than the table by precisely
+the entries the checks refused, and never wider than the repository's own pre-migration access. What
+keeps a call off the old path is therefore **not** the record's width but the walk's rule: it reads
+the table first and consults the record only for a run whose image predates it. The switch is the
+run's own image, and nothing a call sends may choose the record over the table — least of all the
+stage header, since the record is the wider of the two. A call of this release reaches the old path
+never, whatever header it sends. **X4** removes the bridge and this seam together.
 
 ## Every refusal writes one audit line
 

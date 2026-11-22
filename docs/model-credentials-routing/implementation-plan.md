@@ -671,11 +671,11 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### MG3: the old record is written beside the table for one release
 
 - Module: `migration`.
-- Acceptance: For release 1 `fugaro update` keeps writing `creds/repoauth/<slug>` as today, so a run that bootstrapped on the release behind still resolves; the service reads the table first and the old record only for a run whose image predates the table; the old record is derived from the table on every write of either (`update`, `routing set`, an admission change), so it is never wider than the table and a call that omits the stage header to reach the old path gains nothing; the update's in-flight line counts such runs.
+- Acceptance: For release 1 `fugaro update` keeps writing `creds/repoauth/<slug>` as today, so a run that bootstrapped on the release behind still resolves; the service reads the table first and the old record only for a run whose image predates the table; the old record is derived from the table on every write of either (`update`, `routing set`, an admission change), so it gains no source the table does not have, and the entries D3196 leaves on it — the ones the checks refuse — stay there, so it is wider than the table by exactly those and never wider than the repository's own pre-migration access; the walk reads the record only for a run whose image predates the table, so a call of this release reaches the old path never, whatever header it sends; the update's in-flight line counts such runs.
 - Files: `internal/cli/update_repoauth.go`, `internal/cli/update_repoauth_table_test.go` (new), `internal/credsvc/legacy_auth.go` (new), `internal/credsvc/legacy_auth_test.go` (new), `internal/cli/update_in_flight.go`.
 - Interfaces: Consumes C1. Produces the bridge X4 removes.
-- Tests: `TestTheOldRecordIsStillWritten`, `TestAnOlderRunStillResolves`, `TestTheOldRecordIsNeverWiderThanTheTable`.
-- Command: `go test ./internal/cli/ -run 'TestTheOldRecordIsStillWritten|TestTheOldRecordIsNeverWiderThanTheTable' -count=1` and `go test ./internal/credsvc/ -run 'TestAnOlderRunStillResolves' -count=1`
+- Tests: `TestTheOldRecordIsStillWritten`, `TestAnOlderRunStillResolves`, `TestTheOldRecordGainsNoSourceTheTableLacks`.
+- Command: `go test ./internal/cli/ -run 'TestTheOldRecordIsStillWritten|TestTheOldRecordGainsNoSourceTheTableLacks' -count=1` and `go test ./internal/credsvc/ -run 'TestAnOlderRunStillResolves' -count=1`
 - Red step: `TestAnOlderRunStillResolves` fails once CS1 is in and before this bridge exists; before CS1 it is written to fail on the missing file.
 - Depends on: C1 (the contract's names).
 - Commit: `model-credentials-routing MG3: the old record is written beside the table for one release`

@@ -81,11 +81,22 @@ import (
 // HeaderProvider (internal/gateway/service.go's serviceUpstream deletes the
 // names the gateway owns before setting its own; the model path drops nothing
 // by prefix). That is a requirement and not tidiness, because this header is
-// the whole of R24's guard: an agent that could send it would make the service
-// answer with the source, the fallback and the served model, and a
-// release-behind gateway — the one gateway the guard exists to protect — passes
-// an answer header it does not know straight to the agent. So the guard's
-// request side is as strong as its answer side, and both are CS2's to build.
+// the whole of R24's guard: an agent that can send it makes the service answer
+// with the source, the fallback and the served model, and a release-behind
+// gateway — the one gateway the guard exists to keep working — passes an answer
+// header it does not know straight to the agent.
+//
+// **That drop ships in CS2, and it is the whole of what the guard's protection
+// is worth.** The service reads this header and cannot tell the gateway's own
+// from one the agent wrote, so before CS2's drop exists an agent behind a
+// pre-CS2 gateway sends it and reads the three members back through that
+// gateway's own pass-through — the gateway the guard is for is the gateway the
+// guard cannot protect. It is therefore a compatibility rule and not a boundary
+// between the gateway and the agent: it buys the ordinary case (a caller that
+// sends no stage header meets today's answer byte for byte), CS2's request side
+// closes the rest for the gateway CS2 builds, and the image update closes it for
+// every gateway older than that. A later task may not assume the disclosure is
+// closed for a run whose gateway predates CS2.
 const HeaderStage = "X-Fugaro-Stage"
 
 // maxStageNameBytes bounds a stage name. A stage name is recorded in the run's
@@ -199,9 +210,13 @@ const (
 // whose record is empty are different situations, and the walk refuses the
 // first and skips the second. It answers routing.Source values rather than a
 // mode and an account name, because the whole point of the bridge is that an
-// older run's call lands on the same sources the table would send it to — the
-// old record is derived from the table on every write of either, so it can
-// never be wider than the table.
+// older run's call lands on the sources that repository's runs go out on today:
+// the record is derived from the table on every write of either, so it gains no
+// source the table does not have — and it is NOT a subset of the table, because
+// an entry the checks refuse is in no table and is left on the record (D3196).
+// What keeps a call of this release off the record is the walk's rule that it
+// reads the record only for a run whose image predates the table, never the
+// record's width.
 type LegacyBridge interface {
 	OldSources(repository string) ([]routing.Source, bool)
 }

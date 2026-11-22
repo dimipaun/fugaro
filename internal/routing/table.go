@@ -73,24 +73,34 @@ func ValidKind(k Kind) bool {
 	return false
 }
 
-// Source is one credential source in an entry's chain: which kind of
-// credential may serve this model, and which one of that kind.
+// Source is one credential source in an entry's chain: which credential may
+// serve this model, and which model it serves when that is not the model the
+// call asked for.
 //
-// Which members are set follows the kind, and at most one of Pool, Provider and
-// Model is set for the kinds that name one:
+// Which members are set follows the kind:
 //
 //	launcher-pool  nothing further: the launcher's designation decides it
 //	pool           Pool is the project's pool name
 //	anthropic      nothing further: the project has one Anthropic key
 //	provider       Provider is the provider's name
-//	vertex         Model is the model's spelling on Vertex, when the source
-//	               serves a model whose Vertex spelling differs from the
-//	               canonical one (D3175)
+//	vertex         nothing further: the project has one Vertex
 //
-// The last row is why Model is here at all: a move between routes rewrites the
-// spelling, and the map D3175 requires is checked in rather than derived, so the
-// table carries the spelling the route needs instead of something guessing it
-// at serving time.
+// Model is orthogonal to those and may be set on a source of any kind: it names
+// the model this source serves when that is not the model the call asked for —
+// a written downgrade, which spec.md requires to be written explicitly ("then
+// Sonnet via OpenRouter") because nothing is downgraded silently.
+//
+// Model is never a spelling. Which model is sent is Model when it is set and the
+// requested model otherwise, and how that model is written on the source is the
+// checked-in map's answer alone (D3175, pricing.SpellingFor). One authority for
+// the spelling is what keeps the walk (CS1), the Vertex translation (CS4) and
+// the checks (RT3) from disagreeing about the model id a live call carries: the
+// map spells the model this member names, and a model the map does not spell for
+// that source is refused at validation (RT3) rather than sent as something
+// nobody measured.
+//
+// A member a kind cannot use — a provider on a pool source, an admit list on a
+// pool — is RT2's decoder to refuse rather than something stored and never read.
 type Source struct {
 	Kind     Kind   `json:"kind"`
 	Pool     string `json:"pool,omitempty"`
