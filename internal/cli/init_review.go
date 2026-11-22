@@ -456,6 +456,23 @@ func (e *initEngine) projectAdmins(ctx context.Context) []string {
 	return e.admins
 }
 
+// billingAccount is the billing account this run's budget block is on, with
+// where it came from in the words the review screen shows: --billing-account
+// where the run was given one, and the account the carry took out of the
+// installation's own state where it was not (initRun.budgetAccount, R7 of
+// docs/managed-flag-ergonomics/reconciliation.md). Both the cover and the
+// screen read it here, so the account a plan's budget resource is admitted on
+// is exactly the one the screen showed.
+func (e *initEngine) billingAccount() (account, source string) {
+	if b := e.r.o.billingAccount; b != "" {
+		return b, "from --billing-account; the only account a budget may name"
+	}
+	if b := e.r.budgetAccount; b != "" {
+		return b, "from the installation's state, which records the account its alert was created with"
+	}
+	return "", ""
+}
+
 // cover is what the run's one confirmation may cover: grants to the listed
 // members and to Fugaro's own service accounts of the installation's project
 // and the Firebase project.
@@ -465,7 +482,12 @@ func (e *initEngine) cover() tf.Cover {
 	if host, err := infra.RegistryHost(e.lc); err == nil {
 		c.Registry, _, _ = strings.Cut(host, "/")
 	}
-	if b := e.r.o.billingAccount; b != "" {
+	// The account the plan's budget resource may name, read off the RUN and not
+	// off the flags alone: a carried block's account names no flag, so a cover
+	// built from --billing-account alone would refuse the create or update of
+	// the alert the run itself carried the account for (billingAccount, R7 of
+	// docs/managed-flag-ergonomics/reconciliation.md).
+	if b, _ := e.billingAccount(); b != "" {
 		c.Billing = []string{b}
 	}
 	// The licence renewal job's container: the one grant the cover reads a
@@ -629,8 +651,8 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	}
 	alert, asrc := e.alertEmail()
 	fmt.Fprintf(w, "  %-15s %s (%s)\n", "alert email:", pluginwire.Printable(alert), asrc)
-	if o.billingAccount != "" {
-		fmt.Fprintf(w, "  %-15s %s (from --billing-account; the only account a budget may name)\n", "billing account:", pluginwire.Printable(o.billingAccount))
+	if b, src := e.billingAccount(); b != "" {
+		fmt.Fprintf(w, "  %-15s %s (%s)\n", "billing account:", pluginwire.Printable(b), src)
 	}
 	// The project's rigor mode, resolved the one way (task W of
 	// docs/rigor-command/implementation-plan.md; D900): what every run of this

@@ -333,6 +333,17 @@ func TestTheCreationIsHeldToTheFlagsChecks(t *testing.T) {
 			o:    &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, firebase: "proj-9999"},
 			want: "--firebase-project",
 		},
+		{
+			// The carry has nothing to take the account from on a run that
+			// creates the project, and check() sees the creation only where
+			// --create-project is explicit: without this the run reaches the
+			// project stage and only the installation stage's state read
+			// refuses, after the project, Firebase, billing and the APIs are
+			// made (R7).
+			name: "a budget with no billing account",
+			o:    &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, budget: 7, budgetCurrency: "USD"},
+			want: "--billing-account",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &initRun{o: tc.o, w: &strings.Builder{}, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
