@@ -6692,7 +6692,7 @@ Print every plan's tasks, joined to the runs working on them
 
 Print every plan's graph under docs/, with each task's state from the runs.
 
-A task's state joins the graph to the runs bucket of the selected project:
+A task's state joins the graph to the runs the project's index holds:
 running with the stage of the run working on it, done when the run's pull
 request is merged, cancelled when the task's only run was, blocked while a
 task it needs is not done, ready when the work can start (the task a launch
@@ -6703,11 +6703,11 @@ is a run of this checkout's own repository: a run of another repository
 naming the same task is ignored. The join is display-only — nothing here
 makes another plan's task ready.
 
-Every run the bucket still holds (ninety days) is listed. Only the runs that
-join a task of a plan here have their pull requests looked up, so the
-lookups cost what the plans hold rather than what the repository's history
-holds, and one read asks about at most 32 pull requests, the newest runs'
-first.
+The runs come from the run index, one query per task of the plans here, so
+the read costs what the plans hold rather than what the repository's history
+holds, and a task's runs are listed however old they are. Only the runs that
+join a task of a plan here have their pull requests looked up, and one read
+asks about at most 32 pull requests, the newest runs' first.
 
 Whether a pull request is merged is asked of your own gh, when it is
 installed, and only about a pull request of this checkout's own
@@ -6715,6 +6715,10 @@ repository: a run that recorded another repository's pull request is not
 merged here. Where gh cannot answer (a Bitbucket repository, no gh, a
 lookup that failed, one past the 32) a task whose run recorded a ready pull
 request shows done with the mark "merge unknown" rather than nothing.
+
+--no-merges does not ask your gh at all: every task whose run recorded a
+ready pull request reads the same way, and the document says merges_read is
+false. It is the read a screen paints before merge state.
 
 Two artifacts that would be one plan id — docs/plans/foo.graph.json and
 docs/plans/foo/bar.graph.json both give plans/foo — cannot be joined apart,
@@ -6734,6 +6738,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for status |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--no-merges` | bool | `false` | no | spawn no gh: every task whose run recorded a ready pull request reads merge unknown |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 

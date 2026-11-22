@@ -135,5 +135,6 @@
   ],
   "warnings": [
     "docs/plans/2026-09-01-unreadable.graph.json could not be read: its tasks are not listed"
-  ]
+  ],
+  "index_complete": true
 }
