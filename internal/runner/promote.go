@@ -278,6 +278,7 @@ func promoteNamedPaths(it backlog.Item) []string {
 		// itself a repository-relative path (`../x`, `x.md`) may still name
 		// one once the item's own directory is applied.
 		if !strings.Contains(target, "://") && !strings.HasPrefix(target, "/") && !strings.ContainsAny(target, " \t") {
+			target = promoteCitationRE.ReplaceAllString(target, "")
 			if p := path.Clean(path.Join(path.Dir(it.Path), target)); !strings.HasPrefix(p, "../") && p != "." && p != ".." {
 				add(p)
 			}
