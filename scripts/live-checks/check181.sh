@@ -367,18 +367,24 @@ first_error() {
   printf '%s' "$(redact_secrets "$text")"
 }
 
-# run_call SECONDS OUT LOG cmd... — one long command with a deadline of its own,
-# in a process group of its own so the deadline reaches whatever the call
-# started. `timeout(1)` is not used: it is not on macOS, where this check is
+# run_call SECONDS OUT LOG STDIN cmd... — one long command with a deadline of
+# its own, in a process group of its own so the deadline reaches whatever the
+# call started. `timeout(1)` is not used: it is not on macOS, where this check is
 # also run, and a run left behind after a failure is a job someone else pays
-# for. stdin is INHERITED: the converge's own review confirmation is the
-# owner's, and this script asks nothing of its own.
+# for. STDIN is where the child's own standard input comes from: /dev/null for
+# every command that has no question of its own, and a file for the one command
+# that is handed the token. It is a parameter rather than a redirection at the
+# call site because a redirection there would be undone by the child's own —
+# which is how the store would read an empty token and store nothing.
 CALL_PID=""
-run_call() { # run_call SECONDS OUT LOG cmd...
-  local secs=$1 out=$2 log=$3
-  shift 3
+run_call() { # run_call SECONDS OUT LOG STDIN cmd...
+  local secs=$1 out=$2 log=$3 in=$4
+  shift 4
   set -m
-  "$@" >"$out" 2>"$log" &
+  case "$in" in
+  -) "$@" >"$out" 2>"$log" & ;;
+  *) "$@" <"$in" >"$out" 2>"$log" & ;;
+  esac
   CALL_PID=$!
   local waited=0
   while kill -0 "$CALL_PID" 2>/dev/null; do
@@ -400,13 +406,23 @@ run_call() { # run_call SECONDS OUT LOG cmd...
 # call_q SECONDS OUT LOG cmd... — the same call with stdin at /dev/null, for
 # every command that has no confirmation of its own: a prompt nobody can answer
 # is a hang, and a hang inside this check is a run someone pays for while it
-# waits.
+# waits. `fugaro update` is one of them: on an installation that is already
+# applied its ordinary steps are covered by the converge's own review, so it
+# asks nothing, and a step that would need a person is left to the owner with
+# the CLI's own sentence rather than waited on.
 call_q() { # call_q SECONDS OUT LOG cmd...
   local secs=$1 out=$2 log=$3
   shift 3
-  local rc=0
-  run_call "$secs" "$out" "$log" "$@" </dev/null || rc=$?
-  return "$rc"
+  run_call "$secs" "$out" "$log" /dev/null "$@"
+}
+
+# call_in SECONDS OUT LOG FILE cmd... — the same call with its stdin from a
+# file: the ONE command this check is handed the token for, `fugaro secrets
+# set`. Nothing else reads the token's value, and nothing prints it.
+call_in() { # call_in SECONDS OUT LOG FILE cmd...
+  local secs=$1 out=$2 log=$3 in=$4
+  shift 4
+  run_call "$secs" "$out" "$log" "$in" "$@"
 }
 
 stop_call() {
@@ -719,9 +735,8 @@ step_token() {
   fi
 
   rc=0
-  call_q "$CLI_SECONDS" "$SCRATCH/store.out" "$SCRATCH/store.err" \
-    fugaro secrets set bitbucket-token --project-wide --project "$INSTALLATION" \
-    <"$TOKEN_FILE" || rc=$?
+  call_in "$CLI_SECONDS" "$SCRATCH/store.out" "$SCRATCH/store.err" "$TOKEN_FILE" \
+    fugaro secrets set bitbucket-token --project-wide --project "$INSTALLATION" || rc=$?
   if [ "$rc" -eq 0 ]; then
     fact store PASS "fugaro secrets set bitbucket-token --project-wide accepted the token for installation ${INSTALLATION} (exit 0), reading the value from ${TOKEN_FILE} on stdin — the one place the value goes, and it is never on a command line or in this block. This is step 1 of the register's section: the token the credentials service will pair to each run's identity"
   else
