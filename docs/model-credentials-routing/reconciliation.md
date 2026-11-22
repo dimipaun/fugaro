@@ -3,7 +3,8 @@
 The spec ([spec.md](spec.md)) as amended against the code. **Where this document disagrees with
 the spec, this document wins.** Checked against `origin/main` at `dfe066618` on 2026-11-21, and rebased onto `aa75a696c` the
 same day; the symbols cited were not read again one by one at the new commit (O17). The
-owner (Dimi Paun) answered D3170–D3193 on 2026-11-21. Four answers were amended the same day: D3176 by the owner,
+owner (Dimi Paun) answered D3170–D3197 on 2026-11-21 (D3194–D3197 after the pull request opened, as his answers
+to open items O13–O16). Four answers were amended the same day: D3176 by the owner,
 and D3174, D3179 and D3190 after review, each confirmed by him.
 
 Modules, approved by the owner on 2026-11-21 (the capability map): `routing-table`, `pools`,
@@ -325,19 +326,19 @@ names one.
   readable by every launcher and is display data. → PL4, PL9, PL10, PR3.
 - **F62 (Rule, pools).** The intake refuses a member's write under a shared container
   (`internal/intake/handlers.go`; dynamic-delivery D1935). Contributing one's own token to a
-  shared pool (R9) reverses that by one case. → O13, PL5.
+  shared pool (R9) reverses that by one case. → D3194, PL5.
 - **F63 (Rule, migration).** A policy whose version a reader does not know is refused whole
   (`internal/projectpolicy/policy.go`), so a version bump in release 2 would stop release-1
   images and a paused run resuming on one. → R25.
 - **F64 (Gap, pause-resume).** No guard counts a paused chain as in flight: the pull request
   would read stalled and a duplicate or follow-up launch would be admitted between a pause and
-  its resume. → PR12, O14.
+  its resume. → D3195, PR12, PR13.
 - **F65 (Gap, migration).** Some of today's configurations migrate to a table the checks refuse:
   `routing.claude.via: openrouter` or `auto` (allowed today with a doctor warning) becomes a
   chain R3 refuses until Check 50, and a Vertex model has no checked-in spelling until Check 882.
-  → MG1 and MG2 leave such an entry on the release-1 bridge; O15.
+  → D3196: MG1 and MG2 leave such an entry on the release-1 bridge.
 - **F66 (Rule, pause-resume).** The service has no admin surface (D143), so it cannot tell a
-  project admin from anyone else. → PR10 serves the launcher only; O16.
+  project admin from anyone else. → D3197: PR10 serves the launcher only.
 - **F67 (Gap, pause-resume).** The gateway decodes the service's refusal strictly as error,
   message, reset time and tried list, so the new action and resume time need the gateway's and
   the wire's files. → PR2, PR3.
@@ -380,8 +381,12 @@ All answered by the owner on 2026-11-21.
 | D3191 | pause-resume | A resume is launched by a service account but must draw on a person's pool (D2976) | A resume is still the person's run | **As recommended.** D2976 is amended by that one case |
 | D3192 | migration | A `fallback: auto` project waits up to 15 minutes before paying; a strict chain pays at once | Pay at once; `update` says so | **As recommended** |
 | D3193 | chain-serving | Non-Claude models on Vertex (the spec's `gemini-*` example) | Out of this plan | **Not the recommendation: add Gemini on Vertex.** The service translates to and from Vertex's Google-publisher wire (GV1 to GV4) |
+| D3194 | pools | May a member write their own token under a shared container through the intake (O13; reverses D1935 by one case)? | Yes, only into a pool an admin marked as taking contributions, as a member in the contributor's own name | **As recommended** |
+| D3195 | pause-resume | The word for a pull request whose chain is paused (O14) | Live | **Not the recommendation: a fifth word, `paused`.** A new pull-request state beside live, ready, stalled and orphan. My reading, not his words: the chain still counts as in flight to the guards, so a duplicate launch or a follow-up is refused while the pause stands (F64) |
+| D3196 | migration | What `update` does with a configuration that migrates to a table the checks refuse (O15) | Leave that entry on the release-1 bridge, name it, converge | **As recommended** |
+| D3197 | pause-resume | May a project admin cancel another person's paused run (O16)? | Not in this plan | **As recommended.** Only the launcher cancels; D143 stands |
 
-D3194–D3199 are reserved and unused.
+D3198 and D3199 are reserved and unused.
 
 ## Resolutions
 
@@ -528,17 +533,11 @@ None. No two answers pull against each other.
   acceptably on a Gemini model through a translated wire is not known (U8); GV4's end-to-end test
   and Check 886 are what will say.
 - **O12.** Closed: review round 3 ran.
-- **O13.** Owner's: may a member write their own token under a shared container through the
-  intake (R9), which reverses D1935 by one case (F62)? Recommended: yes, only into a pool marked
-  as taking contributions, and only a member in the contributor's own name. PL5's `contribute`
-  half waits on this.
-- **O14.** Owner's: the word for a pull request whose chain is paused (F64). Recommended: live.
-  PR12 waits on this.
-- **O15.** Owner's: what `update` does with a configuration that migrates to a table the checks
-  refuse (F65). Recommended, and what MG1 and MG2 are written to do: leave that entry on the
-  release-1 bridge, name it, and converge.
-- **O16.** Owner's: may a project admin cancel another person's paused run (F66)? The service
-  has no admin surface (D143). Recommended: not in this plan; PR10 serves the launcher only.
+- **O13.** Closed by D3194.
+- **O14.** Closed by D3195. Open within it: whether a paused pull request should still refuse a
+  follow-up, which the plan assumes and the owner was not asked in those words.
+- **O15.** Closed by D3196.
+- **O16.** Closed by D3197.
 - **O17.** Review round 3's fixes are the last commit and were not reviewed again. The branch
   was rebased from `dfe066618` onto `aa75a696c`, where the credentials service's Terraform and
   `SECURITY.md` had changed; the symbols cited were not read again at the new commit.

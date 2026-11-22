@@ -17,11 +17,11 @@ supersedes the last one's craft access (D3170).
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec, as received from the owner on 2026-11-21. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: the capability map (six modules), assumptions A1–A9, findings F1–F67, decisions D3170–D3193 with the owner's answers, resolutions R1–R26, open items O1–O17, UNVERIFIED U1–U8 (U2 withdrawn). **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contracts C1 to C3, documents tasks A1 to A3, 74 tasks in six modules, integrations I1 and I2 (82 runs over two releases, and three contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 880 to 886 |
+| [reconciliation.md](reconciliation.md) | The amended spec: the capability map (six modules), assumptions A1–A9, findings F1–F67, decisions D3170–D3197 with the owner's answers, resolutions R1–R26, open items O1–O17 (O13 to O16 closed), UNVERIFIED U1–U8 (U2 withdrawn). **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Contracts C1 to C3, documents tasks A1 to A3, 75 tasks in six modules, integrations I1 and I2 (83 runs over two releases, and three contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 880 to 886 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
-**Numbers reserved:** decisions **D3170–D3199** (D3170–D3193 used), checks **880–889** (880 to
+**Numbers reserved:** decisions **D3170–D3199** (D3170–D3197 used), checks **880–889** (880 to
 886 used). Read twice on 2026-11-21. The first reading found the highest decision on `main` to
 be D3160, in managed-flag-ergonomics' block D3160–D3169, and checks 860–869 taken, so this plan
 took checks 870–879. Before the branch was pushed, console-fixes (#3540) landed on `main` with
@@ -48,6 +48,11 @@ models), D3174 (D3066), D3175 (D1637), D3176 (D3069), D3177 (D1622 and D1636 of 
 D3183 (D3064), D3184 (D138 of the credentials service), D3189 (D3136 of launcher does not mint)
 and D3191 (D2976 of workspace credentials, by one case). The capability map was approved the same
 day.
+
+**After the pull request opened** the owner answered the four questions round 3 had left
+(O13 to O16) as D3194 to D3197: three as recommended, and D3195 not (a pull request whose chain
+is paused gets a fifth word, `paused`, where the recommendation was to call it live). That added
+one task (PR13) and lifted the two waits on his answers. These last edits were not reviewed.
 
 **Review round 1** (a fresh independent reviewer) confirmed about 60 code claims and found that a
 gateway cap cannot bind Vertex on the job's identity (F23, so D3174 was amended), that a personal
@@ -84,6 +89,5 @@ it.
 
 **What a reader should not take from here:** no task is approved; each needs the owner's go by
 name. The withdrawn tasks of credentials belong to models are stopped by the owner, by hand,
-before any launches (O1). Four questions are open for the owner (O13 to O16), and two tasks wait
-on them (the `contribute` half of PL5, and PR12). Release 2 (X1 to X10) is not launched before release 1 is cut. Checks
+before any launches (O1). Release 2 (X1 to X10) is not launched before release 1 is cut. Checks
 880 to 886 are owner-run.

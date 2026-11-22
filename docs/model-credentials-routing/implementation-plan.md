@@ -21,7 +21,10 @@ fallback badge, the switch log and a pools screen (D3188); the issuer may serve 
 a resume of a pause the credentials service recorded (D3189); a chain's pauses are bounded by
 total paused time, **not the recommendation**, with a minimum pause added after review (D3190);
 a resume of a person's run draws on that person's pool (D3191); a strict chain pays at once and
-`update` says so (D3192); Gemini on Vertex is added, **not the recommendation** (D3193).
+`update` says so (D3192); Gemini on Vertex is added, **not the recommendation** (D3193); a member may contribute their own
+token to a marked shared pool (D3194); a pull request whose chain is paused is in a fifth state,
+`paused`, **not the recommendation** (D3195); a configuration the checks would refuse stays on
+the release-1 bridge (D3196); only the launcher cancels a pause (D3197).
 
 The contract-first pass is on for this repository (`planning.decoupling` is `true`), and the
 repository's rigor is `startup` with no area rules, so the pass decouples aggressively; the three
@@ -81,7 +84,7 @@ by the task named.
 | Every refusal writes one audit line and no value | CS1, CS3, CS4, CS14, PL4, PL5, PL9, PR3, PR10, GV1 |
 | A run in flight across the update keeps working, on either release | MG3, PR6 |
 | A paused run is resumed at most once, never after its launcher cancelled it, and never while its run has not ended `paused` | PR3 (`TestNoResumeOfACancelledPause`), PR4 (`TestARunThatDidNotEndPausedIsNotResumed`), PR10 |
-| A paused chain is in flight to every guard | PR12 |
+| A paused chain is in flight to every guard, and its pull request reads `paused` (D3195) | PR12, PR13 |
 | A run with no slip is served no launcher's pool | CS1, PL4 (`TestARunWithNoSlipHasNoLaunchersPool`) |
 | A pause the current image cannot read ends with a named outcome | PR5 |
 | No proxy call is held open; no command blocks on a paused run | PR2, PR7 |
@@ -142,7 +145,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### A2: the per-user token documents say what now serves them
 
 - Module: `pools`.
-- Acceptance: The dynamic-delivery reconciliation of secrets-brokering says its R7 and R11 stand (a per-user token is owner-only and never lent), that a per-user token now serves a model call through its owner's personal pool (this plan's PL4, where workspace-credentials F4 recorded that nothing did), and that contributing to a shared pool is the holder's own act (R9), which needs the intake to take a member's write under a shared container and so waits on the owner's answer to O13 (it reverses D1935 by one case). Workspace-credentials' README and reconciliation say that plan is unchanged: a person's token at the workspace still follows the route (D3141), a project with a routing table serves from its own service, and D2976 is amended by one case in a project (D3191: a run that resumes a person's paused run draws on that person's pool). The Docs tests pass.
+- Acceptance: The dynamic-delivery reconciliation of secrets-brokering says its R7 and R11 stand (a per-user token is owner-only and never lent), that a per-user token now serves a model call through its owner's personal pool (this plan's PL4, where workspace-credentials F4 recorded that nothing did), and that contributing to a shared pool is the holder's own act (R9), for which the intake takes a member's write under a shared container of a pool marked as taking contributions, reversing D1935 by that one case (D3194). Workspace-credentials' README and reconciliation say that plan is unchanged: a person's token at the workspace still follows the route (D3141), a project with a routing table serves from its own service, and D2976 is amended by one case in a project (D3191: a run that resumes a person's paused run draws on that person's pool). The Docs tests pass.
 - Files: `docs/secrets-brokering/dynamic-delivery/reconciliation.md`, `docs/workspace-credentials/README.md`, `docs/workspace-credentials/reconciliation.md`.
 - Interfaces: Consumes this plan's reconciliation. Produces nothing a task calls.
 - Tests: The Docs tests that pin that folder.
@@ -196,7 +199,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### C3: the pause contract
 
 - Module: `pause-resume`.
-- Acceptance: `internal/runstore/pause.go` holds: the record a pausing job writes for the run that resumes it and for nobody else (`pause.json`: the stage, the session's name, the checkpoint commit, a format version); the node only the credentials service writes (`paused/<slug>/<run>`: the launcher, the pool the launch named, the resume time, the chain id, the chain's paused seconds so far, a cancelled mark); the members `fugaro watch --json` and `runs ls --json` gain for a paused run (the resume time and the run that resumed it); the constant for the status word `paused`; the task's new member `resumes`; the members the service's exhausted answer gains on the wire (`action`: `wait`, `pause` or `halt`, and `resume_at`), sent only to a caller that sent the stage header (R24), and the request a run makes once it has saved (`/pause`); `contract-pause.md` says who writes each, that the resume time and the launcher are the service's own and never the job's (R8, D3189), who may ask for a slip that names `resumes` (the orchestrator's class only, same repository and chain, once, not before the resume time), who may cancel a pause (its launcher; an admin's cancel waits on O16), that `/pause` is honoured only for a run the service last answered `pause` and once per answer, and what a reader of another format version does (ends with a named outcome, R18); the stubs do nothing.
+- Acceptance: `internal/runstore/pause.go` holds: the record a pausing job writes for the run that resumes it and for nobody else (`pause.json`: the stage, the session's name, the checkpoint commit, a format version); the node only the credentials service writes (`paused/<slug>/<run>`: the launcher, the pool the launch named, the resume time, the chain id, the chain's paused seconds so far, a cancelled mark); the members `fugaro watch --json` and `runs ls --json` gain for a paused run (the resume time and the run that resumed it); the constant for the status word `paused`; the task's new member `resumes`; the members the service's exhausted answer gains on the wire (`action`: `wait`, `pause` or `halt`, and `resume_at`), sent only to a caller that sent the stage header (R24), and the request a run makes once it has saved (`/pause`); `contract-pause.md` says who writes each, that the resume time and the launcher are the service's own and never the job's (R8, D3189), who may ask for a slip that names `resumes` (the orchestrator's class only, same repository and chain, once, not before the resume time), who may cancel a pause (its launcher only, D3197), that `/pause` is honoured only for a run the service last answered `pause` and once per answer, and what a reader of another format version does (ends with a named outcome, R18); the stubs do nothing.
 - Files: `internal/runstore/pause.go` (new), `internal/runstore/pause_test.go` (new), `internal/runner/suspend_stub.go` (new, stub), `internal/orchestrator/resume_stub.go` (new, stub), `docs/model-credentials-routing/contract-pause.md` (new).
 - Interfaces: Consumes nothing. Produces the paused record, the node, the status constant and the `resumes` member for `pause-resume`, VS3 and VS4.
 - Tests: `TestPauseShapesAreStable`.
@@ -357,14 +360,13 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### PL5: designate a pool, and contribute a token to the shared pool
 
 - Module: `pools`.
-- Acceptance: `fugaro accounts pool designate <pool>` asks the service's designation route (PL4) to record the caller's own designation for the project, from their own session only; `fugaro accounts pool contribute --to <shared pool>` takes the caller's own token through the intake that already receives secret values, into a member of the project pool marked as that person's contribution, where the pool allows contributions; the contributor withdraws their own member (`accounts pool withdraw`) and an admin removes any (`accounts pool rm-member`); nobody adds a token in another person's name (R9); none asks a question, and a value only a person can type fails at once with no terminal. Every new refusal writes exactly one audit line and no value.
+- Acceptance: `fugaro accounts pool designate <pool>` asks the service's designation route (PL4) to record the caller's own designation for the project, from their own session only; `fugaro accounts pool contribute --to <shared pool>` takes the caller's own token through the intake that already receives secret values, into a member of the project pool marked as that person's contribution, where an admin has marked the pool as taking contributions (D3194, which reverses D1935 by this one case); the contributor withdraws their own member (`accounts pool withdraw`) and an admin removes any (`accounts pool rm-member`); nobody adds a token in another person's name (R9); none asks a question, and a value only a person can type fails at once with no terminal. Every new refusal writes exactly one audit line and no value.
 - Files: `internal/cli/accounts_pool.go`, `internal/cli/accounts_pool_designate.go` (new), `internal/cli/accounts_pool_designate_test.go` (new), `internal/intake/handlers.go`, `internal/cli/secrets_intake.go`, `plugin/skills/setup/reference/decisions.md`, `website/content/cli-reference.md`.
 - Interfaces: Consumes PL4's designation store and PL2's commands. Produces nothing a task calls.
 - Tests: `TestDesignateIsTheCallersOwn`, `TestContributeIsTheHoldersOwn`, `TestAContributorWithdrawsOnlyTheirOwn`.
 - Command: `go test ./internal/cli/ -run 'TestDesignateIsTheCallersOwn|TestContributeIsTheHoldersOwn' -count=1` and `go test ./internal/intake/ -run 'TestAContributorWithdrawsOnlyTheirOwn' -count=1`
 - Red step: `TestDesignateIsTheCallersOwn` fails: the command does not exist.
 - Depends on: PL2 (kept: one file, `accounts_pool.go`); PL4 (kept, behaviour: it writes through the store PL4 builds, whose rules decide who may write); CS15 (kept: one file, the generated `cli-reference.md`).
-- Gate: **The `contribute` and `withdraw` half is not launched before the owner answers O13: the intake refuses a member's write under a shared container today (D1935), and this reverses that by one case. `designate` does not wait.**
 - Commit: `model-credentials-routing PL5: designate a pool, and contribute a token to the shared pool`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -642,7 +644,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### MG1: the migration, as a function
 
 - Module: `migration`.
-- Acceptance: One pure function takes an installation's config and each repository's file and returns the table, the pools and the admissions that keep every run where it was: `oauth` becomes the account's pool, `api-key` the Anthropic key, `cascade` the shared pool then the key where `fallback: auto` was set, `vertex` a chain naming Vertex; `routing.claude.via` becomes the Claude entry (D3173); every ownerless account lands in one shared pool, same members and order and the rule `failover`, which is what the cascade does today (D3183), and a lone account also gets a pool of one (D3176); per-stage accounts and a grade's access (`model_grades.<grade>.access`) are folded into one pool (D3171, F46); each repository is admitted only to the keys it used, and each account keeps its own admissions untouched (D3182). What it cannot write as a table RT3 accepts (a Claude model through a provider before Check 50; a Vertex model with no checked-in spelling) it leaves on the release-1 bridge and returns by name, pending the owner's answer to O15. The function also returns the list of pools that are inert today and will rotate once migrated (D3177). A table-driven test covers every value of `agent.auth` and `via`, two repositories that differ, and two repositories admitted to two different accounts that land in the one shared pool.
+- Acceptance: One pure function takes an installation's config and each repository's file and returns the table, the pools and the admissions that keep every run where it was: `oauth` becomes the account's pool, `api-key` the Anthropic key, `cascade` the shared pool then the key where `fallback: auto` was set, `vertex` a chain naming Vertex; `routing.claude.via` becomes the Claude entry (D3173); every ownerless account lands in one shared pool, same members and order and the rule `failover`, which is what the cascade does today (D3183), and a lone account also gets a pool of one (D3176); per-stage accounts and a grade's access (`model_grades.<grade>.access`) are folded into one pool (D3171, F46); each repository is admitted only to the keys it used, and each account keeps its own admissions untouched (D3182). What it cannot write as a table RT3 accepts (a Claude model through a provider before Check 50; a Vertex model with no checked-in spelling) it leaves on the release-1 bridge and returns by name (D3196). The function also returns the list of pools that are inert today and will rotate once migrated (D3177). A table-driven test covers every value of `agent.auth` and `via`, two repositories that differ, and two repositories admitted to two different accounts that land in the one shared pool.
 - Files: `internal/routing/migrate.go` (new), `internal/routing/migrate_test.go` (new), `internal/routing/testdata/migrate` (new).
 - Interfaces: Consumes C1 and C2's types. Produces `routing.Migrate`, which MG2 calls.
 - Tests: `TestMigrate` (one case per auth mode and per `via`), `TestMigrateMovesNoRepository`.
@@ -655,7 +657,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### MG2: `fugaro update` migrates, and says what changes first
 
 - Module: `migration`.
-- Acceptance: `fugaro update` on an installation at the previous version writes the table, pools and admissions `routing.Migrate` returns into the installation's config, publishes them, and prints before any write one line per repository saying what its runs go out on and that nothing moves, and one line per pool that starts rotating among its tokens now that the spread switch is gone (D3177); and one line for a project whose `fallback` was `auto`, saying a run now pays on the key as soon as its subscriptions are exhausted instead of waiting up to the old threshold first (D3192); it names each entry left on the release-1 bridge (O15) and still converges; it asks nothing, is safe with runs in flight, and a second run changes nothing; the `e2e` update test converges from a fixture of the previous version.
+- Acceptance: `fugaro update` on an installation at the previous version writes the table, pools and admissions `routing.Migrate` returns into the installation's config, publishes them, and prints before any write one line per repository saying what its runs go out on and that nothing moves, and one line per pool that starts rotating among its tokens now that the spread switch is gone (D3177); and one line for a project whose `fallback` was `auto`, saying a run now pays on the key as soon as its subscriptions are exhausted instead of waiting up to the old threshold first (D3192); it names each entry left on the release-1 bridge (D3196) and still converges; it asks nothing, is safe with runs in flight, and a second run changes nothing; the `e2e` update test converges from a fixture of the previous version.
 - Files: `internal/cli/update_routing_migrate.go` (new), `internal/cli/update_routing_migrate_test.go` (new), `internal/cli/update.go`, `internal/cli/init_craft_migrate.go`, `internal/e2e/update_test.go`.
 - Interfaces: Consumes MG1's function, RT2's block, RT4's publisher and PL1's fields. Produces the migrated installation I1 proves.
 - Tests: `TestUpdateMigratesToTheTable`, `TestUpdateSaysWhatChangesFirst`, `TestUpdateMigrationIsIdempotent`.
@@ -909,7 +911,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### PR10: cancel a paused run
 
 - Module: `pause-resume`.
-- Acceptance: `fugaro cancel` of a paused run asks a route of the service to mark its node cancelled, so it is never resumed; the route serves the run's launcher and nobody else (an admin's cancel waits on O16: the service has no admin surface, D143); a cancelled pause shows as cancelled in `runs ls`. Every new refusal writes exactly one audit line and no value.
+- Acceptance: `fugaro cancel` of a paused run asks a route of the service to mark its node cancelled, so it is never resumed; the route serves the run's launcher and nobody else (D3197: an admin does not cancel another person's pause in this plan, since the service has no admin surface, D143); a cancelled pause shows as cancelled in `runs ls`. Every new refusal writes exactly one audit line and no value.
 - Files: `internal/cli/cancel.go`, `internal/cli/cancel_paused_test.go` (new), `internal/credsvc/pause_cancel.go` (new), `internal/credsvc/pause_cancel_test.go` (new), `internal/credsvc/server.go`.
 - Interfaces: Consumes C3's node and its rule for who may cancel. Produces the mark PR4 honours.
 - Tests: `TestCancelOfAPausedRun`, `TestOnlyTheLauncherCancelsAPause`.
@@ -932,19 +934,31 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Commit: `model-credentials-routing PR11: every reader of a status meets `paused``
 - Reviewer tier: standard.
 
-### PR12: a paused chain counts as live
+### PR12: a paused chain is in flight, and its pull request is `paused`
 
 - Module: `pause-resume`.
-- Acceptance: Between a pause and its resume the chain is in flight to every guard that asks: the pull request reads live and not stalled, a duplicate launch and a follow-up are refused as they are for a running run, and the orchestrator's own view counts it; a cancelled pause is not in flight. The word for such a pull request is the owner's (O14); this task builds the recommendation, live.
+- Acceptance: Between a pause and its resume the chain is in flight to every guard that asks: a duplicate launch and a follow-up are refused as they are for a running run, and the orchestrator's own view counts it; a cancelled pause is not in flight. The pull request is in a fifth state, `paused` (D3195): `runs ls --pr`, `watch` and their `--json` say so with the resume time, as a new value of the state member beside live, ready, stalled and orphan, none of which changes meaning.
 - Files: `internal/cli/runs_prstate.go`, `internal/cli/run_duplicate.go`, `internal/cli/followup.go`, `internal/cli/runs_live.go`, `internal/cli/orchestrator_run.go`, `internal/cli/paused_in_flight_test.go` (new).
 - Interfaces: Consumes C3's node. Produces nothing a task calls.
-- Tests: `TestAPausedChainIsInFlight` (one sub-test per guard), `TestACancelledPauseIsNotInFlight`.
-- Command: `go test ./internal/cli/ -run 'TestAPausedChainIsInFlight|TestACancelledPauseIsNotInFlight' -count=1`
+- Tests: `TestAPausedChainIsInFlight` (one sub-test per guard), `TestACancelledPauseIsNotInFlight`, `TestThePullRequestStateIsPaused`.
+- Command: `go test ./internal/cli/ -run 'TestAPausedChainIsInFlight|TestACancelledPauseIsNotInFlight|TestThePullRequestStateIsPaused' -count=1`
 - Red step: `TestAPausedChainIsInFlight/duplicate` fails: the second launch is admitted.
 - Depends on: C3 (the contract's node).
-- Gate: **Not launched before the owner answers O14.**
-- Commit: `model-credentials-routing PR12: a paused chain counts as live`
-- Reviewer tier: standard.
+- Commit: `model-credentials-routing PR12: a paused chain is in flight, and its pull request is `paused``
+- Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
+
+### PR13: the fifth pull-request word, where people and agents read it
+
+- Module: `pause-resume`.
+- Acceptance: `CLAUDE.md`'s paragraph of pull-request words, the rules at the top of `docs/status.md`, and the `landing` and `working` skills name five states and define `paused` the same way: a run suspended itself on this pull request and the orchestrator will resume it at a named time; it needs nothing from a person, is not landed and takes no follow-up while it stands. No row of `docs/status.md` is touched.
+- Files: `CLAUDE.md`, `docs/status.md`, `plugin/skills/landing/SKILL.md`, `plugin/skills/working/SKILL.md`.
+- Interfaces: Consumes PR12's state. Produces nothing a task calls.
+- Tests: The Docs tests; the plugin's tests.
+- Command: `go test ./internal/cli/ -run 'Docs' -count=1` and `go test ./plugin/... -count=1`
+- Red step: None: a documents task. `git grep -n 'paused' CLAUDE.md plugin/skills/landing/SKILL.md` finds the definition in each.
+- Depends on: PR12 (kept, behaviour: the documents describe the state PR12 builds); CS12 (kept: one file, `working/SKILL.md`).
+- Commit: `model-credentials-routing PR13: the fifth pull-request word, where people and agents read it`
+- Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### I2: integration: a run pauses and is resumed
 
@@ -955,7 +969,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Tests: `TestPauseEndToEnd` (four sub-tests).
 - Command: `go test ./internal/cli/ -run 'TestPauseEndToEnd' -count=1`
 - Red step: `TestPauseEndToEnd/pause_and_resume` fails while a stub answers.
-- Depends on: A3, PR1, PR2, PR3, PR4, PR5, PR6, PR7, PR8, PR9, VS3, VS4, PR10, PR11, PR12 (the sides it wires); I1 (kept, behaviour: the test exhausts a real chain, which exists only once I1 has wired it).
+- Depends on: A3, PR1, PR2, PR3, PR4, PR5, PR6, PR7, PR8, PR9, VS3, VS4, PR10, PR11, PR12, PR13 (the sides it wires); I1 (kept, behaviour: the test exhausts a real chain, which exists only once I1 has wired it).
 - Commit: `model-credentials-routing I2: integration: a run pauses and is resumed`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -1064,7 +1078,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Tests: The plugin's tests.
 - Command: `go test ./plugin/... -count=1`
 - Red step: The plugin's test of documented flags fails while a skill names `--token`.
-- Depends on: DOC3 (kept: the documents tasks run one after another over shared tests); PL5 (kept: one file, `decisions.md`); RT5 (kept: one file, `setup/SKILL.md`); CS12 (kept: one file, `working/SKILL.md`).
+- Depends on: DOC3 (kept: the documents tasks run one after another over shared tests); PL5 (kept: one file, `decisions.md`); RT5 (kept: one file, `setup/SKILL.md`); CS12 (kept: one file, `working/SKILL.md`); PR13 (kept: one file, `working/SKILL.md`).
 - Commit: `model-credentials-routing DOC4: the plugin's skills`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -1244,7 +1258,7 @@ plan, a release cut, an owner's check) can hold a task past its level; each is o
 | 5 | RT4, RT5, PL6, CS5, CS10, MG5, GV2, PR11 |
 | 6 | RT6, PL2, CS6, CS7, MG2, PR9 |
 | 7 | RT7, CS12, PR2 |
-| 8 | CS15 |
+| 8 | CS15, PR13 |
 | 9 | PL5 |
 | 10 | PL9 |
 | 11 | PL10, MG4, PR3 |
@@ -1269,8 +1283,7 @@ in the only safe order (the old path, its callers, the plans, the function, the 
 
 **What holds a task besides its edges:** CS1 and MG2 wait on always-a-budget's I1 and the keys
 plan's KS12 (D3071, kept); CS5, CS6 and CS7 on always-a-budget's AB1b; CS11 and RT7 on
-always-a-budget's AB15; PR4 on launcher-does-not-mint's I1; PL8 on the result of Check 880; the
-`contribute` half of PL5 on the owner's answer to O13; PR12 on his answer to O14; DOC1 is not
+always-a-budget's AB15; PR4 on launcher-does-not-mint's I1; PL8 on the result of Check 880; DOC1 is not
 live beside the keys plan's KS13; X1 waits on release 1 being cut and on KS13; X5 on release 1
 being cut. **Release 1 is not cut before DOC1 to DOC4 have merged**: until DOC1, `SECURITY.md`
 still says Vertex has no dollar cap. OpenRouter for a Claude model waits on Check 50 (R3) and
@@ -1349,7 +1362,7 @@ through another task. A change to any task's Files re-checks this table.
 | `internal/watch/render.go` | CS9, PR7 | CS9 then PR7 |
 | `plugin/skills/setup/SKILL.md` | RT5, DOC4 | RT5 then DOC4 |
 | `plugin/skills/setup/reference/decisions.md` | PL5, DOC4 | PL5 then DOC4 |
-| `plugin/skills/working/SKILL.md` | CS12, DOC4 | CS12 then DOC4 |
+| `plugin/skills/working/SKILL.md` | CS12, PR13, DOC4 | CS12 then PR13 then DOC4 |
 | `schemas/fugaro.schema.json` | MG5, X2 | MG5 then X2 |
 | `schemas/project-layer.schema.json` | MG5, X2 | MG5 then X2 |
 | `schemas/result.schema.json` | CS8, PR1 | CS8 then PR1 |
@@ -1482,6 +1495,8 @@ integration task named, which deletes the contract's stubs.
 | PR9 → MG5 | two files, `registry.go` and `settings.schema.json` |
 | PR10 → PR3 | one file, `server.go` |
 | PR11 → PR1 | Behaviour: the readers switch over the set PR1 extends, and their exhaustiveness tests read it |
+| PR13 → PR12 | Behaviour: the documents describe the state PR12 builds |
+| PR13 → CS12 | one file, `working/SKILL.md` |
 | I2 → I1 | Behaviour: the test exhausts a real chain, which exists only once I1 has wired it |
 | VS3 → VS1 | three files shared with VS1 |
 | DOC1 → I1 | a security statement must be true of the tree it describes |
@@ -1493,6 +1508,7 @@ integration task named, which deletes the contract's stubs.
 | DOC4 → PL5 | one file, `decisions.md` |
 | DOC4 → RT5 | one file, `setup/SKILL.md` |
 | DOC4 → CS12 | one file, `working/SKILL.md` |
+| DOC4 → PR13 | one file, `working/SKILL.md` |
 | X1 → I1 | Behaviour: it deletes what I1 proves unused |
 | X1 → I2 | Behaviour: release 2 follows the whole of release 1, the pause included, and its tasks edit files the pause's tasks write |
 | X2 → X1 | Behaviour: its gate must exist before a file may lose the key |
@@ -1514,7 +1530,7 @@ integration task named, which deletes the contract's stubs.
 | X10 → X9 | and X9 |
 | X10 → DOC3 | one file, `release-summaries.yaml` |
 
-**The gain**, as the read reports it: `42 broken, 92 kept, 8 added; before 24 tasks, weight 53;
+**The gain**, as the read reports it: `42 broken, 95 kept, 8 added; before 24 tasks, weight 53;
 after 19 tasks, weight 37; improves`.
 
 **Contract changes anticipated.** A task that finds a contract wrong raises the change and never
@@ -1528,16 +1544,16 @@ works around it.
 
 ## The estimate the graph read printed
 
-`ready in 1238–5135 min, no history yet for 66 tasks (85 tasks; tiers for 19, seeds for 66; from the cached history of 2026-11-21 18:33 UTC)`
+`ready in 1238–5135 min, no history yet for 66 tasks (86 tasks; tiers for 20, seeds for 66; from the cached history of 2026-11-21 18:33 UTC)`
 
 This line is informational and reserves no budget. It is what the tasks' tiers and this
 machine's cached history predict, counts the three contract changes that run only if raised, and
 moves as runs finish and as the graph changes.
 
-**Runs proposed, none launched:** 82 task runs (3 documents, 3 contracts, 2 integrations, 74
+**Runs proposed, none launched:** 83 task runs (3 documents, 3 contracts, 2 integrations, 75
 others), up to 3 contract-change runs if raised, and an independent review
-(`fugaro review --pr N`) for each of the 64 tasks marked opus. At the repository's per-run cap of
-10 USD the 82 task runs cost at most 820 USD and the reviews at most 640 USD; the gateway
+(`fugaro review --pr N`) for each of the 66 tasks marked opus. At the repository's per-run cap of
+10 USD the 83 task runs cost at most 830 USD and the reviews at most 660 USD; the gateway
 enforces the cap, and no brief states one.
 
 ## Checks the plan takes
@@ -1581,6 +1597,8 @@ and no release depends on: designate a personal pool and move their own token in
 - **Taking the retired members out of the policy in release 2**: a release-1 image refuses a
   policy version it does not know (F63); release 2 empties them and a later release removes them.
 - **Holding a designation in the database rules**: people reach the database by IAM (F61).
+- **Calling a paused pull request live** (the recommendation of D3195): declined by the owner;
+  it gets a word of its own.
 - **A count of pauses per chain** (the recommendation of D3190): declined by the owner; total
   paused time is the bound.
 - **Vertex on the job's identity with a cap in the gateway** (D3174 as first answered): the
@@ -1626,6 +1644,10 @@ and no release depends on: designate a personal pool and move their own token in
 | D3191 | A2, PL6, PR3 |
 | D3192 | MG2 |
 | D3193 | GV1, GV2, GV3, GV4, Check 886 |
+| D3194 | A2, PL5 |
+| D3195 | PR12, PR13 |
+| D3196 | MG1, MG2 |
+| D3197 | PR10 |
 | R1 | RT3, CS10 |
 | R2 | CS1, CS2, CS4 |
 | R3 | RT3 |
@@ -1702,9 +1724,9 @@ and no release depends on: designate a personal pool and move their own token in
 | F59 | PL6, PR3 |
 | F60 | CS14, CS1, PL4 |
 | F61 | PL4, PL9, PL10, PR3 |
-| F62 | PL5 (gated on O13) |
+| F62 | PL5 |
 | F63 | X3 |
-| F64 | PR12 (gated on O14) |
+| F64 | PR12, PR13 |
 | F65 | MG1, MG2 |
 | F66 | PR10 |
 | F67 | PR2, PR3 |
@@ -1714,10 +1736,7 @@ and no release depends on: designate a personal pool and move their own token in
 | O11 | GV4, Check 886 |
 | O6 | No task: noted in the reconciliation |
 | O8 | VS3 |
-| O13 | PL5 |
-| O14 | PR12 |
-| O15 | MG1, MG2 |
-| O16 | PR10 |
+| O13 to O16 | Closed by D3194 to D3197 |
 | O17 | No task: the pull request's open items |
 | O10 | Withdrawn |
 | U1 | PL7 |

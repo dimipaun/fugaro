@@ -1104,7 +1104,7 @@
     },
     {
       "id": "PR12",
-      "title": "a paused chain counts as live",
+      "title": "a paused chain is in flight, and its pull request is `paused`",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -1118,6 +1118,23 @@
           "internal/cli/runs_live.go",
           "internal/cli/orchestrator_run.go",
           "internal/cli/paused_in_flight_test.go"
+        ]
+      }
+    },
+    {
+      "id": "PR13",
+      "title": "the fifth pull-request word, where people and agents read it",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "CLAUDE.md",
+          "docs/status.md",
+          "plugin/skills/landing/SKILL.md",
+          "plugin/skills/working/SKILL.md"
         ]
       }
     },
@@ -2293,6 +2310,16 @@
       "reason": "the contract's node"
     },
     {
+      "task": "PR13",
+      "needs": "PR12",
+      "reason": "kept, behaviour: the documents describe the state PR12 builds"
+    },
+    {
+      "task": "PR13",
+      "needs": "CS12",
+      "reason": "kept: one file, `working/SKILL.md`"
+    },
+    {
       "task": "I2",
       "needs": "A3",
       "reason": "the side it wires"
@@ -2373,6 +2400,11 @@
       "reason": "the side it wires"
     },
     {
+      "task": "I2",
+      "needs": "PR13",
+      "reason": "the side it wires"
+    },
+    {
       "task": "VS1",
       "needs": "C1",
       "reason": "the contract's member names"
@@ -2445,6 +2477,11 @@
     {
       "task": "DOC4",
       "needs": "CS12",
+      "reason": "kept: one file, `working/SKILL.md`"
+    },
+    {
+      "task": "DOC4",
+      "needs": "PR13",
       "reason": "kept: one file, `working/SKILL.md`"
     },
     {
