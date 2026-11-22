@@ -1553,10 +1553,12 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	}
 	created := r.creation()
 	// made is how the project became Fugaro's, for the sentences below: the
-	// same word confirmResumedMark uses for the two kinds of resume.
-	made := "created"
+	// same word confirmResumedMark uses for the two kinds of resume. noun is
+	// the same fact as the thing a run resumes, which those sentences need
+	// ("resumed the creation of", "resumed the adoption of").
+	made, noun := "created", "creation"
 	if r.res.Adopted != "" || r.resumedCreation == infra.AdoptedLabelValue {
-		made = "adopted"
+		made, noun = "adopted", "adoption"
 	}
 	if created == "" {
 		// --managed asked for a managed creation and this run made no project
@@ -1659,7 +1661,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		case r.res.Adopted != "":
 			how = "this run adopted"
 		case r.res.Created == "":
-			how = "this run resumed the " + made + " of"
+			how = "this run resumed the " + noun + " of"
 		}
 		fmt.Fprintf(r.w, "recorded that %s project %s: it is Fugaro-managed (gs://%s/%s, labelled %s=%s)\n", how, created, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
 	case fact:

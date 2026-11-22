@@ -271,11 +271,13 @@ func (s *projectStage) read(ctx context.Context) error {
 		return nil
 	}
 	switch {
-	case s.o().strictCreate:
-		return s.strictCreateRefusal()
 	case s.e.r.res.Created == s.id || s.e.r.res.Adopted == s.id:
 		// This run made it Fugaro's a moment ago, in this stage: the project
-		// it reads again carries the label the run wrote.
+		// it reads again carries the label the run wrote. It is checked before
+		// strictCreate, because restore's own child reads its project again
+		// after creating it, and refusing that would refuse every restore.
+	case s.o().strictCreate:
+		return s.strictCreateRefusal()
 	case info.CreatedByFugaro() || info.AdoptedByFugaro():
 		// An earlier run of fugaro setup made it Fugaro's: the resume, with
 		// the label's own value saying how (resumedCreation).
