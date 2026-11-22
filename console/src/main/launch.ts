@@ -30,6 +30,7 @@ import { cliSentence, planFor, privateWorkingDirectory, runToCompletion, spawned
 import type { SpawnLogWriter } from './spawnlog'
 import type { LaunchRecords, LaunchResult } from './launchrules'
 import type { SettingsEntryView, SettingsView } from './settingsview'
+import type { ModelsAddView } from './modelsview'
 import type { SetupView } from './setupview'
 import {
   checkLaunchBranch,
@@ -354,25 +355,31 @@ export interface SettingsConfirmView extends SettingsView {
   readonly project: string
 }
 
-/** ConfirmSubject is what one confirmation window is opened for, and there are
- * exactly four: a launch (`ConfirmView`, rule 11's window), a settings edit's
+/**
+ * ConfirmSubject is what one confirmation window is opened for, and there are
+ * exactly five: a launch (`ConfirmView`, rule 11's window), a settings edit's
  * confirmation (`SettingsConfirmView`, rule 12's), a settings edit's **entry
  * form** (`SettingsEntryView`, SU1's first phase of D2902's one modal, which is
- * the same window before any dry run exists) and a **first setup**
- * (`SetupView`, SW3a: the answers main parsed, their digest, both command lines
- * and the four sentences of what a yes does). The union is a discriminant rather
- * than a guess, so neither the window nor the document it serves can mistake one
- * for the other -- which is the property that matters, because the four
- * questions have different gates: a launch's yes spawns a run, a widening's yes
- * needs the tick as well (`CONFIRM_TICK_NEEDED`), the entry form's answer is a
- * value the main process then runs a dry run over, and a setup's yes is the go
- * for a run whose answers the main process already holds -- it spawns nothing by
- * itself, and it is never a consent the CLI accepts (`wizardrun.ts`). */
+ * the same window before any dry run exists), a **first setup** (`SetupView`,
+ * SW3a: the answers main parsed, their digest, both command lines and the four
+ * sentences of what a yes does) and a **models write** (`ModelsAddView`, MW1:
+ * the CLI's own plan document, its digest and the exact argv the confirmed write
+ * spawns). The union is a discriminant rather than a guess, so neither the
+ * window nor the document it serves can mistake one for the other -- which is
+ * the property that matters, because the five questions have different gates: a
+ * launch's yes spawns a run, a widening's yes needs the tick as well
+ * (`CONFIRM_TICK_NEEDED`, which the settings edit and the models write are the
+ * two of), the entry form's answer is a value the main process then runs a dry
+ * run over, and a setup's yes is the go for a run whose answers the main process
+ * already holds -- it spawns nothing by itself, and it is never a consent the CLI
+ * accepts (`wizardrun.ts`).
+ */
 export type ConfirmSubject =
   | ConfirmView
   | SettingsConfirmView
   | SettingsEntryView
   | SetupView
+  | ModelsAddView
 
 /**
  * LaunchConfirmer is the seam the confirmation window fills: `confirm.ts`'s
