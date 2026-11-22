@@ -107,7 +107,8 @@ allows no other carrier: a per-run Secret Manager secret read by the VM's accoun
 above (the shared account reads every peer's secret, and revocation is not fail-closed). So the
 launcher hands the key as a *secret* launch variable (`LaunchSpec.SecretEnv`), Cloud Run carries it
 in the override, and Batch refuses the launch before creating anything (`ErrRejected`, the value
-never quoted). Batch's launcher wiring is not built, so no launch reaches this today.
+never quoted). Batch's launcher wiring is built (`openCloudFor` and `batchOptions`,
+`internal/cli/cloud.go`), so a launch on that backend reaches this refusal.
 
 **The owner's answer: Batch runs no sealed budget run, and the refusal is a documented limit**
 (2026-10-19, the compute backend plan's P1 — this document's question is closed rather than

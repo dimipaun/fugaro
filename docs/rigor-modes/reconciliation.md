@@ -1005,6 +1005,14 @@ service too old to read the entry, so the row moved with the release that starts
 entries above do. Nothing in this folder changed; the row is named here for the reason the ones
 above are: a reader who finds the figure stale should find who moved it.)
 
+(Amended 2026-11-21: the launcher-does-not-mint plan's LM8 — a launch that holds a ticket for its
+run's identity is refused on a job image whose runner cannot claim it — added `identitySince` to
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 63 to 64. The
+constant names the release whose runner claims the ticket the run's execution carries, so the row
+moved with the release that starts writing one, as the entries above do. Nothing in this folder
+changed; the row is named here for the reason the ones above are: a reader who finds the figure stale
+should find who moved it.)
+
 | Construct | Count | Command |
 | --- | --- | --- |
 | Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
@@ -1017,7 +1025,7 @@ above are: a reader who finds the figure stale should find who moved it.)
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 63 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 64 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 155 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
