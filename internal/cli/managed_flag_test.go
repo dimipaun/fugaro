@@ -1031,8 +1031,8 @@ func TestManagedFlagDefaultsBudget(t *testing.T) {
 // --budget is what replaces it — through RewriteBudget, with both figures
 // printed, so an amount that changed is read rather than discovered later. The
 // figure this command writes is the marker's; the budget ALERT is the
-// installation's Terraform, so the output says which command makes the alert
-// follow.
+// installation's Terraform and no run reads the marker back for it, so the
+// output says that, and names the flags that set the alert to the new figure.
 func TestManagedFlagExplicitRewrites(t *testing.T) {
 	r := managedFlagRig(t)
 	const existing = `{"version":4,"gcp_project":"proj-1234","budget":{"amount":50,"currency":"USD"}}`
@@ -1047,9 +1047,10 @@ func TestManagedFlagExplicitRewrites(t *testing.T) {
 		t.Errorf("gs://%s/%s = %s (present %v), want %s", initRunsBucket, managed.MarkerObject, got, ok, want)
 	}
 	// The old figure and the new one, and what carries the new one to the
-	// alert: an amount that changed and a command that was not mentioned is a
-	// change nobody reads.
-	for _, want := range []string{"50 USD", "400 USD", "fugaro update"} {
+	// alert — the recorded figure is not read back for it, and the flags are
+	// what set it: an amount that changed and a command that was not mentioned
+	// is a change nobody reads.
+	for _, want := range []string{"50 USD", "400 USD", "no run reads this object back for it", "fugaro update --budget 400 --budget-currency USD"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the output does not say %q:\n%s", want, out)
 		}
