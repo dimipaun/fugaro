@@ -1117,7 +1117,14 @@ fi
 trap on_signal INT TERM HUP
 
 retry_read git fetch --quiet origin main --tags --prune
-local_main=$(git rev-parse main)
+# The commit held to origin/main is HEAD's, which the branch check above has
+# already tied to main, and never the `main` ref's: what a release is read and
+# gated from is the working tree this script, the gate, the release policy and
+# the verifier all run out of, and the tree's own commit is what has to equal
+# origin/main. The ref is no part of the question, and asking it is a `set -eu`
+# abort lying in wait -- a substitution that fails ends the script with git's own
+# one-line fatal rather than the refusal below.
+local_main=$(git rev-parse HEAD)
 origin_main=$(git rev-parse origin/main)
 if [ "$local_main" != "$origin_main" ]; then
   echo "main ($local_main) is not origin/main ($origin_main); pull or push first" >&2

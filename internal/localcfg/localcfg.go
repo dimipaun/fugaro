@@ -1689,7 +1689,10 @@ func (c *Config) Overrides() (pricing.Overrides, error) {
 // validateBudget checks the budget block and the model prices.
 func (c *Config) validateBudget(bad func(string, ...any)) {
 	if b := c.Budget; b != nil {
-		if b.Mode != "" && !policy.ValidMode(b.Mode) {
+		// The word that was a budget mode is read before it is judged, so a
+		// config that says it still loads for the update that rewrites it
+		// (F22; load_removed_mode.go).
+		if b.Mode != "" && !acceptedBudgetMode(b.Mode) {
 			bad("budget.mode %q must be off, observe or enforce", b.Mode)
 		}
 		if b.MaxRunTokens < 0 {
