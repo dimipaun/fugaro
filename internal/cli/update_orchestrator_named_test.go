@@ -181,14 +181,19 @@ func TestUpdateNamedMigrationWithRunInFlight(t *testing.T) {
 	if err := prevState.Validate(inst); err != nil {
 		t.Errorf("the release behind refuses the backlog node this update wrote — the one node `fugaro update` writes into an orchestrator subtree — so a member still on it, or a resident daemon whose image the update has not rebuilt, refuses the project's own backlog (F35): %v\n%s", err, folded)
 	}
-	// Take the fold's own node out and the two subtrees are one document: every
-	// node the release behind left is there byte for byte, and none this release
-	// writes has appeared beside it — the driver node included, which is the
-	// lease holder's write and not the update's.
+	// Take the fold's own node out and the two subtrees are one document: the
+	// subtree the update leaves is the subtree it found with that one node
+	// added, so every node the release behind left is there byte for byte and
+	// none this release writes has appeared beside it — the driver node
+	// included, which is the lease holder's write and not the update's. The
+	// claim is about what the update does write, not about an update that
+	// writes nothing: the fold's node is that write (D2716), and D3218 as
+	// amended is that no other node under `orchestrator/` moves for a release
+	// behind to refuse (F35).
 	delete(afterDefault, orchestrator.BacklogNode)
 	if !reflect.DeepEqual(beforeTree, afterTree) {
-		t.Errorf("fugaro update changed an orchestrator node other than the one it folds. D3218 as amended is that it writes nothing else there: a member still on the release behind, or a resident daemon whose image it has not rebuilt, refuses a node that carries a field it does not model (F35)\nbefore: %s\nafter:  %s",
-			before, after)
+		t.Errorf("fugaro update changed an orchestrator node other than the one it folds, %s's backlog node. The subtree it leaves is the subtree it found with that one node added, and D3218 as amended is that no second node of it moves: a member still on the release behind, or a resident daemon whose image it has not rebuilt, refuses a node that carries a field it does not model (F35)\nbefore: %s\nafter:  %s",
+			orchestratorTestID, before, after)
 	}
 
 	// And the run the update found in flight goes on: its lease, its ledger,
