@@ -557,6 +557,78 @@ test_a_paused_rows_own_previous_run_is_not_the_resumer() {
   expect_row "$out" pool UNVERIFIED "a paused row's own previous_run"
 }
 
+test_a_paused_rows_resume_time_is_not_read_as_the_resumer() {
+  case_dir paused_row_resume_time
+  # The paused row carries the resume TIME beside the run that resumed it, and
+  # the plan's own name for the time is `resume_at` (C3, the exhausted answer's
+  # wire member) — a name mentioning resuming. A row that has the time and no
+  # resumer yet, or a listing that spells the resumer otherwise, must not read
+  # the timestamp as the run that resumed the pause: doing so would PASS the
+  # resume row naming a clock reading and send the pool row after a record that
+  # cannot exist.
+  printf '{"runs":[%s]}\n' "$(row paused ',"resume_at":"2026-11-22T06:00:00Z"')" >"$answers/runs-2.json"
+  printf '{"runs":[%s]}\n' "$(row paused ',"resume_at":"2026-11-22T06:00:00Z"')" >"$answers/runs-3.json"
+  run883
+  expect_status "$status" 3 "a paused row's resume time"
+  expect_row "$out" pause PASS "a paused row's resume time: the pause was still read"
+  expect_row "$out" resume UNVERIFIED "a paused row's resume time"
+  expect_row "$out" pool UNVERIFIED "a paused row's resume time"
+  # No record is looked for under a run id that is a clock reading: the pool row
+  # read nothing at all, rather than chasing the timestamp as if it were a run.
+  expect_not_contains "$(cat "$GCLOUD_CALLS")" "2026-11-22T06:00:00Z" \
+    "a paused row's resume time: the timestamp is never named as a run"
+}
+
+test_the_resume_time_before_the_resumer_still_names_the_resumer() {
+  case_dir resume_time_first
+  # The same row written the other way round: the resume time first, the run
+  # that resumed it after. The reading is the member, not the order it is
+  # written in, so the resumer is read and the pool row reads ITS record.
+  printf '{"runs":[%s]}\n' \
+    "$(row paused ',"resume_at":"2026-11-22T06:00:00Z","resumed_by":"'"$RESUMED"'"')" >"$answers/runs-2.json"
+  printf '{"runs":[%s]}\n' \
+    "$(row paused ',"resume_at":"2026-11-22T06:00:00Z","resumed_by":"'"$RESUMED"'"')" >"$answers/runs-3.json"
+  run883
+  expect_status "$status" 0 "the resume time before the resumer"
+  expect_row "$out" resume PASS "the resume time before the resumer"
+  expect_row "$out" pool PASS "the resume time before the resumer"
+  expect_contains "$out" "resumed_by=$RESUMED" "the resume time before the resumer: the run that resumed it, not the time"
+  expect_contains "$(cat "$GCLOUD_CALLS")" "gcloud storage cat gs://$BUCKET/runs/$SLUG/$RESUMED/result.json" \
+    "the resume time before the resumer: the pool row read the resumed run's record"
+}
+
+test_a_resumed_rows_resumes_member_is_read() {
+  case_dir resumed_row_resumes
+  # The plan names the back-link `resumes`: a run reissued over a pause carries
+  # it, naming the paused run (C3's task member; PR4's reissue, VS3's reader).
+  # It contains "resum", so it also has to be read as what it is — the resumed
+  # row pointing back — and not skipped for its name.
+  printf '{"runs":[%s]}\n' "$(row paused ',"paused_until":"2026-11-22T06:00:00Z"')" >"$answers/runs-2.json"
+  printf '{"runs":[%s,{"run":"%s/%s","repo":"acme/sub-app","run_id":"%s","status":"running","resumes":"%s"}]}\n' \
+    "$(row paused ',"paused_until":"2026-11-22T06:00:00Z"')" "$SLUG" "$RESUMED" "$RESUMED" "$LAUNCHED" \
+    >"$answers/runs-3.json"
+  run883
+  expect_status "$status" 0 "a resumed row's resumes member"
+  expect_row "$out" resume PASS "a resumed row's resumes member"
+  expect_row "$out" pool PASS "a resumed row's resumes member"
+  expect_contains "$out" "run=$RESUMED" "a resumed row's resumes member: that row's own run is the resumer"
+}
+
+test_a_paused_rows_own_resumes_member_is_not_the_resumer() {
+  case_dir paused_row_resumes
+  # `resumes` names the run a row RESUMES, not one that resumed it, so on the
+  # PAUSED row it points the other way — the paused run's own predecessor in the
+  # chain — and is not the run that resumed this pause.
+  printf '{"runs":[%s]}\n' \
+    "$(row paused ',"paused_until":"2026-11-22T06:00:00Z","resumes":"run-dddd4444"')" >"$answers/runs-2.json"
+  printf '{"runs":[%s]}\n' \
+    "$(row paused ',"paused_until":"2026-11-22T06:00:00Z","resumes":"run-dddd4444"')" >"$answers/runs-3.json"
+  run883
+  expect_status "$status" 3 "a paused row's own resumes member"
+  expect_row "$out" resume UNVERIFIED "a paused row's own resumes member"
+  expect_row "$out" pool UNVERIFIED "a paused row's own resumes member"
+}
+
 test_a_pool_that_is_not_the_launchers_is_refused_before_anything_runs() {
   case_dir bad_pool_name
   run883_raw --repo acme/sub-app --pool 'team a' --dry-run
@@ -611,6 +683,10 @@ t test_a_record_that_cannot_be_read_leaves_the_row_unverified
 t test_a_resumed_row_that_points_back_at_the_pause_is_read
 t test_a_follow_up_runs_previous_run_is_not_the_resumer
 t test_a_paused_rows_own_previous_run_is_not_the_resumer
+t test_a_paused_rows_resume_time_is_not_read_as_the_resumer
+t test_the_resume_time_before_the_resumer_still_names_the_resumer
+t test_a_resumed_rows_resumes_member_is_read
+t test_a_paused_rows_own_resumes_member_is_not_the_resumer
 t test_a_pool_that_is_not_the_launchers_is_refused_before_anything_runs
 t test_an_unknown_argument_is_refused
 

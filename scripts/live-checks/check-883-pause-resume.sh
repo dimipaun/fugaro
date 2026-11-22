@@ -38,12 +38,15 @@
 #               is the state of the pool, not a defect of the release.
 #   resume      a member of the PAUSED run's own row names the run that resumed
 #               it (the design's place for it, plan C3), or a row that names the
-#               paused run in a member about continuing is the resumed run
-#               itself — the orchestrator's reissue under either spelling.
-#               UNVERIFIED when the bound passes with no such row, naming what
-#               the rows do carry. A member of some other row that names a third
-#               run (a follow-up's own `previous_run`) is not read: the rows are
-#               anchored on the paused run, not on the word.
+#               paused run in a member about continuing (`previous_run`,
+#               `continues`, `resumes`) is the resumed run itself — the
+#               orchestrator's reissue under either spelling. UNVERIFIED when the
+#               bound passes with no such row, naming what the rows do carry. The
+#               resume TIME is a member of the same row and its name mentions
+#               resuming too (`resume_at`), so a name that mentions a time is the
+#               time, never the resumer; and a member of some other row that
+#               names a third run (a follow-up's own `previous_run`) is not read
+#               either: the rows are anchored on the paused run, not on the word.
 #   pool        the RESUMED run's own record — read with `gcloud storage cat`
 #               from the runs bucket, off its stages' `source` — was served from
 #               the pool the launch named and of the kind `launcher-pool`:
@@ -512,23 +515,43 @@ PY
 # that resumed it" is a member of the PAUSED run's own row (plan C3) — and not
 # its name, so the reading is anchored on the row and not on the word:
 #
-#   * on the paused run's own row, any member whose name mentions resuming
+#   * on the paused run's own row, a member whose name mentions resuming
 #     (`resumed_by`, `resumed_run`, `resumer`, ...) holds the run that resumed
-#     it. A member of that row about CONTINUING (`previous_run`, `continues`)
-#     names the run the paused run itself continued, which is the opposite
-#     direction, so it is not read as the resumer.
+#     it. The resume TIME is a member of the same row and its name mentions
+#     resuming too — `resume_at` is the plan's own name for it (C3, the
+#     exhausted answer's wire member) — so a name that mentions a time
+#     (`_at`, `_time`, `_until`, ...) is the time, never the resumer: reading it
+#     would PASS the resume row naming a clock reading and send the pool row
+#     after a record no run has.
+#   * a member about CONTINUING names the run this row's own run continues, the
+#     opposite direction: `previous_run`, `continues`, and `resumes` — the plan
+#     names the back-link `resumes` (C3's task member; PR4's reissue names the
+#     paused run with it, VS3's reader takes it back to `pause.json`). On the
+#     paused row such a member is the paused run's own predecessor and is not
+#     read as the resumer.
 #   * on any other row, only a member about continuing that is EQUAL to the
-#     paused id links the two: that row IS the resumed run (`previous_run`
-#     pointing back at the pause), and the run that resumed it is that row's own
-#     run. A follow-up run's `previous_run` naming some third run says nothing
-#     about this pause and is not read.
+#     paused id links the two: that row IS the resumed run (`previous_run` or
+#     `resumes` pointing back at the pause), and the run that resumed it is that
+#     row's own run. A follow-up run's `previous_run` naming some third run says
+#     nothing about this pause and is not read.
 resumed_by() { # resumed_by <file> [the paused run id]
   python3 - "$1" "${2:-}" <<'PY'
-import json, sys
+import json, re, sys
 try:
     doc = json.load(open(sys.argv[1]))
 except Exception:
     sys.exit(0)
+
+CONTINUING = ("continues", "previous_run", "resumes")
+TIME_WORDS = ("at", "time", "ts", "timestamp", "until", "since", "after",
+              "before", "not_before", "deadline", "expires", "expiry", "eta",
+              "date", "clock", "seconds", "minutes", "duration", "when")
+
+
+def is_time(low):
+    return any(w in TIME_WORDS for w in re.split(r"[^a-z0-9]+", low))
+
+
 paused = sys.argv[2]
 for r in doc.get("runs") or []:
     rid = r.get("run_id") or r.get("run") or ""
@@ -537,8 +560,8 @@ for r in doc.get("runs") or []:
         low = name.lower()
         if not value or isinstance(value, (dict, list)):
             continue
-        resuming = "resum" in low
-        continuing = low in ("continues", "previous_run")
+        continuing = low in CONTINUING
+        resuming = "resum" in low and not continuing and not is_time(low)
         if not (resuming or continuing):
             continue
         if on_paused_row:
@@ -866,7 +889,7 @@ PY
     fi
     last="no row names the run that resumed ${RUN_ID}"
     if ! still_waiting "$deadline"; then
-      fact resume UNVERIFIED "no row of 'fugaro runs ls --json' names the run that resumed ${RUN_ID} after $(elapsed_since "$start")s of waiting (${last}), so whether the resident orchestrator resumes a pause is NOT measured. A pause is resumed when its time comes — never sooner than the policy's minimum pause (${MIN_PAUSE_SECONDS:-unknown}s), with the orchestrator ticking every minute — so this may be a check that waited too little: give it more with --resume-wait, or read 'fugaro runs ls --repo ${REPO} --json' yourself and record what the paused row carries. The two members this check reads are a member of ${RUN_ID}'s OWN row whose name mentions resuming, and, on any other row, a member about continuing that names ${RUN_ID} (that row is then the resumed run)"
+      fact resume UNVERIFIED "no row of 'fugaro runs ls --json' names the run that resumed ${RUN_ID} after $(elapsed_since "$start")s of waiting (${last}), so whether the resident orchestrator resumes a pause is NOT measured. A pause is resumed when its time comes — never sooner than the policy's minimum pause (${MIN_PAUSE_SECONDS:-unknown}s), with the orchestrator ticking every minute — so this may be a check that waited too little: give it more with --resume-wait, or read 'fugaro runs ls --repo ${REPO} --json' yourself and record what the paused row carries. The two members this check reads are a member of ${RUN_ID}'s OWN row whose name mentions resuming and not a time (the row's resume TIME — ${RUN_ID}'s own row carries it too — is not the resumer), and, on any other row, a member about continuing (previous_run, continues, resumes) that names ${RUN_ID} (that row is then the resumed run)"
       return 0
     fi
     pause_between "$POLL_SECONDS"
