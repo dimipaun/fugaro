@@ -130,7 +130,7 @@ func TestLeftForYouIsNotATick(t *testing.T) {
 	if !strings.Contains(got, glyphLeft.sym+" Enable the billing account: run this in your own terminal window") {
 		t.Errorf("the left-for-you line is missing its own marker and text:\n%q", got)
 	}
-	if !strings.Contains(got, "full output: "+sink.path) {
+	if !strings.Contains(got, "  Log:  "+sink.path) {
 		t.Errorf("the left-for-you line does not say where the log is:\n%q", got)
 	}
 	if o.State != Left {
@@ -162,7 +162,7 @@ func TestRefusedIsACrossAndNotALeftForYou(t *testing.T) {
 		if !strings.Contains(got, "\x1b[") {
 			t.Errorf("a terminal gets no colour for the refusal: %q", got)
 		}
-		if !strings.Contains(got, "full output: "+sink.path) {
+		if !strings.Contains(got, "  Log:  "+sink.path) {
 			t.Errorf("the refusal does not say where the log is:\n%q", got)
 		}
 		if !strings.Contains(sink.String(), glyphFailed.text(false)+" Installation: the managed gate refused this step") {
@@ -208,26 +208,34 @@ func TestSummaryUsesTheInjectedClock(t *testing.T) {
 	}
 }
 
-func TestFailedStepPrintsContextAndSinkPath(t *testing.T) {
+// TestAFailedStepPrintsTheWholeMessageAndWhereToReadMore: the step that
+// stopped the run is the one thing its reader has to read in full, so the block
+// prints the error's whole message — the first line under an `Error:` label and
+// its own later lines under that, with no ellipsis anywhere — and then the two
+// lines that say where the rest of it is: the run's log and the command that
+// explains the run. The log gets the same block, without the colour.
+func TestAFailedStepPrintsTheWholeMessageAndWhereToReadMore(t *testing.T) {
+	const id = "update-20261107000000-1"
+	long := strings.Repeat("a message long enough that a step's own reason would be cut with an ellipsis, ", 2)
 	var out bytes.Buffer
-	sink := &fakeSink{path: "/state/fugaro/logs/update-20261107000000-1.log"}
+	sink := &fakeSink{path: "/state/fugaro/logs/" + id + ".log"}
 	r := New(Options{Out: &out, Getenv: noEnv, NoColor: true, Sink: sink})
-	r.Step("Publish the policy").Failed(errors.New("exit status 1"), []string{
-		"Error: permission denied on the policy node",
-		"  with google_project_iam_member.policy",
-	})
+	r.Step("Publish the policy").Failed(errors.New(long+"\nPass a new --gcp-project."), nil)
 	o := r.Summary()
-	got := out.String()
-	for _, want := range []string{
-		"Publish the policy",
-		"exit status 1",
-		"Error: permission denied on the policy node",
-		"with google_project_iam_member.policy",
-		"full output: " + sink.path,
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the failure block does not print %q:\n%q", want, got)
-		}
+	want := glyphFailed.sym + " Publish the policy\n" +
+		"Error: " + long + "\n" +
+		"  Pass a new --gcp-project.\n" +
+		"  Log:  " + sink.path + "\n" +
+		"  Help: fugaro troubleshoot " + id + "\n" +
+		"Failed in 0.0s, 1 step\n"
+	if got := out.String(); got != want {
+		t.Errorf("the failure block is\n%q\nwant\n%q", got, want)
+	}
+	if strings.Contains(out.String(), "…") {
+		t.Errorf("the failure cut its message; a failure is the one thing read in full:\n%q", out.String())
+	}
+	if got := sink.String(); got != want {
+		t.Errorf("the log holds\n%q\nwant the same block without colour:\n%q", got, want)
 	}
 	if o.State != Failed {
 		t.Errorf("Summary state is %v, want Failed", o.State)
@@ -247,13 +255,13 @@ func TestFailedStepPrintsContextAndSinkPath(t *testing.T) {
 // words, and a run that exits 1 over them is not a run to explain (G3).
 func TestTheFailureLineNamesTheTroubleshootCommand(t *testing.T) {
 	const id = "update-20261107000000-48213"
-	want := "Something went wrong. Run: fugaro troubleshoot " + id
+	want := "Help: fugaro troubleshoot " + id
 
 	t.Run("a failed step under a log", func(t *testing.T) {
 		var out bytes.Buffer
 		sink := &fakeSink{path: "/state/fugaro/logs/" + id + ".log"}
 		r := New(Options{Out: &out, Getenv: noEnv, NoColor: true, Sink: sink})
-		r.Step("Installation").Failed(errors.New("exit status 1"), []string{"Error: quota exceeded"})
+		r.Step("Installation").Failed(errors.New("exit status 1\nquota exceeded"), nil)
 		r.Summary()
 		got := out.String()
 		if n := strings.Count(got, want); n != 1 {
@@ -267,10 +275,10 @@ func TestTheFailureLineNamesTheTroubleshootCommand(t *testing.T) {
 	t.Run("no log at all", func(t *testing.T) {
 		var out bytes.Buffer
 		r := New(Options{Out: &out, Getenv: noEnv, NoColor: true})
-		r.Step("Backfill").Failed(errors.New("exit status 1"), []string{"Error: permission denied"})
+		r.Step("Backfill").Failed(errors.New("exit status 1\npermission denied"), nil)
 		r.Summary()
-		if got := out.String(); strings.Contains(got, "Something went wrong") {
-			t.Errorf("a run that kept no log named a run ID it has none of:\n%q", got)
+		if got := out.String(); strings.Contains(got, "Help: fugaro troubleshoot") {
+			t.Errorf("a run that kept no log named a command that would read one:\n%q", got)
 		}
 	})
 
@@ -287,7 +295,7 @@ func TestTheFailureLineNamesTheTroubleshootCommand(t *testing.T) {
 			r := New(Options{Out: &out, Getenv: noEnv, NoColor: true, Sink: sink})
 			tc.do(r.Step("Enable the billing account"))
 			r.Summary()
-			if got := out.String(); strings.Contains(got, "Something went wrong") {
+			if got := out.String(); strings.Contains(got, "Help: fugaro troubleshoot") {
 				t.Errorf("a step %s is not a failure, and the block says so:\n%q", tc.name, got)
 			}
 		}
@@ -306,14 +314,15 @@ func TestTheLogHoldsTheRunsOwnLines(t *testing.T) {
 	// A terminal, so the person's copy is styled and the log's is not.
 	r := New(Options{Out: &out, Getenv: noEnv, IsTerminal: aTerminal, Sink: sink, Now: func() time.Time { return now }})
 	r.Step("Publish the policy").Done("published")
-	r.Step("Backfill").Failed(errors.New("exit status 1"), []string{"Error: permission denied"})
+	r.Step("Backfill").Failed(errors.New("exit status 1\npermission denied"), nil)
 	r.Summary()
 	log := sink.String()
 	for _, want := range []string{
 		glyphDone.sym + " Publish the policy published",
-		glyphFailed.sym + " Backfill: exit status 1",
-		"    Error: permission denied",
-		"full output: " + sink.path,
+		glyphFailed.sym + " Backfill",
+		"Error: exit status 1",
+		"  permission denied",
+		"  Log:  " + sink.path,
 		"Failed in 0.0s, 2 steps",
 	} {
 		if !strings.Contains(log, want) {
@@ -602,11 +611,11 @@ func TestShortLeavesAShortReasonAlone(t *testing.T) {
 	}
 }
 
-// TestWaitsIsOneLineForARunOfStages: a run that stopped at a stage leaves every
-// stage behind it saying the same thing, and the account says it once: at most
-// three stages are named and the rest are counted, the verb agrees with the
-// subject, and the summary still counts the stages rather than the lines.
-func TestWaitsIsOneLineForARunOfStages(t *testing.T) {
+// TestWaitsIsOneDimLineCountingTheSteps: a run that stopped at a step leaves
+// every step behind it saying the same thing, and the account says it once —
+// how many steps never ran, and what they wait for — while the summary still
+// counts the steps rather than the line.
+func TestWaitsIsOneDimLineCountingTheSteps(t *testing.T) {
 	var out bytes.Buffer
 	r := New(Options{Out: &out, Getenv: noEnv, Sink: &fakeSink{path: "/tmp/x.log"}})
 	r.Waits([]string{"firebase", "images", "secrets", "plugin", "repository"}, "installation")
@@ -614,24 +623,53 @@ func TestWaitsIsOneLineForARunOfStages(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("the waiting account is %d lines, want one:\n%q", len(got), out.String())
 	}
-	if want := "↳ firebase, images, secrets and 2 more wait for installation"; got[0] != want {
+	if want := glyphSkipped.sym + " 5 steps not run (they need installation)"; got[0] != want {
 		t.Errorf("the waiting line is %q, want %q", got[0], want)
 	}
 	if o := r.Summary(); o.Steps != 5 {
-		t.Errorf("the run reported %d steps, want the 5 stages the one line stands for", o.Steps)
+		t.Errorf("the run reported %d steps, want the 5 steps the one line stands for", o.Steps)
 	}
 
 	var one bytes.Buffer
 	r = New(Options{Out: &one, Getenv: noEnv})
 	r.Waits([]string{"repository"}, "secrets")
-	if want := "↳ repository waits for secrets"; lines(one.String())[0] != want {
-		t.Errorf("one stage's line is %q, want %q", lines(one.String())[0], want)
+	if want := glyphSkipped.sym + " 1 step not run (it needs secrets)"; lines(one.String())[0] != want {
+		t.Errorf("one step's line is %q, want %q", lines(one.String())[0], want)
 	}
 
 	var none bytes.Buffer
 	r = New(Options{Out: &none, Getenv: noEnv})
 	r.Waits(nil, "secrets")
 	if none.String() != "" {
-		t.Errorf("a run with no waiting stage printed %q", none.String())
+		t.Errorf("a run with no waiting step printed %q", none.String())
+	}
+}
+
+// TestAStoppedRunSaysHowToResumeIt: a run that stopped names the step it
+// stopped at and the command that picks it up there, once, in the closing line
+// — the step count is left out because most of a stopped run's steps are the
+// ones it never reached. A run that is not stopped keeps the count it always
+// had, whatever a caller set RerunFrom to.
+func TestAStoppedRunSaysHowToResumeIt(t *testing.T) {
+	var out bytes.Buffer
+	r := New(Options{Out: &out, Getenv: noEnv, NoColor: true})
+	r.Step("project").Failed(errors.New("the project already exists"), nil)
+	r.RerunFrom("fugaro setup", "project")
+	o := r.Summary()
+	want := "Failed in 0.0s. Rerun fugaro setup to resume at project.\n"
+	if got := out.String(); !strings.HasSuffix(got, want) {
+		t.Errorf("the closing line of a stopped run is\n%q\nwant it to end with %q", got, want)
+	}
+	if o.State != Failed || o.Steps != 1 {
+		t.Errorf("the run reported %v with %d steps, want Failed with 1", o.State, o.Steps)
+	}
+
+	var done bytes.Buffer
+	r = New(Options{Out: &done, Getenv: noEnv, NoColor: true})
+	r.Step("preflight").Done("ready")
+	r.RerunFrom("fugaro setup", "project")
+	r.Summary()
+	if got := done.String(); !strings.HasSuffix(got, "Done in 0.0s, 1 step\n") {
+		t.Errorf("a run that finished lost its own closing line:\n%q", got)
 	}
 }

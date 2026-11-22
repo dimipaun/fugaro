@@ -1,6 +1,7 @@
 package report
 
 import (
+	"io"
 	"strings"
 
 	"github.com/muesli/termenv"
@@ -55,49 +56,78 @@ const (
 	colourWarning = termenv.ANSIColor(3)
 )
 
+// Style is the CLI's one colour decision as a value a caller can hold before it
+// has a reporter: the wizard's questions are asked before the converge builds
+// one — they are what the converge is about — and a question drawn in one
+// syntax with the steps under it in another would be two hands on one screen.
+// NewStyle is the whole of how one is made; everything that prints after the
+// converge has a reporter goes through that instead. The zero Style is plain
+// text.
+type Style struct{ profile termenv.Profile }
+
+// NewStyle is the colour decision for one command's run, made by the same rule
+// the reporter uses (New): a terminal, colour not turned off (--no-color,
+// NO_COLOR, TERM=dumb), markers not kept to ASCII, and no --json.
+func NewStyle(o Options) Style {
+	if o.Getenv == nil {
+		o.Getenv = func(string) string { return "" }
+	}
+	if o.IsTerminal == nil {
+		o.IsTerminal = func(io.Writer) bool { return false }
+	}
+	if !o.JSON && !o.ASCII && !NoColor(o.NoColor, o.Getenv) && o.IsTerminal(o.Out) {
+		// ANSI: the sixteen colours, which every terminal draws and which the
+		// legacy Windows console draws once virtual terminal processing is on.
+		return Style{profile: termenv.ANSI}
+	}
+	return Style{profile: termenv.Ascii}
+}
+
 // Header renders one section's heading the way Homebrew draws it: a bold blue
-// arrow, and the text in bold after it. It is what a run opens with and what a
-// block of its output is announced by, so a person scrolling a long run sees
-// where one part ends and the next begins.
-func (r *Reporter) Header(text string) string {
-	return r.styled("==>", styleOpts{colour: colourHeader, paint: true, bold: true}) + " " + r.Bold(text)
+// arrow, and the text in bold after it. It is what a block of a run's output is
+// announced by, so a person scrolling a long run sees where one part ends and
+// the next begins.
+func (s Style) Header(text string) string {
+	return s.styled("==>", styleOpts{colour: colourHeader, paint: true, bold: true}) + " " + s.Bold(text)
 }
 
 // Error renders a failure's own label: `Error:` in bold red. The message goes
 // after it, and is not coloured — the label is what a person scans for.
-func (r *Reporter) Error(text string) string {
-	return r.styled("Error:", styleOpts{colour: colourFailed, paint: true, bold: true}) + " " + text
+func (s Style) Error(text string) string {
+	return s.styled("Error:", styleOpts{colour: colourFailed, paint: true, bold: true}) + " " + text
 }
 
 // Warning renders a warning's own label: `Warning:` in bold yellow. What it
 // warns about is not a failure and the run goes on, which is why it is not the
 // failure's red.
-func (r *Reporter) Warning(text string) string {
-	return r.styled("Warning:", styleOpts{colour: colourWarning, paint: true, bold: true}) + " " + text
+func (s Style) Warning(text string) string {
+	return s.styled("Warning:", styleOpts{colour: colourWarning, paint: true, bold: true}) + " " + text
 }
 
 // Bold is text drawn in bold, for a line that has to stand out from the ones
-// around it. A nil reporter, a pipe and --no-color all leave it as it is.
-func (r *Reporter) Bold(text string) string { return r.styled(text, styleOpts{bold: true}) }
+// around it. A pipe, a --no-color run and a --json document all leave it as it
+// is.
+func (s Style) Bold(text string) string { return s.styled(text, styleOpts{bold: true}) }
 
 // Dim is text drawn faint, for what is said beside the thing it belongs to: a
 // suggested answer, a count of steps a stopped run never reached. A suggested
 // answer is dim rather than coloured because it is a value the run offers and
 // not a result it reports.
-func (r *Reporter) Dim(text string) string { return r.styled(text, styleOpts{faint: true}) }
+func (s Style) Dim(text string) string { return s.styled(text, styleOpts{faint: true}) }
 
-// Ask renders one question's own line: the label in bold, the hint after it
-// when the question has one, and the suggested answer dimmed inside brackets —
-// which is the whole of what "press Enter to take it" would otherwise have to
-// say in a sentence. It ends at the suggestion: the caller writes the colon the
-// answer is typed after, because a question is a prompt and not a line.
-func (r *Reporter) Ask(label, hint, suggestion string) string {
-	line := r.Bold(label)
+// Ask renders one question's own line: the label in bold, what the question
+// says about the shape of the answer after it, and the suggested answer dimmed
+// inside brackets — which is the whole of what "press Enter to take it" would
+// otherwise have to say in a sentence. It ends at the suggestion: the caller
+// writes the colon the answer is typed after, because a question is a prompt
+// and not a line.
+func (s Style) Ask(label, hint, suggestion string) string {
+	line := s.Bold(label)
 	if hint != "" {
 		line += ": " + hint
 	}
 	if suggestion != "" {
-		line += " " + r.Dim("["+suggestion+"]")
+		line += " " + s.Dim("["+suggestion+"]")
 	}
 	return line
 }
@@ -211,23 +241,23 @@ type styleOpts struct {
 // CLICOLOR_FORCE inside it) is never consulted, so an environment that forces
 // colour cannot put ANSI on a pipe (T4(a), D1355). The Ascii profile is what
 // keeps colour-off to one call rather than a branch at every print.
-func (r *Reporter) painted(text string, c termenv.ANSIColor) string {
-	return r.styled(text, styleOpts{colour: c, paint: true})
+func (s Style) painted(text string, c termenv.ANSIColor) string {
+	return s.styled(text, styleOpts{colour: c, paint: true})
 }
 
-func (r *Reporter) styled(text string, o styleOpts) string {
-	if r == nil || r.profile == termenv.Ascii {
+func (s Style) styled(text string, o styleOpts) string {
+	if s.profile == termenv.Ascii {
 		return text
 	}
-	s := r.profile.String(text)
+	out := s.profile.String(text)
 	if o.bold {
-		s = s.Bold()
+		out = out.Bold()
 	}
 	if o.faint {
-		s = s.Faint()
+		out = out.Faint()
 	}
 	if o.paint {
-		s = s.Foreground(o.colour)
+		out = out.Foreground(o.colour)
 	}
-	return s.String()
+	return out.String()
 }

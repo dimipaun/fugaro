@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 )
@@ -176,4 +177,78 @@ func stripANSI(s string) string {
 		i++
 	}
 	return b.String()
+}
+
+// TestTheSectionLabelsAreDrawnAndPlain: a heading, an `Error:` and a
+// `Warning:` are what a run's blocks are announced by, and they are the run's
+// own syntax — bold and coloured where the colour rule allows it, and the same
+// words with none of it anywhere else. None of them carries a glyph, so the two
+// alphabets draw them identically and --ascii changes nothing about them.
+func TestTheSectionLabelsAreDrawnAndPlain(t *testing.T) {
+	want := []struct{ got, plain string }{
+		{"==> Setting up sandbox", "==> Setting up sandbox"},
+		{"Error: it already exists", "Error: it already exists"},
+		{"Warning: no budget backend yet", "Warning: no budget backend yet"},
+		{"Location: US, EU or a region [us]", "Location: US, EU or a region [us]"},
+	}
+	t.Run("a terminal is coloured", func(t *testing.T) {
+		var out bytes.Buffer
+		r := New(Options{Out: &out, Getenv: noEnv, IsTerminal: aTerminal})
+		got := []string{
+			r.Header("Setting up sandbox"),
+			r.Error("it already exists"),
+			r.Warning("no budget backend yet"),
+			r.Ask("Location", "US, EU or a region", "us"),
+		}
+		for i, g := range got {
+			if !strings.Contains(g, "\x1b[") {
+				t.Errorf("%q is not coloured on a terminal", g)
+			}
+			if plain := stripANSI(g); plain != want[i].plain {
+				t.Errorf("the styled line reads %q without colour, want %q", plain, want[i].plain)
+			}
+		}
+	})
+
+	t.Run("everything that turns colour off draws the words", func(t *testing.T) {
+		cases := []struct {
+			name string
+			o    Options
+		}{
+			{"a pipe", Options{Out: io.Discard, Getenv: noEnv, IsTerminal: notATerminal}},
+			{"NO_COLOR", Options{Out: io.Discard, Getenv: envOf(map[string]string{"NO_COLOR": "1"}), IsTerminal: aTerminal}},
+			{"--no-color", Options{Out: io.Discard, Getenv: noEnv, IsTerminal: aTerminal, NoColor: true}},
+			{"--ascii", Options{Out: io.Discard, Getenv: noEnv, IsTerminal: aTerminal, ASCII: true}},
+			{"--json", Options{Out: io.Discard, Getenv: noEnv, IsTerminal: aTerminal, JSON: true}},
+		}
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				// The wizard's own style, which is NewStyle and not a reporter:
+				// the questions are asked before the converge builds one, and
+				// the two have to draw in one syntax.
+				s := NewStyle(c.o)
+				got := []string{
+					s.Header("Setting up sandbox"),
+					s.Error("it already exists"),
+					s.Warning("no budget backend yet"),
+					s.Ask("Location", "US, EU or a region", "us"),
+				}
+				for i, g := range got {
+					if strings.Contains(g, "\x1b[") {
+						t.Errorf("%q carries ANSI where the rule says none", g)
+					}
+					if g != want[i].plain {
+						t.Errorf("the plain line is %q, want %q", g, want[i].plain)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("a question with no suggestion ends at its label", func(t *testing.T) {
+		s := NewStyle(Options{Out: io.Discard, Getenv: noEnv})
+		if got, want := s.Ask("Rigor mode", "", ""), "Rigor mode"; got != want {
+			t.Errorf("Ask with no hint and no suggestion is %q, want %q", got, want)
+		}
+	})
 }

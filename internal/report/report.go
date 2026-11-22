@@ -106,10 +106,12 @@ type Outcome struct {
 type Reporter struct {
 	o     Options
 	human io.Writer
-	// profile is the colour profile every style is rendered with. The
-	// reporter decides it and forces it into termenv, which would otherwise
-	// colour a pipe when the environment asks (T4(a)); see style.go.
-	profile termenv.Profile
+	// Style is the colour every line is drawn with: the profile the reporter
+	// decided, which style.go's helpers render through. It is a field rather
+	// than a decision made at each print so that one run draws in one syntax
+	// (T4(a), D1355), and so that a caller with no reporter yet — the wizard's
+	// questions — draws in that same one.
+	Style
 
 	mu         sync.Mutex
 	start      time.Time
@@ -148,22 +150,16 @@ func New(o Options) *Reporter {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	r := &Reporter{o: o, human: o.Out, start: o.Now()}
+	r := &Reporter{o: o, human: o.Out, Style: NewStyle(o), start: o.Now()}
 	if o.JSON {
 		// stdout is the document. The human lines still have a home, which is
 		// where the run's own writer already goes under --json.
 		r.human = o.Err
 	}
 	// Colour is on only where every rule allows it: a terminal, colour not
-	// turned off, markers not kept to ASCII, and no --json (G4).
-	colour := !o.JSON && !o.ASCII && !NoColor(o.NoColor, o.Getenv) && o.IsTerminal(o.Out)
-	if colour {
-		// ANSI: the sixteen colours, which every terminal draws and which the
-		// legacy Windows console draws once virtual terminal processing is on.
-		r.profile = termenv.ANSI
-	} else {
-		r.profile = termenv.Ascii
-	}
+	// turned off, markers not kept to ASCII, and no --json (G4) — the one
+	// decision NewStyle makes, read back here as "is there a colour at all".
+	colour := r.profile != termenv.Ascii
 	// The line in flight follows the colour decision exactly — one rule for
 	// what may be drawn — and is not drawn under --verbose, where the run's
 	// own stream owns the terminal.
