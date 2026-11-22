@@ -22,8 +22,12 @@ type Order struct {
 // time.
 //
 // __name__ is appended to the orderBy when the caller names no field for it,
-// as the SDKs send it, so the order is total and a cursor over it is stable:
-// a tie in the last ordered field is broken by the document ID, ascending.
+// in the direction of the last clause, as the service orders documents that tie
+// on every ordered field and as the SDKs send it. That makes the order total
+// and a cursor over it stable, and it is the direction the query's own
+// composite index carries: an index on (plan, updated_at DESC) has __name__
+// descending behind it, so an ascending tie-break would need an index of its
+// own.
 type Query struct {
 	Collection string
 	Where      map[string]any // equality filters, field name -> value
@@ -71,7 +75,11 @@ func (c *Client) RunQuery(ctx context.Context, q Query) ([]Doc, error) {
 		fields = append(fields, o.Field)
 	}
 	if len(fields) == 0 || fields[len(fields)-1] != "__name__" {
-		order = append(order, map[string]any{"field": map[string]any{"fieldPath": "__name__"}})
+		clause := map[string]any{"field": map[string]any{"fieldPath": "__name__"}}
+		if n := len(q.OrderBy); n > 0 && q.OrderBy[n-1].Direction == "DESCENDING" {
+			clause["direction"] = "DESCENDING"
+		}
+		order = append(order, clause)
 		fields = append(fields, "__name__")
 	}
 	sq := map[string]any{

@@ -98,8 +98,8 @@ func TestRunQueryOrdersAndPages(t *testing.T) {
 
 	var last *firestore.Doc
 	for i, want := range [][]string{
-		{"run-a4", "run-a6"}, // 2026-11-22 09:00, ties broken by run id
-		{"run-a2", "run-a3"}, // 2026-11-21 10:00
+		{"run-a6", "run-a4"}, // 2026-11-22 09:00, ties broken by run id descending
+		{"run-a3", "run-a2"}, // 2026-11-21 10:00
 		{"run-a1", "run-a5"}, // 2026-11-20, then 2026-11-19
 		{},                   // the end
 	} {
@@ -108,7 +108,7 @@ func TestRunQueryOrdersAndPages(t *testing.T) {
 			t.Fatalf("page %d = %v, want %v", i+1, got, want)
 		}
 		if i == 0 {
-			want := map[string]any{"plan": "alpha", "status": "ready", "updated_at": runIndexAt(t, "2026-11-22T09:00:00Z")}
+			want := map[string]any{"plan": "alpha", "status": "orphan", "updated_at": runIndexAt(t, "2026-11-22T09:00:00Z")}
 			if !reflect.DeepEqual(docs[0].Fields, want) {
 				t.Fatalf("fields = %#v, want %#v", docs[0].Fields, want)
 			}
@@ -119,26 +119,31 @@ func TestRunQueryOrdersAndPages(t *testing.T) {
 	}
 
 	// The page after the first carries an exclusive cursor over both sort
-	// fields, and the limit the caller asked for.
+	// fields, the direction the sort runs in, and the limit the caller asked
+	// for.
 	body := lastQueryBody(f)
-	for _, want := range []string{`"startAt"`, `"before":false`, `"limit":2`, `"fieldPath":"updated_at"`, `"direction":"DESCENDING"`, `"fieldPath":"__name__"`} {
+	for _, want := range []string{`"startAt"`, `"before":false`, `"limit":2`, `"fieldPath":"updated_at"`, `"fieldPath":"__name__"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the query lacks %s: %s", want, body)
 		}
+	}
+	if n := strings.Count(body, `"direction":"DESCENDING"`); n != 2 {
+		t.Fatalf("the query carries %d descending clauses, want 2 (the sort and the tie-break): %s", n, body)
 	}
 	if strings.Contains(body, `"startAfter"`) {
 		t.Fatalf("the cursor is a startAfter, which the service does not take: %s", body)
 	}
 
-	// One orderBy field: __name__ is appended ascending, so the same ties break
-	// the same way, and a document without the sort key is not in the result.
+	// One orderBy field: __name__ is appended in that field's own direction
+	// (descending here), so the ties break with the sort, and a document without
+	// the sort key is not in the result.
 	docs, err := c.RunQuery(ctx, firestore.Query{
 		Collection: "runIndex", Where: map[string]any{"plan": "alpha"}, OrderBy: sortKey, Limit: 10,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"run-a4", "run-a6", "run-a2", "run-a3", "run-a1", "run-a5"}
+	want := []string{"run-a6", "run-a4", "run-a3", "run-a2", "run-a1", "run-a5"}
 	if got := docIDs(docs); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ordered by one field = %v, want %v", got, want)
 	}

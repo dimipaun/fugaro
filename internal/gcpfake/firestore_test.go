@@ -130,16 +130,19 @@ func TestFakeRunQueryMatchesOrder(t *testing.T) {
 			"where":{"fieldFilter":{"field":{"fieldPath":"plan"},"op":"EQUAL","value":{"stringValue":"alpha"}}},
 			"orderBy":%s,"limit":%d%s}}`, order, limit, cursor)
 	}
-	const desc = `[{"field":{"fieldPath":"updated_at"},"direction":"DESCENDING"},{"field":{"fieldPath":"__name__"},"direction":"ASCENDING"}]`
+	// The query names no __name__ clause, as the client sends none: the fake's
+	// own implicit tie-break orders the ties, in the sort's direction.
+	const desc = `[{"field":{"fieldPath":"updated_at"},"direction":"DESCENDING"}]`
 
-	// Newest first; the tie on updated_at is broken by the run id.
-	if ids := fakeQueryIDs(t, f, query(desc, 2, "")); !reflect.DeepEqual(ids, []string{"run-b", "run-c"}) {
+	// Newest first; the tie on updated_at is broken by the run id, descending
+	// with the sort.
+	if ids := fakeQueryIDs(t, f, query(desc, 2, "")); !reflect.DeepEqual(ids, []string{"run-c", "run-b"}) {
 		t.Fatalf("first page = %v", ids)
 	}
 	// The page after it reads on from the last row: a startAt with before
-	// false is exclusive, so run-c is not answered twice.
+	// false is exclusive, so run-b is not answered twice.
 	after := `,"startAt":{"values":[{"timestampValue":"2026-11-22T10:00:00.000000Z"},` +
-		`{"referenceValue":"projects/p-1234/databases/(default)/documents/runIndex/run-c"}],"before":false}`
+		`{"referenceValue":"projects/p-1234/databases/(default)/documents/runIndex/run-b"}],"before":false}`
 	if ids := fakeQueryIDs(t, f, query(desc, 2, after)); !reflect.DeepEqual(ids, []string{"run-a"}) {
 		t.Fatalf("second page = %v", ids)
 	}

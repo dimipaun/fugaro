@@ -780,7 +780,7 @@ func (f *Firestore) runQuery(w http.ResponseWriter, project string, body []byte)
 		return
 	}
 	// Order: the inequality field must come first; __name__ is the implicit
-	// last tie-break, ascending.
+	// last tie-break, in the direction of the last orderBy clause.
 	var order []fsOrder
 	for _, o := range q.OrderBy {
 		switch o.Direction {
@@ -806,7 +806,7 @@ func (f *Firestore) runQuery(w http.ResponseWriter, project string, body []byte)
 		return
 	}
 	if len(order) == 0 || order[len(order)-1].field != "__name__" {
-		order = append(order, fsOrder{field: "__name__"})
+		order = append(order, fsOrder{field: "__name__", desc: len(order) > 0 && order[len(order)-1].desc})
 	}
 	if q.StartAt != nil && len(q.StartAt.Values) != len(order) {
 		writeError(w, 400, "INVALID_ARGUMENT", "the cursor must have one value per orderBy field (including __name__)")
