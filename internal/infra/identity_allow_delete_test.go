@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -42,9 +43,15 @@ func TestIdentityAllowDeleteNamesOnlyTheMinterRows(t *testing.T) {
 		minterRowChange(orchestratorMinterRow, "serviceAccount:fugaro-orchestrator@proj-1234.iam.gserviceaccount.com", "delete"),
 	}}
 	want := []string{peopleMinterRow(a), peopleMinterRow(o), orchestratorMinterRow}
-	got := IdentityAllowDelete(plan)
+	got := IdentityAllowDelete(plan, false)
 	if !slices.Equal(got, want) {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+	// The same deletes with the switch on are a roster that shrank and an
+	// orchestrator turned off, and the list is the switch-off plan's own: it
+	// names nothing, so the guard and the gate judge them as they always did.
+	if got := IdentityAllowDelete(plan, true); got != nil {
+		t.Fatalf("the list named %q with the switch on", got)
 	}
 	if err := tf.Guard(plan, nil); err == nil {
 		t.Fatal("the guard admitted the switch's deletes with no list")
@@ -64,11 +71,42 @@ func TestIdentityAllowDeleteNamesOnlyTheMinterRows(t *testing.T) {
 		minterRowChange(peopleMinterRow(a), a, "no-op"),
 		minterRowChange(orchestratorMinterRow, "serviceAccount:fugaro-orchestrator@proj-1234.iam.gserviceaccount.com", "update"),
 	}}
-	if got := IdentityAllowDelete(near); len(got) != 0 {
+	if got := IdentityAllowDelete(near, false); len(got) != 0 {
 		t.Fatalf("the list names %q, which the switch does not turn off", got)
 	}
-	if got := IdentityAllowDelete(nil); got != nil {
+	if got := IdentityAllowDelete(nil, false); got != nil {
 		t.Fatalf("a nil plan named %q", got)
+	}
+}
+
+// The switch is read out of the plan's own variables, and the switch-off plan
+// is the one that says so: everything else — no plan, a plan carrying no
+// variable, a value that is not a bool — is read as on, which is the answer
+// that names nothing and leaves the guard judging the delete as before.
+func TestPeopleMinterIsReadOutOfThePlansOwnVariables(t *testing.T) {
+	plan := func(doc string) *tf.Plan {
+		var p tf.Plan
+		if err := json.Unmarshal([]byte(doc), &p); err != nil {
+			t.Fatalf("the fixture is not a plan: %v", err)
+		}
+		return &p
+	}
+	for _, tc := range []struct {
+		why  string
+		plan *tf.Plan
+		want bool
+	}{
+		{"no plan", nil, true},
+		{"no variables", plan(`{"resource_changes":[]}`), true},
+		{"the switch on", plan(`{"variables":{"people_minter":{"value":true}}}`), true},
+		{"the switch off", plan(`{"variables":{"people_minter":{"value":false}}}`), false},
+		{"another type", plan(`{"variables":{"people_minter":{"value":"false"}}}`), true},
+		{"a null", plan(`{"variables":{"people_minter":{"value":null}}}`), true},
+		{"another variable", plan(`{"variables":{"enable_mobile_service":{"value":false}}}`), true},
+	} {
+		if got := PeopleMinter(tc.plan); got != tc.want {
+			t.Errorf("%s: PeopleMinter = %v, want %v", tc.why, got, tc.want)
+		}
 	}
 }
 
@@ -81,7 +119,7 @@ func TestGuardStillRefusesAnotherDelete(t *testing.T) {
 		minterRowChange(orchestratorMinterRow, "serviceAccount:fugaro-orchestrator@proj-1234.iam.gserviceaccount.com", "delete"),
 		minterRowChange(other, "user:someone@example.com", "delete"),
 	}}
-	allow := IdentityAllowDelete(plan)
+	allow := IdentityAllowDelete(plan, false)
 	if !slices.Equal(allow, []string{orchestratorMinterRow}) {
 		t.Fatalf("the list is %q, want only the orchestrator's row", allow)
 	}

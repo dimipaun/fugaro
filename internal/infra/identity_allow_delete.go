@@ -31,11 +31,48 @@ var identityMinterRowPrefixes = []string{
 	"module.installation.google_service_account_iam_member.orchestrator_token_minter[",
 }
 
+// peopleMinterVar is the launcher-does-not-mint switch's name, one name in both
+// roots (modules/firebase/variables.tf and modules/installation/variables.tf):
+// the plan that moves the grant to the credentials service turns both off at
+// once (LM14).
+const peopleMinterVar = "people_minter"
+
+// PeopleMinter reports whether the launcher-does-not-mint switch is ON in p, as
+// the plan's own variables carry it. The plan is the only place that value
+// exists: the binary writes no key for the switch, so the roots' default (on)
+// is what every plan has until the stage that moves the grant turns it off
+// (LM14), and what it hands terraform then is what the plan echoes here.
+//
+// Everything that is not the plan saying `people_minter = false` is read as ON,
+// and that is the answer that leaves the guard judging a delete as it always
+// did: a document that does not carry the variable, one whose value is not a
+// bool, and no plan at all. The switch-off plan is the one that says so, so a
+// reader of this must never infer it from anything else about the plan.
+func PeopleMinter(p *tf.Plan) bool {
+	if p == nil {
+		return true
+	}
+	v, ok := p.Variables[peopleMinterVar]
+	if !ok {
+		return true
+	}
+	b, ok := v.Value.(bool)
+	return !ok || b
+}
+
 // IdentityAllowDelete is the guard's allow-list for p when the
 // launcher-does-not-mint switch is turned off (plan tasks LM11, LM12, LM20):
 // each delete in p of a minter row that switch owns — the people's rows in the
 // Firebase root and the resident orchestrator's in the installation root — and
 // nothing else.
+//
+// peopleMinter is the switch itself (PeopleMinter(p)), and it is the whole of
+// what makes this list the switch-off plan's own: with the switch ON the rows
+// are still planned, and a delete of one of them is a member dropped from the
+// roster or an orchestrator turned off, which the guard and the managed gate
+// must go on judging as they did before this list existed. Naming them here
+// because they appear in the plan would be a standing approval of an address,
+// which is what the owner's own --allow-delete is for.
 //
 // It exists because those deletes are this program's own decision and must not
 // cost the operator a flag or a second command (CLAUDE.md's HARD RULE about
@@ -48,20 +85,13 @@ var identityMinterRowPrefixes = []string{
 // given (LM20's own wiring; F25), and LM14 wires the Firebase root's own guard
 // the same way at its level (F32).
 //
-// The list is the plan's own: a row p does not delete is not named whatever the
-// switch says, so a run whose state read failed still converges (it has no
-// delete to admit), and a delete at any other address — another grant of either
-// root, the issuer's row, the mobile service's — is never named here, so the
-// guard judges it exactly as before.
-//
-// What this list does not distinguish is WHY a minter row is going: the switch
-// turning off and a member dropped from the roster plan the same delete at the
-// same address, and both are admitted. That is the accepted shape of the
-// switch (the rows are fugaro's own either way, and an operator who removed a
-// member meant it); naming the reason would need a field the plan does not
-// carry.
-func IdentityAllowDelete(p *tf.Plan) []string {
-	if p == nil {
+// The list is the plan's own: a row p does not delete is not named, so a run
+// whose state read failed still converges (it has no delete to admit), and a
+// delete at any other address — another grant of either root, the issuer's row,
+// the mobile service's — is never named here, so the guard judges it exactly as
+// before.
+func IdentityAllowDelete(p *tf.Plan, peopleMinter bool) []string {
+	if p == nil || peopleMinter {
 		return nil
 	}
 	var out []string

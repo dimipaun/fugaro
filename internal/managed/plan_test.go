@@ -1135,15 +1135,30 @@ func TestManagedGuardAdmitsTheMinterRowDeletes(t *testing.T) {
 	r.managedShow(t,
 		minterRow(peopleRow, "user:launcher@example.com"),
 		minterRow(orchestratorRow, "serviceAccount:fugaro-orchestrator@"+gcpProject+".iam.gserviceaccount.com"))
+	// The plan the switch-off stage plans: the same two deletes with
+	// people_minter = false in the plan's own variables, which is the whole of
+	// what makes them this binary's own removals rather than a roster that
+	// shrank (infra.PeopleMinter).
+	sh := r.script["show"].(map[string]any)
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(sh["stdout"].(string)), &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["variables"] = map[string]any{"people_minter": map[string]any{"value": false}}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh["stdout"] = string(b)
 
-	named := infra.IdentityAllowDelete(r.plan(t))
+	named := infra.IdentityAllowDelete(r.plan(t), infra.PeopleMinter(r.plan(t)))
 	if !slices.Equal(named, []string{peopleRow, orchestratorRow}) {
 		t.Fatalf("IdentityAllowDelete named %q, want the two minter rows", named)
 	}
 	upgrading := func(t *testing.T, r *rig) Spec {
 		t.Helper()
 		s := spec(t, r, managedCover())
-		s.Upgrade = infra.IdentityAllowDelete(r.plan(t))
+		s.Upgrade = infra.IdentityAllowDelete(r.plan(t), infra.PeopleMinter(r.plan(t)))
 		return s
 	}
 	v := gate(t, r, upgrading(t, r))

@@ -525,7 +525,17 @@ func (r *initRun) gateNamesAnIAMCall(bucket string) string {
 // forbids. It is the installation root's own and no other step's: the
 // runs_launcher grants live in that module, and every other call site passes
 // nil.
-func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover, upgrade []string) (bool, error) {
+//
+// identity is the other half of the same fact (LM20, F25): the minter rows
+// infra.IdentityAllowDelete named out of this plan when the launcher-does-not-
+// mint switch is off, which the gate admits as this binary's own removals
+// beside the upgrade's replaces and the record below names apart from them. It
+// is the CALLER's to match out of the plan it is judging and never this
+// function's: the switch-off plan is the installation root's, so the Firebase
+// root — whose own plan drops a member's row for a reason that is not the
+// switch — passes nil here, and LM14 gives that root's guard the list at its
+// level (F32).
+func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover, upgrade, identity []string) (bool, error) {
 	g := r.gate
 	if g == nil || !g.managed {
 		return false, nil
@@ -546,20 +556,6 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	doc, err := t.ShowJSON(ctx, infra.PlanFile)
 	if err != nil {
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
-	}
-	// The minter rows this update's identity switch turns off are this binary's
-	// own update's deletes, beside the launcher upgrade's replaces (LM20, F25):
-	// they reach the gate as Spec.Upgrade's addresses too, so a managed
-	// project's gate admits a delete of a type D1551 does not protect rather
-	// than taking it as a content warning — and the record below names them as
-	// what they are, not as an upgrade of a grant. Read out of the same
-	// document the gate judges, so the addresses and the plan cannot drift; a
-	// document this binary cannot parse carries none, and the gate refuses it
-	// first anyway.
-	var judged tf.Plan
-	var identity []string
-	if json.Unmarshal(doc, &judged) == nil {
-		identity = infra.IdentityAllowDelete(&judged)
 	}
 	verdict, err := managedmode.Gate(ctx, infra.PlanFile, managedmode.Spec{
 		Project: r.projectName, GCPProject: r.gcpProject,
