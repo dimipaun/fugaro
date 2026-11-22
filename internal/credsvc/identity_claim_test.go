@@ -215,7 +215,23 @@ func newClaimFixture(t *testing.T, operators ...string) *claimFixture {
 			t.Fatalf("the fixture's authenticator cannot be configured: %v", err)
 		}
 		cfg.Auth, s.auth = auth, auth
-		cfg.Identity = IdentityConfig{Signer: testClaimSigner, Operators: operators, Store: issuance}
+		// The identity half wired the way a deployment wires it, the ticket
+		// route's own parts included: the scope check, the installation's
+		// runtime maximum, and the database the installation's scope reads a
+		// run's outcome through (installationScope.Outcomes). A test can
+		// therefore mint a ticket through the REAL ticket route and claim it
+		// (TestClaimOfATicketTheTicketRouteMinted), which is the only way the
+		// two spellings of a ticket are held to each other. It is the real
+		// client over internal/gcpfake's database rather than one of the
+		// fixture's own fakes, because the configured database is the Patcher
+		// the deployment hands the service and the same value has to answer the
+		// scope's Getter.
+		client, _, _ := ticketStore(t)
+		cfg.DB = client
+		cfg.Identity = IdentityConfig{
+			Signer: testClaimSigner, Operators: operators, Store: issuance,
+			Scope: &fakeTicketScope{}, MaxRuntime: testMaxRuntime,
+		}
 	})
 	// The signer the service builds is the real one (token.NewIAMSigner over
 	// token.IAMSigner) pointed at the fake endpoint: what a test replaces is
@@ -231,15 +247,17 @@ func newClaimFixture(t *testing.T, operators ...string) *claimFixture {
 	return &claimFixture{svc: s, issuance: issuance, iam: iam}
 }
 
-// ticket is a ticket for a slug and a run, built by the issuer's own spelling
-// (joinIdentityTicket): what a test puts on a record is what LM1 answers a
-// launcher, so a change to the ticket's spelling fails here rather than passing
-// against a file that spells it twice.
+// ticket is a ticket for a slug and a run, drawn by the issuer's own mint
+// (newTicket, identity_ticket.go): what a test puts on a record is what LM1
+// writes, so a change to the ticket's spelling fails here rather than passing
+// against a file that spells it twice. The ticket the ROUTE answers is what
+// TestClaimOfATicketTheTicketRouteMinted claims, and it is the same spelling
+// because there is one.
 func (f *claimFixture) ticket(t *testing.T, slug, run string) string {
 	t.Helper()
-	ticket, err := joinIdentityTicket(slug, run)
+	ticket, err := newTicket(slug, run)
 	if err != nil {
-		t.Fatalf("a ticket could not be built: %v", err)
+		t.Fatalf("a ticket could not be drawn: %v", err)
 	}
 	return ticket
 }
@@ -509,6 +527,86 @@ func TestClaimSignsTheRecordedClaims(t *testing.T) {
 	}
 }
 
+// TestClaimOfATicketTheTicketRouteMinted holds the contract's two halves to
+// each other: the ticket LM1's route answers a launcher is the ticket this route
+// claims.
+//
+// It is the test the ticket's spelling needs, and it is here rather than in
+// LM1's file because the claim is the side that cannot work without the names:
+// the claim's caller holds no run identity — the claim is a run's first call,
+// made before it has one (R2) — so C1's ClaimRequest carries the ticket and the
+// nonce and nothing else, and the ticket is the ONLY thing that tells this route
+// which record to read. A claim that read a spelling the mint does not write
+// would refuse every real ticket, whatever a fixture of its own drew.
+func TestClaimOfATicketTheTicketRouteMinted(t *testing.T) {
+	f := newClaimFixture(t)
+	ask := identitywire.TicketRequest{
+		Slug:              f.slug,
+		Run:               f.run,
+		Account:           testJobSA,
+		Launcher:          testLauncherAccount,
+		Branch:            "fugaro/" + f.run,
+		MaxRuntimeSeconds: int(testAskRuntime / time.Second),
+	}
+	body, err := json.Marshal(ask)
+	if err != nil {
+		t.Fatalf("building the ask: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, identitywire.TicketPath, strings.NewReader(string(body)))
+	f.server.identityTicket(context.Background(), rec, IdentityCaller{Address: testLauncherAccount, Class: identitywire.ClassPerson}, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the ticket ask is answered %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var issued identitywire.TicketResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &issued); err != nil {
+		t.Fatalf("the ticket's answer is not one this contract reads: %v", err)
+	}
+
+	// The record the ticket route wrote is the one this claim signs from, and
+	// the ticket it answered names its path.
+	resp, answer := f.claimCall(t, identityClaimBody(t, issued.Ticket, testNonce))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the claim of the ticket the route minted is answered %d, want 200: %s", resp.StatusCode, answer)
+	}
+	var claimed identitywire.ClaimResponse
+	if err := json.Unmarshal(answer, &claimed); err != nil {
+		t.Fatalf("the claim's answer is not one this contract reads: %v", err)
+	}
+	claims, signer, err := f.iam.Verify(claimed.Token)
+	if err != nil {
+		t.Fatalf("the token is not one the runs' signer signed: %v", err)
+	}
+	if signer != testClaimSigner {
+		t.Errorf("the token is signed as %q, want the runs' signer %q", signer, testClaimSigner)
+	}
+	// The uid is derived from the record's PATH, and the path is the one the
+	// ticket named: a ticket that named another run's record would have this
+	// claim sign that run's identity.
+	if got := claims["uid"]; got != token.UID(f.slug, f.run) {
+		t.Errorf("the token's uid is %v, want the uid of the run the ticket named (%q)", got, token.UID(f.slug, f.run))
+	}
+	set, ok := claims["claims"].(map[string]any)
+	if !ok {
+		t.Fatalf("the token carries no claim set: %v", claims)
+	}
+	for field, want := range map[string]string{"fs": f.slug, "fr": f.run, "fp": testProject, "rb": testLauncherAccount} {
+		if got, _ := set[field].(string); got != want {
+			t.Errorf("the token's claim %s is %v, want %q", field, set[field], want)
+		}
+	}
+
+	// The ticket the route minted is spent on the job's own account, and the
+	// record's digest is the digest of the ticket it answered.
+	held := f.issuance.record(t, f.slug, f.run)
+	if held.Claimed.Account != testJobSA {
+		t.Errorf("the record is claimed by %q, want the job's own account %q", held.Claimed.Account, testJobSA)
+	}
+	if want := identitywire.Digest(issued.Ticket); held.TicketHash != want {
+		t.Errorf("the record's ticket digest is not the digest of the ticket the route answered")
+	}
+}
+
 // TestClaimIsOnce: R5's fence. A ticket is claimed once, and another claim on
 // it — here another nonce after a success — is refused with one audit line that
 // names the run, signs nothing, and leaves the first claim on the record. The
@@ -692,7 +790,7 @@ func TestClaimChecksTheRecordTheStoreReturns(t *testing.T) {
 		{
 			name: "the record is past the ticket's life",
 			moved: func(_ *testing.T, _ *claimFixture, rec *identitywire.Record) {
-				rec.At = rec.At.Add(-2 * identityTicketLife)
+				rec.At = rec.At.Add(-2 * ticketLifetime)
 			},
 		},
 	} {
@@ -867,7 +965,7 @@ func TestClaimRefusesExpiredTicket(t *testing.T) {
 		f := newClaimFixture(t)
 		// Written long ago and otherwise perfect: the claims' own fx is still in
 		// the future, so the ticket's window is the only thing that refuses this.
-		ticket, _ := f.issued(t, func(rec *identitywire.Record) { rec.At = f.now.Add(-2 * identityTicketLife) })
+		ticket, _ := f.issued(t, func(rec *identitywire.Record) { rec.At = f.now.Add(-2 * ticketLifetime) })
 		resp, body := f.claimCall(t, identityClaimBody(t, ticket, testNonce))
 		wantRefusal(t, resp, body, StatusUnverified, identitywire.RefusalIdentityRefused)
 
@@ -887,7 +985,7 @@ func TestClaimRefusesExpiredTicket(t *testing.T) {
 		// The same nonce, past the ticket's life: the retry R2 answers again is
 		// the retry inside that window, and this one is a claim the launch has
 		// moved past.
-		f.now = f.now.Add(identityTicketLife + time.Minute)
+		f.now = f.now.Add(ticketLifetime + time.Minute)
 		resp, body := f.claimCall(t, identityClaimBody(t, ticket, testNonce))
 		wantRefusal(t, resp, body, StatusUnverified, identitywire.RefusalIdentityRefused)
 

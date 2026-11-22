@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -180,6 +181,12 @@ const (
 	// secret by (internal/credsvc's maxHeaderTokenBytes, unexported there):
 	// the same bound as the token this run presents beside it.
 	maxSlipSecretBytes = 512
+	// maxIdentityTicketBytes bounds the identity ticket this run will carry
+	// into a claim (identitywire.TicketEnv): the service draws it from
+	// crypto/rand, exactly as it draws a slip's claim secret, so this is that
+	// secret's own bound. A longer value is damage to the job's environment,
+	// refused where it is parsed rather than put on the wire.
+	maxIdentityTicketBytes = maxSlipSecretBytes
 )
 
 // slipBeatEvery is how often the beat asks the service to read the slip back
@@ -230,6 +237,20 @@ type Backend struct {
 	// starts (runner.go's addSealKey), and nothing that formats the marker's
 	// value or this field may print it.
 	TokenKey []byte
+	// Ticket is the identity ticket the launcher that started this execution
+	// was issued for it, read out of the job's environment
+	// (identitywire.TicketEnv, LM6): the run claims its identity from the
+	// installation's credentials service with it, instead of opening the
+	// sealed object a signing launcher left (LM7, R7). It is a secret of the
+	// service's, handed to one execution and dying into a token at the claim:
+	// it is registered with the run's redactor before its first use, and
+	// nothing that formats this field may print it.
+	//
+	// Only one of the two is ever set by a launch -- the flag and the ticket
+	// are the two mechanisms of one bridge -- and the ticket wins where both
+	// are, because it is what the launcher of this release asked the issuer
+	// for.
+	Ticket string
 	// MalformedEnv is set, beside BackendErr, when the job's environment
 	// carries the backend URL or the launcher's marker and the value could not
 	// be parsed: the fields above are then only as far as the parse got, and
@@ -252,6 +273,18 @@ type Backend struct {
 // On reports whether a backend is configured.
 func (b Backend) On() bool { return b.RTDBURL != "" }
 
+// Issued reports whether the launcher that started this execution provisioned
+// this run's identity for it: the old marker, whose value is the seal key of
+// the object it left in the runs bucket, or the ticket it asked the issuer for
+// (LM6, LM7). Either one says the same thing about the job's environment --
+// this run has an identity it must be accounted for with, so a job that carries
+// neither a database nor a database key to read is a job that cannot use what
+// it was given, and the run refuses rather than going on outside the shared
+// caps (M2). One predicate for the two mechanisms, because the two answer every
+// question the run asks of them the same way (R7: both live here for one
+// release).
+func (b Backend) Issued() bool { return b.TokenMarked || b.Ticket != "" }
+
 // BackendFromEnv reads the backend from the job's environment. loopbackOK
 // admits a database on a loopback address (a local run against a fake or an
 // emulator). A malformed value is an error, which the runner reports as an
@@ -265,11 +298,16 @@ func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backen
 	url, hasURL := lookup(RTDBURLEnv)
 	key, hasKey := lookup(FirebaseAPIKeyEnv)
 	marker, hasMarker := lookup(BudgetTokenEnv)
+	ticket, hasTicket := lookup(identitywire.TicketEnv)
 	grace, hasGrace := lookup(BudgetGraceEnv)
-	// Everything but the two below describes no backend on its own: a stray
+	// Everything but the ones below describes no backend on its own: a stray
 	// grace or an API key with no URL is damage to the ceiling's environment
-	// rather than a backend this job carries.
-	b.MalformedEnv = hasURL || hasMarker
+	// rather than a backend this job carries. The three that do are the URL and
+	// the two things a launcher writes to say it provisioned this run's
+	// identity (the seal-key marker and the ticket): each is something only a
+	// launcher that saw a budget writes, so each must not be lost to a parse
+	// that failed (L-b).
+	b.MalformedEnv = hasURL || hasMarker || hasTicket
 	if hasURL {
 		if err := rtdb.ValidateURL(url, loopbackOK); err != nil {
 			return b, fmt.Errorf("%s: %v", RTDBURLEnv, err)
@@ -308,6 +346,25 @@ func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backen
 			}
 			b.TokenMarked, b.TokenKey = true, key
 		}
+	}
+	if hasTicket {
+		// Only a launcher that was issued a ticket for this run writes it, and
+		// it is a value this run presents to the issuer in a claim (LM6, LM7).
+		// Anything this run cannot carry there is damage to the job's
+		// environment, reported as an infra_error rather than read as "no
+		// ticket": a run that lost the ticket would look for the sealed object
+		// of a launch that minted none, and stop over the wrong cause.
+		//
+		// The value is a secret and this parse runs before any redactor
+		// exists, so the refusal names the variable and the shape it wants and
+		// never the value (the marker's own rule, above). The floor is the one
+		// every other registered value holds (minSecretLen): a ticket shorter
+		// than that cannot be redacted without redacting text that is not a
+		// secret, and no service draws one that short.
+		if len(ticket) < minSecretLen || len(ticket) > maxIdentityTicketBytes || !printableToken(ticket) {
+			return b, fmt.Errorf("%s: it must be the identity ticket a launcher was issued for this run, one printable value of at least %d and at most %d bytes, and only such a launcher sets it", identitywire.TicketEnv, minSecretLen, maxIdentityTicketBytes)
+		}
+		b.Ticket = ticket
 	}
 	if hasGrace {
 		d, err := time.ParseDuration(grace)
@@ -460,15 +517,16 @@ func strayTokenNoBackend() error {
 // (plan task 3.3: the ordering is the security property, and this is the lease
 // it protects).
 func (r *run) startBudgetBackend(ctx context.Context) error {
-	// The launcher's marker says it minted this run a budget token, which it
-	// only does when the project has a shared budget or a published policy.
+	// The launcher's marker says it minted this run a budget token, and the
+	// ticket says it asked an issuer for this run's identity: either way it did
+	// so only because the project has a shared budget or a published policy.
 	// A job with no backend in its environment then cannot read that policy,
 	// and the run would go on with the environment ceiling, no session and no
 	// kill switch (M2; refuseStrayToken below is the same refusal for a job
-	// that can read the bucket, found there). The marker is proof enough:
-	// nothing else writes it.
-	if r.d.Backend.TokenMarked && !r.d.Backend.On() {
-		return strayTokenNoBackend()
+	// that can read the bucket, found there). What the launcher left is proof
+	// enough: nothing else writes either value.
+	if r.d.Backend.Issued() && !r.d.Backend.On() {
+		return noBackendForWhatTheLauncherLeft(r.d.Backend)
 	}
 	// The run's identity, taken out of the runs bucket once and shared with
 	// the project policy's read (projectpolicy.go): one take, so the policy
@@ -886,6 +944,11 @@ func (r *run) claimSlip(ctx context.Context) {
 // sentence fit for this call — this package's own checkReviewServiceURL wraps
 // its refusals in the review signature's family, and a slip warning that named
 // the review artifact would be a sentence about the wrong call.
+//
+// Both of this run's own claims hold the address to it: a slip's, which is
+// given up over a refusal here, and the identity claim's (identity_claim.go),
+// which is not — the job's own identity token is on that call, and a run with a
+// ticket has no other way to reach an identity.
 func checkSlipServiceURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {

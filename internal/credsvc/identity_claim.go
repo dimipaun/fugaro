@@ -12,35 +12,24 @@ package credsvc
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/identitywire"
 )
 
 // identityTicketSeparator is what a ticket's three parts are joined with. It is
-// '/' because budget.Key escapes it, so the separator can appear nowhere else
-// in the ticket: the split is then unambiguous whatever a slug or a run id
-// holds.
+// '/' because neither name a ticket carries may hold one: the ticket route
+// refuses an ask whose slug or run id is not one path segment
+// (token.ValidSegment, identity_ticket.go), so the separator can appear nowhere
+// else in a ticket this service minted and the split needs no escaping.
 const identityTicketSeparator = "/"
 
-// identityTicketSecretBytes is the entropy of a ticket's secret: thirty-two
-// bytes from crypto/rand, the width a one-time secret needs to be unguessable
-// in practice. The ticket is the whole of what stands between a job account
-// that reads a peer execution's environment and that peer's identity (the
-// residual R5 states), so its secret is drawn at the width of a key rather
-// than at a slip id's.
-const identityTicketSecretBytes = 32
-
-// maxIdentityTicketBytes bounds a presented ticket: the two escaped names and
+// maxIdentityTicketBytes bounds a presented ticket: the two names and
 // the secret, with room to spare, and not a byte more. A longer value is a
 // request this contract does not read rather than one to look up in the
 // database, which is the rule the slip's id is held to (maxSlipIDBytes).
@@ -52,55 +41,30 @@ const maxIdentityTicketBytes = 512
 // no nonce at all.
 const maxIdentityNonceBytes = 128
 
-// identityTicketLife is how long a ticket stays claimable (R2): a ticket, its
-// nonce and the job's identity token together are a run's token for that long
-// and no longer.
-//
-// The value is derived and not chosen, because two bounds meet here. The
-// ticket must outlive the wait between the execution's creation and its
-// container's start, and that wait is exactly what the run's own identity is
-// padded for: token.QueueAllowance is the hour a run may queue before it
-// starts, and token.Slack is the little the clocks may differ by, both of them
-// added to fx by token.ExpiryFX. And the ticket must not outlive the identity
-// it buys: a record's fx is at least the launch, the run's own timeout, this
-// same allowance and this same slack (LM1 writes it, R4), so this life is
-// shorter than the run's identity by the run's own timeout and by nothing
-// else. A longer one would be a ticket that outlives the token it is exchanged
-// for — the claim's own signing refuses a record whose fx has passed, so it
-// would buy nothing and only widen the window R5 states.
-//
-// It is the issuer's constant and the claim's: LM1 answers it as the ticket's
-// ExpiresAt (rec.At + identityTicketLife) and this route holds the same window
-// open, because a record carries no expiry of its own (identitywire.Record) —
-// one spelling of the life, read by both, is what keeps the launcher's answer
-// and the claim's fence from disagreeing.
-const identityTicketLife = token.QueueAllowance + token.Slack
-
-// joinIdentityTicket builds one run's ticket (LM1's mint, R3): the record's
-// own path with the family's prefix dropped — the escaped slug, the escaped
-// run, and a secret drawn from crypto/rand — joined by the separator above.
+// joinIdentityTicket spells one run's ticket (LM1's mint, R3): the slug and the
+// run the record is written under, and the secret drawn for it, joined by the
+// separator above.
 //
 // The spelling is the claim's as much as the issuer's, and that is why it is
-// one function here: the claim reads the slug and the run off the ticket
-// (splitIdentityTicket), because the record is read by that path and by
-// nothing else (IssuanceStore.Get), and a mint that spelled the ticket another
-// way would be a ticket no run could claim.
+// one function here: a ticket is the ONLY thing a claim has to find its record
+// with — the record lives at identitywire.PathRecord(slug, run), C1's
+// ClaimRequest carries the ticket and the nonce and nothing else, and the claim
+// therefore reads the two names back off the ticket (splitIdentityTicket) to
+// read the record at all. A mint that spelled the ticket another way — the bare
+// secret alone, say — would be a ticket no run could claim.
 //
-// The secret is base64url without padding: no '/' and no '+', so the third
-// part cannot be mistaken for a separator.
-func joinIdentityTicket(slug, run string) (string, error) {
-	if !token.ValidSegment(slug) {
-		return "", errors.New("credsvc: a ticket's slug is not one path segment")
+// Neither name is escaped here and neither may be: the ticket route holds every
+// ask to token.ValidSegment and to budget.Key(name) == name before it writes a
+// record, so a name that could hold the separator, or that two spellings could
+// collapse onto one node, never reaches a ticket.
+func joinIdentityTicket(slug, run, secret string) (string, error) {
+	if !token.ValidSegment(slug) || !token.ValidSegment(run) {
+		return "", errors.New("credsvc: a ticket's names are not two path segments")
 	}
-	if !token.ValidSegment(run) {
-		return "", errors.New("credsvc: a ticket's run is not one path segment")
+	if secret == "" {
+		return "", errors.New("credsvc: a ticket carries no secret")
 	}
-	secret := make([]byte, identityTicketSecretBytes)
-	if _, err := rand.Read(secret); err != nil {
-		return "", fmt.Errorf("credsvc: no ticket secret could be drawn: %w", err)
-	}
-	return budget.Key(slug) + identityTicketSeparator + budget.Key(run) + identityTicketSeparator +
-		base64.RawURLEncoding.EncodeToString(secret), nil
+	return slug + identityTicketSeparator + run + identityTicketSeparator + secret, nil
 }
 
 // splitIdentityTicket reads a presented ticket back into the slug and the run
@@ -124,15 +88,10 @@ func splitIdentityTicket(ticket string) (string, string, bool) {
 	if len(parts) != 3 || parts[2] == "" {
 		return "", "", false
 	}
-	slug, err := budget.Unkey(parts[0])
-	if err != nil || !token.ValidSegment(slug) {
+	if !token.ValidSegment(parts[0]) || !token.ValidSegment(parts[1]) {
 		return "", "", false
 	}
-	run, err := budget.Unkey(parts[1])
-	if err != nil || !token.ValidSegment(run) {
-		return "", "", false
-	}
-	return slug, run, true
+	return parts[0], parts[1], true
 }
 
 // identityListed reports whether the verified account is one of the addresses a
@@ -229,7 +188,7 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 	account, err := s.verifyClaimCaller(ctx, tok)
 	if err != nil {
-		s.refuseIdentityCaller(w, err)
+		s.refuseIdentityCaller(w, "this route admits a run's own job service account, verified by its own Google ID token: the claim must come from the account the launch named, so no other caller is served here. A person, a roster service account and the resident orchestrator claim nothing — the ticket route is the one that admits them", err)
 		return
 	}
 	// The claim is the run's FIRST call, so it carries no run identity: the run
@@ -301,7 +260,12 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 	// the fence: R2 says the same-nonce answer holds only for the ticket's own
 	// life, so a ticket past it is refused however right it is — a retry of a
 	// claim this long after the launch is a retry the launch has moved past.
-	if !now.Before(rec.At.Add(identityTicketLife)) {
+	//
+	// The life is ticketExpiry's and not a second derivation of it
+	// (identity_ticket.go): the issuer answers the launcher that same instant
+	// (TicketResponse.ExpiresAt), so a ticket cannot be live at one route and
+	// dead at the other.
+	if !now.Before(ticketExpiry(rec)) {
 		s.refuseIdentityCall(ctx, w, run, slug, StatusUnverified, identitywire.RefusalIdentityRefused,
 			"the ticket has expired: a ticket, its nonce and the job's identity token together are a run's token for the ticket's life and no longer, and this one is past it — the run must be launched again")
 		return
@@ -385,7 +349,7 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 	// C1's interface rather than this route's.
 	if claimed.TicketHash != identitywire.Digest(req.Ticket) ||
 		!strings.EqualFold(account, claimed.ExpectedAccount) ||
-		!now.Before(claimed.At.Add(identityTicketLife)) ||
+		!now.Before(ticketExpiry(claimed)) ||
 		claimed.Claims.Slug != slug || claimed.Claims.Run != run {
 		s.refuseIdentityCall(ctx, w, run, slug, StatusUnverified, identitywire.RefusalIdentityRefused,
 			"the run's issuance record is not the one this claim read: it was replaced under the claim, so the ticket, the account it expects or the claims it holds are not the ones this claim was checked against, and the run must be launched again")
@@ -453,24 +417,6 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 func (s *Server) refuseIdentityNotServed(w http.ResponseWriter) {
 	s.refuse(w, StatusUnavailable, identitywire.RefusalNotServed,
 		"this service does not issue a run's identity: no issuer is configured on this installation, so the identity routes answer 'not served'. A launcher of this release signs the run's identity locally, as it did before an issuer existed; a launcher on an installation that has already moved the grant cannot, and refuses with the fix (run fugaro update)")
-}
-
-// refuseIdentityCaller answers a refusal of an identity route's CALLER, which
-// is those routes' one refusal with no line: nothing has been verified yet, so
-// there is no caller for a line to name.
-//
-// The class's refusal is the contract's own code and not the service's older
-// vocabulary, because the launcher reads these codes: an account on no roster
-// is caller_not_admitted (the contract's own words for it), and anything else
-// — the key set the token had to be checked against being unreadable — is this
-// service's own failure, answered the way every unreadable document here is
-// (R16's ScopeFault rule: a 403 halts a caller as a verdict about itself).
-func (s *Server) refuseIdentityCaller(w http.ResponseWriter, err error) {
-	if errors.Is(err, ErrUnverifiedJob) {
-		s.refuse(w, StatusUnverified, identitywire.RefusalCallerNotAdmitted, err.Error())
-		return
-	}
-	s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
 }
 
 // refuseIdentityCall answers one refusal of an identity route and records it, in

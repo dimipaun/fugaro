@@ -129,7 +129,7 @@ import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
 import type { SpawnLogWriter } from '../../src/main/spawnlog'
 import { PRODUCTION_KEYRING } from '../../src/main/licence'
 import { LICENCE_KEY_CLI_FLOOR, licenceKeySupported } from '../../src/shared/version'
-import { RUNS_LIST_MAX_LIMIT, validateArguments } from '../../src/main/ipc'
+import { IMAGE_TAGS_MAX, IMAGE_TAG_RE, RUNS_LIST_MAX_LIMIT, validateArguments } from '../../src/main/ipc'
 import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
 import { CliSource, LOG_WINDOW_MAX_ENTRIES, MAX_LIVE_FEEDS, createInstallationStore, parseLogEntries } from '../../src/source/cli'
 import type { InstallationCandidate } from '../../src/source/cli'
@@ -193,7 +193,10 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * (WH1's `user ls --me`), and `image.catalog.ls` and `recipes.ls` (the image
  * catalog and the recipes, `image ls` and `recipes ls`). Every one of those
  * commands resolves the installation from the project flags, so they are rows of
- * this list like every other read or write of a project.
+ * this list like every other read or write of a project. The console
+ * improvements plan's MW1 and MW2 add the last four, thirty-seventh to fortieth:
+ * the models write's two halves and the image write's two halves (`models add`
+ * and `image add`), each a dry run and the write that dry run is of.
  *
  * **The wizard's two are not**, and that is the one place this list disagrees
  * with the CLI: `setup.plan` and `setup.apply` (ST2's wizard, `setup
@@ -253,6 +256,24 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'whoami',
   'image.catalog.ls',
   'recipes.ls',
+  // The models write's two halves (MW1, D2903), the thirty-seventh and
+  // thirty-eighth: `models add` aims at an installation through the same
+  // `settingsAimFlags` pair `settings set` takes (`internal/cli/models_add.go`,
+  // `settingsAimFlags(cmd, &o.project, &o.config)`), and the write is a
+  // project's own configuration -- the route's model list, the price entry and,
+  // where the key is set, the `budget.allowed_models` entry it appends to -- so
+  // the installation is resolved from the flags the row fixes, exactly as
+  // `models ls` and the settings rows do.
+  'models.add.plan',
+  'models.add',
+  // The image write's two halves (MW2, D2903), the thirty-ninth and fortieth:
+  // `image add` aims at an installation through the cloud group's own flags
+  // (`addCloudFlags`, `internal/cli/image_catalog.go`), and the write is a
+  // project's own configuration -- the catalog entry, its definition and the
+  // published node its runs are admitted by -- so the installation is resolved
+  // from the flags the row fixes, exactly as `image ls` and the models write do.
+  'image.add.plan',
+  'image.add',
 ]
 /** freshDirectory is a temporary directory this test owns, one per call. */
 function freshDirectory(prefix = 'fugaro-console-test-'): string {
@@ -591,7 +612,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: forty argvs, twenty-nine commands, thirty-six of them with --project', () => {
+  it('fixes the design allow-list exactly: forty-four argvs, thirty-one commands, forty of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -677,6 +698,22 @@ describe('the spawn table and the argv it builds', () => {
       'secrets ls --json',
       'accounts ls --json',
       'models ls --json',
+      // The models write's two phases (MW1, D2903): the plan's argv is the
+      // write's with `--dry-run --json` on it, and both carry `--no-apply` --
+      // the console's own word, so the change is saved and the publish is owed
+      // rather than run, which is what the window shows. The three `=`-form
+      // values and the model ID behind `--` are the arguments the two rows
+      // declare; the two project flags are this row's own words.
+      'models add --no-apply --dry-run --json',
+      'models add --no-apply',
+      // The image write's two phases (MW2, D2903): the same shape as the models
+      // write above and one word different at the head -- `image add` -- and the
+      // plan is the write's with `--dry-run --json` on it, both carrying
+      // `--no-apply` so nothing is built. The three `=`-form values and the
+      // entry's name behind `--` are the two rows' arguments; the two project
+      // flags are this row's own words.
+      'image add --no-apply --dry-run --json',
+      'image add --no-apply',
       'settings --json',
       'settings',
       'version',
@@ -748,15 +785,16 @@ describe('the spawn table and the argv it builds', () => {
       'setup --answers-file - --events --json',
     ])
     // The rows that take the flag (addCloudFlags, internal/cli/cloud.go:51) are
-    // thirty-six rows over twenty-nine commands -- the wizard's two rows are
+    // forty rows over thirty-one commands -- the wizard's two rows are
     // not among them, and that is the one place the console leaves a flag of a
     // command it drives alone: `setup` *has* `--project`, and passing it would
     // aim the run at the installation it exists to create
     // (`COMMANDS_WITHOUT_PROJECT`). Of the rest, `logs` has two
     // rows, `--json` and `--url`, and neither of them may be the one that
     // forgets --project; `settings` (a read and a write), `graph` (a read and
-    // its feed), and AL's `budget show`, `report`, `runs ls` and `user ls` (a
-    // read and its own stream or its `--me`) have two each as well.
+    // its feed), `models add` (a dry run and the write it is of), `image add`
+    // (the same pair), and AL's `budget show`, `report`, `runs ls` and `user ls`
+    // (a read and its own stream or its `--me`) have two each as well.
     // A word is a flag or a separator if it begins with `-`, which is what
     // keeps the launch's literal `-` -- the argv word that means "read the task
     // from stdin" -- out of the command path it is compared as.
@@ -778,6 +816,14 @@ describe('the spawn table and the argv it builds', () => {
         'secrets ls',
         'accounts ls',
         'models ls',
+        // The models write's two rows (MW1, D2903) are two more rows over one
+        // more command: the plan's command path continues the write's, so the
+        // two words below `models add` are the mode words and the command is
+        // this one.
+        'models add',
+        // The image write's two rows (MW2, D2903) are two more rows over one
+        // more command, for the models write's reason exactly.
+        'image add',
         'settings',
         'doctor',
         'coordinator status',
@@ -801,7 +847,7 @@ describe('the spawn table and the argv it builds', () => {
         'recipes ls',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(36)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(40)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -1825,14 +1871,279 @@ describe('the spawn table and the argv it builds', () => {
     ])
     // **The group's other four words are not on this table at all**, which is
     // the spawn half of the never table's fence: `search` takes a positional
-    // `<text>`, and `add`, `rm` and `use` write the project's or a repository's
-    // own configuration.
+    // `<text>`, and `rm` and `use` write the project's or a repository's own
+    // configuration. **`add` is the exception, and it is a named one** (MW1,
+    // D2903): the two rows below drive it, and the never table's `models add`
+    // command row and `add` argv row grant exactly `models.add.plan` and
+    // `models.add` by name through `except` -- so the fence is still a total ban
+    // with two named exceptions, and this list is where the table half of that
+    // is read back. The two rows are the write and its dry run, and their
+    // arguments are the three `=`-form values and the model ID behind `--`.
     expect(SPAWN_COMMANDS.filter((row) => row.words[0] === 'models').map((row) => row.operation)).toEqual([
       'models.list',
+      'models.add.plan',
+      'models.add',
     ])
     for (const key of ['repo', 'model', 'route', 'text', 'all', 'since', 'dir', 'project']) {
       expect(() => argvFor('models.list', { [key]: 'x' }, safeContext()), key).toThrow(/does not declare/)
     }
+  })
+
+  it('spawns the models write and its plan with exactly these words, and the plan is the write plus its two', () => {
+    // The models write (the console-improvements plan's MW1, D2903), both
+    // phases, written out: the plan is `models add --no-apply --dry-run --json`
+    // and the write is that argv **without the two words the dry run is**, which
+    // is what makes the task's own sentence -- the applied argv equals the
+    // planned argv minus `--dry-run` -- a fact of this table rather than of the
+    // flow above it. Both carry `--no-apply`: the console's own word, so the
+    // change is saved and the publish is owed, and the window shows the
+    // follow-up step as `saved` rather than `run`.
+    //
+    // **Every value is one word, and none of them can parse as a flag.** The
+    // three the caller names go out as `--flag=value` (the row's own declared
+    // `=`-form, `EQUALS_FORM_FLAGS`), and the model ID is the positional behind
+    // `--`, the terminator the settings write's row carries for the same reason.
+    const values = {
+      id: 'deepseek/deepseek-v4.1-flash',
+      route: 'openrouter',
+      priceIn: '0.14',
+      priceOut: '0.28',
+    }
+    const plan = [...argvFor('models.add.plan', values, safeContext({ project: 'chosen' }))]
+    const write = [...argvFor('models.add', values, safeContext({ project: 'chosen' }))]
+    expect(plan).toEqual([
+      'models',
+      'add',
+      '--no-apply',
+      '--dry-run',
+      '--json',
+      '--route=openrouter',
+      '--price-in=0.14',
+      '--price-out=0.28',
+      '--project',
+      'chosen',
+      '--',
+      'deepseek/deepseek-v4.1-flash',
+    ])
+    expect(write).toEqual([
+      'models',
+      'add',
+      '--no-apply',
+      '--route=openrouter',
+      '--price-in=0.14',
+      '--price-out=0.28',
+      '--project',
+      'chosen',
+      '--',
+      'deepseek/deepseek-v4.1-flash',
+    ])
+    expect(plan.filter((word) => word !== '--dry-run' && word !== '--json')).toEqual(write)
+    // The write names the active installation, and tells the child the same
+    // project: `$FUGARO_PROJECT` is the CLI's own fallback for `--project`, so
+    // the flag alone would leave the two able to disagree.
+    expect(planFor('models.add', values, safeContext({ project: 'chosen' })).env['FUGARO_PROJECT']).toBe('chosen')
+
+    // **A value that begins with `-` stays a value.** A model ID spelled like a
+    // flag reaches the child behind the terminator, and a route spelled like one
+    // reaches it inside the `=`-form word -- neither is ever a word of its own.
+    expect([
+      ...argvFor('models.add', { ...values, id: '--no-apply' }, safeContext({ project: 'chosen' })),
+    ].slice(-2)).toEqual(['--', '--no-apply'])
+    expect([
+      ...argvFor('models.add', { ...values, route: '--json' }, safeContext({ project: 'chosen' })),
+    ]).toContain('--route=--json')
+  })
+
+  it('refuses a models write whose argv widens by one word', () => {
+    // The mutation the two rows exist to make fail, and it is the widened-argv
+    // one: an argv that carries one word more than the row declares is refused
+    // **before any child exists**. `--inline` is the example the design names --
+    // it defines executable content, so the console may never spawn it -- and
+    // `--` is the other half: only a row that declares a value behind the
+    // terminator may emit one, which is what keeps every other row's positional
+    // from being a place a caller can put a flag.
+    expect(() =>
+      assertArgvFlags('models.add', ['models', 'add', '--no-apply', '--inline', '--', 'acme/model']),
+    ).toThrow(/models\.add would emit --inline/)
+    // ...and the terminator is the other half, read the other way round: every
+    // word after `--` is a value and never a flag, so the same word there is not
+    // refused -- it is the model ID, which is exactly what the row declares it
+    // to be.
+    expect(() =>
+      assertArgvFlags('models.add', ['models', 'add', '--no-apply', '--', '--inline']),
+    ).not.toThrow()
+  })
+
+  it('spawns the image write and its plan with exactly these words, and the plan is the write plus its two', () => {
+    // The image write (the console-improvements plan's MW2, D2903), both
+    // phases, written out. It is the models write's shape one command over: the
+    // plan is `image add --no-apply --dry-run --json` and the write is that argv
+    // **without the two words the dry run is**, which is what makes the task's
+    // own sentence -- the applied argv equals the planned argv minus
+    // `--dry-run` -- a fact of this table rather than of the flow above it. Both
+    // carry `--no-apply`: the entry is saved and its build, redeploy and publish
+    // are owed, which is what the window shows as `saved` rather than `run`.
+    //
+    // **Every value is one word, and none of them can parse as a flag.** The
+    // three the caller names go out as `--flag=value` (`IMAGE_ADD_EQUALS_FLAGS`),
+    // and the entry's name is the positional behind `--`, the terminator the
+    // models write's row carries for the same reason. **`--inline`, `--image`,
+    // `--default` and `--branch` are words of neither row**: they define
+    // executable content, and the child this console spawns carries no
+    // agent-session marker, so the CLI's own refusal of them would not fire --
+    // this table is what keeps them out, and the test below pins each one.
+    const values = {
+      name: 'app',
+      dockerfile: 'acme/app:.fugaro/app.Dockerfile',
+      tags: 'node,redis',
+      description: 'the app image',
+    }
+    const plan = [...argvFor('image.add.plan', values, safeContext({ project: 'chosen' }))]
+    const write = [...argvFor('image.add', values, safeContext({ project: 'chosen' }))]
+    expect(plan).toEqual([
+      'image',
+      'add',
+      '--no-apply',
+      '--dry-run',
+      '--json',
+      '--dockerfile=acme/app:.fugaro/app.Dockerfile',
+      '--tags=node,redis',
+      '--description=the app image',
+      '--project',
+      'chosen',
+      '--',
+      'app',
+    ])
+    expect(write).toEqual([
+      'image',
+      'add',
+      '--no-apply',
+      '--dockerfile=acme/app:.fugaro/app.Dockerfile',
+      '--tags=node,redis',
+      '--description=the app image',
+      '--project',
+      'chosen',
+      '--',
+      'app',
+    ])
+    expect(plan.filter((word) => word !== '--dry-run' && word !== '--json')).toEqual(write)
+    // The write names the active installation, and tells the child the same
+    // project: `$FUGARO_PROJECT` is the CLI's own fallback for `--project`, so
+    // the flag alone would leave the two able to disagree.
+    expect(planFor('image.add', values, safeContext({ project: 'chosen' })).env['FUGARO_PROJECT']).toBe('chosen')
+
+    // **A description holds spaces and a comma stays inside a tags word.** Both
+    // are why those two values are `=`-form words of their own: the renderer's
+    // alphabet (`ARGUMENT_RE`) refuses a space and a comma, and neither value
+    // could ride it.
+    expect([...argvFor('image.add', values, safeContext())]).toContain('--description=the app image')
+    // ...and a name spelled like a flag stays a value behind the terminator.
+    expect([
+      ...argvFor('image.add', { ...values, name: '--inline' }, safeContext({ project: 'chosen' })),
+    ].slice(-2)).toEqual(['--', '--inline'])
+
+    // The group's three rows are the whole of what this table carries for
+    // `image`: the write's two phases and the group's one read, in the table's
+    // own order -- the write's rows sit with the other management groups' and
+    // the read is AL's row near the end. `image rm` and `image promote` stay
+    // Copy-commands, and `image build`, `image gate`, `image record` and
+    // `image refresh` are the never table's (`src/main/ipc.ts`).
+    expect(SPAWN_COMMANDS.filter((row) => row.words[0] === 'image').map((row) => row.operation)).toEqual([
+      'image.add.plan',
+      'image.add',
+      'image.catalog.ls',
+    ])
+  })
+
+  it('refuses an image write whose argv widens by one word, the four content flags included', () => {
+    // The four flags the plan names -- `--inline`, `--image`, `--default` and
+    // `--branch` -- are refused because they are on no row's argv and on no
+    // `SPAWN_FLAGS` entry at all, and **that refusal is the whole of this row's
+    // safety on those words**: the CLI refuses them only in a coding agent's
+    // session, and the console's child carries no agent marker, so a `--default`
+    // or a `--branch` that reached it would be obeyed.
+    for (const word of ['--inline', '--image', '--default', '--branch']) {
+      expect(() =>
+        assertArgvFlags('image.add', ['image', 'add', '--no-apply', word, '--', 'app']),
+      ).toThrow(new RegExp(`image\\.add would emit ${word}`))
+    }
+    // ...and the terminator is the other half, read the other way round: every
+    // word after `--` is a value and never a flag, so a name spelled like one of
+    // those words is the entry's name, which is what the row declares it to be.
+    for (const word of ['--inline', '--image', '--default', '--branch']) {
+      expect(() =>
+        assertArgvFlags('image.add', ['image', 'add', '--no-apply', '--', word]),
+      ).not.toThrow()
+    }
+  })
+
+  it('refuses an image write whose tags or description the argv builder will not carry', () => {
+    // **The argv builder's own gate, asked with the validator out of the way**
+    // (MW2, D2903). The image write's own suite goes through
+    // `validateArguments` first, so what a case there sees refused is the
+    // renderer's gate (`ipc.ts`'s `imageTags` and `imageDescription`) and never
+    // this one; these cases call `argvFor` **directly**, which is the only way
+    // to see the `equalsList` and `equalsText` kinds at all.
+    //
+    // **Both gates refuse the same values**, the way the two `since` cases above
+    // require: the members and the text are asked again in `spawn.ts` rather
+    // than trusted, because a bound asked in one place is a bound the next
+    // caller can miss -- and here the list is the one argument whose shape is
+    // the CLI's own free-form tag rule rather than a membership, so the second
+    // gate is what stands between a widened list and a child.
+    const values = {
+      name: 'app',
+      dockerfile: 'acme/app:.fugaro/app.Dockerfile',
+      tags: 'node,redis',
+      description: 'the app image',
+    }
+    // A member outside the CLI's tag grammar (`IMAGE_TAG_RE`: lower-case, and no
+    // member may be empty) and the empty list, which the row reads as no tags at
+    // all rather than as a word of its own.
+    for (const tags of ['node,Redis', 'Redis', 'node,', ',node', 'node,,redis', 'node,redis ', ' ']) {
+      expect(validateArguments('image.add.plan', { ...values, tags }).ok, JSON.stringify(tags)).toBe(false)
+      for (const operation of ['image.add.plan', 'image.add'] as const) {
+        expect(
+          () => argvFor(operation, { ...values, tags }, safeContext()),
+          `${operation} ${JSON.stringify(tags)}`,
+        ).toThrow(/not a list of tags this console will pass/)
+      }
+    }
+    // ...and the count, in one word: `IMAGE_TAGS_MAX` members is the most the
+    // CLI reads, and one over is refused by both gates. The members are
+    // generated from the constant rather than written out, so this case moves
+    // with it -- and `IMAGE_TAG_RE` is what says they are members at all.
+    const atMost = Array.from({ length: IMAGE_TAGS_MAX }, (_, index) => `tag${String(index)}`)
+    expect(atMost.every((tag) => IMAGE_TAG_RE.test(tag))).toBe(true)
+    const list = atMost.join(',')
+    expect(validateArguments('image.add.plan', { ...values, tags: list }).ok).toBe(true)
+    expect([...argvFor('image.add.plan', { ...values, tags: list }, safeContext())]).toContain(`--tags=${list}`)
+    expect(validateArguments('image.add.plan', { ...values, tags: `${list},node` }).ok).toBe(false)
+    for (const operation of ['image.add.plan', 'image.add'] as const) {
+      expect(() => argvFor(operation, { ...values, tags: `${list},node` }, safeContext())).toThrow(
+        /not a list of tags this console will pass/,
+      )
+    }
+    // The description: empty (the way a renderer says "no description" is by
+    // leaving the argument out, so an empty `--description=` is a different argv
+    // for the same entry), a control character -- a newline would break a listing
+    // that prints one line per entry -- and the console's own bound.
+    for (const description of ['', 'the app\nimage', 'the app\u0000image', 'x'.repeat(MAX_ARGUMENT_LENGTH + 1)]) {
+      expect(
+        validateArguments('image.add.plan', { ...values, description }).ok,
+        JSON.stringify(description),
+      ).toBe(false)
+      for (const operation of ['image.add.plan', 'image.add'] as const) {
+        expect(
+          () => argvFor(operation, { ...values, description }, safeContext()),
+          `${operation} ${JSON.stringify(description)}`,
+        ).toThrow(/not a value this console will pass/)
+      }
+    }
+    // ...and the values both gates do carry are the ones the case above writes
+    // out: a list inside the grammar and a description with a space in it.
+    expect(validateArguments('image.add', values).ok).toBe(true)
+    expect([...argvFor('image.add', values, safeContext())]).toContain('--description=the app image')
   })
 
   it('spawns `settings` with exactly these words and no argument a renderer can fill', () => {

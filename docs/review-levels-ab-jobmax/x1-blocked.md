@@ -1,5 +1,11 @@
 # X1 — Checks 270, 271 and 272 — is blocked: T3.1 is not built
 
+**Kept as the record of 2026-11-15; superseded in part on 2026-11-21.** The re-plan of T3.1, V1.3 and X1 (the
+owner's instruction of 2026-11-21) re-words 271 against the console's shipped per-user switch and 272 against
+T3.1's policy member, and drops the two checks' reliance on T1.2's retired `crash_reports: false`. What blocks X1
+now is build order alone — T2.1 and T3.1 are not built — and the plan's X1 section is the current text. This note's
+facts about the register (below) are as they were on 2026-11-15.
+
 **Nothing was written into `docs/gcp-live-checklist.md` for this task, and this note is the reason.**
 X1's own **Depends on** line is `L4.2, T2.1, T3.1` (plan line 540), and T3.1 — the app's
 Crashlytics following the project switch, with Analytics removed — is not on `main`. Check 272 reads

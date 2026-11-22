@@ -1071,4 +1071,8 @@ export type CliBackedHandlers = Omit<
   | 'setup.plan'
   | 'setup.apply'
   | 'settings.editor.open'
+  | 'models.add.plan'
+  | 'models.add'
+  | 'image.add.plan'
+  | 'image.add'
 >

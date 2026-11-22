@@ -126,12 +126,21 @@ const OPERATIONS: readonly ConsoleOperation[] = CONSOLE_OPERATIONS
  * the column is checked against the design rather than against itself: T12 takes
  * the console's launch and its configuration change away, GV3.2 adds the
  * console's third write -- the move of a task between the record's releases
- * (design section 5.1 rule 14) -- and AL adds the wizard's apply, the write that
+ * (design section 5.1 rule 14) -- AL adds the wizard's apply, the write that
  * converges the installation from the answers a lapsed key no longer licenses
- * (design section 5.1, D2904) -- and nothing else does. The plan row beside it
- * is **not** here: a plan writes nothing, so the lapse keeps it, which is the
- * asymmetry the setup pair is the case for. */
-const THE_REFUSED: readonly OperationName[] = ['run.launch', 'settings.edit', 'roadmap.move', 'setup.apply']
+ * (design section 5.1, D2904), MW1 adds the models write (D2903) and MW2 the
+ * image write -- and nothing else does. The **plan** row beside each write is
+ * **not** here: a plan writes nothing, so the lapse keeps it, which is the
+ * asymmetry the setup pair is the case for and the two writes' pairs are the
+ * second and third cases. */
+const THE_REFUSED: readonly OperationName[] = [
+  'run.launch',
+  'settings.edit',
+  'roadmap.move',
+  'setup.apply',
+  'models.add',
+  'image.add',
+]
 
 /** THE_KEPT is every other operation: the non-vacuity guard for a wrapper that
  * refused the whole surface. */
@@ -149,13 +158,13 @@ const EMPTY_PAYLOADS: readonly OperationName[] = THE_KEPT.filter((name) => {
 })
 
 /**
- * WELL_FORMED is what the registrar's own schema accepts for the three refused
+ * WELL_FORMED is what the registrar's own schema accepts for the refused
  * operations. The tests that go through the bridge for a refusal are about the
  * gate, and a payload the schema refuses would answer a refusal this file is not
- * about; `ipc.test.ts` holds the same three payloads for the same reason. The
- * move's two ids are a document key and a release key as the graph document
- * spells them (contract section 6.22) -- the gate never reads them, and the
- * source behind this fake handler is never reached.
+ * about; `ipc.test.ts` holds the same payloads for the same reason. The move's
+ * two ids are a document key and a release key as the graph document spells them
+ * (contract section 6.22) -- the gate never reads them, and the source behind
+ * this fake handler is never reached.
  */
 const WELL_FORMED: Readonly<Record<string, Record<string, unknown>>> = Object.freeze({
   'run.launch': { installation: 'sandbox', repository: 'acme/app', task: 'do the thing' },
@@ -165,6 +174,17 @@ const WELL_FORMED: Readonly<Record<string, Record<string, unknown>>> = Object.fr
   // is the one main held when it showed the plan window, so the empty payload is
   // the well-formed one and the gate is what the refusal can be about.
   'setup.apply': {},
+  // The models write (MW1, D2903): a claim the schema takes, over one route and
+  // its two rates. The gate never reads them either.
+  'models.add': { id: 'deepseek/deepseek-v4.1-flash', route: 'openrouter', priceIn: '0.14', priceOut: '0.28' },
+  // The image write (MW2, D2903): an entry the schema takes, over a dockerfile
+  // reference, two tags and a description. The gate never reads them either.
+  'image.add': {
+    name: 'app',
+    dockerfile: 'acme/app:.fugaro/app.Dockerfile',
+    tags: 'node,redis',
+    description: 'the app image',
+  },
 })
 
 /** recordingIpcMain is Electron's `ipcMain`, as far as the registrar uses it: a
@@ -276,14 +296,14 @@ describe('the five states a licence reply puts the console in', () => {
 })
 
 describe('the refused class is the table\'s column', () => {
-  it('marks exactly the four operations the design takes away, and no other row', () => {
+  it('marks exactly the six operations the design takes away, and no other row', () => {
     const marked = OPERATIONS.filter((operation) => operation.refusedAfterLapse === true).map(
       (operation) => operation.name,
     )
     expect([...marked].sort()).toEqual([...THE_REFUSED].sort())
   })
 
-  it('names the target installation on the launch row, and on none of the other three', () => {
+  it('names the target installation on the launch row, and on none of the other five', () => {
     // The second column the gate reads, and the reason the rows are not
     // decided the same way: the launch acts on the installation its payload
     // names, and the settings write and the roadmap move act on the installation
@@ -301,6 +321,8 @@ describe('the refused class is the table\'s column', () => {
       ['settings.edit', undefined],
       ['roadmap.move', undefined],
       ['setup.apply', undefined],
+      ['models.add', undefined],
+      ['image.add', undefined],
     ])
   })
 
@@ -326,7 +348,7 @@ describe('the refused class is the table\'s column', () => {
 })
 
 describe('the lapse, at the handler', () => {
-  it('refuses the launch, the settings write, the roadmap move and the wizard’s apply, and reaches no source', async () => {
+  it('refuses the launch, the settings write, the roadmap move, the wizard’s apply and the two writes, and reaches no source', async () => {
     const { bridge, reached } = lapsedConsole(() => AT['lapsed'] as LicenceReply)
     for (const name of THE_REFUSED) {
       const reply = await bridgeMethod(bridge, name)(WELL_FORMED[name])

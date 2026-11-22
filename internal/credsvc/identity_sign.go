@@ -131,7 +131,7 @@ func (s *Server) identityProbe(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 	caller, err := s.cfg.Auth.VerifyLauncher(ctx, tok)
 	if err != nil {
-		s.refuseIdentityCaller(w, err)
+		s.refuseIdentityCaller(w, "this route admits a person on the installation's roster, verified by their own Google ID token: the probe proves the runs' signer for the operators that may run an update, so no other caller is served here. A service account and a run's job account probe nothing — the ticket route is the one that admits them", err)
 		return
 	}
 	if !identityListed(s.cfg.Identity.Operators, caller.Account) {

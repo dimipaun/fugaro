@@ -9,9 +9,15 @@
 mock_provider "google" {}
 mock_provider "google-beta" {}
 
+# database_region is what fugaro update writes for an installation in a US
+# region: the Realtime Database is offered in three locations and us-central1
+# is the nearest to every us-* region (internal/place). The run that asserts it
+# overrides it with another location, because a value every run shares is one a
+# module could ignore.
 variables {
-  project        = "fp-1234"
-  fugaro_project = "aurora"
+  project         = "fp-1234"
+  fugaro_project  = "aurora"
+  database_region = "us-central1"
   names = {
     signer_account_id = "fugaro-token-signer"
     minter_role_id    = "fugaroTokenMinter"
@@ -180,6 +186,105 @@ run "TestLauncherHasViewerAndMinterOnly" {
     condition     = !contains(keys(google_project_iam_member.admin), "user:launcher@example.com") && !contains(keys(google_project_iam_member.admin), "user:operator@example.com")
     error_message = "a launcher or operator who isn't also an owner, editor or listed budget admin must not be a budget admin"
   }
+}
+
+# The issuer's row (launcher-does-not-mint plan task LM11; D3121). With an
+# account given, the module plans exactly one signJwt row for it on the runs'
+# signer, and the people's row is untouched beside it: the two coexist for the
+# one release the update that moves the grant lives in (LM14).
+run "TestIssuerMinterRow" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    issuer_account = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+  }
+
+  assert {
+    condition = (length(google_service_account_iam_member.issuer_minter) == 1 &&
+      google_service_account_iam_member.issuer_minter[0].service_account_id == "projects/fp-1234/serviceAccounts/fugaro-token-signer@fp-1234.iam.gserviceaccount.com" &&
+      google_service_account_iam_member.issuer_minter[0].role == "projects/fp-1234/roles/fugaroTokenMinter" &&
+    google_service_account_iam_member.issuer_minter[0].member == "serviceAccount:fugaro-credentials@proj-1234.iam.gserviceaccount.com")
+    error_message = "the issuer's account holds iam.serviceAccounts.signJwt on the runs' signer of the FP, and nowhere else: the row is bound on the account and not on the project"
+  }
+  assert {
+    condition     = keys(google_service_account_iam_member.minter) == ["user:launcher@example.com", "user:operator@example.com"]
+    error_message = "the issuer's row is added beside the people's and not instead of it: the row the launchers and operators hold leaves in the update that moves the grant, and not in this one"
+  }
+}
+
+# The switch (LM11): with it off, no launcher and no operator holds the minter
+# row, and the issuer's row is not the switch's — it is planned either way,
+# which is what makes the one plan that turns the switch off a plan that moves
+# the grant rather than one that leaves nobody able to mint.
+run "TestPeopleMinterIsOffWithTheSwitch" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    people_minter  = false
+    issuer_account = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+  }
+
+  assert {
+    condition     = length(google_service_account_iam_member.minter) == 0
+    error_message = "with people_minter = false not one launcher or operator holds the minter row"
+  }
+  assert {
+    condition     = length(google_service_account_iam_member.issuer_minter) == 1
+    error_message = "people_minter gates the people's row alone: the issuer's row is planned whatever it says"
+  }
+  assert {
+    condition     = alltrue([for m in google_project_iam_member.viewer : m.role == "roles/firebasedatabase.viewer"])
+    error_message = "people_minter gates the minter row alone: a launcher and an operator keep every read the roster gives them"
+  }
+}
+
+# ... and its default, which is what makes the release carrying this change a
+# plan with nothing new in it: the people's minter row, and no row for an
+# account nobody has named.
+run "people_minter_defaults_on" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  override_resource {
+    target          = google_service_account.signer
+    override_during = plan
+    values = {
+      name   = "projects/fp-1234/serviceAccounts/fugaro-token-signer@fp-1234.iam.gserviceaccount.com"
+      email  = "fugaro-token-signer@fp-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-token-signer@fp-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = (keys(google_service_account_iam_member.minter) == ["user:launcher@example.com", "user:operator@example.com"] &&
+    length(google_service_account_iam_member.issuer_minter) == 0)
+    error_message = "with the defaults the module still plans the people's row and plans no issuer row: the first update carrying this change has to plan nothing new"
+  }
+}
+
+run "bad_issuer_account" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    issuer_account = "not-an-email"
+  }
+
+  expect_failures = [var.issuer_account]
 }
 
 # M9d: the spend history in Firestore. The history account writes (user, on
@@ -405,11 +510,23 @@ run "TestApiKeyRestricted" {
   }
 }
 
-run "TestRtdbRegionIsUsCentral1" {
+# A NEW instance is created where the mapping says (D3089), which is the
+# database_region input: europe-west1 here, so the assertion fails if the
+# resource goes back to a constant. That an existing one keeps its own is not
+# this run's to say — a module-level run plans the config's own value, the
+# ignore_changes in firebase.tf makes a plan show no change and no replacement
+# either way — and two runs of database_region.tftest.hcl hold that (and
+# internal/infra's TestAnExistingInstanceKeepsItsOwnRegion against a synthetic
+# prior state).
+run "TestRtdbRegionComesFromTheMapping" {
   command = plan
 
   module {
     source = "../../modules/firebase"
+  }
+
+  variables {
+    database_region = "europe-west1"
   }
 
   override_resource {
@@ -430,8 +547,8 @@ run "TestRtdbRegionIsUsCentral1" {
   }
 
   assert {
-    condition     = google_firebase_database_instance.this.region == "us-central1"
-    error_message = "the RTDB must be in us-central1 (D4), a location that can't be changed later"
+    condition     = google_firebase_database_instance.this.region == "europe-west1"
+    error_message = "a new RTDB instance must go where the mapping says (D3089), not to a constant: the region is a creation-time field that can't be changed later"
   }
   assert {
     condition     = google_firebase_database_instance.this.instance_id == "fp-1234-default-rtdb" && google_firebase_database_instance.this.type == "DEFAULT_DATABASE"
@@ -789,6 +906,20 @@ run "bad_fugaro_project" {
   }
 
   expect_failures = [var.fugaro_project]
+}
+
+run "bad_database_region" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    database_region = "us-east5"
+  }
+
+  expect_failures = [var.database_region]
 }
 
 run "bad_signer_account_id" {

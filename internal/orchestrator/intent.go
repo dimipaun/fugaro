@@ -320,16 +320,55 @@ func recovery(s State, view RunView, w WorkItem, it Intent, now time.Time) (Acti
 // The spec it starts from is read off that item rather than taken from the
 // action, so what the launcher is handed is the state's own spec.
 func reissuable(s State, a Action) (WorkItem, error) {
-	w, ok := s.Item(a.ItemID)
-	if !ok {
-		return WorkItem{}, fmt.Errorf("%w: no work item %q", ErrNotFound, safetext.OneLine(a.ItemID))
+	w, it, err := openAttempt(s, a.ItemID, a.IntentID, a.RunID)
+	if err != nil {
+		return WorkItem{}, err
 	}
-	it, open := openIntentOf(s, a.ItemID)
-	if !open || it.ID != a.IntentID || it.RunID != a.RunID {
-		return WorkItem{}, fmt.Errorf("%w: %q carries no attempt recorded as %q under run %q", ErrInvalid, safetext.OneLine(a.ItemID), safetext.OneLine(a.IntentID), safetext.OneLine(a.RunID))
-	}
-	if w.Phase.Done() || SpecDigest(w) != it.SpecDigest || it.SpecDigest != a.Digest || !(approvalCovers(w, it) || spentBy(w, it)) {
+	if it.SpecDigest != a.Digest {
+		// The plan was made from an earlier read of the node: the attempt is
+		// the one the state still holds, but not under the spec this action
+		// was built over, and a launch is not started from a stale read.
 		return WorkItem{}, fmt.Errorf("%w: the attempt %q of %q is not one to start", ErrInvalid, safetext.OneLine(it.ID), safetext.OneLine(a.ItemID))
 	}
 	return w, nil
+}
+
+// ReissuableAttempt is openAttempt for a caller that holds no plan of its own:
+// the credentials service's ticket route, which is asked for an attempt and a
+// run id and answers with the orchestrator's own gate (LM24 of
+// docs/launcher-does-not-mint, D3136). The attempt is the intent's id — the item
+// it names is read the way the record's own ids are (IntentItem) — and the run
+// id is the one the ask names, so the answer is "this record still carries that
+// attempt, under that run, as one a re-issue may start".
+//
+// It exists so that the issuer and the gate cannot drift: a compromised
+// orchestrator account must not be able to ask the issuer for what the
+// launcher's own gate refuses, and a second copy of these checks in the issuer
+// is exactly where the two would come apart. An error is a refusal of the ask,
+// never the service's own failure.
+func ReissuableAttempt(s State, attempt, runID string) (WorkItem, error) {
+	w, _, err := openAttempt(s, IntentItem(attempt), attempt, runID)
+	return w, err
+}
+
+// openAttempt is reissuable's judgement of the record itself, shared with
+// ReissuableAttempt: the item the id names, the open intent that is exactly
+// this attempt under this run id, and the two things that hold whatever a
+// caller planned from — the item is not finished, the item is still the spec
+// the attempt was committed for, and the approval that covers the attempt
+// still stands or is the one the attempt spent. What a plan adds to it is the
+// digest the plan was built over (reissuable).
+func openAttempt(s State, itemID, intentID, runID string) (WorkItem, Intent, error) {
+	w, ok := s.Item(itemID)
+	if !ok {
+		return WorkItem{}, Intent{}, fmt.Errorf("%w: no work item %q", ErrNotFound, safetext.OneLine(itemID))
+	}
+	it, open := openIntentOf(s, itemID)
+	if !open || it.ID != intentID || it.RunID != runID {
+		return WorkItem{}, Intent{}, fmt.Errorf("%w: %q carries no attempt recorded as %q under run %q", ErrInvalid, safetext.OneLine(itemID), safetext.OneLine(intentID), safetext.OneLine(runID))
+	}
+	if w.Phase.Done() || SpecDigest(w) != it.SpecDigest || !(approvalCovers(w, it) || spentBy(w, it)) {
+		return WorkItem{}, Intent{}, fmt.Errorf("%w: the attempt %q of %q is not one to start", ErrInvalid, safetext.OneLine(it.ID), safetext.OneLine(itemID))
+	}
+	return w, it, nil
 }

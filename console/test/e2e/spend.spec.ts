@@ -893,11 +893,12 @@ test.describe('the Spend screen', () => {
     const drawn = await screen(page)
 
     expect(drawn.rows).toBe(2)
-    // The `person` class of `sanitize.ts`: an address on the wire is the
-    // console's own marker, and the CLI's `unknown` bucket is drawn as itself.
-    expect(drawn.text).toContain('redacted@example.invalid')
+    // The `person` class of `sanitize.ts`: an address on the wire is drawn as the
+    // person it names (D3213, 2026-11-21), and the CLI's `unknown` bucket as
+    // itself.
+    expect(drawn.text).toContain('ada@example.com')
+    expect(drawn.text).toContain('bob@example.com')
     expect(drawn.text).toContain('unknown')
-    expect(drawn.text).not.toContain('ada')
   })
 
   test('offers no link, and nothing to click', async () => {
@@ -966,8 +967,7 @@ test.describe('the Spend screen', () => {
     expect(hidden.text).not.toContain('ada')
 
     // The operator's own switch: the same read with `by person` and nothing
-    // else, and the rows are drawn -- as the console's marker, never the
-    // address.
+    // else, and the rows are drawn -- the address as the person it names.
     const on = await mountWired(personView(SPEND_DEFAULT_CONTROLS, true), { '7d': PERSON_REPORT })
     const shown = await screen(page)
 
@@ -975,9 +975,8 @@ test.describe('the Spend screen', () => {
     expect(shown.personsEnabled).toBe('true')
     expect(shown.personState).toBe('on')
     expect(shown.rows).toBe(2)
-    expect(shown.text).toContain('redacted@example.invalid')
+    expect(shown.text).toContain('ada@example.com')
     expect(shown.text).toContain('unknown')
-    expect(shown.text).not.toContain('ada')
   })
 
   // -------------------------------------------------------------------------
@@ -1006,10 +1005,9 @@ test.describe('the Spend screen', () => {
     expect(drawn.peopleTotals).toBe(1)
     expect(drawn.peopleReason).toBeNull()
     // The identity the read was resolved for, through the `person` class: the
-    // console's marker, never the address, and the login nowhere on the mount.
-    expect(drawn.peopleYou).toBe('redacted@example.invalid')
+    // address the document named, drawn as itself (D3213).
+    expect(drawn.peopleYou).toBe('ada@example.com')
     expect(drawn.text).toContain('these are every launcher of this project in the window')
-    expect(drawn.text).not.toContain('ada')
 
     // The money path, end to end: the document's three `float64`s reach the
     // cells as dollars, the notional one carries its mark, and the average

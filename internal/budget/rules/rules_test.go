@@ -15,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/coordpath"
+	"github.com/dimipaun/fugaro/internal/identitywire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -2854,5 +2855,115 @@ func assertNoConfigWrites(t *testing.T, marker string) {
 	parent := marker[:strings.LastIndexByte(marker, '/')]
 	if _, ok := generatedPaths(t)[parent]; !ok {
 		t.Errorf("%s has no parent location (%s) in the generated rules", marker, parent)
+	}
+}
+
+// ---- LM5: the issuance record's place (launcher-does-not-mint) --------------
+//
+// C1 places the issuance record under /creds (identitywire.PathRecord), the
+// subtree the document already closes, and its LM5 pins that place here. The
+// family's own node denies every client already, so this task generates no rule
+// for the record and changes none (F26).
+
+// issuanceSlug and issuanceRun are the pair the record's path is keyed by, of
+// the shape a real slug and run id have. They are names in a path and not
+// values: nothing under the record's path is read here.
+const (
+	issuanceSlug = "aurora"
+	issuanceRun  = "fb-20261120-041919-8271"
+)
+
+// TestRulesKeepTheIssuanceRecordClosed (LM5, R3, F26): the issuance record is
+// refused a read and a write to every caller that can hold a token of this
+// database — a run's token, a person's, a device's and a caller with no token
+// at all — and the document carries no rule of its own for it.
+//
+// The record is the service's state for one run's identity: who asked, the
+// claims the service will sign, the account the claim must come from and the
+// digests of the ticket and the nonce (R3). None of it is a client's to read,
+// and none of it is a client's to write.
+//
+// The place is not incidental, which is what F26 found. R3 first put the record
+// beside the run's budget record; a run's node grants its own token a read
+// (`.read: "RUN"`), and an RTDB grant cascades to every child, so a record
+// there would be readable — and its fields writable — by the run it names. The
+// contract moved it under /creds, whose node is the booleans false. The
+// contrast at the end of this test is that finding held in code, and it is
+// this test's red step: pointed at that path instead of the contract's, the
+// walk below fails on the run's own grant.
+//
+// Hand mutation this fails on: adding any node under /creds (both the walk over
+// the document's own locations and the governing walk see it), opening either
+// attribute of /creds, and moving the record's family out from under it — the
+// mutation F26 was, which the contrast refuses a second time.
+func TestRulesKeepTheIssuanceRecordClosed(t *testing.T) {
+	// The path is the contract's own spelling and not a literal here: C1 owns
+	// the record's place, and this is the test its package doc names as the one
+	// that pins it, so a move of the record and this proof cannot drift.
+	record := identitywire.PathRecord(issuanceSlug, issuanceRun)
+
+	// Every location that governs a read or a write of the record — its
+	// ancestors, the path itself, and anything that reaches it through a
+	// wildcard segment — carries nothing but the boolean false. That literal is
+	// what makes the denial true for every caller at once: RTDB evaluates it
+	// before it reads a claim, so it refuses a run's token (the fp, fs and fr
+	// claims), a device's (the mu claim the mobile reader is built on), a
+	// signed-in person — whom no grant admits on its own — and a caller with no
+	// token at all, alike. An expression here would be a grant to the class it
+	// names, and the boolean true a grant to everyone.
+	gov := governingPaths(t, record)
+	for p, attrs := range gov {
+		for _, a := range []string{".read", ".write"} {
+			if v, has := attrs[a]; has && v != false {
+				t.Errorf("/%s %s = %v, want the boolean false: no client token may read or write the issuance record (F26)", p, a, v)
+			}
+		}
+	}
+
+	// The nearest of them is the family's own node, and it carries the denial
+	// itself: an inherited deny is a different document from one that says so
+	// where a reader of the plan looks for it.
+	attrs, ok := gov[credsRoot]
+	if !ok {
+		t.Fatalf("the nearest generated ancestor of %s is not /%s (%v): the record must sit under the subtree the document closes (R3, F26)", record, credsRoot, keys(gov))
+	}
+	for _, a := range []string{".read", ".write"} {
+		if v, has := attrs[a]; !has || v != false {
+			t.Errorf("/%s %s = %v, want an explicit false (F26)", credsRoot, a, v)
+		}
+	}
+
+	// And the generator spells nothing of the record's family: the record's
+	// path is a path and not a location of the document, and the walk above is
+	// the whole of what closes it. This is F26's "no rule is generated".
+	// TestRulesPreexistingPathsUnchanged is the other half of the pin: a node
+	// that appeared under /creds is not an addition any task named
+	// (isNewCredsPath).
+	if !strings.HasPrefix(record, credsRoot+"/") {
+		t.Fatalf("the record's path %q is outside /%s: it must sit under the subtree the document closes (R3, F26)", record, credsRoot)
+	}
+	family := record[:strings.LastIndex(record, "/")] // creds/issuance/<slug>
+	family = family[:strings.LastIndex(family, "/")]  // creds/issuance
+	for p := range generatedPaths(t) {
+		if p == family || strings.HasPrefix(p, family+"/") {
+			t.Errorf("the generated rules carry /%s: the record's family is closed by /%s alone, and a node under it is a rule this task did not ask for (F26)", p, credsRoot)
+		}
+	}
+
+	// The contrast that makes the placement load-bearing: the path R3 first
+	// chose is governed by the run's own node, whose read is the run's token.
+	// The walk above comes back with a grant there and with the boolean false
+	// at the record's place, and the placement is the whole of the difference.
+	beside := budget.PathRun(issuanceSlug, issuanceRun) + "/issuance"
+	runGrant := false
+	for _, a := range governingPaths(t, beside) {
+		if v, has := a[".read"]; has && v != false {
+			if r, _ := v.(string); strings.Contains(r, "auth.token.fs") && strings.Contains(r, "auth.token.fr") {
+				runGrant = true
+			}
+		}
+	}
+	if !runGrant {
+		t.Errorf("no location governing /%s carries the run's own read: F26's finding — that a run reads its own node, so a record beside it is a record the run reads — is what makes the record's placement load-bearing", beside)
 	}
 }

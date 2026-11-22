@@ -310,6 +310,32 @@ type SweepCursor struct {
 	Next string `json:"next"`
 }
 
+// Heartbeat is the document at coordpath.PathHeartbeat: the sweep's own
+// liveness, and the one document here that is a function of the clock rather
+// than of its inputs. It sits beside the views rather than in one for exactly
+// that reason: a view stamped with the time it was computed would be a new
+// generation every tick, and a reader caching on the ETag would re-read a
+// document that had not changed.
+//
+// Both stamps are the database's own clock (rtdb.Client.ServerNow) and never
+// this process's: a host whose clock is wrong would otherwise report a
+// heartbeat in the future, or one hours old, where the reader compares it
+// against lease ages the same clock wrote.
+type Heartbeat struct {
+	// StartedAt is when the last tick began, in UTC. It moves on every tick,
+	// including one that fails — which is what says the schedule is still
+	// firing when nothing is succeeding.
+	StartedAt time.Time `json:"started_at,omitzero"`
+	// OKAt is when a tick last reached its end without failing, in UTC, and
+	// it stays where it was while ticks fail: the gap between it and a
+	// StartedAt after it is how long the coordinator has been trying and not
+	// succeeding. A repository the sweep could not reconcile is not a failed
+	// tick — it is recorded in the stale marker beside its own view, and the
+	// tick carries on — so this says the sweep ran, not that every repository
+	// in it was read.
+	OKAt time.Time `json:"ok_at,omitzero"`
+}
+
 // Sweeper reconciles the coordinator's documents with what GitHub and the
 // runs bucket say. Its whole dependency list is the two reads, the store it
 // writes through and the clock: no credential of its own, no service, no
@@ -354,13 +380,22 @@ type Sweeper struct {
 // error — it is the sweep's own failure rather than a repository's, it would
 // fail for every repository after it, and the job's exit code is where an
 // operator reads it.
+//
+// Every tick writes the heartbeat (Heartbeat) as well: when it began, and — at
+// the end of one that reached it — when it last succeeded. A tick that fails
+// in between therefore leaves started_at moved and ok_at where it was, which is
+// the one thing a health line has to be able to tell apart from a schedule that
+// stopped firing.
 func (s *Sweeper) Sweep(ctx context.Context, repos []Repo) (Result, error) {
 	if s.Reader == nil || s.Runs == nil || s.Store == nil {
 		panic("coordinator: Sweeper needs a Reader, a Runs source and a Store; build it with NewStore")
 	}
+	if err := s.beat(ctx, false); err != nil {
+		return Result{}, err
+	}
 	res := Result{Repos: make([]RepoResult, 0, len(repos))}
 	if len(repos) == 0 {
-		return res, nil
+		return res, s.beat(ctx, true)
 	}
 	start, err := s.cursor(ctx, repos)
 	if err != nil {
@@ -394,7 +429,57 @@ func (s *Sweeper) Sweep(ctx context.Context, repos []Repo) (Result, error) {
 	res.Next = repos[next].Slug
 	wctx, cancel := closing(ctx)
 	defer cancel()
-	return res, s.Store.Write(wctx, PathSweepCursor, SweepCursor{Next: res.Next})
+	if err := s.Store.Write(wctx, PathSweepCursor, SweepCursor{Next: res.Next}); err != nil {
+		return res, err
+	}
+	return res, s.beat(wctx, true)
+}
+
+// beat writes the heartbeat at coordpath.PathHeartbeat, stamped with the
+// database's own clock: with ok false it moves started_at and leaves ok_at
+// where the last successful tick left it, which is what a tick's beginning
+// says; with ok true it moves ok_at and leaves started_at where that beginning
+// put it, which is what a tick that reached its end says. started_at is written
+// by the tick's first beat and by nothing else, so a tick that took a while
+// reads as one that began when it began rather than as one that began when it
+// finished.
+//
+// The read comes before the stamp, and the stamp before the write, for two
+// reasons. ok_at is a fact of the last successful tick and not of this one, so
+// it is read back rather than recomputed — a tick that wrote both stamps at
+// once could not record its own beginning without also claiming a success it
+// does not yet know it will have. And the database must have answered
+// something before it can be asked the time at all (rtdb.Client.ServerNow is
+// the Date header of the last answer), so the read is also what gives the tick
+// a server time to stamp with: a store that has heard nothing leaves the
+// heartbeat where it is rather than stamping it with a clock of its own,
+// exactly as a lease with no server time behind it is not taken
+// (internal/orchestrator/lease.go).
+//
+// A document that does not decode is replaced rather than failing the tick,
+// which is markStale's own rule for the marker beside a view: the node is
+// written by this one job, and a document it cannot read is one it must not
+// keep.
+func (s *Sweeper) beat(ctx context.Context, ok bool) error {
+	var raw json.RawMessage
+	_, found, err := s.Store.Read(ctx, coordpath.PathHeartbeat, &raw)
+	if err != nil {
+		return err
+	}
+	hb := Heartbeat{}
+	if found && json.Unmarshal(raw, &hb) != nil {
+		hb = Heartbeat{}
+	}
+	now, has := s.Store.ServerNow()
+	if !has {
+		return nil
+	}
+	if ok {
+		hb.OKAt = now.UTC()
+	} else {
+		hb.StartedAt = now.UTC()
+	}
+	return s.Store.Write(ctx, coordpath.PathHeartbeat, hb)
 }
 
 // cursor is the index in repos of the repository this tick starts with: the
