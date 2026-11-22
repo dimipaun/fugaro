@@ -86,13 +86,22 @@ func (r *projectRig) existing(billing bool) {
 }
 
 // foreign makes the project exist, readable, with Firebase and billing as
-// given, and without the creation label: a project no run of fugaro setup
-// created, which a run refuses.
+// given, and without an origin label: a project no run of fugaro setup has
+// made Fugaro's yet. It holds nothing else of Fugaro's either, so a run adopts
+// it (the owner's ruling of 2026-11-22); a caller that wants it refused gives
+// it something of Fugaro's first (installed).
 func (r *projectRig) foreign(billing bool) {
 	r.crm.AddProject(newProj, 424242)
 	r.gcs.AddProject(newProj, 424242)
 	r.fb.AddFirebase(newProj)
 	r.bill.SetBilling(newProj, billing)
+}
+
+// installed gives the project a runs bucket of its own: the installation every
+// run of fugaro setup creates, so the project holds something of Fugaro's and
+// is refused rather than adopted.
+func (r *projectRig) installed() {
+	r.gcs.AddBucket("fugaro-runs-"+newProj, 424242, map[string]string{"fugaro": "managed"})
 }
 
 // run is the converge with the flags and the stdin; terminal says whether
@@ -329,13 +338,14 @@ func TestCreateResumesItsOwnProject(t *testing.T) {
 	r.nothingDone(t, "a resumed project")
 }
 
-// TestCreateRefusesAnExistingProjectItDidNotCreate: Fugaro only starts fresh
-// (the owner's ruling of 2026-10-23). A project that already exists, that the
-// caller can read, and that no run of fugaro setup created (it carries no
-// creation label) is refused with the one line that says so, before anything is
-// created, added, linked or applied — whatever billing it has, and in the plan
-// as in the apply.
-func TestCreateRefusesAnExistingProjectItDidNotCreate(t *testing.T) {
+// TestCreateRefusesAProjectThatHoldsSomethingOfFugaros: a project that
+// already exists, that the caller can read, and that holds something of
+// Fugaro's — here the runs bucket of an installation — is refused with the one
+// line that says so, before anything is created, added, linked or applied,
+// whatever billing it has, and in the plan as in the apply. Fugaro adopts only
+// a project that holds nothing of Fugaro's (the owner's ruling of 2026-11-22),
+// and a project holding nothing is TestSetupAdoptsAnExistingEmptyProject's.
+func TestCreateRefusesAProjectThatHoldsSomethingOfFugaros(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		billing bool
@@ -348,17 +358,21 @@ func TestCreateRefusesAnExistingProjectItDidNotCreate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newProjectRig(t)
 			r.foreign(tc.billing)
+			r.installed()
 			r.bill.AddAccount(billingAcc, true)
 			out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n", append([]string{"--create-project"}, tc.args...)...)
 			if ExitCode(err) != ExitUserError {
 				t.Fatalf("exit %d (%v), want a user error\n%s", ExitCode(err), err, out)
 			}
-			if want := "Fugaro only starts fresh: " + newProj + " already exists; pick another id"; !strings.Contains(out+errString(err), want) {
+			if want := newProj + " already exists and holds something of Fugaro's"; !strings.Contains(out+errString(err), want) {
 				t.Errorf("the refusal does not say %q:\n%s\n%v", want, out, err)
 			}
-			r.nothingDone(t, "an existing project setup did not create")
+			r.nothingDone(t, "an existing project holding something of Fugaro's")
+			if got := r.crm.Labels(newProj)[infra.CreatedLabelKey]; got != "" {
+				t.Errorf("the refused project was labelled %s=%s", infra.CreatedLabelKey, got)
+			}
 			if n := len(r.ran(t, "apply")); n != 0 {
-				t.Errorf("an installation was applied into a project setup did not create: %q", r.calls(t))
+				t.Errorf("an installation was applied into a project holding something of Fugaro's: %q", r.calls(t))
 			}
 		})
 	}

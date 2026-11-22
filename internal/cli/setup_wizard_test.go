@@ -431,7 +431,8 @@ func TestSetupOnAnExistingInstallationConvergesAndSaysSo(t *testing.T) {
 
 // TestSetupRefusesAnIDThatHoldsAnInstallation: a first run of `setup` whose ID
 // already holds a Fugaro installation (the runs bucket's marker names it) is
-// refused before the name is asked — Fugaro only starts fresh — and the
+// refused before the name is asked — fugaro setup adopts only a project that
+// holds nothing of Fugaro's (the owner's ruling of 2026-11-22) — and the
 // refusal names the one command that uses that installation from this machine
 // instead. --create-project changes nothing about it. `update` on the same
 // machine is that command: it takes the installation's own name and asks for
@@ -452,7 +453,7 @@ func TestSetupRefusesAnIDThatHoldsAnInstallation(t *testing.T) {
 			if err == nil || ExitCode(err) != ExitUserError {
 				t.Fatalf("setup went on with an ID that holds an installation: %v\n%s", err, out)
 			}
-			for _, want := range []string{"Fugaro only starts fresh: proj-1234 already exists; pick another id", "fugaro update --gcp-project proj-1234 --region " + defaultRegion} {
+			for _, want := range []string{"proj-1234 already exists and holds the Fugaro project", "fugaro update --gcp-project proj-1234 --region " + defaultRegion} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the refusal lacks %q: %v", want, err)
 				}
