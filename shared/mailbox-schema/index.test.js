@@ -447,7 +447,7 @@ test('the schema is not the redactor: redaction happens before it (P1.3)', () =>
 // ---------------------------------------------------------------------------
 
 test('the kind vocabulary is closed, and an absent kind is the ordinary message', () => {
-  assert.deepEqual([...KINDS], ['message', 'prompt', 'answer', 'action', 'registration']);
+  assert.deepEqual([...KINDS], ['message', 'prompt', 'answer', 'action', 'registration', 'stop']);
   const { message } = validateMessage(good());
   assert.equal(Object.hasOwn(message, 'kind'), false, 'an absent kind adds no field');
   for (const kind of KINDS) {
@@ -479,6 +479,14 @@ test('a kind carries its own fields and no others', () => {
   // goes through without a read-back, so it travels as an ordinary message.
   refusal(good({ kind: 'action' }), REFUSALS.MISSING_FIELD, 'action');
   assert.equal(validateMessage(good({ text: 'kick off the fix' })).ok, true, 'a launch is a plain message');
+  // P5.1g's stop request is the opposite case: it is a kind of its own so that
+  // nothing can read it as something to execute, and it carries no action
+  // record — a record with a verb and a confirmation IS the shape that gets
+  // executed, which is exactly what the owner refused the phone.
+  assert.equal(validateMessage(good({ kind: 'stop' })).ok, true, 'a stop request carries nothing but its sentence');
+  refusal(good({ kind: 'stop', action: anAction() }), REFUSALS.FIELD_NOT_ALLOWED, 'action');
+  refusal(good({ kind: 'stop', reply_to: 'm-0000' }), REFUSALS.FIELD_NOT_ALLOWED, 'reply_to');
+  refusal(good({ kind: 'stop', options: ['stop it'] }), REFUSALS.FIELD_NOT_ALLOWED, 'options');
 });
 
 test('an agent is optional, id-shaped, and the same value the heartbeat advertises', () => {
@@ -1284,6 +1292,7 @@ test('the tag is required on every kind, and a wrong-length one is refused on ev
     answer: good({ kind: 'answer', reply_to: 'm-0000' }),
     action: withAction({ verb: 'merge' }),
     registration: aRegistration(),
+    stop: good({ kind: 'stop' }),
     absent: good(),
   };
   for (const [name, m] of Object.entries(kinds)) {

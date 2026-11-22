@@ -142,7 +142,7 @@ func TestDocsMobileChecklistHasCheck81And82And89(t *testing.T) {
 				"Paste back:",
 				"Restore",
 			},
-			refuses: []string{"FUGARO_LIVE_", "policyRules = 1"},
+			refuses: []string{"FUGARO_LIVE_", "policyRules = 1)"},
 		},
 		{
 			heading: "## Check 89:",

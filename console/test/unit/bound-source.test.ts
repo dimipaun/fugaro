@@ -35,7 +35,13 @@ import {
   noInstallationState,
 } from '../../src/source/cli'
 import type { BoundInstallation } from '../../src/source/cli'
-import { NO_GRAPH_SCOPE, NO_PLAN_CHECKOUT, SourceRefusal } from '../../src/source/source'
+import {
+  NO_GRAPH_SCOPE,
+  NO_NAMED_SCOPE,
+  NO_ORCHESTRATOR_MAP,
+  NO_PLAN_CHECKOUT,
+  SourceRefusal,
+} from '../../src/source/source'
 import type { RoadmapMoveAnswer, RoadmapMoveOutcome, Snapshot } from '../../src/source/source'
 import { itHostRoute } from '../support/hostRoute'
 
@@ -606,6 +612,79 @@ describe('the graph read, whose scope a previous answer taught', () => {
     const afterSwitch = await refusalOf(source.graphRead({ source: 'coordinator' }))
     expect((afterSwitch as SourceRefusal).message).toBe(NO_GRAPH_SCOPE)
     expect(spawned, 'the previous installation’s scopes were still admitted').toHaveLength(3)
+  })
+
+  it('refuses a named orchestrator scope below the floor, before the membership rule and before any child', async () => {
+    // **F40's widening sits behind a floor** (`ORCHESTRATOR_MAP_CLI_FLOOR`,
+    // `src/shared/version.ts`): `GRAPH_SCOPE_RE` now admits C-ORCH's named id
+    // (`orchestrator:<project>~<name>`, `src/main/ipc.ts`), and the release that
+    // first reads one is the release that ships `orchestrator map --json`. The
+    // constant is `null` today -- the command is registered from `ee/` and no
+    // tag carries it -- so every named scope is refused here with the console's
+    // own sentence about the CLI being too old, and **not** with `NO_GRAPH_SCOPE`:
+    // an older CLI's document can never list a named scope either, so the
+    // membership rule would give the same refusal for the wrong reason, and a
+    // renderer would be told the scope is missing rather than that this
+    // installation cannot read one.
+    //
+    // The refusal is thrown **before** `resolve`, so no binary is probed and no
+    // child exists: `built` and `spawned` are both empty, which is what makes
+    // this a fence rather than a sentence.
+    const built: string[] = []
+    const spawned: unknown[] = []
+    const source = createBoundSource({
+      installation: () => FIRST,
+      create: async (each) => {
+        built.push(each.id)
+        return aGraphSource([{ sources: [{ source: 'coordinator' }] }], spawned)
+      },
+    })
+
+    for (const scope of ['orchestrator:acme~blue', 'local:acme~blue']) {
+      const error = await refusalOf(source.graphRead({ source: scope }))
+      expect(error, scope).toBeInstanceOf(SourceRefusal)
+      expect((error as SourceRefusal).message, scope).toBe(NO_NAMED_SCOPE)
+    }
+    // The feed is refused by the same guard, thrown where the subscription is
+    // opened rather than when it is first polled -- so a screen cannot open a
+    // live child on a spelling the installation's CLI does not read.
+    expect(() => source.subscribeGraph({ source: 'orchestrator:acme~blue' })).toThrow(NO_NAMED_SCOPE)
+    expect(built, 'a named scope built a source, which is a child').toEqual([])
+    expect(spawned, 'a named scope spawned a read after all').toEqual([])
+
+    // The unnamed scopes are untouched by the floor: `all` and an id-carrying
+    // scope with no separator are the grammar the released CLI already reads.
+    expect((await source.graphRead({})).document['sources']).toEqual([{ source: 'coordinator' }])
+    expect(spawned).toHaveLength(1)
+  })
+
+  it('refuses the map read below the floor, and spawns nothing for it', async () => {
+    // `orchestrator map --json` is on this tree and in no release
+    // (`ORCHESTRATOR_MAP_CLI_FLOOR` is `null`), so the read the Coordinator tab
+    // opens with is refused at the source: no binary probed, no child started,
+    // and no `unknown command "map"` drawn as a failure the operator cannot act
+    // on. The refusal is its own sentence rather than the named scope's, because
+    // the states differ -- one is a read this installation cannot make at all,
+    // the other a scope it cannot name -- and the two fixes are different lines
+    // on the screen.
+    const built: string[] = []
+    const source = createBoundSource({
+      installation: () => FIRST,
+      create: async (each) => {
+        built.push(each.id)
+        return aSource([], each.id)
+      },
+    })
+
+    const error = await refusalOf(source.orchestratorMap({}))
+    expect(error).toBeInstanceOf(SourceRefusal)
+    expect((error as SourceRefusal).message).toBe(NO_ORCHESTRATOR_MAP)
+    expect(built, 'the refusal built a source, which is a child').toEqual([])
+
+    // ...and with no installation chosen it is D13's state rather than this
+    // floor's: the read has no version to ask about.
+    const unbound = createBoundSource({ installation: () => null, create: async (each) => aSource([], each.id) })
+    expect(await refusalOf(unbound.orchestratorMap({}))).toBeInstanceOf(NoInstallation)
   })
 
   /** aMoveSource is `aGraphSource` plus the record's one write: what the next
