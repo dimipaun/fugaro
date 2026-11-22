@@ -68,10 +68,10 @@
 //
 // **The person breakdown is off by default** (design D15 and section 2.3): the
 // report can group by `person`, the document still carries those rows, and the
-// screen draws none of them until the operator turns the view on. Even when it
-// is on, a person key is drawn through `sanitize.ts`'s `person` class, so an
-// address on the wire is the console's own marker (`redacted@example.invalid`)
-// and never the address itself.
+// screen draws none of them until the operator turns the view on. When it is on,
+// a person key is drawn through `sanitize.ts`'s `person` class, which draws the
+// identity the document named (D3213, 2026-11-21) -- who spent the money is the
+// answer this view exists to give.
 //
 // **The by-person view is `runs stats --json`, and it is fail-private.** The
 // knob above turns on a *second read* beside the report (`peopleArguments` and

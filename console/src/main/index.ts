@@ -1004,6 +1004,16 @@ const gated: ConsoleHandlers = {
   // action off the screen in the meantime.
   'models.add.plan': newOperationStub(),
   'models.add': newOperationStub(),
+  // The image write's two rows (MW2, D2903), registered the way the models
+  // write's are: the surface, the argv and the flow behind them are here
+  // (`src/main/imageadd.ts`, `src/main/imagesview.ts`), and what these two
+  // entries wait for is I-OPS, which registers `createImageAdd`'s handlers
+  // through this same table. Until then a screen that asks for one is answered
+  // 'not available in this build' rather than spawn anything -- and the floor
+  // constant the Manage view reads (`IMAGE_ADD_CLI_FLOOR`) is what keeps the
+  // action off the screen in the meantime.
+  'image.add.plan': newOperationStub(),
+  'image.add': newOperationStub(),
 }
 
 /**

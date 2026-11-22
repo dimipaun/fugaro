@@ -86,10 +86,12 @@ type LevelInputs struct {
 	// Floor is the owner's floor for the run's mode: the levels a run of
 	// that mode must run whatever a lower layer asks for. nil is no floor.
 	// It is the answer policy.Effective.ReviewFloorFor gives — the row of
-	// Mode, and, when the run's own request took it off the axis (hotfix),
-	// the row of the mode the layers resolved beside it, because a request
-	// raises a mode and never lowers a floor (D8, LF5) — and never a row a
-	// resolver reads itself.
+	// Mode, and, when the run's own request lowered it below what the
+	// layers resolved, the row of the mode they resolved beside it too,
+	// because a request lowers a mode and never a floor (D8, LF5); a mode
+	// the request took the run to outright (hotfix) reads its own row and
+	// nothing beside it (the owner's ruling of 2026-11-20) — and never a row
+	// a resolver reads itself.
 	Floor []policy.Level
 	// Task is the task's own review_levels block, nil for none. It is
 	// written by the launcher, so it is the layer the resolver trusts

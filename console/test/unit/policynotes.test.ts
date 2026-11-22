@@ -41,7 +41,6 @@
 import { describe, expect, it } from 'vitest'
 
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
-import { PATH_PLACEHOLDER } from '../../src/shared/sanitize'
 import {
   POLICY_CHECK_ABSENT_BECAUSE,
   POLICY_CHECK_IDS,
@@ -345,10 +344,10 @@ describe('the policy notes', () => {
     // `<host><path>:1.2`, a redaction the document does not carry (review of
     // 2026-11-07).
     expect(texts(node, 'policy-notes-entry-image')).toEqual(['ghcr.io/example-owner/agent:1.2'])
-    // The catalog entry's own path goes through the `path` class, which this
-    // console replaces with its placeholder: a path is where the operator's own
-    // machine shows through, and the entry's repository and branch are drawn.
-    expect(texts(node, 'policy-notes-entry-path')).toEqual([PATH_PLACEHOLDER])
+    // The catalog entry's own path goes through the `path` class, which draws a
+    // path as it came: a path is not a credential (D3213), and the entry's
+    // repository and branch are drawn beside it.
+    expect(texts(node, 'policy-notes-entry-path')).toEqual(['images/node.Dockerfile'])
     expect(texts(node, 'policy-notes-default')).toEqual([POLICY_DEFAULT_WORD])
     expect(texts(node, 'policy-notes-count')).toEqual(['2', '2', '3'])
   })
