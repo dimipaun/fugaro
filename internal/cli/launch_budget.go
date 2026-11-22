@@ -63,6 +63,17 @@ import (
 // backend: its mode is not off and a database is configured. A backend with
 // no signer cannot launch anything: say so.
 //
+// The mode it reads is the one internal/infra's budgetEnv writes into every
+// job's FUGARO_BUDGET_MODE (AB5, R3), and it reads it the same way: an unset
+// mode is observe (C1, AB11 — the default the migration lands on), so an
+// installation whose config names a database and no mode mints exactly as one
+// that writes observe does. Reading it off the raw field rather than through
+// Config.BudgetMode is what makes that the same answer: BudgetMode answers the
+// removed word for an unset mode, so a launcher asking it there would read the
+// default as off. An explicit off stays off — it is the one string the mode
+// vocabulary still calls removed (policy.Mode.Removed), and the reason the
+// word is asked for through that predicate rather than compared here.
+//
 // The database is half of that on purpose, and this function is where the
 // decision belongs: a config with a mode (observe or enforce) and no
 // budget.rtdb_url launches, and the launch reads no policy and refuses nothing
@@ -80,7 +91,10 @@ import (
 // no stricter rule, and the deploy is what refuses the job that can see one and
 // cannot read it.
 func budgetBackendOn(lc *localcfg.Config) (bool, error) {
-	if lc.BudgetMode() == localcfg.BudgetOff || lc.Budget == nil || lc.Budget.RTDBURL == "" {
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		return false, nil
+	}
+	if policy.Mode(lc.Budget.Mode).Removed() {
 		return false, nil
 	}
 	return true, budgetSignerOn(lc)

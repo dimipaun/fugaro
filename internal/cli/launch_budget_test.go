@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -50,14 +51,32 @@ func newLaunchBudget(t *testing.T, mode string) *launchBudgetFixture {
 // counterpart for, and the one a test about an unreadable ledger turns on.
 func newLaunchBudgetWith(t *testing.T, mode string, members ...string) *launchBudgetFixture {
 	t.Helper()
-	iam := gcpfake.NewIAMCredentials(t)
-	iam.AddSigner(testSigner)
-	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "iam_credentials: "+iam.URL+"/"), db: gcpfake.NewRTDB(t), iam: iam}
 	extra := ""
 	for _, m := range members {
 		extra += m + ", "
 	}
-	f.appendConfig(t, "budget: { mode: "+mode+", per_run_usd: 5, "+extra+"firebase_project: proj-1234, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+	return newLaunchBudgetBlock(t, "mode: "+mode+", ", extra)
+}
+
+// newUnsetModeBudget is the same fixture with no mode key in its block at all:
+// the installation whose config names a database and no mode, which the
+// launcher reads as observe (C1, AB11) and which is the mode budgetEnv writes
+// into the jobs of exactly that config (AB5).
+func newUnsetModeBudget(t *testing.T) *launchBudgetFixture {
+	t.Helper()
+	return newLaunchBudgetBlock(t, "", "")
+}
+
+// newLaunchBudgetBlock builds the fixture whose budget block is
+// "budget: { <modeClause>per_run_usd: 5, <extra>… }" — the two callers above
+// differ in the mode clause alone, so that what makes a launch mint (or refuse
+// to) is the only thing that varies between them.
+func newLaunchBudgetBlock(t *testing.T, modeClause, extra string) *launchBudgetFixture {
+	t.Helper()
+	iam := gcpfake.NewIAMCredentials(t)
+	iam.AddSigner(testSigner)
+	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "iam_credentials: "+iam.URL+"/"), db: gcpfake.NewRTDB(t), iam: iam}
+	f.appendConfig(t, "budget: { "+modeClause+"per_run_usd: 5, "+extra+"firebase_project: proj-1234, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set("fugaro/project", "aurora")
 	// The database a real installation runs against carries Fugaro's own mark
@@ -473,6 +492,54 @@ func TestMintIsNotNeededWithoutADatabaseWhateverTheMode(t *testing.T) {
 		if on, err := env.budgetMintOn(context.Background()); on || err != nil {
 			t.Fatalf("budgetMintOn with %q = (%v, %v), want a skip: no database, so no policy this CLI could see", cfg, on, err)
 		}
+	}
+}
+
+// The launcher's mint decision reads the mode the way the job's own
+// environment is written (AB5's budgetEnv): an installation whose config names
+// a database and no mode is an installation whose mode is observe (C1, AB11 —
+// unset is observe everywhere), so a launch of it mints the run's token
+// exactly as one that writes observe does, and the job the same config deploys
+// names observe. An explicit off stays off: the two tests above and
+// TestBudgetOffSkipsEverything are its side.
+func TestAnUnsetModeLaunchesWithAToken(t *testing.T) {
+	f := newUnsetModeBudget(t)
+	var env map[string]string
+	f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
+	if _, _, err := runBudget(t); err != nil {
+		t.Fatal(err)
+	}
+	raw := readToken(t, f.cloudFixture, budgetRun)
+	if raw == "" {
+		t.Fatal("an installation whose config names a database and no mode minted no token: an unset mode is observe, and observe mints")
+	}
+	if c := claimsOf(t, f, unsealed(t, markerKey(t, env), []byte(raw), budgetRun)); c["fs"] != appSlug || c["fr"] != budgetRun || c["fp"] != "aurora" {
+		t.Fatalf("claims = %v", c)
+	}
+	// And the job that installation deploys names the same mode: the launcher
+	// and the deploy answer one default, which is what makes a run of it able
+	// to read the policy it was minted an identity for.
+	lc := memEnv(t, f.cloudFixture).lc
+	cfg, problems := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\n" +
+		"workflows:\n  web: { commands: { build: sh b.sh, test: sh t.sh } }\n"))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	// The app id, the base image and the registry the spec asks of every
+	// repository, spelled the way internal/infra's own fixtures spell them:
+	// nothing here is about the provider or the images.
+	lc.RegistryHost = "us-east5-docker.pkg.dev/proj-1234"
+	lc.BaseImages = map[string]string{"base": lc.RegistryHost + "/fugaro-base/fugaro-base:dev-0123abc"}
+	rs, err := infra.Repo(infra.Inputs{LC: lc, Repo: "acme/app", Cfg: cfg, GitHubAppID: "123456"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, ok := rs.Workflows["web"]
+	if !ok {
+		t.Fatalf("the spec carries no web workflow: %v", rs.Workflows)
+	}
+	if got := w.Env[infra.BudgetModeEnv]; got != "observe" {
+		t.Errorf("the job names %s=%q, want observe: the launcher minted for an unset mode, and the deploy must name the mode that mint is for", infra.BudgetModeEnv, got)
 	}
 }
 

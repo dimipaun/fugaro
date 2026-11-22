@@ -80,10 +80,13 @@ func newCloudFixture(t *testing.T, extraEndpoints ...string) *cloudFixture {
 	f.bucket = "file://" + runs
 	// The installation has a budget database, as every installation does: the
 	// harness's own fake, adopted (the project name and the mark every writer
-	// asks for), named in the config with no mode — the block says the
-	// installation has one, never how a run is accounted for, which is the
-	// job's mode and the project's published policy. A test that means the
-	// installation of a release that never had one asks for none (noBudget).
+	// asks for), named in the config with the mode off — this fixture's world
+	// is one whose budget does nothing, so a launch of it mints no token and a
+	// run of it reads no policy (a block with no mode is a block whose mode is
+	// observe, C1/AB11). A test that means a launch that mints builds its own
+	// world (buildBudgetWorld, the launch fixtures); one that means the
+	// installation of a release that never had a database asks for none
+	// (noBudget).
 	f.budget = testutil.NewBudget(t)
 	adoptBudgetFake(f.budget.DB)
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\nbucket_url: " + f.bucket +

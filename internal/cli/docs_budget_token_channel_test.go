@@ -345,8 +345,11 @@ func TestDocsBudgetTokenChannelNamesTheMintingCondition(t *testing.T) {
 	}
 	mintOn := code[ms : ms+me]
 	for _, want := range []string{
-		// "budget mode on": the mode is what the first branch turns on.
-		"lc.BudgetMode() == localcfg.BudgetOff",
+		// "budget mode on": the mode is what the first branch turns on, read
+		// the way the job's own environment is written (AB5's budgetEnv): an
+		// unset mode is observe (C1, AB11), so the removed word is the only
+		// string that turns it off.
+		"policy.Mode(lc.Budget.Mode).Removed()",
 		// "a budget database": both branches need the address.
 		"lc.Budget.RTDBURL == \"\"",
 		// "a published policy": the second branch's own read.
