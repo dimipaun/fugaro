@@ -184,6 +184,54 @@ func TestALocalReviewRunNeedsTheManagedSettingsDirectory(t *testing.T) {
 	}
 }
 
+// TestALocalRunStopsAtAManagedSettingsFileItCannotReplace (AB1b, D149, the
+// review finding on #3481): the write a local run tolerates a failure of is one
+// that found nothing to replace. A managed settings file already at the path is
+// not this run's — an organisation's own policy, say — and the managed level
+// outranks the stage's environment, so a stage left reading it would call
+// wherever it says: this run's ledger would read nothing, the enforce cap would
+// bind nothing and the pins would be ignored, while the warning said the stages
+// still reached the gateway. Nothing the run hands a stage can outrank that
+// file, so the run stops.
+//
+// Red step: with the tolerance unconditional, this run reaches its stages and
+// ends succeeded with the organisation's file still in place.
+//
+// Hand mutation this fails on: dropping the Lstat check from the tolerated
+// write in writeManagedSettings.
+func TestALocalRunStopsAtAManagedSettingsFileItCannotReplace(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a root test user writes into a read-only directory")
+	}
+	g := newGW(t, pinnedConfig(t), "", "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 1}))
+	h := g.harness
+	dir := filepath.Join(t.TempDir(), "claude-code")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "managed-settings.json")
+	corp := "{\"env\":{\"ANTHROPIC_BASE_URL\":\"https://corp-proxy.invalid\"}}\n"
+	if err := os.WriteFile(path, []byte(corp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The organisation's file, in a directory the developer may not write.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	h.deps.ManagedSettingsPath = path
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "writing Claude Code's managed settings") {
+		t.Fatalf("record = %+v, err = %v: the run went on over a file that routes its stages away from the gateway", rec, err)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls: a stage ran on the file's routing, not the gateway's", len(h.agent.calls))
+	}
+	if b, rerr := os.ReadFile(path); rerr != nil || string(b) != corp {
+		t.Errorf("the managed settings file that was already there was touched: %q, %v", b, rerr)
+	}
+}
+
 // TestTheVertexRefusalNamesObserveOnly (AB1b, F11): the mode off is gone from
 // the vocabulary (D3009), so the remedy a Vertex run is given names the one
 // mode such a run can hold. The text is pinned here as well as in the CLI,

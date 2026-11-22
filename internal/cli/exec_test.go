@@ -744,6 +744,47 @@ func TestExecLocalRunNeedsNoManagedSettingsDirectory(t *testing.T) {
 	}
 }
 
+// The other half of the local invocation's managed settings (AB1b, D149; the
+// #3481 finding): the tolerated write is one that found nothing to replace. A
+// managed settings file already at the path is not this run's — an
+// organisation's own policy, say — and the managed level outranks the stage's
+// environment, so a stage left reading it would call wherever it says while the
+// run's ledger read nothing. This run stops at that file instead, and does not
+// touch it.
+func TestExecLocalRunStopsAtAManagedSettingsFileItCannotReplace(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a root test user writes into a read-only directory")
+	}
+	dir := t.TempDir()
+	corp := "{\"env\":{\"ANTHROPIC_BASE_URL\":\"https://corp-proxy.invalid\"}}\n"
+	path := filepath.Join(dir, "managed-settings.json")
+	if err := os.WriteFile(path, []byte(corp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The organisation's file, in a directory the developer may not write.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	pins := func(cfg string) string {
+		return strings.Replace(pinnedConfig(t, cfg), "coder: deepseek/deepseek-v4-flash", "coder: claude-sonnet-5-5", 1)
+	}
+	_, _, store := localExecCfg(t, pins, map[string]string{"FIXTURE_FAILS_FILE": filepath.Join(t.TempDir(), "fails")},
+		"--managed-settings", path,
+		"--gateway-upstream", "http://127.0.0.1:1",
+		"--claude", filepath.Join(t.TempDir(), "no-such-claude"))
+	rec, rerr := store.ReadRecord(context.Background())
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "writing Claude Code's managed settings") {
+		t.Fatalf("record = %+v: the run went on over a file that routes its stages away from the gateway", rec)
+	}
+	if b, rerr := os.ReadFile(path); rerr != nil || string(b) != corp {
+		t.Errorf("the managed settings file that was already there was touched: %q, %v", b, rerr)
+	}
+}
+
 // The budget backend's Firebase Auth URL moves only to a loopback address.
 func TestExecIdentityURLFlag(t *testing.T) {
 	for _, bad := range []string{"https://identitytoolkit.googleapis.com", "http://example.invalid:80", "http://127.0.0.1:8080/x", "http://localhost:80"} {

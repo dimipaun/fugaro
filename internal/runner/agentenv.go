@@ -547,7 +547,10 @@ func (r *run) modelTakesImages(model string) bool {
 // one write a local run does not tolerate a failure of: nothing in a stage's
 // environment carries it, so a stage whose file could not be written would
 // read the head with that head's own hooks and MCP servers enabled, and it
-// stops there instead.
+// stops there instead. The plain write goes the same way where a managed
+// settings file is already at the path: that file outranks the environment the
+// stage is handed, so a stage left reading it would call wherever it says
+// rather than at the gateway this run's ledger is kept by.
 //
 // A stage the run's stage account serves writes none of the gateway's
 // variables and none of the pins, for the reason its own environment carries
@@ -624,6 +627,18 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 			// is still written wherever the developer's machine holds the
 			// directory, so the fence is kept where it exists. Said once per
 			// run: every stage writes the file.
+			//
+			// Only where there was nothing to replace, though: a managed
+			// settings file already at the path is not this run's — an
+			// organisation's own policy, say — and the managed level outranks
+			// the stage's environment, so an ANTHROPIC_BASE_URL or
+			// apiKeyHelper in it would take the stage's calls off the gateway
+			// with this run's ledger reading nothing. Nothing the run hands
+			// the stage can outrank it, so the run stops rather than warn
+			// about a route it does not hold.
+			if _, lerr := os.Lstat(r.managedPath()); !os.IsNotExist(lerr) {
+				return fmt.Errorf("writing Claude Code's managed settings: %w", err)
+			}
 			r.mu.Lock()
 			warned := r.warnedManagedWrite
 			r.warnedManagedWrite = true
