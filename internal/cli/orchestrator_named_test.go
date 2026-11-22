@@ -27,7 +27,10 @@ import (
 // task's commands are used): until it does, a named id seeded under
 // `orchestrator/` is one the listing leaves out, so the name half of an entry is
 // pinned against the function the listing fills entries with rather than through
-// a fixture.
+// a fixture. The same fact is why nothing here installs or runs a named
+// orchestrator: the path rule refuses one, so the resolver and the install guard
+// refuse it too — cleanly, and before a unit exists — and the assertions that
+// flip the day a named id is addressable are marked as such.
 
 // TestOrchestratorNameFlag: `--name` is the name half of an orchestrator id, the
 // project half is the selection every command shares, and the commands that act
@@ -38,8 +41,22 @@ func TestOrchestratorNameFlag(t *testing.T) {
 	if id, err := orchestratorID(lc); err != nil || id != orchestratorTestID {
 		t.Errorf("the project's own orchestrator resolves to %q (%v), and its id is the project's name", id, err)
 	}
-	if id, err := orchestratorIDFor(lc, "night"); err != nil || id != orchestratorTestID+"~night" {
-		t.Errorf("--name night resolves to %q (%v), and a named orchestrator's id is <project>~<name>", id, err)
+	// A name the rule admits builds the id D3207 gives it — `<project>~night` —
+	// and is then refused by the rule this release's node paths are built with,
+	// which admits the project's own id alone. The plan lands the task that widens
+	// it (CG1a) before this task's commands are used, so what is pinned here is the
+	// state of this branch: a named id is well-formed and unaddressable, and the
+	// refusal says which of the two rules said no rather than letting a run reach
+	// the database and die there. The day a named id is addressable this assertion
+	// is the one that changes: `<project>~night` and no error.
+	if id, err := orchestratorIDFor(lc, "night"); err == nil {
+		t.Errorf("--name night resolved to %q, and this release cannot address a named orchestrator: the rule the paths are built with admits the project's own id alone (CG1a)", id)
+	} else {
+		for _, want := range []string{"night", orchestratorTestID + "~night", "nothing is read and nothing is written"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal of --name night is %v, and it does not carry %q", err, want)
+			}
+		}
 	}
 
 	// A name the rule refuses is refused before anything is read or written: the
@@ -79,10 +96,32 @@ func TestOrchestratorNameFlag(t *testing.T) {
 		}
 	}
 
-	// And the daemon reads it: a name the rule refuses stops `orchestrator run`
-	// at the resolver, before it touches any node.
-	newOrchestratorFixture(t)
-	out, _, err := runOrchestrator(t, "", "orchestrator", "run", "--name", "Night", "--once")
+	// And the daemon reads it: `orchestrator run --name night --once` is refused
+	// at the resolver, before it takes a lease or writes anything, so a named unit
+	// a person wrote by hand cannot leave a daemon looping on an id this release
+	// cannot address — and so a unit this release's own install writes cannot
+	// either, which is what the install guard beside this one is for.
+	f := newOrchestratorFixture(t)
+	out, _, err := runOrchestrator(t, "", "orchestrator", "run", "--name", "night", "--once")
+	if err == nil {
+		t.Fatalf("`orchestrator run --name night --once` ran:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "night") {
+		t.Errorf("the run's refusal does not name the name it refused: %v", err)
+	}
+	// Nothing was written for it: the node the id would live at, and the claims
+	// node every item one orchestrator claims is keyed under, are both absent.
+	node := orchestrator.SubtreeRoot + "/" + orchestratorTestID + "~night"
+	if v := f.db.Value(node); v != nil {
+		t.Errorf("the refused run wrote %s: %v", node, v)
+	}
+	if v := f.db.Value(orchestrator.ClaimsRoot); v != nil {
+		t.Errorf("the refused run claimed an item under %s: %v", orchestrator.ClaimsRoot, v)
+	}
+
+	// A name the rule refuses is refused earlier still, in the name rule itself,
+	// and the refusal names the name rather than an id it never built.
+	out, _, err = runOrchestrator(t, "", "orchestrator", "run", "--name", "Night", "--once")
 	if err == nil {
 		t.Fatalf("`orchestrator run --name Night` ran:\n%s", out)
 	}
@@ -250,9 +289,11 @@ func TestOrchestratorLsNameDriver(t *testing.T) {
 
 // TestInstallUnitPerName: the login unit is one file per orchestrator name. The
 // project's own is the unit this release has always written — `fugaro update`
-// keeps writing it, byte for byte — and `--name` writes the named one's, which
-// differs in its file, its label and the `--name` its daemon is run with, so a
-// machine keeps both running at once (D3206, D3207).
+// keeps writing it, byte for byte — and a named one is a unit of its own: its own
+// file, its own label, and a daemon run with `--name`, so a machine keeps both
+// running at once (D3206, D3207). What this release installs is the project's own
+// alone: a named orchestrator's node cannot be built from its paths yet (CG1a),
+// so `install --name` refuses rather than writing a unit that could only loop.
 func TestInstallUnitPerName(t *testing.T) {
 	unitHome(t)
 	f := fakeUnitService(t)
@@ -281,7 +322,9 @@ func TestInstallUnitPerName(t *testing.T) {
 	}
 	// The named unit runs the id it is for. `--name` is the flag `orchestrator
 	// run` takes, so the daemon the service manager restarts drives the named
-	// orchestrator and not the project's own.
+	// orchestrator and not the project's own. Nothing this release installs is a
+	// named unit yet — the guard below is why — and the render is pinned here
+	// because it is what a release whose paths take a named id installs.
 	if !strings.Contains(night.Text, "--name") || !strings.Contains(night.Text, "night") {
 		t.Errorf("the named unit does not run the daemon with --name:\n%s", night.Text)
 	}
@@ -290,10 +333,16 @@ func TestInstallUnitPerName(t *testing.T) {
 	}
 
 	// A name that is not one is refused before anything is written: it becomes
-	// the unit's own file name.
+	// the unit's own file name. The refusal is the name rule's own and not the
+	// guard below — a name the rule refuses is refused as the name it is.
 	out, _, err := executeStdin(t, "install\n", "orchestrator", "install", "--name", "Night")
 	if err == nil {
 		t.Fatalf("install --name Night wrote a unit:\n%s", out)
+	}
+	for _, want := range []string{"Night", "is not one"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal of install --name Night is %v, and it does not carry %q", err, want)
+		}
 	}
 	if len(f.reloads) != 0 {
 		t.Errorf("the refused install still reloaded %v", f.reloads)
@@ -302,52 +351,55 @@ func TestInstallUnitPerName(t *testing.T) {
 		t.Errorf("the refused install wrote %s", night.Path)
 	}
 
-	// The named install writes the named unit and leaves the project's own
-	// alone: the two files stand side by side.
+	// And a name the rule admits is refused too, before the unit exists: this
+	// release cannot run a named orchestrator's daemon, and install is the one of
+	// the three unit commands that writes code a service manager starts at every
+	// login and restarts when it stops. A unit whose daemon is refused at its
+	// first lease is a login loop rather than a refusal a person ever sees, so the
+	// install is where the release says no. CG1a flips this step: once a named id
+	// is addressable, the install writes the file and what follows here becomes
+	// the assertions the named unit deserves.
 	out, _, err = executeStdin(t, "install\n", "orchestrator", "install", "--name", "night")
-	if err != nil {
-		t.Fatalf("install --name night: %v\n%s", err, out)
+	if err == nil {
+		t.Fatalf("install --name night wrote a unit this release cannot run:\n%s", out)
 	}
-	data, err := os.ReadFile(night.Path)
-	if err != nil {
-		t.Fatalf("the named unit was not written: %v", err)
+	for _, want := range []string{"night", "Nothing is installed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal of install --name night is %v, and it does not carry %q", err, want)
+		}
 	}
-	if string(data) != night.Text {
-		t.Errorf("%s is not what this release renders:\n--- on disk\n%s\n--- rendered\n%s", night.Path, data, night.Text)
+	if len(f.reloads) != 0 {
+		t.Errorf("the refused install reloaded %v", f.reloads)
+	}
+	if len(f.removes) != 0 {
+		t.Errorf("the refused install unloaded %v", f.removes)
+	}
+	if _, err := os.Stat(night.Path); err == nil {
+		t.Errorf("the refused install wrote %s", night.Path)
 	}
 	if _, err := os.Stat(def.Path); err == nil {
-		t.Errorf("installing the named orchestrator's unit wrote the project's own at %s", def.Path)
-	}
-	if len(f.reloads) != 1 || f.reloads[0].Path != night.Path {
-		t.Errorf("the service manager was reloaded with %v, want one call for %s", f.reloads, night.Path)
+		t.Errorf("the refused install wrote the project's own unit at %s", def.Path)
 	}
 
-	// It is idempotent, like the default one: a second install re-renders the
-	// same text and reloads the same file.
-	if out, _, err = executeStdin(t, "install\n", "orchestrator", "install", "--name", "night"); err != nil {
-		t.Fatalf("the second install --name night: %v\n%s", err, out)
-	}
-	if again, err := os.ReadFile(night.Path); err != nil || string(again) != night.Text {
-		t.Errorf("the second install left %s (read %v):\n%s", night.Path, err, again)
-	}
-
-	// status and uninstall are about the same unit — the one the name installed
-	// — and neither touches the project's own.
+	// status and uninstall are about the file and not about the node, so a named
+	// unit a person wrote by hand — or one a later release installs — stays theirs
+	// to read and to remove. Neither takes the guard the install does, and there
+	// is no named unit on this machine, which each of them says in its own words.
 	out, _, err = executeStdin(t, "", "orchestrator", "status", "--name", "night")
 	if err != nil {
 		t.Fatalf("status --name night: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, night.Path) {
-		t.Errorf("status --name night does not name %s:\n%s", night.Path, out)
+	if !strings.Contains(out, night.Path) || !strings.Contains(out, "not installed") {
+		t.Errorf("status --name night does not report the absent unit at %s:\n%s", night.Path, out)
 	}
 	out, _, err = executeStdin(t, "", "orchestrator", "uninstall", "--name", "night")
 	if err != nil {
 		t.Fatalf("uninstall --name night: %v\n%s", err, out)
 	}
-	if _, err := os.Stat(night.Path); !os.IsNotExist(err) {
-		t.Errorf("uninstall --name night left %s behind (%v)", night.Path, err)
+	if !strings.Contains(out, "nothing to remove") {
+		t.Errorf("uninstall --name night does not report that there was nothing to remove:\n%s", out)
 	}
-	if len(f.removes) != 1 || f.removes[0].Path != night.Path {
-		t.Errorf("the service manager was unloaded with %v, want one call for %s", f.removes, night.Path)
+	if len(f.removes) != 0 {
+		t.Errorf("uninstall --name night unloaded %v, and there was no unit to unload", f.removes)
 	}
 }

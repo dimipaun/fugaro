@@ -117,6 +117,31 @@ func DefaultOrchestratorID(project string) (string, error) {
 // refuses has to be refused before it becomes one.
 func ValidOrchestratorName(name string) bool { return orchestratorNameRE.MatchString(name) }
 
+// NamedIDsAreAddressable reports whether this release's node paths take a named
+// orchestrator's id at all — whether `orchestrator/<project>~<name>` and the
+// nodes under it can be built. Every path in this package is built through one
+// rule (checkAgentID, store.go), so this is one fact about the build and not one
+// per project: the rule reads the whole id as a name, and an id it refuses it
+// refuses whatever project and name the halves are.
+//
+// It exists for the one caller that acts on an orchestrator without reading a
+// project. `fugaro orchestrator install --name` reads none — a unit carries
+// nothing from a project and the daemon reads the project half itself — so it
+// cannot ask PathState about the id it is about to write a unit for, and a
+// daemon given an id its own release cannot address is not a refusal a person
+// sees: the unit exits at once and the service manager restarts it at every
+// beat. The task that widens the paths (CG1a) makes this answer true, and the
+// check the caller makes with it becomes the cheap guard it reads as.
+func NamedIDsAreAddressable() bool {
+	_, err := PathState(namedIDProbe)
+	return err == nil
+}
+
+// namedIDProbe is one well-formed id of the shape `--name` builds: a project's
+// own name and a name half, each a value its own rule admits, written out so
+// that a refusal can only be the separator's and not a half's.
+const namedIDProbe = "probe~probe"
+
 // NamedOrchestratorID is one named orchestrator of a project:
 // `<project>~<name>`.
 func NamedOrchestratorID(project, name string) (string, error) {

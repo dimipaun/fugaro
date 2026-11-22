@@ -96,19 +96,31 @@ func orchestratorID(lc *localcfg.Config) (string, error) { return orchestratorID
 // from the selection and never from the flag, so a command can act on a named
 // orchestrator of the project it is in and on no other.
 //
-// Both halves are database keys as well as names (O3), so the id is built with
-// the rule the node's paths are built by, before any request is sent, rather
-// than left to the transport to refuse.
+// The id is built by the two rules that own its halves — the project half is
+// config.ProjectNameRE and the name half is D3207's name rule, both inside
+// NamedOrchestratorID — and is then checked as the database key it is with the
+// rule the node's paths are built by, orchestrator.PathState, before any request
+// is sent rather than left to the transport to refuse. That last check is why a
+// name can be well-formed and still refused: this release's paths are built with
+// the work-item rule, which admits the project's own id alone, and the task that
+// widens it to the orchestrator rule (CG1a) is what makes the check pass for a
+// named id. Until then the two refusals are the two cases — the project that
+// cannot name an id, and the name this release cannot address — and each says
+// which rule said no rather than leaving a command to fail at the database.
 func orchestratorIDFor(lc *localcfg.Config, name string) (string, error) {
-	if name == "" {
-		if _, err := orchestrator.PathState(lc.Name); err != nil {
+	id := lc.Name
+	if name != "" {
+		named, err := orchestrator.NamedOrchestratorID(lc.Name, name)
+		if err != nil {
+			return "", userErr("%v", err)
+		}
+		id = named
+	}
+	if _, err := orchestrator.PathState(id); err != nil {
+		if name == "" {
 			return "", userErr("%v: the orchestrator id is the project's name, and project %s cannot name one", err, safetext.Field(lc.Name))
 		}
-		return lc.Name, nil
-	}
-	id, err := orchestrator.NamedOrchestratorID(lc.Name, name)
-	if err != nil {
-		return "", userErr("%v", err)
+		return "", userErr("%v: `--name %s` names the orchestrator %s, and this release cannot address a named one — the paths under `orchestrator/` are built with the rule that admits a project's own id alone, so nothing is read and nothing is written for it", err, safetext.Field(name), safetext.Field(id))
 	}
 	return id, nil
 }

@@ -156,6 +156,23 @@ func TestNamingRules(t *testing.T) {
 		}
 	})
 
+	t.Run("whether a named id is addressable is the path rule's own answer", func(t *testing.T) {
+		// NamedIDsAreAddressable is the one fact a caller reads without a project:
+		// `fugaro orchestrator install` is one unit per name and carries nothing
+		// from a project, so the installer cannot ask PathState about the id its
+		// unit's daemon would drive. What it must not be is a second opinion about
+		// the rule — it is that rule's own answer about a well-formed named id, and
+		// it flips to true the day the rule the paths are built with admits one
+		// (CG1a), which is when the installer's guard becomes dead weight.
+		id, err := orchestrator.NamedOrchestratorID("probe", "probe")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, pathErr := orchestrator.PathState(id); orchestrator.NamedIDsAreAddressable() != (pathErr == nil) {
+			t.Errorf("NamedIDsAreAddressable() = %v, and this release's paths answer %v for %q", orchestrator.NamedIDsAreAddressable(), pathErr, id)
+		}
+	})
+
 	t.Run("the driver node", func(t *testing.T) {
 		// The path is the state node's sibling. The switch of the id checks
 		// this package's paths are built through (checkAgentID, NodeIDs, the
