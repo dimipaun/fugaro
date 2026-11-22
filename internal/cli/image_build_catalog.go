@@ -74,7 +74,7 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 	// passed on, which is what leaves it as it stands.
 	env.Close()
 	if name != "" {
-		return userErr("this project has no image catalog, so there is no entry %s to build: fugaro image add %s writes one and fugaro update publishes it, while fugaro image build --workflow builds a workflow's derived image", pluginwire.Printable(name), pluginwire.Printable(name))
+		return userErr("this project has no image catalog, so there is no entry %s to build: fugaro image add %s writes one and makes it live, while fugaro image build --workflow builds a workflow's derived image", pluginwire.Printable(name), pluginwire.Printable(name))
 	}
 	if repoImagesOff {
 		return repoImagesDisabled(cmd.OutOrStdout())

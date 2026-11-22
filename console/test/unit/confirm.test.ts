@@ -64,9 +64,12 @@ import {
   CONFIRM_WINDOW_TITLE,
   confirmChannel,
   confirmPreloadPath,
+  confirmSubjectID,
   createConfirmWindow,
 } from '../../src/main/confirm'
 import type { ConfirmWindowSeams } from '../../src/main/confirm'
+import { modelsAddConfirmID, modelsAddView } from '../../src/main/modelsview'
+import type { ModelsAddView } from '../../src/main/modelsview'
 import { SENDER_REFUSAL } from '../../src/main/ipc'
 import type { ConsoleEventLike, IpcMainLike, ValidatedArguments } from '../../src/main/ipc'
 import { SETTINGS_EDIT_OPERATION, argvFor } from '../../src/main/spawn'
@@ -1715,6 +1718,34 @@ describe('the settings edit behind the same window', () => {
     expect(narrow.spawns[1]?.shown).not.toContain('--no-apply')
   })
 
+  it('enforces the models write’s tick, and files its window under the installation', async () => {
+    // The models write is the **second** subject that carries a widening's tick
+    // (MW1, D2903), and it is the same gate rather than a second one:
+    // `widenAnswerable` asks the subject, so a yes without the tick decides
+    // nothing here exactly as it decides nothing for a settings edit. What is
+    // pinned is both halves -- the refusal in the main process, and the identity
+    // `close` reaches the window by, which is the installation the write lands
+    // in and not the model it is about.
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const decider = recordingDecider()
+    const subject = modelsAddFixture()
+    expect(confirmSubjectID(subject)).toBe(modelsAddConfirmID(subject.project))
+    confirmer.open(subject, decider.decide)
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes', ticked: false }),
+    ).toStrictEqual({ ok: false, reason: CONFIRM_TICK_NEEDED })
+    expect(decider.calls).toStrictEqual([])
+
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes', ticked: true }),
+    ).toStrictEqual({ ok: true, data: { answered: true } })
+    expect(decider.calls).toStrictEqual([[true, undefined]])
+  })
+
   it('cancels the edit, and closes no other project’s window, when the installation moves', async () => {
     const { confirmer, windows } = confirmOver()
     const source = settingsEditSource()
@@ -2571,6 +2602,45 @@ function frozenLaunch(
 
 /** viewFixture is a `ConfirmView` for the cases that are about the window rather
  * than about the conversion. */
+/** modelsAddFixture is one models write's window content: the CLI's own plan
+ * document as the flow parsed it, beside the two facts main holds (the
+ * document's digest and the exact argv). */
+function modelsAddFixture(): ModelsAddView {
+  const read = modelsAddView({
+    dryRun: {
+      version: 1,
+      layer: 'local',
+      path: '/home/ana/.config/fugaro/sandbox.yaml',
+      model: 'deepseek/deepseek-v4.1-flash',
+      route: 'openrouter',
+      changed: true,
+      claim: {
+        key: 'providers.openrouter.models',
+        entry: 'deepseek/deepseek-v4.1-flash',
+        claimed_by: '',
+      },
+      allowed_models: {
+        key: 'budget.allowed_models',
+        entry: 'deepseek/deepseek-v4.1-flash',
+        present: true,
+      },
+      prices: {
+        key: 'model_prices.deepseek/deepseek-v4.1-flash',
+        input_per_m: 0.14,
+        output_per_m: 0.28,
+        source: 'typed',
+      },
+      steps: [{ name: 'publish', state: 'saved' }],
+      refusal: '',
+    },
+    project: PROJECT,
+    digest: 'a'.repeat(64),
+    argv: ['fugaro', 'models', 'add', '--no-apply', '--dry-run', '--json'],
+  })
+  if (!read.ok) throw new Error(read.because)
+  return read.view
+}
+
 function viewFixture(overrides: { readonly runId?: string } = {}): ConfirmView {
   return confirmView(frozenLaunch(overrides))
 }

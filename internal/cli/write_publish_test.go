@@ -190,8 +190,8 @@ func TestAfterWriteFailureKeepsTheLocalChange(t *testing.T) {
 // coding agent's session may not publish the two member classes no plan gate may
 // judge (D1026) — a published ceiling loosened, and an account-choice member set
 // — whatever the gate's marks say. Both are refused, the node does not move, and
-// nothing is recorded, because a step the gate may not judge is one it records
-// nothing about.
+// the audit log carries nothing, because a step the gate may not judge is one it
+// audits nothing about.
 //
 // The project is managed and its marks stand, which is the whole point: an
 // unmanaged project refuses every layer write for a reason of its own, and a
@@ -332,9 +332,13 @@ func managedForTheHook(t *testing.T, r *initRig) {
 }
 
 // agentPublishedNothing is what both D1026 sub-tests assert: the hook refused
-// with the one sentence, the node is where it was, and no record was written —
-// nothing about a step the gate may not judge is recorded, which is what makes
-// a coding agent's session unable to leave the audit log claiming a widening.
+// with the one sentence, the node is where it was, and the audit log carries
+// nothing — nothing about a step the gate may not judge is recorded there,
+// which is what makes a coding agent's session unable to leave the log claiming
+// a widening. The step itself stays owed in the pending record, which is not
+// the audit log and names a change and never a value (D1570): the change the
+// session already wrote is not live, and `fugaro apply` reaches the same fence
+// when the session runs it.
 func agentPublishedNothing(t *testing.T, r *initRig, db *gcpfake.RTDB, cmd *cobra.Command, out *syncBuf, change afterWriteChange) {
 	t.Helper()
 	err := publishAfterWrite(t.Context(), cmd, change)
@@ -354,15 +358,23 @@ func agentPublishedNothing(t *testing.T, r *initRig, db *gcpfake.RTDB, cmd *cobr
 
 // TestAfterWriteSentenceIsOneHelper is D2614's sentence: one helper words it,
 // every way a stage can stop short ends the command on it, and it names the
-// command that finishes the job — `fugaro update`, which is the whole upgrade
-// until AP3 repoints this one helper.
+// command that finishes the job — `fugaro apply`. It named `fugaro update`
+// while that command did not exist, and docs/contracts/config-ownership.md §7
+// left the wording in this one helper to be repointed the day AP3 landed it.
+//
+// The sentence is true because the arm that prints it leaves the steps the run
+// did not answer in the record `fugaro apply` reads (afterWriteOwed, D1563's
+// "mark pending"): a sentence naming that command over an empty record would
+// send the person to a command with nothing to do. Both sub-tests below read
+// the record back for that reason.
 func TestAfterWriteSentenceIsOneHelper(t *testing.T) {
 	isolateGateCredentials(t)
 	change := afterWriteChange{Key: "budget.per_run_usd", Store: settings.StoreLocal}
-	const want = "budget.per_run_usd is saved and is not live yet: run `fugaro update`, which publishes it"
+	const want = "budget.per_run_usd is saved and is not live yet: run `fugaro apply` to finish the steps it can answer"
 	if got := ErrorText(afterWriteNotLive(change)); got != want {
 		t.Errorf("the one sentence reads %q, want %q", got, want)
 	}
+	owed := []string{initflow.Policy}
 
 	// A stage that FAILED, on a world the gate never sees.
 	t.Run("a failed stage", func(t *testing.T) {
@@ -376,10 +388,16 @@ func TestAfterWriteSentenceIsOneHelper(t *testing.T) {
 		if got := ErrorText(err); got != want {
 			t.Errorf("a failed stage says %q, want the one sentence %q", got, want)
 		}
+		if got := owedStepsAfterTheHook(t); !slices.Equal(got, owed) {
+			t.Errorf("the failed stage left %v owed, want the step it did not answer %v", got, owed)
+		}
 	})
 
 	// And a stage a coding agent's session refused, which is a different stop in
-	// a different world: one wording either way.
+	// a different world: one wording either way, and the step is owed all the
+	// same. What a session may not do is publish that step — which is the write
+	// path's fence and not the record's, and `fugaro apply` reaches the same
+	// fence when the session runs it (contract §9, D1026).
 	t.Run("a refused session", func(t *testing.T) {
 		r, db := updateBudgetRig(t)
 		managedForTheHook(t, r)
@@ -395,7 +413,26 @@ func TestAfterWriteSentenceIsOneHelper(t *testing.T) {
 		if got := ErrorText(err); got != want {
 			t.Errorf("a refused session says %q, want the one sentence %q", got, want)
 		}
+		if got := owedStepsAfterTheHook(t); !slices.Equal(got, owed) {
+			t.Errorf("the refused session left %v owed, want the step it did not answer %v", got, owed)
+		}
 	})
+}
+
+// owedStepsAfterTheHook is the record the hook left behind, read exactly as
+// `fugaro apply` reads it (apply.LoadPending over this installation's own
+// document): the steps the sentence the command ended on points that command at.
+func owedStepsAfterTheHook(t *testing.T) []string {
+	t.Helper()
+	p, err := apply.LoadPending(os.Getenv, initProjectName, initProject)
+	if err != nil {
+		t.Fatalf("reading the record the hook left: %v", err)
+	}
+	var steps []string
+	for _, s := range p.Steps {
+		steps = append(steps, s.Step)
+	}
+	return steps
 }
 
 // TestAfterWriteRunsTheLayerStageForAProjectLayerKey is the other stage of
