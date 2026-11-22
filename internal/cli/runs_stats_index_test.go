@@ -4,15 +4,17 @@ package cli
 // its rows from the run index, one page of entries for its window, and reads no
 // run object at all (F32).
 //
-// Two things are pinned here. The read itself: with an index that has finished a
-// walk, the figures are its entries' and the bucket the command is pointed at is
-// never touched -- the GCS fake counts every request, so the read that made none
-// is the test, and the bucket's own run carries figures the index does not, so a
-// command that fell back to the records would publish them. And the document:
-// `index_complete` says which of the two reads produced the figures, false while
-// the index has never finished a walk (the package's stub, which is what a
-// caller that has wired nothing reads through) and true when the rows are the
-// index's.
+// Three things are pinned here. The read itself: with an index that has finished
+// a walk, the figures are its entries' and the bucket the command is pointed at
+// is never touched -- the GCS fake counts every request, so the read that made
+// none is the test, and the bucket's own run carries figures the index does not,
+// so a command that fell back to the records would publish them. The page's
+// other kind of row, which is the overlay's: a run the index has not folded yet
+// carries no launch and no record and still started, so it is in a row and not
+// in the count of runs that never launched. And the document: `index_complete`
+// says which of the two reads produced the figures, false while the index has
+// never finished a walk (the package's stub, which is what a caller that has
+// wired nothing reads through) and true when the rows are the index's.
 
 import (
 	"context"
@@ -191,6 +193,45 @@ func TestRunsStatsReadsIndexNoObjects(t *testing.T) {
 	}
 	if len(cut.runs) != 1 || cut.runs[0].run.User != "dana@example.com" {
 		t.Errorf("the cut read is over %+v, want the newest entry alone", cut.runs)
+	}
+}
+
+// TestRunsStatsCountsAnOverlayRowAsARunNotAsUnlaunched is the page's other kind
+// of row, the overlay's: a run the index has not folded yet -- in flight, or
+// finished inside the fold gap -- is listed with its run id, its slug and its
+// status alone (contract-index.md, "The overlay"), so it carries no launch and
+// no record and still DID start. It is therefore not one of the window's
+// unlaunched runs, and it is in a row: the unknown one with no record, which is
+// where the record read puts a started run whose launch nobody can read
+// (TestRunsStatsUnreadableLaunchIsUnknownNotUnlaunched). The entry the fold
+// wrote with neither record and no status is the one that never started.
+func TestRunsStatsCountsAnOverlayRowAsARunNotAsUnlaunched(t *testing.T) {
+	f := newCloudFixture(t)
+	env := envOn(t, f, gcpfake.NewGCS(t).Bucket(t, "runs"))
+	day := time.Now().UTC().Truncate(time.Second)
+	statsIndexInstall(t, &statsIndex{complete: true, entries: []runindex.Entry{
+		// The overlay's row: the run id and the slug are the path's own, the
+		// status is the overlay's, and there is nothing else to carry.
+		{RunID: userStatsID(day, 1), Slug: appSlug, UpdatedAt: day, Status: runstore.StatusRunning},
+		// The fold's row for a run that was claimed and never launched: a
+		// task.json and nothing else, so nothing settled a status for it.
+		{RunID: userStatsID(day, 2), Slug: appSlug, UpdatedAt: day.Add(-time.Minute)},
+	}})
+
+	read, err := readUserStatsRuns(context.Background(), env, []string{appSlug}, day.Add(-7*24*time.Hour), userStatsMaxRuns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.unlaunched != 1 {
+		t.Errorf("unlaunched = %d, want 1: only the entry that settled no status never started", read.unlaunched)
+	}
+	res := userstats.Aggregate(userStatsRuns(read.runs))
+	if len(res.Rows) != 1 {
+		t.Fatalf("rows = %+v, want the overlay's run in the unknown row alone", res.Rows)
+	}
+	if got := res.Rows[0]; got.User != userstats.UnknownUser || got.Runs != 1 || got.NoRecord != 1 {
+		t.Errorf("the overlay's row = %+v, want one run under %q with no record: it started, and its launcher "+
+			"and its money are what the page cannot say", got, userstats.UnknownUser)
 	}
 }
 

@@ -215,13 +215,13 @@ func newRunsStatsCmd() *cobra.Command {
 			"itself silently. The bound is on the read, not on a person: the newest --max-runs\n" +
 			"runs are taken before any view is applied, so a private view can be over fewer of\n" +
 			"the caller's own runs than --max-runs suggests. A run with neither a launch nor a\n" +
-			"record -- never launched, cancelled before launch, or a stale claim -- never\n" +
-			"started and is counted in no figure. The count of those is the window's, over\n" +
-			"everyone's runs, and is no more the caller's own than the truncation is. The rows\n" +
-			"come from the run index -- one page of entries for the window, and no run object\n" +
-			"read at all -- which index_complete reports: it is false while the index has not\n" +
-			"finished a walk, when the run records are read instead, over the same window and\n" +
-			"with the same figures.\n\n" +
+			"record, and no status settled for it -- never launched, cancelled before launch,\n" +
+			"or a stale claim -- never started and is counted in no figure. The count of those\n" +
+			"is the window's, over everyone's runs, and is no more the caller's own than the\n" +
+			"truncation is. The rows come from the run index -- one page of entries for the\n" +
+			"window, and no run object read at all -- which index_complete reports: it is false\n" +
+			"while the index has not finished a walk, when the run records are read instead,\n" +
+			"over the same window and with the same figures.\n\n" +
 			"--json prints {version, project, by, view, you, admin, since, until, max_runs,\n" +
 			"truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals\n" +
 			"carry {user, currency, runs, succeeded, failed, halted, infra_error, other,\n" +
@@ -386,8 +386,10 @@ type userStatsRead struct {
 	// runs are the records the window held, mapped to the aggregation's own
 	// view of a run.
 	runs []userStatsRecorded
-	// unlaunched counts the runs of the window that were neither launched
-	// nor recorded: they never started and no figure counts them.
+	// unlaunched counts the runs of the window that never started: neither
+	// launched nor recorded, and -- on a page from the index, where the
+	// overlay lists a live run with neither -- no status settled for them
+	// either (readUserStatsRuns).
 	unlaunched int
 	// truncated means the window held more runs than the read was allowed, so
 	// only its newest max were read.
@@ -580,9 +582,18 @@ func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since
 	// window holds more runs than the read was allowed".
 	read := userStatsRead{indexComplete: true, truncated: page.Next != nil}
 	for _, e := range page.Entries {
-		if e.Launch == nil && e.Record == nil {
-			// An entry for a run that recorded neither: it never started, and
-			// no figure counts it -- the rule the record read applies too.
+		// An entry with neither record is not on its own a run that never
+		// started. The overlay lists a run the index has not folded yet -- in
+		// flight, or finished inside the fold gap -- with its run id, its slug
+		// and its status alone (contract-index.md, "The overlay"), so such a
+		// run arrives here with no launch and no record and still did start.
+		// What says a run never started is that nothing settled a status for
+		// it: the overlay always supplies one, and a run that never launched
+		// has no record to settle one. Counting the overlay's row as unlaunched
+		// would drop a live run from every figure and tell the reader it never
+		// started, which is the mistake the record read's own corrupt-launch
+		// guard makes impossible (TestRunsStatsUnreadableLaunchIsUnknownNotUnlaunched).
+		if e.Launch == nil && e.Record == nil && e.Status == "" {
 			read.unlaunched++
 			continue
 		}
@@ -777,7 +788,7 @@ func userStatsNotes(doc userStatsDoc) []string {
 		notes = append(notes, fmt.Sprintf("read:    the window holds more runs than the %d this call reads: no figure below is over more than its newest %d, and none is over the whole window", doc.MaxRuns, doc.MaxRuns))
 	}
 	if doc.Unlaunched > 0 {
-		notes = append(notes, fmt.Sprintf("read:    %d %s in the window %s never launched (no launch and no record) and %s counted in no figure",
+		notes = append(notes, fmt.Sprintf("read:    %d %s in the window %s never launched (no launch, no record and no status settled for it) and %s counted in no figure",
 			doc.Unlaunched, plural(doc.Unlaunched, "run", "runs"), wasWere(doc.Unlaunched), wasWere(doc.Unlaunched)))
 	}
 	return notes

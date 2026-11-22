@@ -9052,13 +9052,13 @@ holding more says so in the output rather than publishing figures over a part of
 itself silently. The bound is on the read, not on a person: the newest --max-runs
 runs are taken before any view is applied, so a private view can be over fewer of
 the caller's own runs than --max-runs suggests. A run with neither a launch nor a
-record -- never launched, cancelled before launch, or a stale claim -- never
-started and is counted in no figure. The count of those is the window's, over
-everyone's runs, and is no more the caller's own than the truncation is. The rows
-come from the run index -- one page of entries for the window, and no run object
-read at all -- which index_complete reports: it is false while the index has not
-finished a walk, when the run records are read instead, over the same window and
-with the same figures.
+record, and no status settled for it -- never launched, cancelled before launch,
+or a stale claim -- never started and is counted in no figure. The count of those
+is the window's, over everyone's runs, and is no more the caller's own than the
+truncation is. The rows come from the run index -- one page of entries for the
+window, and no run object read at all -- which index_complete reports: it is false
+while the index has not finished a walk, when the run records are read instead,
+over the same window and with the same figures.
 
 --json prints {version, project, by, view, you, admin, since, until, max_runs,
 truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals
