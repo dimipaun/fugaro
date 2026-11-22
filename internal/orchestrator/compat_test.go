@@ -62,8 +62,9 @@ const (
 )
 
 // TestPreviousReleaseReadsNewNodes decodes, with the release behind's strict
-// decoders, every node this release writes: the state, the lease and the driver
-// node, for the default orchestrator and for a named one.
+// decoders, every node this release writes: the state, the lease, the driver
+// node and the standing backlog's, for the default orchestrator and for a named
+// one.
 //
 // Mutation: add a field to the state or to the lease — `project`, `name` or
 // `driver` on the state are the three D3218 as first written would have added —
@@ -78,10 +79,16 @@ func TestPreviousReleaseReadsNewNodes(t *testing.T) {
 	db := gcpfake.NewRTDB(t)
 
 	// The default orchestrator, every node by this release's own writer: the
-	// state's encoder, the daemon's claim, and the driver node the holder
-	// writes beside them.
+	// state's encoder, the daemon's claim, the driver node the holder writes
+	// beside them, and the standing backlog's node — a State through and
+	// through (D2735), so the same encoder's document at the sibling path. The
+	// backlog node is the one of the four `fugaro update` itself writes,
+	// folding a checkout's docs/backlog/ folder into it (D2716): an update over
+	// a checkout holding an open item writes it, which is what makes it the
+	// node a release behind most plausibly meets.
 	source := stateOf(t, readFixture(t))
-	defaultState := writeStateNode(t, db, source, compatProject)
+	defaultState := writeStateNode(t, db, source, compatProject, orchestrator.StateNode)
+	defaultBacklog := writeStateNode(t, db, source, compatProject, orchestrator.BacklogNode)
 	writeLeaseNode(t, db, compatProject)
 	writeDriverNode(t, db, compatProject)
 
@@ -97,13 +104,15 @@ func TestPreviousReleaseReadsNewNodes(t *testing.T) {
 		t.Errorf("the validator's bytes are not the encoder's for %q, so the named node below is not the document this release writes", compatProject)
 	}
 
-	// A named one: the same three documents at its own path. This release
+	// A named one: the same four documents at its own paths. This release
 	// refuses a named id until CG1a widens the id rule (F36) — PathState,
 	// ValidateState and NewLease each check the old one — so the paths are
 	// built from the subtree's own names and the lease and the driver are the
 	// default's own documents. The id is in the path and in no document (F35),
-	// and the state is the one document that differs, in `agent_id` alone.
-	namedState := writeStateNode(t, db, source, compatNamedID)
+	// and the state and the backlog node are the two documents that differ, in
+	// `agent_id` alone.
+	namedState := writeStateNode(t, db, source, compatNamedID, orchestrator.StateNode)
+	namedBacklog := writeStateNode(t, db, source, compatNamedID, orchestrator.BacklogNode)
 	db.Set(nodePath(t, compatNamedID, orchestrator.LeaseNode), json.RawMessage(storedNode(t, db, nodePath(t, compatProject, orchestrator.LeaseNode))))
 	writeDriverNode(t, db, compatNamedID)
 
@@ -117,6 +126,7 @@ func TestPreviousReleaseReadsNewNodes(t *testing.T) {
 		{orchestrator.StateNode, orchestrator.PathState},
 		{orchestrator.LeaseNode, orchestrator.PathLease},
 		{orchestrator.DriverNode, orchestrator.PathDriver},
+		{orchestrator.BacklogNode, orchestrator.PathBacklog},
 	} {
 		want, err := tc.path(compatProject)
 		if err != nil {
@@ -132,6 +142,12 @@ func TestPreviousReleaseReadsNewNodes(t *testing.T) {
 		// this release writes.
 		if err := prevState.Validate(jsonValue(t, defaultState)); err != nil {
 			t.Errorf("the release behind refuses the state this release writes for %q: %v", compatProject, err)
+		}
+		// And the same decoder reads the backlog node, which is the same
+		// document at the sibling path and the one an ordinary `fugaro update`
+		// writes.
+		if err := prevState.Validate(jsonValue(t, defaultBacklog)); err != nil {
+			t.Errorf("the release behind refuses the backlog node this release writes for %q: %v", compatProject, err)
 		}
 		// And the whole reader, this release's own: the id is one its rule
 		// admits, so nothing in this reading is the id's doing.
@@ -150,7 +166,9 @@ func TestPreviousReleaseReadsNewNodes(t *testing.T) {
 		// separator, so a member still on it never lists a named orchestrator
 		// at all (NodeIDs skips the key, F36) and never reaches this document;
 		// what it may not refuse is the shape, which is why the assertion is
-		// made with the id taken out.
+		// made with the id taken out. The backlog node is read the same way and
+		// for the same reason: the id is F36's skew, and a field carrying a
+		// name is the one thing D3218 as amended forbids.
 		if err := prevState.Validate(jsonValue(t, namedState)); err == nil {
 			t.Errorf("the release behind read a state document naming %q: its id rule has no separator, and the id is the one thing this release must not have widened", compatNamedID)
 		}
@@ -158,9 +176,17 @@ func TestPreviousReleaseReadsNewNodes(t *testing.T) {
 		if err := prevState.Validate(jsonValue(t, shaped)); err != nil {
 			t.Errorf("the release behind refuses the shape of a named orchestrator's state: the id is F36's skew, and a field carrying a name is the one thing D3218 as amended forbids: %v", err)
 		}
+		if err := prevState.Validate(jsonValue(t, namedBacklog)); err == nil {
+			t.Errorf("the release behind read a backlog document naming %q", compatNamedID)
+		}
+		shapedBacklog := bytes.Replace(namedBacklog, []byte(compatNamedID), []byte(compatProject), 1)
+		if err := prevState.Validate(jsonValue(t, shapedBacklog)); err != nil {
+			t.Errorf("the release behind refuses the shape of a named orchestrator's backlog node, which `fugaro update` writes for the default id and `fugaro backlog add --name` will for a named one: %v", err)
+		}
 		// F35: the two documents are one document, differing in the id alone.
 		// `project` and `name` are derived from the id and are in neither.
 		sameShapeButTheID(t, defaultState, namedState)
+		sameShapeButTheID(t, defaultBacklog, namedBacklog)
 		readLeaseAndDriver(t, db, compatNamedID)
 	})
 
@@ -217,21 +243,22 @@ func decodePrevLease(t *testing.T, raw []byte) prevLeaseDoc {
 	return doc
 }
 
-// writeStateNode writes the state document this release's encoder emits for id,
-// and hands back the bytes.
+// writeStateNode writes one state-shaped document of this release's encoder for
+// id — the state node's or the standing backlog's, which are the same document
+// (D2735) — and hands back the bytes.
 //
 // EncodeState is the validator and json.Marshal(s.Clone()); the validator adds
 // no field and drops none, which the caller pins against EncodeState itself for
 // the default id, so the document is the encoder's for a named id too — whose
 // id the validator refuses until CG1a widens the rule (F36).
-func writeStateNode(t *testing.T, db *gcpfake.RTDB, s orchestrator.State, id string) []byte {
+func writeStateNode(t *testing.T, db *gcpfake.RTDB, s orchestrator.State, id, node string) []byte {
 	t.Helper()
 	s.AgentID = id
 	raw, err := json.Marshal(s.Clone())
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Set(nodePath(t, id, orchestrator.StateNode), json.RawMessage(raw))
+	db.Set(nodePath(t, id, node), json.RawMessage(raw))
 	return raw
 }
 
@@ -295,10 +322,11 @@ func readLeaseAndDriver(t *testing.T, db *gcpfake.RTDB, id string) {
 	}
 }
 
-// sameShapeButTheID asserts that two state documents are one document with the
-// id changed: the same keys, and the same value under every one of them but
-// `agent_id`. It is F35's whole content — a name is derived from the id and is
-// a field of no document — so a writer that carried one would fail here.
+// sameShapeButTheID asserts that two documents of one node are one document
+// with the id changed: the same keys, and the same value under every one of
+// them but `agent_id`. It is F35's whole content — a name is derived from the
+// id and is a field of no document — so a writer that carried one would fail
+// here.
 func sameShapeButTheID(t *testing.T, defaultDoc, namedDoc []byte) {
 	t.Helper()
 	a, b := objectOf(t, defaultDoc), objectOf(t, namedDoc)
