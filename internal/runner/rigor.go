@@ -76,10 +76,17 @@ func (r *run) roundRigor(ctx context.Context) {
 // moment resolves the same level.
 //
 // The run's own request (rigor.Request.Level, the spec's Rigor: fugaro run
-// --mode) is part of every moment, not only the first: the resolver's
-// raise-only rule is what keeps a request from being outvoted by a later,
-// weaker read, and giving it to all three moments is what makes a requested
-// level hold for the whole run rather than for the moment it arrived at.
+// --mode) is part of every moment, not only the first: it is the narrowest
+// rank of the mode's order (LD3), so it is what a later, different read is
+// settled against, and giving it to all three moments is what makes a
+// requested level hold for the whole run rather than for the moment it arrived
+// at. A mode the spec carried rather than asked for — a --pr follow-up's, a
+// filed task's — is raise-only against the layers (Request.Carried, task's
+// Spec.RigorRequest), so a record weaker than the configuration the run reads
+// never takes it below that configuration, at any of the three moments.
+// Request.Reached is the other half of that: the level the run has already
+// reached is folded in as well, so a moment whose own read comes out weaker
+// never takes the run down (D22).
 //
 // It is also where a raise is read (noteRigorRaise): the level the run had
 // reached before this moment and the resolver's answer for it are both in hand
@@ -87,13 +94,15 @@ func (r *run) roundRigor(ctx context.Context) {
 // matched, not the level each moment resolved.
 func (r *run) recordRigor(at string, paths []string) {
 	before := r.reachedRigor()
-	req := rigor.Request{Level: r.spec.Rigor, Paths: paths, Reached: before}
+	req := r.spec.RigorRequest(paths)
+	req.Reached = before
 	res := rigor.Resolve(r.rigorCfg, req)
 	// The floor the run is held to is read off the level it is at, so a request
-	// that takes it off the axis (hotfix) has to leave the level the layers
-	// resolved in view: that level's floor still holds (LayersRigor, D8, LF5).
-	// It is folded the way the record's own level is, so a later moment's paths
-	// never take it down.
+	// that took the run below the layers has to leave the level they resolved
+	// in view: that level's floor still holds (LayersRigor, D8, LF5). A request
+	// for hotfix leaves none, since a hotfix run reads its own floor row alone
+	// (the owner's ruling of 2026-11-20). The value is folded the way the
+	// record's own level is, so a later moment's paths never take it down.
 	if layers := rigor.LayersRigor(r.rigorCfg, req, r.layersRigor); layers != "" {
 		r.layersRigor = layers
 	}
