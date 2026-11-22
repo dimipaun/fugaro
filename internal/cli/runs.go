@@ -1119,18 +1119,22 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 	// built from the summary re-reads the summary, because reading result.json
 	// here would answer a record the rest of the row was never built from --
 	// and the summary is written beside the record, at the same moments, so it
-	// is as new as it.
+	// is as new as it. A summary that has gone in between is the one case that
+	// falls back to result.json: the shortcut is not there any more, and the
+	// row is then the run's own record rather than a run shown as one nothing
+	// wrote (a nil record here reads as a run the backend lost).
 	if in.Record != nil && in.Record.Status == runstore.StatusRunning && (in.Exec == nil || in.Exec.State.Terminal()) {
 		if r.summarized {
-			sum, err := absent(s.ReadSummary(ctx))
-			if err != nil {
-				return err
+			sum, serr := absent(s.ReadSummary(ctx))
+			if serr != nil {
+				return serr
 			}
-			in.Record = nil
 			if sum != nil {
 				in.Record = sum.AsRecord()
+				return nil
 			}
-		} else if in.Record, err = absent(s.ReadRecord(ctx)); err != nil {
+		}
+		if in.Record, err = absent(s.ReadRecord(ctx)); err != nil {
 			return err
 		}
 	}
