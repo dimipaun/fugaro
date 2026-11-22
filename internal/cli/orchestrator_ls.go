@@ -49,7 +49,8 @@ func newOrchestratorLsCmd() *cobra.Command {
 			"it. --json prints a versioned document\n" +
 			"(schemas/orchestrator-output.schema.json), whose entries carry the id's name\n" +
 			"half (`name`, empty for the project's own orchestrator) and its driver\n" +
-			"beside the fields the table prints.\n\n" +
+			"beside the fields the table prints — an empty driver is an id with no\n" +
+			"driver node to read, which is unknown and not \"nobody drives this\".\n\n" +
 			"There is no registry of processes and no port: the node and the cache file are\n" +
 			"the two things the daemon writes, and a run or a token may not read either.",
 		Args: cobra.NoArgs,
@@ -93,13 +94,16 @@ type orchestratorLsDoc struct {
 // are written on every entry: the field name `project` is from when an id was
 // always a project's name, and a consumer that wants the project reads the part
 // before `~`. `driver` is the principal of the credential driving the id, read
-// from its sibling driver node, and is absent for an id nothing has driven since
-// that node was introduced (D3218, F18).
+// from its sibling driver node, and is written on every entry too — "" is "no
+// driver node, or one this release cannot read", which the contract's own
+// reading refuses to draw as "nobody drives this" (D3218, F18;
+// contract-orchestrators.md, "what each side may rely on" 2), and a consumer
+// needs the empty string to say "unknown" rather than to guess.
 type orchestratorLsEntry struct {
 	Kind        string `json:"kind"`
 	Project     string `json:"project"`
 	Name        string `json:"name"`
-	Driver      string `json:"driver,omitempty"`
+	Driver      string `json:"driver"`
 	LeaseHolder string `json:"lease_holder,omitempty"`
 	UpdatedAt   string `json:"updated_at,omitempty"`
 	CachedAt    string `json:"cached_at,omitempty"`
@@ -226,12 +230,15 @@ func runOrchestratorLs(cmd *cobra.Command, o *orchestratorLsOptions) error {
 		if beat == "" {
 			beat = "-"
 		}
-		// "nobody" is an id with no driver node, which is what every entry read
-		// before the node existed is: it is written by whoever holds the lease
-		// (D3218, F18), so an id nothing has driven since has none.
+		// "unknown" and not "nobody": an empty driver is an id with no driver node
+		// — the node is written by whoever holds the lease (D3218, F18), so an id
+		// nothing has driven since it existed has none — or one this release
+		// cannot read, and the two are one field. The contract's own reading is
+		// that neither is "nobody drives this", which the id's lease is the answer
+		// to (contract-orchestrators.md, "what each side may rely on" 2).
 		driver := e.Driver
 		if driver == "" {
-			driver = "nobody"
+			driver = "unknown"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", safetext.Field(e.Project), e.Kind, safetext.Field(driver), safetext.Field(holder), beat, cache)
 	}

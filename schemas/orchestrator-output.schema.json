@@ -39,7 +39,7 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["kind", "project", "name"],
+            "required": ["kind", "project", "name", "driver"],
             "properties": {
               "kind": {
                 "description": "Where the orchestrator is kept. `local` is one this machine runs: the daemon here wrote its cached brief. `central` is one only the project's database holds.",
@@ -54,8 +54,8 @@
                 "pattern": "^$|^[a-z0-9][a-z0-9-]{0,39}$"
               },
               "driver": {
-                "description": "The principal of the credential driving the orchestrator, read from its `orchestrator/<id>/driver` node (D3218, F18) — the account whose login unit or foreground run holds the id, in the address spelling the rest of the tree uses for a person (localcfg's Me). Absent when that node does not exist, which is every orchestrator nothing has driven since the node was introduced, and always absent for one this machine caches and the database does not hold. Nothing is checked of it here beyond being non-empty, which is the whole of what the node's decoder refuses (internal/orchestrator.DecodeDriver): a pattern here would be a second rule for a value this side does not mint.",
-                "minLength": 1
+                "description": "The principal of the credential driving the orchestrator, read from its `orchestrator/<id>/driver` node (D3218, F18) — the account whose login unit or foreground run holds the id, in the address spelling the rest of the tree uses for a person (localcfg's Me). It is written on every entry, and the empty string is the honest answer for an id whose node does not exist — every orchestrator nothing has driven since the node was introduced, and every one this machine caches and the database does not hold — or whose node this release cannot read: the contract's own reading is that an empty driver is never \"nobody drives this\" (contract-orchestrators.md, \"what each side may rely on\" 2), and which of the two it is, is not a value this field can carry. Nothing is checked of a non-empty value here, which is the whole of what the node's decoder refuses (internal/orchestrator.DecodeDriver): a pattern here would be a second rule for a value this side does not mint.",
+                "type": "string"
               },
               "lease_holder": {
                 "description": "The holder the id's lease node names, which is the daemon driving it. Absent when the node carries no claim, and always absent for an orchestrator this machine caches and the database does not hold.",

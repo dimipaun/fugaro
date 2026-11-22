@@ -101,14 +101,23 @@ func ReadLeaseNode(ctx context.Context, db CAS, agentID string) (LeaseClaim, err
 // ReadDriverNode reads one id's driver node: the principal of the credential
 // driving the id, written by whoever holds its lease (D3218, F18).
 //
-// It is a sibling of the state, the lease and the audit, and it is read the way
-// the lease is: without a claim and without a clock, because "who is driving
-// this id" is not "does this daemon hold it". A node this release cannot read is
-// refused rather than reported as a driver nobody is, which is DecodeDriver's
-// own rule for a node naming no principal. An id with no node at all
-// is the zero Driver and not an error: every id driven before this node existed
-// has none, and a listing that failed on one would fail on the whole
-// installation.
+// It is a sibling of the state, the lease and the audit, and it is read without
+// a claim and without a clock, because "who is driving this id" is not "does
+// this daemon hold it". An id with no node at all is the zero Driver and not an
+// error: every id driven before this node existed has none, and a listing that
+// failed on one would fail on the whole installation.
+//
+// A node this release cannot read is the zero Driver too, and this is the one
+// place the driver is read more leniently than the lease beside it. A lease
+// decides whether an id is held — reading a broken one as unheld is what lets
+// two daemons take one id (lease.go's interpret), so it is refused — while a
+// driver is what a screen shows beside the id. The contract's own reading of an
+// empty driver is "the node was absent or unreadable, never nobody drives this"
+// (contract-orchestrators.md, "what each side may rely on" 2), so the refusal
+// DecodeDriver makes is turned into that empty answer here rather than into a
+// listing that fails whole over one node it cannot read: DecodeDriver is strict
+// because a *direct* reader of the node must not guess, and a caller that has
+// only one string to answer with says it does not know.
 func ReadDriverNode(ctx context.Context, db CAS, agentID string) (Driver, error) {
 	path, err := PathDriver(agentID)
 	if err != nil {
@@ -122,7 +131,11 @@ func ReadDriverNode(ctx context.Context, db CAS, agentID string) (Driver, error)
 	if !found {
 		return Driver{}, nil
 	}
-	return DecodeDriver(raw)
+	driver, err := DecodeDriver(raw)
+	if err != nil {
+		return Driver{}, nil
+	}
+	return driver, nil
 }
 
 // Fresh reports whether the claim is being beaten: somebody holds the id and

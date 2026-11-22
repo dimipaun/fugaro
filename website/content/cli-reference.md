@@ -6211,7 +6211,8 @@ daemon that wrote it has stopped driving the id, so no cycle is rewriting
 it. --json prints a versioned document
 (schemas/orchestrator-output.schema.json), whose entries carry the id's name
 half (`name`, empty for the project's own orchestrator) and its driver
-beside the fields the table prints.
+beside the fields the table prints — an empty driver is an id with no
+driver node to read, which is unknown and not "nobody drives this".
 
 There is no registry of processes and no port: the node and the cache file are
 the two things the daemon writes, and a run or a token may not read either.

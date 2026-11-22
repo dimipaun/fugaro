@@ -106,8 +106,8 @@ func seedOrchestratorDriver(t *testing.T, f *budgetFixture, id, principal string
 // TestOrchestratorLsNameDriver: the listing says which orchestrator each entry
 // is and who is driving it. `name` is the name half of the id — "" for the
 // project's own, which is an answer and not an absence — and `driver` is the
-// principal the id's driver node names, absent for an id nothing has driven
-// since that node was introduced.
+// principal the id's driver node names, "" for an id that node says nothing
+// about.
 func TestOrchestratorLsNameDriver(t *testing.T) {
 	f := lsFixture(t)
 	seedOrchestratorNode(t, f, orchestratorTestID)
@@ -121,11 +121,14 @@ func TestOrchestratorLsNameDriver(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	orchestratorDocMatchesSchema(t, out)
+	// The driver is a pointer so that absent and empty are told apart: it is
+	// written on every entry, and "" is the answer — not a missing field — for
+	// an id whose driver node says nothing.
 	var doc struct {
 		Orchestrators []struct {
-			Project string `json:"project"`
-			Name    string `json:"name"`
-			Driver  string `json:"driver"`
+			Project string  `json:"project"`
+			Name    string  `json:"name"`
+			Driver  *string `json:"driver"`
 		} `json:"orchestrators"`
 	}
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
@@ -140,15 +143,15 @@ func TestOrchestratorLsNameDriver(t *testing.T) {
 			if e.Name != "" {
 				t.Errorf("the project's own orchestrator is %+v, and the name half of its id is empty", e)
 			}
-			if e.Driver != "someone@example.com" {
+			if e.Driver == nil || *e.Driver != "someone@example.com" {
 				t.Errorf("the entry is %+v, and the id's driver node names someone@example.com", e)
 			}
 		case "belong":
 			if e.Name != "" {
 				t.Errorf("belong is %+v, and the name half of its id is empty", e)
 			}
-			if e.Driver != "" {
-				t.Errorf("belong is %+v, and it has no driver node, so it is driven by nobody and not by an empty name", e)
+			if e.Driver == nil || *e.Driver != "" {
+				t.Errorf("belong is %+v, and it has no driver node, so what its driver is, is unknown", e)
 			}
 		default:
 			t.Errorf("the listing carries %q, which no fixture seeded", e.Project)
@@ -182,15 +185,18 @@ func TestOrchestratorLsNameDriver(t *testing.T) {
 		t.Errorf("the table does not name the driver:\n%s", out)
 	}
 
-	// A driver node this release cannot read is refused rather than reported as
-	// nobody driving the id: the same reading DecodeDriver refuses for a node
-	// naming no principal, and for a node that is no driver document at all.
+	// A driver node this release cannot read is not a refusal and not a driver
+	// either: the entry's driver is empty, which the contract's own reading is
+	// the answer for a node that was absent or unreadable — never "nobody drives
+	// this" — and a listing that failed whole over one node it cannot read would
+	// hide every orchestrator of the installation behind it.
 	for _, tc := range []struct {
 		name string
 		doc  any
 	}{
 		{"a node naming no principal", map[string]any{"principal": "", "at": orchestratorTestNow}},
 		{"a node this release does not model", map[string]any{"who": "someone@example.com"}},
+		{"a node that is no document at all", "someone@example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := lsFixture(t)
@@ -201,17 +207,42 @@ func TestOrchestratorLsNameDriver(t *testing.T) {
 			}
 			f.db.Set(path, tc.doc)
 			out, _, err := runOrchestrator(t, "", "orchestrator", "ls", "--json")
-			if err == nil {
-				t.Fatalf("%s was read as a driver:\n%s", tc.name, out)
+			if err != nil {
+				t.Fatalf("%s failed the listing: %v\n%s", tc.name, err, out)
 			}
-			if strings.Contains(out, `"driver"`) {
-				t.Errorf("the listing printed a driver anyway:\n%s", out)
+			// The field is written and it is empty: a consumer reads "unknown"
+			// from it, and the pointer is what says the field is there at all.
+			var doc struct {
+				Orchestrators []struct {
+					Project string  `json:"project"`
+					Driver  *string `json:"driver"`
+				} `json:"orchestrators"`
 			}
-			// And the refusal reads as the node being unreadable rather than as
-			// an id nobody drives: the decoder's own refusal for a node it does
-			// not model, and DecodeDriver's for one naming no principal.
-			if msg := err.Error(); !strings.Contains(msg, "does not model") && !strings.Contains(msg, "names no principal") {
-				t.Errorf("the refusal is %v, and it does not read as this release refusing the node", err)
+			if err := json.Unmarshal([]byte(out), &doc); err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range doc.Orchestrators {
+				if e.Project != orchestratorTestID {
+					continue
+				}
+				if e.Driver == nil || *e.Driver != "" {
+					t.Errorf("%s: the entry is %+v, and its driver is written and empty", tc.name, e)
+				}
+			}
+			// And the table says so in a word: "unknown" and not "nobody", which
+			// would be the claim that this id is driven by no one.
+			out, _, err = runOrchestrator(t, "", "orchestrator", "ls")
+			if err != nil {
+				t.Fatalf("%v\n%s", err, out)
+			}
+			row := ""
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(line, orchestratorTestID+" ") {
+					row = line
+				}
+			}
+			if !strings.Contains(row, "unknown") {
+				t.Errorf("%s: the id's row does not read as an unknown driver:\n%s", tc.name, out)
 			}
 		})
 	}
