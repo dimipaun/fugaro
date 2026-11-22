@@ -1389,21 +1389,35 @@ page's software part is where such a sentence goes when there is one. The two ho
 still stand, and the first is the one that would carry the trust-model half — the page states
 what the app sends, and `SECURITY.md` is where this installation's reach is set out.
 
+**Amended 2026-11-21 (the owner's Q7, Q8 and Q3 answers, and Task P5.2.8): the trust-model half
+is written, and the sentences below that say where it belongs are now the record of the choice
+rather than a gap to close.** `SECURITY.md` carries a new section — **"Push notifications, and
+the relay the publisher holds"** — written by Task P5.2.8 in the pull request that implements
+the app's side: it states the relay the publisher operates, that **the publisher is in the
+message path**, what the app writes and what it never writes, that applying a registration is
+an admin act (Q3), and what it does not claim. **The grep this section quotes below is
+therefore history rather than the file's present state**: the file carries the subject now, in
+the section's own words, so a later task reads that section and not the bullet's "nothing at
+all about the mobile app, the mailbox or notifications". The website half is **"The software"**,
+the privacy page's second part, and it is P5.2.10's, in the task that states what P5.2.6 and
+P5.2.9 built as well.
+
 **Where a push privacy statement belongs, if the owner wants one:**
 
-- **`SECURITY.md`**, whose trust model currently says **nothing at all about the mobile app,
-  the mailbox or notifications.** Stated exactly, because this document's value is that its
-  stated checks hold: a grep of the file finds **no occurrence of "mailbox", "mobile", "phone"
-  or "notification"**, and the occurrences of "push" are all the **git** verb ("anyone who can
-  push to it", "pushes only to", "can push") and never the notification sense — so the
-  absence this design relies on is of the *subject*, not of the word. That is a gap this
-  design surfaces but does not close: the natural home for "what the phone sends, what the
-  provider sees" is the trust model, **and what it would sit beside there is the budget-adjacent
-  material — the launcher's budget identity, the budget token left in the runs bucket, the
-  shared job's bucket reach. It is a new section, not an extension of an existing one: the
-  file carries no mailbox disclosure to extend**, and neither this document nor a later task
-  may point at one, because the sentence above is this document's own evidence that there is
-  none.
+- **`SECURITY.md` — the home the owner chose, and the one the statement now occupies.** Q8's
+  answer of 2026-11-21 is (i), and the paragraph above records what was written there. **What
+  stood in this bullet was the argument for the gap, not a plan for the section**, and its
+  evidence — a grep finding **no occurrence of "mailbox", "mobile", "phone" or
+  "notification"**, with the occurrences of "push" all the **git** verb ("anyone who can push
+  to it", "pushes only to", "can push") — was true of the file when this section was written
+  and is not true of it now. It is kept here as the reason the section is **new** rather than
+  an extension of an existing one: the trust model held the budget-adjacent material — the
+  launcher's budget identity, the budget token left in the runs bucket, the shared job's
+  bucket reach — and **no mailbox disclosure to extend**, which is what the plan's task for the
+  statement repeats and what makes the new section a section of its own. Neither this document
+  nor a later task may point a writer at a push disclosure in the trust model's older text: the
+  section named above is where it is, and it is the one this document's §3.3, §3.5 and §4 are
+  written against.
 - **An app-facing statement** in the app or on the install page, if one exists when the app
   ships (D120's store listings are owner-run and are the other natural home).
 - **"The software", the privacy page's second part** — the site-side line, and the one a store
@@ -1577,7 +1591,9 @@ D160–D179 are not this document's to take.
   **generation 5**, so the registration change is **generation 6**, built on generation 5)*.
 
 **Q3. How does the push token rotate and the user's switches get written, given the app cannot
-write `config/admin`?**
+write `config/admin`? — ANSWERED by the owner on 2026-11-21: as designed. Registration is an
+admin act, like pairing, where the operator lacks the role; the path is (b), the mailbox
+registration plus the admin-held write, with (a)'s reaping kept as the net.**
 - *(a) register at pairing; reap `UNREGISTERED`*: **its registration half cannot be built** —
   D165's pairing-request node admits only the phone's public key and its timestamp, and refuses
   every other field (`rules.json.tmpl`, generation 3; `internal/budget/rules/emulator_pairing_test.go`
@@ -1690,7 +1706,13 @@ really compose the lock-screen text?**
   than the generic one. Android stays data-only with an app-composed alert.
 
 **Q7. FCM direct, or Expo's push relay — given that each installation is its own Firebase
-project?**
+project? — ANSWERED by the owner on 2026-11-21: a relay held by the publisher, not direct FCM.
+The app registers with the publisher's relay and the publisher holds the delivery credentials,
+so the credentials stay with the party that holds them once rather than being copied into every
+installation's project; and the disclosure written for it says that the publisher is in the
+message path. The same answer is the plan's question 10 — the project the device token is
+minted for is the publisher's, which is the project D259 already builds into the app. Task
+P5.2.8 is the app's half of it.**
 - *FCM direct*: **recommended only where the owner owns every installation's Firebase project.**
   No third party beyond Google/Apple; the project is already a Firebase project. **But FCM
   HTTP v1 sends only to registration tokens issued for the sending project**, and an `.p8` key
@@ -1720,13 +1742,18 @@ project?**
 sweep; Q3, Q4, Q5, Q8 and Q10 are each **as this document recommends**. The plan lists every
 answer beside the tasks that waited on it.
 
-**Q8. Where does the push privacy statement live?**
+**Q8. Where does the push privacy statement live? — ANSWERED by the owner on 2026-11-21: (i),
+(ii) and (iii), as recommended. The statement is a new `SECURITY.md` section — the trust-model
+half, written by Task P5.2.8 — and "The software", the privacy page's second part, is the
+site-side half the plan's own task for it (P5.2.10) owns. The bullets below are kept as the
+record of the question and of why the answer is where it is; what each said about the file's
+state at the time is stated as of the date it was written.**
 - *(i) `SECURITY.md`* — **recommended**, because the trust model is where this installation's
   credential-and-reach disclosures already live (the budget identity a launcher can mint, the
-  budget token left in the runs bucket, the shared job's bucket reach) and it currently says
+  budget token left in the runs bucket, the shared job's bucket reach) and it then said
   **nothing at all** about the phone, the mailbox or notifications (§9). **Stated as what it
-  is: the phone's disclosure would be a new section, not an addition to an existing mailbox
-  one — SECURITY.md carries no mailbox disclosure today**, and §9's grep is the evidence.
+  was: the phone's disclosure is a new section, not an addition to an existing mailbox one —
+  the file held no mailbox disclosure to extend**, and §9's grep was the evidence.
 - *(ii) "The software", the second part of the website's privacy page*: **accepted, and it is
   the shipped state's line rather than a rejected one.** The rejection this bullet carried
   ("that page is about **the site**, and it says so itself; push is not a site behaviour") was

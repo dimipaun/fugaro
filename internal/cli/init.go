@@ -724,7 +724,14 @@ type initRun struct {
 	installLabel     string
 	historyNoted     bool
 	coordinatorNoted bool
-	printed          bool // the --json result has been printed
+	// declined is the Firebase stage's one line when its no-flag arm found that
+	// this run may neither adopt nor create the installation's budget database
+	// (R2): the stage changed nothing, says why in this line, and the rest of
+	// the run carries on. It is "" on every other run, and the stage clears it
+	// before it runs so that a plan pass and an apply pass of the same run do
+	// not report two different things.
+	declined string
+	printed  bool // the --json result has been printed
 	// events is the --events feed (setup_events.go), or nil for every run
 	// that did not ask for one — which is what keeps a run without the flag
 	// byte for byte the run it was: no line is written, and the loop's three
@@ -1233,7 +1240,7 @@ func runInit(r *initRun) error {
 			return userErr("--publish-config writes to the cloud: %s", initflow.AgentRefusal(m))
 		}
 		var why []string
-		written, err := publishSharedWarn(cmd.Context(), lc, func(m string) { why = append(why, m); r.warn(m) })
+		written, publishedOptIn, err := publishSharedWarn(cmd.Context(), lc, func(m string) { why = append(why, m); r.warn(m) })
 		if err != nil {
 			return remote(err)
 		}
@@ -1248,6 +1255,10 @@ func runInit(r *initRun) error {
 			return userErr("nothing was published: %s", reason)
 		}
 		fmt.Fprintf(r.stageDetail(), "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+		// The publish the person asked for is what writes the fact down here too
+		// (R15): their own file follows the copy the installation now holds, and
+		// the diff is printed as this run writes it.
+		r.refreshLocalOptIn(path, publishedOptIn)
 		return r.printResult()
 	}
 	spec, err := installSpec(o, lc, r.warn)
@@ -3393,6 +3404,14 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// own eligible names unioned with every one discovery found live, so a
 	// config edit can never shrink the module's for_each (N3).
 	spec.ProjectSecrets = im.ProjectSecrets
+	// Where the installation's log bucket already is, when it has one: a
+	// bucket's location is permanent, so the plan of an installation whose
+	// bucket is `global` must name `global` even though the mapping points
+	// elsewhere (R5, F11). Empty means discovery found no bucket, and the
+	// spec's own value — place.For's answer — is what the plan creates one in.
+	if im.LogBucketLocation != "" {
+		spec.LogBucketLocation = im.LogBucketLocation
+	}
 	// The catalog check's git credentials name a project container only when
 	// the plan holds it, which is known only now.
 	if spec.OwnGitSecrets, err = infra.LiveGitSecrets(ctx, c, lc); err != nil {
@@ -4235,13 +4254,56 @@ func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) 
 		fmt.Fprintf(r.w, "note: the shared config was not published: %s; run "+r.o.doorProgram()+" --publish-config in your own terminal\n", initflow.AgentRefusal(m))
 		return
 	}
-	written, err := publishSharedWarn(ctx, lc, r.warn)
+	written, publishedOptIn, err := publishSharedWarn(ctx, lc, r.warn)
 	if err != nil {
 		r.warn("could not publish the shared config: " + err.Error() + " (teammates will need fugaro setup until it is published)")
 		return
 	}
 	if written {
 		fmt.Fprintf(r.stageDetail(), "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+		// r.res.Config is the file writeLocalConfig wrote immediately before this
+		// publish, which is the file whose copy of the fact follows it (R15).
+		r.refreshLocalOptIn(r.res.Config, publishedOptIn)
+	}
+}
+
+// refreshLocalOptIn rewrites this machine's own copy of the batch block's opt-in
+// fact from the one a publish has just left in the runs bucket (R15). The
+// published object is the installation's copy of the fact and this file's is one
+// machine's, so after a publish the two hold the same value: a file that says
+// `in` while the installation withdrew — or the reverse — follows the published
+// copy here, which is how the window O19 describes closes on this machine
+// without its person doing anything. The field is written as the value the
+// published block carries, "" included: an absent fact is a state of its own and
+// not a withdrawal (C1, D3111), and a machine's copy of the fact is never the
+// authority (R15), so a stray local value is dropped the same way a stale one is
+// replaced. What is written is the file's ordinary write — the diff, the backup,
+// no question: the publish this belongs to is what the person asked for — and a
+// file already holding the value is not written at all.
+//
+// A machine with no batch block of its own is left alone: it has stated no fact,
+// and writing one into its file would be the publish inventing an opt-in nobody
+// wrote (BR18 owns the block a selection writes). A file that cannot be read or
+// parsed is left alone too: the publish itself has succeeded, and this is the
+// file's copy following it, never a reason to fail the command that asked for it.
+func (r *initRun) refreshLocalOptIn(path, publishedOptIn string) {
+	if path == "" {
+		return
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	cur, err := localcfg.Parse(old)
+	if err != nil || cur.Batch == nil || cur.Batch.OptIn == publishedOptIn {
+		return
+	}
+	next := *cur
+	block := *cur.Batch
+	block.OptIn = publishedOptIn
+	next.Batch = &block
+	if err := r.writeLocalConfig(&next, path, old, true); err != nil {
+		r.warn("the local config's batch opt-in was not refreshed: " + err.Error())
 	}
 }
 
@@ -4640,6 +4702,15 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 	if err != nil {
 		return remote(err)
 	}
+	// The undelete command this rollback prints names the bucket's own
+	// location, and an installation made before this mapping has its bucket in
+	// `global` while the spec's own value is place.For's answer for the region
+	// (R5, F10). So the location is read off the bucket before the apply
+	// deletes it, with discovery's own listing and nothing else: this path
+	// runs no discovery, and a read that fails — the Logging API is disabled,
+	// say — leaves the spec's value rather than failing a rollback over a
+	// message.
+	bucketLoc := spec.LogBucketLocation
 	if changed {
 		plan, err := t.Show(ctx, infra.PlanFile)
 		if err != nil {
@@ -4648,6 +4719,11 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		r.planBlock(plan)
 		if err := infra.CheckForgetPlan(plan); err != nil {
 			return initErr(err)
+		}
+		if forgetDeletesLogBucket(plan) {
+			if loc, err := infra.LogBucketWhere(ctx, c, spec.Project, spec.Names.Log.Bucket); err == nil && loc != "" {
+				bucketLoc = loc
+			}
 		}
 		if err := r.guard(ctx, c, plan, infra.ForgetAllowDelete(plan)); err != nil {
 			return err
@@ -4680,11 +4756,23 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 	r.res.Forgotten = true
 	fmt.Fprintln(r.w, "Terraform no longer manages the installation; nothing else was destroyed. Restore the backed-up local config and redeploy each job with the M4 binary.")
 	if slices.Contains(r.res.Deleted, infra.LogBucketAddress) {
-		r.res.Undelete = infra.LogBucketUndelete(spec.Project)
+		r.res.Undelete = infra.LogBucketUndelete(spec.Project, bucketLoc)
 		r.warn(fmt.Sprintf("the log bucket %s is now pending deletion for 7 days, and its ID can't be reused meanwhile; a migration retried within the week runs this first: %s",
 			infra.LogBucket, r.res.Undelete))
 	}
 	return nil
+}
+
+// forgetDeletesLogBucket reports whether the rollback's plan deletes the
+// installation's log bucket: the location its undelete command must name is
+// read before the apply, so only a plan that deletes one is read for.
+func forgetDeletesLogBucket(p *tf.Plan) bool {
+	for _, rc := range p.ResourceChanges {
+		if rc.Address == infra.LogBucketAddress && slices.Contains(rc.Change.Actions, "delete") {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *initRun) printResult() error {

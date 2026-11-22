@@ -486,16 +486,17 @@ func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
 	}
 }
 
-// TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved: the
-// launcher resolves the levels a run will run before any run exists, and it
-// reads the owner's floor the way the run does (policy.FloorFor). A run whose
-// own request takes it off the axis to hotfix is held to hotfix's row *and* to
-// the row the layers resolved — a request raises a mode and never lowers a
-// floor (D8, LF5) — so the launch asks for the owner's floor and for the
-// adversarial step the floor turns on. Reading hotfix's row alone would resolve
-// the launch at no floor and no level 3 while the run resolves at both, and
-// every gate written on this ask would judge a launch that never happens.
-func TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved(t *testing.T) {
+// TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheRunIsAt: the launcher
+// resolves the levels a run will run before any run exists, and it reads the
+// owner's floor the way the run does (policy.FloorFor over
+// rigor.LayersRigor). A run whose own request took it off the axis to hotfix
+// reads hotfix's row alone (the owner's ruling of 2026-11-20), so a floor on
+// `pro` does not reach a `--mode hotfix` launch and the launch asks the image
+// for nothing of it — the same launch with no request keeps the mode its layers
+// resolve, which is the row the floor was written for. Reading both rows here
+// would resolve the launch at a floor and a level 3 the run never runs, and
+// every gate written on this ask would refuse an image the run does not need.
+func TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheRunIsAt(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
 	env.policy = policyReadOnce{done: true, found: true, p: &projectpolicy.Policy{
@@ -508,11 +509,11 @@ func TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved(t *testing
 	if err != nil {
 		t.Fatalf("resolving the levels of a --mode hotfix launch under a floor on pro: %v", err)
 	}
-	if want := "the owner's review-level floor and review level 3 (its adversarial step)"; ask != want {
-		t.Errorf("ask = %q, want %q: the floor of the mode the layers resolved holds beside hotfix's", ask, want)
+	if ask != "" {
+		t.Errorf("ask = %q, want none: a hotfix run reads hotfix's row alone, and this project floors pro", ask)
 	}
 	// The same launch without the request keeps its own mode, which is the row
-	// the floor was written for: the answer does not depend on the union.
+	// the floor was written for.
 	spec.Rigor = ""
 	if ask, err := launchReviewLevelsAsk(context.Background(), env, spec, cfg, nil, false, &bytes.Buffer{}); err != nil || ask != "the owner's review-level floor and review level 3 (its adversarial step)" {
 		t.Errorf("a pro launch under a floor on pro: ask = %q, err = %v", ask, err)
@@ -4499,6 +4500,111 @@ func TestWorkspaceBeatSinceIsTheReleaseTheDocsName(t *testing.T) {
 	} {
 		if !strings.Contains(c.doc, c.want) {
 			t.Errorf("%s does not name the release the key ships in: want %q", c.what, c.want)
+		}
+	}
+}
+
+// TestIdentitySinceRefusesAnOlderImage is identitySince's launch gate and LM8's
+// red step: a launch that holds a ticket for its run's identity is not put on a
+// job image whose runner cannot claim it. From the release that claims on, the
+// launcher signs nothing and writes no sealed object (R7, LM6), so such an
+// execution carries the ticket and nothing else; a runner older than that
+// release looks for the sealed token under tokens/ where its launcher no longer
+// writes one, finds nothing, and stops at bootstrap with no identity at all —
+// with the launch already paid for.
+//
+// The judge is the one every *Since gate uses (checkImageSince, and its
+// checkout: clone twin checkCloneImageSince for a workflow with no build record
+// of its own), and the rows are the boundary itself: the release below the
+// constant is refused, the constant's own release and the one above it are
+// admitted. The refusal names the move that fixes it — the image refresh
+// `fugaro update` performs — and it carries no alt, because the ticket is the
+// whole of what a run's identity travels on and an older image cannot be given
+// one another way.
+func TestIdentitySinceRefusesAnOlderImage(t *testing.T) {
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	older := shiftRelease(t, identitySince, -1)
+
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+older)
+	err := env.identityGate(context.Background(), appSlug, spec, "base", false, io.Discard)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused on a job image older than %s", err, identitySince)
+	}
+	for _, want := range []string{
+		identitySubject,
+		"needs a job image whose runner knows " + identityKnows,
+		"fugaro " + identitySince + " or later",
+		"was built from base image ghcr.io/dimipaun/fugaro-base:" + older + ", release " + older,
+		imageGateRemedy + ", in your own terminal window (never in a coding agent's session",
+		"its images stage verifies this release's base base image, pins it by digest through the installation's remote repository and rebuilds the workflow's image",
+		causeMarkerJobImage,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+
+	for _, rel := range []string{identitySince, shiftRelease(t, identitySince, 1)} {
+		t.Run("a job image at "+rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			env := fileEnv(t, f)
+			writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+rel)
+			if err := env.identityGate(context.Background(), appSlug, spec, "base", false, io.Discard); err != nil {
+				t.Fatalf("a job image whose runner knows the claim was refused: %v", err)
+			}
+		})
+	}
+
+	// A checkout: clone workflow has no build record to judge: its gate is the
+	// installation's own base image, through checkCloneImageSince, and the
+	// boundary is the same one.
+	t.Run("a checkout: clone workflow", func(t *testing.T) {
+		f := newCloudFixture(t)
+		f.appendConfig(t, "base_images: {base: ghcr.io/dimipaun/fugaro-base:"+older+"}\n")
+		env := fileEnv(t, f)
+		err := env.identityGate(context.Background(), appSlug, spec, "base", true, io.Discard)
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want the checkout: clone launch refused", err)
+		}
+		for _, want := range []string{identityKnows, "fugaro update --base base"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the clone refusal does not name %q: %v", want, err)
+			}
+		}
+	})
+}
+
+// TestIdentitySinceHasAReleaseBullet: identitySince names 0.29.0, and no test
+// can derive that number from the tree — the plan it belongs to names no
+// release, and the release it is for is two minors past the one this tree
+// makes — so docs/release.md's Before-you-tag list is the only thing holding
+// the value to the tag actually cut. Its own refusal test is not that check:
+// TestIdentitySinceRefusesAnOlderImage shifts every row off the constant itself
+// (shiftRelease), so a value that named the wrong release stays green there.
+//
+// The pinned phrases are the bullet's account of the number: the ticket's
+// variable, the call site that keeps a bridge launch out of the gate, the
+// release the plan cannot ship before, the two values it is not, and the
+// "refuses too late" failure a value below the claiming release buys.
+func TestIdentitySinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `identitySince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no identitySince bullet: the checklist is where a release verifies the constant, and this constant names a release two minors past the one this tree makes")
+	}
+	if !strings.Contains(bullet, "currently `\""+identitySince+"\"`") {
+		t.Errorf("docs/release.md's identitySince bullet does not carry the constant's release (%q)", identitySince)
+	}
+	for _, want := range []string{"FUGARO_IDENTITY_TICKET", "only for a launch that holds a ticket", "release A", "0.27.0", "refuses too late"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's identitySince bullet does not say %q", want)
 		}
 	}
 }

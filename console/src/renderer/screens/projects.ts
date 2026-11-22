@@ -92,11 +92,15 @@ import type {
   ModelsListView,
 } from '../../shared/schema'
 import { MODELS_LIST_CLI_FLOOR } from '../../shared/version'
+import type { CliCompatibility } from '../../shared/version'
 import { nameableText, sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import type { JSONDoc } from '../../source/source'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
+import { KINDS } from '../manage/kinds/index'
+import { mountManage } from '../manage/shell'
+import type { ManageDeps, ManageSection } from '../manage/shell'
 import { BUSY_SLOT_CLASS } from '../section'
 import { disabledWrite } from '../writes'
 import { POLICY_NODE_SOURCE, POLICY_NODE_SHAPE, buildPolicyNotes, policyNotesBody } from './policynotes'
@@ -2271,13 +2275,26 @@ export const PROJECTS_LICENCE_CLASS = 'projects-licence-section'
  * D439 compares -- the estimate and the seats that key carries. */
 export const PROJECTS_SEATS_CLASS = 'projects-seats-section'
 
+/** PROJECTS_MANAGE_CLASS is the host the Manage section is mounted into (the
+ * console-improvements plan's task I-MG): the tenth sibling of `projects-body`,
+ * drawn for `PROJECTS_MODELS_CLASS`'s reason -- one element wearing two reads'
+ * claims would have whichever landed first take the other's claim down. It is
+ * the one host here drawn **with no slot beside it**, and that is the
+ * difference the section has from every other one of these: the Manage section
+ * carries a read per kind, each with its own busy mark and its own refusal
+ * (`manage/shell.ts`), so a mark of this file's would be a tenth claim about
+ * reads this file never started. */
+export const PROJECTS_MANAGE_CLASS = 'projects-manage-section'
+
 /** DrawnProjectsFrame is the screen with nothing in it: the root, the section a
  * read fills, and the slot the entry's busy mark goes in. Every later section is
  * a `host`/`slot` pair of its own, drawn the same way -- `models` and `settings`
  * from the tab's second and third reads, and `managed`, `accountKeys`,
  * `retirements` and `credentialsService` from the three CM10 added, two of which
  * feed two sections apiece (the account keys the settings read, the retirements
- * the managed state's), and `licence` from S2.7 and `seats` from S4.2. */
+ * the managed state's), and `licence` from S2.7 and `seats` from S4.2. `manage`
+ * (I-MG) is the tenth and the odd one of them: the section it is filled with
+ * reads once per kind, so it is a host with no slot of this file's beside it. */
 export interface DrawnProjectsFrame {
   readonly root: ScreenElement
   readonly body: ScreenElement
@@ -2298,6 +2315,7 @@ export interface DrawnProjectsFrame {
   readonly licenceSlot: ScreenElement
   readonly seats: ScreenElement
   readonly seatsSlot: ScreenElement
+  readonly manage: ScreenElement
 }
 
 /**
@@ -2352,6 +2370,10 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
   // command of its own and owns the mark of that read, like every section here.
   const seats = make(factory, 'div', PROJECTS_SEATS_CLASS)
   const seatsSlot = cell(seats, factory, 'div', BUSY_SLOT_CLASS)
+  // The Manage section's host (I-MG), the last of them and the one with no
+  // slot: `mountProjectsManage` fills it with a section that owns a mark per
+  // kind, so there is no single read of this file's for a slot to be about.
+  const manage = make(factory, 'div', PROJECTS_MANAGE_CLASS)
   root.append(body)
   root.append(models)
   root.append(settings)
@@ -2361,6 +2383,7 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
   root.append(credentialsService)
   root.append(licence)
   root.append(seats)
+  root.append(manage)
   return {
     root,
     body,
@@ -2381,7 +2404,44 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
     licenceSlot,
     seats,
     seatsSlot,
+    manage,
   }
+}
+
+/**
+ * mountProjectsManage mounts the Manage section into the frame's host: the
+ * console's own kinds (the plan's task I-MG, `manage/kinds/index.ts`), over the
+ * caller's operations.
+ *
+ * **It is the tab's own door for that section, and the entry is the caller.**
+ * `mountManage` is handed the kinds the console draws -- `KINDS`, built for the
+ * installation this console is driving, which is what asks the Budget kind's
+ * reduced-mode gate exactly once -- and everything else the section needs is the
+ * *caller's*, because this screen has none of it: the factory, the theme, the
+ * console's operation surface, the clipboard and the rail (`ManageDeps`). This
+ * module therefore spawns nothing, copies nothing and navigates nowhere; it puts
+ * the section into the host it drew and answers what it mounted, so a caller
+ * that has to re-read one kind later can (`ManageSection.readKind`).
+ *
+ * **The cast is the two element surfaces'.** A kind's root is a `ManageElement`
+ * -- the shell's own wider surface, `ElementLike` plus the `replaceChildren` a
+ * repaint needs and the `addEventListener` its groups and its Copy buttons need
+ * (`manage/shell.ts`) -- and this file's `ScreenElement` is the narrower one
+ * (`childNodes`, and no listener at all). The hosts this frame draws are typed
+ * by this file's surface, so the root goes in through the one cast that says the
+ * two are the same node -- the element the caller's own factory made, handed
+ * back to that caller, exactly as `shell.ts`'s `asManage` says it in the other
+ * direction. Nothing here reads a screen member off it, and the shell keeps the
+ * surface it built the element with.
+ */
+export function mountProjectsManage(
+  deps: ManageDeps,
+  compatibility: CliCompatibility,
+  host: ScreenElement,
+): ManageSection {
+  const section = mountManage(KINDS(compatibility)).draw(deps)
+  host.append(section.root as unknown as ScreenElement)
+  return section
 }
 
 /**

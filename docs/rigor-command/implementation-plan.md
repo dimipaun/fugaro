@@ -616,12 +616,16 @@ no opt-in, in `fugaro run` and on the follow-up path alike.
   a run reads the row of the mode it is at, so a request that moved the run off the axis would have
   read hotfix's row — usually empty — and left the row the layers resolved behind: one flag dropping
   a floor the owner set, silently (D8, LF5, D18, Item 3 of
-  `docs/rigor-modes/levels-reconciliation.md`). Both readers of a floor union the two rows:
-  `rigor.LayersMode` answers the mode the layers alone resolved, kept beside the record's own mode as
+  `docs/rigor-modes/levels-reconciliation.md`). Both readers of a floor unioned the two rows:
+  `rigor.LayersMode` answered the mode the layers alone resolved, kept beside the record's own mode as
   the runner's moments run, and `policy.Effective.ReviewFloorFor` — the launcher's `policy.FloorFor`,
-  off the published node — holds that row and hotfix's. An owner floor of `pro l2,l3` therefore still
-  turns the adversarial step on for a `fugaro run --mode hotfix` run, and the owner's lever for
+  off the published node — held that row and hotfix's. An owner floor of `pro l2,l3` therefore still
+  turned the adversarial step on for a `fugaro run --mode hotfix` run, and the owner's lever for
   flooring such a run harder is `fugaro rigor floor set hotfix l2,l3`.
+  **Superseded 2026-11-20 (the owner's ruling):** a hotfix run reads **hotfix's own row alone**, so a
+  floor on `pro` does not reach it; the union above is gone, `rigor.LayersRigor` answers the mode the
+  layers resolved for an **on-axis** request that went below them, and a hotfix run leaves it empty
+  (LV3.2 of `docs/rigor-modes/levels-implementation-plan.md`).
 - **What did not move.** `fugaro rigor set` still refuses to **write** `hotfix` in any form it
   writes (D834, below): the ruling opens the *request*, not the writer. The four forms D834 names
   are the project default, an area rule, a repository's own block and a `--json`-silent value; only
@@ -638,15 +642,15 @@ no opt-in, in `fugaro run` and on the follow-up path alike.
   decides that one run. So the three launch paths are one door: no flag, no marker and no terminal
   is required on any of them, and none refuses it. What stays refused in a session is `fugaro rigor
   set` itself, the write.
-- **Tests.** `TestResolveTakesAHotfixRequestWhole`, `TestLayersModeAnswersOnlyBesideARequestThatTakesTheRunWhole`
-  (`internal/rigor`); `TestReviewFloorForHoldsBothRowsOfAnOffAxisRequest` (`internal/policy`);
-  `TestResolveLevelsFloorHoldsForAHotfixRequest` (`internal/config`); `TestRunTakesHotfixWithNoOptIn`,
+- **Tests.** `TestResolveTakesAHotfixRequestWhole`, `TestLayersRigorAnswersOnlyBesideARequestBelowThem`
+  (`internal/rigor`); `TestReviewFloorForHoldsTheRowAHotfixRequestReads` (`internal/policy`);
+  `TestResolveLevelsFloorFollowsTheHotfixRuling` (`internal/config`); `TestRunTakesHotfixWithNoOptIn`,
   `TestRunTakesHotfixInAnAgentSession`, `TestFollowUpTakesHotfix`, `TestStoredFollowUpKeepsAHotfixRequest`, `TestBudgetPreviewTakesHotfix`,
-  `TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved` and
+  `TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheRunIsAt` and
   `TestDocsRigorModesProductStatesTheHotfixDoor` (`internal/cli`); and
-  `TestBootstrapRigorTakesTheRunsOwnRequestOnlyUpward`'s hotfix row,
-  `TestRigorFloorHoldsWhenTheRequestTakesTheRunToHotfix` and
-  `TestLayersRigorIsKeptOnlyForARequestThatTakesTheRunWhole` (`internal/runner`). The writer
+  `TestBootstrapRigorTakesTheRunsOwnRequest`'s hotfix row,
+  `TestRigorFloorHoldsTheRowAHotfixRequestReads` and
+  `TestLayersRigorIsKeptOnlyForARequestBelowThem` (`internal/runner`). The writer
   refusal that does exist is `TestRigorSetRefusesHotfix` (`internal/cli/rigor_test.go`), unchanged by
   this task: it covers the two forms the command can write, and the `--repo` form it does not name is
   G6's to build. hotfix's levels, its 1/1 rounds and its security-only row keep the rigor table tests

@@ -97,7 +97,7 @@ The spec reserved D2210–D2219. D2210 was answered in the spec; D2211–D2214 a
 | **D2217** | How far does "any project we touch must be managed, else stop" reach? | Every command that writes to a project refuses an unmanaged one, through `managedRequired`, naming `fugaro managed flag`. The exemptions are setup's creating run, `managed flag`, and read-only commands and modes (A5). A test that walks the command tree keeps the classification complete | **2026-11-21: as recommended.** Later answers add exemptions: the in-run commands (D2219), `offboard` (D3160) and `managed unflag` (R8). |
 | **D2218** | When the managed read itself fails (a permission error, a network failure reading the marker or the label), what does a fenced command do? | Stop (fail closed), naming the read that failed | **2026-11-21: not the recommendation — warn and go on.** **Amended after review**, with the intent unchanged. Today `readUpdateGate` (`update_managed.go`) returns `managed=false` with no word on a read error, which is the same value an unmanaged project gets. So T3 makes the read report its error separately (`update_managed.go`, `managed_gate.go`). "Proceed" means the path an unmanaged project took before this plan, with its confirmations and its agent-session refusals, and **never** admission through the managed gate. A read that fails cannot open the gate, so making the read fail buys an attacker nothing the unmanaged path did not already allow. A project the read *answers* is unmanaged still stops. |
 | **D2219** | Are the commands a Fugaro job runs on itself fenced (`tell`, `mailbox`, `followups`, `escalation`)? | Exempt: they write only the run's own records, under the job's account, and the run was launched by a fenced `fugaro run` | **2026-11-21: as recommended.** |
-| **D3160** | Is `fugaro offboard` fenced on an unmanaged project? | Fenced: mark it first, as with every write | **2026-11-21: not the recommendation — exempt.** **Amended after review:** the question described the command wrongly, as removing a repository's cloud pieces. The command is `fugaro user offboard EMAIL` (`internal/cli/offboard.go`), which takes one member's roster grants and stored secrets away. The answer is kept, because taking access away never waits on marking a project first, and the reason is restated in those terms. T7a classifies `fugaro user offboard` as exempt. **Open item: the owner confirms the answer for the command as it really is.** |
+| **D3160** | Is `fugaro offboard` fenced on an unmanaged project? | Fenced: mark it first, as with every write | **2026-11-21: not the recommendation — exempt.** **Amended after review:** the question described the command wrongly, as removing a repository's cloud pieces. The command is `fugaro user offboard EMAIL` (`internal/cli/offboard.go`), which takes one member's roster grants and stored secrets away. The answer is kept, because taking access away never waits on marking a project first, and the reason is restated in those terms. T7a classifies `fugaro user offboard` as exempt. **2026-11-21: the owner confirmed it for the command as it really is: `fugaro user offboard` is exempt.** |
 
 ### Resolutions (one defensible answer)
 
@@ -122,9 +122,9 @@ No tension is open.
 
 ## Open items
 
-- **Confirm D3160** for `fugaro user offboard` as it really is (amended after review).
+None open: D3160 was confirmed by the owner on 2026-11-21 for `fugaro user offboard` as it really is.
 
-Nothing else blocks the plan. Checks 860 and 861 are the owner's.
+Nothing blocks the plan. Checks 860 and 861 are the owner's.
 
 This pull request leaves a dated pointer at each decision it amends, in that decision's own home: D1541 and D1553 in `docs/no-prompt-policy/reconciliation.md`, and D64 in `docs/managed-projects/spec.md`.
 

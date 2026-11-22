@@ -5,7 +5,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // The workspace writes' third half: the address a member's pin may carry (R3),
@@ -372,6 +378,150 @@ func TestShareTakesTheKindFromTheCredentialName(t *testing.T) {
 	}
 	if after := readFileString(t, owner); after != before {
 		t.Errorf("a refused unshare wrote the file:\n%s", after)
+	}
+}
+
+// TestShareAcceptsAProviderKey is WC1's acceptance and its red step: a provider
+// key is shared like any model entry (D2978, F7). The workspace's bundle holds a
+// provider's key in two shapes, and both are shareable and both land as a model
+// entry — a name, the member projects and no coverage, exactly as a Claude
+// account's entry does, because a model call names no repository:
+//
+//   - the project's own, whose document key is config.ProviderKeySecret and
+//     which credsvc.CredentialKey reads as credsvc.KindProvider;
+//   - one repository's named entry for a provider
+//     (repo-credential--<slug>--<provider>), which that same reader answers as
+//     credsvc.KindRepoCredential and NOT as KindProvider, because its document
+//     key carries the repository the copy was made for. That is U7's answer, and
+//     this test is where it is settled: the name is the document key, the kind
+//     the family's own, and the provider the credential half of it.
+//
+// What a call through such an entry is served is the selection's rule and not
+// this command's (TestAClaudeModelThroughASharedProviderKeyWaits, in credsvc).
+func TestShareAcceptsAProviderKey(t *testing.T) {
+	_, _, owner := workspaceOwnerHome(t)
+	workspaceAppend(t, owner, workspaceOwnerTable)
+	slug, err := task.Slug("github", "marker-org/aurora")
+	if err != nil {
+		t.Fatalf("task.Slug: %v", err)
+	}
+	named, err := credsvc.RepoCredentialKey(slug, "openrouter")
+	if err != nil {
+		t.Fatalf("credsvc.RepoCredentialKey: %v", err)
+	}
+	if _, kind, tier, ok := credsvc.CredentialKey(named); !ok || kind != credsvc.KindRepoCredential || tier != creds.TierC {
+		t.Fatalf("CredentialKey(%s) = (%v, %v, %v), want a named provider entry at tier C: this test's own name is not one the loader reads as the family's", named, kind, tier, ok)
+	}
+	if _, kind, tier, ok := credsvc.CredentialKey(config.ProviderKeySecret); !ok || kind != credsvc.KindProvider || tier != creds.TierC {
+		t.Fatalf("CredentialKey(%s) = (%v, %v, %v), want the project's provider key at tier C", config.ProviderKeySecret, kind, tier, ok)
+	}
+
+	for _, credential := range []string{config.ProviderKeySecret, named} {
+		t.Run(credential, func(t *testing.T) {
+			out, _, chainErr := execute(t, "workspace", "share", credential,
+				"--workspace", "workspace-alpha", "--projects", "aurora")
+			assertNoPrompt(t, out)
+			workspaceAssertSavedNotLive(t, "workspace share", out, chainErr)
+			if !strings.Contains(out, "offer "+credential) {
+				t.Errorf("the share of %s does not read as an offer:\n%s", credential, out)
+			}
+			lc, err := localcfg.Parse([]byte(readFileString(t, owner)))
+			if err != nil {
+				t.Fatalf("%v\n%s", err, readFileString(t, owner))
+			}
+			entry, ok := workspaceShared(lc)[credential]
+			if !ok {
+				t.Fatalf("the share of %s wrote no entry:\n%s", credential, readFileString(t, owner))
+			}
+			if entry.Kind != localcfg.WorkspaceSharedModel {
+				t.Errorf("the entry for %s is kind %q, want %q: a provider key is offered as a model entry, which is what a call spent through one is", credential, entry.Kind, localcfg.WorkspaceSharedModel)
+			}
+			if !slices.Equal(entry.Projects, []string{"aurora"}) {
+				t.Errorf("the entry for %s is offered to %v, want aurora", credential, entry.Projects)
+			}
+			if len(entry.Covers) != 0 {
+				t.Errorf("the entry for %s covers %v, and a model entry reaches no repository", credential, entry.Covers)
+			}
+
+			// A coverage is refused for it exactly as it is for a Claude
+			// account: the repositories a model call may be made for are the
+			// member's own policy's business.
+			if _, _, err := execute(t, "workspace", "share", credential, "--workspace", "workspace-alpha",
+				"--projects", "aurora", "--covers", "marker-org/aurora"); err == nil ||
+				!strings.Contains(err.Error(), "cannot be given for "+credential) {
+				t.Errorf("a coverage on %s: %v, want the model entry's own refusal", credential, err)
+			}
+		})
+	}
+
+	// And the node the owner's update publishes carries both as model entries,
+	// which is what the workspace's service reads the pool out of.
+	published, err := localcfg.Parse([]byte(readFileString(t, owner)))
+	if err != nil {
+		t.Fatalf("%v\n%s", err, readFileString(t, owner))
+	}
+	rec := &workspace.Record{Name: "workspace-alpha", Members: []workspace.Member{{Project: "aurora"}}}
+	for _, credential := range []string{config.ProviderKeySecret, named} {
+		entry, err := workspaceSharedEntry(rec, credential, workspaceShared(published)[credential])
+		if err != nil {
+			t.Fatalf("workspaceSharedEntry(%s): %v", credential, err)
+		}
+		if entry.Name != credential || entry.Kind != projectpolicy.SharedKindModel || len(entry.Covers) != 0 {
+			t.Errorf("the published node's entry is %+v, want a model entry named %s: a provider key reaches a member's run as a model credential", entry, credential)
+		}
+	}
+}
+
+// TestShareStillRefusesARepositoryCredential is WC1's other half: a repository's
+// OWN credential — the same family's other half, repo-credential--<slug>--
+// anthropic-api-key--project — is still refused, and refused with a reason of its
+// own rather than the general "not a credential the workspace can offer its
+// members" sentence, which would be false about a name the workspace's bundle
+// really holds.
+//
+// The reason is the entry's own (plan §10): its name carries the repository the
+// copy was made for, so it is one repository's by construction and a member's
+// runs are other repositories'. A provider's key of the same family is a
+// different entry and IS shared (TestShareAcceptsAProviderKey), and the refusal
+// says so, because the two names differ only in their credential half.
+func TestShareStillRefusesARepositoryCredential(t *testing.T) {
+	_, _, owner := workspaceOwnerHome(t)
+	workspaceAppend(t, owner, workspaceOwnerTable)
+	before := readFileString(t, owner)
+	slug, err := task.Slug("github", "marker-org/aurora")
+	if err != nil {
+		t.Fatalf("task.Slug: %v", err)
+	}
+	ours, err := credsvc.RepoCredentialKey(slug, config.AnthropicKeyAccount)
+	if err != nil {
+		t.Fatalf("credsvc.RepoCredentialKey: %v", err)
+	}
+	if _, kind, tier, ok := credsvc.CredentialKey(ours); !ok || kind != credsvc.KindRepoCredential || tier != creds.TierB {
+		t.Fatalf("CredentialKey(%s) = (%v, %v, %v), want one repository's own key at tier B", ours, kind, tier, ok)
+	}
+
+	out, _, err := execute(t, "workspace", "share", ours, "--workspace", "workspace-alpha", "--projects", "aurora")
+	if err == nil {
+		t.Fatalf("sharing a repository's own credential was accepted:\n%s", out)
+	}
+	for _, want := range []string{
+		ours,
+		"a repository's own Anthropic key",
+		"one repository's by construction",
+		"provider-key",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The name the general refusal is about is still refused by it, so the
+	// reason above is that one entry's and not a rewording of the whole rule.
+	if _, _, err := execute(t, "workspace", "share", "not-a-credential", "--workspace", "workspace-alpha", "--projects", "aurora"); err == nil ||
+		!strings.Contains(err.Error(), "is not a credential the workspace can offer its members") {
+		t.Errorf("a name the bundle cannot spell: %v", err)
+	}
+	if after := readFileString(t, owner); after != before {
+		t.Errorf("a refused share wrote the file:\n%s", after)
 	}
 }
 

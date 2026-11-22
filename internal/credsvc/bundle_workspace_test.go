@@ -1,6 +1,7 @@
 package credsvc
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"strings"
@@ -192,6 +193,251 @@ func TestThePoolCarriesForgeEntries(t *testing.T) {
 		if v := e.Value(); v != "" && strings.Contains(rendered, v) {
 			t.Fatal("the pool's answer renders a credential's value: rule 2 is that no run, no CLI and no person is handed one")
 		}
+	}
+}
+
+// TestASharedProviderKeyIsOfferedToItsMembers is WC1's pool half (D2978, F7, U7):
+// a provider key the workspace's bundle holds is offered to the members its
+// allow-list names, and the pool carries it as the model entry a call through one
+// is.
+//
+// Both shapes the bundle holds a provider's key in are read, and the two arms
+// are what tells them from the shape that is NOT offered: the project's own
+// (KindProvider, config.ProviderKeySecret), which is deliberately not in the
+// model index because an account may legally be named after it, and one
+// repository's named entry for a provider (KindRepoCredential, keyed by its
+// document key), which credsvc.CredentialKey answers as that kind and NOT as
+// KindProvider — U7's question, settled in `fugaro workspace share` and read back
+// here. What a coding caller's own list (Credentials) holds is unchanged: neither
+// is in it, and a tier-C entry there would refuse that caller's whole call.
+//
+// A named entry whose credential half is the repository's OWN Anthropic key is
+// skipped, exactly as the write refuses that name: it is one repository's by
+// construction (plan §10), and a member's runs are other repositories'.
+func TestASharedProviderKeyIsOfferedToItsMembers(t *testing.T) {
+	projectKey := repoEntryKeyFor(t, "github", "acme/one", "openrouter")
+	ownKey := repoEntryKeyFor(t, "github", "acme/one", config.AnthropicKeyAccount)
+	if kind, tier, _ := kindOf(t, projectKey); kind != KindRepoCredential || tier != creds.TierC {
+		t.Fatalf("the test's named provider entry is a %v at tier %v, want the family's provider half: this test's claim is about a name the loader reads as one", kind, tier)
+	}
+	if kind, tier, _ := kindOf(t, ownKey); kind != KindRepoCredential || tier != creds.TierB {
+		t.Fatalf("the test's repository-own entry is a %v at tier %v, want the family's paid half", kind, tier)
+	}
+	doc := append([]byte{}, providerKeyDoc(t, testProviderBase, providerAuthBearer)...)
+	doc = append(doc, repoEntryDoc(t, projectKey, fakeCred(t, "openrouter"), testProviderBase, providerAuthBearer)...)
+	doc = append(doc, repoEntryDoc(t, ownKey, fakeCred(t, "mine"), "https://api.anthropic.com", providerAuthXAPIKey)...)
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("ParseBundle: %v", err)
+	}
+	if e, ok := b.ProviderKey(); !ok || e.Name != config.ProviderKeySecret || e.Tier != creds.TierC {
+		t.Fatalf("the bundle's provider key is %+v (present %v), want %q at tier C", e, ok, config.ProviderKeySecret)
+	}
+	node := &projectpolicy.WorkspaceCredentials{
+		Name: wsWorkspace,
+		Shared: []projectpolicy.WorkspaceShared{
+			{Name: config.ProviderKeySecret, Kind: projectpolicy.SharedKindModel, Projects: []string{wsMemberA, wsMemberB}},
+			// The family's other half, offered by a node that a hand-written file
+			// could carry: it is skipped here as well as at the write, and it is
+			// named before the provider's entry because the node is in name order.
+			{Name: ownKey, Kind: projectpolicy.SharedKindModel, Projects: []string{wsMemberA}},
+			{Name: projectKey, Kind: projectpolicy.SharedKindModel, Projects: []string{wsMemberA}},
+		},
+	}
+	if err := node.Validate(); err != nil {
+		t.Fatalf("the test's own node is not one C3 accepts: %v", err)
+	}
+	got := WorkspaceShared(b, node)
+	want := []creds.Shared{
+		{Credential: creds.Credential{Name: config.ProviderKeySecret, Tier: creds.TierC}, Projects: []string{wsMemberA, wsMemberB}},
+		{Credential: creds.Credential{Name: projectKey, Tier: creds.TierC}, Projects: []string{wsMemberA}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("WorkspaceShared =\n%+v\nwant\n%+v\na provider key is offered as a model entry, in both shapes the bundle holds one, and the repository's own key is not offered at all", got, want)
+	}
+	for _, s := range got {
+		if s.Kind != "" || len(s.Covers) != 0 {
+			t.Errorf("the pool's entry %+v names a kind or a coverage, and a model entry carries neither", s)
+		}
+	}
+
+	// The members the allow-list names, and no others: the pool is the
+	// workspace's side of D1298's intersection and the member's own policy the
+	// other (AdmitShared). The member's policy is keyed by the member's own
+	// names, so the leg is asked here with the pool's — what this test holds is
+	// the workspace's side.
+	admitted := func(string) bool { return true }
+	cands := creds.SharedFor(wsMemberA, got, admitted)
+	if len(cands) != 2 || cands[0].Name != config.ProviderKeySecret || cands[1].Name != projectKey {
+		t.Fatalf("the candidates for %s = %+v, want the two provider keys: a member named by the allow-list is offered them", wsMemberA, cands)
+	}
+	for _, c := range cands {
+		if c.Tier != creds.TierC {
+			t.Errorf("the candidate %+v is not at tier C, and a provider's key is spent on the third-party route", c)
+		}
+	}
+	if len(creds.SharedFor(wsMemberB, got, admitted)) != 1 {
+		t.Errorf("the candidates for %s = %+v, want the project's provider key alone: the named entry's allow-list does not name this member", wsMemberB, creds.SharedFor(wsMemberB, got, admitted))
+	}
+	if len(creds.SharedFor(wsMemberA, got, func(string) bool { return false })) != 0 {
+		t.Error("a member whose own policy admits nothing was still offered the pool: the workspace can only tighten a member")
+	}
+
+	// No value, anywhere in the answer, and no second reading of what a bundle
+	// key is: the pool is names and tiers, and each provider key was reached
+	// through the accessor that owns its kind.
+	rendered := fmt.Sprint(got)
+	for _, e := range b.Entries() {
+		if v := e.Value(); v != "" && strings.Contains(rendered, v) {
+			t.Fatal("the pool's answer renders a credential's value: rule 2 is that no run, no CLI and no person is handed one")
+		}
+	}
+	// And a coding caller's own list is untouched by any of this: a tier-C entry
+	// in it would refuse that caller's whole call (checkCandidates).
+	for _, c := range b.Credentials() {
+		if c.Tier == creds.TierC {
+			t.Errorf("Credentials offers %+v, and a coding caller is offered no tier-C credential", c)
+		}
+	}
+}
+
+// TestAModelEntryNamedLikeTheProviderKeyIsTheProviderKey: the one name in this
+// document that two credentials answer, and the arm that decides between them.
+//
+// A Claude account may legally be named "provider-key" — ClaudeAccountNameRE
+// admits the name and config reserves only config.BitbucketSecret — so a bundle
+// holds the project's provider key (the document key config.ProviderKeySecret,
+// KindProvider, tier C) AND that account (the document key
+// claude-oauth-token-provider-key, whose CredentialKey-resolved name is the same
+// "provider-key", KindModel, tier A). The KindProvider arm of the duplicate rule
+// is what admits both, and the two indices are what keeps them apart: the
+// provider key is reached by KIND (ProviderKey) and the account by NAME
+// (Lookup, byName) — measured here, because that is the trap.
+//
+// A node's shared list speaks ONE name, so the arm that reads it has to say
+// which credential the name means, and WC1's write and its help both say
+// `provider-key` is the provider key. Reading the model index first would answer
+// the ACCOUNT and offer members the owner's Claude credential under the name the
+// owner read as the provider key, while the provider key stayed unshareable —
+// one name serving two credentials, which is exactly what the pool's answer, the
+// policy's leg and the service's audit line cannot tell apart.
+func TestAModelEntryNamedLikeTheProviderKeyIsTheProviderKey(t *testing.T) {
+	accountName := config.ClaudeOAuthTokenPrefix + config.ProviderKeySecret
+	if _, kind, tier, ok := CredentialKey(accountName); !ok || kind != KindModel || tier != creds.TierA {
+		t.Fatalf("CredentialKey(%s) = %v at tier %v (ok %v), want the account family's tier-A entry: this test is about the name two credentials share", accountName, kind, tier, ok)
+	}
+	if name, _, _, _ := CredentialKey(accountName); name != config.ProviderKeySecret {
+		t.Fatalf("the account %s resolves to %q, want %q: the collision this test pins is on the RESOLVED name", accountName, name, config.ProviderKeySecret)
+	}
+	doc := append(providerKeyDoc(t, testProviderBase, providerAuthBearer),
+		[]byte(accountName+": "+fakeCred(t, "an-account-named-after-the-key")+"\n")...)
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("a document holding the provider key and an account of its name: %v", err)
+	}
+	// The trap, measured: the index answers the ACCOUNT for that name.
+	acct, ok := b.Lookup(config.ProviderKeySecret)
+	if !ok || acct.Kind != KindModel || acct.Tier != creds.TierA {
+		t.Fatalf("Lookup(%q) = %+v (present %v), want the tier-A account: the provider key is absent from the model index by design, so the name alone cannot be the answer", config.ProviderKeySecret, acct, ok)
+	}
+	key, ok := b.ProviderKey()
+	if !ok || key.Tier != creds.TierC {
+		t.Fatalf("ProviderKey() = %+v (present %v), want the tier-C provider key", key, ok)
+	}
+	if e, held := modelEntryOf(b, config.ProviderKeySecret); !held || e.Tier != creds.TierC {
+		t.Fatalf("modelEntryOf(%q) = %+v (held %v), want the PROVIDER KEY: a node entry naming it is the credential `fugaro workspace share provider-key` wrote, and the account's own entry is named by the account's name only", config.ProviderKeySecret, e, held)
+	}
+
+	// And the pool's answer follows from that arm: the offering carries the
+	// provider key, not the account, so what a member is offered is the
+	// credential the owner declared — the third-party one, refused for a Claude
+	// model by the selection's own rule (D3000) rather than an account nobody
+	// asked to share.
+	node := &projectpolicy.WorkspaceCredentials{
+		Name: wsWorkspace,
+		Shared: []projectpolicy.WorkspaceShared{
+			{Name: config.ProviderKeySecret, Kind: projectpolicy.SharedKindModel, Projects: []string{wsMemberA}},
+		},
+	}
+	if err := node.Validate(); err != nil {
+		t.Fatalf("the test's own node is not one C3 accepts: %v", err)
+	}
+	got := WorkspaceShared(b, node)
+	want := []creds.Shared{{
+		Credential: creds.Credential{Name: config.ProviderKeySecret, Tier: creds.TierC},
+		Projects:   []string{wsMemberA},
+	}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("WorkspaceShared =\n%+v\nwant\n%+v\nthe name names the provider key: offering the account of that name would serve a credential the owner did not declare", got, want)
+	}
+}
+
+// kindOf is what credsvc.CredentialKey answers for a name, in the order this
+// file reads it: the tests hold their own names to the reader that decides what
+// a bundle key is, rather than to a kind written beside them.
+func kindOf(t *testing.T, key string) (Kind, creds.Tier, bool) {
+	t.Helper()
+	_, kind, tier, ok := CredentialKey(key)
+	return kind, tier, ok
+}
+
+// TestAClaudeModelThroughASharedProviderKeyWaits is WC1's selection half, and it
+// is D3000's gate reached through the POOL: the credential a shared provider key
+// offers a member's run is the one the selection refuses for a Claude model —
+// the reserved tier C, whose route this release does not serve, waiting for Check
+// 50 (D150, C3.6, R3).
+//
+// It is the existing rule and not a new one: checkCandidates drops a tier-C
+// candidate for a Claude model and answers the sentence that names the check, and
+// what this test adds is that the credential a workspace's pool hands a member is
+// the one that rule is about. The non-Claude half of the same rule is
+// internal/creds' own (TestANonClaudeProviderModelIsServed), and the offering's
+// half — which named entries a call is offered — cascade_provider_test.go's.
+func TestAClaudeModelThroughASharedProviderKeyWaits(t *testing.T) {
+	doc := append([]byte{}, providerKeyDoc(t, testProviderBase, providerAuthBearer)...)
+	doc = append(doc, repoEntryDoc(t, repoEntryKeyFor(t, "github", "acme/one", "openrouter"), fakeCred(t, "openrouter"), testProviderBase, providerAuthBearer)...)
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("ParseBundle: %v", err)
+	}
+	node := &projectpolicy.WorkspaceCredentials{
+		Name: wsWorkspace,
+		Shared: []projectpolicy.WorkspaceShared{
+			{Name: config.ProviderKeySecret, Kind: projectpolicy.SharedKindModel, Projects: []string{wsMemberA}},
+		},
+	}
+	if err := node.Validate(); err != nil {
+		t.Fatalf("the test's own node is not one C3 accepts: %v", err)
+	}
+	cands := creds.SharedFor(wsMemberA, WorkspaceShared(b, node), func(string) bool { return true })
+	if len(cands) != 1 || cands[0].Tier != creds.TierC {
+		t.Fatalf("the member's candidates = %+v, want the shared provider key at tier C: this test needs the credential a member's call is offered", cands)
+	}
+
+	// The selection is the pool's own caller — the service's cascade builds the
+	// same Selector for a call (cascade.go) — and MayServe is the judgement
+	// without the placement: it writes nothing, so the state the test hands it is
+	// the empty one newFakeStore answers.
+	slug := slugFor(t, "github", "acme/one")
+	sel := &creds.Selector{Store: newFakeStore(), Model: testModel}
+	err = sel.MayServe(context.Background(), creds.Run{Slug: slug, ID: "run-wc1"}, cands[0])
+	if err == nil {
+		t.Fatalf("a Claude model through the shared provider key was served: %+v", cands[0])
+	}
+	for _, want := range []string{config.ProviderKeySecret, "tier C", "Check 50", "D150"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not say %q", err, want)
+		}
+	}
+
+	// And the same credential for a model that is not Claude's is not refused by
+	// this rule: the tie is the caller's (Selector.Provider), and a key with no
+	// provider of its own answers the other sentence — which is the proof that
+	// the refusal above is D3000's gate and not "no credential is offered".
+	other := &creds.Selector{Store: newFakeStore(), Model: openRouterModel, Provider: "openrouter"}
+	if err := other.MayServe(context.Background(), creds.Run{Slug: slug, ID: "run-wc2"}, cands[0]); err == nil ||
+		strings.Contains(err.Error(), "Check 50") {
+		t.Errorf("a non-Claude model through the shared provider key = %v, want the provider tie's own refusal and not Check 50's", err)
 	}
 }
 

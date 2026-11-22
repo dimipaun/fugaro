@@ -13,7 +13,7 @@ This spec predates the folder layout. Its documents lived in `docs/design/` unti
 | File | What it is | Was |
 | --- | --- | --- |
 | [spec.md](spec.md) | The spec, as received (no typo fixed) | `docs/design/managed-flag-ergonomics.md` |
-| [reconciliation.md](reconciliation.md) | Findings F1–F19, the answers to D2211–D2219 and D3160 (open item: confirm D3160, amended after review), tension TN1 (ruled), resolutions R1–R10, Checks 860–861, UNVERIFIED. **Where it disagrees with spec.md, it wins** | new |
+| [reconciliation.md](reconciliation.md) | Findings F1–F19, the answers to D2211–D2219 and D3160 (D3160 confirmed by the owner 2026-11-21, amended after review), tension TN1 (ruled), resolutions R1–R10, Checks 860–861, UNVERIFIED. **Where it disagrees with spec.md, it wins** | new |
 | [implementation-plan.md](implementation-plan.md) | Twelve tasks (T0, T1, T2a–c, T3, T4, T5, T6, T7a–c) in six levels, critical path, shared files. Nothing in it is approved | new |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it | new |
 

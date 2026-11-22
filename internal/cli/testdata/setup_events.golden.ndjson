@@ -1,8 +1,8 @@
 {"type":"stage","name":"preflight","state":"done","detail":"","after":"","undone":false}
 {"type":"stage","name":"installation","state":"will-do","detail":"0 imports, 1 creates, 0 updates","after":"","undone":false}
-{"type":"stage","name":"firebase","state":"skipped","detail":"no --firebase-project given","after":"","undone":false}
-{"type":"stage","name":"images","state":"skipped","detail":"no image to pin or copy: the history image goes with --firebase-project, and a base image with --base KIND, with a checkout whose fugaro.yaml names it, or with a project image catalog whose entries this installation builds","after":"","undone":false}
-{"type":"stage","name":"installation-2","state":"skipped","detail":"no --firebase-project given: nothing to deploy the history job with","after":"","undone":false}
+{"type":"stage","name":"firebase","state":"skipped","detail":"no budget database was created: nothing answers this run's confirmation (no terminal, --json, a pipe and a coding agent never do); a project owner runs fugaro setup once","after":"","undone":false}
+{"type":"stage","name":"images","state":"skipped","detail":"no image to pin or copy: the history image goes with the history job (which this run deploys where it has just created or adopted the budget database, or where --firebase-project names it), and a base image with --base KIND, with a checkout whose fugaro.yaml names it, or with a project image catalog whose entries this installation builds","after":"","undone":false}
+{"type":"stage","name":"installation-2","state":"skipped","detail":"the installation has no budget backend, so there is no history job to deploy: run fugaro update once a project owner has created one","after":"","undone":false}
 {"type":"stage","name":"secrets","state":"skipped","detail":"not in a checkout of a repository: run fugaro setup there to take its secrets","after":"","undone":false}
 {"type":"stage","name":"plugin","state":"skipped","detail":"a development build has no release plugin to install","after":"","undone":false}
 {"type":"stage","name":"repository","state":"skipped","detail":"not in a checkout: run fugaro setup --repo in a checkout of the repository to onboard it","after":"","undone":false}
