@@ -35,7 +35,7 @@ import (
 // merged with what is published there already, so a machine that lacks
 // what another onboarded does not erase it.
 func publishShared(ctx context.Context, lc *localcfg.Config) error {
-	_, err := publishSharedWarn(ctx, lc, func(string) {})
+	_, _, err := publishSharedWarn(ctx, lc, func(string) {})
 	return err
 }
 
@@ -45,12 +45,42 @@ func publishShared(ctx context.Context, lc *localcfg.Config) error {
 // that teammates would refuse themselves (it is not written at all: a
 // non-default runs bucket name, which teammates can't find from
 // gcp_project, or content ParseShared refuses). written says whether the
-// object was written.
-func publishSharedWarn(ctx context.Context, lc *localcfg.Config, warn func(string)) (written bool, err error) {
+// object was written, and a caller that has this machine's own config file
+// at hand rewrites the file's copy of the opt-in fact from publishedOptIn
+// (R15) — the value the object in the runs bucket now carries, which is ""
+// when it carries none.
+func publishSharedWarn(ctx context.Context, lc *localcfg.Config, warn func(string)) (written bool, publishedOptIn string, err error) {
+	return publishSharedValue(ctx, lc, "", warn)
+}
+
+// publishSharedOptIn is the publish of the two writers that CHANGE an
+// installation's opt-in fact (R15): an operator selecting Cloud Batch passes
+// localcfg.BatchOptInOn (R2) and the opt-out passes localcfg.BatchOptInWithdrawn
+// (R16). It is the only way a new value of the fact reaches the runs bucket,
+// and the value is passed explicitly because every other publish keeps the
+// published copy's own (localcfg.MergeSharedOptIn): one machine's block is
+// never the authority on a fact of the installation, so a stale local `in`
+// cannot publish a withdrawal away — nor a stale local withdrawal an opt-in.
+//
+// Where the published copy is refused or too large and is replaced by this
+// machine's view, the value passed here is published with it (O18): the
+// replacement IS the machine's own block, which is the case O18 accepts, and
+// the warning printed beside it is the one that says the copy was replaced.
+func publishSharedOptIn(ctx context.Context, lc *localcfg.Config, optIn string, warn func(string)) (written bool, publishedOptIn string, err error) {
+	return publishSharedValue(ctx, lc, optIn, warn)
+}
+
+// publishSharedValue is the publish both entry points above are, with optIn the
+// opt-in fact this publish is writing ("" for every publish that writes none)
+// and publishedOptIn the fact the object it writes carries, read off the merged
+// config: the published copy's own value under this publish's merge, this
+// publish's value where a writer passed one and where a refused or oversized
+// published copy was replaced with this machine's view (O18).
+func publishSharedValue(ctx context.Context, lc *localcfg.Config, optIn string, warn func(string)) (written bool, publishedOptIn string, err error) {
 	anchor := SharedAnchor{Name: lc.Name, GCPProject: lc.GCPProject, Bucket: "fugaro-runs-" + lc.GCPProject, ImageSource: lc.ImageSource}
 	if lc.RunsBucketName() != anchor.Bucket {
 		warn(fmt.Sprintf("not publishing the shared config: the runs bucket is %q, and a shared config needs the default runs bucket name %s, which teammates find from gcp_project", lc.RunsBucketName(), anchor.Bucket))
-		return false, nil
+		return false, "", nil
 	}
 	// An older config has no registry_host; publish the one every command
 	// derives (infra.RegistryHost), which ParseShared then checks.
@@ -66,44 +96,55 @@ func publishSharedWarn(ctx context.Context, lc *localcfg.Config, warn func(strin
 		// The config's endpoints are fakes (tests, emulators): the gs://
 		// bucket is not the one they stand for, and opening it would reach
 		// the real network with the developer's credentials.
-		return false, nil
+		return false, "", nil
 	}
 	b, err := sharedBucketOpener(ctx, lc.BucketURL())
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	defer b.Close()
 	published, refused, err := readShared(ctx, b, anchor)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	if refused != "" {
 		warn(fmt.Sprintf("the published shared config was refused (%s); replacing it", refused))
 	}
-	data, err := localcfg.MergeShared(published, src).Marshal()
+	merged := localcfg.MergeSharedOptIn(published, src, optIn)
+	data, err := merged.Marshal()
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	if len(data) > localcfg.SharedMaxBytes && published != nil {
 		// A writer bloated the published object (model_prices) to just under
 		// the cap, so every merge goes over: replace it with the local view.
+		// That view carries the opt-in value this publish was given and never a
+		// value read off the machine's block, the same rule as the merge above
+		// (R15, O18).
 		warn("the published shared config was too large to merge; replacing it with this machine's view")
-		if data, err = localcfg.MergeShared(nil, src).Marshal(); err != nil {
-			return false, err
+		merged = localcfg.MergeSharedOptIn(nil, src, optIn)
+		if data, err = merged.Marshal(); err != nil {
+			return false, "", err
 		}
 	}
 	if len(data) > localcfg.SharedMaxBytes {
-		return false, fmt.Errorf("the shared config is %d bytes, over the %d byte limit", len(data), localcfg.SharedMaxBytes)
+		return false, "", fmt.Errorf("the shared config is %d bytes, over the %d byte limit", len(data), localcfg.SharedMaxBytes)
 	}
 	// The exact bytes are checked as a teammate will check them.
 	if _, err := ParseShared(data, anchor); err != nil {
 		warn("not publishing the shared config: " + err.Error())
-		return false, nil
+		return false, "", nil
 	}
 	if err := b.Put(ctx, infra.SharedConfigObject, data, "application/yaml"); err != nil {
-		return false, operatorWriteErr(lc.BucketURL(), infra.SharedConfigObject, err)
+		return false, "", operatorWriteErr(lc.BucketURL(), infra.SharedConfigObject, err)
 	}
-	return true, nil
+	// Read off the config that was written rather than off the value argument:
+	// the object's own fact is what a machine's file is refreshed from, so what
+	// is returned is what the write really left in the bucket.
+	if merged.Batch != nil {
+		publishedOptIn = merged.Batch.OptIn
+	}
+	return true, publishedOptIn, nil
 }
 
 // readShared is the published object as ParseShared accepts it for anchor,
