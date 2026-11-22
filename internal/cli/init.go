@@ -1309,6 +1309,11 @@ func runInit(r *initRun) error {
 				return err
 			}
 			fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsUngatedFirebase)
+			// The database's row of the mapping, and the one thing this
+			// document cannot answer: an instance that is already there keeps
+			// the location it was created in (LP2, D3091). Discovery, which
+			// would find it, is exactly what --print-vars does not run.
+			fmt.Fprintln(cmd.ErrOrStderr(), "note: "+databaseRegionNote(spec.Region))
 		}
 		_, err = cmd.OutOrStdout().Write(data)
 		return err

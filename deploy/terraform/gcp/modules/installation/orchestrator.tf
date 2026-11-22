@@ -299,8 +299,22 @@ resource "google_storage_bucket_iam_member" "orchestrator_runs_reader" {
 # var.orchestrator's own fields rather than being derived here, because a name
 # this module invented would be a second spelling of one `fugaro update`
 # already computes.
+#
+# It is ALSO the one row in this file on a second switch, var.people_minter
+# (launcher-does-not-mint plan task LM12, D3121, R8). That switch is the
+# FIREBASE root's own name for the people's row — the launchers' and the
+# operators' grant on this same signer (LM11) — and it is one name in both roots
+# because the plan that moves minting to the credentials service turns both off
+# at once: `fugaro update` applies both roots with the switch off once the
+# service has proved it signs as this signer (LM14), and the people's row and
+# this one are gone together. ON by default, so an installation that has not
+# been asked to move its grant plans exactly what it planned before this switch
+# existed; and it never gates the ISSUER's row, which is the plan's other half
+# (modules/firebase/iam.tf's issuer_minter) — a switch that took that row away
+# too would leave nobody able to mint a run's identity, which is the failure R8
+# exists to avoid.
 resource "google_service_account_iam_member" "orchestrator_token_minter" {
-  count = local.orchestrator_on ? 1 : 0
+  count = local.orchestrator_on && var.people_minter ? 1 : 0
 
   service_account_id = "projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com"
   role               = "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter"
