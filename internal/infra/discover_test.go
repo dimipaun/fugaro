@@ -720,6 +720,109 @@ func TestEveryLogBucketWithOurIDPendingDeletionIsRefused(t *testing.T) {
 	}
 }
 
+// A project whose no bucket carrying the installation's ID is ACTIVE is refused
+// by its buckets' OWN states, and the undelete command is named only for the
+// ones that are pending deletion: a bucket that is CREATING, UPDATING or FAILED
+// is not restorable at all, and an undelete command printed for it would be a
+// command that fails. The zero-ACTIVE message used to say every bucket was
+// DELETE_REQUESTED and printed an undelete for each of them, whatever they were.
+func TestNoLogBucketActiveIsWordedByState(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	inst := installationSpec(t)
+	elsewhere := "europe-west1"
+	if inst.LogBucketLocation == elsewhere {
+		t.Fatalf("the fixture's mapping already points at %s", elsewhere)
+	}
+	f.logs.AddBucket(inst.Project, "global", LogBucket, "DELETE_REQUESTED", LogBucketDescription)
+	f.logs.AddBucket(inst.Project, elsewhere, LogBucket, "CREATING", LogBucketDescription)
+	im, err := DiscoverInstallation(ctx, f.c, inst)
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("no log bucket under our ID is ACTIVE: err = %v, want a refusal", err)
+	}
+	if len(im.List) != 0 {
+		t.Errorf("no log bucket under our ID is ACTIVE and %v was imported: nothing can be adopted before the ambiguity is resolved", im.List)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"projects/" + inst.Project + "/locations/global/buckets/" + LogBucket,
+		"projects/" + inst.Project + "/locations/" + elsewhere + "/buckets/" + LogBucket,
+		"DELETE_REQUESTED",
+		"CREATING",
+		"fugaro update",
+		// Only the bucket pending deletion can be restored, and it is the only
+		// one whose undelete command the message names.
+		LogBucketUndelete(inst.Project, "global"),
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal of a project with no ACTIVE log bucket lacks %q:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, LogBucketUndelete(inst.Project, elsewhere)) {
+		t.Errorf("the refusal names an undelete command for a bucket that is CREATING, and undelete fails on it:\n%s", msg)
+	}
+	if strings.Contains(msg, "remove all but one") {
+		t.Errorf("the refusal of a project with no ACTIVE log bucket still says to remove all but one:\n%s", msg)
+	}
+}
+
+// A project whose buckets carrying the installation's ID are all in states
+// nothing restores — CREATING, UPDATING or FAILED — names no undelete command
+// at all: the message is worded by those states, and there is no command that
+// puts such a bucket back.
+func TestNoLogBucketActiveAndNonePendingDeletionNamesNoUndelete(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	inst := installationSpec(t)
+	elsewhere := "europe-west1"
+	if inst.LogBucketLocation == elsewhere {
+		t.Fatalf("the fixture's mapping already points at %s", elsewhere)
+	}
+	f.logs.AddBucket(inst.Project, "global", LogBucket, "CREATING", LogBucketDescription)
+	f.logs.AddBucket(inst.Project, elsewhere, LogBucket, "FAILED", LogBucketDescription)
+	_, err := DiscoverInstallation(ctx, f.c, inst)
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("no log bucket under our ID is ACTIVE: err = %v, want a refusal", err)
+	}
+	msg := err.Error()
+	for _, want := range []string{"CREATING", "FAILED", "fugaro update"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal of a project with no ACTIVE log bucket lacks %q:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "logging buckets undelete") {
+		t.Errorf("the refusal names an undelete command for a bucket nothing restores:\n%s", msg)
+	}
+}
+
+// The single-bucket refusal is worded by the bucket's own state too: a bucket
+// that is not pending deletion can be neither imported nor created, and the
+// message names no undelete command, because undelete is what restores a bucket
+// only while it is DELETE_REQUESTED.
+func TestDiscoverRefusesOurBucketInAStateNothingRestores(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	inst := installationSpec(t)
+	f.logs.AddBucket(inst.Project, "global", LogBucket, "CREATING", LogBucketDescription)
+	_, err := DiscoverInstallation(ctx, f.c, inst)
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("our log bucket is CREATING: err = %v, want a refusal", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "CREATING") {
+		t.Errorf("the refusal does not name the bucket's own state:\n%s", msg)
+	}
+	if strings.Contains(msg, "logging buckets undelete") {
+		t.Errorf("the refusal names an undelete command for a bucket that is CREATING, and undelete fails on it:\n%s", msg)
+	}
+	if !strings.Contains(msg, "fugaro update") {
+		t.Errorf("the refusal does not name the fix:\n%s", msg)
+	}
+}
+
 // A soft-deleted custom role is left to the plan's create, which the
 // provider turns into an undelete; an import of a deleted role would fail.
 func TestDiscoverLeavesDeletedRole(t *testing.T) {
