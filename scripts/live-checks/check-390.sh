@@ -351,11 +351,16 @@ def image_of(job):
 
 
 def remote_of(job):
+    """The FUGARO_REMOTE of a job's container. `gcloud run jobs list` forces the
+    v1 API, where an env entry's value is the string itself, so it is read as
+    one: a value of another shape answers nothing rather than raising, which
+    would empty the whole reading and turn every job row into NOT MEASURED."""
     spec = spec_of(job)
     for c in (spec or {}).get("containers") or []:
         for e in (c.get("env") or []) if isinstance(c, dict) else []:
             if isinstance(e, dict) and e.get("name") == "FUGARO_REMOTE":
-                return (e.get("value") or {}).get("value") or ""
+                value = e.get("value")
+                return value if isinstance(value, str) else ""
     return ""
 
 

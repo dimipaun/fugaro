@@ -205,7 +205,11 @@ run)
     while IFS='|' read -r name image label remote; do
       [ -n "$name" ] || continue
       if [ "$first" = yes ]; then first=no; else printf ','; fi
-      printf '{"metadata":{"name":"%s","labels":{"fugaro_repo":"%s"}},"spec":{"template":{"spec":{"template":{"spec":{"containers":[{"image":"%s","env":[{"name":"FUGARO_REMOTE","value":{"value":"%s"}}]}]}}}}}}' \
+      # The real shape of `gcloud run jobs list` (v1): an env entry's value is
+      # the string itself, not a nested object. A fake that wrapped it would
+      # hide a reader that reaches through `value.value` and raises on a real
+      # job, which empties the whole reading.
+      printf '{"metadata":{"name":"%s","labels":{"fugaro_repo":"%s"}},"spec":{"template":{"spec":{"template":{"spec":{"containers":[{"image":"%s","env":[{"name":"FUGARO_REMOTE","value":"%s"}]}]}}}}}}' \
         "$name" "$label" "$image" "$remote"
     done <"$dir/jobs"
     printf ']\n'
