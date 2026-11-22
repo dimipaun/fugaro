@@ -171,8 +171,11 @@ func TestNodeIDsSkipsClaims(t *testing.T) {
 // TestLeaseWritesDriverSibling: the daemon whose claim lands writes who it is
 // to the sibling node `orchestrator/<id>/driver` (D3218, F18), so a reader can
 // say which credential drives an id without reading the lease — whose holder is
-// a daemon's run id and not a person. A daemon that cannot say who it is writes
-// no node at all, and a takeover rewrites the one the daemon before left.
+// a daemon's run id and not a person. A takeover rewrites the one the daemon
+// before left, and a takeover by a daemon that cannot say who it is removes it:
+// the node beside a claim says who drives the id now, so the previous holder's
+// address must not stand there once the lease is somebody else's. A daemon with
+// no principal and no node before it writes nothing at all.
 func TestLeaseWritesDriverSibling(t *testing.T) {
 	ctx := context.Background()
 	f := gcpfake.NewRTDB(t)
@@ -218,6 +221,19 @@ func TestLeaseWritesDriverSibling(t *testing.T) {
 		t.Errorf("after the takeover the driver node is %+v, want %q at %s", d, nextDriver, leaseAt.Add(time.Hour))
 	}
 
+	// The takeover by a daemon that cannot say who it is: the node the daemon
+	// before left is removed, because it names a credential that no longer
+	// holds this lease — a reader that kept it would draw a driver of an
+	// orchestrator somebody else is driving (D3218, C-ORCH's readings).
+	if _, err := mustNamedLease(t, client, namedID, winnerHolder, "", clockAt(leaseAt.Add(2*time.Hour))).Acquire(ctx); err != nil {
+		t.Fatalf("taking the lease over with no driver to name: %v", err)
+	}
+	if _, found, err := client.GetETag(ctx, driverPath, nil); err != nil {
+		t.Fatalf("reading the driver node after the principal-less takeover: %v", err)
+	} else if found {
+		t.Error("the driver node the previous holder wrote is still there, and the daemon that took the lease over named no principal")
+	}
+
 	// A daemon that cannot say who it is writes no driver node rather than one
 	// naming nobody: an absent driver is read as unknown, a node naming nobody
 	// would be read as a driver of nobody (C-ORCH's readings).
@@ -234,6 +250,76 @@ func TestLeaseWritesDriverSibling(t *testing.T) {
 		t.Fatalf("reading the driver node: %v", err)
 	} else if found {
 		t.Error("a daemon with no principal to name wrote a driver node")
+	}
+}
+
+// driverRefusingCAS refuses the conditional write to one path the way a moved
+// ETag does and lets every other read and write through, so a claim that landed
+// with a driver node that did not is the case under test rather than a claim
+// that never landed at all.
+type driverRefusingCAS struct {
+	inner orchestrator.CAS
+	path  string
+}
+
+func (c *driverRefusingCAS) GetETag(ctx context.Context, path string, out any) (string, bool, error) {
+	return c.inner.GetETag(ctx, path, out)
+}
+
+func (c *driverRefusingCAS) PutIfMatch(ctx context.Context, path, etag string, v any) error {
+	if path == c.path {
+		return fmt.Errorf("the driver node's ETag moved: %w", rtdb.ErrPrecondition)
+	}
+	return c.inner.PutIfMatch(ctx, path, etag, v)
+}
+
+// TestAFailedDriverWriteTakesTheClaimBack: a claim that lands and a driver node
+// that does not is a daemon told its Acquire failed, so the claim must not stand
+// — the lease node is freed and the id is the next daemon's at once, instead of
+// being held until the TTL runs out by a daemon that stopped on the error and
+// never beats (D3218, O3).
+//
+// The failure the caller sees is the driver write's own: the lease write landed,
+// and reporting a claim the daemon does not hold would be the reading
+// LeaseState's Held exists to refuse.
+func TestAFailedDriverWriteTakesTheClaimBack(t *testing.T) {
+	ctx := context.Background()
+	f := gcpfake.NewRTDB(t)
+	client := rtdbClient(t, f)
+	driverPath, err := orchestrator.PathDriver(namedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leasePath, err := orchestrator.PathLease(namedID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	db := &driverRefusingCAS{inner: client, path: driverPath}
+	lease := mustNamedLease(t, db, namedID, winnerHolder, namedDriver, clockAt(leaseAt))
+	if state, err := lease.Acquire(ctx); err == nil {
+		t.Fatalf("the claim whose driver write failed is reported as %+v, want the failure", state)
+	} else if !strings.Contains(err.Error(), "recording who drives") {
+		t.Errorf("the failure is %q, want the driver write's own", err)
+	}
+
+	var raw json.RawMessage
+	found, err := client.Get(ctx, leasePath, &raw)
+	if err != nil {
+		t.Fatalf("reading the lease node: %v", err)
+	}
+	if found {
+		t.Errorf("the lease node is %s, want no node at all: a failed Acquire leaves the id free", raw)
+	}
+
+	// And the id is free rather than merely unheld: the next daemon takes it on
+	// the first attempt, with nothing to wait out.
+	taken, err := mustNamedLease(t, client, namedID, loserHolder, nextDriver, clockAt(leaseAt)).Acquire(ctx)
+	if err != nil {
+		t.Fatalf("taking the lease the failed claim left behind: %v", err)
+	}
+	if !taken.Held || taken.Holder != loserHolder {
+		t.Errorf("the next daemon holds %+v, want the lease the failed claim freed", taken)
 	}
 }
 
