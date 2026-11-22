@@ -59,8 +59,10 @@ const (
 	// call for. It is spelled from the config vocabulary that also names the
 	// mode (config.CredentialTypeVertex, the built-in credential's type and the
 	// `auth: vertex` a run's own environment calls vertex), because
-	// internal/gateway keeps that string unexported: its exported kinds are the
-	// two it spells elsewhere as well (KindOAuth, KindService).
+	// internal/gateway keeps that string unexported. That package's own scan
+	// over the tree (internal/gateway/oauth_test.go) refuses any file outside
+	// its tier-A set that names the subscription kind at all, which is why the
+	// name of that kind is written nowhere here.
 	vertexUpstreamKind = config.CredentialTypeVertex
 
 	// vertexAnthropicVersion is the version of the publisher wire, which Vertex
