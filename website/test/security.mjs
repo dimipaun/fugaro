@@ -2114,7 +2114,9 @@ test('a wrapped bullet is one bullet to the page', (t) => {
   const summary = findAll(parse(html), (el) => el.attrs.has('data-security-summary'))[0]
   assert.ok(summary !== undefined, `the copy's page carries no "data-security-summary" region, so there is nothing to read the wrapped bullet out of`)
   const items = findAll(summary, 'li')
-  assert.equal(items.length, 7, `the page renders ${items.length} bullets where the document writes 7: a wrapped bullet is one bullet and its continuation is not a seventh`)
+  // Eight since 2026-11-21: dynamic-delivery's DS4.3 added the summary's bullet on the intake
+  // and the slips a run holds, so the document this case reads writes one bullet more.
+  assert.equal(items.length, 8, `the page renders ${items.length} bullets where the document writes 8: a wrapped bullet is one bullet and its continuation is not an eighth`)
   assert.match(
     prose(text(items[items.length - 1])),
     /and this half of the same bullet/,
@@ -2547,9 +2549,14 @@ test('the gate refuses each planted defect', (t) => {
     /<a href="https:\/\/github\.com\/dimipaun\/fugaro\/blob\/main\/SECURITY\.md#scope">Scope<\/a>/,
     'Scope',
   )
+  //
+  // Re-derived 2026-11-21: dynamic-delivery's DS4.3 added the summary's bullet on the intake
+  // and the slips a run holds, whose cross-reference resolves to the new heading the document
+  // carries for it, so the drop this plant makes is 8 links of the 9 the section writes rather
+  // than 7 of 8 — `[Money](#money)` is still the one reference no heading answers.
   assert.match(
     verdict(t, scopeUnlinked).join('\n'),
-    /carries 7 links where SECURITY\.md's "In short" section writes 8/,
+    /carries 8 links where SECURITY\.md's "In short" section writes 9/,
     'a cross-reference with its link dropped is not refused',
   )
 
