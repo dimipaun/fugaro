@@ -566,20 +566,18 @@ func orchestratorServiceConfig(ctx context.Context, getenv func(string) string, 
 	// local file, no checkout, no repository entry.
 	//
 	// The budget block is the one place this file states a fact the deployment
-	// did not hand it, and the mode is deliberately the strict one. What the
-	// mode decides HERE is one thing only: whether the launcher mints the run
-	// its budget identity (budgetBackendOn: a mode that is not off with a
-	// database configured). A resident launch must mint, and this process
-	// cannot see the published policy to prove a run does not need one — a
-	// config it built with the mode off would send it to read that policy over
-	// an IAM read this account holds no permission for (finding A) and refuse
-	// every launch. What the mode does NOT decide here is the run's own guard:
-	// the mode the run enforces is the one its job was deployed with and the
-	// one the published policy carries (internal/runner's Spend, merged from
-	// the environment and the policy node), and the launcher's local mode
-	// reaches no execution — so the draft the token's claims are minted under
-	// this mode is exactly the draft a person's `fugaro run` mints under a
-	// project whose mode is on.
+	// did not hand it: the database, its Firebase project and the signer this
+	// installation's launches mint through. It names no mode, and that is not
+	// an omission: a launch mints whatever the mode is (budgetBackendOn: the
+	// database decides), so a mode this file wrote would decide nothing — a
+	// resident launch must mint exactly as a person's `fugaro run` does, and
+	// the mode a run is accounted for under is the one its job was deployed
+	// with and the one the published policy carries (internal/runner's Spend,
+	// merged from the environment and the policy node). The launcher's local
+	// mode reaches no execution, which is what the field used to be here for
+	// (AB4): while the mode decided the mint, this process had to write the
+	// strict one to keep its launches from reading a policy over an IAM read
+	// this account holds no permission for (finding A).
 	//
 	// The ceilings are zero and are not a claim about the installation: they
 	// are the gate block's (freshLaunchGates), which a resident launch does not
@@ -596,7 +594,6 @@ func orchestratorServiceConfig(ctx context.Context, getenv func(string) string, 
 		RunsBucket: u.Host,
 		Bucket:     rawBucket,
 		Budget: &localcfg.Budget{
-			Mode:            localcfg.BudgetEnforce,
 			FirebaseProject: fb,
 			RTDBURL:         rawURL,
 			TokenSigner:     fmt.Sprintf("%s@%s.iam.gserviceaccount.com", infra.SignerAccountID, fb),

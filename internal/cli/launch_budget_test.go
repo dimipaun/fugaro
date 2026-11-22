@@ -27,12 +27,17 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-const testSigner = "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
+// testSigner is the signer the fixture's installation mints through: the
+// harness's own (testutil.BudgetSigner), which is the account its config block
+// names and the one the fixture's fake IAM Credentials API signs as.
+const testSigner = testutil.BudgetSigner
 
 // launchBudgetFixture is a cloud fixture whose project has the budget
-// backend: an RTDB fake, an IAM Credentials fake that can sign as the signer.
+// backend: an RTDB fake this file seeds, the harness's signer and the IAM
+// Credentials fake that signs as it.
 type launchBudgetFixture struct {
 	*cloudFixture
 	db  *gcpfake.RTDB
@@ -50,9 +55,8 @@ func newLaunchBudget(t *testing.T, mode string) *launchBudgetFixture {
 // counterpart for, and the one a test about an unreadable ledger turns on.
 func newLaunchBudgetWith(t *testing.T, mode string, members ...string) *launchBudgetFixture {
 	t.Helper()
-	iam := gcpfake.NewIAMCredentials(t)
-	iam.AddSigner(testSigner)
-	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "iam_credentials: "+iam.URL+"/"), db: gcpfake.NewRTDB(t), iam: iam}
+	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t)}
+	f.db, f.iam = f.cloudFixture.budget.DB, f.cloudFixture.iam
 	extra := ""
 	for _, m := range members {
 		extra += m + ", "
@@ -481,9 +485,8 @@ func TestMintIsNotNeededWithoutADatabaseWhateverTheMode(t *testing.T) {
 // a launch mint (or refuse to) is the only thing that varies.
 func newOffModeBudget(t *testing.T, budget string) *launchBudgetFixture {
 	t.Helper()
-	iam := gcpfake.NewIAMCredentials(t)
-	iam.AddSigner(testSigner)
-	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t, "iam_credentials: "+iam.URL+"/"), db: gcpfake.NewRTDB(t), iam: iam}
+	f := &launchBudgetFixture{cloudFixture: newCloudFixture(t)}
+	f.db, f.iam = f.cloudFixture.budget.DB, f.cloudFixture.iam
 	f.appendConfig(t, budget)
 	f.db.Set("fugaro/project", "aurora")
 	f.db.Set("config/mode", "enforce")

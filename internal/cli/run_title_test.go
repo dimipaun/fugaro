@@ -233,7 +233,6 @@ func TestRunBatchCarriesTheTitle(t *testing.T) {
 // no title and this test fails.
 func TestReviewLaunchCarriesTheTitle(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release085)
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261018-120000-abcd",
 		"--recipe", "review-only", "--pr", "7", "--title", "Review the flaky-test PRs"); err != nil {
 		t.Fatal(err)
