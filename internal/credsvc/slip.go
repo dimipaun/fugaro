@@ -966,7 +966,7 @@ func (s *Server) grantPool(ctx context.Context, req SlipGrantRequest, account st
 	admitted := ""
 	for _, name := range req.Credentials {
 		governed, served := false, false
-		for _, pool := range shared.CraftPools {
+		for _, pool := range pools {
 			if !poolGovernsName(pool, name) {
 				continue
 			}
