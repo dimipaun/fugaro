@@ -11,8 +11,10 @@
 # the check launches, and the run's own `result.json` in the runs bucket with
 # the source, the fallback flag and the fallback dollars on it. Every case below
 # bends one of those: a chain that does not start with the pool, a pool with a
-# member still good, a run the pool served, a step nobody flagged, fallback
-# dollars of zero, a record that carries no source at all.
+# member still good, a member whose headroom nobody reported, a member whose
+# window has reopened, an available member's next reset, a member inside a window
+# still closed, a run the pool served, a step nobody flagged, fallback dollars of
+# zero, a record that carries no source at all.
 #
 # Usage: bash scripts/live-checks/check-881-chain-falls-through_test.sh
 set -euo pipefail
@@ -512,6 +514,10 @@ test_the_cap_read_is_the_checkouts_own() {
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "budget show --json --repo acme/chk881" "the checkout's own cap: the repository is named on the call"
   expect_contains "$out" "acme/chk881" "the checkout's own cap: the row names it"
   expect_contains "$out" '$10' "the checkout's own cap: its own figure, not the other repository's"
+  # The row's `(from <source>)` is read off the same row as the figure: reading the
+  # figure first would leave the source to be taken from the truncated string and
+  # print the figure as its own source ("$10 (from 10)").
+  expect_contains "$out" '$10 (from default)' "the checkout's own cap: the source the cap came from"
 }
 
 test_another_repositorys_cap_is_not_this_ones() {
@@ -597,6 +603,73 @@ JSON
   expect_contains "$out" "FACT first-source: FAIL" "a pool with a member still good: the row"
   expect_contains "$out" "still has a member that can serve" "a pool with a member still good: what it found"
   assert_no_launch "$dir" "a pool with a member still good"
+}
+
+test_a_member_with_no_headroom_figure_can_serve() {
+  # PL10: headroom is absent where the provider reported no utilisation figure,
+  # and absent is not zero. A member whose headroom nobody reported is one this
+  # check may not call unable to serve: reading it as unable passes the gate and
+  # spends a run on a pool that could have served it.
+  local dir=$work/noheadroom
+  setup_case "$dir"
+  cat >"$dir/answers/pools.json" <<JSON
+{"pools":[{"name":"${pool}","rule":"failover",
+  "members":[{"state":"available","usage":0.1}]}]}
+JSON
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 2 "a member with no headroom figure"
+  expect_contains "$out" "FACT first-source: FAIL" "a member with no headroom figure: the row"
+  expect_contains "$out" "still has a member that can serve" "a member with no headroom figure: what it found"
+  assert_no_launch "$dir" "a member with no headroom figure"
+}
+
+test_a_member_whose_window_has_reopened_can_serve() {
+  # An exhausted mark whose hold has lapsed serves again (internal/creds
+  # Mark.Usable): the state word stays "exhausted", so only the instant says
+  # whether the window is closed, and a past exhausted_until is not "unable".
+  local dir=$work/reopened
+  setup_case "$dir"
+  cat >"$dir/answers/pools.json" <<JSON
+{"pools":[{"name":"${pool}","rule":"failover",
+  "members":[{"state":"exhausted","usage":0.9,"exhausted_until":"2000-01-01T00:00:00Z"}]}]}
+JSON
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 2 "a member whose window has reopened"
+  expect_contains "$out" "FACT first-source: FAIL" "a member whose window has reopened: the row"
+  assert_no_launch "$dir" "a member whose window has reopened"
+}
+
+test_an_available_members_next_reset_can_serve() {
+  # PL10 prints a next reset for every member, not only an exhausted one, and an
+  # available member's reset is when its window rolls over: a member that is not
+  # exhausted is not waiting for a clock, so its reset is no closed window, and
+  # reading it as one would call a pool that can serve unable.
+  local dir=$work/nextreset
+  setup_case "$dir"
+  cat >"$dir/answers/pools.json" <<JSON
+{"pools":[{"name":"${pool}","rule":"failover",
+  "members":[{"state":"available","usage":0.1,"reset":"2999-01-01T00:00:00Z"}]}]}
+JSON
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 2 "an available member's next reset"
+  expect_contains "$out" "FACT first-source: FAIL" "an available member's next reset: the row"
+  expect_contains "$out" "still has a member that can serve" "an available member's next reset: what it found"
+  assert_no_launch "$dir" "an available member's next reset"
+}
+
+test_a_member_inside_a_closed_window_cannot_serve() {
+  # The state the check needs: the only member's window is still closed, so the
+  # pool cannot serve and the run below falls through to the key.
+  local dir=$work/closedwindow
+  setup_case "$dir"
+  cat >"$dir/answers/pools.json" <<JSON
+{"pools":[{"name":"${pool}","rule":"failover",
+  "members":[{"state":"exhausted","usage":1.0,"exhausted_until":"2999-01-01T00:00:00Z"}]}]}
+JSON
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 0 "a member inside a closed window"
+  expect_contains "$out" "FACT first-source: PASS" "a member inside a closed window: the row"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "run --task-file" "a member inside a closed window: the run still goes out"
 }
 
 test_no_designated_pool_is_the_skip_it_measures() {
@@ -749,6 +822,10 @@ JSON
   expect_status "$status" 2 "a run that never ends"
   expect_contains "$out" "FACT run: FAIL" "a run that never ends: the row"
   expect_contains "$out" "still not terminal" "a run that never ends: what it saw"
+  # The row says what `runs ls` answered with, not whether it answered at all: the
+  # owner reading the block needs the row's own terminal and outcome.
+  expect_contains "$out" "terminal=false, outcome=none" "a run that never ends: the row it read is printed"
+  expect_absent "$out" "was read yes" "a run that never ends: the yes/no it used to print is gone"
 }
 
 test_a_run_still_going_is_not_read_as_ended() {
@@ -830,6 +907,10 @@ t test_a_missing_checkout_is_refused
 t test_a_chain_that_does_not_start_with_the_pool_stops
 t test_a_chain_of_only_the_pool_stops
 t test_a_pool_with_a_member_still_good_stops_before_spending
+t test_a_member_with_no_headroom_figure_can_serve
+t test_a_member_whose_window_has_reopened_can_serve
+t test_an_available_members_next_reset_can_serve
+t test_a_member_inside_a_closed_window_cannot_serve
 t test_no_designated_pool_is_the_skip_it_measures
 t test_a_project_that_is_not_enforced_stops
 t test_a_repository_with_no_per_run_cap_stops

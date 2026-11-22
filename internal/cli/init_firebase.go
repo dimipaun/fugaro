@@ -202,7 +202,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 		counts := infra.CountPlan(plan)
 		// The managed gate first, and the guard and the confirmation only when it
 		// does not admit this plan (D1016, update_managed.go).
-		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil)
+		gated, err := r.gateStep(ctx, t, imports, r.coverOfFirebase(), nil, nil)
 		if err != nil {
 			return plan, err
 		}
@@ -932,6 +932,12 @@ func (r *initRun) deployFirestore(ctx context.Context, fs *infra.FirestoreStep) 
 	}
 	if err := fs.Apply(ctx); err != nil {
 		return initErr(err)
+	}
+	// A database that appeared between the plan and the write, in the location
+	// the plan named, is adopted and not created — and the run says where it
+	// is, because nobody chose it in this run and its location is permanent.
+	if loc := fs.AdoptedLocation(); loc != "" {
+		fmt.Fprintf(r.w, "Cloud Firestore database: created by someone else after the plan, in %s, adopted as it is\n", loc)
 	}
 	fmt.Fprintln(r.w, "ensured the Firestore database, its deny-all rules and its mark (read back)")
 	return nil

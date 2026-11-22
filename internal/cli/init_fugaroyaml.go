@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // gcpProjectFieldSince is the first fugaro release whose fugaro.yaml parser
@@ -249,6 +250,83 @@ func (r *initRun) writeAnchor(a *anchorEdit, env initflow.Env, planOnly bool) (b
 		return false, err
 	}
 	fmt.Fprintf(r.w, "Updated %s with gcp_project. Review it with git diff and commit it like any change. Every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before you merge a change that adds gcp_project: older versions refuse the key as unknown.\n", a.path)
+	return true, nil
+}
+
+// budgetModeEdit is the removal of the budget.mode line from a checkout's
+// fugaro.yaml, prepared and not yet written (AB8b, D3022, F12).
+type budgetModeEdit struct {
+	path     string
+	old, out []byte
+}
+
+// prepareBudgetModeRemoval reads the fugaro.yaml of the checkout at root and
+// makes the edit that takes the word which is not a budget mode any more out of
+// it; nil when the file does not say it.
+//
+// The word is read out of the bytes and before anything judges the file (F22):
+// from AB2 on, a checkout's file that says off is refused by the config's own
+// validation, and this edit is the fix that refusal names — so the reading is
+// localcfg.RemovedBudgetMode, which validates nothing. The edit is a splice and
+// not a re-marshal, so the file keeps every byte it had around the line, and a
+// splice the editor refuses is the caller's to say rather than a silent write.
+func prepareBudgetModeRemoval(root string) (*budgetModeEdit, error) {
+	path := filepath.Join(root, "fugaro.yaml")
+	old, err := requireFugaroYAML(path)
+	if err != nil {
+		return nil, err
+	}
+	if _, off := localcfg.RemovedBudgetMode(old); !off {
+		return nil, nil
+	}
+	out, err := yamledit.RemoveKey(old, []string{"budget", "mode"})
+	if err != nil {
+		return nil, err
+	}
+	return &budgetModeEdit{path: path, old: old, out: out}, nil
+}
+
+// writeBudgetModeRemoval is the one write of the removal, after writeAnchor's
+// pattern: the diff, then --yes writes, a person at the terminal writes having
+// read the diff, and anything else leaves the file alone and prints the line to
+// remove. Nothing is typed for it (docs/no-prompt-policy). planOnly prints what
+// it would do and writes nothing. It reports whether the file was written.
+//
+// A managed project's own terminal is asked nothing here either, for the reason
+// writeAnchor's is not: the diff above is the whole of what the owner reads,
+// the line to remove is not needed because the write is made, and the sentence
+// says why.
+func (r *initRun) writeBudgetModeRemoval(a *budgetModeEdit, env initflow.Env, planOnly bool) (bool, error) {
+	if a == nil {
+		return false, nil
+	}
+	fmt.Fprintf(r.w, "%s\n%s", a.path, lineDiff(string(a.old), string(a.out)))
+	removeLine := fmt.Sprintf("to let this repository's runs start again, remove the budget.mode line from %s: it is not a budget mode any more (there is always a budget, and a mode left unset is observe)\n", a.path)
+	switch {
+	case planOnly:
+		fmt.Fprintln(r.w, "  (plan only: fugaro.yaml is not written)")
+		return false, nil
+	case r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()):
+		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
+	case env.Yes:
+		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
+	case !env.Interactive:
+		fmt.Fprint(r.w, removeLine)
+		return false, nil
+	default:
+		ok, err := r.confirmNow("write this to " + a.path + "?")
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			fmt.Fprint(r.w, removeLine)
+			return false, nil
+		}
+	}
+	if err := writeFileAtomic(a.path, a.out); err != nil {
+		return false, err
+	}
+	fmt.Fprintf(r.w, "Updated %s: the budget.mode line is gone, and the file keeps every other byte it had. Review it with git diff and commit it like any change; until the line is merged away this repository's runs are refused.\n", a.path)
 	return true, nil
 }
 

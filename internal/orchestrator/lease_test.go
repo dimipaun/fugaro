@@ -393,7 +393,7 @@ func clockAt(at time.Time) orchestrator.ServerNow {
 
 func mustLease(t *testing.T, db orchestrator.CAS, holder string, now orchestrator.ServerNow) *orchestrator.Lease {
 	t.Helper()
-	lease, err := orchestrator.NewLease(db, daemonID, holder, now)
+	lease, err := orchestrator.NewLease(db, daemonID, holder, "", now)
 	if err != nil {
 		t.Fatalf("building the lease for %q: %v", holder, err)
 	}

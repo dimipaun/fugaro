@@ -96,9 +96,10 @@ type FirestoreStep struct {
 	FP, Project, GCPProject, Version string
 	// Location is where a database this step creates goes: place.For's answer
 	// for the installation's region (D3085). It is what a database that does
-	// not exist is created in, and it decides nothing about one that does —
-	// a database that exists keeps the location it has, wherever that is
-	// (R5, D3091).
+	// not exist is created in, and a database that existed at plan time keeps
+	// the location it has, wherever that is (R5, D3091). A database that
+	// appears between the plan and the write is adopted only when it appeared
+	// here, because this is the location the person confirmed.
 	Location string
 	// Place is the place the installation's region lies in, which is what
 	// says whether an adopted database is outside it (D3091).
@@ -109,6 +110,10 @@ type FirestoreStep struct {
 	planned                          bool
 	warnings                         []string
 	createDB, deployRules, writeMark bool
+	// adoptedDB is where a database that appeared between the plan and the
+	// write, and was adopted instead of created, lives ("" when Apply created
+	// the database itself, or when the plan already found one).
+	adoptedDB string
 }
 
 func (s *FirestoreStep) mark() FirestoreMark {
@@ -120,6 +125,12 @@ func (s *FirestoreStep) Pending() bool { return s.createDB || s.deployRules || s
 
 // CreatesDatabase reports that Plan found no database.
 func (s *FirestoreStep) CreatesDatabase() bool { return s.createDB }
+
+// AdoptedLocation is where a database that appeared after the plan, and was
+// adopted instead of created, lives; "" when Apply created the database itself
+// or when the plan already found one. The run says where it is, because it did
+// not create it and the location is permanent (D3091).
+func (s *FirestoreStep) AdoptedLocation() string { return s.adoptedDB }
 
 func fsErr(what string, err error) error {
 	if errors.Is(err, firestore.ErrPermission) {
@@ -272,11 +283,28 @@ func (s *FirestoreStep) Apply(ctx context.Context) error {
 		db, err := s.FS.CreateDatabase(ctx, s.Location, true)
 		created := err == nil
 		if errors.Is(err, firestore.ErrPrecondition) {
-			// Created by someone since the plan: adopt only if it is ours to adopt.
+			// Created by someone since the plan: adopt only if it is ours to
+			// adopt, and only where the plan and the person's confirmation put
+			// it. Ours-or-empty is asked first, because a database holding
+			// somebody else's data is refused for that and not for where it is
+			// — and the refusal's own way out would be wrong advice about a
+			// database the next plan would refuse too.
 			if db, err = s.FS.GetDatabase(ctx); err == nil {
 				if err = s.checkExisting(db); err == nil {
-					// Created by someone else meanwhile: ours only if empty or marked.
-					_, err = s.adoptable(ctx)
+					if _, err = s.adoptable(ctx); err == nil {
+						if db.LocationID != s.Location {
+							// A location is permanent and s.Location is the one
+							// confirmed, so a database that appeared elsewhere
+							// is a state nothing agreed to: refuse rather than
+							// quietly keeping the installation's history where
+							// nobody said it would live.
+							err = userErr("the Firebase project %s has had a Firestore database created in %s since this run read it, and this run was confirmed to create one in %s: a location can never be changed, so fugaro adopts a database only where the plan said it would be, and creates none. Nothing was written; run it again, and the plan will read the database where it is and adopt it there once you confirm", s.FP, db.LocationID, s.Location)
+						} else {
+							// Ours, and where it was confirmed: the run says
+							// where it is, because it did not create it.
+							s.adoptedDB = db.LocationID
+						}
+					}
 				}
 			}
 		}
@@ -286,8 +314,10 @@ func (s *FirestoreStep) Apply(ctx context.Context) error {
 		if created && (db.LocationID != s.Location || db.Type != "FIRESTORE_NATIVE") {
 			// We created it, and the service creates where it was asked: a
 			// location or a mode that is not the one confirmed is a surprise.
-			// A database that was already there is another matter — it is
-			// adopted where it is, whatever that is (R5, D3091).
+			// A database that existed at plan time is another matter — the plan
+			// named where it is and the person confirmed adopting it there,
+			// whatever that is (R5, D3091) — and the race above refuses one that
+			// appeared elsewhere after the plan, because nothing confirmed it.
 			return fmt.Errorf("the Firestore database of %s reads back in location %q, type %s, not %s: stopping", s.FP, db.LocationID, db.Type, s.Location)
 		}
 		s.createDB = false
