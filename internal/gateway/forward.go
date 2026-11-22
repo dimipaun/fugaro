@@ -1569,14 +1569,15 @@ var hopByHop = map[string]bool{
 // dropResponseHeaders never reach the agent: they identify the
 // organization behind the real key, or set state on the gateway's origin.
 //
-// The credentials service's answer headers are four more of them (C1.15,
+// The credentials service's answer headers are five more of them (C1.15,
 // service.go), and they are dropped for every upstream kind rather than only
 // under a service one: the tier is what C1.16 charges the call by, the name
-// is which of the project's credentials answered, the switch is which
-// credential a call moved between, and the probe is which tiers were tried.
-// The agent is the one party that must never learn the set of credentials its
-// project holds (D143), and every later upstream kind that answers with them
-// would have to remember this list.
+// is which of the project's credentials answered, the owner is whose token
+// that credential is (F16), the switch is which credential a call moved
+// between, and the probe is which tiers were tried. The agent is the one party
+// that must never learn the set of credentials its project holds (D143), and
+// every later upstream kind that answers with them would have to remember this
+// list.
 //
 // The workspace's headroom header is the fifth (W7, workspace_headroom.go),
 // and the figure it carries is the workspace's own — its month across all of
@@ -1596,7 +1597,7 @@ var hopByHop = map[string]bool{
 // agent with it.
 var dropResponseHeaders = map[string]bool{
 	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
-	HeaderTier: true, HeaderCredential: true, HeaderSwitch: true, HeaderProbe: true,
+	HeaderTier: true, HeaderCredential: true, HeaderCredentialOwner: true, HeaderSwitch: true, HeaderProbe: true,
 	WorkspaceHeadroomHeader: true, WorkspaceRefusalHeader: true,
 }
 
