@@ -303,7 +303,7 @@ func (res *workspaceResolver) scopeFor(call MemberCall, node *projectpolicy.Work
 			repoAuth: &creds.RTDBStore{DB: memberReadOnly{Getter: db}},
 			outcomes: RTDBOutcomes{DB: db},
 			offering: workspaceOffering{w: res.w, call: call, node: node},
-			forge:    workspaceForge{repos: repos, tokens: workspaceTokensOf(node)},
+			forge:    workspaceForge{repos: repos, tokens: workspaceTokensOf(node, call.Member.Project)},
 			repos:    repos,
 		},
 	}, nil
@@ -614,9 +614,10 @@ func (o workspaceOffering) Offering(ctx context.Context, b *Bundle) ([]creds.Cre
 // refused, and so is one the member admitted and the owner did not declare.
 //
 // The token store is the workspace's own DECLARATION and never its bundle: the
-// names the owner's node shares, chosen for the repository the call is on, and
-// read for a value by the route out of the snapshot it already holds (C1's rule
-// 10, workspaceTokens below).
+// names the owner's node shares WITH THIS CALL'S MEMBER — the allow-list is
+// asked here as it is on the model route (R5, workspaceTokensOf) — chosen for
+// the repository the call is on, and read for a value by the route out of the
+// snapshot it already holds (C1's rule 10, workspaceTokens below).
 type workspaceForge struct {
 	repos  map[string]string
 	tokens workspaceTokens
@@ -648,12 +649,14 @@ func (f workspaceForge) Covers(_ context.Context, canonical string) (bool, error
 // **A name the bundle does not hold is skipped, and so is one that does not
 // cover this repository**: the pool's own rule (WorkspaceShared's two skips),
 // read on the proxy's side of the same declaration. The selection ranks nothing
-// and asks no project: what a call may reach is the fence Covers and the
-// member's own policy have already answered (R5), and the owner's coverage says
-// which of the workspace's credentials pays for it. A read the projection cannot
-// make — a token whose value the bundle holds for no name the node declares — is
-// the contract's no_bitbucket_token class, which is a refusal and never a call
-// forwarded without a credential (D143).
+// and asks no project of its OWN: the project is the store's, settled where the
+// store is built (workspaceTokensOf), so what a call may reach is the fence
+// Covers, the entry's allow-list and the member's own policy have already
+// answered (R5), and the owner's coverage says which of the workspace's
+// credentials pays for it. A read the projection cannot make — a token whose
+// value the bundle holds for no name the node declares — is the contract's
+// no_bitbucket_token class, which is a refusal and never a call forwarded
+// without a credential (D143).
 type workspaceTokens []workspaceToken
 
 // workspaceToken is one entry of the node's shared list: the name the bundle
@@ -667,13 +670,33 @@ type workspaceToken struct {
 // it here: a model entry (and a version-1 entry, which is one) names no
 // repository this store could choose a token for, and a GitHub entry is the App
 // key's, which the mint reads out of the bundle itself.
-func workspaceTokensOf(node *projectpolicy.WorkspaceCredentials) workspaceTokens {
+//
+// **An entry the allow-list does not name the CALLING MEMBER's project for is
+// not one to store** (R5, D1298): the workspace's leg of the intersection is
+// asked on the forge route as it is on the model one (creds.Shared.SharedWith,
+// behind AdmitShared), and a store built without it serves the workspace's
+// Bitbucket token to a member the owner offered it to nobody — Select is handed
+// a repository and never the calling member, so no later reader can ask the
+// question this one has to. The member's own policy is no substitute for the
+// leg: a policy that admits a proxied token for a covered repository admits it
+// whatever the allow-list says, which is why AdmitShared asks both. A dropped
+// entry falls through Select's scans to the coverage refusal, and no route, no
+// member and no repository keeps a second list of the pool's entries.
+//
+// Validate makes the two arms one question: an entry carries the member projects
+// it is offered to or `all_members`, never both and never neither
+// (validateSharedEntryV2), so this filter only ever narrows what the owner's
+// declaration already said.
+func workspaceTokensOf(node *projectpolicy.WorkspaceCredentials, project string) workspaceTokens {
 	if node == nil {
 		return nil
 	}
 	var out workspaceTokens
 	for _, s := range node.Shared {
 		if s.Kind != gitprov.KindBitbucket {
+			continue
+		}
+		if !s.AllMembers && !slices.Contains(s.Projects, project) {
 			continue
 		}
 		out = append(out, workspaceToken{name: s.Name, covers: slices.Clone(s.Covers)})

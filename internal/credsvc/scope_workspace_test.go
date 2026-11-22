@@ -1195,6 +1195,21 @@ func TestWorkspaceScopeAnswersItsReaders(t *testing.T) {
 	if _, err := declaredStore.Select(context.Background(), held, other, false); !errors.As(err, &refusal) || refusal.Class != bbtokens.ClassNotCovered {
 		t.Errorf("Select of a repository the owner's coverage does not name = %v, want the coverage refusal (C3's covers)", err)
 	}
+	// And the allow-list is a fence on this store too, which is R5's first leg
+	// and not the model route's alone: the same entry offered to the OTHER
+	// member alone is one this call is not served, however well the owner's
+	// coverage covers the repository — the store holds no entry for it, so
+	// Select falls through to the coverage refusal rather than forwarding the
+	// workspace's token on a project the owner offered it to nobody (D1298).
+	unoffered := wsOneRepo()
+	unoffered.Shared = append(unoffered.Shared, projectpolicy.WorkspaceShared{
+		Name: config.BitbucketSecret, Kind: gitprov.KindBitbucket,
+		Projects: []string{wsMemberB}, Covers: []string{repo},
+	})
+	unofferedStore := newWS2Scope(t, wsPublished(unoffered)).served(t, MessagesPath, wsAccountA).Forge().Bitbucket()
+	if _, err := unofferedStore.Select(context.Background(), held, repo, false); !errors.As(err, &refusal) || refusal.Class != bbtokens.ClassNotCovered {
+		t.Errorf("Select of a covered repository whose entry the allow-list names another member alone = %v, want the coverage refusal: the entry's projects is asked beside the member's own policy (R5, D1298)", err)
+	}
 	covered, err := sc.Forge().Covers(context.Background(), wsRepo)
 	if err != nil {
 		t.Fatalf("Covers: %v", err)
