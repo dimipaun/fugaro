@@ -198,6 +198,10 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
         'the caps panel\'s own word for what a figure is (`CAPS_BILLED_WORD` and its neighbours, this file\'s constants: the panel draws no column headers, so every figure carries one), and the caller passes those constants and nothing else',
     },
     note: 'model.notes holds only the console\'s own sentences (`buildSpendModel`), the one interpolation being a count the console computed',
+    'caps.note':
+      '`SpendCaps.note` has one writer, `capsFromFeed`, and what it writes is this file\'s own `CAPS_STREAM_ABSENT`; the whole-document read leaves it `null`. A document\'s own sentences take the `putText` branch beside it (`caps.warnings`, the `sentence` class)',
+    'caps.modeCarried ? CAPS_MODE_UNSET_WORD : CAPS_MODE_ABSENT_WORD':
+      'both words are this file\'s: `CAPS_MODE_UNSET_WORD` is the console\'s reading of the CLI\'s empty `mode` (the help\'s "unset, which acts as observe" -- the JSON carries `""` and never the phrase), and `CAPS_MODE_ABSENT_WORD` is the console\'s own name for a read that carried no `mode` member at all (RS5\'s streamed caps feed). The choice between them is `caps.modeCarried`, a boolean the model sets from the document\'s own keys, so no string a document wrote reaches this cell',
     'series.empty': "the console's own sentence for an account with no point to draw, written by `buildSeries`/`withheldSeries` -- or `null`, the branch that draws no cell at all",
   },
   'projects.ts': {
