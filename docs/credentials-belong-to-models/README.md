@@ -1,6 +1,6 @@
 # Credentials belong to models, not repositories
 
-**Superseded 2026-11-21 by [model-credentials-routing](../model-credentials-routing/README.md): every task not merged is withdrawn and carried there (CM1, CM3, CM22 and CM32 had merged); no task of this plan is launched.** Former status: plan only; nothing is implemented; no task approved. See
+**Superseded 2026-11-21 by [model-credentials-routing](../model-credentials-routing/README.md): every task not merged is withdrawn there and carried by a task of it, except CM2, which is not replaced (CM1, CM3, CM22 and CM32 had merged); no task of this plan is launched.** Former status: plan only; nothing is implemented; no task approved. See
 [docs/status.md](../status.md) for the current table. Spec owner: Dimi Paun (the owner). Date:
 2026-11-20. Checked against `origin/main` at `d57d71ddb`.
 
@@ -14,12 +14,13 @@ of always a budget, and is the third spec of that series.
 **Superseded in part on 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)
 (D3170).** That plan sets how a model is reached once, in the project's routing table, and its
 table supersedes this plan's craft access: the credential stops being a craft's. **Every task of
-this plan that is not merged is withdrawn** and carried by a task of that plan, and **contract C1
-is withdrawn, its draft pull request #3460 still open and to be closed unmerged**, re-cut as
-that plan's C1. What
-is merged is kept — CM1, CM3, CM22, CM32 and CM35 — with this plan's two-release removal of
-`agent.auth` (R3) and its rule that an unmigrated repository runs as its file says. The withdrawn
-tasks are stopped by the owner by hand before any launches (that plan's O1). The task-by-task
+this plan that is not merged is withdrawn**, carried by a task of that plan except CM2
+(per-repository crafts), which is not replaced: one table per project, and that plan's RT2
+carries admission. **Contract C1 is withdrawn, its draft pull request #3460 still open and to be
+closed unmerged**, re-cut as that plan's C1. What is merged is kept — CM1, CM3, CM22, CM32 and CM35
+— with this plan's two-release removal of `agent.auth` (R3) and its rule that an unmigrated
+repository runs as its file says. The withdrawn tasks are stopped by the owner by hand before any
+launches (that plan's O1). The task-by-task
 table follows; the graph marks the withdrawn nodes; this folder's own `docs/status.md` row is not
 touched by the amending pull request.
 
@@ -61,7 +62,7 @@ a fix naming `--pool`. D3061's intent is kept: Vertex is reached only where a ch
 nothing is implied. D3063 and D3072 (the retired keys, read and named for one release and then
 rejected with no version bump) stand.
 
-**The keys plan's KS13 now waits on that plan's I1**, not on this plan's (its F50).
+**The keys plan's KS13 now waits on that plan's I1**, not on this plan's (that plan's A1, D3170).
 
 | File | What it is |
 | --- | --- |

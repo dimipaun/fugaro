@@ -285,14 +285,15 @@ main()
  * on the console's spawn table.
  *
  * **One key per operation, and the mode word is why it is not simply the
- * command path.** Seven commands carry two rows each today -- `logs` (`--url`),
+ * command path.** Eight commands carry two rows each today -- `logs` (`--url`),
  * `graph` (`--watch`), `runs ls`, `report` and `budget show` (`--stream`, the
  * console improvements' three live reads), `user ls` (`--me`, the caller's own
- * role) and `models add` (`--dry-run`, the models write's plan and its write,
- * MW1) -- and `setup` carries the wizard's two (`--plan-only`). Two rows
- * sharing one key would make one of them unreachable and answer its scenarios
- * from `default`, which is a test passing about a fallback rather than about
- * its fixture (`stub.test.ts` holds the uniqueness).
+ * role), `models add` (`--dry-run`, the models write's plan and its write, MW1)
+ * and `image add` (`--dry-run`, the image write's two phases, MW2) -- and
+ * `setup` carries the wizard's two (`--plan-only`). Two rows sharing one key
+ * would make one of them unreachable and answer its scenarios from `default`,
+ * which is a test passing about a fallback rather than about its fixture
+ * (`stub.test.ts` holds the uniqueness).
  *
  * It is not a copy of anything: `STUB_COMMAND_KEYS` below is derived from the
  * spawn table by calling *this* function on each row's `words`, and the generated

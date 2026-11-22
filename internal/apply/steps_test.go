@@ -134,6 +134,15 @@ func TestStepsMatchesRealSettingKeys(t *testing.T) {
 		{"workspace", []string{initflow.CredentialsRoute}},
 		{"workspace_pin.issuer", nil},
 		{"workspace_pin.service_address", []string{initflow.CredentialsRoute}},
+		// The providers block: the entry the copy of the installation's model
+		// keys writes carries the provider's own address and auth shape, and
+		// reads its container from `providers.<name>.secret`, so the block's
+		// keys owe the copy beside the publish their own row already declares
+		// (update_keys.go, KS12/D3001/KS12a).
+		{"providers.*.base_url", []string{initflow.Policy, initflow.CredentialsCopy}},
+		{"providers.*.auth", []string{initflow.Policy, initflow.CredentialsCopy}},
+		{"providers.*.secret", []string{initflow.Policy, initflow.CredentialsCopy}},
+		{"providers.*.route_fee_pct", []string{initflow.Policy, initflow.CredentialsCopy}},
 	} {
 		got, ok := Steps(Change{Kind: Setting, Key: tc.key})
 		if !ok {

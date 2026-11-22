@@ -31,6 +31,8 @@ func TestPersonGrantDecodesStrictly(t *testing.T) {
 		{"a field of the shape left empty", `{"slug":"s","run":"r","account":"a","name":""}`},
 		{"a personal name this plan does not serve", `{"slug":"s","run":"r","account":"a","name":"anthropic-api-key"}`},
 		{"a body that is not one object", `["slug"]`},
+		{"a body that is not one object at all", `null`},
+		{"a body that is a JSON string", `"slug"`},
 		{"a body carrying a second JSON value", good + ` {}`},
 		{"a body that is not JSON", `slug=acme`},
 	} {
@@ -72,6 +74,11 @@ func TestPersonGrantDecodesStrictly(t *testing.T) {
 		{"an answer that names a slip and holds no token", `{"held":false,"slip":"00112233445566778899aabbccddeeff"}`},
 		{"an answer that names a slip with no held beside it", `{"slip":"00112233445566778899aabbccddeeff"}`},
 		{"an answer that is not one object", `"held"`},
+		// `null` decodes into a Go value of any shape without an error, so without the object
+		// check this one would be read as the shape's zero — "no token held", the benign answer
+		// — where the contract refuses a body that is not one JSON object.
+		{"an answer that is not one object at all", `null`},
+		{"an answer that is a JSON array", `[]`},
 	} {
 		if _, err := ParsePersonGrant([]byte(tc.body)); err == nil {
 			t.Errorf("ParsePersonGrant read %s: %s", tc.what, tc.body)

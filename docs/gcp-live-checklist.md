@@ -23066,8 +23066,10 @@ bash scripts/live-checks/check563.sh --sandbox <the checkout> --expiry   # appro
 
 `--site` names the origin when the deployment is not the CLI's own constant; `--wait` bounds the sign-in;
 `--dry-run` makes every guard and prints every command it would run, calling nothing; `--help` prints the header
-above. `--project fugaro-prod` is refused unless `--production` is given, a value naming `belong` is refused
-**by name**, and a coding agent's session is refused too. The block is headed `CHECK 563 RESULT`, ends
+above. The project under test is the checkout's own installation — this check has **no `--project` flag**, and
+reads `fugaro doctor --json`'s `project.gcp_project` — so an installation whose project is `fugaro-prod` is
+refused unless `--production` is given; a value naming `belong` is refused **by name**, and a coding agent's
+session is refused too. The block is headed `CHECK 563 RESULT`, ends
 `CHECK 563 RESULT END (exit N)`, and exits **0** when the half's criteria held, **1** when one did not, **2**
 when it could not measure — no approve page, an installation with no Firebase project, a sign-in not finished
 inside `--wait`. Its keys are `xtrace`, `agent-session`, `belong`, `project`, `site`, `sandbox`, `address`,
@@ -24655,9 +24657,11 @@ part (b) points the tier at (it must not exist, and the check asks `gcloud` to c
 of the deliberately refused launch, `--executions-limit` how many executions each `gcloud` read asks for
 (default 200: a read `gcloud` fills is widened — ×2 at a time, at most 8× that — because the count parts (a)
 and (c) compare has to be the **exact** one, and a project still full at the widest read is a row that could
-not be measured rather than a pass), and `--cloud-seconds` the bound, in seconds, on the **two** calls that may
-launch something — the deliberately refused launch of (a) and the diagnosis of (c) — which is `timeout`'s own
-(default 1500: the tier's own fifteen-minute timeout and slack; `0` for no bound). `--dry-run` prints the
+not be measured rather than a pass), and `--cloud-seconds` the bound, in seconds, on **every call of this check
+that reaches the cloud**: the deliberately refused launch of (a), the diagnosis of (c), and the two `troubleshoot`
+reads of (a) and (b), each of which launches a job execution whenever its tier answers instead of declining. It
+is `timeout`'s own (default 1500: the tier's own fifteen-minute timeout and slack; `0` for no bound).
+`--dry-run` prints the
 plan — the one job, the one refused launch and the three parts as commands — and every row as `not reached`,
 calls nothing and writes nothing; `--help` prints the script's header.
 
@@ -24666,7 +24670,8 @@ calls nothing and writes nothing; `--help` prints the script's header.
 binary of the release under test, since the gates, the tier and the recipe are its own; a missing one stops
 the run with one line naming it. `timeout` is **not** one of them: it is what the `--cloud-seconds` bound is
 made of, and on a machine without one — macOS ships none, GNU coreutils has it, which is Check 310's own caveat
-— the two calls that may launch something are unbounded and yours to interrupt, which is what they were before
+— every call of this check that reaches the cloud is unbounded and yours to interrupt, which is what they were
+before
 there was a bound at all. A **failed command already logged** on the machine is the premise of part
 (c) — the tier explains a failure this machine wrote, and a check that invented one would be diagnosing
 itself — so run a sandbox command that fails (a `fugaro run` whose launch the installation's gates refuse is
