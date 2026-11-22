@@ -103,6 +103,23 @@ func openReporter(cmd *cobra.Command, name string, secrets func() []string, conv
 	return report.New(o), sink
 }
 
+// questionStyle is the colour a run's own lines are drawn with before it has a
+// reporter: report.NewStyle over the same flags and the same environment
+// openReporter reads, so a wizard question and the steps under it are one
+// syntax. The run holds one (initRun.qs); the writer is the command's stdout,
+// because whether colour is on is a fact about where a person reads, and not
+// about the writer a run has already wrapped around it.
+func questionStyle(cmd *cobra.Command, out io.Writer) report.Style {
+	return report.NewStyle(report.Options{
+		Out:        out,
+		Getenv:     os.Getenv,
+		IsTerminal: writerIsTerminal,
+		JSON:       boolFlag(cmd, "json"),
+		NoColor:    boolFlag(cmd, "no-color"),
+		ASCII:      boolFlag(cmd, "ascii"),
+	})
+}
+
 // reporterOpener is a reporterFor a command hands to its flow instead of
 // calling it itself: the flow opens the reporter where its own work starts, so
 // a refusal made before that point — one this CLI answers without reaching the

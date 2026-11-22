@@ -99,8 +99,9 @@ func DefaultRegion(p Place) string {
 }
 
 // Location is where one of the mapping's rows goes, and the reason when it is
-// not the installation's region itself. A reason is a sentence a person
-// reads: setup prints it under the line it belongs to, and it is empty
+// not the installation's region itself. A reason is a short parenthetical on
+// the row's own line — where the thing goes is the line's other column, so the
+// reason says why and not where ("no log bucket in us-east5") — and it is empty
 // exactly when Where is the region.
 type Location struct {
 	Where  string
@@ -164,12 +165,12 @@ func firestoreFor(region string, p Place) Location {
 	if d := DefaultRegion(p); d != "" {
 		return Location{
 			Where:  d,
-			Reason: fmt.Sprintf("Firestore is not offered in %s; %s is the %s default region", region, d, p),
+			Reason: fmt.Sprintf("no Firestore in %s; %s is the %s default region", region, d, p),
 		}
 	}
 	return Location{
 		Where:  usDefault,
-		Reason: fmt.Sprintf("Firestore is not offered in %s and the region is in neither place; %s is Fugaro's own default", region, usDefault),
+		Reason: fmt.Sprintf("no Firestore in %s, and the region is in neither place", region),
 	}
 }
 
@@ -186,7 +187,7 @@ func databaseFor(region string) Location {
 	}
 	return Location{
 		Where:  where,
-		Reason: fmt.Sprintf("the Realtime Database is offered in only three locations (us-central1, europe-west1, asia-southeast1); %s is the nearest to %s", where, region),
+		Reason: "nearest Realtime DB region",
 	}
 }
 
@@ -220,20 +221,19 @@ func logBucketFor(region string, p Place) Location {
 		return Location{Where: region}
 	}
 	switch p {
-	case US:
+	case US, EU:
+		// The multi-region a US or EU region falls back to is the place's own
+		// name: us and eu are exactly Cloud Logging's two multi-regions, and
+		// Place's values are those two strings (Place.String is the words a
+		// person reads, which is not what a location is).
 		return Location{
-			Where:  "us",
-			Reason: fmt.Sprintf("Cloud Logging offers no bucket in %s; us is the US multi-region", region),
-		}
-	case EU:
-		return Location{
-			Where:  "eu",
-			Reason: fmt.Sprintf("Cloud Logging offers no bucket in %s; eu is the EU multi-region", region),
+			Where:  string(p),
+			Reason: fmt.Sprintf("no log bucket in %s", region),
 		}
 	default:
 		return Location{
 			Where:  "global",
-			Reason: fmt.Sprintf("Cloud Logging offers no bucket in %s and the region is in neither place; global is what is left", region),
+			Reason: fmt.Sprintf("no log bucket in %s, and the region is in neither place", region),
 		}
 	}
 }

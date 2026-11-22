@@ -159,7 +159,7 @@ func New(o Options) *Reporter {
 	// Colour is on only where every rule allows it: a terminal, colour not
 	// turned off, markers not kept to ASCII, and no --json (G4) — the one
 	// decision NewStyle makes, read back here as "is there a colour at all".
-	colour := r.profile != termenv.Ascii
+	colour := !r.Style.plain()
 	// The line in flight follows the colour decision exactly — one rule for
 	// what may be drawn — and is not drawn under --verbose, where the run's
 	// own stream owns the terminal.

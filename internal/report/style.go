@@ -80,8 +80,15 @@ func NewStyle(o Options) Style {
 		// legacy Windows console draws once virtual terminal processing is on.
 		return Style{profile: termenv.ANSI}
 	}
-	return Style{profile: termenv.Ascii}
+	return Style{}
 }
+
+// plain is whether this style draws nothing at all, which the zero Style does.
+// NewStyle answers ANSI or plain and nothing else, so the question is "is this
+// the one profile that colours" — and it is asked this way round because
+// termenv's own zero profile is TrueColor: a run built without a style (a test's
+// hand-built engine) would otherwise paint in a profile nothing chose.
+func (s Style) plain() bool { return s.profile != termenv.ANSI }
 
 // Header renders one section's heading the way Homebrew draws it: a bold blue
 // arrow, and the text in bold after it. It is what a block of a run's output is
@@ -246,7 +253,7 @@ func (s Style) painted(text string, c termenv.ANSIColor) string {
 }
 
 func (s Style) styled(text string, o styleOpts) string {
-	if s.profile == termenv.Ascii {
+	if s.plain() {
 		return text
 	}
 	out := s.profile.String(text)

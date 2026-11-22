@@ -219,19 +219,36 @@ func (r *initRun) askBilling(ctx context.Context) error {
 		r.billingLeft(project)
 		return nil
 	}
-	fmt.Fprintf(r.w, "Billing accounts you can link to %s (from %s):\n", pluginwire.Printable(project), source)
-	for i, a := range accounts {
-		if a.DisplayName == "" {
-			fmt.Fprintf(r.w, "  %d) %s\n", i+1, a.ID)
-			continue
-		}
-		fmt.Fprintf(r.w, "  %d) %s (%s)\n", i+1, a.DisplayName, a.ID)
-	}
-	def := ""
+	// One account is the answer Enter takes, and it is shown by its name rather
+	// than by its number with a list of one above it: a list of one is not a
+	// choice, and a number nobody has to type is a number nobody wants to read
+	// (the owner's layout of 2026-11-22). Several keep the numbered list —
+	// they are a choice — and the question then says a number is what it takes.
+	// The name is drawn from the same fields the list prints.
+	def, show, hint := "", "", "a number from 1 to "+strconv.Itoa(len(accounts))+", or "+billingNoAccount+" to link none now"
 	if len(accounts) == 1 {
-		def = "1" // one account is the answer Enter takes
+		def, hint = "1", ""
+		show = accounts[0].DisplayName
+		if show == "" {
+			show = accounts[0].ID
+		}
 	}
-	v, err := r.prompt(valueSpec{what: "the billing account to link to " + pluginwire.Printable(project) + " (a number, or " + billingNoAccount + " to link none now)", flag: "--link-billing"}, def, func(s string) error {
+	if len(accounts) > 1 {
+		fmt.Fprintf(r.w, "Billing accounts you can link to %s (from %s):\n", pluginwire.Printable(project), source)
+		for i, a := range accounts {
+			if a.DisplayName == "" {
+				fmt.Fprintf(r.w, "  %d) %s\n", i+1, a.ID)
+				continue
+			}
+			fmt.Fprintf(r.w, "  %d) %s (%s)\n", i+1, a.DisplayName, a.ID)
+		}
+	}
+	v, err := r.askValue(wizardAsk{
+		label: "Billing account",
+		hint:  hint,
+		def:   def,
+		show:  show,
+	}, valueSpec{what: "the billing account to link to " + pluginwire.Printable(project), flag: "--link-billing"}, func(s string) error {
 		if s == billingNoAccount {
 			return nil
 		}
