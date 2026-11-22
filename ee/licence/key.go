@@ -55,8 +55,11 @@ package licence
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/x509"
+	_ "embed"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -118,13 +121,52 @@ const (
 // unless it is.
 type Keyring map[string]ed25519.PublicKey
 
-// productionKeyring is the ring a released build trusts, and it is **empty
-// here**. The owner creates the production signing keys (S3.8, K0.2) and a
-// later task publishes their public halves in this table; until then every key
-// is refused for its id alone, so nothing verifies in a build of this task. A
-// test key never lands here: TestStagingKeyIDIsRefused is the half that holds
-// the fixture's ids out.
-var productionKeyring = Keyring{}
+// productionKeyID is the id the owner's production signing key carries, and the
+// one entry productionKeyring holds (S3.8 created it, S2.9 published its public
+// half). It is spelled here as the key's own `kid` and nowhere else: the id is
+// what a key is looked up by, so a second spelling of it would be a second id.
+const productionKeyID = "fugaro-licence-production"
+
+// The production public half, published as a file and compiled in from it
+// (S2.9). **The file is the one copy of the bytes**: the ring below is built
+// from it rather than from a second literal, and the console's ring and the
+// app's are held to the same file by their own suites, so one minted key text
+// verifies in all three or the three are held apart by a failing test rather
+// than by a reader noticing.
+//
+// It is public and only public: a signing key's private half never enters a
+// file, a test or a run (.claude/rules/ee.md), and this file carries the public
+// half of a KMS key that cannot be exported.
+//
+//go:embed keys/production.pub
+var productionPublicPEM []byte
+
+// productionKeyring is the ring a released build trusts: exactly one key, the
+// production public half above, under the id its keys are signed with. A test
+// or staging key never lands here: TestStagingKeyIDIsRefused is the half that
+// holds the fixture's ids out, and TestAKeyUnderTheProductionIDIsRefused holds
+// that naming the id buys nothing without the key itself.
+var productionKeyring = Keyring{productionKeyID: publicKeyOf(productionPublicPEM)}
+
+// publicKeyOf reads one PEM-encoded public half as a keyring holds it. The
+// bytes are compiled in, so a shape this reader does not know is a defect of
+// the build and not a state anything can answer: it panics rather than leaving
+// a verifier that trusts no key while looking like one that trusts a key.
+func publicKeyOf(encoded []byte) ed25519.PublicKey {
+	block, rest := pem.Decode(encoded)
+	if block == nil || block.Type != "PUBLIC KEY" || len(bytes.TrimSpace(rest)) != 0 {
+		panic("licence: the published production key is not one PEM public key")
+	}
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		panic("licence: the published production key is not a public key this verifier reads: " + err.Error())
+	}
+	key, ok := parsed.(ed25519.PublicKey)
+	if !ok {
+		panic("licence: the published production key is not an Ed25519 public key")
+	}
+	return key
+}
 
 // The refusals every reader of a key shares. A key outside the three states is
 // one of these rather than a fourth state.
