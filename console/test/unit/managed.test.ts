@@ -34,11 +34,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { UNAVAILABLE_MARK, measured } from '../../src/shared/availability'
-import {
-  ADDRESS_PLACEHOLDER,
-  MAX_TEXT_INPUT_LENGTH,
-  TOKEN_PLACEHOLDER,
-} from '../../src/shared/sanitize'
+import { MAX_TEXT_INPUT_LENGTH, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
 import { REFUSAL_UNREADABLE } from '../../src/renderer/screens/degraded'
 import {
   BUSY_ATTRIBUTE,
@@ -335,11 +331,12 @@ describe('buildManagedModel', () => {
     expect(fact(list, MANAGED_COUNT_TERM)).toBe('4')
     // The record's five members, each drawn through the class its key declares.
     // `identity` is a person -- the recorder's own class for the account a write
-    // ran as -- so an address loses its local part.
+    // ran as -- and a person's address is not a credential, so it is drawn as the
+    // record wrote it (D3213).
     expect(fact(list, MANAGED_AT_TERM)).toBe(RECORD.at)
     expect(fact(list, MANAGED_COMMAND_TERM)).toBe(RECORD.command)
     expect(fact(list, MANAGED_VERDICT_TERM)).toBe(RECORD.verdict)
-    expect(fact(list, MANAGED_IDENTITY_TERM)).toBe(ADDRESS_PLACEHOLDER)
+    expect(fact(list, MANAGED_IDENTITY_TERM)).toBe(RECORD.identity)
     // `plan_digest` is a digest, and the free-text rules take a long hex run as
     // a credential -- which is the marker the recorder writes for the same
     // value, so the two layers agree about what a digest is worth drawing. The

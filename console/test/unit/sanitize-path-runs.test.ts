@@ -16,14 +16,16 @@
 // `ENTROPY_RE`'s lookarounds list the dot, so the run it took was the part
 // before the first dot directory.
 //
-// Which rule did it, and where. The path rule (`ABS_PATH_RE`) runs before the
-// net in the free-text classes, so `sanitizeText` drew `<path>` and the recorder
-// drew `<path>`: neither of them has the defect. The defect is in the **refusal
+// Which rule did it, and where. The path rule ran before the net in the
+// free-text classes, so `sanitizeText` drew `<path>` and the recorder drew
+// `<path>`: neither of them has the defect. The defect was in the **refusal
 // door** (`sanitizeRefusal`, which `src/renderer/entry.ts`'s `textOf` and
 // `src/renderer/installations.ts`'s `drawn` put the header, the picker's rows and
-// the CLI's own sentences through), and it is there by design: that door runs no
-// path rule, because the operator's own paths are the remedy a refusal names, so
-// nothing had replaced the path before the net saw it.
+// the CLI's own sentences through), which ran no path rule at all: the operator's
+// own paths are the remedy a refusal names, so nothing had replaced the path
+// before the net saw it. D3213 (2026-11-21) then took the path rule out of the
+// free-text classes too, which leaves this guard as the only thing that keeps a
+// path drawn: every door asks the net now, and the net asks `isPathRun`.
 //
 // The fix is one guard, on the net itself: a run that is a **path** -- the path
 // rule's own pattern matches it whole (`PATH_RUN_RE`: `ABS_PATH_SOURCE`, the one
@@ -200,22 +202,23 @@ describe('the header’s path is not a token', () => {
     }
   })
 
-  it('still replaces a path in the free-text classes and in the recorder', () => {
-    // The other two doors run the path rule first, so they already drew
-    // `<path>`; the guard must not have loosened them, because a path in a
-    // sentence is where the operator's user name and checkout live.
-    //
-    // The two markers are the same string, spelled by the two modules that own
-    // them (`sanitize.test.ts` holds the whole marker set equal).
+  it('draws a path in the free-text classes too, and leaves the recorder to replace it', () => {
+    // The other two doors ran the path rule first until D3213 and drew `<path>`;
+    // the rule is gone, so they draw the path, and the guard is what keeps it
+    // drawn rather than the net reading it as a key. The recorder is the one
+    // layer that still replaces a path -- it is the fixture, not the screen
+    // (D3219) -- and the two markers are the same string, spelled by the two
+    // modules that own them (`sanitize.test.ts` holds the whole marker set
+    // equal).
     expect(PATH_PLACEHOLDER).toBe(PATH_MARKER)
     const recorder = createRedactor()
     for (const [what, path] of PATHS) {
-      expect(sentence(path), what).toBe(PATH_PLACEHOLDER)
+      expect(sentence(path), what).toBe(path)
       expect(sentence(`the binary ${path} could not be read`), what).toBe(
-        `the binary ${PATH_PLACEHOLDER} could not be read`,
+        `the binary ${path} could not be read`,
       )
       const structured = sanitizeText(path, 'path', 'the value')
-      expect(structured.ok ? structured.text : 'refused', what).toBe(PATH_PLACEHOLDER)
+      expect(structured.ok ? structured.text : 'refused', what).toBe(path)
       expect(recorder.redactText(path), what).toBe(PATH_MARKER)
     }
   })
@@ -260,7 +263,10 @@ describe('a real credential is still replaced', () => {
     // separators, so it is one word, and the run stays a token.
     const key = fake.highEntropyRun()
     expect(refusal(`read /home/x/${key}/key failed`)).toBe(`read ${TOKEN_PLACEHOLDER} failed`)
-    expect(sentence(`read /home/x/${key}/key failed`)).toBe(`read ${PATH_PLACEHOLDER} failed`)
+    // The sentence class reads the same run the same way now that the path rule
+    // is gone from it: the key is a word of the run, so the run is not a path and
+    // the net replaces all of it.
+    expect(sentence(`read /home/x/${key}/key failed`)).toBe(`read ${TOKEN_PLACEHOLDER} failed`)
   })
 
   it('redacts a run the path rule would never take: the guard asks the path rule’s pattern', () => {
@@ -301,16 +307,16 @@ describe('a real credential is still replaced', () => {
     // **Said out loud, because it is the price of the fix.** The guard reads a
     // name as words run together, so a random body *spelled* as words -- a
     // base64url run with a `-` or `_` in it, written into a path -- reads as a
-    // name, and the refusal door draws it as written. What bounds it: the
-    // free-text classes and the recorder still redact such a run whole
-    // (`<path>`), every shape rule (token families, bearer lines, PEM blocks,
-    // assignments, percent-encoded and base64-wrapped candidates) still runs
-    // before the net in the refusal door too, and the alternative is where this
-    // started -- the operator's own binary path drawn as `[redacted-token]`, a
-    // mark that says a credential was found where none was.
+    // name, and every door of this layer draws it as written. What bounds it:
+    // every shape rule (token families, bearer lines, PEM blocks, assignments,
+    // percent-encoded and base64-wrapped candidates) still runs before the net,
+    // the recorder still replaces such a run whole (`<path>`, the fixture's own
+    // decision, D3219), and the alternative is where this started -- the
+    // operator's own binary path drawn as `[redacted-token]`, a mark that says a
+    // credential was found where none was.
     const run = `/tmp/${scratch()}/${spelled()}`
     expect(refusal(`wrote ${run} here`)).toBe(`wrote ${run} here`)
-    expect(sentence(`wrote ${run} here`)).toBe(`wrote ${PATH_PLACEHOLDER} here`)
+    expect(sentence(`wrote ${run} here`)).toBe(`wrote ${run} here`)
     expect(createRedactor().redactText(`wrote ${run} here`)).toBe(`wrote ${PATH_PLACEHOLDER} here`)
   })
 })
