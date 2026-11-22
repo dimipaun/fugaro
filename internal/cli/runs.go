@@ -282,14 +282,27 @@ func newLsCmd() *cobra.Command {
 		Short: "List runs with their status, stage, cost and PR",
 		Long: "List runs, newest first -- created descending, then run descending --\n" +
 			"joining the runs bucket with what the backend knows.\n\n" +
-			"By default ls shows the last " + strconv.Itoa(lsDefaultDays) + " days of the local config's repositories (every\n" +
-			"repository in the bucket when the config lists none). A run shows as succeeded\n" +
-			"only when its result.json says so; an execution that ended without finalizing\n" +
-			"is an infra_error.\n\n" +
+			"By default ls lists the newest " + strconv.Itoa(lsIndexPage) + " runs by time plus every run that is\n" +
+			"still going, whatever its age, read from the installation's run index rather\n" +
+			"than by scanning the bucket: no listing of the bucket's objects is made on\n" +
+			"that path, so the listing costs a handful of requests however much history\n" +
+			"there is. Its totals are then the index's own summary -- every run the\n" +
+			"installation's index carries, not the page. While the index is still\n" +
+			"building, the listing says so in one line above its table, and --json\n" +
+			"carries index_complete and folded_through.\n\n" +
+			"A run shows as succeeded only when its result.json says so; an execution that\n" +
+			"ended without finalizing is an infra_error.\n\n" +
+			"--since W bounds a window instead of a count: every run of it is listed,\n" +
+			"bounded by the window and not by history, and its totals are those rows'.\n" +
+			"--mine and --batch bound one the same way. A listing the index cannot answer\n" +
+			"-- a fresh installation, or an index that could not be read -- reads the\n" +
+			"bucket's own window instead, one note saying so, and that window is the last\n" +
+			strconv.Itoa(lsDefaultDays) + " days of the local config's repositories (every repository in the\n" +
+			"bucket when the config lists none).\n\n" +
 			"--limit N prints the newest N rows of the listing and shortens nothing else:\n" +
-			"the window is still read, and the totals line, in the text listing and in\n" +
-			"--json's totals, is the whole window's, because a page is not a total. 0,\n" +
-			"the default, prints every row of the window.\n\n" +
+			"the totals line, in the text listing and in --json's totals, is the listing's\n" +
+			"own -- the index's summary by default, and the rows of the window with --since\n" +
+			"-- because a page is not a total. 0, the default, prints every row of it.\n\n" +
 			"--after RUN-ID starts the listing after that run: the rows strictly after it\n" +
 			"in the listing's order, so the same argv with the last id of a page is the\n" +
 			"next page. The id is the run_id --json carries; one the listing does not\n" +

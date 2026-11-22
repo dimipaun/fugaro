@@ -8765,15 +8765,30 @@ List runs with their status, stage, cost and PR
 List runs, newest first -- created descending, then run descending --
 joining the runs bucket with what the backend knows.
 
-By default ls shows the last 7 days of the local config's repositories (every
-repository in the bucket when the config lists none). A run shows as succeeded
-only when its result.json says so; an execution that ended without finalizing
-is an infra_error.
+By default ls lists the newest 50 runs by time plus every run that is
+still going, whatever its age, read from the installation's run index rather
+than by scanning the bucket: no listing of the bucket's objects is made on
+that path, so the listing costs a handful of requests however much history
+there is. Its totals are then the index's own summary -- every run the
+installation's index carries, not the page. While the index is still
+building, the listing says so in one line above its table, and --json
+carries index_complete and folded_through.
+
+A run shows as succeeded only when its result.json says so; an execution that
+ended without finalizing is an infra_error.
+
+--since W bounds a window instead of a count: every run of it is listed,
+bounded by the window and not by history, and its totals are those rows'.
+--mine and --batch bound one the same way. A listing the index cannot answer
+-- a fresh installation, or an index that could not be read -- reads the
+bucket's own window instead, one note saying so, and that window is the last
+7 days of the local config's repositories (every repository in the
+bucket when the config lists none).
 
 --limit N prints the newest N rows of the listing and shortens nothing else:
-the window is still read, and the totals line, in the text listing and in
---json's totals, is the whole window's, because a page is not a total. 0,
-the default, prints every row of the window.
+the totals line, in the text listing and in --json's totals, is the listing's
+own -- the index's summary by default, and the rows of the window with --since
+-- because a page is not a total. 0, the default, prints every row of it.
 
 --after RUN-ID starts the listing after that run: the rows strictly after it
 in the listing's order, so the same argv with the last id of a page is the
