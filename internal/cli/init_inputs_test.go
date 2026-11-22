@@ -819,7 +819,7 @@ func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	// init_confirm_test.go uses, at a terminal, with nothing typed for it.
 	c := condition{name: "a terminal", opts: initOptions{door: setupDoor.name}, terminal: true}
 	location, _, locationOut := c.run(t, "")
-	if err := location.confirmLocation(); err != nil {
+	if err := location.confirmLocation(fsLocation("us-east5")); err != nil {
 		t.Fatalf("%v\n%s", err, locationOut)
 	}
 

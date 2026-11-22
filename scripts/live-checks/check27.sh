@@ -251,12 +251,34 @@ need_tools() {
 # The region this check's own throwaway used — the third live run's — and the
 # value every later --region flag resolves.
 REGION_DEFAULT=us-east5
-# Where the CLI creates the (default) Firestore database of a project it makes:
-# `infra.FirestoreLocation` (internal/infra/firestore.go:21), a fixed value the
-# CLI uses whatever --region says, because a Firestore location is permanent.
-# The read-back is compared with THIS and never with $REGION, or a correct
-# installation on another --region would FAIL.
-FIRESTORE_LOCATION=us-east5
+# firestore_location is where the CLI creates the (default) Firestore database
+# of an installation whose region is $1: the mapping's answer for that region
+# (D3085, internal/place/place.go — the CLI asks place.For and holds no
+# location of its own). Firestore's own location where it offers a database
+# there, the place's default region where it does not, and us-east5 for a
+# region in neither place. The read-back below is compared with THIS, which is
+# the region itself for most regions and is never assumed to be: a database in
+# the run's own --region where Firestore is not offered there is a finding.
+firestore_location() {
+  case "$1" in
+    asia-east1 | asia-east2 | asia-northeast1 | asia-northeast2 | asia-northeast3 | asia-south1 | asia-south2 | asia-southeast1 | asia-southeast2 | \
+      australia-southeast1 | australia-southeast2 | \
+      europe-central2 | europe-north1 | europe-north2 | europe-southwest1 | europe-west1 | europe-west2 | europe-west3 | europe-west4 | europe-west6 | \
+      europe-west8 | europe-west9 | europe-west10 | europe-west12 | \
+      me-central1 | me-central2 | me-west1 | \
+      northamerica-northeast1 | northamerica-northeast2 | northamerica-south1 | \
+      southamerica-east1 | southamerica-west1 | \
+      us-central1 | us-east1 | us-east4 | us-east5 | us-south1 | us-west1 | us-west2 | us-west3 | us-west4)
+      printf '%s\n' "$1"
+      ;;
+    us-*) printf '%s\n' us-east5 ;;
+    europe-*) printf '%s\n' europe-west1 ;;
+    *) printf '%s\n' us-east5 ;;
+  esac
+}
+# FIRESTORE_LOCATION is that answer for the region this run was given. It is set
+# once the flags are parsed (parse_args), because --region decides it.
+FIRESTORE_LOCATION=
 # The installation's name: the plan's own allocation for this check, and the
 # name every later --project flag resolves. Nothing else is accepted.
 NAME_FIXED=fugaro
@@ -1054,8 +1076,10 @@ step_billing() {
 
 # step_firestore: the Firestore database and its PERMANENT location (step 3's
 # last input-phase answer, and the one that can never be changed). The location
-# is the CLI's own fixed one and NOT the region this run converged: the two are
-# the same value by coincidence, and a run on another --region is still correct.
+# is the mapping's answer for the region this run converged (D3085), which is
+# the region itself where Firestore offers a database there and the place's
+# default region where it does not: the read-back is compared with that answer
+# and never with --region.
 step_firestore() {
   read_out gcloud firestore databases describe --database='(default)' --project="$P" --format='value(locationId)'
   if [ "$READ_STATUS" -ne 0 ]; then
@@ -1065,10 +1089,10 @@ step_firestore() {
   local loc
   loc=$(printf '%s\n' "$READ_OUT" | head -1)
   if [ "$loc" = "$FIRESTORE_LOCATION" ]; then
-    fact firestore PASS "the (default) database's locationId is $FIRESTORE_LOCATION, the CLI's own fixed location, which does not follow --region (this run converged $REGION)"
+    fact firestore PASS "the (default) database's locationId is $FIRESTORE_LOCATION, which is where the mapping puts the history database of a $REGION installation (D3085)"
     return 0
   fi
-  fact firestore FAIL "the (default) database's locationId reads '${loc:-empty}' and not $FIRESTORE_LOCATION, the location the CLI creates in whatever --region says: the location is permanent, so this is a finding for the section, not a retry"
+  fact firestore FAIL "the (default) database's locationId reads '${loc:-empty}' and not $FIRESTORE_LOCATION, the location the mapping gives a $REGION installation: the location is permanent, so this is a finding for the section, not a retry"
   stop "the Firestore location is '${loc:-empty}' and not $FIRESTORE_LOCATION"
 }
 
@@ -1414,7 +1438,7 @@ print_plan() {
   say "    which asks 'Type the GCP project's ID: ' and is answered '$P'; the project's confirmation banner, the billing banner and the Firestore location's banner are read and nothing is typed under them. --rigor pro answers the wizard's other question, the project's rigor mode, which proposes nothing: nothing types Enter under it"
   say "  [network, reads] gcloud projects describe $P --format='value(projectId,lifecycleState)' (must read $P ACTIVE)"
   say "  [network, reads] gcloud billing projects describe $P --format='value(billingAccountName,billingEnabled)' (must name the account you gave, enabled True)"
-  say "  [network, reads] gcloud firestore databases describe --database='(default)' --project=$P --format='value(locationId)' (must read $FIRESTORE_LOCATION, the CLI's own fixed location and not --region)"
+  say "  [network, reads] gcloud firestore databases describe --database='(default)' --project=$P --format='value(locationId)' (must read $FIRESTORE_LOCATION, where the mapping puts a $REGION installation's history database)"
   say "  [network, reads] gcloud storage buckets list --project=$P (must name fugaro-runs-$P), gcloud run jobs list --project=$P --region=$REGION (must name fugarohist)"
   say "  [network, reads] gcloud artifacts docker images list $REGION-docker.pkg.dev/$P/fugaro-base --include-tags (must name the history image)"
   say "  [network+local, reads] fugaro doctor --project $N --all, with no terminal: exit 0, and its project line must name (GCP $P,"
@@ -1593,6 +1617,7 @@ parse_args() {
   [ -n "$R" ] || die "--repo is required (an owner/name): the section's step 20 and its Restore's App line are about it, and this script never touches it. usage: $USAGE"
   printf '%s' "$REGION" | grep -qE '^[a-z]+-[a-z]+[0-9]+$' \
     || die "--region '$REGION' does not look like a region (us-east5, europe-west4). usage: $USAGE"
+  FIRESTORE_LOCATION=$(firestore_location "$REGION")
 }
 
 main() {
