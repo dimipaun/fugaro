@@ -103,14 +103,23 @@
 #             release carries), --absent-project the project part (b) points the
 #             tier at (it must not exist, and the check asks gcloud to confirm
 #             that), --task the text of the deliberately refused launch,
-#             --executions-limit how many executions each gcloud read lists,
-#             --cloud-seconds the bound on the one call that may launch a job
-#             (default 1500: the tier's own fifteen-minute timeout and slack).
+#             --executions-limit how many executions each gcloud read asks for
+#             (default 200: a read gcloud fills is widened, because the count
+#             parts (a) and (c) compare has to be the exact one),
+#             --cloud-seconds the bound on the two calls that may launch
+#             something — the deliberately refused launch of (a) and the
+#             diagnosis of (c) (default 1500: the tier's own fifteen-minute
+#             timeout and slack; 0 for no bound). The bound is `timeout`'s own,
+#             so it holds where the machine has one (GNU coreutils; macOS ships
+#             none, which is Check 310's own caveat) and without one those two
+#             calls are unbounded and yours to interrupt.
 # Needs:      bash, python3 (every document and every rewrite below is read and
 #             written with it), git, gcloud (authenticated: it lists executions
 #             and reads the runs bucket) and `fugaro` — the binary of the
 #             release under test, since the gates, the tier and the recipe are
-#             its own. It reads no secret and prompts for nothing.
+#             its own. `timeout` is what the bound above is made of and is not
+#             needed to run the check. It reads no secret and prompts for
+#             nothing.
 # Where:      the sandbox installation, from the sandbox checkout only, and
 #             NEVER belong: a value this check was given that names belong is
 #             refused before the first call, and an installation this check
@@ -221,7 +230,10 @@ on_error() {
 
 need_tools() {
   local t
-  for t in bash mktemp python3 git gcloud fugaro timeout; do
+  # `timeout` is NOT one of them: it is what the --cloud-seconds bound is made
+  # of, and a machine without one (macOS ships none) runs the check with the two
+  # calls that may launch something unbounded rather than not at all (below).
+  for t in bash mktemp python3 git gcloud fugaro; do
     command -v "$t" >/dev/null 2>&1 || {
       say "Check 680 needs '$t' and it is not on PATH"
       exit 2
@@ -659,10 +671,31 @@ PY
 # reads); the two credential variables are unset and `claude` is off PATH, which
 # is the only state in which the cloud tier is the tier that answers (D2400).
 # The check passes no credential of any kind and reads none.
+FG_ENV=(env -u FUGARO_PROJECT -u FUGARO_CONFIG -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY)
+
 fg() {
-  env -u FUGARO_PROJECT -u FUGARO_CONFIG -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY \
-    PATH="$NOCLAUDE_PATH" \
+  "${FG_ENV[@]}" PATH="$NOCLAUDE_PATH" \
     fugaro "$@"
+}
+
+# fg_bounded: the same call with the --cloud-seconds bound in front of the binary.
+# The two calls that may launch something — the deliberately refused launch of
+# part (a) and the diagnosis of part (c) — go through this, so a call that hangs
+# is the bound firing rather than a check that never ends. The bound has to be
+# put in front of `fugaro` itself and not around `fg`, which is a shell function
+# and not something timeout(1) can exec. It is `timeout`'s own bound, so it holds
+# where the machine has one (GNU coreutils; macOS ships none, which is the caveat
+# Check 310's own bound carries) and without one the call is unbounded and yours
+# to interrupt.
+fg_bounded() {
+  local t=""
+  if [ "$CLOUD_SECONDS" -gt 0 ]; then t=$(command -v timeout 2>/dev/null || true); fi
+  if [ -n "$t" ]; then
+    "${FG_ENV[@]}" PATH="$NOCLAUDE_PATH" \
+      "$t" "$CLOUD_SECONDS" fugaro "$@"
+  else
+    fg "$@"
+  fi
 }
 
 # build_noclaude_path: PATH with every directory holding an executable `claude`
@@ -699,10 +732,37 @@ claude_on_path() {
 }
 
 # --------------------------------------------------------------- the gcloud side
-executions_count() { # executions_count FILE — how many executions the project has
-  gcloud run jobs executions list --project "$PROJECT" --region "$REGION" \
-    --limit="$EXECUTIONS_LIMIT" --format='value(name)' >"$1" 2>"$1.err" || return 1
-  awk 'NF{n++} END{print n+0}' "$1"
+# executions_count FILE — how many executions the project has, EXACTLY, or a
+# failure instead of a number.
+#
+# Both readings that rest on this are counts — (a) is "the refused launch created
+# none", (c) is "the diagnosis created exactly one" — and a count read through a
+# limit saturates: on a project holding as many executions as --executions-limit,
+# a refused launch that created one and a refused launch that created none read
+# the same number, so (a)'s safety row would pass over the very leak it exists to
+# find, and (c) would report a finding about a project this check never measured.
+# The read is therefore widened (×2 at a time, at most 8× what the flag asks for)
+# while gcloud returns as many names as it was asked for — a page that is not
+# full IS the count — and a project still full at the widest read is a row this
+# check did NOT measure (the callers' unmeasured path, which prints what is
+# written to the error file here) rather than a number it guessed.
+executions_count() { # executions_count FILE
+  local limit=$EXECUTIONS_LIMIT n
+  while :; do
+    gcloud run jobs executions list --project "$PROJECT" --region "$REGION" \
+      --limit="$limit" --format='value(name)' >"$1" 2>"$1.err" || return 1
+    n=$(awk 'NF{c++} END{print c+0}' "$1")
+    if [ "$n" -lt "$limit" ]; then
+      printf '%s' "$n"
+      return 0
+    fi
+    if [ "$limit" -ge "$EXECUTIONS_LIMIT_MAX" ]; then
+      printf 'the project holds at least %s executions and this check reads at most %s of them, so the count is not the exact one parts (a) and (c) compare\n' "$n" "$limit" >>"$1.err"
+      return 1
+    fi
+    limit=$((limit * 2))
+    if [ "$limit" -gt "$EXECUTIONS_LIMIT_MAX" ]; then limit=$EXECUTIONS_LIMIT_MAX; fi
+  done
 }
 
 # -------------------------------------------------------------------- the steps
@@ -832,7 +892,7 @@ step_setup() {
     stop "the project's executions could not be listed, so no part of this check could read what it created"
   fi
   EXEC_BEFORE=$n
-  fact baseline PASS "the project has $EXEC_BEFORE execution(s) before any part of this check runs (gcloud run jobs executions list --project $PROJECT --region $REGION --limit $EXECUTIONS_LIMIT): parts (a) and (b) are held to this figure and part (c) to exactly one more"
+  fact baseline PASS "the project has $EXEC_BEFORE execution(s) before any part of this check runs (gcloud run jobs executions list --project $PROJECT --region $REGION --limit $EXECUTIONS_LIMIT, widened while a read came back full, so the figure is the count): parts (a) and (b) are held to this figure and part (c) to exactly one more"
 }
 
 # step_subject: the failed command the three parts diagnose. The check writes no
@@ -994,9 +1054,13 @@ step_launch() {
     stop "the workflow's image is judged from the build record, so no refused launch could be arranged here"
   fi
   local status=0
-  fg run --repo "$REPO" "$TASK" >"$SCRATCH/launch.out" 2>"$SCRATCH/launch.err" || status=$?
+  fg_bounded run --repo "$REPO" "$TASK" >"$SCRATCH/launch.out" 2>"$SCRATCH/launch.err" || status=$?
   local out sentence lrelease lworkflow
   out=$(cat "$SCRATCH/launch.out" "$SCRATCH/launch.err" 2>/dev/null || true)
+  if [ "$status" = 124 ]; then
+    fact a-launch FAIL "the deliberate launch was still running when the ${CLOUD_SECONDS}s bound (--cloud-seconds) ended it: the gate this check arranged refuses it in a sentence, before anything is launched, so a launch that had to be ended is one the launch path did not refuse — and a run admitted there is a run that is running now. Read this project's own \`fugaro ls\` and the executions below for what it left"
+    stop "the launch did not come back inside the bound, so it was not refused"
+  fi
   if [ "$status" = 0 ]; then
     fact a-launch FAIL "the deliberate launch was NOT refused: \`fugaro run --repo $REPO\` exited 0 while the installation's base image was rolled back to $BASE_NEW, which the tier's own pre-flight had just refused. The launch path and the diagnosis's pre-flight are one block (F8) and they disagree about the same image — and on a live installation this launch may have started a run"
     stop "the launch was admitted over an image the pre-flight refuses"
@@ -1026,7 +1090,7 @@ step_no_execution() { # the whole of (a), read once at the end of it
     fact a-executions FAIL "the refused launch created $((after - EXEC_BEFORE)) execution(s): the project had $EXEC_BEFORE before the check and $after after it (gcloud run jobs executions list --project $REAL_PROJECT --region $REGION). D2401's decline exists so that a broken launch path costs a person a sentence and not a job that fails the same way a second time"
     stop "the refused launch created an execution"
   fi
-  fact a-executions PASS "the refused launch created no execution: the project's count is unchanged at $EXEC_BEFORE (gcloud run jobs executions list --project $REAL_PROJECT --region $REGION --limit $EXECUTIONS_LIMIT), so what the gate refused never reached the backend — and the tier's own refusal to launch over it (a-decline, above) uploaded nothing either"
+  fact a-executions PASS "the refused launch created no execution: the project's count is unchanged at $EXEC_BEFORE (gcloud run jobs executions list --project $REAL_PROJECT --region $REGION --limit $EXECUTIONS_LIMIT, widened while a read came back full), so what the gate refused never reached the backend — and the tier's own refusal to launch over it (a-decline, above) uploaded nothing either"
 }
 
 step_unavailable() {
@@ -1160,7 +1224,11 @@ step_unavailable_tier() {
 
 step_answer() {
   local status=0
-  fg troubleshoot "$SUBJECT" --json >"$SCRATCH/answer.json" 2>"$SCRATCH/answer.err" || status=$?
+  fg_bounded troubleshoot "$SUBJECT" --json >"$SCRATCH/answer.json" 2>"$SCRATCH/answer.err" || status=$?
+  if [ "$status" = 124 ]; then
+    unmeasured c-answer "fugaro troubleshoot $SUBJECT was still running when the ${CLOUD_SECONDS}s bound (--cloud-seconds) ended it: the tier's own timeout is fifteen minutes and this bound is that timeout and slack, so a diagnosis the bound had to end is one whose job was still going — the run it launched may be there still, and its record is what to read before running this check again"
+    stop "the diagnosis did not come back inside the bound, so (c) was not measured"
+  fi
   json_fields "$SCRATCH/answer.json" >"$SCRATCH/answer.txt"
   local error tier offline reason run_ref outcome answer_first
   error=$(field "$SCRATCH/answer.txt" error)
@@ -1309,7 +1377,7 @@ step_executions_after() {
     fact c-executions FAIL "the diagnosis created $delta execution(s): the project had $EXEC_BEFORE before the check and $after after it. D2407 — one execution and no second launch — so a diagnosis that launched twice paid twice for one answer, and a reader of the record sees one run"
     stop "the diagnosis created more than one execution"
   fi
-  fact c-executions PASS "the diagnosis created exactly one execution: the project went from $EXEC_BEFORE to $after (gcloud run jobs executions list --project $REAL_PROJECT --region $REGION --limit $EXECUTIONS_LIMIT), which is D2407's one execution and no retry — and, since parts (a) and (b) created none, it is the only execution any part of this check created"
+  fact c-executions PASS "the diagnosis created exactly one execution: the project went from $EXEC_BEFORE to $after (gcloud run jobs executions list --project $REAL_PROJECT --region $REGION --limit $EXECUTIONS_LIMIT, widened while a read came back full), which is D2407's one execution and no retry — and, since parts (a) and (b) created none, it is the only execution any part of this check created"
 }
 
 step_restore() {
@@ -1336,7 +1404,7 @@ plan() {
   say "  [gcloud, read-only] run jobs executions list --project <p> --region <r> — the executions before any part, which (a) and (b) are held to and (c) to exactly one more than"
   say "  [local, WOULD WRITE, PUT BACK] base_images.base rolled back to $BAD_RELEASE in the config file (a copy beside it first; the exit trap puts it back whatever happens)"
   say "  [fugaro, no launch, no cost] troubleshoot <id> --json with NO local login (claude off PATH, neither credential variable set) — (a): the cloud tier must DECLINE in D2401's sentence, from the pre-flight, so nothing is uploaded and no execution exists"
-  say "  [fugaro, THE ONE REFUSED LAUNCH, no cost] run --repo <owner/name> '<this check's own task text>' — refused by the same gate, and run at all only once the decline above has shown that gate is the judge: a real run starts if that is wrong, which is why the order is this way"
+  say "  [fugaro, THE ONE REFUSED LAUNCH, no cost, ${CLOUD_SECONDS}s bound here] run --repo <owner/name> '<this check's own task text>' — refused by the same gate, and run at all only once the decline above has shown that gate is the judge: a real run starts if that is wrong, which is why the order is this way"
   say "  [gcloud, read-only] run jobs executions list once more — (a): the count did not move, so what the gate refused never reached the backend"
   say "  [local, PUT BACK] the base image put back from the sidecar (the image gate answers first, so (b) could not reach the tier's own reads over it)"
   say "  [local, WOULD WRITE, PUT BACK] gcp_project (and the budget block's own project and database, where the config records them) pointed at $ABSENT_PROJECT, a project gcloud is asked to confirm does not exist"
@@ -1526,11 +1594,17 @@ case "$BAD_RELEASE" in
 "" | *[!0-9.]*) say "--bad-release has to be a release version like 0.1.0. usage: $USAGE"; exit 2 ;;
 esac
 case "$EXECUTIONS_LIMIT" in
-"" | *[!0-9]*) say "--executions-limit has to be a whole number. usage: $USAGE"; exit 2 ;;
+"" | 0 | *[!0-9]*) say "--executions-limit has to be a whole number of at least 1. usage: $USAGE"; exit 2 ;;
 esac
 case "$CLOUD_SECONDS" in
 "" | *[!0-9]*) say "--cloud-seconds has to be a whole number. usage: $USAGE"; exit 2 ;;
 esac
+
+# The widest executions_count reads: 8× what --executions-limit asks for. A
+# count read is widened while gcloud fills the page it was asked for, and a
+# project that fills this one is a row the check reports as one it could not
+# measure rather than a number it guessed (see executions_count).
+EXECUTIONS_LIMIT_MAX=$((EXECUTIONS_LIMIT * 8))
 
 trap finish EXIT
 trap on_signal INT TERM HUP

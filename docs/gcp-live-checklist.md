@@ -24245,16 +24245,22 @@ Every flag overrides a value the installation supplies: `--name` the installatio
 the repository as `owner/name`, `--project`, `--region`, `--bucket`, `--subject` the failed log to diagnose,
 `--bad-release` the release the base image is rolled back to (default `0.1.0`), `--absent-project` the project
 part (b) points the tier at (it must not exist, and the check asks `gcloud` to confirm that), `--task` the text
-of the deliberately refused launch, `--executions-limit` how many executions each `gcloud` read lists, and
-`--cloud-seconds` the bound on the one call that may launch a job (default 1500: the tier's own fifteen-minute
-timeout and slack). `--dry-run` prints the plan — the one job, the one refused launch and the three parts as
-commands — and every row as `not reached`, calls nothing and writes nothing; `--help` prints the script's
-header.
+of the deliberately refused launch, `--executions-limit` how many executions each `gcloud` read asks for
+(default 200: a read `gcloud` fills is widened — ×2 at a time, at most 8× that — because the count parts (a)
+and (c) compare has to be the **exact** one, and a project still full at the widest read is a row that could
+not be measured rather than a pass), and `--cloud-seconds` the bound, in seconds, on the **two** calls that may
+launch something — the deliberately refused launch of (a) and the diagnosis of (c) — which is `timeout`'s own
+(default 1500: the tier's own fifteen-minute timeout and slack; `0` for no bound). `--dry-run` prints the
+plan — the one job, the one refused launch and the three parts as commands — and every row as `not reached`,
+calls nothing and writes nothing; `--help` prints the script's header.
 
 **Prerequisites.** `bash`, `python3` (every document and every rewrite is read and written with it), `git`,
 `gcloud` — authenticated: it lists the project's executions and reads the runs bucket — and `fugaro`, the
 binary of the release under test, since the gates, the tier and the recipe are its own; a missing one stops
-the run with one line naming it. A **failed command already logged** on the machine is the premise of part
+the run with one line naming it. `timeout` is **not** one of them: it is what the `--cloud-seconds` bound is
+made of, and on a machine without one — macOS ships none, GNU coreutils has it, which is Check 310's own caveat
+— the two calls that may launch something are unbounded and yours to interrupt, which is what they were before
+there was a bound at all. A **failed command already logged** on the machine is the premise of part
 (c) — the tier explains a failure this machine wrote, and a check that invented one would be diagnosing
 itself — so run a sandbox command that fails (a `fugaro run` whose launch the installation's gates refuse is
 the one this check is written around) before running it, or pass `--subject <run id>`. A log that already

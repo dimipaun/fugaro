@@ -117,6 +117,7 @@ import json
 import os
 import re
 import sys
+import time
 
 D = os.environ.get("FAKE680_DIR") or sys.exit("fake680: FAKE680_DIR is not set")
 GCP = os.environ["FAKE680_GCP"]
@@ -244,6 +245,8 @@ def main(argv):
         }))
         sys.exit(0)
     if argv and argv[0] == "run":
+        if flag("run-hangs"):
+            time.sleep(20)
         cfg = config()
         reason = judge(cfg)
         if reason and not flag("run-admitted"):
@@ -308,7 +311,16 @@ if argv[:3] == ["run", "jobs", "executions"]:
             "permission to access it\n" % project)
         sys.exit(1)
     with open(os.path.join(D, "executions.txt")) as fh:
-        sys.stdout.write(fh.read())
+        names = [line for line in fh if line.strip()]
+    limit = ""
+    for i, a in enumerate(argv):
+        if a == "--limit" and i + 1 < len(argv):
+            limit = argv[i + 1]
+        elif a.startswith("--limit="):
+            limit = a.split("=", 1)[1]
+    if limit.isdigit():
+        names = names[:int(limit)]
+    sys.stdout.write("".join(names))
     sys.exit(0)
 
 if argv[:2] == ["projects", "describe"]:
@@ -760,7 +772,8 @@ test_belong_is_refused_before_the_first_call() {
   run_check "$dir" -- --repo belong/sandbox
   expect_status "$status" 1 "belong"
   expect_row belong "not reached" "belong: the guarded row is unmeasured"
-  expect_row aborted "names belong" "belong: the refusal"
+  expect_row aborted "a value this check was given names belong" \
+    "belong: the refusal, and the given-values guard's own words"
   [ ! -s "$dir/logs/fugaro.calls" ] || fail "belong: fugaro was called before the refusal"
   [ ! -s "$dir/logs/gcloud.calls" ] || fail "belong: gcloud was called before the refusal"
   [ ! -s "$dir/logs/git.calls" ] || fail "belong: git was called before the refusal"
@@ -768,7 +781,10 @@ test_belong_is_refused_before_the_first_call() {
 }
 
 test_an_installation_that_names_belong_is_refused() {
-  local dir=$work/belong-install
+  # NOT a directory whose own name carries the word: this case is about the
+  # installation the check resolves for ITSELF, and a checkout path naming belong
+  # would be refused by the given-values guard before that one is ever reached.
+  local dir=$work/other-org
   prepare "$dir"
   python3 - "$dir" <<'PY'
 import json, sys
@@ -779,7 +795,10 @@ json.dump(doc, open(path, "w"))
 PY
   run_check "$dir"
   expect_status "$status" 1 "an installation that names belong"
-  expect_row aborted "names belong" "an installation that names belong: the refusal"
+  expect_row aborted "the installation this checkout resolves to names belong" \
+    "an installation that names belong: the refusal, and the resolved guard's own words"
+  expect_absent "$(fugaro_calls "$dir")" "troubleshoot" \
+    "an installation that names belong: no diagnosis was asked for"
   [ ! -e "$(sidecar_of "$dir")" ] || fail "an installation that names belong: the config was copied"
 }
 
@@ -1039,6 +1058,60 @@ test_a_config_listing_that_fails_is_not_measured() {
   expect_absent "$(gcloud_calls "$dir")" "gcloud" "a config listing that fails: no cloud call was made"
 }
 
+test_a_project_fuller_than_the_read_limit_still_measures() {
+  local dir=$work/limited
+  prepare "$dir"
+  # Three executions read two at a time. Both of the check's readings are counts,
+  # and a read that stops at the limit it was given reads 2 before and 2 after a
+  # diagnosis that really created one: (c) would report a finding about a project
+  # it never measured and (a)'s safety row would pass over the leak it exists to
+  # find. The read has to be widened past the limit, and this case holds it to
+  # the count it can only get that way.
+  run_check "$dir" -- --executions-limit 2
+  expect_status "$status" 0 "a project fuller than the read limit"
+  expect_row baseline "has 3 execution(s)" "a project fuller than the read limit: the baseline is the exact count"
+  expect_row a-executions "created no execution" "a project fuller than the read limit: (a)"
+  expect_row c-executions "exactly one execution" "a project fuller than the read limit: (c)"
+}
+
+test_a_project_too_full_to_count_is_not_measured() {
+  local dir=$work/toofull
+  prepare "$dir"
+  # 39 executions and a limit of 2: the widest read this check makes is 8× the
+  # limit, so no read it can take is the count — and a count it could not take is
+  # a row it did not measure, never a pass (nor a finding about a project it
+  # cannot count).
+  python3 - "$dir" <<'PY'
+import sys
+
+path = sys.argv[1] + "/executions.txt"
+with open(path, "a") as fh:
+    for n in range(4, 40):
+        fh.write("fugaro-job-680-%d\n" % n)
+PY
+  run_check "$dir" -- --executions-limit 2
+  expect_status "$status" 2 "a project too full to count"
+  expect_row baseline "not the exact one" "a project too full to count: the row says which count it could not take"
+  expect_row a-executions "not reached" "a project too full to count: nothing behind the baseline was measured"
+  expect_absent "$(fugaro_calls "$dir")" "troubleshoot" "a project too full to count: no diagnosis was asked for"
+}
+
+test_the_launch_is_bounded() {
+  # The bound is timeout(1)'s own, so a machine without one (macOS ships none)
+  # has no bound to hold the check to and this case cannot measure it.
+  if ! command -v timeout >/dev/null 2>&1; then
+    echo "check680_test: the bound case needs timeout(1), which this machine has not: skipped" >&2
+    return 0
+  fi
+  local dir=$work/bound
+  prepare "$dir"
+  : >"$dir/run-hangs"
+  run_check "$dir" -- --cloud-seconds 2
+  expect_status "$status" 1 "a launch the bound had to end"
+  expect_row a-launch "bound" "a launch the bound had to end: the row names the bound that fired"
+  expect_row a-executions "not reached" "a launch the bound had to end: nothing behind the launch was measured"
+}
+
 # Sharding, so the package's Go test can run the tests of this file side by
 # side: CHECK_TEST_SHARD="i/n" runs every n-th test starting at i, and
 # CHECK_TEST_ONLY=name runs that one test alone. Neither set: all run.
@@ -1074,6 +1147,9 @@ t test_the_executions_could_not_be_listed_is_not_measured
 t test_an_absent_project_that_exists_is_not_measured
 t test_the_restore_row_is_not_vacuous
 t test_a_config_listing_that_fails_is_not_measured
+t test_a_project_fuller_than_the_read_limit_still_measures
+t test_a_project_too_full_to_count_is_not_measured
+t test_the_launch_is_bounded
 
 if [ "$failures" -ne 0 ]; then
   echo "check680_test: $failures failure(s)" >&2
