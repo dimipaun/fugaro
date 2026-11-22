@@ -343,27 +343,53 @@ export const RUNS_STREAM_SINCE_WINDOWS: readonly string[] = Object.freeze(['24h'
 
 /**
  * GRAPH_SCOPE_RE is the closed shape of a `graph.read` scope argument: the two
- * selector words, and an id-carrying scope whose id is one lower-case letter or
- * digit followed by up to 39 more of those or a hyphen. It is **the CLI's own
- * pattern, spelled the same way** (`graph.ParseScope`'s `scopeIDPattern`,
- * `ee/graph/key.go`), because the value reaches argv from a renderer and both
- * ends have to refuse the same strings: an id this process admitted and that
- * command refused would be a child spawned to fail.
+ * selector words, and an id-carrying scope whose id is **C-ORCH's orchestrator
+ * id and nothing else** -- the project's own name rule (`config.ProjectNameRE`),
+ * optionally a `~` (`orchestrator.NameSeparator`) and a name
+ * (`^[a-z0-9][a-z0-9-]{0,39}$`). The id half is one rule, held by
+ * `orchestrator.ValidScopeID` (`internal/orchestrator/naming.go`, F40), the same
+ * rule `graph.ParseScope` reads: an id written twice here would drift from the
+ * command's own, and an id this process admitted and that command refused would
+ * be a child spawned to fail.
+ *
+ * **A named id is admitted by the grammar and by nothing else.** A scope whose
+ * id carries a `~` reaches a child only from a CLI at or above
+ * `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`), because the named
+ * scope grammar and `orchestrator map --json` are one release's; the floor is
+ * asked at the source (`createBoundSource`, `src/source/cli.ts`), the one place
+ * a scope and an installation's version are read together, and `graphScopeIsNamed`
+ * is the one spelling of "this scope names a named orchestrator" both use.
  *
  * Anchored, so nothing before or after it gets in. A leading `-` (which would
  * reach argv as a flag, the plan's H1), a path separator, an uppercase letter,
- * a whitespace character, a `.`, an `@` and a 41-character id are each refused
- * here -- before a child exists -- and `isSafeArgumentValue` refuses the leading
- * `-` and the alphabet a second time on the way into the argv.
+ * a whitespace character, a `.`, an `@`, a trailing hyphen on the project half
+ * and an over-long id are each refused here -- before a child exists -- and
+ * `isSafeArgumentValue` refuses the leading `-` and the alphabet a second time
+ * on the way into the argv.
  */
-const GRAPH_SCOPE_RE = /^(?:all|coordinator|(?:orchestrator|local):[a-z0-9][a-z0-9-]{0,39})$/
+const GRAPH_SCOPE_RE =
+  /^(?:all|coordinator|(?:orchestrator|local):[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:~[a-z0-9][a-z0-9-]{0,39})?)$/
 
 /**
  * MAX_GRAPH_SCOPE_LENGTH bounds a scope argument before the grammar runs, so a
  * hostile payload cannot make the regular expression work. It is the longest
- * value the pattern admits: `orchestrator:` plus a 40-character id.
+ * value the pattern admits: `orchestrator:` plus `orchestrator.MaxOrchestratorIDLength`
+ * (81: a project name at its 40-character cap, the `~`, and a name at its cap).
  */
-export const MAX_GRAPH_SCOPE_LENGTH = 'orchestrator:'.length + 40
+export const MAX_GRAPH_SCOPE_LENGTH = 'orchestrator:'.length + 81
+
+/**
+ * graphScopeIsNamed reports whether a well-formed scope names a **named**
+ * orchestrator -- whether its id half carries the separator. It is one spelling
+ * for the one reader that has to tell the two apart: `createBoundSource`'s scope
+ * guard (`src/source/cli.ts`), which admits a named scope only at or above
+ * `ORCHESTRATOR_MAP_CLI_FLOOR`. It takes a scope `GRAPH_SCOPE_RE` already
+ * admitted and looks for the separator the pattern allows in one place only, so
+ * it is a reading and not a second grammar.
+ */
+export function graphScopeIsNamed(scope: string): boolean {
+  return scope.includes('~')
+}
 
 /**
  * ROADMAP_NODE_RE is the shape of the **document key** a move names: the
@@ -538,13 +564,16 @@ const MAX_ROADMAP_RELEASE_LENGTH = 64
  * is what ties the three together: a `set` carries a value and an `unset` does
  * not.
  *
- * **`graphSource` is the graph read's one argument** (the graph plan's CG9a):
- * the scope the document is about, held to `GRAPH_SCOPE_RE` -- the CLI's own
- * anchored pattern -- and, at the source, to the set a previous read of the same
- * document listed (F21). It is the one kind here whose *shape* is a closed
- * grammar and whose *membership* is the read's own answer, which is why the two
- * checks live apart: this module refuses a spelling no scope could have, and
- * `createBoundSource` refuses an id the CLI never named.
+ * **`graphSource` is the graph read's one argument** (the graph plan's CG9a;
+ * its named ids arrived with the console-fixes plan's CG7a): the scope the
+ * document is about, held to `GRAPH_SCOPE_RE` -- C-ORCH's own id rule, the one
+ * `graph.ParseScope` reads -- and, at the source, to the set a previous read of
+ * the same document listed (F21). It is the one kind here whose *shape* is a
+ * closed grammar and whose *membership* is the read's own answer, which is why
+ * the two checks live apart: this module refuses a spelling no scope could have,
+ * and `createBoundSource` refuses an id the CLI never named -- and refuses a
+ * **named** id below `ORCHESTRATOR_MAP_CLI_FLOOR`, the release whose CLI reads
+ * one at all.
  *
  * **`licenceKey` is the licence section's one argument** (subscriptions plan
  * S2.7), and it is the only argument on this surface whose value is a
@@ -782,7 +811,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Forty-three operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Fifty-seven operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -1178,10 +1207,14 @@ export const CONSOLE_OPERATIONS = [
   // **Its one argument is the scope, and it is the only argument on this
   // surface held to a grammar *and* to a membership.** `GRAPH_SCOPE_RE` refuses
   // every spelling no scope could have (`-x`, `all --source local:o1`,
-  // `orchestrator:../..`, a 41-character id) before a child exists, and
-  // `createBoundSource` refuses a scope the previous document of this read did
-  // not list (F21) -- a value a renderer invented, or one that names a scope
-  // the CLI's own sources array never mentioned, is a refusal and not a spawn.
+  // `orchestrator:../..`, a project half over 40 characters) before a child
+  // exists, and `createBoundSource` refuses a scope the previous document of
+  // this read did not list (F21) -- a value a renderer invented, or one that
+  // names a scope the CLI's own sources array never mentioned, is a refusal and
+  // not a spawn. **A named id is the same check's second half** (CG7a): the
+  // grammar admits `orchestrator:<project>~<name>`, and the source refuses it
+  // below `ORCHESTRATOR_MAP_CLI_FLOOR`, because the CLI that reads a named
+  // orchestrator is the release that ships `orchestrator map --json`.
   // The read is also the one place the console may name a *paid* command
   // (`ee/graph`, D1362), which is why it takes no other word: the `--watch`
   // stream that holds a child open is a different argv and its own row
@@ -1844,6 +1877,41 @@ export const CONSOLE_OPERATIONS = [
     command: 'coordinator intents',
     flags: ['--all', '--json'],
     summary: 'what the fleet’s writers have declared, newest first',
+    args: [],
+  },
+  // The orchestrator map (the console-fixes plan's CG7a; C-ORCH's document,
+  // `internal/orchestrator/mapdoc.go`; D3221): `fugaro orchestrator map --json`,
+  // the project's **active** orchestrators, the connections between them and the
+  // coordinator's own heartbeat. It is the read the Coordinator tab draws, and
+  // it sits beside the stored view and the declarations above because it is the
+  // same screen's third read -- and the one that replaces the tab's v2 sections
+  // (CG7b, D3210).
+  //
+  // **It has no argument at all**, like the declarations read: the whole argv is
+  // the row's own words (`src/main/spawn.ts`), so there is no field a renderer
+  // could fill and nothing it could steer. `--json` is fixed rather than a
+  // control, and `--project`/`--config` come from the row's `takesProject` like
+  // every other project read (rule 3). The document is one project's, so the
+  // scope a screen is looking at is not an argument of this read: the map is
+  // already the project's active set.
+  //
+  // **The command is registered from `ee/`** (`ee/orchestrator/cli/map.go`) and
+  // no released CLI carries it, so `ORCHESTRATOR_MAP_CLI_FLOOR` is `null` today
+  // (`src/shared/version.ts`) and the tab draws the version it needs rather than
+  // spawning this row at all. The two ends of that floor are one release: the
+  // command, and the named graph scope beside it (`GRAPH_SCOPE_RE`, F40).
+  //
+  // Like the stored view, this read asks nothing of the host: the map is built
+  // from the caller's own database -- the orchestrator nodes, their leases, the
+  // claims and the coordinator's heartbeat (`roles/firebasedatabase.viewer`) --
+  // so no App key is read, no installation token is minted and no provider is
+  // opened.
+  {
+    name: 'orchestrator.map',
+    method: 'orchestratorMap',
+    command: 'orchestrator map',
+    flags: ['--json'],
+    summary: 'the project’s active orchestrators, their connections and the coordinator’s heartbeat',
     args: [],
   },
   // The roadmap record's one write (the dependency-graph plan's GV3.2; the
@@ -4226,16 +4294,18 @@ function validateValue(
       if (!SECRET_SCOPES.includes(value)) return refuse(`${spec.key} must be ${SECRET_SCOPES.join(' or ')}`)
       return { ok: true, value }
     case 'graphSource':
-      // The graph read's scope (CG9a): `all`, `coordinator`, or an id-carrying
-      // scope whose id matches the CLI's own pattern. This is the half that
-      // keeps a value from being a path, a flag or another word of the command
-      // -- `-x`, `all --source local:o1`, `orchestrator:../..` and a 41-character
-      // id are all refused here, before a child exists -- and the other half,
-      // that the scope is one a previous read of this document named, is the
-      // source's (`createBoundSource`, F21).
+      // The graph read's scope (CG9a; named ids with CG7a): `all`, `coordinator`,
+      // or an id-carrying scope whose id is C-ORCH's orchestrator id -- a project
+      // name and, for a named orchestrator, a `~` and a name. This is the half
+      // that keeps a value from being a path, a flag or another word of the
+      // command -- `-x`, `all --source local:o1`, `orchestrator:../..`, a
+      // 41-character project half and a name over 40 characters are all refused
+      // here, before a child exists -- and the other half, that the scope is one
+      // a previous read of this document named, is the source's
+      // (`createBoundSource`, F21).
       if (!GRAPH_SCOPE_RE.test(value)) {
         return refuse(
-          `${spec.key} must be all, coordinator, or orchestrator:<id> / local:<id> with an id of 1 to 40 characters of a-z, 0-9 and -`,
+          `${spec.key} must be all, coordinator, or orchestrator:<id> / local:<id> with an id of a project name, optionally ~ and a name of 1 to 40 characters of a-z, 0-9 and -`,
         )
       }
       return { ok: true, value }

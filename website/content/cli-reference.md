@@ -5436,9 +5436,9 @@ command with no flags records a figure rather than asking for one (design
 D2212 and D2211). The amount is the budget ALERT amount the installation's
 Terraform creates and nothing else — this command does not create or change a
 budget, and it makes no billing call. The alert itself is the installation's
-own Terraform and belongs to the fugaro update that applies it, not to this
+own Terraform and belongs to the update step of that installation, not to this
 object — fugaro update --budget N --budget-currency CCC --billing-account ID
-applies the amount this command records. Nothing else is a question: the bound
+sets the amount this command records. Nothing else is a question: the bound
 on
 billable image builds this object used to record (D1013) is gone (D1543), so
 there is no count to ask the owner for and none to write, exactly as fugaro
@@ -7491,11 +7491,13 @@ The repos.* scalars and lists are the generic writer's (D1173):
     fugaro settings set repos.acme/app.base_branch main
     fugaro settings set repos.acme/app.workflows --add docs
 
-The write and the publish are one act, as they are for the same keys through
-fugaro settings set: the keys land in this machine's project config and the
-policy node they are served from is published by this same command, so no second
-command is needed. --no-apply saves the write and leaves the publish to fugaro
-apply.
+The write and the publish are one act, through the same chain fugaro settings
+set runs for a key it writes: the keys land in this machine's project config and
+the policy node they are served from is published by this same command, so no
+second command is needed. A repository's workflows selection is a key the
+generic writer spells too; a profile's seven keys are not, and the generic path
+refuses them and names this command's family instead (D853). --no-apply saves
+the write and leaves the publish to fugaro apply.
 
 This write is a person's own: a coding agent's session is refused it, in a
 managed project by that project's gate.
@@ -10567,7 +10569,7 @@ Flags:
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (setup does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
-| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
+| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names an image the release source never published (a customised or hand-pushed history:latest needs it once; the image of an earlier release needs no flag, and is moved on its own). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
 | `--repo` | bool | `false` | no | onboard the repository of the checkout at PATH (default: the current directory) instead of the installation |
 | `--retire` | bool | `false` | no | with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; no flag, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply |
 | `--rigor` | string | "" | no | answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set |
@@ -10862,7 +10864,7 @@ Flags:
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (update does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
-| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
+| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names an image the release source never published (a customised or hand-pushed history:latest needs it once; the image of an earlier release needs no flag, and is moved on its own). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
 | `--repo` | bool | `false` | no | onboard the repository of the checkout at PATH (default: the current directory) instead of the installation |
 | `--retire` | bool | `false` | no | with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; no flag, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply |
 | `--rigor` | string | "" | no | answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set |

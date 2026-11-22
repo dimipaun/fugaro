@@ -128,8 +128,15 @@ var planTaskReaders = map[string]string{
 	// the same display-only join the rows already carry, from the same field,
 	// and no path is built from it.
 	"internal/runindex/contract.go": "the index entry's own plan_task field: the id plan status and graph join a run to a node by, display-only",
-	"internal/plan/state.go":        "joins the id the row published to a plan's task, for the states a screen draws",
-	"internal/cli/plan_status.go":   "turns the read's own sanitised rows into the facts the join reads; it never opens launch.json",
+	// The reader of that entry (RI3): it names the field as the equality one
+	// page of the index is queried by, and the value is compared and nothing
+	// else -- no path is built from it, no record is opened by it, and what the
+	// query returns carries it as the display text contract.go's entry above
+	// already allows. The id a page was filtered by is the caller's own
+	// argument, never a value read out of a run.
+	"internal/runindex/firestore.go": "names the field as the equality a page of the index is queried by, and decides nothing by it",
+	"internal/plan/state.go":         "joins the id the row published to a plan's task, for the states a screen draws",
+	"internal/cli/plan_status.go":    "turns the read's own sanitised rows into the facts the join reads; it never opens launch.json",
 	// The orchestrator's own graph: an item carries the plan task it stands
 	// for, so the import of a plan (D2704) and the plan's adopted runs in
 	// flight (D2702) meet in one node instead of duplicating it (D2746). The

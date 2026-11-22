@@ -256,6 +256,26 @@ type Options struct {
 	// answer's own fault (an answer this gateway could not read halts the
 	// run instead) — never the hook's.
 	OnServiceAnswer func(ServiceAnswer)
+	// ChainServed says the credentials service serves this run's model calls
+	// (R2, chain_names.go): the gateway holds no key and no table, sends the
+	// run's current stage on every call it makes to the service (HeaderStage,
+	// dropped from the caller's own headers first) and no header naming a
+	// model, and reads the answer's source, fallback and served-model members
+	// into OnChainAnswer below. It is false in the core and for a run whose
+	// repository has not migrated, and a gateway with it false behaves exactly
+	// as it did before this contract — which is what lets the migration land
+	// one repository at a time (R25).
+	//
+	// It is set once, before Start, and never replaced: the run's route to the
+	// service is decided at its start (D2982).
+	ChainServed ChainServed
+	// OnChainAnswer, when set, is called once for every served call of a
+	// chain-serving gateway whose answer named the source that served it
+	// (ChainAnswerFunc, chain_names.go). It is the step's record: it folds the
+	// fallback flag over the stage's calls and takes the last call's source
+	// (CS8). It is called from concurrent calls, with no lock of this package
+	// held, and a nil hook is not an error.
+	OnChainAnswer ChainAnswerFunc
 }
 
 // DefaultGeos are the usage.inference_geo values a default request is
@@ -453,6 +473,15 @@ type Halt struct {
 // Notional is zero and Used is exactly what it always was.
 type Ledger struct {
 	Granted, Used, Notional, Reserved pricing.Micros
+	// FallbackUSD is the real money the run's fallback calls spent (C1, CS8,
+	// D140): the calls the credentials service served from a source that is
+	// not the chain's first and a metered source paid for. It is a part of
+	// Used and not a figure beside it -- those calls are charged, held to the
+	// caps and settled exactly like the calls they fell back from -- and a
+	// fallback a subscription served is in Notional and in no part of this,
+	// because no dollar of it was paid (P12). Zero for every run the service
+	// does not serve, and for one whose chain never fell back.
+	FallbackUSD pricing.Micros
 	// CacheReadTokens and CacheWriteTokens are the run's prompt-cache read
 	// and write token totals: plain sums of the calls' reported usage, not a
 	// dollar split, which the price table's one blended figure per call
@@ -530,6 +559,14 @@ type Server struct {
 	// own usage, kept apart from used because it is not money and no cap
 	// counts it (C1.16, D140).
 	notional pricing.Micros
+	// fallbackUSD is the part of used that bought a fallback: the calls the
+	// credentials service served from a source that is not the chain's first
+	// and a metered source paid for (C1, CS8, D140). It reaches the run's
+	// record through the Ledger, and it is kept here rather than summed from
+	// the stages' reports for the reason used and notional are: a call that
+	// settles after its stage's report was taken is in the run's figure and
+	// in no stage's.
+	fallbackUSD pricing.Micros
 	// lastCacheRead, lastCacheKnown and lastModel are the last settled
 	// call's cache-read tokens, whether its usage was read at all, and its
 	// serving model: what the next answer's switch is estimated from
@@ -888,6 +925,7 @@ func (s *Server) Ledger() Ledger {
 
 func (s *Server) ledgerLocked() Ledger {
 	l := Ledger{Granted: pricing.Micros(math.MaxInt64), Used: s.used, Notional: s.notional, Reserved: s.reserved,
+		FallbackUSD:     s.fallbackUSD,
 		CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite, ModelTokens: copyUsage(s.modelTokens),
 		ReportedBy: copyMicros(s.reportedBy), TableLoBy: copyMicros(s.tableLoBy), TableHiBy: copyMicros(s.tableHiBy),
 		UnreportedCalls: s.unreportedCalls}

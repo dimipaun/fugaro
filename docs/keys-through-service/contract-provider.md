@@ -114,7 +114,12 @@ takes, and the refusal names the field and never the value it refused.
 **The entry.** `ProviderKeyEntry` holds the repository and the credential's name, the provider's
 address and the auth form (the closed set `bearer` / `x-api-key`, D1418), the value — through
 `Value()` alone, rendered by nothing, as `Entry` is — and the **source marker** `ProviderKeySource`:
-the container the copy read the value from and its version (D3014). The zero marker is the whole of
+the container the copy read the value from, named by its Secret Manager **id** (the container that
+answered, not the logical name a person types), and that container's version (D3014). The scope is
+part of the marker because one logical name is held in a container per scope and the two number
+their versions independently: a marker carrying the logical name alone leaves the next copy
+comparing a version of the repository's container against a version of the project-wide one, which
+is a number that answers nothing about either. The zero marker is the whole of
 "an entry the copy did not write", which is what makes that phrase checkable without guessing at a
 spelling, and the copy overwrites no entry it did not write without saying so (KS12).
 

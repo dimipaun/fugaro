@@ -49,6 +49,9 @@
 #             where more than one work item of the daemon is in flight: by
 #             default the check reads the daemon's own state and takes the ONE
 #             item whose phase is `running` with a run id.
+#             This script launches nothing: the ONE approved task it needs is
+#             queued by scripts/live-checks/check640-queue-probe.sh, which you run
+#             first (it asks you to type the project's name to approve the item).
 # Needs:      bash, mktemp, python3 (the reader), gh, gcloud, fugaro. It does NOT
 #             need a checkout and does NOT need git: nothing here runs git, and
 #             no repository is cloned.
