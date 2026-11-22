@@ -382,9 +382,9 @@ func (s *Store) ReadSummary(ctx context.Context) (*Summary, error) {
 // JSON value, a value of the wrong type, another version, another run ID,
 // another slug, no record to stand in for, or no time at all.
 //
-// It is deliberately stricter than the contract in schemas/run-summary.json,
-// which tolerates a member it does not know so a newer writer's summary is
-// still a document an editor can validate: what a reader cannot vouch for it
+// It is deliberately stricter than the contract in
+// schemas/run-summary.schema.json, which tolerates a member it does not know so
+// a newer writer's summary is still a document an editor can validate: what a reader cannot vouch for it
 // refuses, and the caller reads the run's three objects instead. That is why
 // every failure here is a summary to fall back from and never an error a
 // listing reports: an object that is only a shortcut may not break the
