@@ -230,6 +230,7 @@ func proxyTokensWorldOf(t *testing.T, node string, doc []byte, values map[string
 	// before any token is minted or any call is made — is what makes the two
 	// agree, so the mark a 429 leaves is a mark the next request meets.
 	s.now = time.Now().UTC().Truncate(time.Second)
+	s.run = s.now.Format("20060102-150405") + "-ab12"
 
 	w := &proxyTokensWorld{t: t, s: s, up: up, db: db, store: store, values: values, clock: s.now}
 	// The bundle loader's own clock, and not the service's: a test that rotates

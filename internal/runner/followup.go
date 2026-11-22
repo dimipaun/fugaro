@@ -668,6 +668,7 @@ func (r *run) followUpSection() *FollowUpSection {
 		PreviousRun: r.spec.PreviousRun, Authors: sel.Authors, UntrustedAuthors: sel.UntrustedAuthors,
 		UntrustedAuthorCount: sel.UntrustedAuthorCount, UntrustedComments: sel.Omitted[followup.OmitUntrusted],
 		MarkersFromAnyone: sel.MarkersFromAnyone, AuthorUnknown: f.pr.AuthorID == "", NoNewCommits: r.rec.HeadSHA == f.startSHA, Answer: r.answer(),
+		HandBack: r.handBackPart(),
 	}
 	if rf := r.rec.FollowUp; rf != nil {
 		fu.Session, fu.SessionNote = rf.Session, rf.SessionNote

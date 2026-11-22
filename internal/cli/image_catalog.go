@@ -79,7 +79,8 @@ func newImageLsCmd() *cobra.Command {
 			"digest, and the repositories and jobs on it. The two are one command with a\n" +
 			"flag, never two ls commands, so there is no question of which one to run.\n\n" +
 			"A project with no catalog of its own lists nothing: fugaro image add writes\n" +
-			"an entry, and fugaro update publishes the catalog to the project's policy\n" +
+			"an entry and makes it live — its image is built, the repository it is read\n" +
+			"out of is redeployed and the catalog is published to the project's policy\n" +
 			"node (image_catalog), which is what a job reads.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runImageLs(cmd, o, shared, asJSON) },
@@ -131,7 +132,7 @@ func runImageLsCatalog(cmd *cobra.Command, env *cloudEnv, records *blobx.Bucket,
 		return enc.Encode(out)
 	}
 	if len(out.Entries) == 0 {
-		fmt.Fprintln(w, "this project's image catalog is empty: fugaro image add <name> --tags <tags> --dockerfile <owner/name:path> adds an entry, and fugaro update publishes it")
+		fmt.Fprintln(w, "this project's image catalog is empty: fugaro image add <name> --tags <tags> --dockerfile <owner/name:path> adds an entry and makes it live, building its image and publishing the catalog")
 		return nil
 	}
 	for _, r := range out.Entries {
