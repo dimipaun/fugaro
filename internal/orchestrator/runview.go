@@ -88,7 +88,10 @@ type RunReport struct {
 	//
 	// It is here because the fold is the only reader of it: what a person is
 	// told about a run that suspended itself is the pause (notify.go), and the
-	// instant cannot be read off the record, which carries none.
+	// instant cannot be read off the record, which carries none. The reader
+	// fills it from the node the service wrote, and only for a record that ended
+	// `paused` (internal/cli's orchestratorRunView.pauseNode): a run the service
+	// wrote no node for carries none, and its report is the ending it had.
 	Pause *runstore.PauseNode
 }
 
@@ -167,7 +170,7 @@ func noticeForRun(runID, title string, r RunReport, outcome Outcome) Notificatio
 	case r.Pause != nil:
 		return pausedNotice(runID, title, *r.Pause)
 	case r.Halt.Reason == string(runstore.HaltNoCredential):
-		return pauseHaltedNotice(runID, title, r.Halt)
+		return pauseHaltedNotice(runID, r.Halt)
 	}
 	return Notification{
 		Kind:    NotifyRunFinished,

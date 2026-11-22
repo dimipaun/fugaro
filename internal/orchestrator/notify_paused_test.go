@@ -128,9 +128,13 @@ func TestNoticeForAPausedRun(t *testing.T) {
 
 	t.Run("a pause that ended as halted is told, with the halt's own sentence", func(t *testing.T) {
 		// The halt the service's `halt` answer — or a `/pause` it refused —
-		// leaves on the record: the run ended at once and named the reset it
-		// would not wait for (C3).
-		const detail = "the earliest reset is 2026-11-22T14:00:00Z, and this job must be finished by 2026-11-22T12:30:00Z"
+		// leaves on the record (C3), in the words a run really writes
+		// (internal/runner's creds_wait): a sentence longer than the one line
+		// it has to travel on, whose opening says why the run stopped and whose
+		// reset is what a person launches again on.
+		const reset = "2026-11-22T14:00:00Z"
+		const detail = "no credential was usable before this job's own timeout: the credential service answered that the earliest reset is " + reset +
+			", and this job must be finished by 2026-11-22T12:30:00Z (see 'fugaro accounts ls' for the accounts' states; the project policy's credentials.fallback decides whether another tier may be used)"
 		h := runTick(t, orchestrator.RunReport{
 			Finished: true,
 			Outcome:  orchestrator.OutcomeRefused,
@@ -146,8 +150,19 @@ func TestNoticeForAPausedRun(t *testing.T) {
 		if n.Subject != runID {
 			t.Errorf("the notice is about %q, and the run that halted is %q", n.Subject, runID)
 		}
-		if !strings.Contains(n.Text, "nothing resumes it") || !strings.Contains(n.Text, detail) {
-			t.Errorf("the line is %q, and it does not say that no resume is coming and what the run's operator read (%q)", n.Text, detail)
+		// What a person reads is the line, and it is the line the cap applies
+		// to: the reset the halt names is the fact they act on, and it sits far
+		// enough into a real sentence that a notice carrying the sentence whole
+		// would have had it cut off the end.
+		line := n.Line()
+		if !strings.Contains(line, reset) {
+			t.Errorf("the line is %q, and it lost the reset the halt names (%s): what a person launches again on is that instant", line, reset)
+		}
+		if !strings.Contains(line, "nothing resumes it") {
+			t.Errorf("the line is %q, and it does not say that no resume is coming", line)
+		}
+		if len([]rune(line)) > orchestrator.MaxNotifyLineRunes {
+			t.Errorf("the line is %d runes and the cap is %d", len([]rune(line)), orchestrator.MaxNotifyLineRunes)
 		}
 
 		lines := logLines(t, h.sink.got)

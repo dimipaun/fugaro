@@ -1,11 +1,12 @@
 // What a tick tells a person (O7).
 //
-// A tick has five things to say: a run it folded has ended, it has raised a
+// A tick has six things to say: a run it folded has ended, it has raised a
 // question somebody has to answer, it has merged a pull request under a
-// ceiling that merges and tells somebody (D2030), a run has suspended itself on
-// an exhausted chain until a time, and — that same exhaustion read the other
-// way — a run has halted for want of a model (C3). All five are things the
-// cycle itself wrote — the other half of the notification rule, level-triggered
+// ceiling that merges and tells somebody (D2030), it has blocked an item on a
+// dependency cycle that crosses orchestrators (D3220), a run has suspended
+// itself on an exhausted chain until a time, and — that same exhaustion read
+// the other way — a run has halted for want of a model (C3). All six are things
+// the cycle itself wrote — the other half of the notification rule, level-triggered
 // and without a cursor (D1229):
 // the cycle that records an outcome, commits a question or lands a merge is the
 // one that says so, and no cycle afterwards repeats it, because the node no
@@ -129,9 +130,21 @@ func pausedNotice(runID, title string, n runstore.PauseNode) Notification {
 // reset the service named — and that is the one thing that tells a person
 // whether waiting is worth another launch, so it travels with the notice rather
 // than being summarised away.
-func pauseHaltedNotice(runID, title string, h Halt) Notification {
-	text := fmt.Sprintf("run %s halted for %q instead of pausing, and nothing resumes it", runID, title)
-	if d := strings.TrimSpace(h.Detail); d != "" {
+//
+// The sentence is clipped here, to the room the fixed words leave, and not left
+// to the cap: the cap cuts from the end of the line, and the instant a person
+// acts on sits about a hundred runes into the sentences a run really records
+// ("the credential service answered that no credential was usable … the last
+// until <instant>", internal/runner's own words), so a sentence appended whole
+// arrives as its opening and never reaches the fact it was included for. The
+// item's title is what gives way to that room: the subject already names the
+// run, and which work it stopped is on the run's own row, where the instant it
+// waits for is not.
+func pauseHaltedNotice(runID string, h Halt) Notification {
+	const head = "halted, nothing resumes it"
+	room := maxNotifyLineRunes - len([]rune(string(NotifyPauseHalted)+" "+runID+": "+head+": "))
+	text := head
+	if d := cleanLine(strings.TrimSpace(h.Detail), room); d != "" {
 		text += ": " + d
 	}
 	return Notification{Kind: NotifyPauseHalted, Subject: runID, Text: text}
