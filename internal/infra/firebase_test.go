@@ -1505,3 +1505,54 @@ func TestFrontDoorHoldsNoDatabaseWrite(t *testing.T) {
 func namesTheFrontDoor(member string) bool {
 	return strings.Contains(member, "mcp_server") || strings.Contains(member, MCPServerAccountID)
 }
+
+// A NEW Realtime Database instance goes where the mapping says (D3089), and
+// the mapping is the product's table, not a rule of this file's: the
+// installation's own region is the answer only for the three regions that are
+// one of Google's three Realtime Database locations, and every other region
+// gets the nearest of them. The value lands in the tfvars under the module's
+// own variable name (TestFirebaseVarsPlan plans the root with it, and
+// TestFirebaseMarksMatchModule holds the module to the input), which is what
+// makes a first apply create the instance where the mapping would.
+//
+// An instance that already exists is not this: it keeps the location it was
+// created in, which is the module's ignore_changes and discovery's import at
+// the instance's own location (TestAnInstanceElsewhereIsAdopted,
+// TestAnExistingInstanceKeepsItsOwnRegion).
+func TestANewInstanceGoesWhereTheMappingSays(t *testing.T) {
+	base := installationSpec(t)
+	for _, c := range []struct{ region, want string }{
+		{"us-east5", "us-central1"},      // the default US region: the mapping's us-central1
+		{"us-west8", "us-central1"},      // any us-* region
+		{"europe-west1", "europe-west1"}, // the one EU location, so the region itself
+		{"europe-north1", "europe-west1"},
+		{"europe-west2", "europe-west1"}, // London is in neither place and still lands here
+		{"asia-southeast1", "asia-southeast1"},
+		{"asia-northeast1", "asia-southeast1"},
+	} {
+		t.Run(c.region, func(t *testing.T) {
+			inst := base
+			inst.Region = c.region
+			fs, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fs.DatabaseRegion != c.want {
+				t.Errorf("an installation in %s gets %q; want %q", c.region, fs.DatabaseRegion, c.want)
+			}
+			raw, err := FirebaseVars(fs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var vars struct {
+				DatabaseRegion string `json:"database_region"`
+			}
+			if err := json.Unmarshal(raw, &vars); err != nil {
+				t.Fatal(err)
+			}
+			if vars.DatabaseRegion != c.want {
+				t.Errorf("the tfvars carry database_region %q; want %q", vars.DatabaseRegion, c.want)
+			}
+		})
+	}
+}

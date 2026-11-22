@@ -112,7 +112,7 @@ func batchSteps() []batchStep {
 		{batchStepSubnet, func(_ *testing.T, _ *doctorRig, f batchRigFakes) { f.compute.AddSubnetwork(batchRegion, "fugaro") }},
 		{batchStepSink, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
 			f.logging.AddSink("proj-1234", infra.LogSink,
-				"logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro", batchBothArms)
+				"logging.googleapis.com/projects/proj-1234/locations/us/buckets/fugaro", batchBothArms)
 		}},
 		{batchStepExcl, func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
 			f.logging.AddExclusion("proj-1234", infra.LogExclusion, batchBothArms)
@@ -329,7 +329,7 @@ func TestDoctorBatchReportsAMissingImageFamily(t *testing.T) {
 	f.compute.AddNetwork("fugaro")
 	f.compute.AddSubnetwork("us-east5", "fugaro")
 	f.logging.AddSink("proj-1234", infra.LogSink,
-		"logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro", batchSinkArm)
+		"logging.googleapis.com/projects/proj-1234/locations/us/buckets/fugaro", batchSinkArm)
 	r := newDoctorRig(t)
 	r.withBatch(t, f, "")
 
@@ -539,7 +539,7 @@ func TestDoctorBatchReportsANetworkOrSubnetworkThatIsNotThere(t *testing.T) {
 // Mutation (drop the arm check, drop the destination check, or treat a missing
 // sink as ok): one of the three cases stops warning.
 func TestDoctorBatchReportsASinkWithoutTheBatchArm(t *testing.T) {
-	const wantDest = "logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro"
+	const wantDest = "logging.googleapis.com/projects/proj-1234/locations/us/buckets/fugaro"
 	cloudRunArm := `resource.type="cloud_run_job" AND labels."fugaro"="managed"`
 	for _, tc := range []struct {
 		name     string
@@ -568,6 +568,48 @@ func TestDoctorBatchReportsASinkWithoutTheBatchArm(t *testing.T) {
 			}
 			if !strings.Contains(c.Problem, tc.wantInMs) {
 				t.Errorf("the warning does not say %q: %s", tc.wantInMs, c.Problem)
+			}
+		})
+	}
+}
+
+// TestDoctorReadsTheLogBucketWhereItIs (LP6, R5): the sink check compares the
+// live destination against the installation's OWN log bucket. That bucket's
+// location is the one the config's log view names -- the view path the module
+// wrote into the outputs an earlier update recorded -- and place.For's answer
+// for the region only when the config records no view at all. A bucket's
+// location is permanent, so a check that assumed one would warn about a sink
+// routing exactly where the installation's bucket is, which is the warning this
+// test must not see.
+func TestDoctorReadsTheLogBucketWhereItIs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		view string
+		// bucket is where the sink routes, as the trailing locations/<bucket>
+		// pair of the project's own bucket path.
+		bucket string
+		ok     bool
+	}{
+		{"the location the recorded view names", "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs", "global", true},
+		{"the mapping's answer, with no view recorded", "", "us", true},
+		{"the mapping's answer, against a view that names another", "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs", "us", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBatchFakes(t)
+			f.logging.AddSink("proj-1234", infra.LogSink,
+				"logging.googleapis.com/projects/proj-1234/locations/"+tc.bucket+"/buckets/fugaro", batchSinkArm)
+			r := newDoctorRig(t)
+			extra := ""
+			if tc.view != "" {
+				extra = "log_view: " + tc.view + "\n"
+			}
+			r.withBatch(t, f, extra)
+			c, found := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-log-sink")
+			if !found {
+				t.Fatal("doctor reports no batch-log-sink check")
+			}
+			if c.OK != tc.ok {
+				t.Fatalf("check = %+v, want ok=%v: the sink routes to the bucket's own location and nothing here derives it", c, tc.ok)
 			}
 		})
 	}
@@ -997,7 +1039,7 @@ var batchGateConditions = []batchGateCondition{
 	{name: "the sink's Batch arm", id: "batch-log-sink", want: "has no Batch arm",
 		alter: func(_ *testing.T, _ *doctorRig, f batchRigFakes) {
 			f.logging.AddSink("proj-1234", infra.LogSink,
-				"logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro", batchCloudRunArm)
+				"logging.googleapis.com/projects/proj-1234/locations/us/buckets/fugaro", batchCloudRunArm)
 		}},
 	{name: "the log exclusion", id: "batch-log-exclusion", want: "is not in proj-1234",
 		without: []string{batchStepExcl}},
