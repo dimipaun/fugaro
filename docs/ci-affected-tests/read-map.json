@@ -20430,6 +20430,8 @@
         "schemas/merge-judge.schema.json",
         "schemas/models-ls.schema.json",
         "schemas/models-search.schema.json",
+        "schemas/orchestrator-output.schema.json",
+        "schemas/orchestrator-state.schema.json",
         "schemas/pr-index.schema.json",
         "schemas/project-layer.schema.json",
         "schemas/recipe.schema.json",
