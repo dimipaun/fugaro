@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -59,6 +60,10 @@ func publishAfterWrite(ctx context.Context, cmd *cobra.Command, change afterWrit
 	}
 	sel, lc, err := afterWriteSelection(cmd)
 	if err != nil {
+		// No installation is known here, so no record of the steps could be
+		// filed under one (afterWriteOwed): the sentence is the one every arm
+		// ends on and the command it names reads the record of the shell this
+		// write was made from.
 		return afterWriteNotLive(change)
 	}
 	// The run's own door is the command that called: it names the run on every
@@ -102,15 +107,15 @@ func publishAfterWrite(ctx context.Context, cmd *cobra.Command, change afterWrit
 	// writes the machine's own layer file.
 	unlock, err := r.lockWorkdirs(lc.GCPProject)
 	if err != nil {
-		return afterWriteNotLive(change)
+		return afterWriteOwed(lc, change, names)
 	}
 	defer unlock()
 	spec, err := installOptions(o, lc)
 	if err != nil {
-		return afterWriteNotLive(change)
+		return afterWriteOwed(lc, change, names)
 	}
 	e := &initEngine{r: r, lc: lc, spec: spec, path: sel.Path}
-	stages, _ := stagesNamed(e, names...)
+	stages, unanswered := stagesNamed(e, names...)
 	// A coding agent's session is the one session the gate is read for
 	// (D1016): it is what the loop's refusal is replaced by, per stage, and a
 	// person at their own terminal is asked nothing the gate stood in for. The
@@ -136,9 +141,58 @@ func publishAfterWrite(ctx context.Context, cmd *cobra.Command, change afterWrit
 		// change is saved and it is not live. What stopped it is the run's own
 		// line, printed above by the stage that stopped, and the sentence below
 		// is the one thing the command itself says about it (D2614).
-		return afterWriteNotLive(change)
+		return afterWriteOwed(lc, change, afterWriteKept(names, unanswered, res))
 	}
 	return nil
+}
+
+// afterWriteKept is the steps a run that stopped short did not answer, in the
+// command's own order: every step whose stage left the change live is answered
+// and every other one is owed, which is the rule applyRunRecord settles a chain
+// and `fugaro apply` settles a record by (applyStepAnswered, D1563).
+//
+// A step this door registers no stage under — a catalog image's build, which is
+// not a stage at all, and the services slot the hook's own list does not carry —
+// is owed and not dropped: a run that quietly did fewer steps than it was asked
+// for is the one thing neither the record nor the command may do
+// (applyRunRecord's own rule).
+func afterWriteKept(names, unanswered []string, res *initflow.Result) []string {
+	states := map[string]initflow.StageResult{}
+	if res != nil {
+		for _, st := range res.Stages {
+			states[st.Name] = st
+		}
+	}
+	var kept []string
+	for _, n := range names {
+		if slices.Contains(unanswered, n) || !applyStepAnswered(n, states[n], applyOptions{chain: true}) {
+			kept = append(kept, n)
+		}
+	}
+	return kept
+}
+
+// afterWriteOwed records the steps this run did not answer and ends the command
+// on the one sentence (D2614).
+//
+// The record is what makes that sentence true: `fugaro apply` reads this
+// machine's own record and runs the steps in it, and the wording names that
+// command rather than `fugaro update` since AP3 landed it — the repoint
+// docs/contracts/config-ownership.md §7 asks for, in the one place that file
+// keeps the wording (afterWriteNotLive). The change is the subject and never a
+// value (D1570), and the record is written under the same project name and GCP
+// project ID the chain writes its own (chainSave).
+//
+// A record that cannot be written is not swallowed: the command says so, as
+// chainApply says it, because a step nobody would run is worse than a sentence
+// that reads wrong.
+func afterWriteOwed(lc *localcfg.Config, change afterWriteChange, kept []string) error {
+	if len(kept) > 0 {
+		if _, err := chainSave(lc, []apply.Change{{Kind: apply.Setting, Key: change.Key}}, kept); err != nil {
+			return err
+		}
+	}
+	return afterWriteNotLive(change)
 }
 
 // afterWriteSelection is the installation the write landed in, which is the one
@@ -214,11 +268,16 @@ func afterWriteGate(ctx context.Context, lc *localcfg.Config, subcommand string,
 
 // afterWriteNotLive is the one sentence a command ends on when the change it
 // wrote is not live (D2614): the write stays, the command exits non-zero, and
-// this is the whole of what it says about it. It is the one helper AP3 repoints
-// when the command that applies a pending change exists (composite D1563's own
-// sentence names `fugaro apply`, which this release does not have), so the
-// wording lives here once and is never spelled a second time at a call site.
+// this is the whole of what it says about it. The wording lives here once and
+// is never spelled a second time at a call site, which is what
+// TestAfterWriteSentenceIsOneHelper holds.
+//
+// It names `fugaro apply`, the command that runs what a change still owes, and
+// not `fugaro update`: AP3 landed `apply`, and docs/contracts/config-ownership.md
+// §7 is where this one helper was left to be repointed the day it did. The
+// sentence is true because the arm that reaches it recorded the steps first
+// (afterWriteOwed), and `fugaro apply` reads exactly that record.
 func afterWriteNotLive(change afterWriteChange) error {
-	return userErr("%s is saved and is not live yet: run `%s update`, which publishes it",
+	return userErr("%s is saved and is not live yet: run `%s apply` to finish the steps it can answer",
 		safetext.Field(change.Key), selfCommand())
 }
