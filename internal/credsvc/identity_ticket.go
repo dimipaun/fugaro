@@ -182,6 +182,15 @@ func (s *Server) identityTicket(ctx context.Context, w http.ResponseWriter, call
 		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
 			requestRefused+"the ask names no run id of this installation's shape")
 		return
+	case req.Job != "" && !req.Job.Valid():
+		// R1: a Batch launch's job is named by its full resource name, and the
+		// name is the tie two later calls are held to — the registration writes
+		// the job's id on it, and the claim is served only to a VM of it
+		// (D3114). A name of any other shape can never be served, so the ask is
+		// refused here, before the launcher has created anything to name.
+		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
+			requestRefused+"the job must be the full resource name of the Cloud Batch job this launch creates (projects/<project>/locations/<location>/jobs/<job>)")
+		return
 	case caller.Class != identitywire.ClassOrchestrator && req.Attempt != "":
 		// The attempt reference is the orchestrator's own (D3136): it is the
 		// orchestrator's id of an intent it re-issues, and no other class has
@@ -316,6 +325,11 @@ func (s *Server) identityTicket(ctx context.Context, w http.ResponseWriter, call
 		ExpectedAccount: req.Account,
 		TicketHash:      identitywire.Digest(ticket),
 		Attempt:         req.Attempt,
+		// R19: the job the launcher named is written WITH the ticket, and it is
+		// what the registration's id is later written on and what the claim is
+		// held to (D3114). Empty for a Cloud Run launch, whose record is then the
+		// record of the release behind.
+		Job: req.Job,
 	}
 	// The store decides the two facts of the record that are the record's own,
 	// from the node as it stands (identity_record.go's Put): whose record this

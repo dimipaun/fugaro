@@ -583,6 +583,29 @@ describe('the image write behind the modal', () => {
     expect(calls).toHaveLength(2)
   })
 
+  it('is one write at a time across the dry run too: a plan still spawning refuses a second', async () => {
+    // The two calls overlap **inside** the first plan's dry run: `ask` starts the
+    // handler, which suspends at `await runChild`, and the second call arrives
+    // before the child answers. A guard that read only `held` -- written after
+    // that await -- would let both spawn and the second's window replace the
+    // first's argv, which is the mutation the sequential case above catches one
+    // step later.
+    const { writer, confirmer, calls } = aWriter()
+    const first = ask(writer, 'image.add.plan', aValues())
+    const second = ask(writer, 'image.add.plan', aValues({ name: 'another' }))
+    expect(await second).toStrictEqual({
+      ok: false,
+      reason: IMAGE_ADD_PLAN_PENDING_REFUSAL,
+    })
+    expect(await first).toStrictEqual({
+      ok: true,
+      data: { ok: true, sentence: 'the plan is waiting for your answer in its window' },
+    })
+    expect(calls).toHaveLength(1)
+    expect(confirmer.opened).toHaveLength(1)
+    expect(viewOf(confirmer.opened[0]?.subject).name).toBe(NAME)
+  })
+
   it('spawns nothing when the apply arrives before the window’s own yes', async () => {
     const { writer, calls } = aWriter()
     await ask(writer, 'image.add.plan', aValues())
