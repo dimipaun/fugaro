@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -897,5 +898,295 @@ func TestManagedFlagRefusesWhenTheRunsBucketRootRefusesTheWrite(t *testing.T) {
 	}
 	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
 		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+	}
+}
+
+// TestManagedFlagNoArgUsesInstallation is D2213's first half: the PROJECT_ID
+// argument is optional, and omitted it is the selected installation's own GCP
+// project. Consent was the argument (D1541); what replaces it is that the
+// project the command is about to write to is named, before anything is
+// written, in the statement its owner reads — so an invocation with no
+// argument is still an invocation about a named project, and not one about
+// whatever the config happens to hold silently.
+func TestManagedFlagNoArgUsesInstallation(t *testing.T) {
+	r := managedFlagRig(t)
+	terminal(t, true)
+	out, _, err := execute(t, "managed", "flag", "--budget", "50", "--budget-currency", "USD")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// The statement names the installation's project, and it is printed before
+	// the write rather than after it.
+	if !strings.Contains(out, "flagging GCP project "+initProject+" as managed") {
+		t.Errorf("the statement does not name the installation's project %s:\n%s", initProject, out)
+	}
+	got, ok := managedFlagAt(t, r.gcs, initRunsBucket)
+	if !ok {
+		t.Fatalf("no %s in gs://%s after the command ran with no project ID:\n%s", managed.MarkerObject, initRunsBucket, out)
+	}
+	want := `{"version":4,"gcp_project":"proj-1234","budget":{"amount":50,"currency":"USD"}}`
+	if got != want {
+		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.MarkerObject, got, want)
+	}
+	// The label goes on the same project the statement named: the argument was
+	// one half of the project's own identity and this is the other, so a
+	// default that resolved to another project would write both halves wrong.
+	if got := r.crm.Labels(initProject)[managed.ProjectLabelKey]; got != managed.ProjectLabelValue {
+		t.Errorf("the project carries %s=%q after the command, want %q", managed.ProjectLabelKey, got, managed.ProjectLabelValue)
+	}
+	if !managedFlagIsManaged(t, r) {
+		t.Error("the managed read does not believe the project this command flagged with no project ID")
+	}
+}
+
+// TestManagedFlagArgMustMatch is the other half of D2213: an ID that IS given
+// still has to be the selected installation's own GCP project, exactly as it
+// did when it was required — the argument names where the write goes, and the
+// selection names whose config and credentials it goes with, and the two
+// disagreeing is refused whichever one is the mistake.
+func TestManagedFlagArgMustMatch(t *testing.T) {
+	t.Run("the installation's own ID is accepted", func(t *testing.T) {
+		r := managedFlagRig(t)
+		noTerminal(t)
+		out, _, err := execute(t, "managed", "flag", initProject)
+		if err != nil {
+			t.Fatalf("the installation's own project ID was refused: %v\n%s", err, out)
+		}
+		if _, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok {
+			t.Errorf("no %s in gs://%s after the command:\n%s", managed.MarkerObject, initRunsBucket, out)
+		}
+	})
+	t.Run("another project's ID is refused", func(t *testing.T) {
+		r := managedFlagRig(t)
+		terminal(t, true)
+		out, _, err := execute(t, "managed", "flag", "another-proj")
+		if err == nil {
+			t.Fatalf("the command flagged a project the installation is not in:\n%s", out)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+		}
+		for _, want := range []string{"another-proj", initProject} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name %s: %v", want, err)
+			}
+		}
+		if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+			t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+		}
+		if got := r.crm.Labels(initProject)[managed.ProjectLabelKey]; got != "" {
+			t.Errorf("a refused run wrote %s=%q on the project", managed.ProjectLabelKey, got)
+		}
+	})
+}
+
+// TestManagedFlagDefaultsBudget: the amount and the currency stopped being
+// required flags. With neither given the command records the figures
+// internal/infra/managed's defaults carry (D2212, D2211) — 100 USD — so an
+// installation can be marked with one command and no questions, and what is
+// recorded is a figure the marker's own rule accepts rather than a zero.
+func TestManagedFlagDefaultsBudget(t *testing.T) {
+	r := managedFlagRig(t)
+	terminal(t, true)
+	out, _, err := execute(t, "managed", "flag", initProject)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := fmt.Sprintf(`{"version":4,"gcp_project":"proj-1234","budget":{"amount":%d,"currency":%q}}`,
+		managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency)
+	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok || got != want {
+		t.Errorf("gs://%s/%s = %s (present %v), want %s", initRunsBucket, managed.MarkerObject, got, ok, want)
+	}
+	// The statement is what the owner reads before the write, so the figures
+	// that reach the marker are in it rather than left to be discovered.
+	if want := fmt.Sprintf("budget alert amount %d %s", managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency); !strings.Contains(out, want) {
+		t.Errorf("the statement does not say %q:\n%s", want, out)
+	}
+	if !managedFlagIsManaged(t, r) {
+		t.Error("the managed read does not believe a project flagged with no --budget")
+	}
+}
+
+// TestManagedFlagExplicitRewrites is D2215 on this command's door: a project
+// that already records an amount is not edited by a default, and an explicit
+// --budget is what replaces it — through RewriteBudget, with both figures
+// printed, so an amount that changed is read rather than discovered later. The
+// figure this command writes is the marker's; the budget ALERT is the
+// installation's Terraform, so the output says which command makes the alert
+// follow.
+func TestManagedFlagExplicitRewrites(t *testing.T) {
+	r := managedFlagRig(t)
+	const existing = `{"version":4,"gcp_project":"proj-1234","budget":{"amount":50,"currency":"USD"}}`
+	r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(existing))
+	terminal(t, true)
+	out, _, err := execute(t, "managed", "flag", "--budget", "400")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := `{"version":4,"gcp_project":"proj-1234","budget":{"amount":400,"currency":"USD"}}`
+	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok || got != want {
+		t.Errorf("gs://%s/%s = %s (present %v), want %s", initRunsBucket, managed.MarkerObject, got, ok, want)
+	}
+	// The old figure and the new one, and what carries the new one to the
+	// alert: an amount that changed and a command that was not mentioned is a
+	// change nobody reads.
+	for _, want := range []string{"50 USD", "400 USD", "fugaro update"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the output does not say %q:\n%s", want, out)
+		}
+	}
+	if !managedFlagIsManaged(t, r) {
+		t.Error("the managed read does not believe a project whose budget this command rewrote")
+	}
+}
+
+// TestManagedFlagRewriteKeepsRecordedCurrency is R6: a rewrite is reached by
+// an explicit --budget, and a --budget-currency with no value given keeps the
+// currency the marker already records rather than putting the default over it —
+// replacing a recorded EUR with a defaulted USD would be the one thing D2215's
+// default must never do. An explicit currency is still the owner's and wins.
+func TestManagedFlagRewriteKeepsRecordedCurrency(t *testing.T) {
+	t.Run("the recorded currency is kept", func(t *testing.T) {
+		r := managedFlagRig(t)
+		// A version-2 marker, which installations carry (F15): the rewrite
+		// writes version 4, and the currency it writes is the recorded one.
+		const existing = `{"version":2,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"EUR"}}`
+		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(existing))
+		terminal(t, true)
+		out, _, err := execute(t, "managed", "flag", "--budget", "400")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		want := `{"version":4,"gcp_project":"proj-1234","budget":{"amount":400,"currency":"EUR"}}`
+		if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok || got != want {
+			t.Errorf("gs://%s/%s = %s (present %v), want %s", initRunsBucket, managed.MarkerObject, got, ok, want)
+		}
+		if !managedFlagIsManaged(t, r) {
+			t.Error("the managed read does not believe a project whose budget this command rewrote")
+		}
+	})
+	t.Run("an explicit currency replaces it", func(t *testing.T) {
+		r := managedFlagRig(t)
+		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(`{"version":4,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"EUR"}}`))
+		terminal(t, true)
+		out, _, err := execute(t, "managed", "flag", "--budget", "400", "--budget-currency", "USD")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		want := `{"version":4,"gcp_project":"proj-1234","budget":{"amount":400,"currency":"USD"}}`
+		if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok || got != want {
+			t.Errorf("gs://%s/%s = %s (present %v), want %s", initRunsBucket, managed.MarkerObject, got, ok, want)
+		}
+	})
+	// The figures the marker already records are not written again: a
+	// version-2 marker given its own amount and currency is left at that
+	// version, which ConvergeMarker is the migration for and not this command.
+	t.Run("the same figures write nothing", func(t *testing.T) {
+		r := managedFlagRig(t)
+		const existing = `{"version":2,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"EUR"}}`
+		r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(existing))
+		terminal(t, true)
+		out, _, err := execute(t, "managed", "flag", "--budget", "7")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if got, _ := managedFlagAt(t, r.gcs, initRunsBucket); got != existing {
+			t.Errorf("gs://%s/%s = %s, want it left as it was (%s)", initRunsBucket, managed.MarkerObject, got, existing)
+		}
+		if !strings.Contains(out, "nothing was rewritten") {
+			t.Errorf("the command does not say nothing was rewritten:\n%s", out)
+		}
+	})
+}
+
+// TestManagedFlagDefaultDoesNotRewrite is D2215's other half: the default is
+// taken where nothing is recorded, and a run with no --budget over a marker
+// that already records an amount refuses rather than replacing a figure its
+// owner chose. Nothing is written by that refusal — not the object, and not the
+// label, which is the half that would otherwise make an unmanaged project
+// managed on a command that changed nothing about its budget.
+func TestManagedFlagDefaultDoesNotRewrite(t *testing.T) {
+	r := managedFlagRig(t)
+	const existing = `{"version":4,"gcp_project":"proj-1234","budget":{"amount":7,"currency":"EUR"}}`
+	r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(existing))
+	terminal(t, true)
+	out, _, err := execute(t, "managed", "flag")
+	if err == nil {
+		t.Fatalf("the default was written over a recorded amount:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	// What the refusal has to carry: the recorded figures, and the flag that
+	// would replace them — a stop that did not say how to go on would be a
+	// dead end on the one command the managed gate sends owners to.
+	for _, want := range []string{"7", "EUR", "--budget"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if got, _ := managedFlagAt(t, r.gcs, initRunsBucket); got != existing {
+		t.Errorf("a refused run changed the object: %s → %s", existing, got)
+	}
+	if got := r.crm.Labels(initProject)[managed.ProjectLabelKey]; got != "" {
+		t.Errorf("a refused run wrote %s=%q on the project", managed.ProjectLabelKey, got)
+	}
+}
+
+// TestManagedFlagNoArgRefusedInAgentSession: the refusal D58's answer rests on
+// holds for the argument-less form too, and it is the first thing the command
+// does — an agent that runs the bare command writes neither mark, and it does
+// not read the project either.
+func TestManagedFlagNoArgRefusedInAgentSession(t *testing.T) {
+	r := managedFlagRig(t)
+	terminal(t, true)
+	t.Setenv("CLAUDECODE", "1")
+	out, _, err := execute(t, "managed", "flag")
+	if err == nil {
+		t.Fatalf("the command ran in a coding agent's session:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+	}
+	if !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Errorf("the refusal does not name the marker: %v", err)
+	}
+	if len(r.crm.Requests()) != 0 {
+		t.Errorf("a refused run read the project: %v", r.crm.Requests())
+	}
+	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+	}
+}
+
+// TestManagedFlagNoArgRefusedInsideAFugaroRun is the same property for the
+// other identity: a run's own process carries its own variables, and each of
+// them refuses the bare command on its own, before anything is read.
+func TestManagedFlagNoArgRefusedInsideAFugaroRun(t *testing.T) {
+	for _, marker := range managedFlagRunMarkers {
+		t.Run(marker, func(t *testing.T) {
+			r := managedFlagRig(t)
+			terminal(t, true)
+			t.Setenv(marker, "x")
+			out, _, err := execute(t, "managed", "flag")
+			if err == nil {
+				t.Fatalf("the command ran inside a Fugaro run:\n%s", out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+			}
+			if !strings.Contains(err.Error(), marker) {
+				t.Errorf("the refusal does not name %s: %v", marker, err)
+			}
+			if len(r.crm.Requests()) != 0 {
+				t.Errorf("a refused run read the project: %v", r.crm.Requests())
+			}
+			if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+				t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+			}
+			if got := r.crm.Labels(initProject)[managed.ProjectLabelKey]; got != "" {
+				t.Errorf("a refused run wrote %s=%q on the project", managed.ProjectLabelKey, got)
+			}
+		})
 	}
 }
