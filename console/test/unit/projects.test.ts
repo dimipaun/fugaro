@@ -704,11 +704,12 @@ describe('renderProjects', () => {
     }
   })
 
-  it('draws every person field in the person class, so no address shape leaks its local part', () => {
-    // An operator who killed a repository and a Claude account are people. The
-    // `person` class refuses what is not a bare address or a login; a `label`
-    // would draw a quoted local part, or a display name beside the marker, as it
-    // arrived. Built at run time, on a reserved host.
+  it('draws every person field as the person it names, local part and all', () => {
+    // An operator who killed a repository and a Claude account are people, and
+    // the console is the operator's own tool (D3213, 2026-11-21): the value is
+    // drawn as it came, a quoted local part and a display name included. The
+    // class is the same one the wire key carries, so the cell says what the
+    // document said. Built at run time, on a reserved host.
     const local = ['ana', 'lopez'].join('.')
     const shapes = [`"${local}"@example.invalid`, `Ana Lopez <${local}@example.invalid>`]
     for (const who of shapes) {
@@ -719,9 +720,9 @@ describe('renderProjects', () => {
       for (const className of ['projects-kill-by', 'projects-account']) {
         const cells = all(tree, className)
         expect(cells.length, className).toBeGreaterThan(0)
-        for (const leaf of cells) expect(leaf.textContent?.toLowerCase(), `${className} for ${who}`).not.toContain('lopez')
+        expect(cells.map((leaf) => leaf.textContent), `${className} for ${who}`).toContain(who)
       }
-      expect(drawn(tree).toLowerCase()).not.toContain('lopez')
+      expect(drawn(tree)).toContain(who)
     }
   })
 
@@ -756,10 +757,12 @@ describe('renderProjects', () => {
     )
     const reasons = all(panel(tree, 'caps'), 'projects-because').map((node) => node.textContent ?? '')
     expect(reasons).toEqual([sentence])
-    // The `sentence` class is what would have eaten it, asserted rather than
-    // argued: `roles/datastore.viewer` is two long segments around a slash.
+    // The `sentence` class draws it too, since D3213: `roles/datastore.viewer`
+    // is two long segments around a slash, which the path rule used to eat and
+    // the rules no longer carry. The door is separate because of its own
+    // business, not because the rules would have rewritten this sentence.
     const through = sanitizeText(sentence, 'sentence', 'the CLI sentence')
-    expect(through.ok && through.text).not.toBe(sentence)
+    expect(through.ok && through.text).toBe(sentence)
   })
 
   it('draws a cap the document does not carry as n/a, never as zero', () => {
@@ -874,9 +877,9 @@ describe('renderProjects', () => {
   it('draws the accounts panel\'s own list, its `none` and the document\'s sentence', () => {
     const tree = renderProjects(factory, buildProjectsModel(inputs()), 'light')
     const accounts = panel(tree, 'accounts')
-    // A Claude account is a person: an address is drawn as the marker and never
-    // as itself.
-    expect(texts(accounts, 'projects-account')).toEqual([ADDRESS_PLACEHOLDER])
+    // A Claude account is a person, and a person is drawn as itself (D3213):
+    // the address is the answer the panel exists to give.
+    expect(texts(accounts, 'projects-account')).toEqual(['claude-ops@example.test'])
     expect(all(accounts, 'projects-account-none')).toEqual([])
     // A complete document with no account draws the console's own `none` -- and
     // a sentence the document itself carries, when it carries one.
@@ -1094,16 +1097,12 @@ describe('the read-only models panel', () => {
     expect(texts(tree, 'projects-models-to-every')).toHaveLength(1)
     expect(texts(tree, 'projects-models-allow')).toEqual(['example-owner/example-repo'])
     expect(texts(tree, 'projects-models-to-word')).toEqual(['may send data to', 'may send data to'])
-    // **The host is the console's marker, and not the machine's own name.**
-    // `routes[].host` is `host` in the decoder's table (`WIRE_TEXT_CLASSES`), and
-    // that class returns `HOST_PLACEHOLDER` for every machine name it is given,
-    // valid or not (`sanitize.ts`) -- which is the console's rule for a machine
-    // and the recorder's too. No other class would draw the name either: `label`
-    // and `sentence` run the free-text rules, and their hostname rule replaces
-    // one before any class branch reads the value. The route is recognised
-    // without the host: its `name` is the document's own word for it, and the
-    // full hostname is drawn inside the `base_url` beside it.
-    expect(texts(tree, 'projects-models-route-host')).toEqual(['<host>', '<host>'])
+    // **The host is the machine's own name.** `routes[].host` is `host` in the
+    // decoder's table (`WIRE_TEXT_CLASSES`), and that class draws the name it
+    // was given, valid or not (D3213, `sanitize.ts`): which endpoint a route
+    // sends data to is what the panel is for, and the recorder's `<host>` is the
+    // fixture's answer rather than the screen's.
+    expect(texts(tree, 'projects-models-route-host')).toEqual(['api.anthropic.com', 'gateway.example.test'])
     // A route that claims no model at all: the panel's own word, not a blank.
     const empty = modelsTree(
       modelsInputs({
@@ -1460,6 +1459,41 @@ describe('the settings section', () => {
     // The owned row, and the writable row with no target layer, each draw none.
     expect(all(settingsRow(tree, 'agent.models.coder'), 'projects-settings-pencil')).toEqual([])
     expect(all(settingsRow(tree, 'budget.mode'), 'projects-settings-pencil')).toEqual([])
+  })
+
+  it('draws the pencil as the panel’s only write control, and no box to type a value into', () => {
+    // SU2b's half of the deletion: the inline editor an entry used to append to
+    // a row is gone, and this is the tree's own side of it. The row set is a
+    // picture of the document plus **one** control per writable row -- the
+    // pencil, which opens main's window (`entry.ts`) -- and the section's other
+    // box is the search field, which is a filter and not a value anything is
+    // written with. Nothing here is a value the operator types into.
+    const writableGrouped = {
+      ...SETTINGS_GROUPED,
+      settings: SETTINGS_GROUPED.settings.map((row) =>
+        row['key'] === 'budget.per_run_usd' ? { ...row, writable: true, target_layer: 'project' } : row,
+      ),
+    }
+    const tree = settingsTree(settingsInputs({ raw: writableGrouped }))
+    for (const tag of ['textarea', 'select', 'form']) {
+      expect(walk(tree).filter((node) => node.tag === tag), `the panel drew a <${tag}>`).toEqual([])
+    }
+    const inputs = walk(tree).filter((node) => node.tag === 'input')
+    expect(inputs, 'the panel drew a box that is not its search field').toHaveLength(1)
+    expect(inputs[0]?.getAttribute('class')).toBe('projects-settings-search')
+    const buttons = walk(tree).filter((node) => node.tag === 'button')
+    expect(buttons.length, 'the panel drew no pencil at all').toBeGreaterThan(0)
+    for (const button of buttons) {
+      expect(
+        button.getAttribute('class'),
+        'the panel drew a control that is not a row’s pencil',
+      ).toBe('projects-settings-pencil')
+      expect(button.getAttribute('type')).toBe('button')
+    }
+    // The entry is what draws a press's answer, and it draws it into the row it
+    // belongs to: the tree the screen built carries no outcome region of its
+    // own, so a repaint cannot leave one behind.
+    expect(walk(tree).filter((node) => node.getAttribute('aria-live') !== null)).toEqual([])
   })
 
   it('names the pencil with the key as the sanitizer drew it, never with the raw text', () => {
@@ -2400,13 +2434,12 @@ describe('renderRun', () => {
     expect(drawnText(tree)).not.toContain(token)
   })
 
-  it('draws the run\'s requester in the person class, so no address shape leaks its local part', () => {
+  it('draws the run\'s requester as the person it names, in the person class', () => {
     const local = ['ana', 'lopez'].join('.')
     for (const who of [`"${local}"@example.invalid`, `Ana Lopez <${local}@example.invalid>`]) {
       const diagnosis = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, requested_by: who } }
       const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis })), 'light')
-      expect(one(tree, 'run-requested-by').textContent?.toLowerCase()).not.toContain('lopez')
-      expect(drawnText(tree).toLowerCase()).not.toContain('lopez')
+      expect(one(tree, 'run-requested-by').textContent).toBe(who)
     }
   })
 
@@ -2414,12 +2447,11 @@ describe('renderRun', () => {
     // The run view is where the owner's spec puts the **full identity** ("the
     // full identity only in the expanded or run view and in JSON"): the Live and
     // Projects columns draw the short form. It goes through the `person` class,
-    // the class the wire key carries, so an address is the console's marker here
-    // as it is in the requester cell beside it, and a login is itself.
+    // the class the wire key carries, and a person is drawn as the identity it
+    // names (D3213): the address, here as in the requester cell beside it.
     const named = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, launched_by: 'dana@example.test' } }
     const tree = renderRun(factory, buildRunModel(runInputs({ diagnosis: named })), 'light')
-    expect(one(tree, 'run-started-by').textContent).toBe(ADDRESS_PLACEHOLDER)
-    expect(drawnText(tree)).not.toContain('dana@example.test')
+    expect(one(tree, 'run-started-by').textContent).toBe('dana@example.test')
 
     const login = { ...DIAGNOSIS, row: { ...DIAGNOSIS.row, launched_by: 'ci-runner' } }
     const other = renderRun(factory, buildRunModel(runInputs({ diagnosis: login })), 'light')

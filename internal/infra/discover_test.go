@@ -612,6 +612,114 @@ func TestABucketWhereTheMappingNoLongerPointsIsFound(t *testing.T) {
 	}
 }
 
+// The same bucket ID can be live in two locations at once — the ID is unique
+// per location, and a location change replaces the bucket while the old one
+// waits out its deletion — and only the ACTIVE one is the installation's. The
+// bucket on its way out is a rollback's or a replace's leftover: importing it
+// would set its retention and delete it again, so the live one answers for the
+// ID wherever the mapping now points (R5, F10).
+func TestTheLiveLogBucketAnswersBesideOnePendingDeletion(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	inst := installationSpec(t)
+	elsewhere := "europe-west1"
+	if inst.LogBucketLocation == elsewhere {
+		t.Fatalf("the fixture's mapping already points at %s", elsewhere)
+	}
+	f.logs.AddBucket(inst.Project, "global", LogBucket, "DELETE_REQUESTED", LogBucketDescription)
+	f.logs.AddBucket(inst.Project, elsewhere, LogBucket, "ACTIVE", LogBucketDescription)
+	im, err := DiscoverInstallation(ctx, f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "projects/" + inst.Project + "/locations/" + elsewhere + "/buckets/" + LogBucket
+	if got := importMap(im)[LogBucketAddress]; got != path {
+		t.Errorf("the log bucket's import id = %q, want %q: the bucket pending deletion is not the installation's, whatever the listing returns last", got, path)
+	}
+	if im.LogBucketLocation != elsewhere {
+		t.Errorf("the discovered log bucket location = %q, want %s", im.LogBucketLocation, elsewhere)
+	}
+}
+
+// Two ACTIVE buckets carrying the installation's ID give the listing nothing
+// to choose between, and picking one would be a coin toss that sets a
+// stranger's retention and deletes it on a rollback. So the read refuses,
+// naming both, and the refusal says what to do about it (R5, F10).
+func TestTwoLiveLogBucketsWithOurIDAreRefused(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	inst := installationSpec(t)
+	elsewhere := "europe-west1"
+	if inst.LogBucketLocation == elsewhere {
+		t.Fatalf("the fixture's mapping already points at %s", elsewhere)
+	}
+	f.logs.AddBucket(inst.Project, "global", LogBucket, "ACTIVE", LogBucketDescription)
+	f.logs.AddBucket(inst.Project, elsewhere, LogBucket, "ACTIVE", LogBucketDescription)
+	im, err := DiscoverInstallation(ctx, f.c, inst)
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("two live log buckets under our ID: err = %v, want a refusal", err)
+	}
+	if len(im.List) != 0 {
+		t.Errorf("two live log buckets under our ID imported %v: nothing can be adopted before the ambiguity is resolved", im.List)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"projects/" + inst.Project + "/locations/global/buckets/" + LogBucket,
+		"projects/" + inst.Project + "/locations/" + elsewhere + "/buckets/" + LogBucket,
+		"fugaro update",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal of two live log buckets lacks %q:\n%s", want, msg)
+		}
+	}
+}
+
+// Every bucket carrying the installation's ID can be on its way out at once —
+// a mapping moved twice, or a rollback that deleted the replacement — and then
+// there is nothing to choose between because there is nothing to adopt: none
+// is ACTIVE. The read refuses for that reason and the refusal says so, rather
+// than telling a person to delete a bucket that is already deleting (R5, F10).
+func TestEveryLogBucketWithOurIDPendingDeletionIsRefused(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	inst := installationSpec(t)
+	elsewhere := "europe-west1"
+	if inst.LogBucketLocation == elsewhere {
+		t.Fatalf("the fixture's mapping already points at %s", elsewhere)
+	}
+	f.logs.AddBucket(inst.Project, "global", LogBucket, "DELETE_REQUESTED", LogBucketDescription)
+	f.logs.AddBucket(inst.Project, elsewhere, LogBucket, "DELETE_REQUESTED", LogBucketDescription)
+	im, err := DiscoverInstallation(ctx, f.c, inst)
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("every log bucket under our ID pending deletion: err = %v, want a refusal", err)
+	}
+	if len(im.List) != 0 {
+		t.Errorf("every log bucket under our ID pending deletion imported %v: a bucket on its way out is not the installation's to adopt", im.List)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"projects/" + inst.Project + "/locations/global/buckets/" + LogBucket,
+		"projects/" + inst.Project + "/locations/" + elsewhere + "/buckets/" + LogBucket,
+		"DELETE_REQUESTED",
+		"fugaro update",
+		// Restoring one is immediate and keeps the logs it holds, so the way
+		// out is the undelete command of each pending bucket, not a wait.
+		LogBucketUndelete(inst.Project, "global"),
+		LogBucketUndelete(inst.Project, elsewhere),
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal of a project whose every bucket is pending deletion lacks %q:\n%s", want, msg)
+		}
+	}
+	// The many-live-buckets advice would have a person delete a bucket that is
+	// already deleting: the zero-ACTIVE refusal is a different one.
+	if strings.Contains(msg, "remove all but one") {
+		t.Errorf("the refusal of a project whose every bucket is pending deletion still says to remove all but one:\n%s", msg)
+	}
+}
+
 // A soft-deleted custom role is left to the plan's create, which the
 // provider turns into an undelete; an import of a deleted role would fail.
 func TestDiscoverLeavesDeletedRole(t *testing.T) {

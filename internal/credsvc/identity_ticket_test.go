@@ -181,11 +181,22 @@ func (f *tickets) issued(t *testing.T, rec *httptest.ResponseRecorder, body []by
 	if err := json.Unmarshal(body, &ans); err != nil {
 		t.Fatalf("the answer is not one this contract can read: %v (%s)", err, body)
 	}
-	if len(ans.Ticket) != ticketBytes*2 {
-		t.Fatalf("the ticket is %d characters, want %d", len(ans.Ticket), ticketBytes*2)
+	// The ticket is the record's own two names and the secret, in the one
+	// spelling the mint and the claim share (joinIdentityTicket and its inverse,
+	// identity_claim.go): the claim's caller holds no run identity, so the ticket
+	// is the only thing that tells it which record to read, and a mint that
+	// spelled it another way would be a ticket no run could claim. That the two
+	// names are the ask's own is what the claim's tests state, by claiming a
+	// ticket this route minted (identity_claim_test.go).
+	parts := strings.Split(ans.Ticket, identityTicketSeparator)
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" {
+		t.Fatalf("the ticket is %q, want the record's slug and run and a secret", ans.Ticket)
 	}
-	if _, err := hex.DecodeString(ans.Ticket); err != nil {
-		t.Fatalf("the ticket is not hex: %v", err)
+	if len(parts[2]) != ticketBytes*2 {
+		t.Fatalf("the ticket's secret is %d characters, want %d", len(parts[2]), ticketBytes*2)
+	}
+	if _, err := hex.DecodeString(parts[2]); err != nil {
+		t.Fatalf("the ticket's secret is not hex: %v", err)
 	}
 	if !ans.ExpiresAt.Equal(f.now.Add(ticketLifetime)) {
 		t.Errorf("the ticket expires at %s, want the lifetime every ticket of this release has (%s)", ans.ExpiresAt, f.now.Add(ticketLifetime))

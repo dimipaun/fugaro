@@ -187,7 +187,9 @@ type Config struct {
 	// cost estimates (design §10.1).
 	ComputePrices map[string]Price `yaml:"compute_prices,omitempty"`
 	// LogView is the log view Fugaro job logs are read through
-	// (projects/<p>/locations/global/buckets/<b>/views/<v>); empty reads
+	// (projects/<p>/locations/<l>/buckets/<b>/views/<v>, where <l> is the
+	// run log bucket's own location — the mapping's, or `global` for an
+	// installation made before it — and not always a region); empty reads
 	// the project's default logs.
 	LogView string `yaml:"log_view,omitempty"`
 	// SchedulerRegion is where the daily image check's Cloud Scheduler
