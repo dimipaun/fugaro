@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // update_budget_off_test.go holds task AB8b of docs/always-a-budget: the two
@@ -337,6 +338,84 @@ func TestTheUpdateNamesWhatWillStopFirst(t *testing.T) {
 	t.Run("a release that stops nothing here prints nothing", func(t *testing.T) {
 		if got := budgetStops(budgetStopFacts{repoPath: "/w/app/fugaro.yaml", dbMode: budget.ModeEnforce}); len(got) != 0 {
 			t.Errorf("the listing holds %v, want nothing: every line is answered by a fact, and none of the five is set here", got)
+		}
+	})
+
+	// The model key's line is F26, and the state it is about is the one a
+	// repository the switch held off is really in: a node that says the word,
+	// a bundle the service can serve it from, and a record in the local config
+	// that is FALSE — the switch's own past answer, with the word folded into
+	// it. A line read from that record could never fire here, which is what
+	// these two subtests are about: the reading is the node's two modes and the
+	// bundle's readiness.
+	t.Run("the model key a repository under off loses", func(t *testing.T) {
+		rig := func(t *testing.T, mode, doc string) (*initEngine, budgetStopFacts) {
+			t.Helper()
+			noAgentSession(t)
+			r := newInitRig(t)
+			r.appendConfig(t, "  acme/app: { provider: github, credentials_service_ready: false, workflows: [app, api] }\n")
+			r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+			db := gcpfake.NewRTDB(t)
+			r.appendConfig(t, budgetBlock(db))
+			adoptBudgetFake(db)
+			db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+			node := currentNode()
+			node["budget"] = map[string]any{"mode": mode, "per_run_usd": 5}
+			db.Set(projectpolicy.PathShared(), node)
+			if doc != "" {
+				putSwitchBundle(t, r, []byte(doc))
+			}
+			t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
+			e := rigEngine(t, r, &initOptions{door: updateDoor.name})
+			if e.lc.Repos["acme/app"].CredentialsServiceOn() {
+				t.Fatalf("the fixture is not the state this line is about: the record says the service is ready for a repository the switch held off, and a line read from that record would fire for the wrong reason")
+			}
+			return e, e.budgetStopFacts(context.Background())
+		}
+		ready := config.ClaudeAccountSecret("") + ": " + credsValue(t, "token") + "\n" +
+			config.GitHubAppKeySecret + ": " + credsValue(t, "appkey") + "\n"
+		want := config.ReservedSecrets[config.ClaudeOAuthToken]
+
+		_, f := rig(t, "off", ready)
+		if f.modelKey != want {
+			t.Errorf("the model key a repository under off loses is %q, want %q: its node says the word, the policy stage of this same run rewrites it to observe, and the bundle holds what its oauth runs and its GitHub provider need — so the apply that follows serves it and drops the key from its job (F26)", f.modelKey, want)
+		}
+		if got := budgetStops(f); len(got) != 1 || !strings.Contains(got[0].line, want) {
+			t.Errorf("the listing holds %v, want the one line naming %s: what will stop is what the update owes before it changes anything (R8)", got, want)
+		}
+
+		// A bundle the service cannot serve this repository from is no move: the
+		// switch stays off and the job keeps its key.
+		if _, f := rig(t, "off", ""); f.modelKey != "" {
+			t.Errorf("the listing names %q over a bundle that holds nothing, want nothing: the switch needs a bundle it can serve the repository from, so no key leaves the job", f.modelKey)
+		}
+
+		// And a node that is already live is no move either: the switch serves
+		// the repository as it stands, so nothing about it changes at this apply.
+		if _, f := rig(t, "observe", ready); f.modelKey != "" {
+			t.Errorf("the listing names %q over a node that already says observe, want nothing: the key left that job at an earlier apply", f.modelKey)
+		}
+	})
+
+	t.Run("the predicate reads the node's two modes", func(t *testing.T) {
+		apiKey, oauth := config.ReservedSecrets[config.AnthropicSecret], config.ReservedSecrets[config.ClaudeOAuthToken]
+		for name, tc := range map[string]struct {
+			installed, ready    bool
+			auth, before, after string
+			want                string
+		}{
+			"an api-key repository under the word, over a ready bundle": {true, true, config.AuthAPIKey, "off", "observe", apiKey},
+			"an oauth repository under the word, over a ready bundle":   {true, true, config.AuthOAuth, "off", "observe", oauth},
+			"a bundle the service cannot serve it from":                 {true, false, config.AuthAPIKey, "off", "observe", ""},
+			"an installation with no service":                           {false, true, config.AuthAPIKey, "off", "observe", ""},
+			"a node that already says observe":                          {true, true, config.AuthAPIKey, "observe", "observe", ""},
+			"a node that already says enforce":                          {true, true, config.AuthOAuth, "enforce", "enforce", ""},
+			"a node that names no mode at all":                          {true, true, config.AuthAPIKey, "", "", ""},
+			"a cascade repository":                                      {true, true, config.AuthCascade, "off", "observe", ""},
+		} {
+			if got := movedModelKey(tc.installed, tc.ready, tc.auth, tc.before, tc.after); got != tc.want {
+				t.Errorf("%s: movedModelKey(%v, %v, %q, %q, %q) = %q, want %q", name, tc.installed, tc.ready, tc.auth, tc.before, tc.after, got, tc.want)
+			}
 		}
 	})
 

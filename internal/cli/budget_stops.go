@@ -132,7 +132,7 @@ func (e *initEngine) budgetStopFacts(ctx context.Context) budgetStopFacts {
 	if !ok {
 		return f
 	}
-	f.modelKey = movedModelKey(e.lc, oi.Repo, agent.Auth, e.writtenBudgetMode())
+	f.modelKey = e.budgetStopModelKey(ctx, oi.Repo, agent.Auth, data)
 	return f
 }
 
@@ -186,43 +186,124 @@ func capsText(caps budget.GlobalCaps, defaults budget.DefaultCaps) string {
 		usd(caps.DailyMicros), usd(caps.PerRunMicros), usd(defaults.RepoDailyMicros))
 }
 
-// writtenBudgetMode is this machine's budget mode as its file writes it, and
-// not as the loader would answer it: the loader reads the word the release
-// before this one wrote and holds it as written (localcfg's
-// acceptedBudgetMode, F22), so the one reader that has to tell the word from
-// the observe it now means reads the bytes the run found rather than the
-// loaded config.
-func (e *initEngine) writtenBudgetMode() string {
-	if w, off := localcfg.RemovedBudgetMode(e.old); off {
-		return w
-	}
-	if e.lc == nil || e.lc.Budget == nil {
+// nodeBudgetMode is the budget mode the published node's own bytes write, ""
+// where no node was read: a project that has published none, a database this
+// machine cannot reach, or a node this reader refuses.
+//
+// It is the NODE's mode and not this machine's local config's, because the
+// node's is the mode the apply reads — internal/infra builds a repository
+// root's credentials switch out of Inputs.Policy's budget mode — while the
+// local config's own mode is a value the same update is in the middle of
+// rewriting.
+//
+// The read is fresh and not the run's memoized one (policyReadOnce): that memo
+// answers the gates and the launch, whose answers must not change, and this
+// reading is taken before the policy stage — a memo primed here would hand
+// every later reader of the run the node from before the stage that rewrites
+// it.
+func (e *initEngine) nodeBudgetMode(ctx context.Context) string {
+	if e.lc == nil {
 		return ""
 	}
-	return e.lc.Budget.Mode
+	p, found, err := projectPolicyRead(ctx, e.lc)
+	if err != nil || !found {
+		return ""
+	}
+	return policyBudgetMode(p)
 }
 
-// movedModelKey is F26, asked through the switch's own predicate: the model
-// credential this apply moves out of the repository's job, "" when none does.
+// budgetModeAfterMigration is the mode the policy stage of this same run leaves
+// the node with: the word that is not a mode any more is rewritten to observe
+// in place (projectpolicy's migrateRemovedMode, AB8a, D3010), and every other
+// mode — and a node whose budget block names none — is left exactly where it
+// is.
+func budgetModeAfterMigration(mode string) string {
+	if policy.Mode(mode).Removed() {
+		return policy.ModeObserve
+	}
+	return mode
+}
+
+// credentialsServiceInstalled is the switch's first condition as this machine's
+// local config carries it: the block the update that deployed the service wrote
+// there, which is also the reading openBundleStore makes of a config before it
+// reads a bundle at all.
 //
-// The switch is judged twice, on the mode the file writes and on what that mode
-// means from now on, and the key moves exactly where the two disagree — an
-// api-key or oauth repository that was in the word that is not a mode any more
-// (or had none written, which was off too) is one the credentials service
-// starts serving where its bundle is ready, and the next apply drops the key
-// from its job. infra.CredentialsServiceServes is the one predicate both
-// answers come from, so this line cannot claim a move the apply does not make.
-func movedModelKey(lc *localcfg.Config, repo, auth, written string) string {
-	if lc == nil || repo == "" {
+// It is not the installation's own outputs, which is what the apply and the
+// record read: those are a terraform state read, and this listing is printed
+// before the update's first stage and may not spend one.
+func (e *initEngine) credentialsServiceInstalled() bool {
+	return e.lc != nil && e.lc.CredentialsService != nil && e.lc.CredentialsService.URL != ""
+}
+
+// bundleServes is the bundle's own answer for this repository: whether the
+// credentials service holds what one of its runs would ask it for — the model
+// credential its auth calls for, and the GitHub App key its git provider needs
+// to mint with (credentialsBundleServes).
+//
+// It is the readiness half of the switch, read from the bundle and never from
+// the local config's record: the record is the switch's whole past answer with
+// the mode of the day folded into it (init_credentials.go's RecordSwitch), so
+// every repository the switch held off carries a false record however ready its
+// bundle is.
+func (e *initEngine) bundleServes(ctx context.Context, auth, repo string, data []byte) bool {
+	provider, _ := config.ProviderOf(data)
+	if provider == "" {
+		// A checkout whose file names no provider takes the one this machine's
+		// config holds for it, which is how the repository stage resolves it.
+		provider = e.lc.Repos[repoConfigKey(e.lc, repo)].Provider
+	}
+	var accounts []string
+	if auth == config.AuthOAuth {
+		// The accounts this repository's runs may go out on, exactly as
+		// infra.WorkflowAccounts answers them for the oauth arm: the bundle has
+		// to hold every one of them (D143). The other auths' readiness is read
+		// from the bundle's own entries and names no account.
+		accounts = config.ClaudeAccountTokenNames(e.lc.Credentials, config.AllowedClaudeAccounts(e.lc.ClaudeAccounts, repo))
+	}
+	ready, _ := e.r.credentialsBundleServes(ctx, e.lc, auth, accounts, provider)
+	return ready
+}
+
+// budgetStopModelKey is F26 for this run's repository: the model credential the
+// apply that follows moves out of its job, "" when none moves.
+//
+// The two modes are the published node's, as its bytes write it now and as the
+// policy stage of this same run will leave it, because the node's mode is the
+// mode the apply reads. The key moves exactly where those two disagree: an
+// api-key or oauth repository on a node that says the word is one the switch
+// holds off, and the same node rewritten to observe is one the switch serves
+// where the bundle is ready — which is the apply that drops the key from its
+// job.
+func (e *initEngine) budgetStopModelKey(ctx context.Context, repo, auth string, data []byte) string {
+	before := e.nodeBudgetMode(ctx)
+	after := budgetModeAfterMigration(before)
+	installed := e.credentialsServiceInstalled()
+	// The mode half is asked first: the bundle is read only where the two modes
+	// disagree, which is the only state this line can be printed in. A read
+	// spent on every other repository would be a cloud call, and a warning
+	// (readCredentialsBundle), for a line nobody prints.
+	if movedModelKey(installed, true, auth, before, after) == "" {
 		return ""
 	}
-	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
-	local, _ := lc.RepoFor(repo)
-	ready := local.CredentialsServiceOn()
-	if infra.CredentialsServiceServes(installed, ready, auth, written) {
+	return movedModelKey(installed, e.bundleServes(ctx, auth, repo, data), auth, before, after)
+}
+
+// movedModelKey is F26's predicate: the model credential that leaves the
+// repository's job, "" when none does, asked through the switch's own predicate
+// twice — once on the mode the node writes now and once on the mode the policy
+// stage leaves it with. infra.CredentialsServiceServes is the one predicate
+// both answers come from, so this line cannot claim a move the apply does not
+// make.
+//
+// ready is the bundle's own reading (bundleServes) and never the record in the
+// local config: a record that is true means an earlier apply already dropped
+// the key, which is not a move this apply makes.
+func movedModelKey(installed, ready bool, auth, before, after string) string {
+	if infra.CredentialsServiceServes(installed, ready, auth, before) {
 		return ""
 	}
-	if !infra.CredentialsServiceServes(installed, ready, auth, policy.Mode(written).Effective()) {
+	if !infra.CredentialsServiceServes(installed, ready, auth, after) {
 		return ""
 	}
 	switch auth {
