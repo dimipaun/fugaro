@@ -524,6 +524,24 @@ import (
 // about, and says that no message was sent into a stage that never ran. Every
 // case holds the same two things wherever it is about something else: a
 // message's own text never reaches the block, and no access token is asked for.
+// Check 670's fakes are a fake `fugaro`, a fake `git`, a fake `gcloud` and a
+// fake `gh` over one installation and the GitHub sandbox. The fake `fugaro`
+// prints the six steps of an enrolment and reads the project's name it asks for,
+// answers `doctor --json`, the credentials listing, `status` (whose screen and
+// whose document both turn green only once the case's own fill has happened, so
+// F11's empty container and the row that names its fix are read against a state
+// that really changed) and `runs ls`, which reports the run under the removal
+// terminal only once the removal has happened; it applies `secrets set` and
+// `project repos rm` as writes on the case's own files, the removal modelling
+// the CLI's own question -- with a terminal it asks for the project's name and
+// reads it, and with none it refuses in the CLI's words, which is where a case
+// reads D2407's strict confirmation. The fake `git` makes the throwaway checkout
+// and holds the branch a run pushed, the fake `gcloud` the built image, the
+// container with an enabled version and the run's objects in the runs bucket,
+// and the fake `gh` the App's installation and the pull request the run opened.
+// Every row of the block has a failing form and an unmeasurable one, and every
+// case holds that the App's private key reaches neither the block, the output
+// nor the scratch directory.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -628,6 +646,7 @@ var liveCheckScripts = []struct {
 	{"check-830.sh", "check-830_test.sh"},
 	{"check-840.sh", "check-840_test.sh"},
 	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
+	{"check670.sh", "check670_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

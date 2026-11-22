@@ -1184,6 +1184,7 @@ probe account carries predefined grants only).
 | 810 | **The auth retirement's first release, watched across four repositories and a run in flight** ([`docs/credentials-belong-to-models/`](credentials-belong-to-models/implementation-plan.md), its task **CM22** and its "Check 810, after release 1"; the reconciliation's **U5** and the owner's **O1**): on a real installation **at the previous release** — the **premise** that stops the check on one release 1 has already reached — with a repository on a **subscription**, one on an **Anthropic key**, one on the **cascade** and one on **Vertex**, and a run of the subscription repository **already in flight**: a project owner's `fugaro update` **migrates all four** (once for the installation and once with `--repo` in each checkout, all five exiting 0), each repository's **new record out of the database's `creds` node** names the credential its old `agent.auth` meant, names `vertex` for the Vertex repository and **never** for the other three, and names no version other than 1, and the update's **own output names each repository and the credential its crafts resolve to**; the run that was **in flight across the migration finishes** (**U5**); a **new run of each of the four** is launched **together**, ends, has a **served line** in the service's own log (it went through its gateway) and carries the **same `model_basis`** in its own record out of the runs bucket that it carried before the update (the subscription for the subscription repository, the API list for the other three, **F25**); and a call the check builds **BY HAND** — carrying a live run's own identity, minted the way the launcher mints it, and declaring a craft that repository's record does not name — is **refused**, with **exactly one** audit line for it in the service's log (**U5**, **O1**, **C1.13**) | See "Check 810" below; `bash scripts/live-checks/check810.sh --installation <name> --oauth <checkout> --api-key <checkout> --cascade <checkout> --vertex <checkout> --job <the subscription repository's Cloud Run job> --gcp-project <project> --region <region>` is the whole of it, its sibling test `scripts/live-checks/check810_test.sh` drives it against fake `gcloud`, `fugaro` and `curl` on PATH with four **real local git repositories** in a temp directory (no network, no cloud, nothing spent), and **you** run it, at your own terminal, on an installation you may upgrade and on repositories you may spend on, **never `belong`** (a coding agent's session is refused outright, as is a traced shell); **no agent runs any step of it** | **FIVE billable runs** — the one in flight across the update and the four launched after it — on the four repositories' own budgets, plus a project owner's `fugaro update`. Everything else is a read: the four checkouts' committed `fugaro.yaml`, the database's `creds` node before and after, the job and service descriptions, the update's own output, `fugaro runs ls`, the five runs' records out of the runs bucket and the service's own log lines. The premise row **stops the check (exit 2)** on an installation release 1 has already reached, **before any run is launched**. The identity the audit row mints is signed in as the run the check launched, whose Auth user that run's own launch already made, so the exchange creates no user and none is deleted. Its scratch directory is removed from the exit trap and the `restore` row says whether it really went; the five runs are left to end on their own and nothing else was created. **OWNER-RUN, NOT RUN.** |
 | 811 | **The auth retirement's second release: the token out of the agent's environment, the image gate, the retired key and the old record** ([`docs/credentials-belong-to-models/`](credentials-belong-to-models/implementation-plan.md), its task **CM22** and its "Check 811, after release 2"; **CM9**, **CM28**, **CM29** and **CM31** read together): a run of the subscription repository comes out of a **job whose container environment carries no `CLAUDE_CODE_OAUTH_TOKEN`**, whose calls the **credentials service's own log** shows served through its gateway, and whose **own record names no subscription credential for any of its stages** (**CM9**, **CM28**, **D3067**); a launch on an image **older than release 1** is **refused** with the command that rebuilds it (`fugaro update`, or `fugaro image build`) and the release it needs (**CM28**); a file that still writes a **retired key** (`agent.auth`, `agent.oauth_token`, a craft's `access`, a grade's `access`) is **rejected by `fugaro validate` naming the key and the fix** (**CM29**); and the repository's **old record** (`creds/repoauth/<slug>`) is **kept while its run is in flight** and **gone** once none is going, with release 2's update **never writing one** where the installation had none (**CM31**, **D3063**) | See "Check 811" below; `bash scripts/live-checks/check811.sh --installation <name> --subscription <checkout> --job <the subscription repository's Cloud Run job> --gcp-project <project> --region <region> [--retired-key <checkout>] [--old-image <checkout>]` is the whole of it, its sibling test `scripts/live-checks/check811_test.sh` drives it against fake `gcloud`, `fugaro` and `curl` on PATH with three **real local git checkouts** in a temp directory (no network, no cloud, nothing spent), and **you** run it, at your own terminal, on an installation release 1 reached and release 2 is reaching, on a subscription repository you may spend on, **never `belong`** (a coding agent's session is refused outright, as is a traced shell); **no agent runs any step of it** | **ONE billable run** (the subscription repository's own model spend, bounded by its cap), plus a second launch that costs **nothing** when the refusals row is right — an image older than release 1 is refused before anything is built or run — and **two** `fugaro update --repo` calls in the subscription checkout. **No secret is read at all**: every document is a name, a status or a record, and the job's own document is read for the **names** of its container's environment and the **ids** of the secrets it mounts, never a value. A premise that does not hold — a committed or working file that still writes a retired key, a database that cannot be read, a repository with no access record, a subscription this check cannot read off the records — **stops the check (exit 2)** before anything is launched. Its scratch directory is removed from the exit trap and the `restore` row says whether it really went; the run is left to end on its own and nothing else was created. **OWNER-RUN, NOT RUN.** |
 | 740 | **Messaging a run that is going**, live ([`docs/run-messages/`](run-messages/implementation-plan.md), its **Check 740** and task **RM8**; the reconciliation's **U2**, **U3** and **U4**, and **D2941**'s read-only prefix): one real run of a repository you name, sent a plain message and a `--now` message while its implement stage is going, and read four ways — the plain message **`delivered`** at the next coder stage; the `--now` message delivered into that same stage carrying **no reason** on its fate, which is the runner finding a quiet point **and** going on in the same session, so `no quiet point in 10m` and `session lost at forced stop` are exactly what **U2** and **U3** answer with when the answer is no; the **IAM Policy Troubleshooter** asked whether the **real** job account of the run's execution — and, where the installation has one, the account of a shared project job — holds `storage.objects.create` on a `tokens/<slug>/<run>/messages/<seq>.msg.json` object, which must be **denied** (**D2941**), a throwaway account given only `objectViewer` proving nothing because the role cannot write by definition; and the runs bucket's **lifecycle configuration**, where the `.msg.json` rule must select the messages and leave the sealed `budget-token` beside them alone (**U4**) | See "Check 740" below; **the script is how you run it**: `bash scripts/live-checks/check-740-run-messages.sh --installation <name> --repo <owner/name>`, with the test that drives every step of it against fakes, `scripts/live-checks/check-740-run-messages_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on a **scratch installation you own** (**never `belong`**), after the release and `fugaro update`, and **no agent runs any step of it** | It launches **one real run** of the repository you name: that run's own model spend, one branch and one pull request, plus the two small objects `fugaro tell` writes under `tokens/`, which expire by the bucket's own rule. Everything else is a read (`fugaro doctor`, `fugaro version`, `fugaro runs ls`, `gcloud run jobs describe`/`list`, `gcloud storage cat`/`buckets describe`, the troubleshooter). It changes nothing anywhere else: the run it launched stays, the `restore` row says the scratch directory went, and no credential value is read. **OWNER-RUN, NOT RUN.** |
+| 670 | **Enrolling the GitHub sandbox end to end, and removing it under a run in flight** ([`docs/repos-management/`](repos-management/implementation-plan.md), its **Check 670** and task **RE6**; **D2400**'s six steps read in their own order, **F11** read with **D2411**, **D2405** and the six leaves of **D2406**, and **D2407**'s typed confirmation): `fugaro project repos add` prints the **six steps** it is about to converge — the repository's own `fugaro.yaml`, this machine's config entry, the image map, the allow-list, the publish and the job with its `roles/run.invoker` grant — names the first image build as **billable and not part of it**, and closes with the `enrolled ... is ready` line; the `github-app-key` container is then **left empty**, and `fugaro project repos status` must name that row, say the container holds no enabled version, name `fugaro secrets set` as its fix and exit **nonzero** (**F11** — the enrolment that reads complete while the readiness gate plans no job, which is the failure this whole order answers); filling it from a `0600` `.pem` by redirection and converging again turns the row **green** and the exit **zero**; a first real run is launched and its row reaches the listing; a **second** run is launched, and **while it is going** `fugaro project repos rm` is run and must take the **strict confirmation** — the sentence naming the run and the typed project name, the only thing that confirms it while a run is in flight — before the removal proceeds, after which **the run finishes anyway** (**D2407**: nothing rewrites what a run in flight holds); and the **six things `rm` leaves** are read back from the outside afterwards — the provider's App installation, the built image, the secret and its version, the run history, the pull request and the remote branch (**D2406**) — with `fugaro update` afterwards writing nothing new | See "Check 670" below; **the script is how you run it**: `bash scripts/live-checks/check670.sh --installation <name> --app-key-file <the App's .pem>`, with the test that drives every step of it against fake `gcloud`, `fugaro`, `gh` and `git`, `scripts/live-checks/check670_test.sh` (run by `go test ./scripts`); **you** run it, at your own terminal, on a **throwaway installation** and the GitHub sandbox repository (`dimipaun/fugarosandbox`, the name must contain `sandbox` and is the default), **never `belong`**, after the release and `fugaro update`, and **no agent runs any step of it** | It launches **TWO billable runs** of the sandbox repository — the one it only watches start and the one the removal is run under — on that installation's own budget, plus the `fugaro update` and the deployment the enrolment drives; whatever the first image build costs is **not** part of it (`add` says so itself and leaves the build to `fugaro image build <entry>`). Everything else is a read or a config write: the six steps' own output, `fugaro project repos status` twice (its screen and its `--json` document, which is where the fix survives whole), the container's metadata, the run listing, `gh api`/`gh pr view`, `git ls-remote --heads`, `fugaro image ls --shared --json` with `gcloud` for the image, `gcloud secrets describe` for the container, the runs bucket for the history and `fugaro project show`/`policy show` for the enrolment. **No credential value is read by any step**: the private key goes into `fugaro secrets set` by redirection from a `0600` file and reaches no command line and no fact. Its scratch directory and the throwaway checkout in it are removed from the exit trap, and the `restore` row names what is left by design — the branch, the pull request it opened and the App's installation, which a person takes away on the provider's side. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -24162,3 +24163,139 @@ needed to run the check as the register writes it.
 `scripts/live-checks/check-740-run-messages_test.sh`, which drives every step of it against fake tools — a
 fake `fugaro` and a fake `gcloud`, no cloud, no installation and no run — and is run by
 `go test ./scripts`.
+
+## Check 670: the sandbox enrolment and the removal under a run in flight (a throwaway installation and the GitHub sandbox, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **RE6** of
+[docs/repos-management/implementation-plan.md](repos-management/implementation-plan.md) — its "## RE6. Check 670,
+enrol the sandbox end to end and remove it" — and **run by the owner**, at their own terminal, on a **throwaway
+installation** and the GitHub sandbox repository (`dimipaun/fugarosandbox`), after the release and `fugaro update`.
+It is the live half of the repos-management work: RE1 to RE4 (the four verbs) are merged, and every offline test of
+them runs against a fake backend, `internal/gcpfake` and `t.TempDir()`. **No agent runs any step of it** — it
+enrols and removes a repository on a real installation and launches two real runs — and the script refuses a coding
+agent's session by name (`CLAUDECODE` and the four other markers that say an agent, and not a person, is driving
+the shell) as well as a traced shell, because `bash -x` would print a document's contents a second time.
+
+**The number is this work's own, and it was renumbered.** The check was written as Check 620; **620 to 627 are the
+mobile-auth work's** (the register's own paragraph and `docs/status.md` both say so), so the owner ruled on
+2026-11-21 that this plan's one check is **Check 670**. The plan, the reconciliation, the README, the script's own
+name, the register row above and this section all read **670**; **621 to 629 stay reserved and unused**, and no
+number is reused.
+
+**What it settles.** Six readings of the four verbs as shipped, each taken from the outside and nowhere else:
+
+- **The enrolment's six steps, in the order it printed them** (step 1). `fugaro project repos add <repo>
+  --project <installation>` is run on a **fresh throwaway checkout** and the check reads its own output: one
+  numbered line per step — the repository's own `fugaro.yaml`, this machine's config entry, its image map, the
+  allow-list, the publish and the job with its `roles/run.invoker` grant — the sentence that names the first image
+  build as **billable and not part of it**, the question it asks for the project's name, and the closing
+  `enrolled ... is ready` line (**D2400**). A converge that ran fewer steps than it printed is what this row is
+  for.
+- **F11: the empty `github-app-key` container** (step 2). The container is left **empty** on the first attempt —
+  the state Terraform leaves, and the check refuses to measure the failure if a version is already stored, because
+  then there is no empty container to read. `fugaro project repos status <repo>` must name that row
+  (`credential-version`), say the container holds no enabled version, **name `fugaro secrets set` as the fix** and
+  **exit nonzero** (**F11** with **D2411**): an enrolment that reads as complete while the readiness gate plans no
+  job for the repository. The screen clips a long row at 160 columns, so the fix is read from the same command's
+  `--json` document — the document is where it survives whole, and it is the document the console reads.
+- **The fill, and the same read the other way** (step 3). `fugaro secrets set github-app-key --repo <repo>` takes
+  the App's private key **by redirection from a `0600` file** (never on a command line, never in a fact), the
+  converge is run again, and `status` then exits **zero** with a **green** row.
+- **A run starts** (step 4). `fugaro run --repo <repo> --json` names a run, and the project's own listing holds
+  its row. This is the first of the check's **two billable runs**.
+- **D2407: the removal under a run in flight takes the strict confirmation, and the run finishes** (step 5). A
+  **second** run is launched and watched until it is going; `fugaro project repos rm <repo>` is then run **while
+  it goes**. The typed project name is the **only** thing that confirms a removal while a run is in flight, and
+  the sentence that says so is printed in the command's own **refusal** and nowhere else — so the check runs the
+  removal once with **no terminal at all**, requires the refusal to name the run and to write nothing before the
+  question, and then runs the same command at your terminal, where the question the CLI prints is read (the
+  project whose name it asks for, and **the run it is about**). What the row is really about is the other half:
+  the run must **end anyway**, because a removal is never allowed to rewrite what a run in flight holds.
+- **D2406: the six things `rm` leaves** (step 6), each read from the outside after the removal — the provider's
+  **App installation** (`gh api /repos/<repo>/installation`, the one fact only the provider holds, which is why
+  this check's fakes include `gh`), the **built image** (the shared lock's entry through `fugaro image ls --shared
+  --json`, then Artifact Registry through `gcloud`), the **secret and its version** (`gcloud secrets describe` and
+  the enabled versions), the **run history** in the runs bucket, the **pull request** the run opened (`gh pr
+  view`) and the **remote branch** (`git ls-remote --heads`). And then that **`fugaro update` writes nothing
+  new**: it exits 0, fails no stage, leaves nothing for the owner, and the allow-list and the enrolment read
+  afterwards are the ones read before.
+
+**The command.** It is **one command**, run at your own terminal, against an installation you may throw away and
+the GitHub sandbox repository:
+
+```sh
+bash scripts/live-checks/check670.sh --installation <name> --app-key-file <the App's .pem>
+```
+
+`--installation` is the installation's own name (what `fugaro doctor --json` prints as `project.name`, not the GCP
+project id); `--app-key-file` is the GitHub App's private key, written to a file of its own at **mode 0600**.
+`--repo <owner/name>` names another repository (the default is `dimipaun/fugarosandbox`, and the name must contain
+`sandbox` on purpose), `--task <file>` is the brief the two runs are launched with, `--base <branch>` the `--ref`
+they are launched on, `--gcp-project <id>` and `--production` are the escape hatches a project not named by the
+checkout's own `doctor` needs, `--dry-run` makes every guard and prints every command it would run while calling
+nothing, and `--help` prints the script's header. **Prerequisites.** `fugaro`, `gcloud`, `gh`, `git`, `bash`,
+`mktemp` and `python3` on PATH (a missing one stops the run with one line naming it); a `gcloud` login that may
+read the installation's project (Artifact Registry, Secret Manager, Cloud Run) and the runs bucket; a `gh` login
+that may read the repository's installation and pull requests; and the installation at the release or later. **The
+script asks you nothing of its own**: the two confirmations are the CLI's own (`add` and `rm` each ask for the
+project's name) and their output is printed on your terminal as it happens.
+
+**Reading the `CHECK 670 RESULT` block.** Progress goes to stderr; ONE block on stdout, headed `CHECK 670 RESULT`
+and ending `CHECK 670 RESULT END (exit N)`, is what you copy back. Its keys, in the order it prints them, are
+`fugaro-version`, `installation`, `sandbox`, `app-key`, `checkout`, `xtrace`, `agent-session`, `belong`, `enrol`,
+`empty-container`, `status-screen`, `status-fix`, `status-exit`, `filled`, `status-green`, `run-started`,
+`strict-confirmation`, `confirmation`, `removal`, `run-finished`, `kept-app`, `kept-image`, `kept-secret`,
+`kept-history`, `kept-pull-request`, `kept-branch`, `kept-update`, `restore` and `scratch`, followed by `aborted`
+if an internal error ended the run. A criterion the check never reached prints `FAIL — not reached` with the
+reason, so a block is never short and a key missing from it is a key the version you ran does not know. **The
+exit status is the verdict:** **0** when every criterion that was measured held; **1** when a measured criterion
+did not hold, or a guard stopped the check before it could run; **2** when a row could not be measured for a
+reason that is this check's own setup rather than a break — a missing tool, a container that already holds a
+version (so F11 has nothing to read), a run that ended before the removal could be run under it, an image nothing
+built, a run that opened no pull request. Only an all-PASS block is a PASS: a check that measured most of its
+criteria and left one unmeasured is INCOMPLETE, not a pass.
+
+**What it reads, and what it never reads.** Names, ids, versions, states, stages, a status word and a count: the
+installation and its project, the repository's slug, the six steps' own lines, the container's id and version
+count, the runs' ids and their rows, the App's installation id, the image ref, the secret's id and latest version,
+the pull request's URL and the branch's name. **No credential value is read by any step**, and the App's private
+key never reaches the block, a command line or a fact: it is redirected out of a 0600 file into `fugaro secrets
+set`, and every read here is metadata. And no trace: `bash -x` prints every command as it runs, so the check
+**refuses** a shell that arrived with tracing on rather than printing what it read. `belong` is refused by name
+wherever it appears — the installation, the repository, the project or a path — before anything is cloned or run.
+
+**What it leaves, and what it costs.** It launches **two real runs** of the sandbox repository: the one it only
+watches start, and the one the removal is run under (that second one is what makes the strict confirmation the
+confirmation that fires). Both are the repository's own model spend under the installation's caps, the repository
+ends up with a branch and a pull request from each, and the enrolment itself drives a deployment (the repository's
+job set, the allow-list's publish and the policy node). The first image build is **not** part of any of it: `add`
+says so itself and leaves the build to `fugaro image build <entry>` — and the `kept-image` row is measured only
+when the installation's shared lock already serves the repository, and says so rather than failing when nothing
+has built it. Everything else the check does is a read (`fugaro doctor`, `fugaro version`, `fugaro project repos
+status`, `fugaro runs ls`, `fugaro project show`, `fugaro policy show`, `fugaro image ls`, `gh api`, `gh pr view`,
+`git ls-remote`, `gcloud`) or a config write the enrolment itself makes.
+
+**Restore.** Nothing this check did to the installation's own base image goes back, and there is nothing to undo
+that the check could undo itself: the removal **is** this check's own point, so the repository ends up removed
+from the installation, and the six things `rm` leaves are left on purpose. The `restore` row names exactly what is
+still there and what you may want to take away by hand — the branch (`git push <remote> --delete <branch>`), the
+pull request it opened (`gh pr close <url>`) and the App's **installation** on the repository, which is a
+person's step on the provider's side and not something this check may do. The **scratch directory and the
+throwaway checkout** in it are removed from the exit trap, on a failed assertion and on a Ctrl-C as well;
+`CHECK670_KEEP_SCRATCH=yes` keeps the scratch directory and the `scratch` row then says where it is rather than
+that it went. The installation itself is a throwaway one, so the rest goes with it.
+
+**The knobs.** `CHECK670_INSTALLATION`, `CHECK670_REPO`, `CHECK670_APP_KEY_FILE`, `CHECK670_TASK`,
+`CHECK670_BASE`, `CHECK670_GCP_PROJECT`, `CHECK670_RUNS_BUCKET`, `CHECK670_PRODUCTION`, `CHECK670_DRY_RUN` and
+`CHECK670_KEEP_SCRATCH` are the inputs, beside the bindings this check's own test and an owner's own patience use:
+`CHECK670_RUN_SECONDS`, `CHECK670_POLL_SECONDS`, `CHECK670_LAUNCH_SECONDS`, `CHECK670_CLI_TIMEOUT_SECONDS`,
+`CHECK670_CLONE_SECONDS` and `CHECK670_LOG_LIMIT`. None of them can point a call at another project or another
+host, and none is needed to run the check as the register writes it. A project named `fugaro-prod` is refused
+outright unless `CHECK670_PRODUCTION` says otherwise, and every knob is read with a default so an unset shell runs
+the check as written.
+
+**OWNER-RUN, NOT RUN: no agent runs any step of it.** Its own automated proof is
+`scripts/live-checks/check670_test.sh`, which drives every step of it against fake tools — fake `gcloud`, `fugaro`,
+`gh` and `git` on PATH, no network, no cloud, no installation and no run — with every row read in a passing,
+failing and unmeasurable form, and its registration and this description's own file are in
+`scripts/live_checks_test.go` (`liveCheckScripts`). It is run by `go test ./scripts`.
