@@ -121,8 +121,42 @@ func TestNoticeForAPausedRun(t *testing.T) {
 		if n.Kind != orchestrator.NotifyRunPaused {
 			t.Errorf("a cancelled pause was told as %q, and the run is still a suspended one", n.Kind)
 		}
-		if !strings.Contains(n.Text, "cancelled") || !strings.Contains(n.Text, "nothing resumes it") {
-			t.Errorf("the line is %q, and a cancelled pause is never resumed", n.Text)
+		if !strings.Contains(n.Line(), "cancelled") || !strings.Contains(n.Line(), "nothing resumes it") {
+			t.Errorf("the line is %q, and a cancelled pause is never resumed", n.Line())
+		}
+	})
+
+	// A title runs to MaxTitleRunes and the line is capped from its end, so the
+	// two readings are told apart by words that may not be the last thing on the
+	// line: a title long enough to fill what is left is what the cap takes, and
+	// a cancelled pause that printed as one coming back would be the false
+	// promise this notice exists to avoid (D3197).
+	t.Run("a title too long for the line gives up its own words, not the clause", func(t *testing.T) {
+		long := strings.Repeat("land the daemon and the plan behind it ", 5)
+		for _, c := range []struct {
+			cancelled bool
+			want      string
+			unwanted  string
+		}{
+			{cancelled: true, want: "nothing resumes it", unwanted: "the orchestrator resumes it then"},
+			{want: "the orchestrator resumes it then", unwanted: "cancelled"},
+		} {
+			node := pausedNode()
+			node.Cancelled = c.cancelled
+			h := runTick(t, orchestrator.RunReport{Finished: true, Outcome: orchestrator.OutcomeFailed, Pause: &node})
+
+			h.step()
+
+			line := onlyNotification(t, h.sink.got).Line()
+			if !strings.Contains(line, c.want) {
+				t.Errorf("with a %d-rune title the line is %q and it lost %q: what a person does next may not be the part the cap takes", len([]rune(long)), line, c.want)
+			}
+			if strings.Contains(line, c.unwanted) {
+				t.Errorf("with a %d-rune title the line is %q and it carries %q, which belongs to the other reading of the same node", len([]rune(long)), line, c.unwanted)
+			}
+			if len([]rune(line)) > orchestrator.MaxNotifyLineRunes {
+				t.Errorf("the line is %d runes and the cap is %d", len([]rune(line)), orchestrator.MaxNotifyLineRunes)
+			}
 		}
 	})
 

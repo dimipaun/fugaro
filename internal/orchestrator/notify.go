@@ -111,11 +111,20 @@ func (n Notification) Line() string {
 // A pause its launcher cancelled is the one reading of it that changes: a
 // cancelled pause is never resumed (D3197), and a line promising this run's
 // return would be false.
+//
+// Which of the two readings it is comes before the title and not after it. The
+// line is capped from its end and a title runs to MaxTitleRunes, so a title
+// placed ahead of the clause pushes it off the line for every title longer than
+// what the rest of the line leaves — and the two readings are then one line,
+// with a cancelled pause printed exactly like a run that comes back, which is
+// the false promise this notice may not make. The title is what the cap trims
+// instead: which work a run was is a glance at a row, and whether anything
+// resumes it is the whole of what a person does next.
 func pausedNotice(runID, title string, n runstore.PauseNode) Notification {
 	at := time.UnixMilli(n.ResumeAt).UTC().Format(time.RFC3339)
-	text := fmt.Sprintf("run %s paused until %s for %q, and the orchestrator resumes it then", runID, at, title)
+	text := fmt.Sprintf("run %s paused until %s, and the orchestrator resumes it then (for %q)", runID, at, title)
 	if n.Cancelled {
-		text = fmt.Sprintf("run %s paused until %s for %q, and its launcher cancelled the pause, so nothing resumes it", runID, at, title)
+		text = fmt.Sprintf("run %s paused until %s, and its launcher cancelled the pause, so nothing resumes it (for %q)", runID, at, title)
 	}
 	return Notification{Kind: NotifyRunPaused, Subject: runID, Text: text}
 }
