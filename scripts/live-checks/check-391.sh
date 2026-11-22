@@ -38,9 +38,13 @@
 #   6. **The one `fugaro apply`**: it must exit 0, and its own account must name
 #      each of the three steps once ("applied catalog-build, repository,
 #      policy").
-#   7. The stages it really ran: the run's own transcript, where every stage
-#      prints one row. The `policy` row and the `repository` row must appear
-#      exactly once each — the stage ran once, and not once per change.
+#   7. The stages it really ran: the run's own stream, where every stage that
+#      reached a result prints one line — internal/report's shape, a glyph, the
+#      stage's name and its detail (`✔ policy published`). The `policy` line and
+#      the `repository` line must appear exactly once each — the stage ran once,
+#      and not once per change. The plan-view table (a mark, a state word and
+#      then the name) is not read here: an applying run points that table at the
+#      log, and what its own stream carries is these lines.
 #   8. What is owed afterwards: `fugaro apply --status --json` again, which must
 #      be nothing.
 #   9. The teardown: `fugaro image rm <entry> --no-apply` and the two keys put
@@ -378,22 +382,28 @@ def pending(path):
             print("applied=%s" % a)
 
 
-# A stage's own row in a run's transcript: the status column (a mark, a space,
-# and the stage's word, padded), then the stage's name, then whatever it says.
-# The words are initflow's own (stateLabel) and the two-word ones are here whole
-# so a line is matched by what it is rather than by where its columns fell.
-STAGE_WORDS = ("billing pending", "waiting for billing", "left for you", "will do",
-               "done", "changed", "skipped", "failed", "waiting")
-STAGE_ROW = re.compile(r"^\s*\S+[ \t]+(?:%s)[ \t]+(\S+)"
-                       % "|".join(re.escape(w) for w in STAGE_WORDS))
+# A stage's own line in a run's transcript, as internal/report prints it: the
+# result's glyph, a space, the stage's name, and then the detail that result
+# carries — `sep` is " " for a tick and a skip and ": " for a failure or a step
+# left for you (report.go's end). The glyphs are the ones a step's own result
+# can carry (style.go: a tick, a skip, a cross, the left-for-you marker), and
+# NOT the waiting arrow: `↳ <text>` carries no stage name. The plan-view table —
+# a mark, a state word, then the name — is deliberately not matched here: an
+# applying run points that table at the log (Options.Detail) and what the run's
+# own stream carries is these step lines, which is what a check reading the
+# command's stderr sees.
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+STEP_GLYPHS = ("✔", "+", "–", "-", "✖", "x", "!")
+STEP_ROW = re.compile(r"^(?:%s) +([^\s:]+)(?:$|[ \t:])"
+                      % "|".join(re.escape(g) for g in STEP_GLYPHS))
 
 
 def transcript(path):
-    """The stage rows of a run's own transcript, one `row=<name> count=<n>` line
-    per stage it printed, and the `applied <names>` line the command ends on.
-    The count is the whole reading: a stage the loop reached once prints one
-    row, and a record that queued the same step per change would reach it more
-    than once."""
+    """The stages of a run's own transcript: one `row=<name> count=<n>` line per
+    stage it reported a result for, and the `applied <names>` line the command
+    ends on. The count is the whole reading: a stage the loop reached once
+    prints one line, and a record that queued the same step per change would
+    reach it more than once."""
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             text = fh.read()
@@ -402,8 +412,8 @@ def transcript(path):
         return
     print("read=yes")
     counts = {}
-    for line in text.splitlines():
-        m = STAGE_ROW.match(line)
+    for line in ANSI.sub("", text).splitlines():
+        m = STEP_ROW.match(line)
         if m:
             counts[m.group(1)] = counts.get(m.group(1), 0) + 1
             continue
@@ -772,9 +782,10 @@ step_applied() {
     fact applied FAIL "the one fugaro apply ended after ${APPLY_SECONDS}s with exit ${APPLY_STATUS}: $(last_line "$SCRATCH/apply.err"). The steps it could not run are still owed; the whole transcript is in $SCRATCH/apply.out and apply.err (set CHECK391_KEEP_SCRATCH=1 to keep the directory)"
     return 0
   fi
-  # The command's own answer is on stdout (`applied <names>`); every stage row it
-  # prints is on stderr, because the command points itself there for the length
-  # of the run so that a stage's own output can never land on the answer.
+  # The command's own answer is on stdout (`applied <names>`); every stage's own
+  # result line is on stderr, because the command points itself there for the
+  # length of the run so that a stage's own output can never land on the answer.
+  # The line is internal/report's: a glyph, the stage's name, then its detail.
   read_json "$SCRATCH/apply-rows.txt" transcript "$SCRATCH/apply.err"
   if [ "$(field "$SCRATCH/apply-rows.txt" read)" != yes ]; then
     unmeasured applied "the one fugaro apply's own transcript could not be read ($SCRATCH/apply.err): its exit status was 0, but what it ran cannot be read"
@@ -805,7 +816,7 @@ step_applied() {
 
 step_stages() {
   if [ -z "${APPLIED_NAMES:-}" ]; then
-    unmeasured stages "the one apply's own account was not read (the applied row says why), so the stage rows it printed cannot be held to anything"
+    unmeasured stages "the one apply's own account was not read (the applied row says why), so the stage lines it printed cannot be held to anything"
     return 0
   fi
   local c_policy c_repo rows
@@ -815,10 +826,10 @@ step_stages() {
   STAGE_POLICY=${c_policy:-0}
   STAGE_REPO=${c_repo:-0}
   if [ "${STAGE_POLICY:-0}" != 1 ] || [ "${STAGE_REPO:-0}" != 1 ]; then
-    fact stages FAIL "the one apply printed the stage row for policy ${STAGE_POLICY:-0} time(s) and for repository ${STAGE_REPO:-0} time(s), and each of them must be exactly one: the record keeps one entry per step name (D1562), so the loop reaches each stage once whatever number of changes owed it. The rows it printed: ${rows:-<none>}"
+    fact stages FAIL "the one apply printed the policy stage's own line ${STAGE_POLICY:-0} time(s) and the repository stage's ${STAGE_REPO:-0} time(s), and each of them must be exactly one: the record keeps one entry per step name (D1562), so the loop reaches each stage once whatever number of changes owed it. The stages it reported: ${rows:-<none>}"
     return 0
   fi
-  fact stages PASS "the one apply printed one row for the policy stage and one for the repository stage (${rows:-<none>}): three changes that all owed policy reached that stage ONCE, which is the collapse the pending record exists for (D1562, D1570)"
+  fact stages PASS "the one apply printed one line for the policy stage and one for the repository stage (${rows:-<none>}): three changes that all owed policy reached that stage ONCE, which is the collapse the pending record exists for (D1562, D1570)"
 }
 
 step_owed() {
@@ -1047,7 +1058,7 @@ print_plan() {
   say "  [writes] ${FUGARO_BIN} settings set ${KEY_B} ${VALUE_B} --layer local --no-apply: change 3 of 3, saved and not live (it owes policy)"
   say "  [reads] ${FUGARO_BIN} apply --status --json: the steps the three changes owe, which must be exactly catalog-build, repository and policy, each ONCE"
   say "  [writes] ${FUGARO_BIN} apply: THE ONE APPLY. It builds the catalog image, redeploys the repository's jobs and publishes the catalog once each, under a ${DEADLINE}s deadline"
-  say "  [reads] the one apply's own transcript: the policy stage's row and the repository stage's row, each printed exactly once"
+  say "  [reads] the one apply's own stream: the policy stage's own line and the repository stage's own line (a glyph, the stage's name and its detail), each printed exactly once"
   say "  [reads] ${FUGARO_BIN} apply --status --json again: which must owe nothing"
   say "  [writes] ${FUGARO_BIN} image rm ${ENTRY} --no-apply, ${FUGARO_BIN} settings set|unset ${KEY_A} --layer local --no-apply and the same for ${KEY_B}, then ONE ${FUGARO_BIN} apply: the teardown, which takes the entry back out and puts both keys back"
   say "  [writes] nothing else: one scratch directory (mode 0700) holding the transcripts, removed at the end"
@@ -1154,7 +1165,7 @@ main() {
     fact saved INFO "planned: a real run writes three changes with --no-apply: fugaro image add ${ENTRY} --dockerfile ${DOCKERFILE} (owing catalog-build, repository, policy), and fugaro settings set ${KEY_A} ${VALUE_A} --layer local and ${KEY_B} ${VALUE_B} --layer local (each owing policy)"
     fact status INFO "planned: a real run reads fugaro apply --status --json and holds the record to exactly three steps, one entry per step name: catalog-build, repository and policy, each once (D1562, D1570)"
     fact applied INFO "planned: a real run runs ONE fugaro apply under a ${DEADLINE}s deadline -- it builds the catalog image, redeploys the repository's jobs and publishes the catalog -- and reads the steps it answered out of its own 'applied' line"
-    fact stages INFO "planned: a real run counts the stage rows of that apply's transcript: the policy stage's row and the repository stage's row must each appear exactly once"
+    fact stages INFO "planned: a real run counts the stages of that apply's own transcript: the policy stage's own line and the repository stage's must each appear exactly once"
     fact owed INFO "planned: a real run reads fugaro apply --status --json again, which must owe nothing"
     fact teardown INFO "planned: a real run removes the entry with fugaro image rm ${ENTRY} --no-apply and puts both settings back the way it found them (their own value at the local layer, or unset), then runs ONE fugaro apply"
     fact claim INFO "planned: the verdict is a real run's, and it is the CLI's own record that answers it"

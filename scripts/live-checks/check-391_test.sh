@@ -94,12 +94,15 @@ saved_line() { # saved_line NAMES...
   printf 'saved, not live yet: %s owed\n' "$names"
 }
 
-# stage_row NAME: one stage's own row, in the shape the run prints it (a mark, a
-# space, the word padded to the status column, then the stage's name padded to
-# its own), on stderr -- the command points its own output there for the length
-# of a run so a stage's output can never land on its answer.
+# stage_row NAME: one stage's own result line, in the shape the run prints it —
+# internal/report's end: the result's glyph, a space, the stage's name, then the
+# detail the result carries — on stderr, because the command points its own
+# stream there for the length of a run so a stage's output can never land on its
+# answer. The plan-view table (a mark, a state word, then the name) is NOT this
+# line: an applying run sends that table to the log, and a fake that printed it
+# here would hide a reader that matched the wrong shape.
 stage_row() {
-  printf '  %s %-13s %-16s %s\n' "✔" "done" "$1" "the $1 stage ran" >&2
+  printf '%s %s %s\n' "✔" "$1" "the $1 stage ran" >&2
 }
 
 # render_catalog: the JSON `image ls` answers, one row per line of the catalog
@@ -573,23 +576,23 @@ test_a_record_that_cannot_be_read_is_unmeasured() {
   expect_contains "$(fact_line claim)" "NOT MEASURED" "the claim row"
 }
 
-test_a_policy_stage_row_twice_is_a_fail() {
+test_a_policy_stage_line_twice_is_a_fail() {
   setup_case stagetwice
   mode apply twicerow
   run391_default
   expect_status "$status" 1 "a policy stage that ran twice"
   expect_contains "$(fact_line stages)" "FAIL" "the stages row"
-  expect_contains "$(fact_line stages)" "policy 2 time(s)" "the stages row counts the rows"
+  expect_contains "$(fact_line stages)" "policy stage's own line 2 time(s)" "the stages row counts the lines"
   expect_contains "$(fact_line claim)" "FAIL" "the claim row"
 }
 
-test_a_missing_stage_row_is_a_fail() {
+test_a_missing_stage_line_is_a_fail() {
   setup_case norow
   mode apply norow
   run391_default
-  expect_status "$status" 1 "a run that printed no stage row"
+  expect_status "$status" 1 "a run that printed no stage line"
   expect_contains "$(fact_line stages)" "FAIL" "the stages row"
-  expect_contains "$(fact_line stages)" "policy 0 time(s)" "the stages row says nothing was printed"
+  expect_contains "$(fact_line stages)" "policy stage's own line 0 time(s)" "the stages row says nothing was printed"
   expect_contains "$(fact_line claim)" "FAIL" "the claim row"
 }
 
@@ -830,8 +833,8 @@ t test_the_changes_run_with_their_stdin_closed
 t test_a_policy_entry_twice_is_a_fail
 t test_a_step_that_is_not_the_records_is_a_fail
 t test_a_record_that_cannot_be_read_is_unmeasured
-t test_a_policy_stage_row_twice_is_a_fail
-t test_a_missing_stage_row_is_a_fail
+t test_a_policy_stage_line_twice_is_a_fail
+t test_a_missing_stage_line_is_a_fail
 t test_an_applied_list_with_a_step_twice_is_a_fail
 t test_an_apply_that_exits_nonzero_is_a_fail
 t test_an_apply_that_answers_nothing_is_a_fail
