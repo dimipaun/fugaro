@@ -3946,9 +3946,10 @@ orchestrator this installation has. coordinator is that view alone;
 orchestrator:<id> is one orchestrator's node under /orchestrator, its work
 items as nodes and their depends_on as edges; local:<id> is the same node
 read as one this machine's daemon drives, falling back to the daemon's
-cached brief when the node cannot be read. An id is one lower-case letter or
-digit, then up to 39 more of those or a hyphen, and nothing else: anything
-that does not match is refused before anything is read, and so is an id the
+cached brief when the node cannot be read. An id is an orchestrator id and
+nothing else: a project's own name, or a project name, ~ and a name for a
+named one, which is how the tree under /orchestrator is keyed. Anything that
+does not match is refused before anything is read, and so is an id the
 project's database does not hold, with a sentence naming it and pointing at
 fugaro orchestrator ls. Which ids exist is what that listing asks — a key
 under /orchestrator — and not whether a state node was written, so an id it
