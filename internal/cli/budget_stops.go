@@ -126,7 +126,7 @@ func (e *initEngine) budgetStopFacts(ctx context.Context) budgetStopFacts {
 		return f
 	}
 	if prices, _, err := priceTable(e.lc, budgetNow()); err == nil && prices != nil {
-		f.pins = config.CheckPins(agent, prices)
+		f.pins = config.UnpricedPins(agent, prices)
 	}
 	oi, ok := readOrigin(ctx, root)
 	if !ok {
