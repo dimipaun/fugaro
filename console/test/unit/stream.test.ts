@@ -38,7 +38,7 @@ import type { RunsListRow } from '../../src/shared/schema'
  * --json`'s array holds, with the line's own `type` beside it. The four members
  * a row must carry are the ones `decodeRunsList` reads (`schema.ts`). */
 function aLine(run: string, status = 'failed'): Record<string, unknown> {
-  return { type: 'row', run, repo: 'acme/widgets', status, terminal: true }
+  return { type: 'row', row: { run, repo: 'acme/widgets', status, terminal: true } }
 }
 
 /** END_LINE is the feed's own statement that it finished. */

@@ -227,6 +227,12 @@ var notFields = []string{
 	// output. `plan_approve` is the person's approval of a plan's items (R5),
 	// and `work_item_upsert` is the op a session declares work with.
 	"plan_approve", "work_item_upsert",
+	// The kind of line `setup --events --json` writes for one thing only the
+	// user can do, named by the setup skill's driving reference on the line
+	// that says what `--events` writes (setup_events.go's closed set). It is a
+	// value of that line's `type` member, not a member of any --json document,
+	// though the same word is one.
+	"left_for_you",
 }
 
 var fieldTokenRE = regexp.MustCompile("`([a-z][a-z0-9]*(?:(?:_[a-z0-9]+)+|(?:\\.[a-z][a-z0-9_]*(?:\\[\\])?)+)(?:\\.[a-z][a-z0-9_]*)*)`")
