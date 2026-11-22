@@ -7,7 +7,6 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/runstore"
-	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // oauthToken is the account token of the harness's OAuth runs: long enough
@@ -17,17 +16,6 @@ const oauthToken = "oauth-token-for-tests-1234"
 // usageLimitText is what Claude Code's result event carries when the OAuth
 // account has spent its subscription allowance.
 const usageLimitText = "Claude AI usage limit reached|1760000000"
-
-// oauthHarness is a harness whose config authenticates with the account's
-// OAuth token, as a job of that account starts: api-key out of the
-// environment, the token in it.
-func oauthHarness(t *testing.T) *harness {
-	t.Helper()
-	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "auth: api-key", "auth: oauth", 1)
-	h := newHarness(t, cfg, nil)
-	h.deps.Env = append(filterEnv(h.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN="+oauthToken)
-	return h
-}
 
 // failingReview is a senior review stage that reported an error result with
 // text: is_error set, no Go error, the shape an API the provider refused
@@ -60,7 +48,7 @@ func TestStageErrorReasonNamesTheOAuthUsageLimit(t *testing.T) {
 	const named = "stage review: the OAuth account's subscription usage limit was reached, so the run stops here: " +
 		"the account's allowance is shared with the owner's own Claude Code use and resets on its own schedule: " + usageLimitText
 	t.Run("oauth", func(t *testing.T) {
-		rec, err := oauthHarness(t).run(t, implement("feature"), failingReview("success", usageLimitText))
+		rec, err := oauthHarness(t, "", nil).run(t, implement("feature"), failingReview("success", usageLimitText))
 		if err != nil || rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
 			t.Fatalf("rec = %+v, err = %v", rec, err)
 		}
@@ -86,7 +74,7 @@ func TestStageErrorReasonNamesTheOAuthUsageLimit(t *testing.T) {
 		{"the error type in prose", "the gateway answers 429 rate_limit_error when too many calls are in flight"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			rec, err := oauthHarness(t).run(t, implement("feature"), failingReview("success", tc.text))
+			rec, err := oauthHarness(t, "", nil).run(t, implement("feature"), failingReview("success", tc.text))
 			if err != nil || rec.Status != runstore.StatusFailed {
 				t.Fatalf("rec = %+v, err = %v", rec, err)
 			}
@@ -150,7 +138,7 @@ func TestStageErrorReasonQuotesTheAgentsText(t *testing.T) {
 func TestStageErrorTextIsRedactedOneLineAndClipped(t *testing.T) {
 	long := strings.Repeat("y", 400)
 	text := "API Error: 500 upstream echoed " + oauthToken + "\nsecond line " + long
-	rec, err := oauthHarness(t).run(t, implement("feature"), failingReview("success", text))
+	rec, err := oauthHarness(t, "", nil).run(t, implement("feature"), failingReview("success", text))
 	if err != nil || rec.Status != runstore.StatusFailed {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
@@ -186,7 +174,7 @@ func TestStageErrorTextIsRedactedOneLineAndClipped(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			half := len(oauthToken) / 2
 			split := "API Error: 500 upstream echoed " + oauthToken[:half] + tc.sep + oauthToken[half:]
-			rec, err := oauthHarness(t).run(t, implement("feature"), failingReview("success", split))
+			rec, err := oauthHarness(t, "", nil).run(t, implement("feature"), failingReview("success", split))
 			if err != nil || rec.Status != runstore.StatusFailed {
 				t.Fatalf("rec = %+v, err = %v", rec, err)
 			}

@@ -213,17 +213,55 @@ case "$sub" in
   cat "$answers/iam.json"
   ;;
 "iam roles describe"*)
-  role=${4:-}
-  python3 - "$answers/roles.json" "$role" <<'PY'
+  # The real command takes a predefined role with its `roles/` prefix and no
+  # --project, and a custom one as a bare ID plus the --project it belongs to
+  # (`iam_util.GetRoleName`). The fake holds the same contract, so a check that
+  # hands over a spelling gcloud refuses is refused here too, and the case that
+  # expects the role's permissions fails.
+  role="" role_project=""
+  shift 3
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --project=*) role_project=${1#--project=} ;;
+    --project)
+      role_project=${2:-}
+      shift
+      ;;
+    --format=*) ;;
+    --format) shift ;;
+    -*) ;;
+    *) [ -n "$role" ] || role=$1 ;;
+    esac
+    shift
+  done
+  python3 - "$answers/roles.json" "$role" "$role_project" <<'PY'
 import json, sys
+path, role, project = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
-    doc = json.load(open(sys.argv[1]))
+    doc = json.load(open(path))
 except Exception:
     sys.exit(1)
+if role.startswith("projects/") or role.startswith("organizations/"):
+    print("ERROR: (gcloud.iam.roles.describe) Invalid value for [ROLE_ID]: The role id should not include any 'projects/' or 'organizations/' prefix.", file=sys.stderr)
+    sys.exit(1)
+if role.startswith("roles/"):
+    if project:
+        print("ERROR: (gcloud.iam.roles.describe) Invalid value for [ROLE_ID]: The role id that starts with 'roles/' only stands for predefined role. Should not specify the project or organization for predefined roles", file=sys.stderr)
+        sys.exit(1)
+    want = role
+else:
+    if "/" in role:
+        print("ERROR: (gcloud.iam.roles.describe) Invalid value for [ROLE_ID]: The role id should not include any '/' character.", file=sys.stderr)
+        sys.exit(1)
+    if not project:
+        print("ERROR: (gcloud.iam.roles.describe) Missing required argument [--organization or --project]: Should specify the project or organization name for custom roles.", file=sys.stderr)
+        sys.exit(1)
+    want = "projects/%s/roles/%s" % (project, role)
 for r in doc.get("roles") or []:
-    if r.get("name") == sys.argv[2] or r.get("id") == sys.argv[2]:
+    if (r.get("name") or "") == want:
         print(json.dumps(r))
         sys.exit(0)
+print("ERROR: (gcloud.iam.roles.describe) NOT_FOUND: Role %s not found" % want, file=sys.stderr)
 sys.exit(1)
 PY
   ;;
@@ -885,6 +923,14 @@ PY
   expect_status "$status" 1 "a granted predefined role"
   expect_contains "$out" "FACT grants: FAIL" "a granted predefined role: the row"
   expect_contains "$out" "roles/aiplatform.user" "a granted predefined role: the role it found"
+  # A predefined role is asked for under the `roles/` prefix the policy spells it
+  # with and with no --project: the fake refuses the prefixed id beside a --project
+  # and reads a bare id as a custom role, so either mistake would show here as
+  # UNVERIFIED rather than FAIL.
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_contains "$calls" "iam roles describe roles/aiplatform.user --format=json" "a granted predefined role: the prefixed ID gcloud is asked for"
+  expect_absent "$calls" "describe aiplatform.user " "a granted predefined role: the bare ID is not handed to gcloud"
 }
 
 test_a_custom_role_with_the_permission_is_a_finding() {
@@ -900,7 +946,12 @@ PY
   run_check "$dir" -- $(default_args "$dir")
   expect_status "$status" 1 "a custom role with the permission"
   expect_contains "$out" "FACT grants: FAIL" "a custom role with the permission: the row"
-  expect_contains "$(cat "$dir/logs/gcloud.calls")" "iam roles describe" "a custom role with the permission: the role is read"
+  expect_contains "$out" "projects/${project}/roles/chk882vertex" "a custom role with the permission: the role it found"
+  # A project role is the bare ID plus the project the binding names.
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_contains "$calls" "iam roles describe chk882vertex --project=${project} --format=json" "a custom role with the permission: the ID and its own project are what gcloud is asked"
+  expect_absent "$calls" "describe projects/" "a custom role with the permission: the policy's own spelling is not handed to gcloud"
 }
 
 test_a_refused_launch_is_not_measured() {

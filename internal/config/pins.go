@@ -155,43 +155,65 @@ func craftModels(crafts []CraftModel) []CraftModel {
 // which reads them from the slots the bootstrap write filled, passes none — and
 // a craft that names no model is not judged (F17).
 func CheckPins(a Agent, prices *pricing.Table, crafts ...CraftModel) []Problem {
+	return pinProblems(a, prices, crafts, false)
+}
+
+// UnpricedPins is CheckPins' price half alone: one Problem per pin that NAMES a
+// model the table cannot charge, and nothing for a pin that names no model at
+// all.
+//
+// It exists for the readers that answer "what does this document stop" over a
+// document that is not the whole configuration: a repository's own fugaro.yaml
+// names no model on a layered installation — the project layer or the published
+// policy supplies every slot — so CheckPins over it reports a role "is required
+// with a budget" for a run that has one, which is exactly the false refusal
+// R8's listing (`fugaro update` and `doctor`, internal/cli/budget_stops.go) may
+// not print. An alias is not this function's either: it resolves to a priced
+// model, and the pin rule's own sentence about it is CheckPins'.
+func UnpricedPins(a Agent, prices *pricing.Table, crafts ...CraftModel) []Problem {
+	return pinProblems(a, prices, crafts, true)
+}
+
+func pinProblems(a Agent, prices *pricing.Table, crafts []CraftModel, priceOnly bool) []Problem {
 	var ps []Problem
-	for _, r := range pins(a) {
+	add := func(path, model string) {
+		// priceOnly keeps the pins that NAME a model the table cannot charge:
+		// a pin that names no model is not a model without a price, and an
+		// alias resolves to a row the table holds (pricing.Lookup matches
+		// aliases), so neither is a stop R8's listing may name.
+		if priceOnly && (model == "" || pricing.IsAlias(model)) {
+			return
+		}
 		switch {
-		case r.model == "" && r.path == "agent.models.background":
-			ps = append(ps, Problem{Path: r.path, Message: "is required with a budget: name a model ID such as claude-haiku-4-5"})
-		case r.model == "":
-			ps = append(ps, Problem{Path: r.path, Message: "is required with a budget: set it, or agent.model, to a model ID such as claude-sonnet-5-5"})
-		case pricing.IsAlias(r.model):
-			ps = append(ps, Problem{Path: r.path, Message: r.model + " is an alias: with a budget, name a model ID such as claude-sonnet-5-5"})
+		case model == "" && path == "agent.models.background":
+			ps = append(ps, Problem{Path: path, Message: "is required with a budget: name a model ID such as claude-haiku-4-5"})
+		case model == "":
+			ps = append(ps, Problem{Path: path, Message: "is required with a budget: set it, or agent.model, to a model ID such as claude-sonnet-5-5"})
+		case pricing.IsAlias(model):
+			ps = append(ps, Problem{Path: path, Message: model + " is an alias: with a budget, name a model ID such as claude-sonnet-5-5"})
 		default:
-			if _, ok := prices.Lookup(r.model); !ok {
-				// A model the catalog could not price carries its own
-				// message — the model, the switch and both ways out (P8) —
-				// because the pin is where the refusal becomes real.
-				if why := prices.Refusal(r.model); why != "" {
-					ps = append(ps, Problem{Path: r.path, Message: why})
-					continue
-				}
-				ps = append(ps, Problem{Path: r.path, Message: r.model + " has no price: add it under model_prices in the project config"})
+			if _, ok := prices.Lookup(model); !ok {
+				ps = append(ps, unpricedProblem(path, model, prices))
 			}
 		}
+	}
+	for _, r := range pins(a) {
+		add(r.path, r.model)
 	}
 	for _, c := range craftModels(crafts) {
-		switch {
-		case pricing.IsAlias(c.Model):
-			ps = append(ps, Problem{Path: c.craftPath(), Message: c.Model + " is an alias: with a budget, name a model ID such as claude-sonnet-5-5"})
-		default:
-			if _, ok := prices.Lookup(c.Model); !ok {
-				if why := prices.Refusal(c.Model); why != "" {
-					ps = append(ps, Problem{Path: c.craftPath(), Message: why})
-					continue
-				}
-				ps = append(ps, Problem{Path: c.craftPath(), Message: c.Model + " has no price: add it under model_prices in the project config"})
-			}
-		}
+		add(c.craftPath(), c.Model)
 	}
 	return ps
+}
+
+// unpricedProblem is the one sentence about a model the table cannot charge:
+// the catalog's own refusal where it has one — the model, the switch and both
+// ways out (P8) — and the model_prices fix otherwise.
+func unpricedProblem(path, model string, prices *pricing.Table) Problem {
+	if why := prices.Refusal(model); why != "" {
+		return Problem{Path: path, Message: why}
+	}
+	return Problem{Path: path, Message: model + " has no price: add it under model_prices in the project config"}
 }
 
 // PinWarnings are the pins whose price is an embedded placeholder nobody has
