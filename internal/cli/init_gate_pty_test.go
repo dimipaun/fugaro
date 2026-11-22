@@ -47,16 +47,20 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	e, out, typeAt := ttyEngine(t, &initOptions{})
 	done := make(chan error, 1)
 	go func() { done <- e.r.gatherInputs(t.Context()) }()
-	typeAt("Type the GCP project's ID", 1, "my-proj-42\n")
-	typeAt("Type the place the installation lives in (US, EU, or a region typed in full)", 1, "\n")
-	typeAt("Type the Fugaro project's name", 1, "\n") // its default can come from an installation in that project
+	// Every marker is the start of the question's own prompt (askedPrompt), so
+	// the answers follow the questions rather than a wording this file would
+	// keep: a question is one line, asked once.
+	typeAt(askedPrompt("--gcp-project"), 1, "my-proj-42\n")
+	typeAt(askedPrompt("--location"), 1, "\n")
+	typeAt(askedPrompt("--name"), 1, "\n") // its default can come from an installation in that project
 	// The rigor mode is the one question here Enter is not an answer to (task
-	// W), so the mode is typed rather than taken.
-	typeAt("Type the project's rigor mode", 1, string(rigor.Pro)+"\n")
+	// W), so the mode is typed rather than taken. Its line is marked with the
+	// colon: the same words also open the heading above the four modes.
+	typeAt(questionFor("--rigor").label+": ", 1, string(rigor.Pro)+"\n")
 	// The budget amount is the project's alert threshold, and Enter is its
 	// suggestion (T2b of docs/managed-flag-ergonomics; D2210).
-	typeAt("Type the monthly amount of the project's budget alert", 1, "\n")
-	typeAt("Bake your repos", 1, "\n") // the wizard's last question (IS7), and Enter is its suggestion
+	typeAt(askedPrompt("--budget"), 1, "\n")
+	typeAt(askedPrompt("--bake-repos"), 1, "\n") // the wizard's last question (IS7), and Enter is its suggestion
 	select {
 	case err := <-done:
 		if err != nil {

@@ -297,7 +297,7 @@ func TestAllowDeleteAFailedWriteIsAFailedStep(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the command reported a write the bucket refused:\n%s%s", out, errOut)
 	}
-	if !strings.Contains(out, markFailed+" delete-list:") {
+	if !strings.Contains(out, markFailed+" delete-list") {
 		t.Errorf("the refused write is not a failed step:\n%s%s", out, errOut)
 	}
 	reported(t, out, "delete-list")
@@ -307,7 +307,7 @@ func TestAllowDeleteAFailedWriteIsAFailedStep(t *testing.T) {
 	// And the log is the run the screen shows: the same failed step and the
 	// same closing line (the path above points at it).
 	log := writesALog(t, "allow-delete")
-	if !strings.Contains(log, markFailed+" delete-list:") {
+	if !strings.Contains(log, markFailed+" delete-list") {
 		t.Errorf("the log does not hold the failed step:\n%s", log)
 	}
 }

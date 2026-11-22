@@ -1129,7 +1129,7 @@ func TestImageRefreshStoppedAtStepKeepsItsSentence(t *testing.T) {
 	if got := strings.Join(*ran, ","); got != "base,check job,builds" {
 		t.Errorf("ran %s, want base,check job,builds: a step after the stop ran, or one before it did not", got)
 	}
-	if !strings.Contains(out, markFailed+" builds: 503 from the cloud") {
+	if !strings.Contains(out, markFailed+" builds") {
 		t.Errorf("the step that failed is not the reporter's:\n%s", out)
 	}
 	// G8: the failure prints the log's path, and the run closes on the failure

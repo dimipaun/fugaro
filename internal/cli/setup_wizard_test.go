@@ -452,7 +452,7 @@ func TestSetupRefusesAnIDThatHoldsAnInstallation(t *testing.T) {
 					t.Errorf("the refusal lacks %q: %v", want, err)
 				}
 			}
-			if strings.Contains(out.String(), questionFor("--name").what) {
+			if strings.Contains(out.String(), askedPrompt("--name")) {
 				t.Errorf("the run asked for a name before refusing:\n%s", out)
 			}
 		})
@@ -467,7 +467,7 @@ func TestSetupRefusesAnIDThatHoldsAnInstallation(t *testing.T) {
 		if r.o.name != initProjectName || r.o.createProject {
 			t.Errorf("name %q, create %v: want the installation's own name and no creation", r.o.name, r.o.createProject)
 		}
-		if strings.Contains(out.String(), questionFor("--name").what) {
+		if strings.Contains(out.String(), askedPrompt("--name")) {
 			t.Errorf("the run asked for a name, and the installation has one:\n%s", out)
 		}
 	})

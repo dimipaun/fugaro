@@ -63,7 +63,7 @@ func anchorExec(t *testing.T, stdin string, args ...string) (string, string, err
 	out, errOut, err := executeStdin(t, stdin, args...)
 	var kept []string
 	for _, l := range strings.SplitAfter(out, "\n") {
-		if !strings.HasPrefix(l, "warning: XDG_") {
+		if !strings.HasPrefix(l, "Warning: XDG_") {
 			kept = append(kept, l)
 		}
 	}

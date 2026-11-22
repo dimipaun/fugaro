@@ -282,6 +282,13 @@ type loop struct {
 	// plan view does not read it: it runs nothing, so nothing runs past a stop
 	// there, and what a reader of the plan sees is what the run would do.
 	ranPast *stop
+	// stageFix is the way out the failed stage itself gave (StageError.Fix),
+	// or "" when it gave none. It is the failure block's own line under the
+	// message (endStep): what a person does next is the stage's sentence where
+	// there is one, and where there is none the closing line's rerun is the
+	// whole of it — the generic fix the record carries (Failure.Fix) is that
+	// same sentence and not a second one to print beside it.
+	stageFix string
 }
 
 // defaultProgram is what the run's lines name when the caller names no
@@ -523,6 +530,9 @@ func (l *loop) fail(stage string, err error) {
 	var se *StageError
 	if errors.As(err, &se) && se.Fix != "" {
 		f.Fix = l.redact(oneLine(se.Fix))
+		l.stageFix = f.Fix
+	} else {
+		l.stageFix = ""
 	}
 	l.res.Failed, l.res.Cause = f, l.redactedCause(err)
 	l.record(StageResult{Name: stage, State: Failed, Detail: f.Error})
@@ -618,6 +628,7 @@ func (l *loop) pastStops(s Stage, name string, stops []stop) {
 // run past that stop (RunsPastStop).
 func (l *loop) converge(ctx context.Context, stages []Stage) error {
 	l.res.Stages, l.res.Left, l.res.Failed, l.res.Cause = nil, []Left{}, nil, nil
+	l.stageFix = ""
 	l.executing = true
 	var stops []stop // the stages the run stopped at: what everything after waits for
 	paused := ""     // the stage that paused for billing: what needs billing waits for it
@@ -1125,12 +1136,19 @@ func (l *loop) endStep(r StageResult, shown string) {
 		// The whole error, under the cross, and not the one line the result
 		// carries: the step that stopped the run is the one thing its reader
 		// has to read in full, and the message's own later lines are the
-		// context that goes under it (G8).
+		// context that goes under it (G8). The way out the stage gave follows
+		// them, as the last of that context: the block reads what went wrong
+		// and then what to do about it, before the paths to the run's log and
+		// to the command that explains it.
 		err := l.res.Cause
 		if err == nil {
 			err = errors.New(r.Detail)
 		}
-		s.Failed(err, nil)
+		var context []string
+		if l.stageFix != "" {
+			context = append(context, l.stageFix)
+		}
+		s.Failed(err, context)
 	case NeedsYou, BillingPending, WaitingForBilling:
 		// The user still owes this stage — a confirmation, a billing
 		// account — so it is never a tick, whatever it says (G3).

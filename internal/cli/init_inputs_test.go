@@ -112,7 +112,7 @@ func TestProjectIDDefaultIsFugaroName(t *testing.T) {
 	if got := r.o.cloud.gcpProject; got != "fugaro-aurora" {
 		t.Errorf("Enter took %q, want the new project fugaro-aurora\n%s", got, out.String())
 	}
-	if !strings.Contains(out.String(), questionFor("--gcp-project").what+" [fugaro-aurora]") {
+	if !strings.Contains(out.String(), questionFor("--gcp-project").label+" [fugaro-aurora]") {
 		t.Errorf("the question does not suggest fugaro-aurora:\n%s", out.String())
 	}
 
@@ -594,7 +594,7 @@ func TestPromptsSkippedWhenConfigExists(t *testing.T) {
 		t.Fatalf("err %v, read %v", err, spy.read)
 	}
 	out, _, err := executeStdin(t, initProjectName+"\n", "setup", "--plan-only")
-	if err != nil || strings.Contains(out, "first run") || strings.Contains(out, questionFor("--region").what+" [") {
+	if err != nil || strings.Contains(out, "first run") || strings.Contains(out, regionPrompt) {
 		t.Fatalf("err %v\n%s", err, out)
 	}
 }
@@ -690,7 +690,7 @@ func TestFirstRunSuggestsTheInstallationsName(t *testing.T) {
 	// The name is the installation's, so the name question is not asked at all
 	// (the ID's suggestion is the directory's name prefixed — fugaro-my-app —
 	// which is a suggestion for a project to create, not this run's name).
-	if r.o.name != "team-x" || r.o.createProject || !strings.Contains(out.String(), "writing it from the installation, and applying nothing") || strings.Contains(out.String(), questionFor("--name").what) {
+	if r.o.name != "team-x" || r.o.createProject || !strings.Contains(out.String(), "writing it from the installation, and applying nothing") || strings.Contains(out.String(), askedPrompt("--name")) {
 		t.Errorf("name %q, create %v:\n%s", r.o.name, r.o.createProject, out.String())
 	}
 	if len(asked) != 1 || asked[0] != "proj-1234 us-east5" {
@@ -778,7 +778,7 @@ func TestRegionDefaultIsUsEast5(t *testing.T) {
 	if !strings.Contains(out.String(), "["+string(place.US)+"]") {
 		t.Errorf("the question does not show the US place as its suggestion:\n%s", out)
 	}
-	if n := strings.Count(out.String(), "Type "+questionFor("--location").what+": "); n != 1 {
+	if n := strings.Count(out.String(), askedPrompt("--location")); n != 1 {
 		t.Errorf("the wizard asked the place %d times, want once:\n%s", n, out)
 	}
 	r, out = first("Not A Region\n" + defaultRegion + "\n\n\n")
@@ -815,7 +815,7 @@ func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	if regionRun.o.cloud.region != defaultRegion {
 		t.Fatalf("Enter took the region %q, want the question's own default %q\n%s", regionRun.o.cloud.region, defaultRegion, out)
 	}
-	region := promptLine(t, out.String(), questionFor("--location").what)
+	region := promptLine(t, out.String(), questionFor("--location").label, askedPrompt("--budget"))
 
 	// The database's own note, as the Firebase step prints it: the harness
 	// init_confirm_test.go uses, at a terminal, with nothing typed for it.
@@ -885,7 +885,7 @@ func TestSetupAsksThePlace(t *testing.T) {
 	}
 	placeAsked := func(t *testing.T, out string) {
 		t.Helper()
-		if strings.Contains(out, questionFor("--location").what) {
+		if strings.Contains(out, askedPrompt("--location")) {
 			t.Errorf("the place was answered, and the wizard asked it anyway:\n%s", out)
 		}
 	}
@@ -901,7 +901,7 @@ func TestSetupAsksThePlace(t *testing.T) {
 		if !strings.Contains(out.String(), "["+string(place.US)+"]") {
 			t.Errorf("the place question's suggestion is not US:\n%s", out)
 		}
-		if n := strings.Count(out.String(), "Type "+questionFor("--location").what+": "); n != 1 {
+		if n := strings.Count(out.String(), askedPrompt("--location")); n != 1 {
 			t.Errorf("the place was asked %d times, want once:\n%s", n, out)
 		}
 	})
@@ -1181,7 +1181,7 @@ func TestALocationThatCreatesNothingIsRefused(t *testing.T) {
 		noInstallation(t)
 		out, errOut, err := executeStdin(t, "", "update", "--location", "eu")
 		refusal(t, err, out+errOut)
-		if asked := out + errOut; strings.Contains(asked, questionFor("--region").what) {
+		if asked := out + errOut; strings.Contains(asked, regionPrompt) {
 			t.Errorf("the run asked its own question on the way to refusing the flag:\n%s", asked)
 		}
 	})
@@ -1395,18 +1395,47 @@ func locationBlock(t *testing.T, out string) []locationBlockRow {
 // "Type …: " under it, up to the colon it stops at. The run goes on writing on
 // that same line (the billing note, here), and a golden holds the question
 // rather than what follows it.
-func promptLine(t *testing.T, out, label string) string {
+// regionPrompt is the region question's own prompt. It is `fugaro update`'s
+// line rather than a row of setupQuestions — the setup door asks the place
+// instead (LP4) — so its label is the one wizard_stage.go writes at the
+// prompt, spelled here.
+const regionPrompt = "Region: "
+
+// askedPrompt is the start of the line a question's prompt prints: the row's
+// label and, where the row has one, what it says about the answer after it
+// (Style.Ask). The suggestion — what Enter takes — is drawn after this, right
+// before the colon the answer is typed at, so this is the part of the line that
+// says which question is being asked.
+//
+// It is what a check that a question was, or was not, asked reads. The row's
+// `what` is the question in a sentence and belongs to the refusals a run with
+// no terminal prints, so an output never carries it: a question is one line,
+// asked once, and its line is built from the row's own label.
+func askedPrompt(flag string) string {
+	q := questionFor(flag)
+	if q.hint == "" {
+		return q.label
+	}
+	return q.label + ": " + q.hint
+}
+
+// promptLine is one question's own line as the terminal shows it: what out
+// holds from label up to until, which is the next thing the run says after the
+// answer's colon, without the spaces a prompt leaves there. The question is one
+// line, suggestion included — "Location: US, EU or a region [us]:" — and the
+// answers of a scripted run are not echoed, so the questions run into one
+// another in the captured output and until is what ends this one.
+func promptLine(t *testing.T, out, label, until string) string {
 	t.Helper()
 	i := strings.Index(out, label)
 	if i < 0 {
 		t.Fatalf("no prompt %q in:\n%s", label, out)
 	}
 	rest := out[i:]
-	j := strings.Index(rest, ": ")
-	if j < 0 {
-		t.Fatalf("the prompt %q does not end at a colon in:\n%s", label, out)
+	if j := strings.Index(rest, until); j >= 0 {
+		rest = rest[:j]
 	}
-	return rest[:j+1]
+	return strings.TrimRight(rest, " ")
 }
 
 // trimTrailingSpaces is out without the spaces a prompt writes after its colon
