@@ -79,6 +79,14 @@ func TestCrossDependsOnValidates(t *testing.T) {
 		}
 	})
 
+	t.Run("a reference listed twice is refused like a bare one", func(t *testing.T) {
+		s := stateWithAQueuedItem(t, now)
+		s.WorkItems[0].DependsOn = []string{otherID + "/wi-9", otherID + "/wi-9"}
+		if err := orchestrator.ValidateState(s); !errors.Is(err, orchestrator.ErrInvalid) {
+			t.Fatalf("the same reference written twice was accepted: %v", err)
+		}
+	})
+
 	t.Run("a reference the rule does not admit is refused", func(t *testing.T) {
 		for _, dep := range []string{
 			"Beta/wi-9",       // not an orchestrator id: a project name is lower-case

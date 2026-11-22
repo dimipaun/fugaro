@@ -399,6 +399,9 @@ func validateItem(s State, w WorkItem) error {
 			if ref.Orchestrator == s.AgentID && namesItself(ref.Item, w) {
 				return fmt.Errorf("%w: %q depends on itself", ErrInvalid, w.ID)
 			}
+			if slices.Contains(w.DependsOn[:i], dep) {
+				return fmt.Errorf("%w: %q depends on %q twice", ErrInvalid, w.ID, safetext.OneLine(dep))
+			}
 			continue
 		}
 		if dep == w.ID {
