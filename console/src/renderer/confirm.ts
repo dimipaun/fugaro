@@ -438,6 +438,26 @@ export const NO_WORD = 'no'
 export const SAVED_WORD = 'saved'
 export const UNSAVED_WORD = 'not saved'
 
+/** ALLOWED_ADDED_WORD, ALLOWED_NAMES_WORD and ALLOWED_ABSENT_WORD are the three
+ * answers `budget.allowed_models` gives a models plan, in the console's own
+ * words: the list gains the entry the write would append, the list is set and
+ * already names the model, or the key is not set at all. The third is D786's
+ * rule, and it is **not** an empty list: a project whose key is absent allows
+ * every model a route opens, so the window says the key is not set rather than
+ * drawing `NONE` over it (`internal/cli/models_add.go`'s
+ * `modelsAddPlanAllowText` spells the same three states). */
+export const ALLOWED_ADDED_WORD = '+='
+export const ALLOWED_NAMES_WORD = 'already names it'
+export const ALLOWED_ABSENT_WORD = 'is not set, so it stays absent'
+
+/** MODELS_PRICE_GIVEN is the one of a price entry's three sources (`given`,
+ * `catalog` and `local`, contract section 6.33) whose entry the write lands: a
+ * model the built-in catalog or the project's own file already prices needs no
+ * `model_prices.<id>` entry, so the window draws the key as an entry for this
+ * source alone and the source row says where the rates came from for the other
+ * two. */
+export const MODELS_PRICE_GIVEN = 'given'
+
 /** TITLE_LAUNCH, TITLE_SETTINGS, TITLE_ENTRY, TITLE_SETUP, TITLE_MODELS_ADD and
  * TITLE_IMAGE_ADD are the six questions' headings, and TASK_HEADING is the
  * launch's own subtitle. The settings, setup and Manage windows have none: the
@@ -995,8 +1015,9 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
 
   /** drawModelsAdd is the models write's set of rows (MW1): what the write
    * claims, the entry the route's own list would gain or the pattern that already
-   * covers it, whether the project's allowed-models key is set at all, the price
-   * entry the document would write and where its two rates come from, the steps
+   * covers it, the three states the project's allowed-models key can be in, the
+   * price entry the document would write when the rates are the operator's own
+   * and where its two rates came from, the steps
    * `--no-apply` saves, the plan's digest and the exact argv the yes spawns.
    *
    * Every document string goes through `drawn` under the class the Manage table
@@ -1017,16 +1038,27 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     // list would gain, or the pattern that already admits the model.
     if (add.claimedBy !== '') safeRow(FIELDS.coveredBy, add.claimedBy, 'label', 'models_add.claim.covered_by')
     else safeRow(FIELDS.claimEntry, add.claimEntry, 'label', 'models_add.claim.entry')
-    // An absent `budget.allowed_models` stays absent (D786), and that is a fact
-    // about the project the operator should read rather than an empty line.
+    // The three states the key can be in, read off the document's own two
+    // members: the list gains this entry, the list already names the model, or
+    // the key is not set at all and stays absent (D786) -- which is the one the
+    // old `NONE` here misread, because a project with no key allows every model
+    // a route opens.
     if (add.allowPresent && add.allowEntry !== '') {
-      safeRow(FIELDS.allowedModels, add.allowEntry, 'label', 'models_add.allowed_models.entry')
-    } else row(FIELDS.allowedModels, NONE)
-    if (add.priceKey !== '') {
+      row(
+        FIELDS.allowedModels,
+        `${ALLOWED_ADDED_WORD} ${drawn(add.allowEntry, 'label', 'models_add.allowed_models.entry')}`,
+      )
+    } else if (add.allowPresent) row(FIELDS.allowedModels, ALLOWED_NAMES_WORD)
+    else row(FIELDS.allowedModels, ALLOWED_ABSENT_WORD)
+    // The key is an entry the write lands only for a source of `given`: the
+    // catalog and the file's own prices need none, and for those two the
+    // document's key says where the rate came from rather than a row to write
+    // (contract section 6.33).
+    if (add.priceSource === MODELS_PRICE_GIVEN) {
       code(FIELDS.priceKey, drawn(add.priceKey, 'branch', 'models_add.prices.key'))
-      row(FIELDS.price, `${priceText(add.priceIn)} / ${priceText(add.priceOut)}`)
-      safeRow(FIELDS.priceSource, add.priceSource, 'label', 'models_add.prices.source')
     }
+    row(FIELDS.price, `${priceText(add.priceIn)} / ${priceText(add.priceOut)}`)
+    safeRow(FIELDS.priceSource, add.priceSource, 'label', 'models_add.prices.source')
     if (add.steps.length > 0) {
       term(FIELDS.steps)
       for (const step of add.steps) {

@@ -11384,15 +11384,25 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		t.Errorf("%s's §8 still calls `run` \"the one row here that writes\": `settings set|unset` is the second, and the row it belongs in is above this sentence", path)
 	}
 
-	// §9: the console's documents are read-only **with** the two writes named,
-	// and the sentence that says so keeps the pinned claim about the set.
+	// §9: the console's documents are read-only **with** the writes named, and
+	// the sentence that says so keeps the pinned claim about the set.
 	nine := mdBetween(t, path, doc, "## 9. What the console may do", "\n## 10. ")
 	for _, want := range []string{
 		"Every document in the console's set is read-only",
 		"**second write**",
+		// The count, and the two members this change added: the sentence is
+		// where a reader counts the console's writes from, so the fifth and the
+		// sixth are pinned as words and by the two operations they are --
+		// `models.add` and `image.add`, the argv on the allow-list (design
+		// §5.1 rule 6).
+		"six\n   exceptions",
+		"**fifth**",
+		"**sixth**",
+		"`models.add`",
+		"`image.add`",
 	} {
 		if !strings.Contains(nine, want) {
-			t.Errorf("%s's §9 does not state %q: the console now writes twice, and this is the section that counts what it may do with the documents it reads", path, want)
+			t.Errorf("%s's §9 does not state %q: the console now writes six times, and this is the section that counts what it may do with the documents it reads", path, want)
 		}
 	}
 }

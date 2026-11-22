@@ -41,6 +41,9 @@ import { describe, expect, it } from 'vitest'
 import {
   ADD_ENTRY_LABEL,
   ADD_MODEL_LABEL,
+  ALLOWED_ABSENT_WORD,
+  ALLOWED_ADDED_WORD,
+  ALLOWED_NAMES_WORD,
   CONFIRM_UNDRAWABLE,
   NONE,
   NO_WORD,
@@ -865,8 +868,13 @@ describe('the models write’s window', () => {
       // window that drew it would be one an operator reads a value out of.
       { label: 'Would change the file', values: [YES_WORD] },
       { label: 'Route entry', values: ['deepseek-v4.1-flash'] },
-      { label: 'Allowed models', values: ['deepseek-v4.1-flash'] },
-      { label: 'Price entry', values: ['model_prices.deepseek-v4.1-flash'] },
+      // The list is set and does not name the model, so the write appends it:
+      // the row is the addition, not the entry on its own (contract section
+      // 6.33's `allowed_models.entry`).
+      { label: 'Allowed models', values: [`${ALLOWED_ADDED_WORD} deepseek-v4.1-flash`] },
+      // No `Price entry` row: the catalog prices this model, so the write lands
+      // no `model_prices` entry and the source row below says where the rates
+      // came from instead.
       { label: 'Price $/M (in / out)', values: ['0.14 USD per million tokens / 0.28 USD per million tokens'] },
       { label: 'Price source', values: ['catalog'] },
       { label: 'Steps this saves', values: ['policy: saved'] },
@@ -895,15 +903,51 @@ describe('the models write’s window', () => {
   })
 
   it('draws the console’s own word for an allowed-models key the project has not set', async () => {
-    // D786: an absent list stays absent, and "this project names no models at
-    // all" is a fact about the installation rather than an empty line.
+    // D786: an absent key stays absent, so the window says that rather than
+    // drawing an empty list: every model a route opens is allowed in this
+    // project, which is the opposite of what an empty list would mean.
     const plan = {
       ...(MODELS_PLAN as Record<string, unknown>),
       allowed_models: { entry: '', present: false },
     }
     const { document } = await drawWindow(modelsWindow(plan))
     const allowed = rowsOf(document).find((row) => row.label === 'Allowed models')
-    expect(allowed?.values).toEqual([NONE])
+    expect(allowed?.values).toEqual([ALLOWED_ABSENT_WORD])
+  })
+
+  it('says the key is set and already names the model, and claims no addition', async () => {
+    // The third state of the same two members: `present` with no `entry` is a
+    // list that already holds the model, which is a fact about the policy the
+    // window must not draw as an append (`internal/cli/models_add.go`'s
+    // `modelsAddPlanAllowText`).
+    const plan = {
+      ...(MODELS_PLAN as Record<string, unknown>),
+      allowed_models: { entry: '', present: true },
+    }
+    const { document } = await drawWindow(modelsWindow(plan))
+    const allowed = rowsOf(document).find((row) => row.label === 'Allowed models')
+    expect(allowed?.values).toEqual([ALLOWED_NAMES_WORD])
+  })
+
+  it('draws the price entry the write lands when the rates are the operator’s own', async () => {
+    // `given` is the one source whose `model_prices` entry the write lands: a
+    // rate the catalog or the file already carries needs none (contract section
+    // 6.33).
+    const plan = {
+      ...(MODELS_PLAN as Record<string, unknown>),
+      prices: {
+        key: 'model_prices.deepseek-v4.1-flash',
+        input_per_m: 0.14,
+        output_per_m: 0.28,
+        source: 'given',
+      },
+    }
+    const { document } = await drawWindow(modelsWindow(plan))
+    const rows = rowsOf(document)
+    expect(rows.find((row) => row.label === 'Price entry')?.values).toEqual([
+      'model_prices.deepseek-v4.1-flash',
+    ])
+    expect(rows.find((row) => row.label === 'Price source')?.values).toEqual(['given'])
   })
 
   it('draws the pattern that already covers the model, and never both halves of the claim', async () => {
@@ -1036,11 +1080,13 @@ describe('the values the two windows draw', () => {
     const plan = {
       ...(MODELS_PLAN as Record<string, unknown>),
       path: 'fugaro.yaml',
+      // The `given` source, because it is the one whose key the window draws as
+      // an entry: the price row is here at all only for that source.
       prices: {
         key: 'model_prices.deepseek-v4.1-flash',
         input_per_m: 0.14,
         output_per_m: 0.28,
-        source: 'catalog',
+        source: 'given',
       },
     }
     const { document } = await drawWindow(modelsWindow(plan))
