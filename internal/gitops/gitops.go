@@ -332,8 +332,9 @@ func (r *Repo) processEnv() []string {
 	// The identity ticket goes with them (BR4, R7 of docs/batch-run-identity).
 	// It is not a secret in the way the marker is — Batch prints a job's
 	// variables itself, which D3115 accepts because the ticket alone claims
-	// nothing — and Fugaro prints it nowhere: it is redacted in every reason
-	// and in no run record. A git call is one of the places it would otherwise
+	// nothing — and Fugaro does not print it: this strip keeps it out of
+	// every git call's environment, and registering it with the run's redactor
+	// is a separate step that is not in this change. A git call is one of the places it would otherwise
 	// surface, for the same reason the marker's is: a launch carries it in the
 	// job's environment, and a command an agent-written .git/config makes git
 	// run inherits that environment.
