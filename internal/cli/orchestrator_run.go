@@ -715,6 +715,14 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		// repository says so through the client's own refusal, once per cadence,
 		// rather than ingesting nothing quietly.
 		Issues: issues,
+		// The cross-orchestrator references (D3208): the items of the other
+		// orchestrators this node's own items name, read from the same database
+		// the node is and only for the ids a reference names. It is wired
+		// always, because the reading is what makes such a reference mean
+		// anything: a daemon that resolved none would hold every item that
+		// names one, and the reference would be a dependency nothing can ever
+		// satisfy.
+		Cross: orchestrator.CrossShards{DB: d.db, Role: orchestrator.RoleOrchestrator},
 		// The audit log the trip writes its refusal line to (O19): the daemon's
 		// own node, under the id the entry derives from the run, which is the
 		// same log the triage and the decision agent append to. It is wired
