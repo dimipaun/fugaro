@@ -38,6 +38,10 @@ func TestMigrate(t *testing.T) {
 		name string
 		in   Installation
 		want Table
+		// carried are the pools the installation's own configuration already
+		// has, as the migration must write them: by name, with their members and
+		// the rule their strategy means.
+		carried []PoolSpec
 		// bridge is the set of "repo model" pairs the migration leaves on the
 		// release-1 bridge, as "repo\x00model".
 		bridge []string
@@ -109,7 +113,9 @@ func TestMigrate(t *testing.T) {
 	}, {
 		name: "cascade without fallback auto",
 		in: Installation{
-			Project: "acme/widgets",
+			Project:        "acme/widgets",
+			Accounts:       []string{"ada"},
+			DefaultAccount: "ada",
 			Repos: []Repo{{
 				Name:   "acme/batch",
 				Auth:   testAuthCascade,
@@ -123,8 +129,10 @@ func TestMigrate(t *testing.T) {
 	}, {
 		name: "cascade with fallback auto",
 		in: Installation{
-			Project:      "acme/widgets",
-			FallbackAuto: true,
+			Project:        "acme/widgets",
+			Accounts:       []string{"ada"},
+			DefaultAccount: "ada",
+			FallbackAuto:   true,
 			Repos: []Repo{{
 				Name:   "acme/batch",
 				Auth:   testAuthCascade,
@@ -233,9 +241,11 @@ func TestMigrate(t *testing.T) {
 	}, {
 		name: "via cascade changes the credential, never the route",
 		in: Installation{
-			Project:   "acme/widgets",
-			Via:       testViaCascade,
-			ViaModels: []string{"claude-sonnet-5-5"},
+			Project:        "acme/widgets",
+			Accounts:       []string{"ada"},
+			DefaultAccount: "ada",
+			Via:            testViaCascade,
+			ViaModels:      []string{"claude-sonnet-5-5"},
 			Providers: []Provider{
 				{Name: "openrouter", AllowDataTo: []string{"*"}},
 			},
@@ -298,6 +308,33 @@ func TestMigrate(t *testing.T) {
 				Models: []Model{{ID: "deepseek-v4-flash", Provider: "dashscope"}},
 			}},
 		},
+	}, {
+		name: "a pool the installation carries keeps its name against an account's",
+		in: Installation{
+			Project:  "acme/widgets",
+			Accounts: []string{"ada", "grace"},
+			Pools: []Pool{{
+				Name:      "grace",
+				Members:   []string{"ada", "grace"},
+				Strategy:  "round-robin",
+				Principal: Principal{Kind: PrincipalProject, ID: "acme/widgets"},
+			}},
+			Repos: []Repo{{
+				Name:     "acme/web",
+				Auth:     testAuthOAuth,
+				Accounts: []string{"grace"},
+				Models:   []Model{claude("claude-haiku-4-5")},
+			}},
+		},
+		want: Table{{
+			Match: "claude-haiku-4-5",
+			Chain: []Source{{Kind: KindPool, Pool: SharedPool}},
+		}},
+		carried: []PoolSpec{{
+			Name:    "grace",
+			Rule:    RuleRoundRobin,
+			Members: []string{"ada", "grace"},
+		}},
 	}, {
 		name: "two repositories that differ",
 		in: Installation{
@@ -380,10 +417,28 @@ func TestMigrate(t *testing.T) {
 			if !slices.Equal(bridged, tc.bridge) {
 				t.Errorf("the bridge holds %v, want %v", bridged, tc.bridge)
 			}
-			if want := accountsOf(tc.in); !slices.Equal(members(t, got, SharedPool), want) {
-				t.Errorf("the shared pool holds %v, want every account in the installation's own order: %v", members(t, got, SharedPool), want)
+			// The shared pool holds every account in the installation's own order
+			// (D3183), and it is written only where there is one to put in it: a
+			// pool with no members is a shape the config refuses.
+			if want := accountsOf(tc.in); len(want) > 0 {
+				if !slices.Equal(members(t, got, SharedPool), want) {
+					t.Errorf("the shared pool holds %v, want every account in the installation's own order: %v", members(t, got, SharedPool), want)
+				}
+			} else if slices.ContainsFunc(got.Pools, func(p PoolSpec) bool { return p.Name == SharedPool }) {
+				t.Errorf("an installation with no account has no shared pool to write, and this one was written: %+v", got.Pools)
+			}
+			for _, want := range tc.carried {
+				if p := pool(t, got, want.Name); !slices.Equal(p.Members, want.Members) || p.Rule != want.Rule {
+					t.Errorf("the pool %s the installation carries is %+v, want %+v", want.Name, p, want)
+				}
 			}
 			for _, a := range accountsOf(tc.in) {
+				// A pool the installation carries under an account's own name keeps
+				// it: the owner's pool is what that name means, and the pool of one
+				// is this migration's own shape (D3176).
+				if slices.ContainsFunc(tc.carried, func(p PoolSpec) bool { return p.Name == a }) {
+					continue
+				}
 				if p := pool(t, got, a); !slices.Equal(p.Members, []string{a}) || p.Rule != RuleFailover {
 					t.Errorf("the pool of one for %s is %+v, want one member served by failover (D3176)", a, p)
 				}

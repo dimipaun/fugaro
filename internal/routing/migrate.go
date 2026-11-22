@@ -250,8 +250,9 @@ type Migration struct {
 	// the credential it used (D3182).
 	Table Table
 	// Pools are the pools the migration writes or carries: the shared pool
-	// (D3183), a pool of one per account (D3176), and every pool the
-	// installation already carried.
+	// (D3183) — written only where the installation has an account to put in it,
+	// because the config refuses a pool with no members — a pool of one per
+	// account (D3176), and every pool the installation already carried.
 	Pools []PoolSpec
 	// Bridge is what could not be written as a table RT3 accepts, by name: the
 	// repository, the model and the reason. MG2 leaves each of them on the
@@ -308,6 +309,10 @@ type migrator struct {
 	// poolOf records the pools written by name, so that an account and a pool
 	// the installation carries are written once.
 	poolOf map[string]bool
+	// shared records whether the shared pool was written. It is not written for
+	// an installation with no account, and a chain names it only where it is
+	// there: a table naming a pool the config does not hold is refused whole.
+	shared bool
 	// accounts are every account the migration wraps, in order: the
 	// installation's own, then any a repository's file names and the
 	// installation's list does not.
@@ -328,6 +333,13 @@ func (m *migrator) collectAccounts() {
 
 // buildPools writes the shared pool, a pool of one per account, and every pool
 // the installation already carries.
+//
+// A pool the installation carries keeps its own name: the pools of one below
+// skip every name such a pool holds, so a pool a person wrote — its members, its
+// order and the rule its strategy means — is never dropped in favour of a shape
+// this migration invents. An account whose name a carried pool holds keeps its
+// membership in the shared pool and goes without a pool of one, which is what
+// `--pool <account>` then resolves to: the owner's own pool (D3176).
 func (m *migrator) buildPools() {
 	// The shared pool first: the members a pool the cascade was marked with
 	// already had, in their owner's order, then every account the installation
@@ -341,20 +353,33 @@ func (m *migrator) buildPools() {
 		}
 	}
 	shared = appendUnique(shared, m.accounts...)
-	m.pools = append(m.pools, PoolSpec{
-		Name:      SharedPool,
-		Rule:      RuleFailover,
-		Principal: Principal{Kind: PrincipalProject, ID: m.in.Project},
-		Members:   shared,
-	})
-	m.poolOf[SharedPool] = true
+	// A pool with no members is a shape the config refuses, and an installation
+	// with no account has nothing to put in this one.
+	if len(shared) > 0 {
+		m.pools = append(m.pools, PoolSpec{
+			Name:      SharedPool,
+			Rule:      RuleFailover,
+			Principal: Principal{Kind: PrincipalProject, ID: m.in.Project},
+			Members:   shared,
+		})
+		m.poolOf[SharedPool] = true
+		m.shared = true
+	}
+	// The names the installation's own pools hold, claimed before the pools of
+	// one below.
+	carried := map[string]bool{}
+	for _, p := range m.in.Pools {
+		if p.Name != "" {
+			carried[p.Name] = true
+		}
+	}
 	// A pool of one per account: the retired `--token <account>` becomes
 	// `--pool <account>` (D3176), which needs a pool of that name, and every
 	// subscription token of the installation then sits in a pool.
 	ones := slices.Clone(m.accounts)
 	sort.Strings(ones)
 	for _, a := range ones {
-		if m.poolOf[a] {
+		if m.poolOf[a] || carried[a] {
 			continue
 		}
 		m.pools = append(m.pools, PoolSpec{
@@ -445,7 +470,12 @@ func (m *migrator) addAuthSource(c *chain, repo Repo, model, name string) {
 	// credential the auth gives: a chain that could not reach them would move
 	// exactly the runs those keys are for. An `oauth` or `cascade` repository
 	// always names one, if only the installation's default account.
-	if len(repo.Accounts) > 0 || repo.Auth == authOAuth || repo.Auth == authCascade {
+	//
+	// It is named only where it was written: an installation with no account at
+	// all has no shared pool to send a call to, and a chain naming one the config
+	// does not hold would be refused whole. Such a repository then reaches
+	// nothing, which is what it reaches today.
+	if m.shared && (len(repo.Accounts) > 0 || repo.Auth == authOAuth || repo.Auth == authCascade) {
 		c.addPool(SharedPool)
 	}
 	switch repo.Auth {
