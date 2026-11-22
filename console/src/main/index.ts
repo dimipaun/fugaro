@@ -994,6 +994,16 @@ const gated: ConsoleHandlers = {
   'setup.plan': newOperationStub(),
   'setup.apply': newOperationStub(),
   'settings.editor.open': newOperationStub(),
+  // The models write's two rows (MW1, D2903), registered the way AL registered
+  // its nine: the surface, the argv and the flow behind them are here
+  // (`src/main/modelsadd.ts`, `src/main/modelsview.ts`), and what these two
+  // entries wait for is I-OPS, which registers `createModelsAdd`'s handlers
+  // through this same table. Until then a screen that asks for one is answered
+  // 'not available in this build' rather than spawn anything -- and the floor
+  // constant the Manage view reads (`MODELS_ADD_CLI_FLOOR`) is what keeps the
+  // action off the screen in the meantime.
+  'models.add.plan': newOperationStub(),
+  'models.add': newOperationStub(),
 }
 
 /**

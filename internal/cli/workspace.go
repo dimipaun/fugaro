@@ -184,8 +184,10 @@ func workspaceEditResult(path string, out []byte, err error) ([]byte, error) {
 // `fugaro update` is what carries them into the record its runs read (R3, R4),
 // which no step of this machine's apply can do for another project's file. The
 // commands of the other families that still hand off — accounts allow, the
-// project profile and routing writes — are AP7's audit, and they keep this
-// helper until then.
+// project profile and routing writes, the image map, the clone URLs — are
+// AP7's audit, and their texts stay as they are: none of them is one of
+// D1566's management commands, so the audit classifies that line (b) rather
+// than moving a step into the command that wrote it.
 func workspaceHandoff(cmd *cobra.Command, old, next []byte) {
 	if yamledit.Changed(old, next) {
 		fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")

@@ -24,8 +24,9 @@ import (
 //
 // A level uses a subset of the six, so a section the file does not carry is
 // empty rather than an error, and nothing here decides what a level does
-// with them: LV4.3 files the entries as backlog items and LV5.1 reads the
-// sections it requires, and both ask this parser only for what the file
+// with them: LV4.3 publishes the sections its level owes in the run's own
+// account (handBackPart, internal/rigor's hand-back table) and LV5.1 reads
+// the sections it requires, and both ask this parser only for what the file
 // carried.
 
 // The six sections, in the order the contract names them. The spelling is
