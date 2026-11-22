@@ -7960,7 +7960,8 @@ closed, not yours to read) the restore proceeds only on --budget and
 --budget-currency. The billing account is always yours to give: the creation
 fact is not a credential and records none.
 
-NEW_PROJECT_ID must not exist: an existing project is refused (Fugaro only starts fresh).
+NEW_PROJECT_ID must not exist: restore creates a project, and adopts nothing
+(setup is the command that adopts one that holds nothing of Fugaro's).
 If the creation fails or does not end in a project this run created and
 marked, the local project config file is put back as it was and the restore
 can be run again; what the creation did in the cloud (the project, its
@@ -10178,8 +10179,10 @@ Credentials), so that fugaro run works; --operator or --admin replaces that,
 an existing config is never changed by it, and with a service
 account's credentials it stops and names the two flags.
 
-Fugaro only starts fresh: a first run creates the GCP project the installation
-lives in, and that project is Fugaro's, and managed, from its creation. On a
+A first run creates the GCP project the installation
+lives in — or adopts one that is already there and holds nothing of Fugaro's,
+using it as if it had created it (the owner's ruling of 2026-11-22) — and that
+project is Fugaro's, and managed, from its creation. On a
 first run it asks its questions once, in this order, each with a suggestion
 Enter takes, and writes the local config, so later runs ask nothing: the new
 GCP project's ID (--gcp-project; a project named after this one,
@@ -10203,14 +10206,18 @@ confirmations below need a terminal at all: without one, or with
 --json, the run names every missing flag in one
 error — the bake switch and the budget need no flag there, because an absent
 key means the same as a written yes and a budget nobody answered takes its own
-default. An ID that already exists is refused before anything is
-asked or changed ("Fugaro only starts fresh: <id> already exists; pick
-another id"), and so is one that already holds a Fugaro installation, with the
+default. An ID that already exists and holds anything of Fugaro's is refused
+before anything is asked or changed ("<id> already exists and holds something
+of Fugaro's: fugaro setup only adopts a project that holds nothing of
+Fugaro's, so pick another id"), and so is one that already holds a Fugaro
+installation, with the
 command that uses that installation from this machine instead: fugaro update
 --gcp-project <id> --region <region>, which writes the local config from the
-installation and applies nothing. The one taken ID a first run goes on with is a project an
-earlier run of fugaro setup created and did not finish (it carries the label
-fugaro_created=true from its creation): the rerun resumes it. The budget
+installation and applies nothing. A project that already exists and holds
+nothing of Fugaro's is adopted: the run uses it as if it had created it. The
+other ID a first run goes on with is a project an
+earlier run of fugaro setup made Fugaro's and did not finish (it carries the
+label fugaro_created, true or adopted, from that run): the rerun resumes it. The budget
 section of a local config written from an installation (rtdb_url,
 firebase_project, firebase_api_key, token_signer: none a secret) is filled
 from the Firebase root's outputs, read only. A --name given for an
@@ -10485,7 +10492,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
 | `--coordinator` | bool | `false` | no | with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
-| `--create-project` | bool | `false` | no | create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of setup always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of setup created it (the resume). Billing is not linked unless --link-billing is also given; without it setup prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing |
+| `--create-project` | bool | `false` | no | create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of setup always creates its project, so the flag only says so explicitly. An ID that already exists is refused unless an earlier run of setup made it Fugaro's (the resume), and one that holds nothing of Fugaro's is adopted instead: setup uses it as if it had created it. Billing is not linked unless --link-billing is also given; without it setup prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing |
 | `--display-name` | string | "" | no | on a first run, which creates the project: its display name (default: its ID) |
 | `--events` | bool | `false` | no | write the run to stdout as newline-delimited events instead of the one --json document: one `step` line as the run reaches a stage, one `stage` line as a stage settles (its name, state, detail and the stage it waited for), one `left_for_you` line for each thing only you can do — with the one line to run — and one last line that ends the feed: `done` with the run's exit code, or `error` naming the stage the run stopped at. A run that ends with steps left for you ends `done` with exit code 1 — it did not fail, and the steps are the left_for_you lines above it — which is the hand-off a surface draws rather than an error. It needs --json: the feed takes the document's place on stdout, and the run's own progress stays on stderr where --json already puts it. Nothing here confirms a step: --json confirms none, so every step that needs a confirmation arrives as left_for_you for you to run in your own terminal window |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it setup trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |

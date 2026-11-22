@@ -390,10 +390,11 @@ func initStages(e *initEngine) []initflow.Stage {
 		stages = append(stages, newComputeStage(e))
 	}
 	// The project stage, which is the one stage that may create the GCP
-	// project. `setup` registers it on every first run: Fugaro only starts
-	// fresh, so a first run creates its project (settleCreation sets the
-	// field the flag sets), and the stage refuses an ID that already exists
-	// unless an earlier run of setup created it. `update` never registers it,
+	// project. `setup` registers it on every first run: a first run makes its
+	// project Fugaro's (settleCreation sets the field the flag sets), and the
+	// stage creates it, adopts one that is already there and holds nothing of
+	// Fugaro's, and refuses one that holds anything of Fugaro's unless an
+	// earlier run of setup made it Fugaro's. `update` never registers it,
 	// and neither does a `setup` whose installation is already there: e.old is
 	// the project config's file, and a run that has one converges as update
 	// does (D11, reconciliation F24).

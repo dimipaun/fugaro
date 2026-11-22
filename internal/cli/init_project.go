@@ -773,7 +773,7 @@ func (s *projectStage) fail(err error) error {
 // ask the organization for.
 func (s *projectStage) refusedCreate() string {
 	return "Fugaro could not create the project " + s.id + ": your Google account is not allowed to create projects in your organization. " +
-		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder, or create the project yourself and rerun this command with the same --gcp-project: fugaro setup adopts a project that already exists and holds nothing of Fugaro's. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder. If they create the project for you instead, rerun this command with the same --gcp-project: fugaro setup adopts a project that already exists and holds nothing of Fugaro's. " +
 		"See docs/gcp-setup.md#not-an-owner."
 }
 

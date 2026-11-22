@@ -20,10 +20,11 @@ import (
 
 // setup_wizard_test.go pins the wizard task W1.3 of
 // docs/setup-wizard/implementation-plan.md gives `fugaro setup`, as the owner's
-// ruling of 2026-10-23 reshaped it: Fugaro only starts fresh, so there is no
-// question about the project — a first run creates it, the project stage
-// (init_project.go) refuses an ID that already exists, and the creation is
-// never covered by --yes (D12).
+// rulings of 2026-10-23 and 2026-11-22 reshaped it: there is no question about
+// the project — a first run makes it Fugaro's, creating it or adopting one that
+// is already there and holds nothing of Fugaro's, the project stage
+// (init_project.go) refuses an ID that holds anything of Fugaro's, and the
+// creation is never covered by --yes (D12).
 //
 // The question list itself is setup.go's `setupQuestions`, and
 // TestEveryWizardQuestionHasAFlag is the contract on it: every question has a
@@ -250,11 +251,12 @@ func TestEveryWizardQuestionHasAFlag(t *testing.T) {
 	})
 }
 
-// TestSetupAsksNoCreateOrAdoptQuestion: Fugaro only starts fresh, so a first
-// run of `setup` asks for the new project's ID, the region and the name, and
-// nothing about whether to create the project or use another: the answer is
-// creation, recorded on --create-project's own field without a question, and
-// the project stage is registered for every first run.
+// TestSetupAsksNoCreateOrAdoptQuestion: a first run of `setup` asks for the
+// project's ID, the region and the name, and nothing about whether to create
+// the project or use another: the answer is creation, recorded on
+// --create-project's own field without a question, and a run whose ID is
+// already there and holds nothing of Fugaro's adopts it without asking. The
+// project stage is registered for every first run.
 func TestSetupAsksNoCreateOrAdoptQuestion(t *testing.T) {
 	r, out := wizardRun(t, stdinFor(""), nil)
 	if err := r.gatherInputs(t.Context()); err != nil {

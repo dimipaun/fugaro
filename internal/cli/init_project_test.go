@@ -610,7 +610,7 @@ func stageLine(s string) string {
 // the fix (a role, or someone else creating the project) is the same one.
 func TestRefusedProjectCreationIsOneHelpfulLine(t *testing.T) {
 	const want = "Fugaro could not create the project " + newProj + ": your Google account is not allowed to create projects in your organization. " +
-		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder. If they create the project for you instead, rerun this command with the same --gcp-project: fugaro setup adopts a project that already exists and holds nothing of Fugaro's. " +
 		"See docs/gcp-setup.md#not-an-owner."
 	// The three shapes the same refusal takes: a 403, a 400 whose own text says
 	// what it is (the only thing that can tell a refusal from the other 400s
@@ -664,7 +664,7 @@ func TestRefusedProjectCreationIsOneHelpfulLine(t *testing.T) {
 // and keeps its own message and exit code.
 func TestRefusedCreationArrivingOnTheOperation(t *testing.T) {
 	const want = "Fugaro could not create the project " + newProj + ": your Google account is not allowed to create projects in your organization. " +
-		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder: Fugaro only starts fresh, so it creates the project itself. " +
+		"Ask your organization's admin (IT) for the Project Creator role on the organization or a folder. If they create the project for you instead, rerun this command with the same --gcp-project: fugaro setup adopts a project that already exists and holds nothing of Fugaro's. " +
 		"See docs/gcp-setup.md#not-an-owner."
 
 	// PERMISSION_DENIED and FAILED_PRECONDITION are the two codes a refusal
@@ -1117,10 +1117,10 @@ func TestFirebaseProjectPairingRuleIsUnchanged(t *testing.T) {
 
 // TestFirebaseProjectIsAlwaysTheInstallations pins the pairing refusal from
 // both sides: it fires for a run that creates the project and for one that
-// creates nothing. Fugaro only starts fresh (the owner's ruling of
-// 2026-10-23), so a Firebase project other than the installation's own is no
-// layout at all any more: check() refuses it wherever both ids are on the
-// command line, and runInit does where the GCP project comes from the config.
+// creates nothing. The budget backend lives in the installation's own project,
+// so a Firebase project other than it is no layout at all: check() refuses it
+// wherever both ids are on the command line, and runInit does where the GCP
+// project comes from the config.
 func TestFirebaseProjectIsAlwaysTheInstallations(t *testing.T) {
 	// A creation whose Firebase project is another one: refused, naming the
 	// flag and the project.
