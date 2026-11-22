@@ -128,6 +128,13 @@ func TestDocsCheck640(t *testing.T) {
 		}
 	}
 	runner := readRepoFile(t, "scripts/live_checks_test.go")
+	for _, want := range []string{
+		`{"check640-queue-probe.sh", "check640-queue-probe_test.sh"}`,
+	} {
+		if !strings.Contains(runner, want) {
+			t.Errorf("scripts/live_checks_test.go does not list %s: the script that queues Check 640's task is driven from that table too", want)
+		}
+	}
 	if !strings.Contains(runner, `{"check640.sh", "check640_test.sh"}`) {
 		t.Errorf("scripts/live_checks_test.go does not list {\"check640.sh\", \"check640_test.sh\"}: every check's sibling test is driven from that table, and a check missing from it is one no job runs")
 	}
@@ -309,5 +316,37 @@ func TestDocsCheck640IsNotClaimedAsRun(t *testing.T) {
 	flat := strings.ToLower(flattenDoc(check640Section(t, register)))
 	if !strings.Contains(flat, "an agent cannot") {
 		t.Errorf("Check %s's section does not say an agent cannot raise the App's permission: the conditional step the plan writes is the owner's alone", check640Number)
+	}
+}
+
+// TestDocsCheck640NamesTheQueueStep: Check 640 launches nothing, so the register
+// says which script queues the one approved task it needs, that the approval is
+// the owner's typed confirmation, and that the script, its digest tool and its
+// test are really there. check640.sh's own usage text points at it too.
+func TestDocsCheck640NamesTheQueueStep(t *testing.T) {
+	flat := strings.ToLower(flattenDoc(check640Section(t, readDoc(t, liveChecksDoc))))
+	for _, want := range []string{
+		"bash scripts/live-checks/check640-queue-probe.sh",
+		"scripts/live-checks/check640-queue-probe_test.sh",
+		"go run ./scripts/orchdigest",
+		"you** type the project's name",
+		"`--dry-run`",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check %s's section does not say %q: the owner needs the task queued and approved, and this is the one command that does it", check640Number, want)
+		}
+	}
+	for _, p := range []string{
+		"scripts/live-checks/check640-queue-probe.sh",
+		"scripts/live-checks/check640-queue-probe_test.sh",
+		"scripts/orchdigest/main.go",
+		"scripts/orchdigest/main_test.go",
+	} {
+		if _, err := os.Stat(filepath.Join("..", "..", p)); err != nil {
+			t.Errorf("the register names %s and there is no such file: %v", p, err)
+		}
+	}
+	if !strings.Contains(readRepoFile(t, check640Script), "check640-queue-probe.sh") {
+		t.Errorf("%s's usage text does not name check640-queue-probe.sh, the script that queues its task", check640Script)
 	}
 }
