@@ -18,11 +18,16 @@ import (
 // write here carries the person's own credential, so the database's IAM roles
 // decide what a run may do (D1241).
 //
-// The orchestrator id is the selected project's name: a machine keeps one
-// orchestrator per project it manages (docs/cli-output-console-graph, D1358),
-// and no command takes an id of its own, so the node a run reads is the node
-// its project's daemon writes. The daemon's two other writers — the launch loop
-// (O6, O8) and the session-start cache — are not this command family's.
+// The orchestrator id is the selected project's name, or the project's name and
+// a `~` and a name for one of the project's named orchestrators (C-ORCH's
+// `<project>~<name>`, D3207): a machine keeps one orchestrator per project it
+// manages as the default (docs/cli-output-console-graph, D1358) and any number
+// of named ones beside it, each with its own node, its own daemon and its own
+// lease (D3206). A command names one with `--name`, and no command takes a whole
+// id of its own: the project half is the selection every command in this CLI
+// shares, so an id can never name a project the session is not in. The daemon's
+// two other writers — the launch loop (O6, O8) and the session-start cache — are
+// not this command family's.
 
 // orchestratorOutputVersion is the version of the documents this family prints
 // with --json (schemas/orchestrator-output.schema.json). A field never changes
@@ -80,15 +85,45 @@ func orchestratorNodeShard(lc *localcfg.Config, db orchestrator.CAS, shard orche
 	return node, nil
 }
 
-// orchestratorID is the orchestrator a run acts on: the selected project's
-// name. It is a database key as well as a name (O3), so it is checked with the
-// rule the node's paths are built by, before any request is sent, rather than
-// refused by the transport.
-func orchestratorID(lc *localcfg.Config) (string, error) {
-	if _, err := orchestrator.PathState(lc.Name); err != nil {
-		return "", userErr("%v: the orchestrator id is the project's name, and project %s cannot name one", err, safetext.Field(lc.Name))
+// orchestratorID is the orchestrator a command acts on when it was given no
+// --name: the selected project's own orchestrator, whose id is the project's
+// name.
+func orchestratorID(lc *localcfg.Config) (string, error) { return orchestratorIDFor(lc, "") }
+
+// orchestratorIDFor is the orchestrator a command acts on: the selected
+// project's own when name is empty, and one of its named orchestrators —
+// `<project>~<name>` (D3207) — when --name was given. The project half comes
+// from the selection and never from the flag, so a command can act on a named
+// orchestrator of the project it is in and on no other.
+//
+// Both halves are database keys as well as names (O3), so the id is built with
+// the rule the node's paths are built by, before any request is sent, rather
+// than left to the transport to refuse.
+func orchestratorIDFor(lc *localcfg.Config, name string) (string, error) {
+	if name == "" {
+		if _, err := orchestrator.PathState(lc.Name); err != nil {
+			return "", userErr("%v: the orchestrator id is the project's name, and project %s cannot name one", err, safetext.Field(lc.Name))
+		}
+		return lc.Name, nil
 	}
-	return lc.Name, nil
+	id, err := orchestrator.NamedOrchestratorID(lc.Name, name)
+	if err != nil {
+		return "", userErr("%v", err)
+	}
+	return id, nil
+}
+
+// orchestratorNameFlag is the flag every command that acts on one orchestrator
+// takes, and addOrchestratorNameFlag registers it.
+const orchestratorNameFlag = "name"
+
+// addOrchestratorNameFlag registers `--name`. It is one function because the
+// flag means one thing wherever it appears — which of the project's
+// orchestrators the command is about — and a second wording would be a second
+// answer to "is this the same flag" (C-ORCH, D3206, D3207).
+func addOrchestratorNameFlag(cmd *cobra.Command, name *string) {
+	cmd.Flags().StringVar(name, orchestratorNameFlag, "",
+		"which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own")
 }
 
 // selectOrchestratorProject selects the project without reaching for a
@@ -134,6 +169,10 @@ func newOrchestratorCmd() *cobra.Command {
 			"work items of the plan's own node, or the one-time session dump,\n" +
 			"validated as a patch and refused the person's own ops: no dump approves\n" +
 			"work, and no import approves anything.\n\n" +
+			"A command acts on the project's own orchestrator unless --name names one\n" +
+			"of its named ones: `--name night` is the orchestrator `<project>~night`,\n" +
+			"with its own node and its own daemon, and the project half is always the\n" +
+			"project this session is in.\n\n" +
 			"run is the daemon itself, in the foreground. install, uninstall and\n" +
 			"status are the login unit that keeps it running: the three read no\n" +
 			"project and reach no network, and they write no system path and need no\n" +
