@@ -62,6 +62,10 @@ var orchestratorResources = []struct{ typ, name string }{
 	// without roles/run.invoker before the container runs.
 	{"google_cloud_run_v2_service_iam_member", "orchestrator_credentials_invoker"},
 	{"google_cloud_scheduler_job", "orchestrator_tick"},
+	// The operators' token creation on the account itself, which the daemon on
+	// an operator's machine needs to mint its ID token (the one use of
+	// var.operators this file admits).
+	{"google_service_account_iam_member", "fugaro_orchestrator_token_creator"},
 }
 
 // tfBlock returns the body of the resource block for typ and name, or "" when
@@ -253,6 +257,14 @@ func TestOrchestratorModuleGrantsTheDesignsTable(t *testing.T) {
 // table's.
 func TestOrchestratorIsNeverALauncher(t *testing.T) {
 	src := tfSource(t, orchestratorTF)
+	// The operators' token creation on the account is the one admitted use of
+	// var.operators: it grants operators the right to act as the account and
+	// never puts the account on a people list.
+	const operatorsFor = "for_each = local.orchestrator_on ? toset(var.operators) : toset([])"
+	if strings.Count(src, operatorsFor) != 1 {
+		t.Errorf("%s does not carry the operators' token-creator for_each exactly once", orchestratorTF)
+	}
+	src = strings.Replace(src, operatorsFor, "", 1)
 	for _, never := range []string{
 		"var.launchers", "var.operators", "var.viewers", "var.launcher_accounts",
 		"roles/firebasedatabase.viewer", "roles/datastore.viewer", "roles/serviceusage.serviceUsageConsumer",
@@ -474,6 +486,9 @@ func TestOrchestratorLeavesAPlanUntouchedWhenItIsOff(t *testing.T) {
 	twoSwitches := map[string]string{
 		"google_cloud_run_v2_service_iam_member.orchestrator_credentials_invoker": "count = local.orchestrator_credentials_on ? 1 : 0",
 		"google_service_account_iam_member.orchestrator_token_minter":             "count = local.orchestrator_on && var.people_minter ? 1 : 0",
+		// The operators' grant is a for_each over the operators, off with the
+		// orchestrator by an empty set.
+		"google_service_account_iam_member.fugaro_orchestrator_token_creator": "for_each = local.orchestrator_on ? toset(var.operators) : toset([])",
 	}
 	for _, r := range orchestratorResources {
 		block := tfBlock(src, r.typ, r.name)
