@@ -90,8 +90,9 @@ It is a name condition on the accessor rather than a second implementation of an
 **Nobody else.** The container is in the workspace's project, so no member's admin reads it through
 their own project's IAM, and a member holds no grant on the workspace's project beyond the invoke
 grants of its job accounts (`tf.Cover.WorkspaceNotCovered`, `internal/infra/tf/workspace.go`: the one
-accessor on the bundle and invoke grants to member job accounts are the whole of what a plan of that
-root may add, and the one deletion it admits is a member's invoke grant — F15). Another roster person
+accessor on the bundle, the conditioned accessor above, invoke grants to member job accounts and one
+invoke grant per address for each `human` of the roster are the whole of what a plan of that root may
+add, and the two deletions it admits are a member's and a person's invoke grant — F15, WC2). Another roster person
 reads nothing of it: a grant names only the caller's own personal names (`checkGrantedNames`,
 `internal/credsvc/slip.go`; D2962). A launcher reads nothing of it: the grant's answer is a slip id and
 a runtime (`SlipGrantResponse`). A run reads nothing of it: no value is handed to a run, a CLI or a

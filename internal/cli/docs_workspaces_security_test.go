@@ -111,6 +111,20 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"**The one grant a member holds in the workspace's project is the invoke grant on the workspace's own credentials service**",
 		"`roles/run.invoker` per member job account",
 		"no node of the workspace's database",
+		// WC2 makes that sentence's implication false: from the task that
+		// renders the roster's people into the workspace's own root, a
+		// member's job accounts are no longer the only holders of that
+		// grant. So the sentence names the other two principals — one
+		// invoke grant per address for each `human` of the roster, and one
+		// accessor for the workspace's own account, conditioned to the
+		// person's prefix AND to the one name the workspace serves (D2971,
+		// R6) — and the width of that condition is pinned, because a
+		// condition that dropped either half would read the project's other
+		// secrets.
+		"**A person the workspace's roster names holds the same invoke grant, and the workspace's own account holds one conditioned accessor beside it.**",
+		"`roles/run.invoker` per address",
+		"conditioned to the `fugaro_u_` prefix",
+		"the one personal name the workspace serves",
 		// The pool, the intersection, and what a compromised member reaches.
 		"**A compromised member reaches the pool, and the intersection is what bounds it.**",
 		"cannot read a credential's value",
@@ -324,6 +338,12 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		// the workspace's project, and a section that kept the older wording
 		// would tell a reader no member's account reaches the workspace at all.
 		"because no member holds a grant on the workspace's project",
+		// And WC2's own: the roster's people hold that grant too, so a
+		// sentence that left a member's job accounts as its only holders
+		// would send a reader past the grant a person of the workspace
+		// holds and past the accessor the workspace's own account holds
+		// beside it.
+		"only member job accounts hold a grant",
 		// The meter, which is machinery on this tree and wired to the paid-call
 		// path of the workspace's own deployment -- which is built here and
 		// which `fugaro update` applies -- so the cap IS a fence over a
