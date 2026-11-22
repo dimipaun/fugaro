@@ -15,7 +15,7 @@ package credsvc
 
 import (
 	"context"
-	"slices"
+	"encoding/json"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -54,22 +54,18 @@ func legacyRecord(t *testing.T, db *gcpfake.RTDB, slug, auth string, accounts ..
 	}
 }
 
-// sameSources compares two chains by their content. slices.Equal cannot: a
-// routing.Source carries the admit list, so the type is not comparable, and the
-// chain the bridge answers is compared whole — the kinds, the names and the
-// admissions a source may carry.
-func sameSources(got, want []routing.Source) bool {
-	if len(got) != len(want) {
-		return false
+// sourcesJSON is a chain as the document it is, which is how this test compares
+// two: a routing.Source carries the admit list, so the type is not comparable
+// and slices.Equal cannot take it — and the JSON is the shape the answer and the
+// run's record carry (contract-table.md), so a chain that reads back as the
+// wanted one is a chain the rest of the contract can read too.
+func sourcesJSON(t *testing.T, sources []routing.Source) string {
+	t.Helper()
+	b, err := json.Marshal(sources)
+	if err != nil {
+		t.Fatalf("marshalling %v: %v", sources, err)
 	}
-	for i := range got {
-		if got[i].Kind != want[i].Kind || got[i].Pool != want[i].Pool ||
-			got[i].Provider != want[i].Provider || got[i].Model != want[i].Model ||
-			!slices.Equal(got[i].Admit, want[i].Admit) {
-			return false
-		}
-	}
-	return true
+	return string(b)
 }
 
 // TestAnOlderRunStillResolves: a repository's record — the one the release
@@ -124,8 +120,8 @@ func TestAnOlderRunStillResolves(t *testing.T) {
 			if !found {
 				t.Fatalf("a run whose image predates the table meets no record at %s: it carries no table of its own, so the record is the only thing that can answer it", creds.PathRepoAuth(slug))
 			}
-			if !sameSources(got, tc.want) {
-				t.Errorf("the record stands for %v, want %v", got, tc.want)
+			if got, want := sourcesJSON(t, got), sourcesJSON(t, tc.want); got != want {
+				t.Errorf("the record stands for %s, want %s", got, want)
 			}
 		})
 	}

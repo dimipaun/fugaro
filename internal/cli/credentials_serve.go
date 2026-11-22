@@ -897,6 +897,18 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, userErr("the credentials service cannot verify its callers, so it will not start: %v", err)
 	}
+	// MG3's release-1 bridge, which the chain walk (CS1) consults for a run
+	// whose image predates the routing table: the old access record read as the
+	// chain it stands for, over this deployment's own database client and
+	// therefore the same service identity every node beside it is read with
+	// (legacy_auth.go). It is assigned here because this is the one place a
+	// client exists — the bridge takes creds.DB so that a test can drive it
+	// against a fake, and the seam's own default is the stub that answers "no
+	// old record" (chain_stub.go) — and it is assigned rather than left to that
+	// default because the default is the answer that refuses a run whose image
+	// predates the table, which is the one thing the migration's first release
+	// promises not to do. X4 removes the assignment with the bridge.
+	credsvc.LegacyChain = credsvc.NewLegacyAuth(db)
 	return credsvc.Config{
 		Auth:    auth,
 		Bundles: loader,

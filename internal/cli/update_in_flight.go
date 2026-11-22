@@ -68,6 +68,15 @@ import (
 // audit (docs/design/update-in-flight.md) and the gate function the line reads.
 // The count's own read is a step of the run, so the wait it can be is named
 // while it happens.
+//
+// Two of the lines under the count are not steps, and they are the two facts the
+// count's line cannot carry: R5's, that a run which started with the budget off
+// holds its key already and finishes; and MG3's, that this release keeps writing
+// the old access record a run whose image predates the routing table resolves
+// from. Neither is a reach and neither is gated on a step's own question, which
+// is why they are printed beside the steps rather than among them: a note saying
+// no step reaches a run in flight is about the steps alone, and these two facts
+// stand outside that list.
 
 // announceRunsInFlight prints the update door's note about the runs in flight —
 // the count's line and the steps under it. It prints nothing at all when no run
@@ -150,6 +159,19 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 	if e.budgetOffRunFinishes() {
 		fmt.Fprintf(w, "  a run that started with the budget off holds its key and finishes\n")
 	}
+	// MG3's own line, and like R5's it is not a step: this release keeps writing
+	// the repository's old access record beside the routing table, and that
+	// record is what a run whose image predates the table resolves from (D3196,
+	// R25). It is printed here rather than among the steps because it is the
+	// opposite of a reach — the write is what keeps such a run where it is —
+	// and it carries no count of its own because nothing on this machine could
+	// make one: no member of a registry entry, of the record or of a run's task
+	// names the image a run is running, so the count above is every run the
+	// record could be serving and which of them it is serving is not a fact
+	// this door holds. Saying nothing would leave the one fact a person
+	// watching this migration needs — that the runs in flight are not the ones
+	// the table strands — out of the note entirely.
+	fmt.Fprintf(w, "  old access record: still written, so a run whose image predates the table resolves\n")
 	return nil
 }
 

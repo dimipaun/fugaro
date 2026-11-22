@@ -47,12 +47,19 @@ var _ LegacyBridge = stubLegacyBridge{}
 //
 // The guard is the same one provider_wire_stub.go carries, for the same
 // reason: the toolchain presents a package's files in name order, so whether
-// this init runs before or after the real bridge's depends on what that file
-// is called — legacy_auth.go sorts after this one today, and a name that sorts
-// before it would put the stub back over the real bridge with nothing failing
-// to compile. Asking whether LegacyChain is still nil makes this file what it
-// is meant to be whatever the bridge's file is called: the answer that stands
+// this init runs before or after a real bridge's depends on what that file is
+// called — legacy_auth.go sorts after this one today, and a name that sorts
+// before it would put the stub back over a real bridge with nothing failing to
+// compile. Asking whether LegacyChain is still nil makes this file what it is
+// meant to be whatever a real bridge's file is called: the answer that stands
 // until a real one exists, and never one that stands over a real one.
+//
+// MG3's real bridge is assigned past this init and not at one, because it is
+// built over a database client the package cannot reach (legacy_auth.go's
+// NewLegacyAuth): the deployment that holds the client assigns it
+// (internal/cli's credentialsServiceConfig), so a process that never serves
+// anything keeps this answer and the stub is what a test of the walk alone
+// meets.
 func init() {
 	if LegacyChain == nil {
 		LegacyChain = stubLegacyBridge{}
