@@ -63,9 +63,14 @@ downgrade) and a route's own spelling may differ from the canonical one (CS3). P
 requested model would charge the wrong model's price, so the served model travels on the answer. The
 agent is shown the model it asked for and never this one.
 
-**The agent never sees any of the three.** They are the run's own accounting, they join the explicit
-list in `internal/gateway/forward.go`'s `dropResponseHeaders` (CS2), and they are read into the step's
-record hook below.
+**The agent never sees any of the three through the gateway.** They are the run's own accounting, they
+join the explicit list in `internal/gateway/forward.go`'s `dropResponseHeaders` (CS2), and they are
+read into the step's record hook below. "Through the gateway" is the whole of it, and the qualifier is
+not hedging: a gateway built before this contract drops the answer headers it knows and passes the
+rest through, so what keeps the agent from reading a `source` is not the drop list but the rule that
+no agent can make the service answer in full at all — the stage header is the gateway's own, and an
+agent's copy of it is dropped before the gateway sets it (*The stage header is the gateway's own*,
+below).
 
 ## The gateway's half
 
@@ -87,6 +92,18 @@ cannot run the other way — and the two halves of this contract split according
   fallback flag and the served model of ONE call. A step's record reads it (CS8): it folds the flag
   over the stage's calls and takes the last call's source. The gateway keeps no per-stage figure — it
   does not know where a stage begins or ends — and a nil hook is not an error.
+- **The stage header is the gateway's own.** The gateway sets it from the run's current stage on
+  every call, and the caller's copy is dropped before it is set — the same rule, in the same place,
+  as `HeaderProvider`: `internal/gateway/service.go`'s `serviceUpstream` clones the caller's request
+  headers and deletes the names the gateway owns before setting its own, and the stage header joins
+  that list (CS2). The model path drops nothing by prefix — unlike the git paths' forwarding — so a
+  header that is not on the list reaches the service exactly as the agent wrote it, which is why
+  this is a requirement and not a tidy-up: the R24 guard is worth precisely what it costs an agent
+  to pass, and an agent that could send `X-Fugaro-Stage` itself would make the service answer in
+  full. That is the disclosure the guard exists to prevent, and a release-behind gateway is the one
+  gateway it exists to protect — the gateway that passes an answer header it does not know straight
+  to the agent. CS2's mirror test carries the request side with the names: the test that pins the
+  wire's names pins the rule that the gateway's own headers are its own.
 
 ## The shapes, and what each reader may rely on
 

@@ -456,7 +456,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### CS2: the gateway says which stage a call is for
 
 - Module: `chain-serving`.
-- Acceptance: The in-job gateway sends the run's current stage on every call to the service and no model header (the service reads the body), reads the answer's source and fallback members into the step's record hook, and strips them before the agent sees the answer (they join the explicit list in `dropResponseHeaders`); it holds no key and no table (R2).
+- Acceptance: The in-job gateway sends the run's current stage on every call to the service and no model header (the service reads the body), reads the answer's source and fallback members into the step's record hook, and strips them before the agent sees the answer (they join the explicit list in `dropResponseHeaders`). The stage header is the gateway's own: it is set from the run's current stage and the caller's copy is dropped before it is set, the same rule and place as `HeaderProvider` in `serviceUpstream` — an agent that could send it would make the service answer in full, and a release-behind gateway passes an unknown answer header to the agent — and the mirror test carries the request side with the names. It holds no key and no table (R2).
 - Files: `internal/gateway/service.go`, `internal/gateway/chainwire.go` (new), `internal/gateway/chainwire_test.go` (new), `internal/gateway/gateway.go`, `internal/gateway/forward.go`.
 - Interfaces: Consumes C1's wire names. Produces the hook CS8 reads and the file CS4 extends.
 - Tests: `TestGatewaySendsTheStage`, `TestTheAgentNeverSeesTheSource`.

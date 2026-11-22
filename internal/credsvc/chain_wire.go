@@ -74,6 +74,18 @@ import (
 // changes is the shape of the answer, which is why a value the service does not
 // accept as a stage name is answered in the pre-contract shape rather than
 // refused as a call (SentStage).
+//
+// **It is the gateway's own header, and the gateway is the only caller that may
+// set it.** The gateway sets it from the run's current stage and drops the
+// caller's copy before it does — the same rule, in the same place, as
+// HeaderProvider (internal/gateway/service.go's serviceUpstream deletes the
+// names the gateway owns before setting its own; the model path drops nothing
+// by prefix). That is a requirement and not tidiness, because this header is
+// the whole of R24's guard: an agent that could send it would make the service
+// answer with the source, the fallback and the served model, and a
+// release-behind gateway — the one gateway the guard exists to protect — passes
+// an answer header it does not know straight to the agent. So the guard's
+// request side is as strong as its answer side, and both are CS2's to build.
 const HeaderStage = "X-Fugaro-Stage"
 
 // maxStageNameBytes bounds a stage name. A stage name is recorded in the run's
