@@ -1,6 +1,8 @@
 package craft
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -384,6 +386,36 @@ func TestTheLegacyRuleAnswersEveryOldAuthValue(t *testing.T) {
 		},
 	}
 
+	// A grade's access is written into the coder's craft and the merge judge's
+	// alone (Crafts.Coder, Crafts.MergeJudge, internal/runner/routing.go), so it
+	// reaches plan, implement, fix and merge_judge and no review: taking it for
+	// every craft would move a graded task's reviews onto the coder's credential
+	// (R3, F38). The shape is checked here with auth vertex, where the grade's
+	// arm stands in front of the repository's own access, so a review answering
+	// Vertex is the whole of "the grade did not reach it".
+	graded := func() LegacyInput {
+		in := legacyHero()
+		in.Auth = "vertex"
+		in.Grades.Strong = &config.Craft{Access: "alice"}
+		return in
+	}
+	for _, stage := range []string{"plan", "implement", "fix", "merge_judge"} {
+		t.Run("a grade's access reaches "+stage+", a craft applyGrade writes it into", func(t *testing.T) {
+			got, ok := LegacyAccess(graded(), stage, config.GradeStrong)
+			if !ok || got.Name != "alice" {
+				t.Fatalf("LegacyAccess(%q, %q) = %+v, ok=%v; want the grade's access", stage, config.GradeStrong, got, ok)
+			}
+		})
+	}
+	for _, stage := range []string{"review", "review_first", "adversarial", "triage"} {
+		t.Run("a grade's access does not reach "+stage+", which keeps its craft's", func(t *testing.T) {
+			got, ok := LegacyAccess(graded(), stage, config.GradeStrong)
+			if !ok || got.Name != config.CredentialVertex {
+				t.Fatalf("LegacyAccess(%q, %q) = %+v, ok=%v; want the repository's own access, Vertex", stage, config.GradeStrong, got, ok)
+			}
+		})
+	}
+
 	// The unsuffixed default's own spelling is a name an operator can write, and
 	// both keys that may carry one admit it deliberately (localcfg's
 	// choiceRefProblem): a stage key or an agent.oauth_token spelled `default`
@@ -550,6 +582,66 @@ func TestTheHandedEntryIsTheAnswerItEncodes(t *testing.T) {
 	}
 	if _, _, err := ParseResolved("{not json"); err == nil {
 		t.Error("an entry that is not JSON was accepted")
+	}
+}
+
+// TestTheHandedEntryRefusesWhatThisReleaseCannotReadBack pins the failure half
+// of (b)'s encoding, and it is the half a run's safety rests on: the document is
+// the launcher's own, written by the release that handed it, so one that cannot
+// be read back in full is refused rather than half understood — a half-read
+// document could send a stage's calls to something the launcher never resolved,
+// and falling back would apply the rule to a file the launcher may already have
+// replaced (access_stub.go is the runner's side of that decision).
+//
+// Every case is a valid document with one thing changed, so the refusal is the
+// check's and not a document that was never JSON.
+func TestTheHandedEntryRefusesWhatThisReleaseCannotReadBack(t *testing.T) {
+	in := legacyHero()
+	in.Auth = "oauth"
+	coder, ok := LegacyAccess(in, "implement", "")
+	if !ok {
+		t.Fatal("the rule answered nothing for an oauth repository")
+	}
+	encoded, err := Resolved{Version: ResolvedVersion, Crafts: map[string]Access{config.CraftCoder: coder}}.Encode()
+	if err != nil {
+		t.Fatalf("encoding the resolved access: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want error
+	}{
+		{"a version this release does not know", strings.Replace(encoded, `"version":1`, `"version":99`, 1), ErrResolvedVersion},
+		{"a field this release does not model", strings.Replace(encoded, `"version":1`, `"version":1,"surprise":true`, 1), ErrResolvedMalformed},
+		{"a craft this vocabulary does not hold", strings.Replace(encoded, `"coder"`, `"sculptor"`, 1), ErrResolvedMalformed},
+		{"a craft name under grades", strings.Replace(encoded, `"crafts"`, `"grades"`, 1), ErrResolvedMalformed},
+		{"not a document at all", "{not json", ErrResolvedMalformed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			back, found, err := ParseResolved(tc.doc)
+			if !errors.Is(err, tc.want) || found {
+				t.Fatalf("ParseResolved(%s) = %+v, found=%v err=%v; want %v and not found", tc.doc, back, found, err, tc.want)
+			}
+		})
+	}
+
+	// The writer's half, which is the same rule one step earlier: a launcher that
+	// encoded an answer this release would refuse would hand a run a document it
+	// cannot use, and the refusal is what keeps the two ends one contract.
+	for _, tc := range []struct {
+		name string
+		doc  Resolved
+	}{
+		{"a craft this vocabulary does not hold", Resolved{Version: ResolvedVersion, Crafts: map[string]Access{"sculptor": coder}}},
+		{"a grade this vocabulary does not hold", Resolved{Version: ResolvedVersion, Grades: map[string]Access{"stout": coder}}},
+		{"a version this release does not write", Resolved{Version: ResolvedVersion + 1, Crafts: map[string]Access{config.CraftCoder: coder}}},
+	} {
+		t.Run("Encode refuses "+tc.name, func(t *testing.T) {
+			if out, err := tc.doc.Encode(); err == nil {
+				t.Fatalf("Encode() = %q, want a refusal", out)
+			}
+		})
 	}
 }
 

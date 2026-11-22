@@ -76,9 +76,10 @@ type RepoAccess struct {
 	// rather than reading the members it recognises as the whole of it.
 	Version int `json:"version"`
 	// Crafts maps each craft (config.CraftNames) to what its calls may be served
-	// by, in the project's own order where the project wrote the craft's access
-	// itself (a pool's members are its order) and in the project's declaration
-	// order where the migration worked it out by reach (F43). A craft this
+	// by: a set of names, in name order and once each, because the write puts
+	// every list through the same cleaning (cleanRefs) and keeps no order a
+	// caller passed. The order that matters is a pool's own members', and that
+	// is the pool's (config.PoolMembers) and not this list's. A craft this
 	// record does not carry is one the project wrote nothing for and the
 	// migration found nothing that reaches: its calls are refused.
 	Crafts map[string][]AccessRef `json:"crafts"`
@@ -280,8 +281,12 @@ func (r RepoAccess) NamesToken(name string) bool {
 	return slices.Contains(r.Tokens, name)
 }
 
-// Reach is every credential and pool the record names, sorted and without
-// repeats: a run's whole reach, which is the union over its crafts (R4).
+// Reach is every credential and pool the record's crafts name, sorted and
+// without repeats: a run's whole reach, which is the union over its crafts
+// (R4: a call declares its craft, and the service serves it what the record
+// names for that craft). The grades and the tokens are not in it: R4 states the
+// reach as the union over the crafts, and AccessForGrade and NamesToken are the
+// two reads that answer a grade's entry and a name a run chose.
 func (r RepoAccess) Reach() []string {
 	var out []string
 	for _, refs := range r.Crafts {
