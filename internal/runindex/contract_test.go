@@ -80,6 +80,20 @@ func TestContractShapes(t *testing.T) {
 			},
 		}
 		roundTrip(t, want)
+		// The round trip above would survive a tag rename, because both
+		// directions would move together. The names are the contract, though:
+		// each one is the Firestore field a query filters or orders by and the
+		// key the document in contract-index.md is written under, so a rename
+		// is a reader that finds nothing where the writer put it. The set is
+		// asserted whole rather than field by field, so a field added here and
+		// not in the document fails too.
+		keysAre(t, want, []string{
+			"run_id", "slug", "repo", "updated_at", "status", "plan_task", "pr",
+			"requested_by", "launched_by", "batch", "tier", "rigor",
+			"started_at", "finished_at", "workflow", "title", "recipe",
+			"oauth_account", "previous_run", "follow_up", "follow_up_of",
+			"launch", "record",
+		})
 	})
 
 	t.Run("summary", func(t *testing.T) {
@@ -106,6 +120,11 @@ func TestContractShapes(t *testing.T) {
 			},
 		}
 		roundTrip(t, want)
+		keysAre(t, want, []string{
+			"version", "complete", "folded_through", "updated_at", "runs",
+			"states", "spent_micros", "notional_micros", "compute_micros",
+			"compute_runs", "compute_not_estimated", "estimate",
+		})
 	})
 
 	t.Run("cursor", func(t *testing.T) {
@@ -161,5 +180,29 @@ func roundTrip[T any](t *testing.T, want T) {
 	}
 	if !bytes.Equal(data, back) {
 		t.Errorf("%T did not survive its own JSON:\n wrote %s\n read  %s", want, data, back)
+	}
+}
+
+// keysAre is the document's own key set, in the order the struct declares it,
+// against the names contract-index.md fixes. A value marshalled from a fixture
+// that sets every field carries every key, so this is the field list and not
+// the fixture's luck.
+func keysAre[T any](t *testing.T, v T, want []string) {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshalling %T: %v", v, err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("unmarshalling %T as a document: %v", v, err)
+	}
+	for _, k := range want {
+		if _, ok := doc[k]; !ok {
+			t.Errorf("%T carries no %q field", v, k)
+		}
+	}
+	if len(doc) != len(want) {
+		t.Errorf("%T carries %d fields, want %d: %s", v, len(doc), len(want), data)
 	}
 }

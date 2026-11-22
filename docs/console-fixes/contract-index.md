@@ -61,7 +61,7 @@ read needs no slug beside it.
 | --- | --- | --- | --- |
 | `run_id` | string | the run id, and the document's own id | every reader |
 | `slug` | string | the repository's storage key, `runs/<slug>/` | `runs ls`, `runs stats` (their scope) |
-| `repo` | string | the task's `owner/name`, falling back to the slug | the row's display name |
+| `repo` | string | the task's `owner/name`, with the slug as the fallback a reader shows where the task recorded none | the row's display name |
 | `updated_at` | timestamp | the record's `finished_at`, else its `started_at`, else the launch's `launched_at` | **the sort key**; the `--since` window |
 | `status` | string | `result.json`'s `status`, one of `runstore.Statuses`; absent when the record settled none | `--state`, the active set, `runs stats`, the estimate table |
 | `plan_task` | string | `launch.json`'s `plan_task` | `plan status`, `graph` (the join) |
