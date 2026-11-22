@@ -212,23 +212,25 @@ func (s OrchestratorSource) Scope() Scope {
 // and one it lost between the enumeration and the read is left out with the
 // sentence saying so rather than taking the document with it (readGraph).
 //
-// A local scope's id is judged before the endpoint is read, and the judgement
-// keeps this source from reading one and from nothing else: a name H1's pattern
-// cannot carry names no local scope, so no registry file is looked for it and the
-// node and then the cache answer exactly as they do on a machine with no daemon.
-// That is the one place the scope's rule is narrower than the daemon's own
-// (agentRE admits `_` and 64 characters), and the limit is named rather than
-// widened: a project whose name carries `_`, or is longer than 40 characters, has
-// no local scope (H1, CG13c).
+// A local scope's id is judged before the endpoint is read, and the rule it is
+// judged by is the id rule and not a second one (F40, CG8): ParseScope holds the
+// value to naming.go's ValidOrchestratorID, which is the rule `orchestrator/<id>`
+// is keyed by, so `<project>~<name>` is a local scope's argument like any other
+// and the endpoint serving it is read. What the judgement can still refuse is a
+// value no orchestrator may be keyed by at all — an id with `_`, one past 81
+// characters, an empty one — and no enumerator of this CLI can produce one, since
+// NodeIDs and CachedBriefs hold every id they answer with to that same rule
+// (store.go's checkAgentID) and the command line refuses one as it parses the
+// argument, before a source exists (ParseScope). What it guards is a source built
+// by hand, and it keeps that source from looking a registry file up for an id one
+// could not be keyed by: the node and then the cache answer exactly as they do on
+// a machine with no daemon.
 //
-// The *refusal* such a name gets on the command line is the caller's, made when
-// it parses the argument, and it has to be: the command line is the only place a
-// local scope is named rather than enumerated. Under `all` an id comes from the
-// database's listing and this machine's cache, and a cached brief is what makes
-// it a local scope there whatever the database holds — so an id the database
-// holds with a brief beside it is exactly the shape a refusal here would take out
-// of the console's default graph, work items and dependencies with it, although
-// the database has the state to draw (graphSources, readGraph).
+// It answers, and does not refuse, because of what `all` enumerates: an id there
+// is one the database lists or one this machine holds a cached brief for, and a
+// refusal would take that scope out of the console's default graph — work items
+// and dependencies with it — over a value the enumeration itself produced
+// (graphSources, readGraph).
 //
 // It never returns a read's own failure: the caller classifies that before it
 // gets here (a refusal is terminal and is returned by the caller without asking
@@ -264,22 +266,20 @@ func (s OrchestratorSource) Nodes() ([]Node, []Edge, SourceState, error) {
 }
 
 // localID reports whether a local scope's own name is one the kind may carry: it
-// is the two rules that govern the id, and it is the narrower of them that
-// decides — H1's pattern, which is what a value that reaches argv from a renderer
-// may look like (ParseScope), over the daemon's own rule for the id of
-// `orchestrator/<id>` (agentRE). H1's admits no `_` and stops at 40 characters
-// where the daemon's carries 64, so a name this answers false for is one an
-// endpoint may well be serving and one no `local:` scope names, and the limit is
-// named rather than widened: the source reads no endpoint for it (H1, CG13c).
+// is the id rule ParseScope holds the argument to (naming.go's
+// ValidOrchestratorID, F40), which is the same rule the id of `orchestrator/<id>`
+// is keyed by. A name it answers false for is therefore one no orchestrator may
+// be keyed by at all — an id with `_`, one past 81 characters, an empty one — and
+// one no enumerator of this CLI hands this source (checkAgentID, NodeIDs,
+// CachedBriefs). It is judged before the endpoint is read, so nothing is looked
+// up for such a name (Nodes).
 //
-// It answers, and does not refuse, because of what `all` enumerates: an id there
-// is one the database lists or one this machine holds a cached brief for, and the
-// brief is what makes it local whatever the database holds (graphSources). A
-// refusal would take an orchestrator the database has a state node for — its work
-// items, its dependencies, its place in the console's default graph — out of the
-// document over a project named `my_project`. The command line's own refusal is
-// made before this source exists, when the argument is parsed, which is the one
-// place a scope is named rather than enumerated.
+// It answers, and does not refuse, because of what `all` enumerates: a refusal
+// would take a scope the enumeration itself named out of the console's default
+// graph, where the judgement costs a hand-built source its endpoint and nothing
+// else. The command line's own refusal is made before this source exists, when
+// the argument is parsed (ParseScope), which is the one place a scope is named
+// rather than enumerated.
 func localID(source string) bool {
 	_, err := ParseScope(source)
 	return err == nil

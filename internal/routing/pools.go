@@ -40,15 +40,16 @@
 // the service that resolves them (internal/credsvc, PL4, CS1) and the commands
 // that print them (internal/cli, PL2, PL5, PL9), so one package has to hold them
 // and every one of those can import it. What that package must not do is import
-// any of them back: a cycle is one line away otherwise — internal/creds is
-// already imported by internal/config, and internal/config is the file a pool's
-// own members are written in (PL1) — so this file imports no package of this
-// tree at all, and a later member that needs one belongs in the package that
-// reads it rather than here.
+// any of them back: a cycle is one line away otherwise — internal/creds already
+// imports both this package and internal/config, and internal/config is where a
+// pool's own members are written (PL1) — so this file imports no package of
+// this tree at all, and a later member that needs one belongs in the package
+// that reads it rather than here.
 package routing
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -171,9 +172,10 @@ var PrincipalKinds = []PrincipalKind{PrincipalPerson, PrincipalServiceAccount, P
 // served from follows the verified principal on the run's slip, so a forged
 // requester gets nothing (F51's accepted risk is the project's own database
 // admin, who can forge the record itself — not a job's word about itself).
-// The field R7 warns about is named in
+// The launcher's own text — the field R7 names beside the principal, and the
+// one of the two with a guard test of its own — is named in
 // [contract-pools.md](../../docs/model-credentials-routing/contract-pools.md)
-// and deliberately not here: a guard test fails a Go file of this module that
+// and deliberately not here: that guard fails a Go file of this module which
 // names it, which is what keeps it out of every decision.
 type Principal struct {
 	// Kind is one of PrincipalKinds.
@@ -342,8 +344,14 @@ type (
 	PoolEntry struct {
 		// Name is the pool's name.
 		Name string `json:"name"`
-		// Rule is how the service picks among the pool's members (R5), with ""
-		// read as failover as everywhere else.
+		// Rule is how the service picks among the pool's members (R5), as the
+		// pool's owner wrote it: "" where the pool names none, which is read as
+		// the `strategy` the pool was written with and as failover only where it
+		// names neither (Rule.RuleOrDefault). That is the one resolution every
+		// pool's rule gets, so a reader of this member never invents a rule of
+		// its own and a pool is never read as one its owner did not write. This
+		// document carries the pool and not its strategy, so the resolution
+		// happens where a pool is read with its config (PL1) and never here.
 		Rule Rule `json:"rule"`
 		// Principal is whose pool it is (D3181).
 		Principal Principal `json:"principal"`
@@ -390,3 +398,21 @@ type (
 		Tokens int64 `json:"tokens"`
 	}
 )
+
+// MarshalJSON writes the document with its pools a list whatever the caller
+// built in memory: a PoolListDoc whose Pools was never filled is the project
+// with no pool, and the document says that with an empty array and never with a
+// null — a reader that met a null would have to decide for itself whether the
+// project has no pool or the writer forgot to say, which is the one thing this
+// member's own comment promises it never has to. It is the same invariant the
+// documents of this tree keep at their construction sites, kept here instead
+// because three sides build this one and the first of them (PL2) prints it
+// before any of its figures exist.
+func (d PoolListDoc) MarshalJSON() ([]byte, error) {
+	type plain PoolListDoc // no methods: every field and tag is written as declared
+	out := plain(d)
+	if out.Pools == nil {
+		out.Pools = []PoolEntry{}
+	}
+	return json.Marshal(out)
+}

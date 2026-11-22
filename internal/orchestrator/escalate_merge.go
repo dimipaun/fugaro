@@ -924,7 +924,12 @@ func (s BeyondSeams) merge(ctx context.Context, item WorkItem, step escalation.S
 	in := MergeInput{
 		Item: item, Step: step, Head: read.HeadSHA, Read: mr, Launches: launches,
 		ReadyDrafts: s.ReadyDrafts, Landed: landed, Said: said,
-		Launchable: ladderLaunchable(st, item),
+		// The hook reads one node's items (MergeNode) and no other
+		// orchestrator's, so it holds no reading of a cross reference to hand
+		// here (D3208): a reference it cannot resolve holds the item, which is
+		// the direction a launch fails in, and the item is left to a cycle whose
+		// own node can resolve it.
+		Launchable: ladderLaunchable(st, nil, item),
 	}
 	if mr.Read && mr.Number != 0 {
 		// The pull request and its checks are read at the head under

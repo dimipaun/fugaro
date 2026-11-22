@@ -294,12 +294,23 @@ const FORBIDDEN_KEY_CHARS = new Set(['%', '.', '$', '#', '[', ']', '/']);
  *            and, optionally, the user controls. It is the only kind that
  *            carries a `token`, and the only path by which a token can reach
  *            `config/admin/push/$uid` at all.
+ *   stop     the phone's stop request (P5.1g, Q10's answer (c)): the phone
+ *            asking a human to stop what it is looking at, which the human at
+ *            the console or the laptop acts on and which nothing raises as a
+ *            prompt. It is deliberately not an `action`: an action record is
+ *            executed, while this one is never executed by anything — the owner
+ *            refused a phone-writable kill switch, so no message this kind
+ *            carries stops a run, lowers a cap or writes `config/kill/**`. It
+ *            is a kind of its own rather than a `message` so that the consumer,
+ *            the rules and the app all read the same intent from the record
+ *            instead of from its prose, and so that a stop request can never be
+ *            handed to a launched run's agent as free text (P5.1-Q4).
  *
  * This is not P1.1's own `KIND` (`command` · `prompt`), which names the two
  * ACCEPTANCE WINDOWS; P6.5 and P6.7 map a message kind to a window, and only
  * they can, because the mapping needs the prompt's TTL and the command window.
  */
-export const KINDS = Object.freeze(['message', 'prompt', 'answer', 'action', 'registration']);
+export const KINDS = Object.freeze(['message', 'prompt', 'answer', 'action', 'registration', 'stop']);
 
 /**
  * The platforms a registration may name: the pair §3.4's node shape carries,
@@ -369,6 +380,7 @@ const KIND_OPTIONAL = Object.freeze({
   answer: Object.freeze(['reply_to']),
   action: Object.freeze(['action', 'reply_to']),
   registration: Object.freeze(['token', 'platform', 'prefs']),
+  stop: Object.freeze([]),
 });
 
 const KIND_REQUIRED = Object.freeze({
@@ -377,6 +389,7 @@ const KIND_REQUIRED = Object.freeze({
   answer: Object.freeze(['reply_to']),
   action: Object.freeze(['action']),
   registration: Object.freeze(['token', 'platform']),
+  stop: Object.freeze([]),
 });
 
 /**
@@ -463,7 +476,7 @@ export const REFUSALS = Object.freeze({
   BAD_CHARACTER: 'bad-character',
   /** A number is not a non-negative epoch-millisecond safe integer. */
   BAD_TIMESTAMP: 'bad-timestamp',
-  /** A kind is not one of the four. */
+  /** A kind is not one of `KINDS`. */
   UNKNOWN_KIND: 'unknown-kind',
   /** An action's verb is not one of the three the ruling names. */
   UNKNOWN_VERB: 'unknown-verb',

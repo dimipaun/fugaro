@@ -79,27 +79,47 @@ func TestRunnerCompressionOffStartsNoSidecar(t *testing.T) {
 	}
 }
 
-// TestStartCompressionRefusesWithoutGateway is P9's runtime half: the
-// gateway requirement can live in no config layer, because the effective
-// budget mode is the tightest of the ceiling, the default branch's file and
-// the run's own, and only the runner's bootstrap sees all three. The
-// harness is the gateway-less one -- no ceiling, no default-branch budget --
-// so the run stops before any stage.
-func TestStartCompressionRefusesWithoutGateway(t *testing.T) {
-	h := newHarness(t, "", nil)
+// TestACompressionRunWithNoModeHasItsGateway (AB1b, F15): the mode used to be
+// read at this step -- P9's refusal lived here, because a run whose job named
+// no mode (or the word off) had no gateway, and the sidecar's upstream is the
+// gateway's loopback address. There is always a budget, so such a run has its
+// gateway and its sidecar with it: the sidecar starts, and what it was told to
+// forward to answers as the run's own gateway.
+//
+// Mutation (make startCompression read the mode again, refusing the run whose
+// job names none): no stage runs and the run is refused where it used to be.
+func TestACompressionRunWithNoModeHasItsGateway(t *testing.T) {
+	h := newGW(t, gwConfig(t, ""), "", "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 1})).harness
 	h.deps.CompressionForTest = "headroom"
-	rec, err := h.run(t, implement("feature"))
-	if err == nil {
-		t.Fatal("agent.compression without the budget gateway did not fail the run")
+	probed := false
+	inspect := func(inner step) step {
+		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			probed = true
+			token := envValue(req.Env, "ANTHROPIC_API_KEY")
+			if token == "" {
+				t.Fatal("the stage has no gateway token: this run is meant to have a gateway")
+			}
+			if len(h.lastCompressionEnv) != 1 {
+				t.Fatalf("the sidecar's env = %q, want the upstream variable alone", h.lastCompressionEnv)
+			}
+			_, upstream, _ := strings.Cut(h.lastCompressionEnv[0], "=")
+			// Read inside the stage, while the gateway is up: the address is
+			// the one the sidecar's every call goes to, and only the gateway
+			// forwards to the fake upstream this run was given.
+			if !isTheGateway(t, upstream, token) {
+				t.Fatalf("the sidecar's upstream %q does not answer as the run's own gateway", upstream)
+			}
+			return inner(t, ctx, req)
+		}
 	}
-	if rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone || !strings.Contains(rec.Reason, "budget gateway") {
-		t.Fatalf("record = %+v, want infra_error naming the budget gateway", rec)
+	if _, err := h.run(t, inspect(implement("feature")), review("ship", 0)); err != nil {
+		t.Fatal(err)
 	}
-	if h.compressionStarts != 0 {
-		t.Fatal("a sidecar was started despite the gateway being off")
+	if !probed {
+		t.Fatal("no stage ran")
 	}
-	if len(h.agent.calls) != 0 {
-		t.Fatal("a stage ran")
+	if h.compressionStarts != 1 {
+		t.Fatalf("the sidecar was started %d times for a run whose job names no mode, want 1", h.compressionStarts)
 	}
 }
 
