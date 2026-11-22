@@ -141,7 +141,7 @@ run "the_role_is_the_databases_two_data_permissions_and_no_lifecycle_one" {
   }
 }
 
-run "the_only_grant_is_the_workspace_database_role_on_the_workspace_service" {
+run "the_database_grant_is_the_custom_role_on_the_workspace_service" {
   command = plan
 
   # The same override as the run above, which each run block needs of its own:
@@ -174,7 +174,10 @@ run "the_only_grant_is_the_workspace_database_role_on_the_workspace_service" {
 # workspace owner's `fugaro update` writes: null — the default the runs above
 # plan with — creates none of it, and one image, one region and one member table
 # create the service, its ONE bundle accessor and one invoke grant per member job
-# account.
+# account. The same variables carry the workspace's roster (WC2, R6, D2971), and
+# with a non-empty people list they add one invoke grant per person and the ONE
+# conditioned accessor the workspace's own account holds on a person's own Claude
+# token.
 #
 # What these runs hold is what the Go-side cover reads a plan for
 # (internal/infra/tf's WorkspaceServiceEnv, workspaceService and
