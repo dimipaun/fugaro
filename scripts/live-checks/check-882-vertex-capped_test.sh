@@ -62,7 +62,7 @@ other_job=chk882-job-two
 other_sa=${other_job}@${project}.iam.gserviceaccount.com
 model=claude-opus-5-5
 model2=claude-sonnet-5
-probe=STANDIN-NOT-A-KEY
+probe=sentinel-for
 
 # --------------------------------------------------------------------- fakes
 # write_fake_fugaro DIR: a stand-in for `fugaro` that answers the reads this
@@ -165,7 +165,7 @@ case "$sub" in
     echo "ERROR: (gcloud.auth.print-access-token) no --impersonate-service-account was asked" >&2
     exit 1
   fi
-  printf 'STANDIN-NOT-A-KEY-%s\n' "$sa"
+  printf 'sentinel-for-%s\n' "$sa"
   ;;
 "run jobs list"*)
   cat "$answers/jobs.json"
