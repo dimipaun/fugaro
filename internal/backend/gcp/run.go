@@ -132,7 +132,7 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	// override as FUGARO_RUN: the API merges these into the job's environment.
 	// A secret entry (the marker of a launch that sealed its token, whose
 	// value is the seal key, D15) goes there too: the execution's override is
-	// the carrier docs/design/budget-token-channel.md §7.1 accepts and prices
+	// the carrier docs/budget-token-channel/spec.md §7.1 accepts and prices
 	// (the project's readers, not a peer run of the job).
 	// backend.LaunchEnv is where both backends read them, so an entry this one
 	// refuses (a malformed one, or one naming a variable the environment
@@ -415,7 +415,7 @@ func (b *Backend) JobFullEnv(ctx context.Context, job string) (map[string]string
 //
 // It is JobFullEnv's mirror: that one returns the plain-value entries, this
 // one the entries whose value comes from value_source.secret_key_ref (the
-// deployed job's mounted secrets, design docs/design/project-secrets.md §7),
+// deployed job's mounted secrets, design docs/project-secrets/spec.md §7),
 // and neither reads a secret's value. The ID is the reference's own name
 // with any projects/<p>/secrets/ prefix stripped, so a name written the same
 // project's way (deploy/terraform/gcp/modules/workflow/job.tf) and one

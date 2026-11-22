@@ -347,6 +347,301 @@ func TestSkillSaysFirestoreIsNotTheStore(t *testing.T) {
 	}
 }
 
+// handoffAnchor opens the one section of SKILL.md that says who launches the
+// runs. Every check below is over that section rather than over the file, so a
+// pointer from somewhere else in the skill cannot satisfy them.
+const handoffAnchor = "Who launches the runs"
+
+// handoffRules is what the hand-off section has to carry, as the phrases it
+// does it in. The first four are the reads that decide it — the switch, the
+// project's lease, and this machine's own unit — the next is who launches, and
+// the rest are the two doors the work goes through and the fact the daemon asks
+// the session to import with.
+var handoffRules = []struct{ what, text string }{
+	{"the switch a session reads before it launches anything", "fugaro settings orchestrator_enabled --json"},
+	{"the project-wide read that says whether a daemon is live at all", "fugaro orchestrator ls"},
+	{"that a live lease is read as a daemon on the project, on whichever machine", "lease"},
+	{"that this machine's unit is the rotation and not the project", "in the rotation"},
+	{"that this machine's unit is read too", "fugaro orchestrator status"},
+	{"that the daemon is the launcher", "the daemon is the launcher"},
+	{"that the session never launches, sweeps or watches", "never launch, sweep or watch a run yourself"},
+	{"the item door", "work_item_upsert"},
+	{"the plan door", "fugaro orchestrator import --plan"},
+	{"the fact that asks a session to import a plan", "plan_in_flight_"},
+	{"what a machine with no daemon does", "drive the runs as before"},
+}
+
+// selfDriveRE is the class a session drives itself: the launcher, the watcher,
+// and the daemon's own loop — the login unit runs `fugaro orchestrator run`, so
+// a session that runs it in the foreground has taken the project's launcher
+// away with it when it closes.
+var selfDriveRE = regexp.MustCompile(`fugaro (run|watch|orchestrator run)\b`)
+
+// selfDriveViolation says why one unit of the section may not carry a
+// self-driven command, and "" when it may: a fenced line is an instruction and
+// never carries one, and an inline mention has to be forbidden by the prose
+// before it. It is a function so the checks below can be proved to bite on
+// lines they are written to catch rather than passing by matching nothing.
+func selfDriveViolation(u unit) string {
+	if selfDriveRE.FindStringIndex(u.text) == nil {
+		return ""
+	}
+	if u.inBlock {
+		return "a fenced line runs it"
+	}
+	if !negatedBefore(u.ctx[:u.col]) {
+		return "the prose before it does not forbid it"
+	}
+	return ""
+}
+
+// orchestratorSkillFile is the skill's own SKILL.md, parsed the way the
+// shipped lint parses it, so these tests read the units it reads.
+func orchestratorSkillFile(t *testing.T) *skillFile {
+	t.Helper()
+	for _, f := range orchestratorSkillFiles(t) {
+		if f.isSkill {
+			return f
+		}
+	}
+	t.Fatal("the orchestrator skill has no SKILL.md")
+	return nil
+}
+
+// sectionLines is the line range a `## title` section occupies: its heading
+// line, and the line before the next heading.
+func sectionLines(t *testing.T, f *skillFile, title string) (int, int) {
+	t.Helper()
+	start, end := 0, len(f.lines)
+	for i, l := range f.lines {
+		switch {
+		case l == "## "+title:
+			start = i + 1
+		case start > 0 && strings.HasPrefix(l, "## "):
+			return start, i
+		}
+	}
+	if start == 0 {
+		t.Fatalf("%s has no %q section", f.path, title)
+	}
+	return start, end
+}
+
+// TestSkillSaysStopSweepingWhileDaemonLive (R5, D2703): with the switch on and
+// a daemon live, the session hands the work to the daemon and stops driving
+// runs — the launcher, the poll and the watcher are the daemon's own job, and a
+// run started beside it is a second run of work it is already doing. With the
+// switch off or no unit on this machine, the session drives them as before, so
+// the section says both.
+func TestSkillSaysStopSweepingWhileDaemonLive(t *testing.T) {
+	section := skillSection(t, orchestratorSkill(t), handoffAnchor)
+	for _, rule := range handoffRules {
+		if !strings.Contains(section, rule.text) {
+			t.Errorf("the hand-off section never says %s (%q):\n%s", rule.what, rule.text, section)
+		}
+	}
+	// And the rule is a rule: every unit of the section that names one of these
+	// commands either forbids it (an inline mention) or is a violation (a fence
+	// is an instruction).
+	f := orchestratorSkillFile(t)
+	start, end := sectionLines(t, f, handoffAnchor)
+	mentions := 0
+	for _, u := range f.units {
+		if u.line < start || u.line > end {
+			continue
+		}
+		if why := selfDriveViolation(u); why != "" {
+			t.Errorf("%s:%d: the hand-off section names %q and %s:\n%s", f.path, u.line, selfDriveRE.FindString(u.text), why, u.text)
+		}
+		if selfDriveRE.MatchString(u.text) {
+			mentions++
+		}
+	}
+	// A predicate that matched nothing would pass that loop by saying nothing.
+	if mentions < 2 {
+		t.Errorf("the hand-off section forbids %d of these commands by name, and naming them is how it stops a session running one:\n%s", mentions, section)
+	}
+	prose := "While a daemon is live, launch `fugaro run --task ship-it` for each item."
+	span := unit{
+		line: 1, text: "fugaro run --task ship-it",
+		ctx: prose, col: strings.Index(prose, "`") + 1,
+	}
+	for _, hostile := range []struct {
+		what string
+		u    unit
+	}{
+		{"a fence that launches a run", unit{line: 1, text: "fugaro run --task ship-it", inBlock: true}},
+		{"prose that tells the session to launch one", span},
+	} {
+		if selfDriveViolation(hostile.u) == "" {
+			t.Errorf("%s is not caught by these checks, so the pass above proves nothing:\n%s", hostile.what, hostile.u.ctx)
+		}
+	}
+}
+
+// unitAbsenceRE is the claim about this machine's own login unit that the
+// section may not turn into a project-wide answer: the daemon serves the whole
+// project, and one machine holds the lease.
+var unitAbsenceRE = regexp.MustCompile(`(?i)(no login unit|no unit|unit is not installed)`)
+
+// TestSkillDecidesLivenessOnTheProjectNotThisMachine (R5, D2703, D1358): the
+// daemon serves the project and one machine holds its lease, so a machine's own
+// unit says whether that machine is in the rotation and nothing about whether
+// the project is being driven. A section that read a missing unit as "nothing
+// is launching this project" would have a session launch, sweep and watch runs
+// beside a live daemon on another machine — and queue the same work as items,
+// which that daemon launches a second time once the person approves them.
+func TestSkillDecidesLivenessOnTheProjectNotThisMachine(t *testing.T) {
+	section := skillSection(t, orchestratorSkill(t), handoffAnchor)
+	driving := 0
+	for i, line := range strings.Split(section, "\n") {
+		if !strings.Contains(line, "drive the runs as before") {
+			continue
+		}
+		driving++
+		if unitAbsenceRE.MatchString(line) {
+			t.Errorf("the hand-off section's line %d reads this machine's missing unit as a project nobody is driving:\n%s", i+1, line)
+		}
+		// The only two things that say no daemon is driving the project are the
+		// switch and the lease: a line that reaches the rule without either is
+		// one that decided it from this machine.
+		if !strings.Contains(line, "lease") && !strings.Contains(line, "switch") {
+			t.Errorf("the hand-off section's line %d sends a session to drive the runs as before without the switch or the project's lease, and those are the two things that answer it:\n%s", i+1, line)
+		}
+	}
+	if driving == 0 {
+		t.Error("the hand-off section has no rule for a project nobody is driving, so the two checks above passed by reading nothing")
+	}
+	// Predicates that matched nothing would pass those checks by saying nothing:
+	// the sentence the section carried before is what the first one is for, and
+	// a line that decided it from this machine alone is what the second is.
+	was := "`fugaro orchestrator status` reporting no login unit, or the switch read as `false`, is the other answer: no daemon is launching anything here, so drive the runs as before."
+	if !unitAbsenceRE.MatchString(was) {
+		t.Error("the missing-unit check does not catch the sentence it exists for, so its pass above proves nothing")
+	}
+	hostile := "With no unit installed here, drive the runs as before."
+	if !unitAbsenceRE.MatchString(hostile) || strings.Contains(hostile, "lease") || strings.Contains(hostile, "switch") {
+		t.Error("a line that decided it from this machine alone is not what the checks above catch")
+	}
+}
+
+// personOnlyOps is the class a session may not land and the reference's op
+// table has to say so about: each of these approves work or sets the goal, and
+// each lands for a person at a real terminal and for nobody else (D2706,
+// D2718).
+var personOnlyOps = []string{"work_item_approve", "plan_approve", "goal_set"}
+
+// approvingOpRE is the class in the words a patch is written with, for the
+// check below: an op kind in a fenced patch document.
+var approvingOpRE = regexp.MustCompile(`"(work_item_approve|plan_approve|goal_set)"`)
+
+// approvingOpViolation says why one fenced line may not carry an approving op,
+// and "" when it may. A fence is an instruction — the lint's own reading — so a
+// skill that hands a session a patch document to send is telling it to send it,
+// and D2718 leaves the person's approval a document only the person builds.
+func approvingOpViolation(u unit) string {
+	if !u.inBlock {
+		return ""
+	}
+	if m := approvingOpRE.FindString(u.text); m != "" {
+		return "the block carries " + m
+	}
+	return ""
+}
+
+// TestSkillNeverTellsTheSessionToApprove (R5, D2703, D2718): what the daemon
+// launches on is a person's approval, and the skill hands a session the two
+// doors that land unapproved — an item declaration and an import — and no way
+// to approve. The reference rows that hand a session an approving op are the
+// failure this reads for, because the table is where a session looks up what it
+// may send.
+func TestSkillNeverTellsTheSessionToApprove(t *testing.T) {
+	skill, ref := orchestratorSkill(t), orchestratorReference(t)
+	section := skillSection(t, skill, handoffAnchor)
+	for _, want := range []string{
+		"approves nothing", "never write it", "the person's own word",
+		"Ask the person for it and stop", "plan_approve", "queued and unapproved",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the hand-off section never says %q, and a session left to work the approval out for itself is one that tries:\n%s", want, section)
+		}
+	}
+	// The op table says which ops those are, in the one column a session reads
+	// for it.
+	for _, op := range personOnlyOps {
+		row := opTableRow(t, ref, op)
+		if !strings.Contains(row, "a person only") {
+			t.Errorf("reference/state.md's row for %s does not say it is a person's alone:\n%s", op, row)
+		}
+	}
+	// And no fence in either file carries one: the skill teaches a session to
+	// write patches, so a patch document in a fence is one it would write.
+	scanned := 0
+	for _, f := range orchestratorSkillFiles(t) {
+		for _, u := range f.units {
+			if !u.inBlock {
+				continue
+			}
+			scanned++
+			if why := approvingOpViolation(u); why != "" {
+				t.Errorf("%s:%d: %s, and an approval is the person's own document:\n%s", f.path, u.line, why, u.text)
+			}
+		}
+	}
+	if scanned == 0 {
+		t.Error("neither file has a fenced block, so this check passed by reading nothing")
+	}
+	// A predicate that matched nothing would pass the loop above by saying
+	// nothing: this is the line it exists to catch.
+	if approvingOpViolation(unit{line: 1, inBlock: true, text: `    { "op": "plan_approve", "plan_approve": { "node": "demo" } }`}) == "" {
+		t.Error("the check does not catch a fence that carries an approval, so the pass above proves nothing")
+	}
+}
+
+// TestSkillSaysNothingClearsThePlanFactOnATick (R5, D2721): the
+// plan_in_flight fact is written once, as the daemon adopts the runs already in
+// flight (internal/orchestrator's Adopt), and no tick of the loop deletes a
+// fact — the only two ways one goes are the `fact_delete` op and the retention
+// trim that drops whatever key sorts last. A skill that told a session the
+// daemon clears it on its next tick would have the session read a standing
+// request as a spent one, and so leave a plan nobody imported.
+func TestSkillSaysNothingClearsThePlanFactOnATick(t *testing.T) {
+	files := map[string]string{
+		"plugin/skills/orchestrator/SKILL.md":           orchestratorSkill(t),
+		"plugin/skills/orchestrator/reference/state.md": orchestratorReference(t),
+	}
+	cleared := []string{
+		"cleared on the daemon's next tick",
+		"clears the fact on its next tick",
+		"imports once and moves on",
+	}
+	for path, body := range files {
+		for _, claim := range cleared {
+			if strings.Contains(body, claim) {
+				t.Errorf("%s says %q, and nothing clears the fact on a tick: it is written at adoption and stands until it is deleted", path, claim)
+			}
+		}
+		if !strings.Contains(body, "stands until somebody removes it") {
+			t.Errorf("%s never says the fact stands until somebody removes it, which is what a session finding it twice needs to know", path)
+		}
+		if !strings.Contains(body, "fact_delete") {
+			t.Errorf("%s does not name `fact_delete`, the op that removes a fact", path)
+		}
+	}
+}
+
+// opTableRow is one op's row of reference/state.md's op table, whole.
+func opTableRow(t *testing.T, body, op string) string {
+	t.Helper()
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "| `"+op+"` |") {
+			return line
+		}
+	}
+	t.Fatalf("reference/state.md's op table has no row for %q, and that table is where a session reads what it may send", op)
+	return ""
+}
+
 // orchestratorStateCmd is the released `fugaro orchestrator state` command,
 // so a test can read the promise the CLI makes for the flags the skill sends
 // a session to.

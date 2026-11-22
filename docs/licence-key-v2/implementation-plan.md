@@ -289,10 +289,12 @@ Reviewer tier is **standard** unless a task says `SECURITY`.
 ### Slice K7: notes and release
 
 - **K7.2 Supersede notes.** Files: `docs/licensing/implementation-plan.md`, `docs/subscriptions/implementation-plan.md`,
-  `docs/design/key-signing-service.md` (a dated "superseded by licence-key-v2" note where S2.1, S2.3, S2.4,
+  `docs/key-signing-service/spec.md` (a dated "superseded by licence-key-v2" note where S2.1, S2.3, S2.4,
   S3.1–S3.4 name the old claims). Depends on: none. Commit: `docs: licence key v2 supersedes the old key's claims`.
 
 - **K7.3 Remove the old key format.** Files: `ee/licence/key.go`, `store.go`, `key_test.go`, `testdata/vectors.json` (the old format: the verifier and its Go readers go, but **the fixture stays** -- the console's verifier of that format and the app's read it at module top level, so it leaves with those two readers and not with the Go verifier; `keyv1.go` renamed to the package's `Claims`/`Verify`). Tests: `go test ./ee/... -tags ee -count=1` compiles and passes with no reference to the old format. Depends on: K1.3, K2.1, K2.5, K3.1. Commit: `ee: the old licence key format is removed`. SECURITY.
+
+- **K7.4 The live-check scripts (added and approved by the owner, 2026-11-21).** The section "Checks this plan takes" says the owner types each script's one command, and no task above writes a script; the portal's P9.4 did this for Checks 570 to 575. Files: `scripts/live-checks/check560.sh` to `check564.sh` with a hermetic `_test.sh` beside each (new), `scripts/live_checks_test.go` (their registration), `docs/gcp-live-checklist.md` (a section per check). Each script refuses `fugaro-prod` unless `--production` is given, refuses an agent session, and asks nothing. **Before writing a script the task reads the check against what the portal replaced**: Check 561's admin page is the portal's operations screens (P5.3) and Check 562's sign-in is measured by the portal's Check 570, so a check the portal's 570 to 575 already perform is closed in the register with a dated note naming the check that replaced it, and gets no script. Command: `go test ./scripts/ -run TestLiveCheckScripts -count=1` and `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1`. Depends on: K2.3, K2.4, K2.5, K3.3, K4.1, K4.2 (all merged). Commit: `scripts: the licence key's live checks`. Running the checks stays owner-run, and Check 564 waits on the Paddle account (K5.2).
 
 ## Parallel execution
 
@@ -306,6 +308,7 @@ Edges are the "Depends on" lines.
 | 3 | K2.4, K3.2, K7.3 |
 | 4 | K3.3, K3.5, K4.1 |
 | 5 | K3.6, K4.2 (K6.1 dropped, 2026-11-16) |
+| 6 | K7.4 (added 2026-11-21) |
 | held | K3.4 (the owner's enforcement go, TN1), after level 3 |
 
 **Critical path:** K1.1 → K2.1 → K2.3 → K2.4 → K3.3 (five levels, since K6.1 was dropped on 2026-11-16; K2.3 → K3.2 → K3.5 → K3.6 is as long). The sequence K2.3 → K2.4 → K2.6 → K2.7 on
@@ -336,7 +339,8 @@ runtime is what the Terraform runs.
 | `ee/register/licence_renew.go` | K4.1 (4) |
 | `ee/register/licence_login.go`, `ee/licence/login/login.go` | K3.3 (4) |
 | `deploy/terraform/.../installation/licence.tf`, `variables.tf`, `deployer.tf`, `internal/cli/update_licence.go` | K4.2 (5) |
-| `docs/licensing/implementation-plan.md`, `docs/subscriptions/implementation-plan.md`, `docs/design/key-signing-service.md` | K7.2 (0) |
+| `docs/licensing/implementation-plan.md`, `docs/subscriptions/implementation-plan.md`, `docs/key-signing-service/spec.md` | K7.2 (0) |
+| `scripts/live-checks/check560.sh` … `check564.sh` and their `_test.sh`, `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md` (the 560–564 rows and their `## Check 56N` sections) | K7.4 (6) |
 
 No level holds two writers of one file. A change to any task's Files re-checks this table.
 

@@ -300,6 +300,12 @@ var metaAgent = []struct {
 		Group:       GroupRuns,
 		Type:        TypeBool,
 	}},
+	{"agent.workspace_beat", Meta{
+		Label:       "Workspace keep-warm beat",
+		Description: "Whether a run that uses its workspace's credentials service keeps it warm between calls.",
+		Group:       GroupRuns,
+		Type:        TypeBool,
+	}},
 
 	{"escalation.cost_ceiling", Meta{
 		Label:       "Escalation cost ceiling",

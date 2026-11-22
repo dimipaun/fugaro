@@ -5,7 +5,7 @@
 //
 // The read is the CLI's own enumeration of the installations this machine has
 // (`internal/cli/config_list.go`, which closes the v1 design's gap 5 — "nothing
-// enumerates installations", docs/design/desktop-console.md §4.3). The console
+// enumerates installations", docs/desktop-console/spec.md §4.3). The console
 // opens no config file itself (§3.4 rule 7): it spawns the one local read that
 // lists them and draws what it printed, so a document that is refused here is
 // refused rather than partly believed.
@@ -36,7 +36,7 @@
 //      either would hide the rows this read exists to draw. What is **not**
 //      tolerated is a length: a row past `MAX_DISCOVERED_INSTALLATIONS`
 //      checkouts is a refusal, because the picker draws one button per entry
-//      (`docs/design/console-styling.md` §2.2) and a shortened row is a screen
+//      (`docs/console-styling/spec.md` §2.2) and a shortened row is a screen
 //      that lies by omission.
 //   2. **Nothing in the document is a path the console will run.** A row's
 //      `checkouts` are offered back to the CLI verbatim when the operator picks
@@ -379,7 +379,7 @@ type CheckoutRows =
  *
  * **Past the bound it refuses the document, and does not return a short
  * array.** The picker draws one button per checkout this carries
- * (`docs/design/console-styling.md` §2.2), so a truncation here is a screen
+ * (`docs/console-styling/spec.md` §2.2), so a truncation here is a screen
  * showing fewer directories than the CLI printed with nothing said about the
  * ones that went -- the silent omission rule 3 forbids. The same goes for a
  * repository record: a launch that offered fewer repositories than the

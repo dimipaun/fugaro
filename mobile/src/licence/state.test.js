@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See mobile/LICENSE.md for the terms.
 // The app's lapse state (subscriptions plan S6.3; D436, T12, D523; the design
-// is docs/design/lapse-read-only.md, §1, §4.2 and §5).
+// is docs/lapse-read-only/spec.md, §1, §4.2 and §5).
 //
 // **What this file is about.** The verifier (`verify.js`) names three states of
 // a KEY -- `valid`, `grace`, `expired` -- and refuses everything else. What the

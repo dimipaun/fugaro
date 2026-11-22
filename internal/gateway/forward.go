@@ -793,9 +793,10 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 			// present its own identity on is a run the service cannot serve
 			// at all. The metadata server is the only place the job's ID
 			// token comes from and the run's own token is the only identity
-			// the service verifies it by, so this is a halt -- like an
-			// unreachable service -- rather than one 502 per call until the
-			// stage's deadline. Nothing was sent: nothing to charge.
+			// the service verifies it by, so this is a halt -- where an
+			// unreachable service is waited for first, this one no wait can
+			// fix -- rather than one 502 per call until the stage's deadline.
+			// Nothing was sent: nothing to charge.
 			s.haltService(w, stateDetailUnidentified)
 			return zeroOutcome(p.model, false), false
 		}
@@ -807,11 +808,13 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	}, p.model, rt.provider != nil && !rt.provider.Served)
 	if err != nil {
 		if s.serviceCall(rt) && s.serviceUnreachable(w, s.base, r.Context()) {
-			// C1.15 (service.go), D143: an unreachable credentials service
-			// halts the run -- it never falls back to a credential of the
-			// job's own, which this upstream has none of. Nothing reached
-			// the upstream: nothing to charge. Anything did: the service may
-			// have been generating, so the whole reservation.
+			// C1.15 (service.go), D2983: the call could not reach the
+			// credentials service. The run waits for it -- the answer written
+			// above ends the stage in flight -- and halts only once the bound
+			// is spent, and it never falls back to a credential of the job's
+			// own, which this upstream has none of. Nothing reached the
+			// upstream: nothing to charge. An attempt that may have reached
+			// the service may have been generating, so the whole reservation.
 			if !sent.Load() {
 				return zeroOutcome(p.model, false), lost
 			}
@@ -1011,15 +1014,17 @@ var upstreamRetryDelay = 250 * time.Millisecond
 //
 // A call a service upstream answers (C1.15, KindService) is not retried here:
 // the service retries its own calls across the credentials it holds, inside
-// the one answer it gives this gateway, and D143 makes an unreachable service
-// a halt rather than a call this gateway sends again. That is the service's
-// calls and not the upstream's kind: a route the job holds the key for sits
-// beside the same service upstream (R6, D1634), such a call is the provider's
-// own and no one else's, and it is retried here exactly as it is beside the
-// Anthropic upstream — direct says which of the two this call is, because only
-// the caller holds the route. A SERVED route is the service's own call and not
-// one of these (KS5, R1/R12): it went to the service's provider route, and the
-// retry above is the service's there too.
+// the one answer it gives this gateway, and a service that cannot be reached at
+// all is the run's wait rather than a call this gateway sends again (D2983,
+// service.go's serviceUnreachable: the stage in flight ends, the runner waits
+// for the bound and resumes it, and the call that meets the spent bound halts
+// the run). That is the service's calls and not the upstream's kind: a route
+// the job holds the key for sits beside the same service upstream (R6, D1634),
+// such a call is the provider's own and no one else's, and it is retried here
+// exactly as it is beside the Anthropic upstream — direct says which of the two
+// this call is, because only the caller holds the route. A SERVED route is the
+// service's own call and not one of these (KS5, R1/R12): it went to the
+// service's provider route, and the retry above is the service's there too.
 //
 // What the narrow form costs, stated: the first attempt may have reached an
 // upstream that then generated and answered nothing, and this gateway read no
@@ -1564,14 +1569,15 @@ var hopByHop = map[string]bool{
 // dropResponseHeaders never reach the agent: they identify the
 // organization behind the real key, or set state on the gateway's origin.
 //
-// The credentials service's answer headers are four more of them (C1.15,
+// The credentials service's answer headers are five more of them (C1.15,
 // service.go), and they are dropped for every upstream kind rather than only
 // under a service one: the tier is what C1.16 charges the call by, the name
-// is which of the project's credentials answered, the switch is which
-// credential a call moved between, and the probe is which tiers were tried.
-// The agent is the one party that must never learn the set of credentials its
-// project holds (D143), and every later upstream kind that answers with them
-// would have to remember this list.
+// is which of the project's credentials answered, the owner is whose token
+// that credential is (F16), the switch is which credential a call moved
+// between, and the probe is which tiers were tried. The agent is the one party
+// that must never learn the set of credentials its project holds (D143), and
+// every later upstream kind that answers with them would have to remember this
+// list.
 //
 // The workspace's headroom header is the fifth (W7, workspace_headroom.go),
 // and the figure it carries is the workspace's own — its month across all of
@@ -1591,7 +1597,7 @@ var hopByHop = map[string]bool{
 // agent with it.
 var dropResponseHeaders = map[string]bool{
 	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
-	HeaderTier: true, HeaderCredential: true, HeaderSwitch: true, HeaderProbe: true,
+	HeaderTier: true, HeaderCredential: true, HeaderCredentialOwner: true, HeaderSwitch: true, HeaderProbe: true,
 	WorkspaceHeadroomHeader: true, WorkspaceRefusalHeader: true,
 }
 
@@ -1941,10 +1947,12 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	resp, err := s.client.Do(up)
 	if err != nil {
 		if s.o.Upstream.Kind == KindService && s.serviceUnreachable(w, s.base, r.Context()) {
-			// C1.15 (service.go), D143: as a Messages call's, an unreachable
-			// service halts the run rather than being retried or fallen back
-			// from. A count holds no reservation, so there is nothing to
-			// settle either way.
+			// C1.15 (service.go), D2983: as a Messages call's, a count that
+			// could not reach the service is what ends the stage in flight and
+			// starts the run's wait, and the halt comes when the bound is
+			// spent. It is never retried here and never fallen back from. A
+			// count holds no reservation, so there is nothing to settle either
+			// way.
 			return
 		}
 		if r.Context().Err() == nil {

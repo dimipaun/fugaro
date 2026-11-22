@@ -477,7 +477,7 @@ func TestModelsLsShowsCatalogAgeAndSpread(t *testing.T) {
 	// cheapest end and there is an undercharge to size.
 	old := budgetNow
 	t.Cleanup(func() { budgetNow = old })
-	budgetNow = func() time.Time { return time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC) }
+	budgetNow = func() time.Time { return time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC) }
 
 	out, _, err := execute(t, "models", "ls")
 	if err != nil {
@@ -486,7 +486,7 @@ func TestModelsLsShowsCatalogAgeAndSpread(t *testing.T) {
 	if !strings.Contains(out, "provider price catalog:") {
 		t.Errorf("the read does not head the models with the catalog's own provenance:\n%s", out)
 	}
-	if !strings.Contains(out, "2026-10-23") {
+	if !strings.Contains(out, "2026-11-21") {
 		t.Errorf("the read does not show the catalog's checked date:\n%s", out)
 	}
 	if !strings.Contains(out, "3 days ago") {

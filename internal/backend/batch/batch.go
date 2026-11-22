@@ -1,5 +1,5 @@
 // Package batch implements the CLI's backend seam on Google Cloud Batch
-// (design docs/design/compute-backend.md): one Batch job per run, on Compute
+// (design docs/compute-backend/spec.md): one Batch job per run, on Compute
 // Engine VMs, for the workflows that need a real Docker daemon.
 //
 // An installation reaches it by writing `backend: cloud-batch`, which config
@@ -215,27 +215,32 @@ type Options struct {
 	// started. Task 7/8 resolve it per (slug, workflow); here it is one
 	// installation's.
 	Image string
-	// ServiceAccount is the email of the dedicated service account the job's
-	// VMs run as (design §3.2). New refuses an empty one and the default
-	// Compute Engine service account: that account is Editor, "not
-	// recommended for production", and shared with everything else in the
-	// project, so a run on it would hold far more than its own resources.
-	// It is the one account an installation's block carries today, which is
-	// why a launch refuses a workflow on a shared project job outright
-	// (account.go); **BR10 stops reading it** (D3103) once a workflow's
-	// account comes from the deployed job it belongs to, and JobAccounts
-	// below is what replaces it.
+	// ServiceAccount is the email of the dedicated service account an
+	// installation's block carries (design §3.2). New still refuses an empty
+	// one and the default Compute Engine service account: that account is
+	// Editor, "not recommended for production", and shared with everything
+	// else in the project, so a run on it would hold far more than its own
+	// resources. **No launch reads it for a job's identity any more** (BR10,
+	// D3103): a run's VMs run as the account of the deployed job it stands in
+	// for (account.go), and JobAccounts below is where those are named.
 	ServiceAccount string
 	// JobAccounts is the account each deployed job runs as, keyed by that
 	// job's own name -- gcp.JobName(slug, workflow) for a per-repository job,
 	// gcp.ProjectJobName(profile, provider, account) for a shared project
-	// job. **BR10 reads this and fills it in** (account.go): a Batch job's
-	// VMs run as the account of the deployed job the run stands in for, so a
-	// shared project job's workflow runs under that job's account rather than
-	// under the block's single one (D3103). Empty means no accounts are
-	// passed in, and a launch falls back to the block's own account -- which
-	// is every launch today, and which is why a project job is still refused
-	// rather than run as an identity the project's policy did not choose.
+	// job. **BR10 reads it** (account.go): a shared project job's name is
+	// written, never parsed (R2-5), so the (profile, provider, account) triple
+	// it hashes cannot be recovered and its account has to be named. A
+	// per-repository job's account is not in here: it is
+	// gcp.ServiceAccountID(slug, workflow) in this installation's project,
+	// which is what a launch derives when the job is not recorded (F11: the
+	// block's single account is not a job's to run under). **No caller fills
+	// it yet**, so a project job's launch is refused rather than run under the
+	// wrong identity (account.go): the launcher resolves which job a run lands
+	// on from the project's published policy, per launch, after this backend
+	// was opened -- so the account has to reach the launch through a field the
+	// launch carries, which is the contract change BR10 raises
+	// (`R-C1-project-job-account`). Empty costs a per-repository launch
+	// nothing, and it is the state every launch is in today.
 	JobAccounts map[string]string
 	// Secrets maps an environment variable name to a Secret Manager secret
 	// name -- never a value. Nothing is mounted from it (BR11, D3104): a Batch

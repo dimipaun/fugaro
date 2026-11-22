@@ -10,7 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 )
 
-// The project layer's cache (docs/design/layered-config.md §7, decision
+// The project layer's cache (docs/layered-config/spec.md §7, decision
 // L13): unlike the shared config's and the recipes', it is never "fresh".
 // Every command reads the bucket; the entry stands in only when the bucket
 // cannot be reached at all, for SharedOfflineFor.

@@ -262,6 +262,7 @@ orchestrator.decision_model_per_class	open:writer-unproven
 orchestrator_enabled	open:no-writer
 policy_generation	label:plumbing
 pools.conformance.allowed_users	open:writer-unproven
+pools.conformance.cascade	open:no-writer
 pools.conformance.legacy_open	open:no-writer
 pools.conformance.members	open:writer-unproven
 pools.conformance.name	open:writer-unproven

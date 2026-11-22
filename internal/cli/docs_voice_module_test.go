@@ -735,10 +735,10 @@ func TestDocsVoiceModuleReconciliationFindingsResolve(t *testing.T) {
 //
 // Three cited paths are deliberately NOT stat'ed, and they are not all
 // branch-only. docs/mobile/design/voice-evaluation-switch.md (PR #633, merged
-// as `80f2b7fa`) and docs/design/console-styling.md (PR #634, merged as
+// as `80f2b7fa`) and docs/console-styling/spec.md (PR #634, merged as
 // `721aa091`) are on `main` now, and this branch (based on `82ba600d`) predates
 // both, so neither file is in this tree and neither can be stat'ed. Only
-// docs/design/project-named-oauth-tokens.md (PR #584) is still branch-only. The
+// docs/project-named-oauth-tokens/spec.md (PR #584) is still branch-only. The
 // document says so in its own words and this test pins that disclosure -- one
 // path not on `main`, the other two "on `main` now" -- so a reader who finds
 // the link dead is told why rather than left to guess. That is the same
@@ -749,8 +749,8 @@ func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 	recon := readDoc(t, path)
 	for _, cited := range []string{
 		// The three documents this spec revises or depends on.
-		"docs/design/voice-spec.md",
-		"docs/design/voice.md",
+		"docs/voice/spec-source.md",
+		"docs/voice/spec.md",
 		"docs/credentials-service/",
 		// The phone work and its reconciliation.
 		"docs/mobile/README.md",
@@ -764,17 +764,17 @@ func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 		// second entry, so no path under the console directory may be written
 		// into this file at all, not even inside a comment. The contract's own
 		// existence is that test's business.
-		"docs/design/desktop-console.md",
-		"docs/design/desktop-console-v2.md",
+		"docs/desktop-console/spec.md",
+		"docs/desktop-console-v2/spec.md",
 		// The plan the earlier spec's reconciliation points at, and the register.
-		"docs/plans/2026-10-16-voice.md",
+		"docs/voice/implementation-plan.md",
 		"docs/gcp-live-checklist.md",
 		// The credentials-service documents the "security service" turns out to be.
 		"docs/credentials-service/spec.md",
 		// The credential machinery the minting precedent lives in.
-		"docs/design/named-oauth-tokens.md",
-		"docs/design/project-secrets.md",
-		"docs/design/m9-budget-and-dashboard.md",
+		"docs/named-oauth-tokens/spec.md",
+		"docs/project-secrets/spec.md",
+		"docs/m9-budget-and-dashboard/spec.md",
 		// The repository's own licence and security posture.
 		"SECURITY.md",
 		"LICENSE",
@@ -790,8 +790,8 @@ func TestDocsVoiceModuleReconciliationCitationsExist(t *testing.T) {
 		// branch-only after #633 and #634 merged, so the disclosure names one
 		// path as branch-only and the other two as on main now.
 		"../mobile/design/voice-evaluation-switch.md",
-		"../design/console-styling.md",
-		"../design/project-named-oauth-tokens.md",
+		"../console-styling/spec.md",
+		"../project-named-oauth-tokens/spec.md",
 		"**One path cited below is not on `main` and its link will not resolve until its pull request merges**",
 		"**on `main` now**",
 	} {
@@ -884,17 +884,17 @@ var voiceModuleQuotations = []voiceModuleQuotation{
 	},
 	// #29: --project-wide's sentence is the comment on secretsOptions.projectWide
 	// in the CLI, which is where a reader looking for the flag finds it. The
-	// document cited docs/design/project-secrets.md section 4, which does not
+	// document cited docs/project-secrets/spec.md section 4, which does not
 	// carry this sentence.
 	{
-		"stores or lists the secret once per Fugaro project rather than per repository (design docs/design/project-secrets.md §4)",
+		"stores or lists the secret once per Fugaro project rather than per repository (design docs/project-secrets/spec.md §4)",
 		"internal/cli/secrets.go",
 	},
 	// #29: the reader rule is in that design's "Who reads" paragraph, not in
 	// its section 4 -- the same design file, a different place in it.
 	{
 		"Only a job's own service account, granted `secretAccessor` **per secret, per job**, exactly as today",
-		"docs/design/project-secrets.md",
+		"docs/project-secrets/spec.md",
 	},
 	// #27: the schema's size bound and the redaction promise, in the README's
 	// own words.
@@ -917,7 +917,7 @@ var voiceModuleQuotations = []voiceModuleQuotation{
 	// "only if U7 finds it can surface a prompt" is not the sentence.
 	{
 		"only if U7 finds that a callback can surface a prompt the app can show and wait on",
-		"docs/design/voice.md",
+		"docs/voice/spec.md",
 	},
 	// #4 and #20: two finding titles that quoted the spec's Goal and its
 	// pipeline box in words the spec does not use.
@@ -1040,7 +1040,7 @@ func TestDocsVoiceModuleReconciliationQuotesAreVerbatim(t *testing.T) {
 	// that actually carries the claim.
 	for _, want := range []string{
 		"the flag's own comment on `secretsOptions.projectWide`, in that file",
-		`the reader rule from ` + "`docs/design/project-secrets.md`" + `'s "Who reads" paragraph`,
+		`the reader rule from ` + "`docs/project-secrets/spec.md`" + `'s "Who reads" paragraph`,
 		"**D148** is the decision that corrects it",
 		"**D130** answers a different question",
 		"`voice.md` **F12** (the middle box is not a Fugaro service)",
@@ -1375,7 +1375,7 @@ func TestDocsVoiceModuleReconciliationReadsTheDesignAtItsMergeCommit(t *testing.
 // ("; on `main` (`f67753f9`) now holds questions ...", the subject is
 // `shared/prompts`), a noun with the notation glued to its preposition ("the
 // voice allow-list of on `main` (`80f2b7fa`)"), and a sentence opened with the
-// article that used to follow a comma ("the `docs/design/console-styling.md`
+// article that used to follow a comma ("the `docs/console-styling/spec.md`
 // now on `main` (`721aa091`)"). Each is pinned here as the corrected sentence,
 // and the two shapes that gave them away are banned outright, so the next pass
 // of the same replacement cannot reintroduce them quietly.
@@ -1385,7 +1385,7 @@ func TestDocsVoiceModuleReconciliationHasNoNotationSubstitutionSlips(t *testing.
 	for _, want := range []string{
 		"`shared/prompts` on `main` (`f67753f9`) now holds questions **inside a local queue**",
 		"the voice allow-list of the design on `main` (`80f2b7fa`), extended to name the summariser's endpoint",
-		"The `docs/design/console-styling.md` now on `main` (`721aa091`) states the situation in §1.1",
+		"The `docs/console-styling/spec.md` now on `main` (`721aa091`) states the situation in §1.1",
 	} {
 		if !strings.Contains(recon, want) {
 			t.Errorf("%s lacks %q: the sentence this notation pass left broken, as it reads once repaired", path, want)
@@ -1705,7 +1705,7 @@ func TestDocsVoiceModuleReconciliationDoesNotCreditThisPRWithTheConsoleHelper(t 
 }
 
 // voiceModuleDesignBlock returns the block a "**F32 — ...**" heading opens in
-// docs/design/voice.md: the heading line and its body, up to the next bold
+// docs/voice/spec.md: the heading line and its body, up to the next bold
 // heading or section heading. An empty string means the heading is gone.
 func voiceModuleDesignBlock(doc string, name string) string {
 	i := strings.Index(doc, "**"+name+" — ")
@@ -1723,7 +1723,7 @@ func voiceModuleDesignBlock(doc string, name string) string {
 
 // TestDocsVoiceModuleReconciliationAttributesTheSynthesisedFixturesRule: a
 // cloud review found the phrase "synthesised, not captured" credited to
-// voice.md's F32 in five places. It is not F32's sentence. In docs/design/voice.md
+// voice.md's F32 in five places. It is not F32's sentence. In docs/voice/spec.md
 // the phrase appears once, in D52's recommendation cell, and that cell cites F32
 // as the reason a recording is excluded; F32 is the finding that anything
 // recorded needs a redaction check because a recording of a person's voice is
@@ -1732,7 +1732,7 @@ func voiceModuleDesignBlock(doc string, name string) string {
 func TestDocsVoiceModuleReconciliationAttributesTheSynthesisedFixturesRule(t *testing.T) {
 	const path = "docs/voice-module/reconciliation.md"
 	recon := readDoc(t, path)
-	const voicePath = "docs/design/voice.md"
+	const voicePath = "docs/voice/spec.md"
 	voice := readDoc(t, voicePath)
 	// The source first: D52's cell carries the phrase and F32's block carries
 	// the exclusion the phrase rests on. If either moves, the document's
@@ -2133,7 +2133,7 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 // (70) Writing "**Three paths cited below are not on `main`**" back into
 // section 0 fails TestDocsVoiceModuleReconciliationCitationsExist: only
 // project-named-oauth-tokens.md (⊂ PR #584) is branch-only now.
-// (71) Dropping the reason clause from docs/design/voice.md's D52 cell
+// (71) Dropping the reason clause from docs/voice/spec.md's D52 cell
 // ("... **synthesised, not captured**, because a recording of a person's voice
 // is new stored material no redactor covers (F32)") fails the same test from the
 // source side, which is why it reads voice.md rather than trusting the
@@ -2164,7 +2164,7 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 // (`80f2b7fa`)") fails it on the banned " voice allow-list of on `main` (" and
 // on the missing repaired sentence.
 // (92) Lower-casing the article the substitution stranded ("The
-// `docs/design/console-styling.md` now on `main` (`721aa091`) states" -> "the
+// `docs/console-styling/spec.md` now on `main` (`721aa091`) states" -> "the
 // ...") fails it: a line that opens with a lower-case letter and carries the
 // notation used to be the tail of another sentence.
 // And fourteen that pin the quotations and the stale-question claims of the
@@ -2270,8 +2270,8 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 // spec.md's pipeline says "orchestrator/LLM", with no article and lower case.
 // (44) Replacing #29's corrected citation ("the flag's own comment on
 // `secretsOptions.projectWide`, in that file") with the old
-// `docs/design/project-secrets.md` §4 fails it.
-// (45) Shortening "the reader rule from `docs/design/project-secrets.md`'s "Who
+// `docs/project-secrets/spec.md` §4 fails it.
+// (45) Shortening "the reader rule from `docs/project-secrets/spec.md`'s "Who
 // reads" paragraph" back to "the reader rule" fails it: the design's §4 is the
 // storage decision, and the rule is in the paragraph named.
 // (46) Pointing the gateway quotation at `internal/agent/env.go` instead of
@@ -2430,6 +2430,6 @@ func TestDocsVoiceModuleMutationLogIsSelfConsistent(t *testing.T) {
 // reconciliation.md's last owner question, "### Q13 —" to "### Q14 —", fails
 // TestDocsVoiceModuleReconciliationAllocatesNoDecisions twice -- Q13 missing,
 // Q14 present.
-// (3) Renaming docs/design/voice.md on disk fails
+// (3) Renaming docs/voice/spec.md on disk fails
 // TestDocsVoiceModuleReconciliationCitationsExist with `cites
-// "docs/design/voice.md", which does not exist at this commit`.
+// "docs/voice/spec.md", which does not exist at this commit`.

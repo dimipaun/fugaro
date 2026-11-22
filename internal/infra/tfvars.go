@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -93,7 +94,7 @@ type InstallOptions struct {
 	// read from the project's creation fact (init's installRoot) — so the
 	// key follows the installation and not the run. What it does not settle
 	// is whether the fence works: Check 68 has not been run
-	// (deployer.tf's header, docs/design/managed-deployer-fence.md).
+	// (deployer.tf's header, docs/managed-deployer-fence/spec.md).
 	ManagedDeployerScoped bool
 	// Coordinator is the owner's opt-in to the coordinator's aggregation job
 	// (P5, D194): with BudgetBackend, the installation declares the
@@ -192,6 +193,14 @@ type InstallationSpec struct {
 	AdoptLegacyRegistry     bool            `json:"adopt_legacy_registry"`
 	// LogBucketDescription is the log bucket's ownership mark.
 	LogBucketDescription string `json:"log_bucket_description"`
+	// LogBucketLocation is where the run log bucket is. Installation() writes
+	// the mapping's answer (place.For), which is what a NEW installation's
+	// bucket is created in; DiscoverInstallation gives it the location it read
+	// for a bucket that exists, because a bucket's location is permanent and
+	// nothing that exists is ever given the mapping's answer (R5, F10). The
+	// module ignores the field on a bucket it manages, so the value a plan
+	// carries can never move one.
+	LogBucketLocation string `json:"log_bucket_location"`
 	// LogIsolation is nil for the module's default, which is on; only
 	// --no-log-isolation and the rollback turn it off.
 	LogIsolation *bool `json:"log_isolation,omitempty"`
@@ -222,7 +231,7 @@ type InstallationSpec struct {
 	// ProjectSecrets are the installation module's project-wide secret
 	// containers (logical name -> gcp.ProjectSecretID), which fugaro update
 	// creates or adopts; their values are never set by Terraform (design
-	// docs/design/project-secrets.md §4). Installation() fills it from the
+	// docs/project-secrets/spec.md §4). Installation() fills it from the
 	// local config's eligibility; DiscoverInstallation then unions in every
 	// correctly-labelled container that already exists, so a config edit
 	// can never shrink the module's for_each (N3).
@@ -670,18 +679,36 @@ func CredentialsInstallationFacts(lc *localcfg.Config) error {
 // whose table binds no run to a repository are installations the service
 // cannot be deployed into (its own Authenticator refuses a table of none).
 func credentialsInstallation(lc *localcfg.Config) (*localcfg.Budget, []CredentialsJob, error) {
-	b := lc.Budget
-	if b == nil || b.FirebaseProject == "" || b.RTDBURL == "" {
-		return nil, nil, userErr("the credentials service reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro update --firebase-project <gcp-project-id>' first, which writes both from the Firebase root's outputs", lc.Name)
-	}
-	if err := rtdb.ValidateURL(b.RTDBURL, true); err != nil {
-		return nil, nil, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro update --firebase-project <gcp-project-id>' to write it from the Firebase root's outputs")
+	b, err := firebaseBackend(lc, "the credentials service")
+	if err != nil {
+		return nil, nil, err
 	}
 	jobs, err := CredentialsJobAccounts(lc)
 	if err != nil {
 		return nil, nil, err
 	}
 	return b, jobs, nil
+}
+
+// firebaseBackend is the Firebase project and database an installation's own
+// cloud services read, and the two refusals a project that names neither gets.
+// what names the thing asking, so the sentence an owner reads is about what
+// they turned on: the credentials service reads the installation's own
+// database (Credentials), and so does the resident orchestrator
+// (infra.Orchestrator in orchestrator.go).
+//
+// The database's URL must be a Realtime Database URL: both readers build a
+// client for it before they serve anything, so an installation whose config
+// names a host that is not one is an installation whose service never comes up.
+func firebaseBackend(lc *localcfg.Config, what string) (*localcfg.Budget, error) {
+	b := lc.Budget
+	if b == nil || b.FirebaseProject == "" || b.RTDBURL == "" {
+		return nil, userErr("%s reads the installation's Firebase database, and project %s's config names no Firebase project and database (budget.firebase_project and budget.rtdb_url): run 'fugaro update --firebase-project <gcp-project-id>' first, which writes both from the Firebase root's outputs", what, lc.Name)
+	}
+	if err := rtdb.ValidateURL(b.RTDBURL, true); err != nil {
+		return nil, userErr("budget.rtdb_url is not a Firebase Realtime Database URL: it must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app, with no credentials, path, query or fragment (a loopback address, which is the emulator, is admitted here). Run 'fugaro update --firebase-project <gcp-project-id>' to write it from the Firebase root's outputs")
+	}
+	return b, nil
 }
 
 // verifierAccountsField spells an effective verifier list as the three-state
@@ -1889,34 +1916,43 @@ func CarriedManagedDeployerScoped(vars, prev []byte) ([]byte, error) {
 const OrchestratorKey = "orchestrator"
 
 // CarriedOrchestrator returns vars with the orchestrator block the document prev
-// carried, when vars carry none of their own: prepare's fifth carry, beside the
-// credentials service's, the intake's, the implicit review job's and the
-// deployer's scope.
+// carried: prepare's fifth carry, beside the credentials service's, the intake's,
+// the implicit review job's and the deployer's scope.
 //
 // The block is the design's section 4.3 table and nothing else — the account
 // fugaro-orch, the launcher's project role, the runs bucket's conditioned write
 // and its unconditioned read, the token-minter role on the budget signer ACCOUNT
 // and the job runner's role on each of the installation's jobs — and the
-// installation holds it as STATE. No writer in this tree composes it: the
-// variable has no CLI writer yet (infra.OrchestratorAccountID says so), so the
-// one installation that has the block is one whose owner put it in
-// terraform.tfvars.json by hand. Every path that re-serializes the root's tfvars
-// rebuilds the document from a spec that does not carry the key, so without this
-// carry the next `fugaro update` hands Terraform a document with no orchestrator
-// block at all, and the plan is the account's and its bindings' removal — a
-// google_service_account, which D1551 classifies as data-bearing ("an identity
-// whose keys and grants are lost with it") and the removal rule therefore
-// REFUSES (internal/infra/tf's RefusesRemovalType). An installation that opted
-// in by hand stops converging at its next update, and every update after it
+// installation holds it as STATE. The ONE writer is `fugaro update
+// --firebase-project <id> --orchestrator` (internal/cli's
+// ensureOrchestratorBlock, through infra.Orchestrator and SetOrchestrator), and
+// it writes the block only where the installation holds none: from the apply
+// that creates the account onwards every path that re-serializes the root's
+// tfvars rebuilds the document from a spec that does not carry the key, so
+// without this carry the next `fugaro update` hands Terraform a document with no
+// orchestrator block at all, and the plan is the account's and its bindings'
+// removal — a google_service_account, which D1551 classifies as data-bearing
+// ("an identity whose keys and grants are lost with it") and the removal rule
+// therefore REFUSES (internal/infra/tf's RefusesRemovalType). An installation
+// that opted in stops converging at its next update, and every update after it
 // repeats the same refusal.
 //
 // The block is taken WHOLE and not recomposed: it is the installation's own
 // record of what it opted into, and a run that rebuilt it from a spec would be a
-// run re-deciding the account's grants. It is carried as it is found, present or
-// absent, so an installation that never opted in is unchanged rather than given
-// a block by a run that decided nothing; and a document that carries the key of
-// its own stands, which is where the release that adds the writer will put the
-// caller's own answer.
+// run re-deciding the account's grants (the service and the tick are force-new
+// names, and the pairing container carries prevent_destroy). It is carried as it
+// is found, present or absent, so an installation that never opted in is
+// unchanged rather than given a block by a run that decided nothing.
+//
+// The block from prev WINS over one vars already carry, and that is not a
+// detail: prev is each document of the pair below in turn, so the LAST one read
+// is the tfvars the workdir holds NOW — where the run's own writers put what
+// they write, the opt-in's block and the image the credentials-service stage
+// re-pinned inside it — and a carry that kept the snapshot's answer would let
+// the older document, the one from before the run, revert both. CarriedIntake
+// and carriedCredentialsService take the previous document's block the same way,
+// for the same reason (init.go's prepare says which two documents they are, in
+// which order).
 //
 // prev is the same pair of documents the carries beside it take —
 // infra.Workdir.PrevVars, the snapshot from before the run, and the tfvars the
@@ -1939,9 +1975,6 @@ func CarriedOrchestrator(vars, prev []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
-	if _, own := doc[OrchestratorKey]; own {
-		return vars, nil // the caller's own answer stands
-	}
 	doc[OrchestratorKey] = block
 	return sortedJSON(doc)
 }
@@ -1953,12 +1986,13 @@ func CarriedOrchestrator(vars, prev []byte) ([]byte, error) {
 // It is the reader of the same switch the module's own root reads — var.
 // orchestrator is null by default and orchestrator.tf creates NOTHING when it
 // is (its local.orchestrator_on) — and it exists because the block's presence
-// is a fact about the INSTALLATION and not about a run's spec: nothing in this
-// tree composes the block (CarriedOrchestrator says why), so the one
-// installation that holds it is one whose owner put it there, and everything
-// the account is — the account itself, its five bindings, the caller class
-// credentials.tf renders and the invoker grant orchestrator.tf adds — exists on
-// exactly the installations this answers true for.
+// is a fact about the INSTALLATION and not about a run's spec: the block is
+// written once (CarriedOrchestrator names the writer), so everything the account
+// is — the account itself, its five bindings, the caller class credentials.tf
+// renders and the invoker grant orchestrator.tf adds — exists on exactly the
+// installations this answers true for. The writer asks it before it writes, and
+// the credentials-service stage asks it before it re-pins an image: an
+// installation that has not opted in is one no run hands an orchestrator.
 //
 // A key present as null is NOT recorded. VoiceServiceRecorded answers the other
 // way for the same shape, because the question there is whether a run may
@@ -2164,7 +2198,13 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		Budget:               o.Budget,
 		AdoptLegacyRegistry:  o.AdoptLegacyRegistry,
 		LogBucketDescription: LogBucketDescription,
-		ProjectSecrets:       projectSecretContainers(lc),
+		// The mapping's answer for this region: the region itself where Cloud
+		// Logging offers a bucket there, else the place's multi-region, else
+		// global with the reason stated (D3082). It is what a log bucket
+		// CREATED from now on is in; discovery replaces it with where an
+		// installation's own bucket already is.
+		LogBucketLocation: place.For(lc.Region).LogBucket.Where,
+		ProjectSecrets:    projectSecretContainers(lc),
 	}
 	jobs, err := projectJobs(lc, bucket, s.EnableVertex, o.CarriedJobProfiles)
 	if err != nil {
@@ -2256,7 +2296,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 }
 
 // projectSecretContainers are the project-wide secret containers the local
-// config makes eligible (design docs/design/project-secrets.md §4): every
+// config makes eligible (design docs/project-secrets/spec.md §4): every
 // project_secrets entry with a non-empty allow_data_to, every provider's own
 // key unconditionally (§3a: a provider's key is eligible for project storage
 // whether or not its allow_data_to list exists, and an absent list is a

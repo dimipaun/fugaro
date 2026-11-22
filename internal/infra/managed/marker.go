@@ -2,7 +2,7 @@
 // object the run that created the project writes at the root of the runs
 // bucket, and (the task after this one) the read that fails closed over it.
 // The object is the authority for whether confirmations may be skipped
-// (docs/design/managed-projects.md, decisions D56 and D57), so no
+// (docs/managed-projects/spec.md, decisions D56 and D57), so no
 // credential a run holds may have a write path to it — the shape of that,
 // and the tests that assert it, are in this file's WriteMarker and its
 // test.
@@ -610,7 +610,7 @@ func writeManagedLabel(ctx context.Context, c *crm.Service, project, who string)
 }
 
 // WriteFlag records the owner's statement that an EXISTING project is
-// managed (docs/design/managed-projects.md, D58; the plan's Task 6.1) — the
+// managed (docs/managed-projects/spec.md, D58; the plan's Task 6.1) — the
 // second way a project becomes managed, and the only one that does not need
 // a creation.
 //
@@ -956,6 +956,131 @@ func convergeMarker(ctx context.Context, s *storage.Service, bucket, project str
 		return false, err
 	}
 	return true, nil
+}
+
+// RewriteBudget replaces the monthly amount and the currency a managed
+// project's marker already records, conditioned on the generation this call
+// read, and answers with the figures it replaced (D2215,
+// docs/managed-flag-ergonomics).
+//
+// It is the one way a recorded amount changes, and it is needed because the
+// amount became writable with a default: every creating run and `fugaro
+// managed flag` record a figure when the owner states none (D2212,
+// DefaultBudgetAmount), so a project can be recording a number nobody chose,
+// and without this write that project could never be given the owner's real
+// one — WriteFlag adds a budget to a fact that records none and refuses every
+// other object (F7). Two rules keep D64's intent — the amount is evidence a
+// budget was chosen — standing: only an EXPLICIT --budget reaches this write,
+// and it is never silent. The caller prints the figures this call answers
+// with, so what a person reads is the old amount and the new one rather than
+// a number that quietly changed; deciding when to call is the callers' rule
+// and not this function's (the two fenced call sites, T3 and T4).
+//
+// What it may write over is this project's marker of a version that records
+// an amount: 2, 3 and 4 (F15 — installations carry all three, and
+// ConvergeMarker leaves a version-2 fact exactly where it is). Everything the
+// marker's own shape says about the object is checked here before the write,
+// because a rewrite conditioned on an object the caller did not understand is
+// the write this package refuses, and for the same reason ConvergeMarker
+// refuses one: a marker this build's managed read refuses WHOLE — a bad
+// amount, a version-3 object whose count is outside its rule — is refused
+// rather than rewritten. Rewriting it as a fact the read accepts would turn a
+// refused marker into an accepted one and open the gate that read keeps
+// closed on the installation, which is a widening no rewrite may make on its
+// own; refusing the version-1 creation fact is the other half of the same
+// rule, and that object is WriteFlag's, because the amount it is missing is
+// what this write would have to carry.
+//
+// The write is version MarkerVersionNoBuilds with the new figures and nothing
+// else of the object changed — the same two fields and the same version 4 the
+// creation fact has carried since the count went (A3, MarkerVersionNoBuilds)
+// — and it is conditioned on the generation this call read (insertMarker), so
+// a writer that got there first is never clobbered: it comes back as
+// ErrAlreadyMarked, and what is there is its object rather than this call's.
+//
+// Equal figures write nothing at all, and that is not an optimisation: it is
+// what makes the rewrite safe to reach on every update that was given a
+// --budget, and it is why no caller has to compare the figures to decide.
+// A version-3 fact whose amount is already the one asked for is left to
+// ConvergeMarker, whose job that version is.
+func RewriteBudget(ctx context.Context, s *storage.Service, bucket, project string, number uint64, budget Budget) (old Budget, err error) {
+	old, err = rewriteBudget(ctx, s, bucket, project, number, budget)
+	return old, safetext.FieldErr(err)
+}
+
+func rewriteBudget(ctx context.Context, s *storage.Service, bucket, project string, number uint64, budget Budget) (old Budget, err error) {
+	switch {
+	case bucket == "" || number == 0:
+		return old, refusedf("to rewrite the budget recorded in %s for %s: no runs bucket, or no project number to check it against", MarkerObject, project)
+	case s == nil:
+		return old, refusedf("to rewrite the budget recorded in %s for %s: no storage client", MarkerObject, project)
+	}
+	// Before the bucket is read, as in WriteFlag and for the same reason: the
+	// budget the caller states is judged by the marker's own rule before any
+	// API call, so a pair that is not one writes nothing and reads nothing.
+	if err := budget.Check(); err != nil {
+		return old, refusedf("to rewrite the budget recorded in %s for %s: the budget the rewrite would record is not one a managed creation's: %v", MarkerObject, project, err)
+	}
+	if err := proveRunsBucket(ctx, s, bucket, project, MarkerObject, number); err != nil {
+		return old, err
+	}
+	data, gen, ok, err := markerAt(ctx, s, bucket, project)
+	if err != nil {
+		return old, err
+	}
+	if !ok {
+		// Nothing to rewrite, and writing one would not be a rewrite: the fact
+		// a project with no object at this key is missing is the creation
+		// fact, which is WriteFlag's and is gated on the owner's own command.
+		return old, refusedf("to rewrite the budget recorded in gs://%s/%s for %s: it is not there, so nothing records an amount to replace — `fugaro managed flag`, run by its owner at their own terminal, is what records one", bucket, MarkerObject, project)
+	}
+	m, perr := parseMarker(data, bucket, project)
+	if perr != nil {
+		return old, refusedf("to rewrite the budget recorded in gs://%s/%s for %s: %v", bucket, MarkerObject, project, perr)
+	}
+	// The project it names first, as every reader here judges it: an object
+	// about another project is that, whatever else is wrong with it, and is
+	// never rewritten as this project's.
+	if m.GCPProject != project {
+		return old, refusedf("to rewrite the budget recorded in gs://%s/%s: it names project %s, not %s", bucket, MarkerObject, safetext.Field(m.GCPProject), safetext.Field(project))
+	}
+	switch {
+	case m.Version == MarkerVersion:
+		return old, refusedf("to rewrite the budget recorded in gs://%s/%s for %s: it is the version-%d creation fact, which records no amount, and the write that replaces that one is `fugaro managed flag`, run by its owner at their own terminal", bucket, MarkerObject, project, MarkerVersion)
+	case !recordsBudget(m.Version):
+		return old, refusedf("to rewrite the budget recorded in gs://%s/%s for %s: it is a version %d marker, and this build knows versions %d, %d, %d and %d, so it is not an object this build may write a fact over", bucket, MarkerObject, project, m.Version, MarkerVersion, MarkerVersionBudget, MarkerVersionBuilds, MarkerVersionNoBuilds)
+	}
+	if m.Budget == nil {
+		return old, refusedf("to rewrite the budget recorded in gs://%s/%s for %s: it is version %d and records no budget amount, so it is not a fact this build wrote — read it with `gcloud storage cat` and write the fact the owner means", bucket, MarkerObject, project, m.Version)
+	}
+	if err := m.Budget.Check(); err != nil {
+		return old, refusedf("to rewrite the budget recorded in gs://%s/%s for %s: the amount it records is one this build refuses (%v), so the marker is one the managed read refuses whole and rewriting it as one that read accepts would open a gate on this project rather than carry a figure — read it with `gcloud storage cat` and write the fact the owner means", bucket, MarkerObject, project, err)
+	}
+	if m.Version == MarkerVersionBuilds {
+		if err := CheckImageBuilds(m.MaxImageBuilds); err != nil {
+			return old, refusedf("to rewrite the budget recorded in gs://%s/%s for %s: it is version %d and records an image build bound this build refuses (%v), so the marker is one the managed read refuses whole and rewriting it as one that read accepts would open a gate on this project rather than carry a figure — read it with `gcloud storage cat` and write the fact the owner means", bucket, MarkerObject, project, MarkerVersionBuilds, err)
+		}
+	}
+	old = *m.Budget
+	if old == budget {
+		return old, nil
+	}
+	rewritten := Marker{Version: MarkerVersionNoBuilds, GCPProject: project, Budget: &budget}
+	out, err := rewritten.Bytes()
+	if err != nil {
+		return old, err
+	}
+	if err := insertMarker(ctx, s, bucket, gen, out); err != nil {
+		if errors.Is(err, ErrAlreadyMarked) {
+			// The object changed between the read above and this write, so
+			// what the figures above were read from is not what is there, and
+			// the amount this call replaced is nobody's: the caller prints the
+			// refusal rather than a rewrite it did not make.
+			return old, fmt.Errorf("%w: gs://%s/%s was written by someone else between this command's read and its write, so the amount recorded there is that writer's and none of it was replaced", ErrAlreadyMarked, bucket, MarkerObject)
+		}
+		return old, err
+	}
+	return old, nil
 }
 
 // RemoveMarker removes the creation fact from a project's runs bucket: the

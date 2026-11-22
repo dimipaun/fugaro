@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 )
 
 // The Firebase side's singletons, in the Firebase project (the FP) and in
@@ -229,10 +230,19 @@ func CoordinatorRepos(lc *localcfg.Config) []CoordinatorRepo {
 // FirebaseSpec is the Firebase root's tfvars: exactly its variables.
 type FirebaseSpec struct {
 	// Project is the Firebase project's ID (the FP).
-	Project       string        `json:"project"`
-	FugaroProject string        `json:"fugaro_project"`
-	Names         FirebaseNames `json:"names"`
-	ManageAPIs    bool          `json:"manage_apis"`
+	Project string `json:"project"`
+	// DatabaseRegion is the location a NEW Realtime Database instance is
+	// created in: the mapping's answer for the installation's own region
+	// (place.For(inst.Region).RealtimeDatabase, D3089), which is us-central1
+	// for a US installation as D4 chose and one of Google's three Realtime
+	// Database locations for every other. It is NOT read for an instance that
+	// already exists — the module ignores the field, and discovery imports the
+	// instance at the location it really is in (D3091, F8) — which is why the
+	// rule that gives it a value lives here and not at the plan.
+	DatabaseRegion string        `json:"database_region"`
+	FugaroProject  string        `json:"fugaro_project"`
+	Names          FirebaseNames `json:"names"`
+	ManageAPIs     bool          `json:"manage_apis"`
 	// Launchers and Operators mint run tokens and read the database;
 	// Admins (the GCP project's owners and editors) and BudgetAdmins write
 	// it. The history account is the sweeper's, which holds its own roles.
@@ -338,7 +348,16 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 		}
 	}
 	s := FirebaseSpec{
-		Project:            in.FP,
+		Project: in.FP,
+		// The installation's own region decides where a new budget database
+		// goes, through the product's table rather than a rule of this file's
+		// (docs/location-preference/reconciliation.md, "The mapping"): Google
+		// offers the Realtime Database in three locations for the whole world,
+		// so the region itself is the answer only for the three that are one of
+		// them. The region a run in flight has is whatever its installation was
+		// created with, and an installation whose region is under europe-west1
+		// gets europe-west1 here.
+		DatabaseRegion:     place.For(inst.Region).RealtimeDatabase.Where,
 		FugaroProject:      inst.FugaroProject,
 		Names:              FirebaseNames{SignerAccountID: SignerAccountID, MinterRoleID: MinterRoleID, APIKey: APIKeyID},
 		ManageAPIs:         inst.ManageAPIs,
@@ -604,6 +623,53 @@ func DatabaseURLs(ctx context.Context, c *Clients, fp string) ([]string, error) 
 		return nil, fmt.Errorf("listing project %s's databases: %w", fp, err)
 	}
 	return urls, nil
+}
+
+// DatabaseCreatorPermissions are the project's own IAM changes the Firebase
+// root makes: it creates the token signer's custom role and the account that
+// wears it, and it grants the role to it (modules/firebase/iam.tf). They are
+// what the caller of a run that would CREATE the budget database is asked for
+// (R2): a person who holds them can make the project's IAM changes and the
+// stage may go ahead, and one who does not gets the stage's one line naming a
+// project owner instead of a failed apply halfway through the root.
+//
+// The list is the permissions and not a role: roles/editor holds none of the
+// project's policy write, and whether an operator's roles suffice is exactly
+// the question (U1, AB7's probe). roles/owner holds all four.
+var DatabaseCreatorPermissions = []string{
+	"resourcemanager.projects.getIamPolicy",
+	"resourcemanager.projects.setIamPolicy",
+	"iam.roles.create",
+	"iam.serviceAccounts.create",
+}
+
+// CanMakeIAMChanges reports whether the caller holds every permission the
+// Firebase root's own IAM changes need on project fp. It reads the caller's
+// OWN permissions (projects.testIamPermissions) and never the project's policy,
+// which is the API's own division: the policy says who may do what, and this
+// says what this credential, here, may.
+//
+// A project the caller cannot read at all is an error rather than a no: the two
+// are different answers, and the caller is the one that knows which of them its
+// own line names.
+func CanMakeIAMChanges(ctx context.Context, c *Clients, fp string) (bool, error) {
+	if c.CRM == nil {
+		return false, errors.New("no Resource Manager client (endpoints.cloud_resource_manager is not set)")
+	}
+	res, err := c.CRM.Projects.TestIamPermissions(fp, &crm.TestIamPermissionsRequest{Permissions: DatabaseCreatorPermissions}).Context(ctx).Do()
+	if err != nil {
+		return false, fmt.Errorf("testing your permissions on project %s: %w", fp, err)
+	}
+	held := map[string]bool{}
+	for _, p := range res.Permissions {
+		held[p] = true
+	}
+	for _, p := range DatabaseCreatorPermissions {
+		if !held[p] {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // ErrNoFirebaseOutputs means the Firebase root's state holds no outputs.

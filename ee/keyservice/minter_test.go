@@ -4,7 +4,7 @@
 package keyservice
 
 // The minter and the wire the intake reaches it over (subscriptions plan S3.2;
-// the design docs/design/key-signing-service.md §2, §3.2). The two facts these
+// the design docs/key-signing-service/spec.md §2, §3.2). The two facts these
 // tests hold are the ones no other task states: the minter dates every key
 // itself, and its ceiling is the verifier's ceiling.
 

@@ -435,6 +435,9 @@
         "agent.triage": {
           "default": "unset = on (startup and pro only, config.TriageMode)"
         },
+        "agent.workspace_beat": {
+          "default": "true"
+        },
         "backend": {
           "default": "unset = cloud-run"
         },
@@ -1102,6 +1105,9 @@
         "layer.defaults.agent.review_stop_fraction": {
           "default": "unset = 0.8 (config.DefaultReviewStopFraction)"
         },
+        "layer.defaults.agent.workspace_beat": {
+          "default": "unset = true"
+        },
         "layer.defaults.git.pr.checkpoints": {
           "default": "unset = inherit"
         },
@@ -1501,6 +1507,9 @@
         },
         "pools.*.allowed_users": {
           "default": "unset = only the owner"
+        },
+        "pools.*.cascade": {
+          "default": "unset = false: only `fugaro update` writes this, for the pool it migrates out of a cascade that serves"
         },
         "pools.*.legacy_open": {
           "default": "unset = false: only the policy migration writes this, for a pool that predates owners"

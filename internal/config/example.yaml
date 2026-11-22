@@ -16,7 +16,8 @@ git:
     # checkpoints: true       # push each new commit within about a minute, and at every stage end (fast-forward only); false: only at verified stage ends and at the end
 
 agent:
-  auth: vertex                # vertex | api-key | oauth | cascade
+  # A repository has no auth mode: what a stage goes out on is its craft's
+  # access, which the project's config names (docs/credentials-belong-to-models).
   # model: claude-opus-5-5    # defaults to Claude Code's default model
   review_rounds: 2            # review → fix rounds before the PR is opened
   # first_line_review: auto   # auto | on | off: the coder's model reviews (and fixes) before the senior review; auto is on only with a provider coder

@@ -96,8 +96,8 @@ import (
 //
 // A deployment whose environment is incomplete does not serve: the refusal is
 // by name, and no port is bound. That is the fail-closed direction this whole
-// work is held to (D143: an unreachable service halts a run, and no code path
-// falls back to a key in the job). A revision that fails to start is what
+// work is held to (D143: an unreachable service is waited for, and then halts
+// the run, and no code path falls back to a key in the job). A revision that fails to start is what
 // tells an owner the image they deployed cannot serve, while a service that
 // answered every call with a refusal would look healthy and halt every run
 // that reached it. Guessing a fact is what this command must not do either: a
@@ -342,6 +342,46 @@ const (
 	// the token has to be minted FOR THIS SERVICE'S URL, which no plain
 	// `gcloud auth print-identity-token` does.
 	envOrchestratorAccounts = "FUGARO_ORCHESTRATOR_ACCOUNTS"
+	// envSignerAccount is the account a run's identity is signed as (D3121,
+	// LM11): ONE bare address, the runs' signer the installation's Firebase root
+	// creates (its own output token_signer, whose account ID
+	// internal/infra's SignerAccountID holds) and the account LM11 puts the
+	// issuer's single minter row on. It is the address the launcher's signJwt
+	// call named before this work. It is the one value that says whether this
+	// installation HAS an issuer at all -- an installation whose block names no
+	// signer has none, and its identity routes answer the contract's "not
+	// served" (R7, I1) -- and it is read here as an OPTIONAL value for exactly
+	// that reason: a service the installation root rendered before LM12 set the
+	// entry, and one an update has not yet handed a signer to, must keep
+	// starting rather than refuse to bind a port.
+	//
+	// It is not a credential: the service is granted the minter ROLE on this
+	// account through IAM (LM11's row), and the account's own keys are nobody's
+	// (modules/firebase/iam.tf grants it no role at all). A value present and
+	// not one address is a deployment that is wrong, refused by name.
+	envSignerAccount = "FUGARO_SIGNER_ACCOUNT"
+	// envRosterServiceAccounts is the roster's service accounts (D3123): a JSON
+	// array of bare addresses, the `serviceAccount:` entries of the
+	// installation's roster -- the launcher class a person's list cannot hold,
+	// because the address presents a service account's token rather than a
+	// person's. `fugaro update` names such entries in its own lines (R10) and
+	// renders the ones this installation holds here; an installation whose
+	// roster names none renders no entry and must start, which is why it is read
+	// as an OPTIONAL value like every other class list. It is credsvc's
+	// IdentityConfig.ServiceAccounts, and nothing serves a caller by it until
+	// the issuer is wired in (I1).
+	envRosterServiceAccounts = "FUGARO_ROSTER_SERVICE_ACCOUNTS"
+	// envImplicitAdmins is the implicit admins of this installation (F29, R16):
+	// a JSON array of bare addresses, which is what the module renders from the
+	// machine's terraform.budget_admins -- the same list the CLI's own launch
+	// gate reads out of its local configuration (userImplicitAdmins,
+	// internal/cli's access_run_gate.go), so that the issuer's scope check
+	// admits an owner the gate admits today. A `group:` or `domain:` member is
+	// not on it, for the gate's own reason: a member the gate cannot match
+	// against a caller is not one it can place. It is credsvc's
+	// IdentityConfig.ImplicitAdmins, read as an OPTIONAL value like the lists
+	// above and used by nothing yet (LM23 judges with it).
+	envImplicitAdmins = "FUGARO_IMPLICIT_ADMINS"
 )
 
 // credentialsServiceEnvNames is the whole of this command's REQUIRED
@@ -669,6 +709,34 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
+	// The identity half's three values (LM22): the signer a run's identity is
+	// signed as (D3121), the roster's service accounts (D3123) and the implicit
+	// admins the CLI's own gate reads (F29, R16). They are read here into C1's
+	// configuration and NOTHING USES THEM YET: the five identity routes answer
+	// the contract's "not served" whatever this configuration holds, because the
+	// issuer is not wired in (credsvc's identity stub, which I1 deletes), and
+	// the store, the scope check and the ticket's bound on a run's runtime are
+	// LM1's, LM23's and LM24's. Each is read as an OPTIONAL value by the rules
+	// above -- the module that renders them is LM12, so an installation whose
+	// module does not render one yet must start the service it always did --
+	// while a value that is present and is not the document the module renders
+	// is a deployment that is wrong, refused by name and never by value.
+	var (
+		signer         string
+		rosterAccounts []string
+		implicitAdmins []string
+	)
+	if workspace == "" {
+		if signer, err = credentialsServiceSigner(getenv(envSignerAccount)); err != nil {
+			return credsvc.Config{}, userErr("%v", err)
+		}
+		if rosterAccounts, err = credentialsServiceRosterServiceAccounts(getenv(envRosterServiceAccounts)); err != nil {
+			return credsvc.Config{}, userErr("%v", err)
+		}
+		if implicitAdmins, err = credentialsServiceImplicitAdmins(getenv(envImplicitAdmins)); err != nil {
+			return credsvc.Config{}, userErr("%v", err)
+		}
+	}
 	// The database's shape, then the database itself: a URL that is not a
 	// Firebase Realtime Database at all is a different refusal from one that
 	// names another installation's database.
@@ -914,6 +982,24 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// rather than answer a grant naming a proxy that admits nothing.
 		BuildPairs: &creds.RTDBStore{DB: db},
 		Log:        log,
+		// The identity half (LM22, C1): the three values this command read out
+		// of the deployment's environment above, and everything of the issuer's
+		// configuration that an environment can state. The rest of
+		// IdentityConfig — the issuance store (LM1), the launch-scope check
+		// (LM23 and LM24) and the bound on a run's runtime — is I1's, which
+		// wires the routes in and deletes credsvc's identity stub; until then
+		// every identity route answers the contract's "not served" whatever
+		// this holds, which is the bridge R7 leaves every installation on.
+		//
+		// An empty Signer is the state that answer is about: an installation
+		// whose Firebase root carries no issuer row yet, and one deployed by a
+		// release before this work, has no account to sign a run's identity as
+		// and must serve the bridge rather than a route that cannot sign.
+		Identity: credsvc.IdentityConfig{
+			Signer:          signer,
+			ServiceAccounts: rosterAccounts,
+			ImplicitAdmins:  implicitAdmins,
+		},
 	}, nil
 }
 
@@ -1234,6 +1320,97 @@ func credentialsServiceOrchestrators(raw string) ([]string, error) {
 		return nil, fmt.Errorf("%s is not the installation's orchestrator list: it must be a JSON array of the bare email addresses a Google ID token carries, one per resident orchestrator daemon that may ask the service for a label write and for a merge token. Nothing was started and no credential was issued", envOrchestratorAccounts)
 	}
 	return orchestrators, nil
+}
+
+// credentialsServiceSigner turns FUGARO_SIGNER_ACCOUNT into the identity
+// half's signer (LM22, D3121): the account a run's identity is signed as, as
+// the one bare address its Google ID token's email claim carries — the runs'
+// signer modules/firebase/iam.tf creates and LM11 grants the issuer its single
+// minter row on.
+//
+// It is credentialsServiceCoordinator's rule word for word and for the same
+// reason: an absent or empty value is the EMPTY account and not a refusal,
+// because the entry arrives with the module LM12 renders next, so a service
+// deployed by a release before it must start the same service it always did —
+// with no signer, which is an installation that has no issuer and whose
+// identity routes answer the contract's "not served" (R7, I1) — while a value
+// that is present and is not one address is a deployment that is wrong. And
+// whether the value is an ADDRESS at all is left to whoever consumes it (I1),
+// which is the coordinator's own rule: this reader holds it to the shape the
+// module renders and decides nothing about the account.
+//
+// The refusal names the variable and never the value: it is an account, and the
+// environment is this process's own (the no-echo rule).
+func credentialsServiceSigner(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	if raw != strings.TrimSpace(raw) || strings.ContainsAny(raw, " \t\r\n") {
+		return "", fmt.Errorf("%s is not the installation's signer account: it must be one bare email address, the one a Google ID token's email claim carries, with no space and nothing else in the value. Nothing was started and no credential was issued", envSignerAccount)
+	}
+	return raw, nil
+}
+
+// credentialsServiceRosterServiceAccounts turns FUGARO_ROSTER_SERVICE_ACCOUNTS
+// into the identity half's service-account class (LM22, D3123): a JSON array of
+// bare addresses, which is what the module renders from the `serviceAccount:`
+// entries of the installation's roster.
+//
+// It is credentialsServiceBuildAccounts' rule word for word, and for the same
+// reason: an absent or empty value is an EMPTY list and not a refusal, because
+// the entry arrives with the module LM12 renders next and an installation whose
+// roster names no service account — or whose module does not render the entry
+// at all — must start the same service it always did rather than refuse to bind
+// a port; while a value that is present and is not that array is a deployment
+// that is wrong. The refusal names the variable and never an entry, because the
+// entries are service accounts of the installation's own project.
+//
+// The list is not a class of its own at this end yet: nothing serves a caller
+// by it until the issuer is wired in (I1), and it is read here into
+// credsvc.IdentityConfig.ServiceAccounts, which no route reads. A `group:` or
+// `domain:` roster entry is deliberately not on it — an address that holds no
+// token to present is one no caller can be — which is LM12's and the update's
+// to say, not this reader's.
+func credentialsServiceRosterServiceAccounts(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var accounts []string
+	if err := json.Unmarshal([]byte(raw), &accounts); err != nil {
+		return nil, fmt.Errorf("%s is not the installation's roster service accounts: it must be a JSON array of the bare email addresses a Google ID token carries, one per serviceAccount: entry of the installation's roster. Nothing was started and no credential was issued", envRosterServiceAccounts)
+	}
+	return accounts, nil
+}
+
+// credentialsServiceImplicitAdmins turns FUGARO_IMPLICIT_ADMINS into the
+// identity half's implicit admins (LM22, F29, R16): a JSON array of bare
+// addresses, which is what the module renders from the machine's
+// terraform.budget_admins — the same list the CLI's own launch gate reads out
+// of its local configuration (userImplicitAdmins, access_run_gate.go), so that
+// the issuer's scope check gives the gate's answer and an owner is not refused
+// a launch that works today.
+//
+// It is credentialsServiceRosterServiceAccounts' rule word for word, and for
+// the same reason: an absent or empty value is an EMPTY list and not a refusal
+// — the entry is the deployment's, and an installation whose local
+// configuration names no admin must start the service it always did — while a
+// value that is present and is not that array is a deployment that is wrong.
+// The refusal names the variable and never an entry, because the entries are
+// accounts of people.
+//
+// A `group:` or `domain:` member is not on the list by the gate's own rule: a
+// member the gate cannot match against a caller is not one it can place. The
+// value is read into credsvc.IdentityConfig.ImplicitAdmins and used by nothing
+// yet (LM23 judges with it).
+func credentialsServiceImplicitAdmins(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var admins []string
+	if err := json.Unmarshal([]byte(raw), &admins); err != nil {
+		return nil, fmt.Errorf("%s is not the installation's implicit admins: it must be a JSON array of the bare email addresses a Google ID token carries, one per terraform.budget_admins member the installation's own configuration names. Nothing was started and no credential was issued", envImplicitAdmins)
+	}
+	return admins, nil
 }
 
 // credentialsServiceCoordinator turns FUGARO_COORDINATOR_ACCOUNT into the read

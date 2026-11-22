@@ -1,7 +1,7 @@
 // The consumer's lease on the heartbeat (mobile P4.1, Task T3): the Go binding
 // of shared/lease (P1.2, merged), and the store that holds it.
 //
-// Ruling M1 of docs/plans/2026-10-18-mobile-mailbox-consumer.md: **the lease IS
+// Ruling M1 of docs/mobile/mailbox-consumer-plan.md: **the lease IS
 // the heartbeat, taken by an ETag compare-and-swap, and there is no fourth
 // node.** The consumer reads `mailbox/$mb/heartbeat` with
 // `internal/rtdb`'s `GetETag` and writes `{at, boot, mac}` back with

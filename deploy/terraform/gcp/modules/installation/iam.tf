@@ -159,7 +159,8 @@ resource "google_project_iam_member" "operator_cloud_asset_reader" {
 # before any process could decide (F31). Every other spelling is left out for
 # the reason the class refuses those callers — a group or a domain is not a
 # person's address, and a service account is the non-person caller the class
-# exists to refuse.
+# exists to refuse (the roster's own service accounts hold the grant below this
+# one instead, and are served as their own class: D3123).
 #
 # The width is the deliberate part (F36). Cloud Run grants the invoker per
 # service and not per route, so every member here passes IAM on every route
@@ -171,6 +172,38 @@ resource "google_project_iam_member" "operator_cloud_asset_reader" {
 # is not theirs.
 resource "google_cloud_run_v2_service_iam_member" "credentials_invoker" {
   for_each = local.credentials_service_on ? local.launcher_invoker_members : toset([])
+
+  project  = var.project
+  location = var.region
+  name     = var.credentials_service.service
+  role     = "roles/run.invoker"
+  member   = each.value
+
+  depends_on = [google_cloud_run_v2_service.credentials]
+}
+
+# ... and the roster's own SERVICE ACCOUNTS (D3123, LM12), which are neither
+# people nor any account this module creates: a pipeline's identity, named on
+# the installation's roster as a `serviceAccount:` member. Until this grant such
+# an account had no way into the service at all — the grant above is the
+# roster's USER members, and the two class lists refuse a service account's
+# address by construction — so a pipeline that launches runs could reach
+# nothing (F4). Cloud Run's front end is the first door and it is per service,
+# so without this row the account is refused before the container runs; what it
+# is SERVED after that is the service's own class for it (credentials.tf's
+# FUGARO_ROSTER_SERVICE_ACCOUNTS, D3137's unscoped admission).
+#
+# The members come from var.credentials_service.roster_service_accounts rather
+# than from the `serviceAccount:` entries filtered out of var.launchers here,
+# and that is deliberate: the account that may knock is read from the same
+# variable the service admits it by, so the grant and the class cannot drift —
+# the property every other class list of this service has (the coordinator's,
+# the verifier's, the build identity's and the orchestrator's, whose entries and
+# grants are one value read twice). Each member is on the review screen (the
+# roster's own account), and the cover's invoker cell carries a listed member's
+# kind.
+resource "google_cloud_run_v2_service_iam_member" "credentials_roster_service_account" {
+  for_each = local.credentials_service_on ? local.roster_service_account_members : toset([])
 
   project  = var.project
   location = var.region
@@ -296,6 +329,16 @@ locals {
   # granted to the list whole.
   viewers_only   = setsubtract(toset(var.viewers), setunion(toset(var.launchers), toset(var.operators)))
   bucket_readers = setunion(local.launchers_only, local.viewers_only)
+
+  # The roster's service accounts as the MEMBERS a Cloud Run grant takes
+  # (D3123, LM12): the bare addresses the update hands over in
+  # var.credentials_service.roster_service_accounts, spelled the one way IAM
+  # accepts them. It is the same list credentials.tf renders into the service's
+  # environment, which is what keeps the account that may knock and the account
+  # that may be served one value. `try` is the null block's: the variable is
+  # null on an installation that runs no credentials service, and a local is
+  # evaluated whatever the resources reading it are counted on.
+  roster_service_account_members = toset([for a in try(var.credentials_service.roster_service_accounts, []) : "serviceAccount:${a}"])
 }
 
 # Everyone who reads the whole runs bucket: the launchers and the viewers.
@@ -315,8 +358,8 @@ resource "google_storage_bucket_iam_member" "runs_reader" {
 # Launchers write runs/, tokens/ and issues/ only. objectUser, not
 # objectCreator: the launch claim's takeover overwrites and its release
 # deletes, and the sealed budget token in tokens/ is replaced on a retry and
-# deleted after a launch that did not start (docs/design/budget-token-
-# channel.md section 7.2, D16: the deliberate widening that came with moving
+# deleted after a launch that did not start (docs/budget-token-channel/spec.md
+# section 7.2, D16: the deliberate widening that came with moving
 # the token out of runs/, still one condition and not a role on the bucket).
 # issues/ is the launcher's third write, and the only area of the shared issue
 # store (docs/troubleshoot-issue/reconciliation.md D1727: the launcher who

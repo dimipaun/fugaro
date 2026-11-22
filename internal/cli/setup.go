@@ -58,8 +58,11 @@ lives in, and that project is Fugaro's, and managed, from its creation. On a
 first run it asks its questions once, in this order, each with a suggestion
 Enter takes, and writes the local config, so later runs ask nothing: the new
 GCP project's ID (--gcp-project; a project named after this one,
-fugaro-<name>, which Enter takes; never gcloud's default project), the region
-(--region; us-east5), the project's name (--name; from the repository's
+fugaro-<name>, which Enter takes; never gcloud's default project), where the
+installation lives (--location; US, whose region is us-east5 and which Enter
+takes, or EU, whose region is europe-west1; a region typed in full answers the
+same question and is --region's own form, and the two given together must
+agree), the project's name (--name; from the repository's
 owner, else this directory's), the project's rigor mode (--rigor; how much
 review every run of it gets — poc, startup, pro, the built-in default that is
 listed first, or critical — and the one question with no suggestion, so Enter
@@ -95,9 +98,10 @@ not, the build is left for you with each missing permission and its fix and
 nothing is billed. A repository the local config does not list is asked about
 first, at the start, before any plan.
 
-setup runs as a converge of stages (preflight, installation, with
---firebase-project the Firebase backend and the images, the secrets, the
-plugin wiring and the repository, and on a first run the project — the one
+setup runs as a converge of stages (preflight, installation, the Firebase
+backend — the budget database, which it adopts or creates, see
+--firebase-project — the images, the secrets, the plugin wiring and the
+repository, and on a first run the project — the one
 stage that creates the GCP project, and the one that refuses an ID that
 already exists), each with its own confirmation, in order, and stops at the
 first that fails or needs you; a rerun resumes, and one with nothing to do
@@ -143,8 +147,18 @@ session may run it: it edits only a local file.
 setup --firebase-project <gcp-project-id> turns the shared budget on: it
 builds the budget backend in the installation's own GCP project. The value is
 the installation's own GCP project id (the default; the flag is only needed to
-turn the shared budget on), and any other id is refused. A setup without it
-builds no backend. It creates nothing and links nothing
+turn the shared budget on), and any other id is refused. The stage runs with
+and without the flag, and setup and update run the same one: with none it
+adopts the database the installation's Firebase state names where that
+database is the installation's own project's, or creates one in the
+installation's own project where this credential may make the project's IAM
+changes and the project has billing (the new database starts in observe, with
+no mode chosen); where neither is this run's — the credential may not, the
+project has no billing, or nothing answers the confirmation creating one costs
+(a coding agent's session, --json, a pipe) — the stage changes nothing, says
+in one line who must run the command or that billing must be linked, and the
+rest of the run carries on. An installation whose database this machine
+already records keeps what it has. The stage creates nothing and links nothing
 itself (the project and its billing link are the first run's), and it refuses
 a project that has no billing, or whose database holds data and no Fugaro
 mark. It runs three applies, each
@@ -399,10 +413,18 @@ var setupQuestions = []wizardQuestion{
 		missing: "--gcp-project <id>",
 	},
 	{
-		what:    "the region the installation's jobs and the scheduler run in",
-		label:   "Region (the installation's jobs and the scheduler)",
-		flag:    "--region",
-		missing: "--region <region>",
+		// The place question (LP4 of docs/location-preference; D3080, D3081,
+		// D3086). It is the wizard's region question in a person's words and
+		// not a second question (F2): the answer is us, eu, or a region typed
+		// in full, --region answers the same question precisely, and the
+		// region stays the one setting the installation stores (D3080). The
+		// suggestion is US, which is today's default region; the region itself
+		// is not in the row, because a place answer names one region and the
+		// mapping's own line says which (R7).
+		what:    "the place the installation lives in (US, EU, or a region typed in full)",
+		label:   "Place (US, EU, or a region: where the installation's jobs and its data go)",
+		flag:    "--location",
+		missing: "--location <us|eu>",
 	},
 	{
 		what:    "the Fugaro project's name",

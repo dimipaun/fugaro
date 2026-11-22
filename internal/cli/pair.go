@@ -111,6 +111,17 @@ func newPairCmd() *cobra.Command {
 			"code the operator types matches the key the phone wrote, so a refused\n" +
 			"pairing leaves the project exactly as it was.\n" +
 			"\n" +
+			"--email naming somebody other than you is an INVITATION rather than a\n" +
+			"pairing. An admin may name another member's email with a --role at or\n" +
+			"below the role the roster grants them, and the command writes an invite\n" +
+			"that person's phone presents when it pairs, creates the member record, and\n" +
+			"draws a code carrying the project's mobile endpoint, that address, a\n" +
+			"one-time nonce and the fingerprint of the consumer key the phone pins. An\n" +
+			"invitation carries no credential and writes no device node: it waits for\n" +
+			"nothing, asks nothing and ignores --timeout, and the person it names pairs\n" +
+			"when they sign in. --name is a device's, so an invitation refuses a value\n" +
+			"for it.\n" +
+			"\n" +
 			"The code is drawn in a terminal wide enough for it. The payload is over a\n" +
 			"kilobyte, so its code is over a hundred columns wide, and a narrower\n" +
 			"terminal gets the payload line instead of a drawing that would wrap and\n" +
@@ -125,9 +136,9 @@ func newPairCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error { return runPair(cmd, o) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.name, "name", "", "the device's name, for pair ls and the device node's own field")
-	f.StringVar(&o.email, "email", "", "the administered email for the device (default, and normally the value: your own verified address, which is the only address this command may administer)")
-	f.StringVar(&o.role, "role", "", "the device's role: viewer, operator or admin (default: the role the allowlist resolves for your address, or your own when it names none; --role may only lower it, and never below the entry an address that already has one resolves to)")
+	f.StringVar(&o.name, "name", "", "the device's name, for pair ls and the device node's own field (refused when --email invites somebody else: the phone's node is written when it pairs)")
+	f.StringVar(&o.email, "email", "", "the administered email for the device (default, and normally the value: your own verified address); naming somebody else's address is an invitation for that member, which an admin sends with --role and which pairs no device now")
+	f.StringVar(&o.role, "role", "", "the device's role: viewer, operator or admin (default for your own address: the role the allowlist resolves, or your own when it names none; required for an invitation, where it must be at or below the role the roster grants that address; --role may only lower it)")
 	f.DurationVar(&o.timeout, "timeout", pairDefaultTimeout, "how long to wait for the phone's key and the typed code (refused above "+pairMaxTimeout.String()+")")
 	f.BoolVar(&o.asJSON, "json", false, "stream the pairing as newline-delimited JSON events on stdout")
 	addCloudFlags(cmd, &o.cloudOptions)
@@ -162,13 +173,6 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	lc, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedBudget), err)
-	}
-	// The config layer validates the key only when it is set, so an installation
-	// that never ran `fugaro update --firebase-project` would otherwise print a
-	// code whose api_key is empty and which the phone cannot exchange a custom
-	// token with at all.
-	if strings.TrimSpace(lc.Budget.FirebaseAPIKey) == "" {
-		return pairRefuse(ev, o, pairRefusedAPIKey, fmt.Errorf("project %s has no budget.firebase_api_key: the phone exchanges the pairing token with it, and a code without one scans into a phone that cannot sign in; restore it with 'fugaro update --firebase-project %s', which writes budget.rtdb_url and budget.firebase_api_key", lc.Name, lc.GCPProject))
 	}
 	// The probe comes before the ownership question rather than after it:
 	// both refuse the same pairing, and a credential that the database will
@@ -241,12 +245,14 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		}
 	}
 
-	// §7.1 step 2, D226: the one address this command may administer is the
-	// pairing operator's own verified one, read by the check
-	// init_members.go's userEmail already performs for the CLI. --email is
-	// therefore not a free field: an address that is not the operator's own
-	// would put a device on D166's allowlist under an address nobody proved
-	// they hold, and the node's existence is the whole of what the rules read.
+	// §7.1 step 2, D226 as amended by D2799: the address a device is paired
+	// under is normally the pairing operator's own verified one, read by the
+	// check init_members.go's userEmail already performs for the CLI. An address
+	// that is not the operator's own is no longer refused outright — an admin may
+	// name another member's email (D2799) — but it is not a device pairing
+	// either: it is an INVITATION, which writes the invite the pairing endpoint
+	// reads and no device node at all. The two paths part here, and everything
+	// below this point is the bootstrap pairing's.
 	own, err := authenticatedUser(ctx, lc)
 	if err != nil {
 		// The check reads the address from the identity endpoint, so it can
@@ -256,9 +262,31 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		// answer would go and fix the wrong thing.
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedEmail), err)
 	}
-	email, err := pairAdministeredEmail(own, o.email)
+	email, mine, err := pairAdministeredEmail(own, o.email)
 	if err != nil {
 		return pairRefuse(ev, o, pairRefusedEmail, err)
+	}
+	if !mine {
+		return pairRunInvite(ctx, cmd, o, ev, lc, db, pairInviteRequest{
+			own:     own,
+			ownRole: ownRole,
+			grants:  grantsNode.Grants,
+			email:   email,
+			want:    wantRole,
+		}, now)
+	}
+
+	// The bootstrap code carries budget.firebase_api_key, and a code without one
+	// scans into a phone that cannot sign in, so the pairing refuses here rather
+	// than printing it. The config layer validates the key only when it is set,
+	// so an installation that never ran `fugaro update --firebase-project` would
+	// otherwise print a code whose api_key is empty. The check sits below the path
+	// decision because it is the BOOTSTRAP code that carries the key: an
+	// invitation's code carries no credential at all, and the phone gets the
+	// database URL and the API key from the service on success, so an installation
+	// whose config has no key can still invite (D2799, F4).
+	if strings.TrimSpace(lc.Budget.FirebaseAPIKey) == "" {
+		return pairRefuse(ev, o, pairRefusedAPIKey, fmt.Errorf("project %s has no budget.firebase_api_key: the phone exchanges the pairing token with it, and a code without one scans into a phone that cannot sign in; restore it with 'fugaro update --firebase-project %s', which writes budget.rtdb_url and budget.firebase_api_key", lc.Name, lc.GCPProject))
 	}
 
 	// D224, and this is the place the resolution runs: once, in the CLI, at the
@@ -287,33 +315,35 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedAllowlistUnreadable), err)
 	}
 
-	signer, err := (&cloudEnv{lc: lc}).tokenSigner(ctx)
-	if err != nil {
-		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedUnreachable), err)
-	}
-	pairingToken, uid, err := token.MintPairing(ctx, signer, o.timeout, now)
+	// The one-shot pairing token comes from the installation's credentials
+	// service, or — where the service has no identity half to answer with, is a
+	// release behind, or is not configured at all — from this operator's own
+	// credential, which is what this command did before the issuer existed
+	// (LM10, R7).
+	issuer := newPairIssuer(lc, now, o.timeout)
+	minted, err := issuer.Pairing(ctx)
 	if err != nil {
 		if errors.Is(err, token.ErrNotMinter) {
-			return pairRefuse(ev, o, pairRefusedMinter,
-				fmt.Errorf("%s; pairing mints the one-shot pairing token with your own credential, which needs the fugaroTokenMinter role on the signer account %s (the installation's launchers and operators hold it)", oneLine(err.Error()), lc.Budget.TokenSigner))
+			return pairRefuse(ev, o, pairRefusedMinter, pairMinterRefusal(lc, err))
 		}
-		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedUnreachable), err)
+		return pairRefuse(ev, o, pairIssuerCode(err), err)
 	}
+	pairingToken, uid := minted.Token, minted.UID
+	expiresAt := minted.ExpiresAt.UTC().Format(time.RFC3339)
 
 	payload, err := json.Marshal(pairQR{
-		V:           pairQRVersion,
+		V:           pairBootstrapQRVersion,
 		Project:     lc.Name,
 		GCPProject:  lc.GCPProject,
 		DatabaseURL: lc.Budget.RTDBURL,
 		APIKey:      lc.Budget.FirebaseAPIKey,
 		Token:       pairingToken,
 		UID:         uid,
-		ExpiresAt:   now.Add(token.PairingLifetime(o.timeout)).UTC().Format(time.RFC3339),
+		ExpiresAt:   expiresAt,
 	})
 	if err != nil {
 		return userErr("building the QR payload: %v", err)
 	}
-	expiresAt := now.Add(token.PairingLifetime(o.timeout)).UTC().Format(time.RFC3339)
 
 	out := cmd.OutOrStdout()
 	if o.asJSON {
@@ -388,9 +418,12 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	// §7.1 steps 6 and 7, M4: the device token is minted and then the node
 	// exists before anything is delivered, so no token exists that the rules
 	// do not yet admit.
-	device, err := token.MintDevice(ctx, signer, now)
+	device, err := issuer.Device(ctx)
 	if err != nil {
-		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedMinter), err)
+		if errors.Is(err, token.ErrNotMinter) {
+			return pairRefuse(ev, o, pairRefusedMinter, pairMinterRefusal(lc, err))
+		}
+		return pairRefuse(ev, o, pairIssuerCode(err), err)
 	}
 	node := pairDeviceNode{Name: o.name, Email: email, Role: string(role), At: now.UTC().Format(time.RFC3339)}
 	if err := db.Patch(ctx, rules.PathDevices, map[string]any{device.UID: node}); err != nil {
@@ -545,7 +578,7 @@ type pairDeliveryNode struct {
 // names localcfg accepts. A pairing that cannot name its item is a pairing
 // that cannot store a key, so the prefix is what gives way.
 func pairItemName(project, deviceUID string) string {
-	return project + "-" + strings.TrimPrefix(deviceUID, "m~")
+	return project + "-" + strings.TrimPrefix(deviceUID, pairDeviceUIDPrefix)
 }
 
 // pairStoreMACKey draws this pairing's MAC key (D171) and stores it at item,
@@ -1031,8 +1064,10 @@ func pairInheritedRole(grants []accesslib.Grant, me string) mobileauth.Role {
 }
 
 // pairAdministeredEmail is the address the entry is written with (§7.1 step 2,
-// D226): the operator's own verified one, canonicalised by the same rule P1
-// reads entries with, with --email admitted only when it is that same address.
+// D226 as amended by D2799): the operator's own verified one, canonicalised by
+// the same rule P1 reads entries with, or the address --email names when it is
+// somebody else's — in which case the answer says so, and the caller takes the
+// invitation path instead of pairing a device.
 //
 // Both sides go through NormalizeEmail, and that is the whole reason this is a
 // function rather than two lines at the call site: the value written has to be
@@ -1053,24 +1088,27 @@ func pairInheritedRole(grants []accesslib.Grant, me string) mobileauth.Role {
 // because the provider an address of this shape belongs to resolves the local
 // part case-insensitively — the operator who capitalised a letter of their own
 // address typed their own address, and refusing that would send them to change
-// an account rather than a keystroke. What differs after both folds is a
-// different address and is refused rather than repaired.
-func pairAdministeredEmail(own, typed string) (string, error) {
-	mine, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(own)))
+// an account rather than a keystroke.
+//
+// The second answer, mine, is the path decision and not a refusal: D226 refused
+// an address that was not the operator's own outright, and D2799 turns that
+// refusal into an invitation. An address that is not the operator's own is
+// therefore returned rather than rejected, and it is the caller — which holds
+// the grants and the role --role named — that decides whether an invitation may
+// be written for it.
+func pairAdministeredEmail(own, typed string) (address string, mine bool, err error) {
+	ownCanonical, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(own)))
 	if err != nil {
-		return "", fmt.Errorf("the identity endpoint answered with %q as your verified address, and that is not an address this installation's allowlist can carry (%v): a device node's administered email is what the allowlist resolves a role for, so an entry this build cannot read would refuse every pairing in the installation, and this command will not write one", own, err)
+		return "", false, fmt.Errorf("the identity endpoint answered with %q as your verified address, and that is not an address this installation's allowlist can carry (%v): a device node's administered email is what the allowlist resolves a role for, so an entry this build cannot read would refuse every pairing in the installation, and this command will not write one", own, err)
 	}
 	if strings.TrimSpace(typed) == "" {
-		return mine, nil
+		return ownCanonical, true, nil
 	}
 	want, err := mobileauth.NormalizeEmail(strings.ToLower(strings.TrimSpace(typed)))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	if want != mine {
-		return "", fmt.Errorf("--email %s is not your own verified address (%s): a device node's administered email is an address this installation has proved the pairing operator holds, and pairing refuses one it cannot attribute to you", want, mine)
-	}
-	return want, nil
+	return want, want == ownCanonical, nil
 }
 
 // errPairResolvedAbove is D224's own refusal: the role the allowlist resolves

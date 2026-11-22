@@ -15,7 +15,7 @@ import (
 // The other half of what the managed creation leaves behind: beside Task 0.1's
 // creation fact, the managed run sets up D77's dedicated state bucket and binds
 // the deployer to it on that bucket alone (Task 1.5 (3) of
-// docs/plans/2026-10-16-managed-projects.md).
+// docs/managed-projects/implementation-plan.md).
 //
 // Both steps live in markCreated and nowhere else, and both are gated on the
 // run having created the project: they are setup on the operator's own

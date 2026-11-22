@@ -10,7 +10,7 @@ import (
 )
 
 // The budget amount of a managed creation (Task 4.2 of
-// docs/plans/2026-10-16-managed-projects.md, D64): required at creation, with
+// docs/managed-projects/implementation-plan.md, D64): required at creation, with
 // a suggestion printed and a clear refusal otherwise, and recorded in the
 // project's own creation fact so a later run and a restore can read what was
 // chosen. The other half is what these tests exist as much for: a creation

@@ -28,8 +28,8 @@ its answer in its own entry, and the answers are what the
 - `internal/infra/{projectcreate.go,firebase.go,firebasedb.go,discover.go,hardening.go,projectjobs.go,readiness.go,tf/env.go}`
 - `internal/gcpfake/billing.go`, `internal/preflight/{preflight.go,google.go}`
 - `internal/clidoc/{cliref.go,secdoc.go}`, `website/content/cli-reference.md`
-- `docs/gcp-setup.md`, `docs/design/m11-setup-and-skills.md`,
-  `docs/plans/2026-10-04-m11-setup-and-skills.md`, `docs/gcp-live-checklist.md`
+- `docs/gcp-setup.md`, `docs/m11-setup-and-skills/spec.md`,
+  `docs/m11-setup-and-skills/implementation-plan.md`, `docs/gcp-live-checklist.md`
 - `plugin/skills/setup/`, `plugin/skills/upgrade/`, `plugin/skills_lint_test.go`,
   `plugin/setup_skill_test.go`, `plugin/readme_test.go`
 - `README.md`, `website/data/install.yaml`, `website/src/pages/getting-started.astro`
@@ -532,7 +532,7 @@ figure is read with the command rather than at `82d366af`:
 
 This follows the tree's own precedent: `plugin/readme_test.go`'s
 `TestReadmeNamesNoRetiredSkill` carries a `skip` regex over
-`docs/plans/`, `docs/design/m11-` and the spec-source precisely because a
+`docs/plans/` and `docs/m11-setup-and-skills/` precisely because a
 retired name may live in a dated record. See D9.
 
 ### F21 — `fugaro config init` is a different command with the same word · **Gap**
@@ -698,7 +698,7 @@ comm -13 <(git grep -l 'fugaro init' 82d366af | sort) \
 - comments only (tests): `internal/cli/{launch_budget,secrets}_test.go` (W2.1);
   `internal/infra/{statebucket,workdir}_test.go` and
   `internal/runner/{policy,provider_policy,providers}_test.go` (W2.2).
-- `docs/design/layered-config.md` (4 lines) — a dated root (D9), left alone
+- `docs/layered-config/spec.md` (4 lines) — a dated root (D9), left alone
   like the other 30 files in `docs/design/**`, even though the `fugaro init`
   pattern does not count it in the 85.
 

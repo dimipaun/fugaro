@@ -475,7 +475,7 @@ func SuggestProjectID(id string) string {
 // Its return is the creation fact, and the only one: a caller that gets nil
 // here created the project, and a project Fugaro created is a project Fugaro
 // manages (the owner's addendum of 2026-10-15; design D56/D57, Task 0.1 of
-// docs/plans/2026-10-16-managed-projects.md). init turns it into
+// docs/managed-projects/implementation-plan.md). init turns it into
 // initResult.Created and records it in the runs bucket
 // (internal/infra/managed.WriteMarker, called from init's markCreated);
 // nothing here writes that object, because at this moment the bucket does

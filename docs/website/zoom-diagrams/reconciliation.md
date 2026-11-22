@@ -31,7 +31,7 @@ shipped in #841).
 written, and the site must not print them.** Level 1's loop is close to the runner but wrong
 in three of its six lines (§3). "Why GCP" is right about Firebase and wrong about four
 other things, one of which — *"GCP projects are free and disposable"* — the repository's own
-managed-projects reconciliation explicitly rejects (`docs/design/managed-projects.md:18,211`).
+managed-projects reconciliation explicitly rejects (`docs/managed-projects/spec.md:18,211`).
 The mobile page's six bullets describe an app that is, today, **voiceless and unpaired**
 (`mobile/README.md:19-21`). None of this is an argument against the brief; it is the reason
 this document exists before the pages do.
@@ -235,9 +235,9 @@ The brief's four numbered points and its two closing paragraphs, against the tre
 ### ZF15 — **Wrong** — "GCP projects are free and disposable"
 
 "Free to create" is supportable and is in the repository's own words
-(`docs/design/m9-budget-and-dashboard.md:828` — "A new project costs nothing by itself").
+(`docs/m9-budget-and-dashboard/spec.md:828` — "A new project costs nothing by itself").
 "Disposable" is **rejected by the repository's own reconciliation**:
-`docs/design/managed-projects.md:18` — "A managed project is **not disposable** in the way
+`docs/managed-projects/spec.md:18` — "A managed project is **not disposable** in the way
 the spec means" — and `:211` lists why: the Terraform state bucket lives in that project,
 so does the spend history and the kill-switch state in the Realtime Database, so does the
 application data, and the Firestore database's **location is permanent and can never be
@@ -248,10 +248,10 @@ changed**. A page that prints "disposable" unqualified contradicts `docs/design/
 Fugaro's provisioning model **is** Terraform: `e924481:docs/gcp-setup.md:75` (the page before its rewrite) describes the typed-confirmation
 applies, and `internal/infra/tf/cover.go` is the type allow-list for the resources those
 applies may create. A **managed** project is one Fugaro created
-(`docs/design/managed-projects-spec.md:27`), but even there Terraform **is** run — the
-deployer applies the agent-authored root (`docs/design/managed-projects.md:191`;
+(`docs/managed-projects/spec-source.md:27`), but even there Terraform **is** run — the
+deployer applies the agent-authored root (`docs/managed-projects/spec.md:191`;
 `internal/cli/managed_apply.go:36-56`) — and D58 explicitly permits flagging an **existing**
-project into managed mode (`docs/design/managed-projects.md:174`). The true, narrow sentence
+project into managed mode (`docs/managed-projects/spec.md:174`). The true, narrow sentence
 is: *a managed project is a new project that holds only Fugaro's resources*.
 
 ### ZF17 — **Wrong** — "Fugaro gets its own isolated, Fugaro-managed project", in the present tense
@@ -260,7 +260,7 @@ Managed projects were **gated off** when this note was written: `internal/cli/re
 `const managedDeployerShipped = false` (true as of 0.10.0), and every command that would create
 one or act as its deployer refused before any cloud call (`internal/cli/managed_flag.go`,
 `internal/cli/init.go`'s `check`, `internal/cli/restore.go`,
-`internal/cli/managed_apply.go`). `docs/design/managed-projects.md` says it outright, and
+`internal/cli/managed_apply.go`). `docs/managed-projects/spec.md` says it outright, and
 `docs/releases/v0.9.5.md` lists managed projects among the disabled features; 0.10.0's note
 lists them among the shipped ones, with the fence unmeasured (Check 68).
 
@@ -289,7 +289,7 @@ But they are the **budget, dashboard and history control plane**, and it is opti
 `README.md:99` — "The budget is off by default" — and `e924481:docs/gcp-setup.md:464` (the page before its rewrite) documents a
 degraded mode with no Firebase at all. A run needs none of the three. And Firebase Auth is
 **not** the identity provider for the console (which holds no credential,
-`docs/design/desktop-console.md:13,96`) nor for the CLI, which signs in with
+`docs/desktop-console/spec.md:13,96`) nor for the CLI, which signs in with
 `gcloud auth application-default login` (`internal/cli/adcpath.go:77`).
 
 ### ZF20 — **Partly** — "an object store could be swapped for S3"
@@ -314,7 +314,7 @@ second cloud is **out of scope for 1.0 and wanted from contributors**:
 `README.md:188-190` ("Other clouds: help wanted… We want to run Fugaro on **AWS**… and
 **Azure**"), `README.md:204` (roadmap, unchecked), `docs/backends.md:3,21,42` (the seam, its
 conformance suite and the live-checklist entry a second backend must add), and
-`docs/design/setup-and-skills-spec-source.md:25` ("An AWS backend is out of scope [for 1.0]").
+`docs/m11-setup-and-skills/spec-source.md:25` ("An AWS backend is out of scope [for 1.0]").
 A page saying the pluggable cloud "became clear" to be wrong would be arguing against the
 repository's own open invitation.
 
@@ -346,7 +346,7 @@ D164 and stated at `docs/mobile/functional-spec-v0.1.md:59`. It is **not** an ac
 detector: the owner's ruling of 2026-10-19 answered Q5 option (1), keeping the transcript
 prefix test and **dropping** the spec's openWakeWord/Porcupine bullet
 (`docs/voice-module/reconciliation.md:539-545,664`). The console's own voice spec lists the
-wake word as a **non-goal for v1** (`docs/design/voice-spec.md:26`). And the app has no
+wake word as a **non-goal for v1** (`docs/voice/spec-source.md:26`). And the app has no
 speech engine, so "say Fugaro" works in no build today.
 
 ### ZF25 — **Partly** — switching projects and agents by name is Phase 6, unbuilt
@@ -381,7 +381,7 @@ writes, because the parts that would write it are the ones that wait.
 
 ### ZF28 — **Rule** — what the voice ruling fixes, and what it forbids
 
-D44 answered **local-only for v1** (`docs/plans/2026-10-16-voice.md:11`); D47 answered that
+D44 answered **local-only for v1** (`docs/voice/implementation-plan.md:11`); D47 answered that
 destructive voice commands are **not in v1** (same line). The in-app local/remote switch is
 **design only and an evaluation, not an adoption**: `docs/mobile/design/voice-evaluation-switch.md:1-5,13-23`
 — "Status: design only; nothing is implemented", default local, a persistent indicator, a
@@ -492,7 +492,7 @@ and Check 69b's "nothing phones home" (ZU5) is unchanged. The recommendation was
 document's; the choice was the owner's, and §12's last column is where it stands. The four
 doors stay written down because a door not taken is the record of what the answer refused,
 in the shape the managed-projects row keeps its own alternatives in
-(`docs/design/managed-projects.md:190`).
+(`docs/managed-projects/spec.md:190`).
 
 ## 7. The pinned zoom section: what the constraints allow
 
@@ -858,7 +858,7 @@ answer list — may cite it as allocated rather than as proposed.**
 | **D245** | What are the level markers? | `<a href="#level-N">` anchors, each with an accessible name, in a `<nav>` of their own, mirroring the console slider's dots | Anchors need no script, the linkcheck gate resolves them, and the no-JS page keeps them working (ZF39) | `<button>`s — a no-JS reader gets dead controls; a scripted scroll-spy — new JavaScript for something CSS can do | **ANSWERED 2026-10-21: as recommended** — the level markers are `<a href="#level-N">` anchor links with accessible names, in a `<nav>` of their own. |
 | **D246** | How does the homepage slider reuse `site.js`? | Rename the script's interior selectors to `data-slider-track` / `data-slider-slide` / `data-slider-dot` hooks, keep `[data-slider]` as the door, and let both components carry them | ZF46: the container scan is already generic and the interior is not; hooks let one component serve two pages without either borrowing the other's class names | A second slider implementation in `site.js` — the JS budget grows twice and two copies drift; borrowing `.screens-track` on the homepage — the console's names leak into a page that has no console, and `slider.mjs:447-460` already forbids the reverse | **ANSWERED 2026-10-21: as recommended** — the shared slider hooks are `data-slider-track` / `data-slider-slide` / `data-slider-dot`, with `[data-slider]` as the door. **Half of it has shipped since**: #842's homepage slider and its dots already carry `data-slider-slide` and `data-slider-dot` (`HomeSlider.astro:279,305`), and the file's door and step-control names are hooks already (`site.js:529-531`); the three names the rename still moves are the console's (`site.js:550-552`). |
 | **D247** | Does the zoom work take a live check, and which number? | Yes — **112** and up (70d if the redesign's block is preferred), written and **not** run, as 69a–69c and 70a–70c are | The highest written check is **111** (`docs/gcp-live-checklist.md:5781`); a visual feature with no owner-run check is a feature nobody looks at on the live site (ZF43) | No check — the pinned section's behaviour under reduced motion (ZU1) is then never observed anywhere | **ANSWERED 2026-10-21: yes — 112.** The zoom work takes a written-and-not-run owner check **112** (not 70d); the plan's Part 5 carries it. The mobile page's proposed 113 is untouched and stays a proposal. |
-| **D248** | May the page print "disposable"? | No. Use "one integrated project", and where the word is wanted, define it: a managed project is **new** and holds only Fugaro's resources | ZF15: `docs/design/managed-projects.md:18,211` rejects "disposable" and lists what would be lost; the brief's own suggested framing uses the word, so this is the owner's to keep or drop | Keep "disposable" — the page then contradicts `docs/design/`, and the FAQ's "where does the code run" answer becomes the second place the site disagrees with itself | **ANSWERED 2026-10-21: as recommended — no.** The page **must not print "disposable"**; where that sense is wanted it says "one integrated project", and a managed project is defined as **new** and holding only Fugaro's resources (ZF15). |
+| **D248** | May the page print "disposable"? | No. Use "one integrated project", and where the word is wanted, define it: a managed project is **new** and holds only Fugaro's resources | ZF15: `docs/managed-projects/spec.md:18,211` rejects "disposable" and lists what would be lost; the brief's own suggested framing uses the word, so this is the owner's to keep or drop | Keep "disposable" — the page then contradicts `docs/design/`, and the FAQ's "where does the code run" answer becomes the second place the site disagrees with itself | **ANSWERED 2026-10-21: as recommended — no.** The page **must not print "disposable"**; where that sense is wanted it says "one integrated project", and a managed project is defined as **new** and holding only Fugaro's resources (ZF15). |
 | **D249** | How is the framing rule enforced? | A `wording.mjs`-style pair: a **banned** list (`no real alternative`, `no alternative`, `the only cloud`) and a **required** sentence the page must carry ("no other cloud offers this as one integrated project"), each with a planted defect | ZF58/ZF59: the rule is the owner's and no gate holds it; the repository's own `RETIRED_CLAIMS` is the precedent | Convention only — the next round re-introduces the phrase and nobody notices | **ANSWERED 2026-10-21: as recommended** — the framing rule is a `wording.mjs`-style gate: a banned list ("no real alternative", "no alternative", "the only cloud") and a required sentence the page must carry, each with a planted defect. |
 | **D250** | When does Part 1 (the shared slider) land? | After PR #842 merges, re-reading `HomeSlider.astro` first | ZF51: the task text names #842 as reworking this component and #842 is not in this checkout, so landing first means writing assertions against markup that may already have moved | Land now against the component as this checkout has it — `home.mjs` churn twice for one feature, and if #842 has landed the assertions are written against a shape that no longer exists | **ANSWERED 2026-10-21: as recommended — after #842, which has merged.** #842 is in this branch's history (`3c5cc354`, "the owner's 2026-10-21 feedback — the spark, Home in the menu, and the slider"), so ZF51's unverifiable pull request is verified, and Part 1 re-reads `HomeSlider.astro` before writing assertions against it: the merge has already changed the component — it carries the door and the slide and dot hooks — while the "See it" panel still holds the one `<img>` (`/images/fugaro-watch.png`) that Part 1 turns into rows. |
 | **D251** | Who supplies the slides? | The owner, as files plus a `MANIFEST.json`-shaped record and a data row each, exactly as the console's four did (`website/README.md:1409-1562`) | ZF49, ZF50: no phone screenshot exists and no agent may commit one; the console's own process is the precedent and is already gated | An agent generates placeholder images — D190 and `website/README.md:1547` forbid it, and a placeholder that ships is worse than an empty slot | **ANSWERED 2026-10-21: the images the Console page already uses, reused.** The slides are the console page's **own four screenshots** (`console-{live,run,spend,installations}.webp`, committed with `MANIFEST.json` and `website/data/console-screens.yaml`), rendered by the shared slider rather than copied again, with the Watch row last; **phone screenshots come later, supplied by the owner as files** (ZF49, ZF50). No agent commits a picture. |

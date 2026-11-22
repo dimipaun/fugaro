@@ -19,7 +19,7 @@ import (
 )
 
 // The compute stage: the Batch backend's installation-level provisioning
-// (design docs/design/compute-backend.md §3.2, §3.7, §8.1 task 6). It is the
+// (design docs/compute-backend/spec.md §3.2, §3.7, §8.1 task 6). It is the
 // owner's step, and it is behind --provision-batch: what it creates is money
 // and infrastructure `fugaro update` does not apply, and a run that never asks
 // for it never reaches this root.

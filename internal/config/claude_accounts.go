@@ -11,7 +11,7 @@ import (
 
 // DefaultClaudeAccount is the always-available, implicit name: the
 // unsuffixed claude-oauth-token secret every repository already uses
-// (design docs/design/named-oauth-tokens.md §1). It is reserved and may
+// (design docs/named-oauth-tokens/spec.md §1). It is reserved and may
 // not appear as a key of claude_accounts.
 const DefaultClaudeAccount = "default"
 
@@ -42,7 +42,7 @@ var ClaudeAccountNameRE = regexp.MustCompile(`^[a-z](?:[a-z0-9]|-[a-z0-9]){0,30}
 // build the secret name, which SecretNameRE elsewhere caps at 63
 // characters; the name is also concatenated into gcp.WorkflowVariant's
 // "workflow_name" key, which Cloud Run job and service-account identifiers
-// bound tightly (design docs/design/named-oauth-tokens.md). 31 keeps every
+// bound tightly (design docs/named-oauth-tokens/spec.md). 31 keeps every
 // derived identifier comfortably inside those limits.
 const MaxClaudeAccountNameLen = 31
 

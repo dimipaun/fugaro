@@ -923,7 +923,7 @@ is *another command*. This slice's reading of it, stated because a reviewer must
 - **Shared jobs for coding runs (the general C3.9).** The coding shared project jobs stay refused on every
   route, with today's sentence and today's test. **Task 3.4a's refusal** of an OAuth launch onto a shared
   job stays lifted-at-C3.9 and is **not touched**.
-- **The tier-A registry and the reference record of `docs/design/project-centric.md` §7.** D131 and O4
+- **The tier-A registry and the reference record of `docs/project-centric/spec.md` §7.** D131 and O4
   name them as what the shared-job work grows into. This slice reads **O4's published admissions** — which
   is the source the model path already uses — and builds no registry.
 - **The model-credential move for shared jobs.** `--provision-credentials` still does not reach
