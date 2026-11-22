@@ -375,8 +375,11 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
  * -- git, the tools `doctor` finds with `LookPath`, `gcloud`, and their
  * plugins -- which is the leak F41 exists to forbid, and the same "a credential
  * handed over for no reader" the WSL route below leaves the key out for.
- * Nothing reaches that state yet, only because `PRODUCTION_KEYRING` is empty
- * and every paste is refused until S2.9. **A real installation must not be
+ * Nothing reaches that state, and it is the floor below that keeps it out rather
+ * than the ring: `PRODUCTION_KEYRING` is held empty (S2.9 publishes the key in
+ * `ee/licence/keys/production.pub` and the release that closes this hand-off
+ * fills the ring), and the floor hands a key to no child at all in the meantime.
+ * **A real installation must not be
  * handed the key before the child can take it back out**, so the hand-off asks a
  * floor on the child's version -- `LICENCE_KEY_CLI_FLOOR`
  * (`src/shared/version.ts`), the release that carries the registration point --

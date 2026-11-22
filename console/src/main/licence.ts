@@ -43,9 +43,7 @@
 // (`licence-store.ts`, and one new `CHILD_ENV_KEYS` entry that is
 // security-sensitive and has its own review). No read-only state: what the
 // console still allows after the grace is S6.1's design and S6.2's build. No
-// production key: `PRODUCTION_KEYRING` below is where S2.9 puts the owner's
-// published public half, once S3.8 has created it. And no vectors: one set of
-// vectors for all three verifiers is S2.6's.
+// vectors: one set of vectors for all three verifiers is S2.6's.
 //
 // Three more things are rules rather than omissions. The verifier **makes no
 // network call**, which is a fact about this file's imports and is held by a
@@ -93,11 +91,24 @@ export interface LicenceClaims {
  * build holds production ids only. */
 export type LicenceKeyring = Readonly<Record<string, string>>
 
-/** PRODUCTION_KEYRING is the ring the shipped console verifies against. It is
- * empty today because the owner's signing keys do not exist yet: S3.8 creates
- * them, S2.9 puts the published production public half in here, and until then
- * nothing verifies in a real build -- which is the honest state of a release
- * that carries no key enforcement. */
+/** PRODUCTION_KEYRING is the ring the shipped console verifies against: the one
+ * key the owner's production signing half is published as (S3.8 created it, S2.9
+ * published it), under the id a production key carries, and no other entry --
+ * a key minted for a test or for a sandbox names an id this ring does not hold.
+ *
+ * The entry is the PEM in `ee/licence/keys/production.pub` verbatim: one key, in
+ * one file, in three verifiers, and `test/unit/licence.test.ts` holds this ring
+ * to that file.
+ *
+ * **It holds nothing while no CLI takes the licence key back out of its own
+ * environment** (`LICENCE_KEY_CLI_FLOOR`, `src/shared/version.ts`). A console
+ * that can keep a key while no CLI can take one back is a console that hands a
+ * credential to a CLI which passes it on to every program it starts, which is
+ * what `spawn.test.ts` holds this ring and that floor together for: the two move
+ * in one change, and the floor names a release that exists. The key is published
+ * either way -- the Go verifier's ring is built from the file and the app's holds
+ * the same bytes -- so nothing is missing here but the release that closes the
+ * hand-off. */
 export const PRODUCTION_KEYRING: LicenceKeyring = Object.freeze({})
 
 /** GRACE_DAYS is the grace that follows `expires` before the paid side lapses

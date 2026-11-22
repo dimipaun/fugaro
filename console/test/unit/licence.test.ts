@@ -84,6 +84,7 @@ import {
   type LicenceV1Refusal,
   type LicenceV1State,
 } from '../../src/main/licence'
+import { LICENCE_KEY_CLI_FLOOR, licenceKeySupported } from '../../src/shared/version'
 
 const DAY = 86_400
 
@@ -251,11 +252,49 @@ describe('the licence key', () => {
     const test = signer('test-2026')
 
     expect(PRODUCTION_KEYRING[test.id]).toBeUndefined()
-    // S2.9 adds the owner's published production key here; what must survive
-    // that task is the shape of every entry.
+    // The ring holds the owner's published production key (S2.9); what this
+    // case keeps is the shape of every entry.
     for (const [id, pem] of Object.entries(PRODUCTION_KEYRING)) {
       expect(createPublicKey(pem).asymmetricKeyType, `${id} is not an Ed25519 public key`).toBe('ed25519')
     }
+  })
+
+  it('TestKeyringMatchesThePublishedKey: the ring is the published key the day a CLI can take a key back', () => {
+    // The one file the owner's production public half is published as, read as
+    // it is written: the Go verifier's ring is built from this file and the
+    // app's holds the same bytes, so the console is held to it rather than to a
+    // second copy of the PEM.
+    const PUBLISHED = fileURLToPath(new URL('../../../ee/licence/keys/production.pub', import.meta.url))
+    const pem = readFileSync(PUBLISHED, 'utf8')
+    const PRODUCTION_ID = 'fugaro-licence-production'
+
+    // The file is one Ed25519 public key in the shape a ring entry has, and the
+    // ring that holds it refuses a stranger who signs a key under the
+    // production id: the id is the one part nothing decodes, so a ring that
+    // held it for the id alone would be a ring a throwaway keypair mints
+    // against.
+    expect(createPublicKey(pem).asymmetricKeyType, 'the published production key is not a key this ring can hold').toBe('ed25519')
+    const publishedRing: LicenceKeyring = { [PRODUCTION_ID]: pem }
+    const stranger = signer(PRODUCTION_ID)
+    expect(refusalOf(verifyLicenceKey(mint(stranger, claimsFor()), at(ISSUED), publishedRing))).toContain('signature')
+    // The same key verifies under the ring its own keypair is in, so the
+    // refusal is the published key's and not the key text's.
+    expect(verified(verifyLicenceKey(mint(stranger, claimsFor()), at(ISSUED), stranger.keyring)).state).toBe('valid')
+
+    if (LICENCE_KEY_CLI_FLOOR === null) {
+      // No CLI release takes the key back out of its own environment yet, so
+      // this console keeps no key at all: the ring is empty and the hand-off
+      // gate answers false for every version (`spawn.test.ts` holds the two
+      // together, and this case is the other half -- the entry the day the
+      // floor is named).
+      expect(Object.keys(PRODUCTION_KEYRING)).toEqual([])
+      expect(licenceKeySupported('99.99.99')).toBe(false)
+      return
+    }
+
+    // Once a release carries the removal the ring is that file's key, under the
+    // published id and nothing else.
+    expect(PRODUCTION_KEYRING).toEqual(publishedRing)
   })
 })
 
