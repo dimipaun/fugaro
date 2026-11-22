@@ -96,7 +96,7 @@ func TestContractShapes(t *testing.T) {
 			ComputeRuns:         349_998,
 			ComputeNotEstimated: 1,
 			Estimate: &estimate.Table{
-				Version: 1, WrittenAt: folded,
+				Version: estimate.CacheVersion, WrittenAt: folded,
 				Groups: []estimate.Group{{
 					Tier: tier.Medium, Rigor: rigor.Pro, Runs: 12,
 					DurationMinutes: estimate.Quartiles{P25: 18, P50: 24, P75: 31},
