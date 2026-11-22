@@ -213,17 +213,53 @@ case "$sub" in
   cat "$answers/iam.json"
   ;;
 "iam roles describe"*)
-  role=${4:-}
-  python3 - "$answers/roles.json" "$role" <<'PY'
+  # The real command takes a bare role ID — `aiplatform.user`, not the
+  # `roles/aiplatform.user` a policy spells — and `--project` only for a project's
+  # own role, naming that role's project. The fake holds the same contract, so a
+  # check that hands over the policy's spelling is refused here exactly as gcloud
+  # refuses it, and the case that expects the role's permissions fails.
+  role="" role_project=""
+  shift 3
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --project=*) role_project=${1#--project=} ;;
+    --project)
+      role_project=${2:-}
+      shift
+      ;;
+    --format=*) ;;
+    --format) shift ;;
+    -*) ;;
+    *) [ -n "$role" ] || role=$1 ;;
+    esac
+    shift
+  done
+  python3 - "$answers/roles.json" "$role" "$role_project" <<'PY'
 import json, sys
+path, role, project = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
-    doc = json.load(open(sys.argv[1]))
+    doc = json.load(open(path))
 except Exception:
     sys.exit(1)
+if not role or "/" in role:
+    print("ERROR: (gcloud.iam.roles.describe) '%s' is not a role ID: an IAM policy spells a predefined role 'roles/ID' and a project's own 'projects/P/roles/ID', and this command takes neither" % role, file=sys.stderr)
+    sys.exit(1)
 for r in doc.get("roles") or []:
-    if r.get("name") == sys.argv[2] or r.get("id") == sys.argv[2]:
+    name = r.get("name") or ""
+    if name.startswith("roles/") and name[len("roles/"):] == role:
+        if project:
+            print("ERROR: (gcloud.iam.roles.describe) '%s' is a predefined role and takes no --project" % name, file=sys.stderr)
+            sys.exit(1)
         print(json.dumps(r))
         sys.exit(0)
+    if name.startswith("projects/") and name.endswith("/roles/" + role):
+        want = name[len("projects/"):-len("/roles/" + role)]
+        if project != want:
+            print("ERROR: (gcloud.iam.roles.describe) '%s' is a project role and needs --project=%s" % (role, want), file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps(r))
+        sys.exit(0)
+print("ERROR: (gcloud.iam.roles.describe) no role '%s' in this project" % role, file=sys.stderr)
 sys.exit(1)
 PY
   ;;
@@ -885,6 +921,13 @@ PY
   expect_status "$status" 1 "a granted predefined role"
   expect_contains "$out" "FACT grants: FAIL" "a granted predefined role: the row"
   expect_contains "$out" "roles/aiplatform.user" "a granted predefined role: the role it found"
+  # The policy's own spelling is what the row names, and the bare ID with no
+  # --project is what gcloud is asked: the fake refuses the former, so a check
+  # that handed it over would read the row as UNVERIFIED, not FAIL.
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_contains "$calls" "iam roles describe aiplatform.user --format=json" "a granted predefined role: the ID gcloud is asked for, with no --project"
+  expect_absent "$calls" "describe roles/aiplatform.user" "a granted predefined role: the policy's own spelling is not handed to gcloud"
 }
 
 test_a_custom_role_with_the_permission_is_a_finding() {
@@ -900,7 +943,12 @@ PY
   run_check "$dir" -- $(default_args "$dir")
   expect_status "$status" 1 "a custom role with the permission"
   expect_contains "$out" "FACT grants: FAIL" "a custom role with the permission: the row"
-  expect_contains "$(cat "$dir/logs/gcloud.calls")" "iam roles describe" "a custom role with the permission: the role is read"
+  expect_contains "$out" "projects/${project}/roles/chk882vertex" "a custom role with the permission: the role it found"
+  # A project role is the bare ID plus the project the binding names.
+  local calls
+  calls=$(cat "$dir/logs/gcloud.calls")
+  expect_contains "$calls" "iam roles describe chk882vertex --project=${project} --format=json" "a custom role with the permission: the ID and its own project are what gcloud is asked"
+  expect_absent "$calls" "describe projects/" "a custom role with the permission: the policy's own spelling is not handed to gcloud"
 }
 
 test_a_refused_launch_is_not_measured() {

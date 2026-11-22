@@ -124,7 +124,6 @@ PROG=${0##*/}
 say() { printf '%s: %s\n' "$PROG" "$*" >&2; }
 owner() { printf '%s: %s\n' "$PROG" "$*" >&4; }
 ABORT=""
-REACHED_END=no
 CLEANUP_RUNNING=no
 
 # Every global a step assigns is set to the empty string here, so the exit trap
@@ -290,27 +289,6 @@ finish() {
 }
 
 # ------------------------------------------------------------------- the tools
-run_bounded() { # run_bounded SECONDS KEY CMD...
-  local secs=$1 key=$2
-  shift 2
-  BOUNDED_TIMED_OUT=no
-  "$@" >>"$SCRATCH/$key.out" 2>>"$SCRATCH/$key.err" &
-  local pid=$! waited=0
-  while kill -0 "$pid" 2>/dev/null; do
-    [ "$waited" -lt "$secs" ] || break
-    sleep 1
-    waited=$((waited + 1))
-  done
-  if kill -0 "$pid" 2>/dev/null; then
-    BOUNDED_TIMED_OUT=yes
-    kill -TERM "$pid" 2>/dev/null || true
-    sleep 2
-    kill -KILL "$pid" 2>/dev/null || true
-  fi
-  BOUNDED_STATUS=0
-  wait "$pid" 2>/dev/null || BOUNDED_STATUS=$?
-}
-
 oneline() { tr '\n\t' '  ' | tr -s ' ' | sed -e 's/^ //' -e 's/ $//'; }
 
 jget() { # jget <file> <dotted.path>
@@ -478,6 +456,28 @@ for b in doc.get("bindings") or []:
             print(role)
             break
 PY
+}
+
+# describe_role ROLE: `gcloud iam roles describe` for a role spelled the way the
+# IAM policy spells it, which is not the way gcloud takes it. A binding carries
+# `roles/ID` for a predefined role and `projects/P/roles/ID` for a project's own,
+# and gcloud refuses both: it wants the bare ID, with --project only for a project
+# role — and then the role's own project, the one the binding names. A spelling
+# that is neither (an organization's, say) is passed through, so the call fails and
+# the row reads UNVERIFIED rather than a role being read as something it is not.
+describe_role() { # describe_role <role>
+  case "$1" in
+  roles/*)
+    gcloud iam roles describe "${1#roles/}" --format=json
+    ;;
+  projects/*/roles/*)
+    local rest=${1#projects/}
+    gcloud iam roles describe "${1##*/roles/}" --project="${rest%%/roles/*}" --format=json
+    ;;
+  *)
+    gcloud iam roles describe "$1" --format=json
+    ;;
+  esac
 }
 
 # record_facts FILE prints what this check reads of a run's own record:
@@ -922,7 +922,7 @@ step_grants() {
     while IFS= read -r role; do
       [ -n "$role" ] || continue
       local rrc=0
-      gcloud iam roles describe "$role" --project="$GCP_PROJECT" --format=json \
+      describe_role "$role" \
         >"$SCRATCH/role.json" 2>"$SCRATCH/role.err" || rrc=$?
       if [ "$rrc" != 0 ]; then
         verdict=UNVERIFIED
@@ -1405,7 +1405,6 @@ main() {
   step_served
   step_priced
   step_settled
-  REACHED_END=yes
 }
 
 trap finish EXIT
