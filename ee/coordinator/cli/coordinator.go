@@ -37,6 +37,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -902,6 +903,77 @@ func coordinatorRun(in runview.Input) coordinator.Run {
 		if cf := r.ChangedFiles.Bounded(); cf != nil {
 			run.Files, run.FilesTruncated = cf.Paths, cf.Truncated
 		}
+	}
+	return run
+}
+
+// bucketRuns is the runs half read from the runs bucket: coordinatorRuns, the
+// read `coordinator status --from-store`'s fallback has always answered with,
+// and the one the sweep makes for itself (coordinatorRunsSource).
+func bucketRuns(env *fcli.Cloud) RunsFallback {
+	return func(warn io.Writer) coordinator.RunsReader { return coordinatorRunsSource{env: env, warn: warn} }
+}
+
+// IndexRuns is the runs half of a repository's view read from the run index
+// (IR3, F3), as the fallback a stored-project read takes when the project's
+// database holds no view for the repository.
+//
+// The half it answers is the one the runs bucket answers, because the index is
+// folded from those same runs (RI4): a repository's runs in the read's window,
+// newest first, each reduced to what the view shows of it (indexRun). What
+// changes is what the read costs, and that is the whole point of the task. The
+// bucket read is a listing of the repository's runs plus about three object
+// reads for each of them and no cache (F3), while the index answers the same
+// window with one query over a constant number of documents, whatever the
+// history behind it. The coordinator's sweep is off on most installations, so
+// this fallback — and not the stored view — is what most repositories of most
+// projects are drawn from, and in `fugaro graph` it is the console's own read.
+//
+// It is the person's read and not a service account's: the index is reached
+// with the credential the person running the CLI holds
+// (roles/datastore.viewer), and no job holds a Firestore role at all (F8), so
+// the sweep keeps reading the runs bucket (coordinatorRunsSource). The reader
+// is passed in rather than opened here, so that this half is testable without
+// a database and the caller owns the one client it reads through.
+func IndexRuns(reader runindex.Reader) RunsFallback {
+	return func(io.Writer) coordinator.RunsReader { return indexRunsSource{reader: reader} }
+}
+
+// indexRunsSource is IndexRuns as the reader itself: the index, and the window
+// the stored view is read over. It writes no warning, where the bucket read
+// warns about a run whose objects would not decode: an entry the fold could not
+// read is one the index does not carry, and the page says nothing about it.
+type indexRunsSource struct{ reader runindex.Reader }
+
+func (s indexRunsSource) Runs(ctx context.Context, repo coordinator.Repo, since time.Time) ([]coordinator.Run, error) {
+	page, err := s.reader.List(ctx, runindex.Filter{Slugs: []string{repo.Slug}, Since: since})
+	if err != nil {
+		return nil, fcli.RemoteErr(err)
+	}
+	out := make([]coordinator.Run, 0, len(page.Entries))
+	for _, e := range page.Entries {
+		out = append(out, indexRun(e))
+	}
+	return out, nil
+}
+
+// indexRun is one run as the view holds it, out of the index's entry for it:
+// the same reduction coordinatorRun makes of a run's objects, from the two
+// records the entry carries whole.
+//
+// **One fact comes from the entry and not from those records**: the pull
+// request a run's *task* names. A run that has opened none of its own carries
+// the number in its task and not in its record — coordinatorRun's own fallback
+// — and a task is not in the index, whose whole reason for not carrying one is
+// that its prompt is the largest thing about a run. The fold writes the number
+// both of them agree on into the entry (Entry.PR), which is what keeps such a
+// run filed under its pull request in the view rather than in the in-flight
+// set; a run the entry names no pull request for keeps the record's own
+// reading.
+func indexRun(e runindex.Entry) coordinator.Run {
+	run := coordinatorRun(runview.Input{RunID: e.RunID, Launch: e.Launch, Record: e.Record})
+	if e.PR != 0 {
+		run.PR = e.PR
 	}
 	return run
 }
