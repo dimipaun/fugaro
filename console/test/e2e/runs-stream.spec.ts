@@ -193,7 +193,7 @@ function bundle(body: string): string {
  * --json`'s array holds, with the line's own `type` beside it. The four members
  * a row must carry are the ones `decodeRunsList` reads. */
 function aLine(run: string): Record<string, unknown> {
-  return { type: 'row', run, repo: 'acme/widgets', status: 'failed', terminal: true }
+  return { type: 'row', row: { run, repo: 'acme/widgets', status: 'failed', terminal: true } }
 }
 
 /** RUNS is the three runs every case streams, in the order the CLI writes them:

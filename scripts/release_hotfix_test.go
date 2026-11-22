@@ -393,39 +393,29 @@ func TestHotfixRefusesADirtyTree(t *testing.T) {
 	res.requireFailureContaining(t, "the working tree is not clean")
 }
 
-// TestHotfixRefusesACodingAgentsSession: --hotfix is the same release by another
-// door -- it pushes release/X.Y and cuts a tag that is just as permanent -- so
-// the agent refusal in the preconditions covers it too, and the new-release
-// skill's own "the same command with --hotfix" is not a way around it. Nothing
-// outward-facing happens before the refusal: no maintenance branch, no tag, and
-// no gh call at all (the fake's log is empty). The ordinary path's run of the
-// same session is TestReleaseRefusesToCutTheTagInACodingAgentsSession.
-func TestHotfixRefusesACodingAgentsSession(t *testing.T) {
+// TestHotfixRunsInACodingAgentsSession: the owner's order of 2026-11-21 removed
+// the refusal of a coding agent's session, on the hotfix path as on the
+// ordinary one: the same release run from an agent's session reaches the
+// maintenance branch and the tag, and --dry-run still passes.
+func TestHotfixRunsInACodingAgentsSession(t *testing.T) {
 	r := newHotfixRepo(t)
 	g := r.state(t).with("CLAUDECODE=1")
 
-	res := runHotfix(t, r, g, "0.12.1", "--fix", r.fix)
-
-	res.requireFailureContaining(t, "CLAUDECODE says this is a coding agent's session")
-	if refExists(t, r.bare, "refs/heads/release/0.12") {
-		t.Error("an agent's session pushed the maintenance branch: the refusal is a precondition, ahead of the branch")
-	}
-	if refExists(t, r.bare, "refs/tags/v0.12.1") {
-		t.Error("an agent's session pushed the tag")
-	}
-	if log := strings.TrimSpace(g.log(t)); log != "" {
-		t.Errorf("an agent's session called gh before the refusal:\n%s", log)
-	}
-	if n := worktrees(t, r.local); n != 1 {
-		t.Errorf("the refused run left %d worktree(s) behind", n)
-	}
-
-	// --hotfix --dry-run is covered by the same exemption --dry-run has on the
-	// ordinary path: it creates nothing outside its own scratch worktree.
 	dry := runHotfix(t, r, g, "0.12.1", "--fix", r.fix, "--dry-run")
 	dry.requireSuccess(t)
 	if !strings.Contains(dry.out, "Dry run for v0.12.1 (release/0.12)") {
-		t.Errorf("--hotfix --dry-run must still pass in a coding agent's session:\n%s", dry.out)
+		t.Errorf("--hotfix --dry-run did not plan in a coding agent's session:\n%s", dry.out)
+	}
+	// The fixture's maintenance branch has no release text yet, so the real run
+	// stops at the step after the push, which is how far a refusal of the
+	// session would have kept it from getting.
+	res := runHotfix(t, r, g, "0.12.1", "--fix", r.fix)
+	res.requireFailureContaining(t, "release/0.12 is pushed, but the release's own text is not on it")
+	if strings.Contains(res.out, "coding agent's session") {
+		t.Errorf("a coding agent's session was refused:\n%s", res.out)
+	}
+	if !refExists(t, r.bare, "refs/heads/release/0.12") {
+		t.Errorf("a coding agent's session did not push the maintenance branch:\n%s", res.out)
 	}
 }
 
