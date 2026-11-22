@@ -103,7 +103,7 @@ func (c *wu5Cloud) seams(t *testing.T) workspaceProjectAddSeams {
 			c.opened++
 			return c.auth, nil
 		},
-		member: func(ctx context.Context, m workspace.MemberTarget, region string) (workspace.MemberOps, error) {
+		member: func(ctx context.Context, _ *localcfg.Config, m workspace.MemberTarget, region string) (workspace.MemberOps, error) {
 			c.opened++
 			c.targets = append(c.targets, m)
 			c.regions = append(c.regions, region)
