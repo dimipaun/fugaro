@@ -71,7 +71,7 @@ func docIDs(docs []firestore.Doc) []string {
 
 // TestRunQueryOrdersAndPages pages a filtered, ordered collection the way the
 // run index is read: updated_at descending, the run id as the tie-break, one
-// request per page and a startAfter cursor carrying the last row read.
+// request per page and a cursor carrying the last row read.
 func TestRunQueryOrdersAndPages(t *testing.T) {
 	f := gcpfake.NewFirestore(t)
 	seedRunIndex(t, f)
@@ -118,16 +118,16 @@ func TestRunQueryOrdersAndPages(t *testing.T) {
 		}
 	}
 
-	// The page after the first carries a startAfter cursor over both sort
+	// The page after the first carries an exclusive cursor over both sort
 	// fields, and the limit the caller asked for.
 	body := lastQueryBody(f)
-	for _, want := range []string{`"startAfter"`, `"limit":2`, `"fieldPath":"updated_at"`, `"direction":"DESCENDING"`, `"fieldPath":"__name__"`} {
+	for _, want := range []string{`"startAt"`, `"before":false`, `"limit":2`, `"fieldPath":"updated_at"`, `"direction":"DESCENDING"`, `"fieldPath":"__name__"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("the query lacks %s: %s", want, body)
 		}
 	}
-	if strings.Contains(body, `"startAt"`) {
-		t.Fatalf("the cursor is a startAt: %s", body)
+	if strings.Contains(body, `"startAfter"`) {
+		t.Fatalf("the cursor is a startAfter, which the service does not take: %s", body)
 	}
 
 	// One orderBy field: __name__ is appended ascending, so the same ties break

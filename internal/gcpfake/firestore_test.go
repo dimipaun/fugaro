@@ -109,7 +109,8 @@ func fakeQueryIDs(t *testing.T, f *Firestore, q string) []string {
 }
 
 // TestFakeRunQueryMatchesOrder runs the query a page of the run index is: an
-// equality filter, an order by of two fields, a limit and a startAfter cursor.
+// equality filter, an order by of two fields, a limit and an exclusive startAt
+// cursor.
 func TestFakeRunQueryMatchesOrder(t *testing.T) {
 	f := NewFirestore(t)
 	for _, d := range []struct{ id, plan, at string }{
@@ -135,10 +136,10 @@ func TestFakeRunQueryMatchesOrder(t *testing.T) {
 	if ids := fakeQueryIDs(t, f, query(desc, 2, "")); !reflect.DeepEqual(ids, []string{"run-b", "run-c"}) {
 		t.Fatalf("first page = %v", ids)
 	}
-	// The page after it starts after the last row read: a startAfter is
-	// exclusive, so run-c is not answered twice.
-	after := `,"startAfter":{"values":[{"timestampValue":"2026-11-22T10:00:00.000000Z"},` +
-		`{"referenceValue":"projects/p-1234/databases/(default)/documents/runIndex/run-c"}]}`
+	// The page after it reads on from the last row: a startAt with before
+	// false is exclusive, so run-c is not answered twice.
+	after := `,"startAt":{"values":[{"timestampValue":"2026-11-22T10:00:00.000000Z"},` +
+		`{"referenceValue":"projects/p-1234/databases/(default)/documents/runIndex/run-c"}],"before":false}`
 	if ids := fakeQueryIDs(t, f, query(desc, 2, after)); !reflect.DeepEqual(ids, []string{"run-a"}) {
 		t.Fatalf("second page = %v", ids)
 	}
@@ -147,8 +148,7 @@ func TestFakeRunQueryMatchesOrder(t *testing.T) {
 	}
 
 	for name, q := range map[string]string{
-		"both cursors":  query(desc, 2, after+`,"startAt":{"values":[{"stringValue":"x"}]}`),
-		"short cursor":  query(desc, 2, `,"startAfter":{"values":[{"timestampValue":"2026-11-22T10:00:00.000000Z"}]}`),
+		"short cursor":  query(desc, 2, `,"startAt":{"values":[{"timestampValue":"2026-11-22T10:00:00.000000Z"}],"before":false}`),
 		"bad direction": query(`[{"field":{"fieldPath":"updated_at"},"direction":"SIDEWAYS"}]`, 2, ""),
 	} {
 		if code, b, _ := rtdbDo(t, "POST", f.URL+runQueryPath, q, nil); code != 400 {

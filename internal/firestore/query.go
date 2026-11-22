@@ -16,9 +16,10 @@ type Order struct {
 }
 
 // Query is a structured query: equality filters, an orderBy of at most two
-// fields, a limit and a startAfter cursor. It is the shape a page of the run
-// index needs (plan RI1, finding F10): one plan's or repository's runs, newest
-// first, one page at a time.
+// fields, a limit and a cursor that reads on from a document the caller
+// already read. It is the shape a page of the run index needs (plan RI1,
+// finding F10): one plan's or repository's runs, newest first, one page at a
+// time.
 //
 // __name__ is appended to the orderBy when the caller names no field for it,
 // as the SDKs send it, so the order is total and a cursor over it is stable:
@@ -34,7 +35,9 @@ type Query struct {
 // RunQuery runs one structured query and returns its documents in the query's
 // order, at most Limit of them. It makes exactly one request, so a page costs
 // the same whatever the history behind it: the caller that wants the next page
-// passes the last document it read back as StartAfter.
+// passes the last document it read back as StartAfter, which is sent the way
+// the service takes an exclusive cursor — startAt with before false, the shape
+// the SDKs' StartAfter maps to.
 func (c *Client) RunQuery(ctx context.Context, q Query) ([]Doc, error) {
 	if !validName(q.Collection) {
 		return nil, fmt.Errorf("firestore: %q is not a collection", q.Collection)
@@ -92,7 +95,7 @@ func (c *Client) RunQuery(ctx context.Context, q Query) ([]Doc, error) {
 		if err != nil {
 			return nil, err
 		}
-		sq["startAfter"] = map[string]any{"values": values}
+		sq["startAt"] = map[string]any{"values": values, "before": false}
 	}
 	var rows []struct {
 		Document *rawDoc `json:"document"`
@@ -137,9 +140,9 @@ func equalityFilters(where map[string]any) ([]any, error) {
 	return filters, nil
 }
 
-// cursorValues is the startAfter cursor for a query ordered by fields: one
-// value per ordered field, taken from doc, then doc's own resource name (the
-// __name__ the query orders by last).
+// cursorValues is the exclusive startAt cursor for a query ordered by fields:
+// one value per ordered field, taken from doc, then doc's own resource name
+// (the __name__ the query orders by last).
 func (c *Client) cursorValues(doc *Doc, fields []string) ([]any, error) {
 	ref, err := c.docPath(doc.Collection, doc.ID)
 	if err != nil {

@@ -20,7 +20,7 @@ import (
 // uses, for one project's (default) database: documents GET/PATCH/DELETE
 // (updateMask, currentDocument preconditions), runQuery (equality and range
 // filters, an order by of one or two fields in either direction, a limit, a
-// startAt or startAfter cursor) and the databases get/create calls with their
+// startAt cursor) and the databases get/create calls with their
 // long-running operation. It is as strict as the real service where that is
 // known: typed values only (an integerValue is a decimal string), updateMask
 // paths parsed with the backtick grammar, a name that must match the URL,
@@ -690,9 +690,10 @@ type fsQuery struct {
 		Direction string `json:"direction"`
 	} `json:"orderBy"`
 	Limit int `json:"limit"`
-	// A query continues from one cursor, startAt or startAfter.
-	StartAt    *fsCursor `json:"startAt"`
-	StartAfter *fsCursor `json:"startAfter"`
+	// A query continues from one cursor: a startAt, exclusive unless it sets
+	// before. The service has no startAfter field — a client's exclusive
+	// cursor is a startAt with before false.
+	StartAt *fsCursor `json:"startAt"`
 }
 
 type fsCursor struct {
@@ -807,20 +808,11 @@ func (f *Firestore) runQuery(w http.ResponseWriter, project string, body []byte)
 	if len(order) == 0 || order[len(order)-1].field != "__name__" {
 		order = append(order, fsOrder{field: "__name__"})
 	}
-	if q.StartAt != nil && q.StartAfter != nil {
-		writeError(w, 400, "INVALID_ARGUMENT", "a query starts at a startAt or a startAfter cursor, not both")
-		return
-	}
-	// A startAfter is exclusive; a startAt skips its position unless before is
-	// set.
-	cursor, exclusive := q.StartAfter, true
-	if q.StartAt != nil {
-		cursor, exclusive = q.StartAt, !q.StartAt.Before
-	}
-	if cursor != nil && len(cursor.Values) != len(order) {
+	if q.StartAt != nil && len(q.StartAt.Values) != len(order) {
 		writeError(w, 400, "INVALID_ARGUMENT", "the cursor must have one value per orderBy field (including __name__)")
 		return
 	}
+	cursor, exclusive := q.StartAt, q.StartAt != nil && !q.StartAt.Before
 	if q.Limit < 0 {
 		writeError(w, 400, "INVALID_ARGUMENT", "negative limit")
 		return
