@@ -501,6 +501,35 @@ import (
 // the mint reads), a token that may not read the operations area, a month whose
 // lines do not sum and a token minted for the wrong audience, and says what the
 // check recorded of each.
+// licence-key-v2's Checks 560 to 564 are the owner's, and each has fakes of its
+// own. Check 560's are a fake `gcloud` serving the Scheduler job, the licence
+// job, the fire, the execution it started and the job's own log lines over one
+// installation's key: a case says what a tick that renewed the key reads, and
+// what a fire that started no execution reads. Check 561's add a fake `fugaro`
+// answering `doctor --json` and two `licence status --json` reads -- one before
+// the tick and one after it -- so a case bends a revocation the server answered
+// about another key, a tick that reached the server with the key still good, and
+// each answer D2140's unreachable half must produce or refuse (a key given up on
+// a failed check, a state that moved, a failure the record did not count, a
+// last-ok time that moved, a check recorded as an answer). Check 562's are a
+// fake `curl` serving the licence site's own 403 and the CLI's loopback refusal
+// page, and a fake `fugaro` whose `licence login` prints an authorize address
+// and holds a listener, so a case says what a wrong-`state` callback answered,
+// whether the flow was still running after it, and that no key-shaped string
+// reached the block. Check 563's are a fake `fugaro` whose `licence login
+// --device` prints an address and a code and then ends either approved or
+// expired, so a case says what each half holds and that a code which ran out
+// wrote nothing. Check 564's are a fake `curl` over the portal's API and the
+// Paddle SANDBOX API, a fake `fugaro` whose `licence login` prints an authorize
+// address and whose `licence status --json` holds a check the case places before
+// or after the refund, and a fake `gcloud` whose Scheduler job is in a location
+// the installation's own Cloud Run region is NOT (Scheduler does not serve every
+// region, which is what K4.2's module works around), together with the licence
+// job's executions and both of the check's fires: so a case bends a transaction
+// the sandbox does not hold, a renewal that did not move the term, a refund that
+// withdrew only the key the event named rather than the whole licence, a fire
+// that failed, a job in no location the project serves, a tick whose fire started
+// no execution, and an installation that has recorded no check since the refund.
 // Check 760's fakes are a fake `fugaro` answering `doctor --json` and the four
 // `runs ls` reads it times, over a window that names two pull requests -- one of
 // them with no index entry, so its read falls back to the scan -- and a fake
@@ -638,6 +667,11 @@ var liveCheckScripts = []struct {
 	{"check573.sh", "check573_test.sh"},
 	{"check574.sh", "check574_test.sh"},
 	{"check575.sh", "check575_test.sh"},
+	{"check560.sh", "check560_test.sh"},
+	{"check561.sh", "check561_test.sh"},
+	{"check562.sh", "check562_test.sh"},
+	{"check563.sh", "check563_test.sh"},
+	{"check564.sh", "check564_test.sh"},
 	{"check-760-runs-ls-speed.sh", "check-760-runs-ls-speed_test.sh"},
 	{"check790.sh", "check790_test.sh"},
 	{"check791.sh", "check791_test.sh"},
