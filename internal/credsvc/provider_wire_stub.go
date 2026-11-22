@@ -19,7 +19,7 @@ package credsvc
 // **It decides nothing.** It reads no bundle, no document, no repository and
 // no policy: the two arguments are not looked at, and two calls with two
 // different repositories get the same answer. That is the stub rule the other
-// scaffolding in this tree follows (scope_stub.go, internal/cli's
+// scaffolding in this tree follows (sealkey_stub.go, internal/cli's
 // after_write_stub.go).
 
 // stubReadProviderKey is the accessor's body until KS1 supplies the real one:
@@ -38,13 +38,11 @@ func stubReadProviderKey(*Bundle, string, string) (ProviderKeyEntry, bool) {
 
 // The assignment stands only while nothing else has made one.
 //
-// The guard is not decoration, because the filename order that carries the same
-// job in scope_stub.go carries it the other way here: that file's real side is
-// scope_workspace.go, which sorts after it, while the sides that fill this
-// accessor sort BEFORE this file — KS1 assigns it from bundle.go and I1 from
-// provider_wire_bundle.go, and the toolchain presents a package's files in name
-// order, so an unguarded init here would run last and put the stub back over
-// the real reader. Asking whether the accessor is still nil makes the stub what
+// The guard is not decoration, because the filename order works the other way
+// here: the sides that fill this accessor sort BEFORE this file — KS1 assigns
+// it from bundle.go and I1 from provider_wire_bundle.go — and the toolchain
+// presents a package's files in name order, so an unguarded init here would run
+// last and put the stub back over the real reader. Asking whether the accessor is still nil makes the stub what
 // it is meant to be whatever the other file is called: the answer that stands
 // until a real one exists, and never one that stands over a real one.
 func init() {
