@@ -57,7 +57,7 @@ last, since that one is a plan matter rather than a design one:
 | Where each layer lives, and what an area is | D20, D21; the project layer's closed `defaults:` (F36), the repository's `rigor:` block, and `rigor.areas` as `{name, match, mode}` `doublestar` rules (F9) |
 | What "dynamically" means | D22: chosen per run from the files it touches — declared at bootstrap where the caller knows them, measured from `runstore.Record.ChangedFiles` as they become known, monotone within the run (F38, F39) |
 | The resolved mode, and which layer won, in the run, PR and watch output | D24: the record (`runview.Row`, `fugaro runs ls`, `fugaro diagnose`), the PR body's status section (`internal/runner/prflow.go`'s `finalSection`), and `fugaro watch`'s live row, which costs a registry child (F40) |
-| A rule for a run that touches several areas | D23: the strictest matched area wins and every matched area is recorded, in the order strictest first |
+| A rule for a run that touches several areas | D23: the strictest matched area wins within one layer, the narrower layer wins across them, and every matched area is recorded, in the order strictest first (amended 2026-10-22; the D23 answer below) |
 | (The re-cut the ruling asks for, which is a plan matter and not a design one) | §2 of the [plan](implementation-plan.md): Slice 1's T1.2, T1.3 and T1.4, in that order |
 
 Two things the ruling does not change: the spec stays verbatim (its own commit,

@@ -655,13 +655,36 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 // deletion completes — and adopting the wrong one would set its retention and
 // delete it on a rollback. The names of the buckets are the message's whole
 // point: naming them is what lets a person say which is the installation's.
+//
+// Live is how many of them are ACTIVE. It is 0 when every bucket carrying the
+// ID is DELETE_REQUESTED: there is nothing to choose between because there is
+// nothing to adopt, and the message says so rather than telling a person to
+// delete a bucket that is already deleting. Restoring one of them is the way
+// out — it is immediate, it keeps the logs the bucket holds, and it leaves
+// exactly one ACTIVE, which this read then adopts — so that message names the
+// undelete command for each of them instead of a bucket to delete.
+//
+// Project is the project the buckets are in, which the zero-ACTIVE message
+// names each undelete command with.
 type LogBucketAmbiguousError struct {
-	Names []string
+	Names   []string
+	Live    int
+	Project string
 }
 
 func (e *LogBucketAmbiguousError) Error() string {
+	names := strings.Join(e.Names, ", ")
+	if e.Live == 0 {
+		restore := make([]string, 0, len(e.Names))
+		for _, name := range e.Names {
+			loc, _ := logBucketLocationID(name)
+			restore = append(restore, LogBucketUndelete(e.Project, loc))
+		}
+		return fmt.Sprintf("the project holds %d log buckets with the installation's ID, and every one of them is DELETE_REQUESTED: %s. A bucket on its way out is not the installation's to adopt, and one left to delete is gone in 7 days, logs and all: restore one of them (%s), then rerun fugaro update",
+			len(e.Names), names, strings.Join(restore, ", "))
+	}
 	return fmt.Sprintf("the project holds %d log buckets with the installation's ID: %s. fugaro cannot tell which one is the installation's, and it will not adopt one by chance, since the plan would set that bucket's retention and a rollback would delete it: remove all but one of them (gcloud logging buckets delete <id> --location=<location> --project <project>), then rerun fugaro update",
-		len(e.Names), strings.Join(e.Names, ", "))
+		len(e.Names), names)
 }
 
 // logBucketNamed is the project's log bucket of ID id, found by listing the
@@ -675,7 +698,9 @@ func (e *LogBucketAmbiguousError) Error() string {
 // made in its place is ACTIVE, so the ACTIVE one answers for the ID. Two
 // ACTIVE ones answer for nothing and the read refuses through
 // LogBucketAmbiguousError, naming both, rather than import whichever the
-// listing happened to return last.
+// listing happened to return last; so does a project whose every bucket
+// carrying the ID is DELETE_REQUESTED, with the message saying that and naming
+// the undelete command rather than a bucket to delete.
 //
 // It is nil, with no error, when the project holds no such bucket. A 404 (the
 // project is gone) and a disabled Logging API are the errors they are, and
@@ -711,7 +736,7 @@ func logBucketNamed(ctx context.Context, c *Clients, project, id string) (*loggi
 	if len(live) == 1 {
 		return live[0], nil
 	}
-	return nil, &LogBucketAmbiguousError{Names: names}
+	return nil, &LogBucketAmbiguousError{Names: names, Live: len(live), Project: project}
 }
 
 // Existing is what discovery found of a repository's live jobs and
