@@ -40,9 +40,9 @@ contract.
 | `routing.Rule` | `ordered`, `round-robin`, `failover` | how the service picks among a pool's usable members (R5) |
 | `routing.PrincipalKind` | `person`, `service-account`, `project` | what a pool's principal is (D3181) |
 | `routing.Threshold` | a number greater than 0 and at most 1 | the pool's optional usage threshold (D3178) |
-| a pool's new config members | `rule`, `principal`, `threshold` | PL1 adds them to `config.Pool`; `owner` and `strategy` keep their meanings and `subscription_spread` is still decoded (R21) |
+| a pool's new config members | `rule`, `principal`, `threshold` | PL1 adds them to `config.Pool`; `owner` and `strategy` keep their meanings — an absent `rule` resolves to `strategy` — and `subscription_spread` is still decoded (R21) |
 | a designation's members | `principal`, `project`, `pool` | one principal's pool for one project (R26) |
-| a pool reference's members | `project`, `pool`, `rule`, `threshold`, `principal` | the pool a run may be served from, as the lookup answers it |
+| a pool reference's members | `project`, `pool`, `rule`, `threshold`, `principal` | the pool a run may be served from, as the lookup answers it; `rule` is always resolved (never `""`) |
 | a grant's new members | `sources`, `named_pool` | the sources the grant covers and the pool `--pool` named (CS14) |
 | the listing's members | `project`, `pools`, `name`, `rule`, `principal`, `threshold`, `members`, `state`, `next_reset`, `usage`, `calls`, `tokens`, `headroom` | the JSON of `fugaro accounts pool ls --json` (PL2, PL10) |
 | `model_routing` | the policy key C1 adds | what tells the service the installation is migrated (PL3) |
@@ -68,10 +68,19 @@ the one file of the two C2 adds there that survives I1.
   the ones a mark or a cap holds. It keeps its meaning and is what `internal/creds`' selection
   already does within a tier.
 - **`failover`** is the member used least recently — the one exhausted longest ago — with the
-  round-robin counter breaking an exact tie. It keeps its meaning, and it is what a pool that names no
-  rule is served by: `rule` is a NEW member (R21), so a pool published before it existed keeps behaving
-  exactly as it does today, which is what `strategy`'s own default is. No pool moves because a rule
-  arrived, and a value that is not one of the three is refused rather than read as one of them.
+  round-robin counter breaking an exact tie. It keeps its meaning, and it is the rule a pool that names
+  neither a rule nor a strategy is served by. A value that is not one of the three is refused rather
+  than read as one of them.
+
+**An absent `rule` resolves to the pool's own `strategy`** (PL1): `rule` is a NEW member (R21) and
+`strategy` is still read and still means what it means, so a pool published with `strategy:
+round-robin` and no `rule` is served round-robin: a pool moves because a rule arrived only where its
+owner wrote one. `failover`
+is the answer only where a pool names neither, which is `strategy`'s own default read one step
+further. That resolution is one function, `routing.Rule.RuleOrDefault(strategy)`; whoever fills a
+pool reference's `rule` reads the member through it, **so `PoolRef.Rule` always carries the resolved
+rule and never `""`**, and the picker acts on one answer without reading the pool's configuration a
+second time.
 
 `D3177` retires `subscription_spread`: a pool of several subscription tokens serves all of them,
 under every rule, and the switch no longer decides whether a second token may be used. The member is
@@ -195,8 +204,22 @@ picker the walk calls inside one pool: it takes the reference the lookup answere
 threshold travel with the pool), the run and the pool's members, and it is an interface rather than a
 function because the stub the sides are written against until PL3 lands is a file I1 deletes — a
 declaration there would have to be moved by the deletion rather than deleted. Its stub answers the
-pool's first member, or `ErrNoCandidates` for a pool that holds none, which is what a member list
-with no rule behind it does.
+pool's first member, and `ErrNoCandidates` when it is handed no members at all.
+
+What the picker answers when there is nothing to serve from is the selection path's own language
+(`Selector.Select`), not a second one:
+
+- **`*ExhaustedUntil`** — no member is usable now and one becomes usable at a known time. The walk
+  applies `Select`'s own wait-or-switch rule to it, exactly as it does to a selection.
+- **`ErrNoCredential`** — no member is usable and none becomes usable by waiting: every member is
+  broken, or holds a mark with no time to wait for. It is a **refusal and never a fallback** (D143),
+  as it is on the selection path, where a dead token is the case the difference matters most.
+- **`ErrNoCandidates`** is none of those. It is the refusal of being handed **no members at all** — a
+  caller's mistake, a pool read that came back empty — and the walk must not move past it. Answering
+  it for an exhausted pool would hide the mistake behind a wait or a fallback to the chain's next
+  source, which may be a paid key (D143). It is not the empty pool's answer either: the lookup already
+  answers `found` false for a pool that holds no member (D3180), so a walk handed an empty list has
+  read something other than the pool it was pointed at.
 
 ## `fugaro accounts pool ls --json` (PL2, PL10, VS2)
 
@@ -261,7 +284,7 @@ decides nothing.**
 | Stub | Its answer | What it must not do |
 | --- | --- | --- |
 | `internal/credsvc/launcherpool_stub.go` | no pool designated, for every principal and every name, with no error | read a designation, a pool, a policy or an entitlement, or answer an error that a caller could tell from "none" |
-| `internal/creds/poolrule_stub.go` | the pool's first member, `ErrNoCandidates` for an empty pool | read or write a mark, a lease, a placement, a counter or a utilisation figure, or take a lease on the member it answers |
+| `internal/creds/poolrule_stub.go` | the pool's first member; `ErrNoCandidates` when it is handed no members at all | read or write a mark, a lease, a placement, a counter or a utilisation figure, take a lease on the member it answers, or answer `ExhaustedUntil`/`ErrNoCredential` (which only a rule that reads a member's state can) |
 
 I1 deletes both — and nothing a side keeps is declared in them, and each stub's own test goes with
 it — and points the service at the real lookup (PL4) and the real rule (PL3).

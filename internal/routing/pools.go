@@ -7,7 +7,8 @@
 // computes — no picker, no store, no policy read, no command:
 //
 //   - the rule a pool is served by (R5, D3177): `ordered`, `round-robin`, or
-//     `failover`, which is what a pool written before a rule existed does today;
+//     `failover`, which is what a pool that names neither a rule nor a strategy
+//     is served by, as it is today;
 //   - the principal a pool belongs to (D3181): a person, a service account, or
 //     the project itself;
 //   - the optional threshold a pool may carry (D3178, PL8);
@@ -56,10 +57,9 @@ import (
 // It is a string and the three values below are the whole vocabulary, because a
 // rule is published in the installation's policy and read back by a release that
 // may be older than the writer: `rule` is a NEW member of a pool (R21), so a
-// pool that carries none is read as `failover`, which is what such a pool does
-// today (`strategy` was the member that carried it, and its own default is the
-// same — internal/config's StrategyOrDefault) — a value never changes meaning,
-// and no pool written before a rule existed moves because one arrived.
+// pool that carries none is served by the `strategy` it was written with, and by
+// `failover` only where it names neither (RuleOrDefault) — a value never changes
+// meaning, and no pool written before a rule existed moves because one arrived.
 //
 // `round-robin` and `failover` keep their meanings (D3177): the second is the
 // credential exhausted longest ago, the round-robin counter breaking an exact
@@ -69,7 +69,8 @@ import (
 //
 // `failover` is NOT the zero value by accident: like Strategy in internal/creds
 // it is the default a caller gets without saying anything, and RuleOrDefault is
-// the one place that reads "" as it.
+// the one place that reads "" as it — after the pool's own `strategy`, which
+// keeps its meaning (PL1, R21).
 type Rule string
 
 const (
@@ -83,7 +84,8 @@ const (
 	// RuleFailover takes the member used least recently — the one exhausted
 	// longest ago — with the round-robin counter breaking an exact tie, which is
 	// what internal/creds' leastRecentlyExhausted already does. It is what a pool
-	// with no rule does, and what every pool did before rules existed.
+	// that names neither a rule nor a strategy does, and what every pool did
+	// before rules existed.
 	RuleFailover Rule = "failover"
 )
 
@@ -102,14 +104,36 @@ func (r Rule) Valid() bool {
 	return false
 }
 
-// RuleOrDefault is the rule a pool is served by when it names none: a pool
-// published before `rule` existed is served as it is today, which is failover
-// (R5, R21).
-func (r Rule) RuleOrDefault() Rule {
-	if r == "" {
-		return RuleFailover
+// RuleOrDefault is the rule a pool is served by: the `rule` it names, or, where
+// it names none, the `strategy` it was written with, and failover where it names
+// neither.
+//
+// The middle step is what keeps `strategy` meaning what it means (PL1, R21): a
+// pool published with `strategy: round-robin` and no `rule` is served
+// round-robin, exactly as it is today. So `strategy` is read rather than
+// reinterpreted, and a pool moves because a rule arrived only where its owner
+// wrote one.
+//
+// `strategy` is a plain string rather than config's own type, because this file
+// imports no package of this tree; the caller holding the pool passes the member
+// it read. The two values it carries are config's own PoolStrategies
+// (`failover`, `round-robin`), named in the switch below for the same reason.
+// `ordered` is not among them: it arrived with `rule`, so a pool that wants it
+// writes `rule`, and a strategy of anything else reads as failover — which is
+// config's own StrategyOrDefault read one step further.
+//
+// Its answer is never "": whoever fills a PoolRef.Rule reads it through this, so
+// a picker acts on one resolved rule and never re-reads the pool's
+// configuration.
+func (r Rule) RuleOrDefault(strategy string) Rule {
+	if r != "" {
+		return r
 	}
-	return r
+	switch s := Rule(strategy); s {
+	case RuleRoundRobin, RuleFailover:
+		return s
+	}
+	return RuleFailover
 }
 
 // PrincipalKind is what a pool's principal is (D3181, D3179): a person, a
@@ -235,9 +259,11 @@ type PoolRef struct {
 	Project string `json:"project"`
 	// Pool is the pool's name.
 	Pool string `json:"pool"`
-	// Rule is how the service picks among the pool's usable members. "" reads as
-	// failover, exactly as it does in the config a pool is written in
-	// (Rule.RuleOrDefault).
+	// Rule is how the service picks among the pool's usable members, RESOLVED:
+	// never "". Whoever fills this reference reads the pool's own `rule` and,
+	// where it names none, the `strategy` it was written with (Rule.RuleOrDefault),
+	// so the picker acts on one answer and reads the pool's configuration no
+	// second time (PL3, PL4).
 	Rule Rule `json:"rule"`
 	// Threshold is the pool's usage threshold, null when it names none: the
 	// same optional member the pool carries in the config, read back out of it

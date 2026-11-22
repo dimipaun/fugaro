@@ -24,15 +24,17 @@ import (
 // counter and no utilisation figure, it writes none of them, and it takes no
 // lease on the member it answers. So a caller cannot pass on a decision nothing
 // made — the member it answers is the one the pool's own order already names,
-// and an empty pool is ErrNoCandidates (the seam's own "nothing usable right
-// now", which the walk treats as an exhausted source) rather than a member
-// invented to keep a call going.
+// and a caller that hands it no members at all gets ErrNoCandidates, the seam's
+// refusal of an empty member list, rather than a member invented to keep a call
+// going. It never reads a member's state, so it never answers what a real rule
+// answers for a pool whose members are all unusable (*ExhaustedUntil or
+// ErrNoCredential, the interface's own two).
 type StubPoolRule struct{}
 
 var _ PoolPicker = StubPoolRule{}
 
-// PickInPool answers the pool's first member, and ErrNoCandidates for a pool
-// that holds none: see the file's own comment.
+// PickInPool answers the pool's first member, and ErrNoCandidates when it is
+// handed no members at all: see the file's own comment.
 func (StubPoolRule) PickInPool(_ context.Context, _ routing.PoolRef, _ Run, members []Credential) (Credential, time.Duration, error) {
 	if len(members) == 0 {
 		return Credential{}, 0, ErrNoCandidates

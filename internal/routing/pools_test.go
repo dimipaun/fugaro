@@ -41,23 +41,50 @@ func TestPoolShapesAreStable(t *testing.T) {
 				t.Errorf("%q is one of the contract's rules and Valid refuses it", r)
 			}
 		}
-		// A pool that names no rule is served as it is today, which is what
-		// every pool written before a rule existed does (R21): failover, never
-		// an unknown rule refused and never a rule of its own.
+		// A pool that names no rule is served as it is today (R21): by the
+		// strategy it was written with, which keeps its meaning (PL1), and by
+		// failover only where it names neither — never refused, and never a rule
+		// of its own invention.
 		if !routing.Rule("").Valid() {
 			t.Error("a pool that names no rule is refused, and it is read as failover rather than refused")
 		}
-		if got := routing.Rule("").RuleOrDefault(); got != routing.RuleFailover {
-			t.Errorf("a pool that names no rule is served by %q, and the contract reads it as %q", got, routing.RuleFailover)
+		if got := routing.Rule("").RuleOrDefault(""); got != routing.RuleFailover {
+			t.Errorf("a pool that names neither a rule nor a strategy is served by %q, and the contract reads it as %q", got, routing.RuleFailover)
 		}
 		for _, r := range routing.Rules {
-			if got := r.RuleOrDefault(); got != r {
-				t.Errorf("a pool that names the rule %q is served by %q, and RuleOrDefault must move no rule that is already named", r, got)
+			for _, strategy := range []string{"", "round-robin", "failover", "sticky"} {
+				if got := r.RuleOrDefault(strategy); got != r {
+					t.Errorf("a pool that names the rule %q is served by %q with strategy %q, and RuleOrDefault must move no rule that is already named", r, got, strategy)
+				}
 			}
 		}
 		for _, bad := range []routing.Rule{"sticky", "Ordered", "round_robin", "random"} {
 			if bad.Valid() {
 				t.Errorf("the rule %q is not one of the contract's and Valid accepts it: a value that is not a rule is refused, so no pool is served by a word nobody defined", bad)
+			}
+		}
+	})
+
+	t.Run("an absent rule falls back to the strategy and then to failover", func(t *testing.T) {
+		// PL1 keeps `strategy` read with the same meaning, so a pool published
+		// with `strategy: round-robin` and no `rule` must still turn through its
+		// members: reading it as failover would move a pool whose owner wrote
+		// nothing new (D3177).
+		for strategy, want := range map[string]routing.Rule{
+			"round-robin": routing.RuleRoundRobin,
+			"failover":    routing.RuleFailover,
+		} {
+			if got := routing.Rule("").RuleOrDefault(strategy); got != want {
+				t.Errorf("a pool with no rule and strategy %q is served by %q, and the contract reads it as %q", strategy, got, want)
+			}
+		}
+		// Whatever a pool was written with, the resolved rule is a rule: a
+		// reference never carries "", which is what lets the picker act on it
+		// without reading the pool's configuration again.
+		for _, strategy := range []string{"", "round-robin", "failover", "ordered", "sticky"} {
+			got := routing.Rule("").RuleOrDefault(strategy)
+			if !got.Valid() || got == "" {
+				t.Errorf("a pool with no rule and strategy %q resolves to %q, and a resolved rule is one of the contract's", strategy, got)
 			}
 		}
 	})

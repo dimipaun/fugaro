@@ -108,16 +108,34 @@ type SlipChain struct {
 // `round-robin` turns through them, `failover` takes the one exhausted longest
 // ago. It is the signature CS1 calls inside one pool and PL3 implements.
 //
-// It answers the member to serve from and how long the call may hold it, the
-// same pair the selection path answers (Selector.Select), and it answers
-// ErrNoCandidates when the pool holds no member that is usable right now — the
-// walk treats that as an exhausted source and moves on (D3180), it is never
-// "no pool here".
+// It answers the member to serve from and how long the call may hold it, and
+// where there is none to serve from it answers what the selection path answers
+// for the same states (Selector.Select), so that a pool is one more place a
+// credential comes from and not a second vocabulary:
+//
+//   - *ExhaustedUntil — no member is usable NOW and one becomes usable at a
+//     known time. The walk applies Select's own wait-or-switch rule to it, the
+//     same rule a selection gets;
+//   - ErrNoCredential — no member is usable and none becomes usable by waiting:
+//     every member is broken, or holds a mark with no time to wait for. It is a
+//     REFUSAL and never a fallback (D143), exactly as it is on the selection
+//     path, because a dead token is the case where the difference matters most.
+//
+// It is NOT ErrNoCandidates when the pool's members are unusable: that error is
+// the answer to being handed no members at all — a caller's mistake, which the
+// walk must not move past — and answering it like an exhausted pool would hide
+// the mistake behind a wait or a fallback to the chain's next source, possibly a
+// paid key (errors.go).
 type PoolPicker interface {
 	// PickInPool answers the member of this pool to serve one call from. ref is
 	// the pool the lookup resolved, so the rule and the threshold are the ones
-	// that pool was designated with; run is the run the call is for, which the
-	// rules that need one place to turn through need; members are the pool's
-	// candidates in the order its owner listed them.
+	// that pool was designated with, and ref.Rule is already resolved (never
+	// ""); run is the run the call is for, which the rules that need one place
+	// to turn through need; members are the pool's candidates in the order its
+	// owner listed them.
+	//
+	// Its answers are the ones the interface's own comment names: a member and
+	// its hold time, *ExhaustedUntil or ErrNoCredential for a pool with nothing
+	// to serve from, and ErrNoCandidates only for an empty member list.
 	PickInPool(ctx context.Context, ref routing.PoolRef, run Run, members []Credential) (Credential, time.Duration, error)
 }
