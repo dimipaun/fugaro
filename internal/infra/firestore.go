@@ -270,6 +270,7 @@ func (s *FirestoreStep) Apply(ctx context.Context) error {
 	}
 	if s.createDB {
 		db, err := s.FS.CreateDatabase(ctx, s.Location, true)
+		created := err == nil
 		if errors.Is(err, firestore.ErrPrecondition) {
 			// Created by someone since the plan: adopt only if it is ours to adopt.
 			if db, err = s.FS.GetDatabase(ctx); err == nil {
@@ -282,7 +283,11 @@ func (s *FirestoreStep) Apply(ctx context.Context) error {
 		if err != nil {
 			return fsErr("creating the Firestore database of "+s.FP, err)
 		}
-		if db.LocationID != s.Location || db.Type != "FIRESTORE_NATIVE" {
+		if created && (db.LocationID != s.Location || db.Type != "FIRESTORE_NATIVE") {
+			// We created it, and the service creates where it was asked: a
+			// location or a mode that is not the one confirmed is a surprise.
+			// A database that was already there is another matter — it is
+			// adopted where it is, whatever that is (R5, D3091).
 			return fmt.Errorf("the Firestore database of %s reads back in location %q, type %s, not %s: stopping", s.FP, db.LocationID, db.Type, s.Location)
 		}
 		s.createDB = false

@@ -488,7 +488,9 @@ func TestCreateRaceAdoptsOnlyAcceptable(t *testing.T) {
 		t.Error("the raced database was not marked")
 	}
 	// A database that appeared elsewhere meanwhile is adopted too (LP3, R3):
-	// where it is decides nothing, and the line says where that is.
+	// where it is decides nothing. The plan was made before it existed, so no
+	// line of it names a location (TestEnsureAdoptsDatabaseElsewhere is where
+	// the line is pinned).
 	r2 := newFBRig(t)
 	fakeTerminal(t)
 	r2.fs.RaceCreate("europe-west1")
@@ -496,8 +498,8 @@ func TestCreateRaceAdoptsOnlyAcceptable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a database that appeared in europe-west1 was not adopted: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "exists in europe-west1 (outside the US), adopted as it is") {
-		t.Errorf("the plan does not say where the raced database is:\n%s", out)
+	if loc, _ := r2.fs.Database(); loc != "europe-west1" {
+		t.Errorf("the raced database was changed: %s", loc)
 	}
 	if _, ok := r2.fs.Value("meta", "installation"); !ok {
 		t.Error("the raced database elsewhere was not marked")
