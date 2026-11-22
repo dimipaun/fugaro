@@ -438,16 +438,6 @@ export const NO_WORD = 'no'
 export const SAVED_WORD = 'saved'
 export const UNSAVED_WORD = 'not saved'
 
-/** TITLE_LAUNCH, TITLE_SETTINGS, TITLE_ENTRY and TITLE_SETUP are the questions'
- * headings, and TASK_HEADING is the launch's own subtitle. The settings and
- * setup windows have none: the `<pre>` below holds the command line for a launch
- * and nothing for an edit or a setup, and a heading over an empty box is a field
- * an operator would look for a value in. */
-/** TITLE_LAUNCH, TITLE_SETTINGS, TITLE_ENTRY and TITLE_SETUP are the questions'
- * headings, and TASK_HEADING is the launch's own subtitle. The settings and
- * setup windows have none: the `<pre>` below holds the command line for a launch
- * and nothing for an edit or a setup, and a heading over an empty box is a field
- * an operator would look for a value in. */
 /** TITLE_LAUNCH, TITLE_SETTINGS, TITLE_ENTRY, TITLE_SETUP, TITLE_MODELS_ADD and
  * TITLE_IMAGE_ADD are the six questions' headings, and TASK_HEADING is the
  * launch's own subtitle. The settings, setup and Manage windows have none: the
@@ -779,10 +769,12 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     // The default button is the view's own decision (D1109: Cancel for a
     // widening, Confirm otherwise), and taking it is a focus rather than a
     // keystroke: the confirming button stays pointer-only either way, and Enter
-    // and Escape decline in the main process whatever this document does. A
-    // launch keeps its own rule -- Cancel focused -- because its default button
-    // is not a member of its view.
-    if (subject.kind === 'settings' && subject.defaultButton === 'confirm' && !confirm.disabled) confirm.focus()
+    // and Escape decline in the main process whatever this document does. The
+    // three views that carry the member are the ones that decide it -- the
+    // settings edit, the models write and the image write; a launch, a first
+    // setup and the entry form carry none, and their own rule is Cancel focused.
+    const defaultButton: 'confirm' | 'cancel' = 'defaultButton' in subject ? subject.defaultButton : 'cancel'
+    if (defaultButton === 'confirm' && !confirm.disabled) confirm.focus()
     else cancel.focus()
   }
 

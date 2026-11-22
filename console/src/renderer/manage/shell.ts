@@ -75,7 +75,6 @@ import { sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { SkewTheme } from '../../shared/version'
 import { putText } from '../app'
 import type { ElementLike } from '../app'
-import { GATE_ALLOWED } from '../gating'
 import type { GateAction, GateDecision } from '../gating'
 import { BUSY_SLOT_CLASS, renderRetry, renderStamp, sectionRead } from '../section'
 import type { SectionElement, SectionRead, SectionTimers } from '../section'
@@ -137,8 +136,8 @@ export interface ManageControlElement extends ManageElement {
 
 /**
  * ManageDeps is what the caller hands the section: where elements come from,
- * the theme the busy mark is drawn with, the read, and the two things the
- * console does on the operator's behalf.
+ * the theme the busy mark is drawn with, the read, the role the writes are
+ * asked about, and the two things the console does on the operator's behalf.
  *
  * **The read is handed in rather than imported.** The shell spawns nothing: the
  * caller's `read` is the console's own operation surface (`entry.ts`'s bridge),
@@ -158,14 +157,19 @@ export interface ManageDeps {
    * it is drawn (`gating.ts`'s `Gate.can`) -- the section asks about the action
    * it is about to offer and never about a role, which is F19's rule.
    *
-   * **It is optional, and its absence is not a refusal.** A caller that hands no
-   * gate draws every write as one a role that may use it would see, which is
-   * exactly `gating.ts`'s "no answer" case: a tab that wired no role read would
-   * otherwise disable every write of the installation, and the CLI's own refusal
-   * is the authority either way (D2907). The tab that draws this section is the
-   * caller (`screens/projects.ts`).
+   * **It is required, and no caller may hand nothing.** A section that drew a
+   * write control without a role read would offer the write to a role the CLI
+   * refuses, and the models write is the one the CLI cannot correct: `models add`
+   * has no role check of its own to fall back on (U5 of the reconciliation), so
+   * an unwired gate there is a write offered to everybody. A caller that read no
+   * role says so with a value -- `gateFrom(null).can`, which allows every action
+   * and is exactly `gating.ts`'s "no answer" case -- rather than by leaving the
+   * member out, so the decision is the caller's and read at the one place it is
+   * made. The tab that draws this section is the caller
+   * (`screens/projects.ts`), and the role read it hands is the entry's
+   * (`entry.ts`'s `roles`).
    */
-  readonly can?: (action: GateAction) => GateDecision
+  readonly can: (action: GateAction) => GateDecision
   readonly now?: () => number
   readonly timers?: SectionTimers
 }
@@ -538,7 +542,7 @@ function writeControl(
   deps: ManageDeps,
 ): ManageElement {
   const box = make(factory, 'div', MANAGE_WRITE_BOX_CLASS)
-  const decision = deps.can?.(action.gate) ?? GATE_ALLOWED
+  const decision = deps.can(action.gate)
   const button = decision.allowed
     ? literal(make(factory, 'button', MANAGE_WRITE_CLASS), action.label)
     : disabledWrite(factory, MANAGE_WRITE_CLASS, action.label, null, decision)

@@ -390,14 +390,17 @@ const DOCUMENTS: Readonly<Record<string, unknown>> = Object.freeze({
  * MODULES is every compiled module the screen under test requires, computed from
  * `renderer/screens/projects.js`'s relative `require`s and closed under them:
  * the Project tab's own modules, the Manage section's shell and descriptor, the
- * nine files of kinds `index.ts` names and the Spend screen the Budget kind's
- * rows come from. The list is written out by hand because the registry below is
- * hand-built, and `modules-registry.spec.ts` reads the built modules and fails
- * here -- by module -- when a renderer edit adds an import this list does not
- * carry.
+ * nine files of kinds `index.ts` names, the Spend screen the Budget kind's rows
+ * come from and `renderer/gating.js`, which the harness reads for the gate it
+ * hands the section (`ManageDeps.can` is required, and a harness with no role
+ * read hands the no-answer value that module builds). The list is written out by
+ * hand because the registry below is hand-built, and `modules-registry.spec.ts`
+ * reads the built modules and fails here -- by module -- when a renderer edit
+ * adds an import this list does not carry.
  */
 const MODULES: readonly string[] = Object.freeze([
   'renderer/app.js',
+  'renderer/gating.js',
   'renderer/manage/command.js',
   'renderer/manage/kinds/budget.js',
   'renderer/manage/kinds/images.js',
@@ -416,6 +419,9 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/screens/spend.js',
   'renderer/section.js',
   'renderer/skeleton.js',
+  // The streamed reads the Project tab and the Spend screen fall back through
+  // (RS5), which both of them require.
+  'renderer/stream.js',
   'renderer/writes.js',
   'shared/availability.js',
   'shared/notice.js',
@@ -542,6 +548,7 @@ var DOCUMENTS = ${JSON.stringify(DOCUMENTS)};
 var COMPATIBILITY = ${JSON.stringify(COMPATIBILITY)};
 
 var projects = load('/renderer/screens/projects.js');
+var gating = load('/renderer/gating.js');
 var factory = domFactory();
 var frame = projects.renderProjectsFrame(factory, 'light');
 var previous = document.getElementById(MOUNT);
@@ -560,6 +567,10 @@ var section = projects.mountProjectsManage({
   read: function (operation) { reads.push(operation); return Promise.resolve(DOCUMENTS[operation]); },
   copy: function (text) { copied.push(text); },
   openView: function (view) { opened.push(view); },
+  // The harness reads no role, which is gating.ts's no-answer case: the gate
+  // it hands the section allows every action, and it is a value rather than an
+  // absent member (ManageDeps.can is required).
+  can: gating.gateFrom(null).can,
 }, COMPATIBILITY, frame.manage);
 
 function all(selector, root) {
@@ -986,7 +997,10 @@ test('puts the exact argv of every kind-level Copy-command on the clipboard', as
   // **The whole list of Copy-commands the mount draws**, in the order the kinds
   // are drawn: the roles kind's grant (the only one of the three People kinds
   // with a command of its own), the accounts kind's add -- the empty list above
-  // included -- and the keys kind's two.
+  // included -- the images and models kinds' own, which are the state both
+  // writes' floors give every CLI this console can place (the constants are
+  // unset, so the Add is not shown and the Copy-command is), and the keys
+  // kind's two.
   //
   // A **row's** own command is the descriptor's `ManageRow.actions` (a pair's
   // `fugaro user revoke`, a repository's removal), and the shell draws the
@@ -996,15 +1010,17 @@ test('puts the exact argv of every kind-level Copy-command on the clipboard', as
   expect(labels).toEqual([
     'fugaro user grant MEMBER --role ROLE --scope SCOPE',
     'fugaro accounts add NAME',
+    'fugaro image add',
+    'fugaro models add',
     'fugaro secrets set NAME',
     'fugaro secrets rm NAME',
   ])
 
-  // Only those three kinds offer one, and a kind with no command of its own
+  // Only those five kinds offer one, and a kind with no command of its own
   // draws no control at all rather than a disabled one.
   expect(
     drawn.groups.flatMap((group) => group.kinds.filter((kind) => kind.copies.length > 0).map((kind) => kind.id)),
-  ).toEqual(['roles', 'accounts', 'keys'])
+  ).toEqual(['roles', 'accounts', 'images', 'models', 'keys'])
 
   // The button's label **is** the command (`copyCommandText`, the one place the
   // argv is joined), and clicking it puts that exact text on the clipboard: the

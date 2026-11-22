@@ -143,6 +143,9 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/skeleton.js',
   'renderer/screens/reading.js',
   'renderer/section.js',
+  // The streamed read the Spend screen falls back through (RS5), which it
+  // requires.
+  'renderer/stream.js',
   'renderer/screens/spend.js',
   'renderer/screens/coordinator.js',
 ])

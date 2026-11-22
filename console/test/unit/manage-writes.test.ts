@@ -243,12 +243,15 @@ class Section {
       },
       copy: () => undefined,
       openView: () => undefined,
+      // A case that hands no gate reads no role, which is `gating.ts`'s
+      // no-answer value: it allows every action, and the member is required so
+      // that the section always has one to ask (`ManageDeps.can`).
+      can: can ?? gateFrom(null).can,
       now: () => AT,
       timers: {
         setTimeout: () => 1 as unknown as ReturnType<typeof setTimeout>,
         clearTimeout: () => undefined,
       },
-      ...(can === undefined ? {} : { can }),
     }
   }
 
@@ -682,9 +685,11 @@ describe('the role a Manage write asks for', () => {
   })
 
   it('draws every write as one a role that may use it would see with no role read at all', async () => {
-    // `gating.ts`'s "no answer is not a refusal": the caller that handed no gate
-    // (the tab today) draws the control the way it always did, and the CLI's own
-    // refusal is what the operator meets after the click.
+    // `gating.ts`'s "no answer is not a refusal": a caller that read no role
+    // hands `gateFrom(null).can` -- the value this case's helper defaults to,
+    // and the only way a caller can say it read nothing now that the member is
+    // required -- so the control is drawn the way it always was, and the CLI's
+    // own refusal is what the operator meets after the click.
     const { root } = await drawSection(CASES[0].kind, CASES[0].group)
     const control = one(root, MANAGE_WRITE_CLASS)
     expect(control.getAttribute('aria-disabled')).toBeNull()
@@ -938,7 +943,12 @@ describe('the image write’s window', () => {
     const confirm = actions.button(ADD_ENTRY_LABEL)
     expect(confirm.disabled).toBe(false)
     expect(confirm.tabIndex).toBe(-1)
-    expect(at('confirm-actions').button('Cancel').focused).toBe(true)
+    // D1109: the default button is the view's own member, and this view's is
+    // Confirm -- so the focus the window takes is this button. (Cancel was
+    // focused before the subject arrived, which is the window's own rule for a
+    // `fields()` that never answers; the fake records the focus calls and not
+    // the blur that a real focus() would do.)
+    expect(confirm.focused).toBe(true)
     await confirm.fire('click', 1)
     expect(answers).toEqual([{ answer: 'yes' }])
   })
