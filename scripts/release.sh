@@ -39,12 +39,15 @@
 # workflow at a branch tip and the commit named is generally not the tip -- and
 # the commit is tagged where it is. The rehearsal, the summary, the tag and the
 # post-tag verification are the ordinary path's, unchanged, and no precondition
-# but "the checkout is origin/main's tip" is relaxed: in particular the commit
-# still has to be green, and a commit with no full ci run of its own is refused
-# with the command that puts one on it. The user's checkout is never moved (the
-# commit's own files are read from a scratch worktree) and --at refuses
-# --hotfix: a patch release is cut from release/X.Y, which carries no commit of
-# main to name.
+# is relaxed: --at is cut from a clean main equal to origin/main exactly as the
+# ordinary path is, because this script, the gate, the release policy and the
+# verifier all run from this checkout -- only which commit the tag goes on
+# changes, and so does the commit the release's own text and checks are read
+# from. The commit named still has to be green, and a commit with no full ci run
+# of its own is refused with the command that puts one on it. The user's
+# checkout is never moved (the commit's own files are read from a scratch
+# worktree) and --at refuses --hotfix: a patch release is cut from release/X.Y,
+# which carries no commit of main to name.
 #
 # The release reads the CLI stream from docs/release-streams.yaml through a
 # small Go helper, internal/streams/cmd/streams (GD7: one file, the graph's
@@ -238,11 +241,12 @@ cleanup_scratch() {
 }
 # in_release_tree runs a command from the root of the tree being released: this
 # checkout on the ordinary path, whose preconditions tie it to origin/main, and
-# the scratch worktree at --at's commit on --at, which never moves the
-# checkout. It is how everything that needs a working directory is made against
-# the right tree: the stream catalogue through internal/streams/cmd/streams,
-# the two doc lines, scripts/bump-plugin-version.sh --check, and the pre-tag
-# rehearsal, which builds the CLI from the tree it runs in.
+# the scratch worktree at --at's commit on --at, whose commit is not the tip the
+# checkout stands on even though it is main. It is how everything that needs a
+# working directory is made against the right tree: the stream catalogue through
+# internal/streams/cmd/streams, the two doc lines,
+# scripts/bump-plugin-version.sh --check, and the pre-tag rehearsal, which
+# builds the CLI from the tree it runs in.
 in_release_tree() {
   if [ -n "$at" ]; then
     ( cd "$scratch_dir/tree" && "$@" )
@@ -1070,15 +1074,14 @@ if [ "$hotfix" = 1 ]; then
   exit 0
 fi
 
-# "The checkout is origin/main's tip" is the one precondition --at relaxes and
-# the only one: it cuts the release at the commit it names, so the checkout may
-# be on any branch or none, and is never moved.
-if [ -z "$at" ]; then
-  current_branch=$(git rev-parse --abbrev-ref HEAD)
-  if [ "$current_branch" != main ]; then
-    echo "the current branch is '$current_branch', not main; switch to main first" >&2
-    exit 1
-  fi
+# The checkout is main equal to origin/main on --at too: the flags differ only
+# in which commit the tag goes on, and this script, the gate, the release policy
+# and the verifier all run from the checkout, so a release read and gated from
+# whatever tree it happens to hold is no release at all. --at never moves it.
+current_branch=$(git rev-parse --abbrev-ref HEAD)
+if [ "$current_branch" != main ]; then
+  echo "the current branch is '$current_branch', not main; switch to main first" >&2
+  exit 1
 fi
 
 # The pre-tag rehearsal needs the sandbox project named, and it is checked here
@@ -1116,19 +1119,18 @@ trap on_signal INT TERM HUP
 retry_read git fetch --quiet origin main --tags --prune
 local_main=$(git rev-parse main)
 origin_main=$(git rev-parse origin/main)
-if [ -z "$at" ] && [ "$local_main" != "$origin_main" ]; then
+if [ "$local_main" != "$origin_main" ]; then
   echo "main ($local_main) is not origin/main ($origin_main); pull or push first" >&2
   exit 1
 fi
 
 # treeish is the commit the release's own text is read from and the commit the
-# tag goes on: origin/main for the ordinary path, whose checkout the checks
-# above tie to it, and --at's commit for --at. where says the same in words,
-# for the refusals below; retry_cmd is the command they point the user back at
-# -- this run's own, except that --at's placeholder stands for the commit the
-# person has to land the missing piece in, which only they know; tag_rerun
-# re-runs this release for the commit being tagged, and so names --at's commit
-# outright.
+# tag goes on: origin/main for the ordinary path, and --at's commit for --at.
+# where says the same in words, for the refusals below; retry_cmd is the command
+# they point the user back at -- this run's own, except that --at's placeholder
+# stands for the commit the person has to land the missing piece in, which only
+# they know; tag_rerun re-runs this release for the commit being tagged, and so
+# names --at's commit outright.
 treeish=origin/main
 where="on main"
 retry_cmd="scripts/release.sh $version"

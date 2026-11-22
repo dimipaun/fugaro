@@ -1262,18 +1262,15 @@ func rehearsalRecordFor(t *testing.T, r *releaseRepo, sha string, res runResult)
 // than at main's tip. The tag goes on that commit and no other, no branch, commit
 // or pull request of the run's own is made, nothing is dispatched (a
 // workflow_dispatch runs a workflow at a ref's tip, and the commit being tagged
-// is not one), and the checkout -- which here is not even on main -- is never
-// moved. The gate is read on the named commit: its sha has the full run and main's
-// tip has none at all, so a gate that read the tip could not have passed. And the
-// rehearsal, which refuses a checkout that is not at the commit it records, built
-// the named commit's tree.
+// is not one), and the checkout, which is main's tip, is never moved. The gate is
+// read on the named commit: its sha has the full run and main's tip has none at
+// all, so a gate that read the tip could not have passed. And the rehearsal,
+// which refuses a checkout that is not at the commit it records, built the named
+// commit's tree.
 func TestAtTagsTheCommitItNames(t *testing.T) {
 	r := newReleaseRepo(t)
 	sha := atBump(t, r, "0.12.0")
 	tip := advanceMainPast(t, r)
-	// The checkout is on a branch of its own: --at relaxes "the checkout is
-	// main's tip" and nothing else, and it never moves what it finds.
-	testutil.Git(t, r.local, "switch", "--quiet", "-c", "elsewhere", tip)
 
 	g := newGHState(t, r, greenChecks())
 	ciRuns(t, g, sha+"\tci (full)\t"+sha)
@@ -1299,13 +1296,63 @@ func TestAtTagsTheCommitItNames(t *testing.T) {
 	if dispatched := workflowRunLines(t, g); len(dispatched) != 0 {
 		t.Errorf("--at dispatches no ci run, and the commit carries one already: %q", dispatched)
 	}
-	if got := currentBranch(t, r); got != "elsewhere" {
-		t.Errorf("--at moved the checkout to %s; it never moves it", got)
+	if got := currentBranch(t, r); got != "main" {
+		t.Errorf("--at left the checkout on %s; it is cut from main and never moves it", got)
 	}
 	if out := testutil.Git(t, r.local, "status", "--porcelain"); out != "" {
 		t.Errorf("--at left the checkout dirty:\n%s", out)
 	}
 	rehearsalRecordFor(t, r, sha, res)
+}
+
+// TestAtStillNeedsACleanMain: --at changes which commit the tag goes on and
+// nothing else -- the release is still cut from a checkout on main equal to
+// origin/main, because release.sh, scripts/release-gate.sh,
+// scripts/release-policy.sh and scripts/verify-release.sh all run from it: an
+// agent's task branch carrying a stale or altered gate would otherwise decide
+// whether the named commit is green, and no other tree's files are released on
+// the --at path. Both halves of that precondition refuse before the worktree,
+// the gate or the tag, and the commit named is a perfectly good one.
+func TestAtStillNeedsACleanMain(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		mutate func(t *testing.T, r *releaseRepo)
+		want   string
+	}{
+		{
+			name: "the checkout is on another branch",
+			mutate: func(t *testing.T, r *releaseRepo) {
+				testutil.Git(t, r.local, "switch", "--quiet", "-c", "elsewhere")
+			},
+			want: "not main",
+		},
+		{
+			name: "main is ahead of origin/main",
+			mutate: func(t *testing.T, r *releaseRepo) {
+				testutil.Git(t, r.local, "commit", "--quiet", "--allow-empty", "-m", "local only")
+			},
+			want: "is not origin/main",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			sha := atBump(t, r, "0.12.0")
+			c.mutate(t, r)
+			g := newGHState(t, r, greenChecks())
+			ciRuns(t, g, sha+"\tci (full)\t"+sha)
+
+			res := runRelease(t, r, g, "", "0.12.0", "--at", sha)
+
+			res.requireFailureContaining(t, c.want)
+			requireNoTag(t, r, res)
+			if n := countLog(t, g, "pr "); n != 0 {
+				t.Errorf("a refused --at must not touch a pull request:\n%s", g.log(t))
+			}
+			if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
+				t.Errorf("a refused --at was rehearsed (stat: %v)\n%s", err, res.out)
+			}
+		})
+	}
 }
 
 // TestAtReadsTheChecksOnTheCommitItNames: the gate is the named commit's own
@@ -1405,9 +1452,13 @@ func TestAtRefusesACommitThatIsNotOnMain(t *testing.T) {
 	r := newReleaseRepo(t)
 	atBump(t, r, "0.12.0")
 	// A commit of the fixture's own that main does not have: the bump is whole
-	// and the commit is still no ancestor of origin/main.
+	// and the commit is still no ancestor of origin/main. It is made on a branch
+	// of its own and the checkout goes back to main, which the release demands of
+	// every path.
+	testutil.Git(t, r.local, "switch", "--quiet", "-c", "side")
 	testutil.Git(t, r.local, "commit", "--quiet", "--allow-empty", "-m", "not on main")
 	off := testutil.Git(t, r.local, "rev-parse", "HEAD")
+	testutil.Git(t, r.local, "switch", "--quiet", "main")
 	g := newGHState(t, r, greenChecks())
 
 	res := runRelease(t, r, g, "", "0.12.0", "--at", off)
