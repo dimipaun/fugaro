@@ -14,14 +14,19 @@
 #   account        the account `gcloud config get-value account` answers with
 #   cfg            key=value knobs — impersonate_fail, impersonate_fail.<what>
 #                  (what: describe, submit, delete, token), submit_fail,
-#                  delete_fail, delete_fail.<job>, delete_lists, claim_status,
-#                  claim_error, claim_token, and the same three per job as
-#                  claim_status.<job> etc., no_lines.<job>, run_fail
+#                  delete_fail, delete_fail.<job>, delete_lists, delete_submits,
+#                  claim_status, claim_error, claim_message, claim_token, and the
+#                  same four per job as claim_status.<job> etc.,
+#                  no_lines.<job>, run_fail
 #   jobs/<name>/job.json  the job document: `describe --format=json` answers with
 #                  it, `list` reads its labels, `delete` removes it
-#   deleting/<name>/lists  a job whose delete the platform has accepted and not
-#                  finished: it stays listed for that many more `list` calls,
-#                  which is how a Batch delete behaves (DELETION_IN_PROGRESS)
+#   deleting/<name>/lists, deleting/<name>/submits  a job whose delete the
+#                  platform has accepted and not finished: it stays listed for
+#                  that many more `list` calls and its name stays un-submittable
+#                  for that many more `submit` calls (ALREADY_EXISTS), which is
+#                  how a Batch delete behaves (DELETION_IN_PROGRESS); a
+#                  `describe` of it answers DELETION_IN_PROGRESS while either
+#                  has anything left
 #   logs/<uid>.json  the entries a job's task logs answer with, selected by the
 #                  tree's own filter (labels.job_uid="<uid>")
 #   audit.json     the entries the CreateJob audit filter answers with
@@ -34,9 +39,11 @@
 #   gcloud.calls, curl.calls, fugaro.calls  every invocation, one line each
 #
 # A submitted attack job is not answered from a file: the fake builds its log
-# lines out of the knobs (claim_status/claim_error/claim_token), because what an
-# attack's own VM is told IS the reading the check reports. `@TICKET@` in a
-# fixture is not needed: the ticket is a fixture value the test writes and knows.
+# lines out of the knobs (claim_status/claim_error/claim_message/claim_token),
+# because what an attack's own VM is told IS the reading the check reports — and
+# the refusal's SENTENCE is what tells the refusal of the VM from one the route
+# answers before it asks the link. `@TICKET@` in a fixture is not needed: the
+# ticket is a fixture value the test writes and knows.
 #
 # The tree is a fixture too: the check reads the ticket's variable, the claim's
 # route and the record's path family out of internal/identitywire/wire.go, the
@@ -190,20 +197,72 @@ def jobs():
     going = os.path.join(D, "deleting")
     try:
         for n in sorted(os.listdir(going)):
-            counter = os.path.join(going, n, "lists")
-            try:
-                left = int(open(counter).read().strip() or "0")
-            except OSError:
-                left = 0
-            if left > 0:
-                with open(counter, "w") as fh:
-                    fh.write(str(left - 1))
+            if reaping(n, "lists"):
                 names.append(n)
-            else:
-                shutil.rmtree(os.path.join(going, n), ignore_errors=True)
     except OSError:
         pass
     return sorted(names)
+
+
+def reaping(name, kind):
+    """Is the platform still finishing with a deleted job of this name?
+
+    A Batch delete is accepted at once and the job stays the platform's until it
+    has finished with it: it is still listed, still described (DELETION_IN_PROGRESS)
+    and its name is not free — a submit under it is refused ALREADY_EXISTS. The
+    fixture says how long that lasts for each kind of read of its own
+    (deleting/<name>/lists, deleting/<name>/submits), so a case can make a name
+    slow to be listed without also making it slow to be submitted, and the other
+    way round: the check makes both reads, and one must not spend the other's.
+    """
+    counter = os.path.join(D, "deleting", name, kind)
+    try:
+        left = int(open(counter).read().strip() or "0")
+    except OSError:
+        return False
+    if left <= 0:
+        forget(name)
+        return False
+    with open(counter, "w") as fh:
+        fh.write(str(left - 1))
+    return True
+
+
+def forget(name):
+    """The platform is done with a deleted job of this name: nothing is left to
+    read, so a later describe is NOT_FOUND and a submit under the name creates."""
+    going = os.path.join(D, "deleting", name)
+    try:
+        kinds = os.listdir(going)
+    except OSError:
+        return
+    for kind in kinds:
+        try:
+            if int(open(os.path.join(going, kind)).read().strip() or "0") > 0:
+                return
+        except OSError:
+            pass
+    shutil.rmtree(going, ignore_errors=True)
+
+
+def held(name):
+    """Is a deleted job of this name still the platform's? A describe answers the
+    job in DELETION_IN_PROGRESS until it is done, which is what makes NOT_FOUND a
+    reading of a job that is gone rather than the first answer every delete gets.
+    """
+    going = os.path.join(D, "deleting", name)
+    try:
+        kinds = os.listdir(going)
+    except OSError:
+        return False
+    for kind in kinds:
+        try:
+            if int(open(os.path.join(going, kind)).read().strip() or "0") > 0:
+                return True
+        except OSError:
+            pass
+    forget(name)
+    return False
 
 
 def doc(name):
@@ -231,9 +290,16 @@ def attack_log(name, uid):
     status = C.get("claim_status." + name, C.get("claim_status", "403"))
     err = C.get("claim_error." + name, C.get("claim_error", "identity_refused"))
     tok = C.get("claim_token." + name, C.get("claim_token", "no"))
+    # The refusal's own sentence is what tells the VM's refusal from one the
+    # route answers before it asks the link at all (the ticket already spent),
+    # so the fake prints one on every claim it refuses, exactly as credsvc's
+    # refuse does (WireError.Message). The default is the link's own refusal.
+    words = C.get("claim_message." + name, C.get("claim_message",
+        "the VM this claim came from is not a VM of the job the record names"))
     lines = [
         "C831 start host=attack-vm-%d" % uid,
         "C831 claim status=%s error=%s token=%s" % (status, err, tok),
+        "C831 refusal %s" % words,
         "C831 read",
     ]
     os.makedirs(os.path.join(D, "logs"), exist_ok=True)
@@ -290,6 +356,12 @@ elif args[0] == "batch":
         name = args[args.index("describe") + 1]
         impersonated("describe")
         d = doc(name)
+        if d is None and held(name):
+            # The job is gone from the live set and the platform has not finished
+            # with its name: it is still described, in DELETION_IN_PROGRESS, and
+            # NOT_FOUND is the answer only once it is done.
+            d = {"name": "projects/fugaro-dev/locations/us-east5/jobs/" + name,
+                 "uid": "", "status": {"state": "DELETION_IN_PROGRESS"}}
         if d is None:
             fail("NOT_FOUND: job %s" % name)
         fmt = flag("--format")
@@ -312,6 +384,12 @@ elif args[0] == "batch":
         impersonated("submit")
         if C.get("submit_fail") == "yes":
             fail("the job could not be created")
+        if reaping(name, "submits"):
+            # The platform has not finished with a deleted job of this name, so
+            # the name is not free: the real Batch refuses the create with
+            # ALREADY_EXISTS, and a check that read that as the attack's refusal
+            # would never make the attack.
+            fail("ALREADY_EXISTS: job %s already exists" % name)
         try:
             with open(flag("--config")) as fh:
                 d = json.load(fh)
@@ -344,14 +422,17 @@ elif args[0] == "batch":
             if os.path.isdir(going):
                 sys.exit(0)
             fail("NOT_FOUND: job %s" % name)
-        left = C.get("delete_lists", "0")
-        if left != "0":
-            os.makedirs(going, exist_ok=True)
-            with open(os.path.join(going, "lists"), "w") as fh:
-                fh.write(left)
-            shutil.rmtree(live)
-        else:
-            shutil.rmtree(live)
+        # The name stays the platform's for as long as the fixture says, per kind
+        # of read: `delete_lists` keeps it listed, `delete_submits` keeps it
+        # un-submittable (ALREADY_EXISTS), and a describe answers it in
+        # DELETION_IN_PROGRESS while either of them has anything left.
+        for kind in ("lists", "submits"):
+            left = C.get("delete_" + kind, "0")
+            if left != "0":
+                os.makedirs(going, exist_ok=True)
+                with open(os.path.join(going, kind), "w") as fh:
+                    fh.write(left)
+        shutil.rmtree(live)
         out("")
 GCLOUD_EOF
   chmod +x "$1/bin/gcloud"
@@ -690,6 +771,22 @@ PY
   delete-fail) printf 'impersonate_fail.delete=yes\n' >>"$1/state/cfg" ;;
   delete-always) printf 'delete_fail.%s=yes\n' "$job_replay" >>"$1/state/cfg" ;;
   delete-lists) printf 'delete_lists=2\n' >>"$1/state/cfg" ;;
+  # A name the platform is still reaping, for the re-creation's own read: the
+  # submit under it is refused ALREADY_EXISTS for the first two attempts, which
+  # is the platform's answer and not the third attack's refusal.
+  rename-slow-submit) printf 'delete_submits=2\n' >>"$1/state/cfg" ;;
+  # The refusal the route answers WITHOUT asking the link: the ticket is already
+  # spent, and the run's own bootstrap is what spent it (the check waits for the
+  # ledger to say the run opened its session and was metered, which is after the
+  # run's claim). A tree with no VM-to-job link at all answers exactly this, so
+  # a row that read it as its own refusal would record a PASS proving nothing.
+  fence) printf 'claim_error=identity_refused\nclaim_message=the ticket was already claimed: a ticket is claimed once, and this claim is not the one that claimed it\nclaim_message.%s=this record names a job and the claim carries no attestation field\n' "$job_noticket" >>"$1/state/cfg" ;;
+  # The link is not wired at all: a claim the service cannot judge is answered
+  # 'not served' and nothing falls back (D3114).
+  not-served) printf 'claim_status=503\nclaim_error=not_served\nclaim_message=this service does not issue a run identity: no issuer is configured on this installation\n' >>"$1/state/cfg" ;;
+  # A refusal that is not the claim route's own decision about a claim it read:
+  # the caller's class, in the shape refuseIdentityCaller writes it.
+  claim-other) printf 'claim_error=caller_not_admitted\nclaim_message=this route admits a run own job service account\n' >>"$1/state/cfg" ;;
   run-fail) printf 'run_fail=yes\n' >>"$1/state/cfg" ;;
   esac
 }
@@ -748,6 +845,12 @@ run_check() { # run_check [K=V ...] [-- ARGS...]
     CHK831_WAIT_METERED=0
     CHK831_WAIT_ATTACK=0
     CHK831_WAIT_AUDIT=0
+    # A case that makes the platform hold a deleted job's name must give the
+    # re-creation its own bound, as the check's own comment says: zero is the
+    # fail-closed default here, so a case that forgot it reports the FAIL rather
+    # than spinning.
+    CHK831_WAIT_RENAME=0
+    CHK831_RENAME_POLL=0
     CHK831_SWEEP_BOUND=2
     CHK831_SWEEP_POLL=0
   )
@@ -806,10 +909,15 @@ expect_no_unreached() { # what
 # being deleted, and no directory is left under either tree.
 nothing_left() { # what
   local names
-  names=$(find "$dir/state/jobs" "$dir/state/deleting" -mindepth 1 -maxdepth 1 -type d 2>/dev/null || true)
+  names=$(find "$dir/state/jobs" -mindepth 1 -maxdepth 1 -type d 2>/dev/null || true)
   if [ -n "$names" ]; then
     fail "$1: jobs left behind: $(printf '%s' "$names" | tr '\n' ' ')"
   fi
+  # A `deleting/<name>` entry is the platform's own state and not a job this
+  # check left: the job is already gone from `jobs/`, because a delete MOVES it
+  # there. What is asserted is that no job is left, and the cases that are about
+  # a name the platform is still reaping assert the `restore` row's reading
+  # beside this one.
 }
 # submitted: the job configuration the check sent for one job, as JSON.
 submitted() { cat "$dir/state/submits/$1.json" 2>/dev/null || true; }
@@ -989,6 +1097,90 @@ test_a_claim_that_nobody_decided_is_not_a_refusal() {
   expect_status "$status" 1 "a 500"
   expect_verdict attack-replay FAIL "a 500: the row"
   expect_row attack-replay "nothing decided it (HTTP 500)" "a 500: an outage is not a refusal"
+}
+
+# The finding the two replay rows were fixed for. The check waits for the ledger
+# to say the run opened its session and was metered, and the run's own bootstrap
+# has claimed the ticket by then — so a service that never asks whether the VM is
+# the job's (this tree, until BR2 and BR3 merge) refuses the replay with the
+# once-only fence, and a row that read any non-5xx refusal as its own would print
+# a PASS on a tree with no VM-to-job link at all.
+test_a_refusal_the_route_answers_without_the_link_is_not_the_rows() {
+  setup_case fence
+  write_default_case "$dir" fence
+  run_check
+  expect_status "$status" 1 "the fence"
+  expect_verdict attack-replay FAIL "the fence: the row"
+  expect_row attack-replay "the ticket was already claimed" "the fence: the service's own sentence is named"
+  expect_row attack-replay "WITHOUT asking whether the VM is the job's" "the fence: the row says what the refusal is not"
+  expect_verdict attack-rename FAIL "the fence: the re-created job's claim met it too"
+  expect_row attack-rename "the ticket being spent and not the VM" "the fence: the re-creation's row says the same"
+  expect_verdict attack-noticket PASS "the fence: the control's own refusal is its own"
+}
+
+test_a_claim_the_service_cannot_judge_is_not_a_refusal() {
+  setup_case not-served
+  write_default_case "$dir" not-served
+  run_check
+  expect_status "$status" 1 "not served"
+  expect_verdict attack-replay FAIL "not served: the row"
+  expect_row attack-replay "answered 'not_served'" "not served: the code is named"
+  expect_row attack-replay "link from a VM to the job the record names is not wired" "not served: the row says the link is the missing thing"
+  expect_verdict attack-rename FAIL "not served: the re-creation's claim too"
+}
+
+test_a_refusal_that_is_not_the_routes_own_is_not_measured() {
+  setup_case claim-other
+  write_default_case "$dir" claim-other
+  run_check
+  expect_status "$status" 1 "another refusal"
+  expect_verdict attack-replay FAIL "another refusal: the row"
+  expect_row attack-replay "not by the claim route's own decision" "another refusal: the row says so"
+  expect_row attack-replay "caller_not_admitted" "another refusal: the code is named"
+}
+
+test_the_refusal_the_row_passes_on_is_the_services_own_sentence() {
+  setup_case words
+  write_default_case "$dir"
+  run_check
+  expect_status "$status" 0 "the words"
+  expect_verdict attack-replay PASS "the words: the row"
+  expect_row attack-replay "not a VM of the job the record names" "the words: the service's sentence is recorded"
+  expect_row attack-replay "the refusals this route answers before it asks the link" "the words: the row says what a PASS excludes"
+}
+
+# The third attack deletes the run's job and re-creates one under the same name,
+# and a Batch delete is asynchronous: the name stays the platform's until it has
+# finished with the job, and a submit under it is refused ALREADY_EXISTS. That
+# refusal is the platform's, and reading it as the attack's would report the
+# attack refused without ever making it — on the owner's one paying run.
+test_a_name_the_platform_is_still_reaping_is_waited_for() {
+  setup_case rename-slow-submit
+  write_default_case "$dir" rename-slow-submit
+  run_check CHK831_WAIT_RENAME=8
+  expect_status "$status" 0 "a slow submit"
+  expect_verdict attack-rename PASS "a slow submit: the attack is made once the name is free"
+  expect_row attack-rename "re-created under the same name" "a slow submit: the re-creation happened"
+  expect_contains "$err" "still the platform's to reap" "a slow submit: the wait is reported"
+  expect_contains "$err" "waiting, 0s of 8s" "a slow submit: the bound is named"
+  # The re-creation was attempted three times: the platform refused the first
+  # two, and the third was made.
+  local tries
+  tries=$(printf '%s\n' "$(calls)" | grep -c -- "batch jobs submit $runjob ")
+  [ "$tries" = 3 ] || fail "a slow submit: the re-creation was submitted $tries times, want 3 (two refusals, then the create)"
+  expect_verdict restore PASS "a slow submit: nothing left"
+  nothing_left "a slow submit"
+}
+
+test_a_name_the_platform_never_frees_is_not_the_attacks_refusal() {
+  setup_case rename-held
+  write_default_case "$dir" rename-slow-submit
+  run_check CHK831_WAIT_RENAME=0
+  expect_status "$status" 1 "a name the platform keeps"
+  expect_verdict attack-rename FAIL "a name the platform keeps: the row"
+  expect_row attack-rename "the name is still the platform's after" "a name the platform keeps: the bound is named"
+  expect_row attack-rename "ALREADY_EXISTS" "a name the platform keeps: the platform's own answer is quoted"
+  expect_verdict attack-replay PASS "a name the platform keeps: the replay is unaffected"
 }
 
 test_an_attack_that_reported_nothing_is_not_judged() {
@@ -1361,6 +1553,12 @@ t test_a_run_whose_job_never_appears_fails_job_found
 t test_a_job_carrying_no_ticket_fails_the_replay_and_the_rename
 t test_a_claim_that_comes_back_with_a_token_is_the_finding
 t test_a_claim_that_nobody_decided_is_not_a_refusal
+t test_a_refusal_the_route_answers_without_the_link_is_not_the_rows
+t test_a_claim_the_service_cannot_judge_is_not_a_refusal
+t test_a_refusal_that_is_not_the_routes_own_is_not_measured
+t test_the_refusal_the_row_passes_on_is_the_services_own_sentence
+t test_a_name_the_platform_is_still_reaping_is_waited_for
+t test_a_name_the_platform_never_frees_is_not_the_attacks_refusal
 t test_an_attack_that_reported_nothing_is_not_judged
 t test_the_second_launcher_must_be_able_to_read_the_job
 t test_the_second_launcher_must_be_able_to_submit

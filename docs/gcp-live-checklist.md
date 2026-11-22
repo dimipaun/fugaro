@@ -24099,13 +24099,23 @@ service. **No agent runs any step of it.**
   - **`attack-replay`** — the run's ticket, read out of its job as the second launcher, replayed
     into a job of the second launcher's own, claiming from **its own VM**. The attestation must
     refuse it: that VM is not the recorded job's. A **token** coming back is the finding, and this
-    is the row the check exists for.
+    is the row the check exists for. A `PASS` here is the service's own decision **about the VM**,
+    and the row reads the refusal's own sentence to know it: the two refusals this route answers
+    **before it asks the link** — the ticket already spent by the run's own bootstrap, which is
+    what a replay of a metered run's ticket meets, and the ticket's own life — are a `FAIL` of this
+    row and not a `PASS`, because a service that never asks whether the VM is the job's answers
+    exactly those. So is `not_served` (the installation's link is not wired: nothing is judged) and
+    any refusal that is not the claim route's own.
   - **`attack-noticket`** — the same job with **no ticket** at all, the control: it must be refused
     too, so that the replay's refusal is about the attestation rather than about a job that could
     never have claimed.
   - **`attack-rename`** — the run's job is deleted and **re-created under the same name** carrying
     the same ticket (**D3108**, **F30**): the record's **id** must refuse the claim, because a name
-    is not an identity. The row names the state the job was in when it was deleted.
+    is not an identity. The row names the state the job was in when it was deleted. A Batch delete
+    is **asynchronous** — the name stays the platform's, in `DELETION_IN_PROGRESS`, until it has
+    finished with the job — so the re-creation is retried within its own bound rather than reading
+    the platform's `ALREADY_EXISTS` as the attack's refusal, and its row is judged by the same rule
+    as the replay's.
   - **`attack-record`** — the issuance record is read **straight out of the database** with the
     second launcher's own token. The database's rules must refuse it; a `200` is the finding.
 
@@ -24134,9 +24144,10 @@ variable that could point another project at it, and `belong`, EdgeWeb and EdgeS
 name. `--dry-run` runs the guards and the tree reads, prints every command a real run would run, and
 touches no cloud project. A traced shell (`bash -x`) is refused, because a trace would print the
 ticket into the log you paste back. Every bound is a knob — `CHK831_WAIT_JOB`, `CHK831_WAIT_SESSION`,
-`CHK831_WAIT_METERED`, `CHK831_WAIT_ATTACK`, `CHK831_WAIT_AUDIT`, `CHK831_SWEEP_BOUND`,
-`CHK831_SWEEP_POLL`, `CHK831_MAX_USD` — because a slow project should be given longer rather than
-read as a `FAIL`.
+`CHK831_WAIT_METERED`, `CHK831_WAIT_ATTACK`, `CHK831_WAIT_AUDIT`, `CHK831_WAIT_RENAME`,
+`CHK831_RENAME_POLL`, `CHK831_SWEEP_BOUND`, `CHK831_SWEEP_POLL`, `CHK831_MAX_USD` — because a slow
+project (or a platform slow to let a deleted job's name go) should be given longer rather than read
+as a `FAIL`.
 
 **What it reads, and what the block says.** One block on stdout headed `CHECK 831 RESULT`, whose last
 line is `CHECK 831 RESULT: PASS|FAIL`, with **one row per fact**: `installation`, `launch`,
@@ -24167,7 +24178,10 @@ replace its preemption.
 `scripts/live-checks/check-831_test.sh`, drives it entirely against a fake `gcloud`, `curl` and
 `fugaro` on PATH — no network, no project, no resource — and is run by `go test ./scripts` like
 every other check's. It fails when the replay step is removed from the script, which is the proof
-that the replay row is what the row measures.
+that the replay row is what the row measures; and it fails when the row is made to accept any
+refusal the service answers, the once-only fence's *the ticket was already claimed* among them,
+which is the difference between a row that measures the VM-to-job link and one that would pass on a
+tree with no link at all.
 
 ## Check 840: what a Cloud Run execution can prove — its identity token, the override read back, and one custom token exchanged twice (your own development installation, never `belong`; run by you; NOT RUN)
 

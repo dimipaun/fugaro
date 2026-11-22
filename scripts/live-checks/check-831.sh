@@ -415,6 +415,14 @@ WAIT_SESSION=${CHK831_WAIT_SESSION:-600}
 WAIT_METERED=${CHK831_WAIT_METERED:-900}
 WAIT_ATTACK=${CHK831_WAIT_ATTACK:-600}
 WAIT_AUDIT=${CHK831_WAIT_AUDIT:-180}
+# The bound on the re-creation: a Batch delete is accepted at once and the name
+# is the platform's until it has finished with the job — a submit under it
+# before then is refused ALREADY_EXISTS (the reaper's own DELETION_IN_PROGRESS,
+# the state the SWEEP_BOUND comment below is about). The third attack retries
+# within this bound rather than reading the platform's own answer as the
+# attack's refusal, and it is a knob for the same reason the others are.
+WAIT_RENAME=${CHK831_WAIT_RENAME:-180}
+RENAME_POLL=${CHK831_RENAME_POLL:-5}
 # Deleting a Batch job is asynchronous: the delete is accepted at once and the
 # job stays listable, in DELETION_IN_PROGRESS, until the platform has finished
 # with it (the engine's own reaper lists that state: internal/backend/batch/
@@ -750,9 +758,11 @@ job_labels() { # job_labels FILE
 # the job's own variables. It makes the claim the run's own runner makes — the
 # ticket, a nonce it draws, and its OWN VM's identity token in full format as the
 # attestation and as the bearer (internal/runner/identity_claim.go,
-# batch_attest.go) — and it prints one `C831 claim` line: the status, the
-# contract's refusal code and whether a token came back. It never prints the
-# ticket or the token.
+# batch_attest.go) — and it prints one `C831 claim` line (the status, the
+# contract's refusal code and whether a token came back) and one `C831 refusal`
+# line carrying the refusal's own sentence, which is what tells the VM's
+# refusal from one the route answers before the link is asked. It never prints
+# the ticket or the token.
 write_attack_container() {
   cat >"$SCRATCH/attack.sh" <<'C831CONTAINER'
 #!/bin/bash
@@ -783,7 +793,7 @@ PY
 code=$(curl -sS -o "$HOME/claim.json" -w '%{http_code}' --max-time 20 \
   -X POST -H "Authorization: Bearer ${tok}" -H 'Content-Type: application/json' \
   -H 'Accept: application/json' --data "$body" "${svc%/}${path}" 2>/dev/null) || code=000
-read -r err has <<EOF
+IFS=$(printf '\t') read -r err has words <<EOF
 $(python3 - "$HOME/claim.json" <<'PY'
 import json, sys
 try:
@@ -792,11 +802,21 @@ except Exception:
     d = {}
 if not isinstance(d, dict):
     d = {}
-print("%s %s" % (d.get("error", "none"), "yes" if d.get("token") else "no"))
+# The refusal's own words, collapsed to one line and bounded: they are the
+# service's prose (credsvc's refuse writes WireError.Message), and the CODE
+# alone cannot tell the refusal of a claim on the VM that made it from a
+# refusal the route answers before the link is ever asked.
+msg = " ".join(str(d.get("message", "")).split())[:400]
+print("%s\t%s\t%s" % (d.get("error", "none"), "yes" if d.get("token") else "no", msg))
 PY
 )
 EOF
 echo "C831 claim status=${code} error=${err} token=${has}"
+# The service's own sentence, on a line of its own because it has spaces in it.
+# It names the field the refusal is about and never what the call sent (R7):
+# the ticket and the attestation reach no refusal, no log line and no audit
+# line, so this line carries no credential of this run's.
+echo "C831 refusal ${words}"
 echo "C831 read"
 sleep "${FUGARO_CHK831_LINGER:-60}"
 echo "C831 done"
@@ -1194,17 +1214,30 @@ submit_attack() { # submit_attack NAME TICKET [ACCOUNT]
   return 0
 }
 
-# claim_verdict: one attack's row, from the line its own container printed. PASS
-# is the absence of an identity AND a decision by the service: a claim answered
-# 5xx, or not answered at all, was not judged, and an answer that carried a token
-# is the finding these rows exist for.
+# claim_row: one attack's row, from the lines its own container printed. PASS is
+# the absence of an identity AND a decision about the VM the claim came from: a
+# claim answered 5xx, or not answered at all, was not judged; an answer that
+# carried a token is the finding these rows exist for; and a refusal the route
+# can make WITHOUT asking the link is not this row's refusal either.
+#
+# The last of those is the one this function has to work for. These attacks run
+# after the ledger says the run opened its session and was metered, and by then
+# the run's own bootstrap has already claimed the ticket — so a service that
+# does not ask the link (this tree, until BR2 and BR3 merge: the route checks
+# the account, the ticket's digest and life, the record's claims and the
+# once-only fence, and never reads the attestation) refuses the replay with the
+# FENCE's refusal, "the ticket was already claimed". A row that read that as a
+# refusal of the attack would record a PASS proving nothing: a tree with no
+# VM-to-job link at all would pass both replay rows. What is read here is the
+# refusal's own sentence, which the container prints beside its code, and the
+# sentence is what tells the two apart.
 claim_row() { # claim_row KEY LINES WHAT-REFUSED
   local key=$1 lines=$2 what=$3
   if ! grep -qx 'C831 read' "$lines" 2>/dev/null; then
     fact "$key" FAIL "the attack's container reported no reading at all within the bound (no 'C831 read' line came back through the tree's own filter): the attack was NOT judged, and an attack nobody judged is not a refusal. Read the job's own status and its logs: gcloud batch jobs describe <the attack job> --project=${P} --location=${L}"
     return 0
   fi
-  local line status refusal token
+  local line status refusal token words
   line=$(grep -m1 '^C831 claim ' "$lines" 2>/dev/null || true)
   case "$line" in
   "")
@@ -1219,6 +1252,11 @@ claim_row() { # claim_row KEY LINES WHAT-REFUSED
   status=$(printf '%s' "$line" | sed -n 's/.*status=\([^ ]*\).*/\1/p')
   refusal=$(printf '%s' "$line" | sed -n 's/.*error=\([^ ]*\).*/\1/p')
   token=$(printf '%s' "$line" | sed -n 's/.*token=\([^ ]*\).*/\1/p')
+  words=$(grep -m1 '^C831 refusal ' "$lines" 2>/dev/null | sed 's/^C831 refusal //' || true)
+  if [ "$refusal" = not_served ]; then
+    fact "$key" FAIL "the service answered 'not_served', so it did NOT decide the claim: its link from a VM to the job the record names is not wired (identitywire.VMIdentity, BR3 — a nil link is answered this way, D3114), and a claim it cannot judge is served to nobody and refused to everybody. Nothing about the VM was measured, so this row is NOT a refusal of the attack. Its own words: '${words:-<none>}' (HTTP ${status}). An owner run on an installation whose link is not wired reports exactly this, and the answer is the plan's work and not a defect in the check"
+    return 0
+  fi
   case "$status" in
   000 | 5*)
     fact "$key" FAIL "the claim was made from the attack's own VM and nothing decided it (HTTP ${status}): a service that is down, or one that answered its own failure, did not refuse anything, so the attack was NOT judged. The container's own line reads '${line#C831 claim }'. Read the service's logs and run again"
@@ -1229,7 +1267,32 @@ claim_row() { # claim_row KEY LINES WHAT-REFUSED
     fact "$key" FAIL "the attack OBTAINED the run's identity: the claim was made from the attack's own VM (${what}) and the service answered it a token (HTTP ${status}, refusal ${refusal}). This is the finding these rows exist for — the identity of a Batch run was served to a VM that is not the run's job's, and the mechanism the plan rests on (D3114, D3108) is not doing its work in the tree under test"
     return 0
   fi
-  fact "$key" PASS "the attack was refused: the claim was made from the attack's own VM (${what}), the service decided it, and no identity came back (HTTP ${status}, the contract's refusal ${refusal}). The refusal is the service's own decision and not an outage: a claim answered 5xx or not answered at all is this row's FAIL, so this PASS is a decision read once"
+  if [ "$refusal" != identity_refused ]; then
+    fact "$key" FAIL "the claim was refused and not by the claim route's own decision about it: the service answered the code '${refusal}' (HTTP ${status}), which is not the refusal a claim the route READ is refused with (identity_refused), and its words are '${words:-<none>}'. Whether the VM was ever judged is not said by this answer, so the row is NOT measured: read the service's logs for this run and run again"
+    return 0
+  fi
+  # The two refusals this route can answer before it asks the link, in this
+  # attack's own situation (the account is the run's, the ticket is the record's
+  # and was minted minutes ago): the once-only fence, when the ticket is already
+  # spent — the run's own bootstrap spends it, which is what a replay of a
+  # metered run's ticket meets — and the ticket's own life. Both are the route's
+  # words in internal/credsvc/identity_claim.go, both are answered WITHOUT the
+  # link, and either of them read as this row's refusal would be the PASS this
+  # row must not print. Any other refusal of a claim the route read is one the
+  # link made (D3114: the VM is not the recorded job's, or the job is not the
+  # registered one — D3108 for the re-created job), which is what these rows
+  # measure.
+  case "$words" in
+  *"already claimed"* | *"has expired"*)
+    fact "$key" FAIL "the claim was refused, and the refusal is one the service answers WITHOUT asking whether the VM is the job's: '${words}'. The attack's ticket was already spent — the run's own bootstrap claimed it, which is what the check's own order guarantees: it waits for the ledger to say the run opened its session and was metered, and that claim is the run's — so this refusal is the ticket being spent and not the VM being another job's. The tree under test does not ask the link on this route (BR2, BR3), and this row is the measurement of that, not a PASS: the identity was not served to the attack's VM by any decision about the VM, and a tree with no link at all answers exactly this"
+    return 0
+    ;;
+  esac
+  if [ -z "$words" ]; then
+    fact "$key" FAIL "the service refused the claim (HTTP ${status}, ${refusal}) and its refusal carried no sentence this check could read, so the refusal cannot be told from one the route answers before the link is asked — the ticket already spent, or expired — and this row is NOT measured. A refusal of this service carries WireError.Message (credsvc's refuse); read the service's logs and run again"
+    return 0
+  fi
+  fact "$key" PASS "the attack was refused: the claim was made from the attack's own VM (${what}), the service decided it, and no identity came back (HTTP ${status}, the contract's refusal ${refusal}). The refusal is a decision about the VM and not the ticket: the service's own words are '${words}', and the refusals this route answers before it asks the link — the ticket already spent, and the ticket expired — are this row's FAIL. A claim answered 5xx or not answered at all is this row's FAIL too, so this PASS is a decision read once"
 }
 
 # attack-replay: the second launcher reads the run's job, takes the ticket out of
@@ -1289,7 +1352,10 @@ step_attack_noticket() {
 # attack-rename: the second launcher deletes the run's job while it is queued and
 # re-creates one under the same name carrying the same ticket. A re-created job
 # is another job with another Google id, and the record's id is what must refuse
-# it (D3108, F30).
+# it (D3108, F30). The re-creation waits, bounded, for the deleted name to be
+# free again: a Batch delete is asynchronous, and a submit under the name while
+# the platform is still finishing with the job is refused ALREADY_EXISTS — the
+# platform's own answer, and not the attack's refusal.
 step_attack_rename() {
   if [ "$TICKET_PRESENT" != yes ]; then
     fact attack-rename FAIL "there is nothing to carry into a re-created job: the run's job carries no ${TICKET_ENV} (see \`launch-ticket\`), so the re-creation could not be the attack the plan asks for and this row is NOT measured"
@@ -1311,12 +1377,36 @@ step_attack_rename() {
   fi
   local ticket
   ticket=$(cat "$TICKET_FILE" 2>/dev/null || true)
-  if ! submit_attack "$RUN_JOB" "$ticket"; then
-    local msg
+  # The re-creation is retried, bounded, and the reason is the platform's: the
+  # delete above was accepted and the name is still the platform's until it has
+  # finished with the job (DELETION_IN_PROGRESS — the state the sweep's own
+  # comment is about), so a submit under it is refused ALREADY_EXISTS and that
+  # refusal is the platform's and not the third attack's. A check that read it
+  # as the attack would report the attack refused on the owner's one paying run
+  # and never make it. Any other refusal is the submit's own failure and stops
+  # the step at once, and the platform's first refusal is kept to be named if
+  # the name never comes free.
+  local waited=0 first="" msg tick="$RENAME_POLL"
+  [ "$tick" -gt 0 ] || tick=1
+  while :; do
+    if submit_attack "$RUN_JOB" "$ticket"; then break; fi
     msg=$(oneline <"$SCRATCH/err")
-    fact attack-rename FAIL "the run's job ${RUN_JOB} was deleted, and the second launcher could not re-create a job under the same name (${msg}): the attack was NOT made. A job left deleted is a run that stops here — this check's own sweep deletes the re-created one, and the run's job is already gone"
-    return 0
-  fi
+    case "$msg" in
+    *ALREADY_EXISTS* | *"already exists"*) ;;
+    *)
+      fact attack-rename FAIL "the run's job ${RUN_JOB} was deleted, and the second launcher could not re-create a job under the same name (${msg}): the attack was NOT made. A job left deleted is a run that stops here — this check's own sweep deletes the re-created one, and the run's job is already gone"
+      return 0
+      ;;
+    esac
+    [ -n "$first" ] || first=$msg
+    if [ "$waited" -ge "$WAIT_RENAME" ]; then
+      fact attack-rename FAIL "the run's job ${RUN_JOB} was deleted and the name is still the platform's after ${waited}s of waiting, so a job could not be re-created under it and the attack was NOT made. The platform's own answer was '${first}'. A Batch delete is asynchronous: the job stays the platform's — listed, and described as DELETION_IN_PROGRESS — until it has finished with it, and a submit under its name before then is refused ALREADY_EXISTS. Give it longer (CHK831_WAIT_RENAME=<seconds>) and run again: this check waits up to ${WAIT_RENAME}s. The run's job is deleted either way, so the run stopped here, and \`restore\` names what is left"
+      return 0
+    fi
+    say "the name ${RUN_JOB} is still the platform's to reap ('${msg}'); waiting, ${waited}s of ${WAIT_RENAME}s"
+    sleep "$tick"
+    waited=$((waited + tick))
+  done
   local uid
   uid=$(job_uid "$RUN_JOB")
   if ! wait_for_lines "$uid" '^C831 read$' "$SCRATCH/rename-lines" "$WAIT_ATTACK"; then
@@ -1384,7 +1474,7 @@ print_plan() {
   say "  [cloud]  gcloud batch jobs describe ${RUN_JOB:-<the job of this run>} --impersonate-service-account=<second launcher> — the first attack's read of the run's job"
   say "  [cloud]  gcloud batch jobs submit ${JOB_REPLAY} --impersonate-service-account=<second launcher> — the replay: the second launcher's own job, running as the run's own account, carrying the ticket it read, claiming from its own VM"
   say "  [cloud]  gcloud batch jobs submit ${JOB_NOTICKET} --impersonate-service-account=<second launcher> — the same job with no ticket"
-  say "  [cloud]  gcloud batch jobs delete ${RUN_JOB:-<the job of this run>} --impersonate-service-account=<second launcher>, then gcloud batch jobs submit under the SAME name with the same ticket — the re-creation, claiming from its own VM"
+  say "  [cloud]  gcloud batch jobs delete ${RUN_JOB:-<the job of this run>} --impersonate-service-account=<second launcher>, then gcloud batch jobs submit under the SAME name with the same ticket — the re-creation, claiming from its own VM, retried within ${WAIT_RENAME}s because a Batch delete is asynchronous and the name stays the platform's (DELETION_IN_PROGRESS) until it has finished with the job"
   say "  [cloud]  curl ${RTDB:-<rtdb_url>}/${RECORDS_PATH}/<slug>/<run>.json with the second launcher's access token — the direct read of the issuance record, which the database's rules must refuse"
   say "  [local]  the exit trap deletes every job of this check's by its label, and the run's job by the label the backend writes on it, and removes the scratch directory"
   say "A dry run runs the guards and the tree reads only. It launches no run, makes no attack, and touches no cloud project"

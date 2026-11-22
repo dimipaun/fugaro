@@ -451,11 +451,18 @@ import (
 // answers per path with a different answer from the second read on (so a row
 // that waits for a value rather than reading once is measured), every job
 // configuration the check submits, and a delete whose acceptance is listed for a
-// while afterwards -- so a case can read the body it sent, including the ticket,
-// which the test asserts never reaches the block, the progress log or any file
-// but the one of its own. The tree is a fixture too, and four cases bend it: no
-// ticket's variable, another path family, no run variable and a run variable of
-// another shape.
+// while afterwards and whose name stays un-submittable (ALREADY_EXISTS) until
+// the platform has finished with it -- so a case can read the body it sent,
+// including the ticket, which the test asserts never reaches the block, the
+// progress log or any file but the one of its own. The refusal a claim comes
+// back with is what the two replay rows are judged on, and its own sentence is
+// what tells the VM's refusal from the ones the route answers WITHOUT asking the
+// link -- the once-only fence's, the ticket's own life, and `not_served` -- so
+// cases bend that sentence each of those ways and the rows are required to FAIL
+// on every one of them: a row that read any refusal as its own would pass on a
+// tree with no VM-to-job link at all. The tree is a fixture too, and four cases
+// bend it: no ticket's variable, another path family, no run variable and a run
+// variable of another shape.
 
 // Checks 50, 780 and 781 are the keys-through-service work's owner-run checks,
 // and the three are the ones whose fakes have to hold STATE rather than answer
