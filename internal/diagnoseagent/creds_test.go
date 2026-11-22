@@ -466,16 +466,20 @@ func credsTable(sources ...routing.Source) routing.Table {
 // project's routing table decides what a diagnosis reaches a model through, and
 // an account name no longer chooses the credential by itself.
 //
-// Four properties, and each is a way the table is the decider:
+// Five properties, and each is a way the table is the decider:
 //
 //   - a table whose entry names the project's own Anthropic key reads that key
 //     and never an account's token, whatever the configuration's account keys
 //     say — the source the table answered with is what chose the credential;
+//   - a key that does not admit this repository is skipped, not read: the
+//     admission is per source and per repository (D3182), and a chain whose key
+//     admits another repository still reaches this one through the pool below
+//     it;
 //   - a table whose entry names a pool reads the project's Claude account's
 //     token, and the handle records the pool the table named;
 //   - a model the table has no entry for is refused with the fix, BEFORE any
 //     credential is read, and so is an entry whose every source is one only a
-//     deployment holds;
+//     deployment holds or one this repository is not admitted to;
 //   - a project that has published no table is served as it was before the
 //     table existed, and records no source, because none named one.
 //
@@ -488,7 +492,7 @@ func TestTheDiagnoseAgentGoesByTheTable(t *testing.T) {
 		var asked []string
 		a := credsAccounts("team-b")
 		a.Model = "claude-sonnet-5-5"
-		a.Table = credsTable(routing.Source{Kind: routing.KindAnthropic})
+		a.Table = credsTable(routing.Source{Kind: routing.KindAnthropic, Admit: []string{"acme/app"}})
 		h, err := Resolve(nil, a, credsReader(value, &asked))
 		if err != nil {
 			t.Fatalf("a table naming the project's Anthropic key did not resolve: %v", err)
@@ -505,6 +509,66 @@ func TestTheDiagnoseAgentGoesByTheTable(t *testing.T) {
 		src, ok := h.Source()
 		if !ok || src != (routing.SourceName{Kind: routing.KindAnthropic}) {
 			t.Errorf("Source() = %+v, %v, want the anthropic source the table named and true", src, ok)
+		}
+	})
+
+	t.Run("a key that does not admit the repository is skipped, not read", func(t *testing.T) {
+		// D3182: the admission is per source and per repository, and a source
+		// this repository is not admitted to is skipped exactly as the
+		// service's walk skips it — so the pool below the key still serves
+		// this repository, and the project's key is never read for one its
+		// admit list does not name.
+		value := credsValue(t, "account")
+		var asked []string
+		a := credsAccounts("team-b")
+		a.Model = "claude-sonnet-5-5"
+		a.Table = credsTable(
+			routing.Source{Kind: routing.KindAnthropic, Admit: []string{"acme/other"}},
+			routing.Source{Kind: routing.KindPool, Pool: "acme-team"},
+		)
+		h, err := Resolve(nil, a, credsReader(value, &asked))
+		if err != nil {
+			t.Fatalf("a chain whose key admits another repository was refused: %v — the pool below the key serves this one", err)
+		}
+		if want := []string{config.ClaudeAccountSecret("team-b")}; !slices.Equal(asked, want) {
+			t.Errorf("the secrets read were %v, want %v: the key was read for a repository its admit list does not name", asked, want)
+		}
+		if src, ok := h.Source(); !ok || src != (routing.SourceName{Kind: routing.KindPool, Name: "acme-team"}) {
+			t.Errorf("Source() = %+v, %v, want the pool the chain reached after the key was skipped", src, ok)
+		}
+	})
+
+	t.Run("a key that admits no repository is refused with the fix, and never read", func(t *testing.T) {
+		a := credsAccounts("team-b")
+		a.Model = "claude-sonnet-5-5"
+		a.Table = credsTable(routing.Source{Kind: routing.KindAnthropic, Admit: []string{"acme/other"}})
+		_, err := Resolve(nil, a, credsUnread(t))
+		if err == nil {
+			t.Fatal("the project's key was read for a repository its admit list does not name: the admission is what keeps one repository's key out of another repository's diagnosis")
+		}
+		for _, want := range []string{"acme/app", config.AnthropicSecret, "admit", "fugaro routing set"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name %q: %v", want, err)
+			}
+		}
+	})
+
+	t.Run("a key is refused where there is no repository to check it against", func(t *testing.T) {
+		// The fail-closed answer the account path's own guard gives for the
+		// same reason (F22): an admission that is per repository cannot be
+		// checked against a repository there is not, so the key is not read.
+		a := credsAccounts("team-b")
+		a.Repo = ""
+		a.Model = "claude-sonnet-5-5"
+		a.Table = credsTable(routing.Source{Kind: routing.KindAnthropic, Admit: []string{"acme/app"}})
+		_, err := Resolve(nil, a, credsUnread(t))
+		if err == nil {
+			t.Fatal("the project's key was read with no repository in hand")
+		}
+		for _, want := range []string{"checkout", config.AnthropicSecret} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name %q: %v", want, err)
+			}
 		}
 	})
 
