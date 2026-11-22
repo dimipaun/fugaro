@@ -1103,13 +1103,24 @@ func readIndex(ctx context.Context, env *cloudEnv, idx runindex.Reader, f lsFilt
 		// the newest-limit alone would drop. It is the same filter without the
 		// limit, since a limit is what "the newest N" is and not what "every
 		// active run" is.
+		//
+		// The question is an addition and not a second opinion: the rows the
+		// first one answered are a listing either way, so an index with nothing
+		// to say about the active runs is a listing with no run going rather
+		// than one that reads the window (an index that has folded runs and
+		// written no summary is exactly that). A reader that failed is a read
+		// that did not happen, and half a listing is not a listing: the window
+		// answers it whole, as it does for a failure of the first question.
 		active := filter
 		active.Active, active.Limit = true, 0
-		more, _, ok := readIndexEntries(ctx, idx, active, f.warn)
-		if !ok {
+		more, _, answered, err := readIndexPage(ctx, idx, active)
+		if err != nil {
+			noteIndexUnreadable(f.warn, err)
 			return lsRead{}, false
 		}
-		entries = mergeIndexEntries(entries, more)
+		if answered {
+			entries = mergeIndexEntries(entries, more.Entries)
+		}
 	}
 	refs := make([]lsRef, 0, len(entries))
 	for _, e := range entries {
@@ -1117,6 +1128,13 @@ func readIndex(ctx context.Context, env *cloudEnv, idx runindex.Reader, f lsFilt
 			refs = append(refs, lsRef{e.Slug, e.RunID})
 		}
 	}
+	// The runs the index named are read one by one, with no run cache: the
+	// cache is keyed by a flat listing of every object of a repository
+	// (runcache.List), and that listing is exactly what this path exists to
+	// avoid -- the index has already said which runs to read, so asking the
+	// bucket for the generations of all of them would be reading the window
+	// again by another name.
+	f.noCache = true
 	rows, err := readRefRows(ctx, env, f, refs, nil, now, lsWarnf(f.warn))
 	if err != nil {
 		return lsRead{}, false
@@ -1154,15 +1172,41 @@ func readIndex(ctx context.Context, env *cloudEnv, idx runindex.Reader, f lsFilt
 // answer with, or when the reader failed, having said so in one line: every
 // caller then reads the window as it did before the index existed.
 func readIndexEntries(ctx context.Context, idx runindex.Reader, filter runindex.Filter, warn io.Writer) ([]runindex.Entry, lsIndexState, bool) {
+	page, state, answered, err := readIndexPage(ctx, idx, filter)
+	if err != nil {
+		noteIndexUnreadable(warn, err)
+		return nil, lsIndexState{}, false
+	}
+	if !answered {
+		return nil, lsIndexState{}, false
+	}
+	return page.Entries, state, true
+}
+
+// readIndexPage is one question put to the index and nothing decided about it:
+// the page, what the page said about the index itself, and whether the index
+// had anything to answer with at all (indexAnswers). False there is an index
+// that has folded nothing and finished no walk -- the stub's shape, and an
+// installation before its first fold -- and never an index whose filter matched
+// nothing, which answers with the summary's own state beside an empty page
+// (readIndexEntries and readIndex's second question read it differently, and
+// that is why the two are told apart here rather than collapsed into one).
+func readIndexPage(ctx context.Context, idx runindex.Reader, filter runindex.Filter) (runindex.Page, lsIndexState, bool, error) {
 	page, err := idx.List(ctx, filter)
 	if err != nil {
-		lsNotef(warn, "note: the run index could not be read: %v; listing the window instead, as it did before the index existed\n", oneLine(err.Error()))
-		return nil, lsIndexState{}, false
+		return runindex.Page{}, lsIndexState{}, false, err
 	}
 	if !indexAnswers(page) {
-		return nil, lsIndexState{}, false
+		return runindex.Page{}, lsIndexState{}, false, nil
 	}
-	return page.Entries, lsIndexState{complete: page.IndexComplete, foldedThrough: page.FoldedThrough}, true
+	return page, lsIndexState{complete: page.IndexComplete, foldedThrough: page.FoldedThrough}, true, nil
+}
+
+// noteIndexUnreadable is the one line a listing says when the index could not
+// be read: it is about to read the window, as every listing did before the
+// index existed.
+func noteIndexUnreadable(warn io.Writer, err error) {
+	lsNotef(warn, "note: the run index could not be read: %v; listing the window instead, as it did before the index existed\n", oneLine(err.Error()))
 }
 
 // readIndexTotals is the figure beside a listing the index answered: the
