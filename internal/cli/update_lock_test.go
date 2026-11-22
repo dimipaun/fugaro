@@ -336,6 +336,10 @@ func TestTheWorkdirLockIsOnlyTheConverges(t *testing.T) {
 // read its own name there.
 func TestTheAccountsConvergeTakesTheWorkdirLock(t *testing.T) {
 	r := newAddRig(t)
+	// The owner's own terminal: a managed project's `accounts add` is the
+	// owner's step, and a caller the gate does not admit is refused before the
+	// converge — and so before the lock — is ever reached.
+	ownerAtTheTerminal(t)
 	lock, err := infra.LockWorkdirs(os.Getenv, initProject, "fugaro update")
 	if err != nil {
 		t.Fatal(err)

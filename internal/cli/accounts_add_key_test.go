@@ -1368,7 +1368,26 @@ func providerKeyRig(t *testing.T, local string) *addRig {
 // deployed service runs is the one read, whatever this tree's version is.
 func providerKeyRigAt(t *testing.T, local, rel string) *addRig {
 	t.Helper()
-	r := newAddRigWith(t, local)
+	return providerKeyRigMarks(t, local, rel, true)
+}
+
+// providerKeyRigUnmanaged is the same world as an ORDINARY installation: a
+// project with neither mark, which is the world `accounts add --type` needs and
+// no world it runs in otherwise. The provider key that command writes goes
+// through the same door `creds set` uses, and on a managed project the gate
+// answers first — the widening rule and the owner's own terminal, before the
+// entry is reached — so the write these guards are about is only reached where
+// there is no gate to read (D2217; the fence's own tests are in
+// managed_require_test.go). The world is asked for by name, one per refusal.
+func providerKeyRigUnmanaged(t *testing.T, local, rel string) *addRig {
+	t.Helper()
+	return providerKeyRigMarks(t, local, rel, false)
+}
+
+// providerKeyRigMarks is the provider-key world with the marks chosen.
+func providerKeyRigMarks(t *testing.T, local, rel string, managed bool) *addRig {
+	t.Helper()
+	r := newAddRigMarks(t, local, managed)
 	skew := newRunServiceSkew(t)
 	if rel != "" {
 		skew.deployedService(credentialsImage(rel), credentialsImage(rel))
@@ -1652,6 +1671,7 @@ func TestAnOlderServiceIsNotWrittenANamedEntry(t *testing.T) {
 	})
 	t.Run("accounts add", func(t *testing.T) {
 		r := providerKeyRigAt(t, providerKeyLocal, older)
+		ownerAtTheTerminal(t)
 		bundleID := bundleFixtureFor(t, r.sm, "aurora", nil)
 		value := addToken()
 		out, errOut, err := executeStdin(t, value+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter")
@@ -1724,7 +1744,7 @@ func TestOnlyAProjectOwnerWritesAProviderKey(t *testing.T) {
 		{
 			what: "accounts add",
 			older: func(t *testing.T) (*gcpfake.Secrets, string) {
-				r := providerKeyRig(t, providerKeyLocal)
+				r := providerKeyRigUnmanaged(t, providerKeyLocal, "")
 				return r.sm, bundleFixtureFor(t, r.sm, "aurora", nil)
 			},
 			args: []string{"accounts", "add", "team-a", "--repos", "owner/repo-a", "--type", "openrouter"},

@@ -378,10 +378,14 @@ func TestConfigPublishManagedFailsClosedWhenAMarkCannotBeRead(t *testing.T) {
 
 // The other half of the answer above, read on an installation whose endpoints
 // answer: neither mark is there — the bucket carries no label and no creation
-// fact — so the read SUCCEEDS and answers "not managed". The session is refused
-// in the words it has always been refused in, the header is not printed, nothing
-// is published and nothing is recorded: a project that is not managed is today's
-// behaviour, unchanged (TestManagedZeroValueKeepsEveryRefusal's rule).
+// fact — so the read SUCCEEDS and answers "not managed". The run is refused,
+// the header is not printed, nothing is published and nothing is recorded. What
+// the session reads is not this command's own refusal but the fence's (D2217):
+// a project that is not managed is refused at the door, whatever called, and the
+// published layer it would have written is where D1541's rule has to hold first.
+// This command's own agent refusal is what a session reads on a managed project
+// the gate did not admit (TestConfigPublishManagedRefusesAnAgentSession's
+// neighbourhood above), which is the world that refusal is still reached in.
 func TestConfigPublishManagedRefusesAnAgentSessionOnAnUnmanagedProject(t *testing.T) {
 	gcs := gcpfake.NewGCS(t)
 	gcs.AddBucket(managedPublishBucket(), managedPublishNumber, nil)
@@ -394,14 +398,7 @@ func TestConfigPublishManagedRefusesAnAgentSessionOnAnUnmanagedProject(t *testin
 	if err == nil {
 		t.Fatal("a coding agent's session published to a project with no mark")
 	}
-	if !strings.Contains(err.Error(), initflow.AgentRefusal("CLAUDECODE")) {
-		t.Errorf("the refusal is not the one this command has always given a coding agent's session: %v", err)
-	}
-	for _, leak := range []string{"creation fact", "storage", "resource manager"} {
-		if strings.Contains(err.Error(), leak) {
-			t.Errorf("the refusal carries installation diagnostics (%q): %v", leak, err)
-		}
-	}
+	checkFenceRefusal(t, err, "config publish")
 	if strings.Contains(errOut, "project: ") {
 		t.Errorf("a session the gate never admitted printed the project header: %q", errOut)
 	}
