@@ -126,8 +126,6 @@ project_cmd.go	then run fugaro update
 project_job.go	run fugaro update
 project_profile.go	fugaro update, which publishes it
 project_repos_rm.go	Run jobs are — fugaro update
-project_repos_set.go	fugaro update publishes it
-project_repos_set.go	next: fugaro update
 project_repos_set.go	run would ever read this selection: fugaro update
 project_repos_set.go	then holds and fugaro project policy publish
 project_repos_set.go	then holds, and fugaro project policy publish
