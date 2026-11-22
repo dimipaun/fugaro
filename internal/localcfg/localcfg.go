@@ -998,7 +998,7 @@ func (p WorkspacePin) IsZero() bool { return p == WorkspacePin{} }
 // WorkspaceMember is one member of a workspace, as the workspace owner
 // declares it: how the workspace's own service reaches that member. It is the
 // owner's declaration and never the member's, and every value in it is one the
-// owner writes by hand (`fugaro workspace member add`).
+// owner writes by hand (`fugaro workspace project add`).
 type WorkspaceMember struct {
 	// Repos are the repositories this member contributes to the workspace, as
 	// `owner/repo`. Empty for a member that contributes none.
@@ -1057,7 +1057,7 @@ type WorkspaceJobAccount struct {
 }
 
 // IsZero reports whether the entry declares nothing at all, which is the state
-// validateWorkspace refuses and `fugaro workspace member rm` reads as "there is
+// validateWorkspace refuses and `fugaro workspace project rm` reads as "there is
 // no entry to remove". It is one rule with two readers, so the loader and the
 // command cannot come to different answers about an entry that is there and
 // says nothing.

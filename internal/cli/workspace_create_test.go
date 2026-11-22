@@ -28,7 +28,7 @@ import (
 // points at, a private XDG state home, and no cloud.
 //
 // The owner's half of the config is update_workspace_test.go's own fixture
-// (wsOwnerTable and wsOwnerCap, the shape `fugaro workspace member add` and
+// (wsOwnerTable and wsOwnerCap, the shape `fugaro workspace project add` and
 // `cap set` write): the stage's predicate is W2's, so the config that makes
 // this installation a workspace's own is the same document, and a second
 // spelling of it here would be a second reading of what a workspace is.
@@ -797,7 +797,7 @@ func TestWorkspaceProjectStageVerifyRefusesARootThatStillHasChanges(t *testing.T
 
 // TestWorkspaceProjectStageConvergesACapWithoutAMember: a config the owner's
 // own commands reach — `fugaro workspace cap set` writes the cap alone, and
-// `workspace member rm` of the last member leaves the table empty — is this
+// `workspace project rm` of the last member leaves the table empty — is this
 // project's workspace, and the run converges it. W2 publishes nothing (a record
 // that lists none admits nobody) and that is its stage's business; reading it
 // as "no workspace" here would leave the account missing, and reading it as an

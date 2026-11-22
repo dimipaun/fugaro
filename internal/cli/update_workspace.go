@@ -140,7 +140,7 @@ const workspaceNoDBReason = "the project's config names no Firebase budget backe
 // workspaceNoMemberReason is the skip for a config that declares a workspace and
 // lists no member in it. The state is one the owner's own commands reach —
 // `fugaro workspace cap set` writes the cap alone on a project that has no
-// table, and `fugaro workspace member rm` of the last member leaves the table
+// table, and `fugaro workspace project rm` of the last member leaves the table
 // empty — so it is a config this program must be able to read, and the sentence
 // names the local edit that fixes it rather than leaving the owner to work it
 // out from a node that was not written.
@@ -153,7 +153,7 @@ const workspaceNoDBReason = "the project's config names no Firebase budget backe
 // this one — never ran. Nothing is published either way: no member is a record
 // that admits nobody.
 func workspaceNoMemberReason(lc *localcfg.Config) string {
-	return fmt.Sprintf("the workspace %s declares no member, and a record that lists none is a workspace that admits nobody: nothing is published; declare the projects the workspace groups with 'fugaro workspace member add %s <project>' in this project's config, then run %s",
+	return fmt.Sprintf("the workspace %s declares no member, and a record that lists none is a workspace that admits nobody: nothing is published; declare the projects the workspace groups with 'fugaro workspace project add <project> --workspace %s' on this project's machine, then run %s",
 		lc.Name, lc.Name, selfCommand()+" update")
 }
 
@@ -232,7 +232,7 @@ func workspaceOwnFirebase(lc *localcfg.Config, fp string) bool {
 // database it holds no grant on at all.
 //
 // The two lists are SORTED here rather than required to be sorted in the file:
-// yamledit appends where `fugaro workspace member add` writes, so the file's
+// yamledit appends where `fugaro workspace project add` writes, so the file's
 // order is the order the owner's edits happened in and not an order anyone
 // chose (internal/localcfg says so beside the table). The record that is
 // published is sorted, which is what makes two spellings of one member list one
@@ -245,7 +245,7 @@ func workspaceOwnFirebase(lc *localcfg.Config, fp string) bool {
 // fixes it, rather than written and discovered from the other side. It is the
 // skip workspaceNoMemberReason gives and not an error of this function's: the
 // state is this config's own file, reachable from `fugaro workspace cap set` and
-// from `fugaro workspace member rm` of the last member, and a stage of `fugaro
+// from `fugaro workspace project rm` of the last member, and a stage of `fugaro
 // update` that failed the run on it would leave every stage after it blocked.
 func workspaceRecordOf(lc *localcfg.Config) (*workspace.Record, error) {
 	if !workspaceDeclared(lc) {
@@ -455,7 +455,7 @@ func (p *workspacePublication) allWidens() []string {
 // That is what keeps the group's first record out of a coding agent's reach: it
 // is money or permanent, and D1026 admits no plan gate's answer for one. A
 // hand edit of `workspace_members` in the YAML — past the fenced `fugaro
-// workspace member add` — is a document this stage would otherwise publish
+// workspace project add` — is a document this stage would otherwise publish
 // behind a mark, and the node is the group's whole membership.
 //
 // The comparison is against the published node and not the local file: a member
@@ -507,7 +507,7 @@ func workspaceWidening(rec *workspace.Record, node *projectpolicy.Workspace, fou
 //
 // A removal is not a widening — it takes away rather than admits — and it does
 // not take the typed name: the owner asked for it by editing their own table
-// (`fugaro workspace member rm`), which is their own word about their own group
+// (`fugaro workspace project rm`), which is their own word about their own group
 // already. One removal is both a removal and a widening, and it is in both
 // lists: the cap. It is stated here as what the node loses and in
 // workspaceWidening as what the group gains, because it is one change with two
@@ -830,7 +830,7 @@ func workspaceSharedEntry(rec *workspace.Record, name string, entry localcfg.Wor
 	}
 	for _, p := range out.Projects {
 		if !slices.Contains(memberProjects(rec), p) {
-			return projectpolicy.WorkspaceShared{}, userErr("workspace_shared.%s offers the workspace's credential to %s, which the workspace's member table does not declare: the workspace's own service would be asked to reach a member the workspace does not have (F13); nothing was written — declare the member ('fugaro workspace member add %s %s'), or offer the entry to the members it is for ('fugaro workspace share %s --workspace %s --projects <member>'), then run %s again",
+			return projectpolicy.WorkspaceShared{}, userErr("workspace_shared.%s offers the workspace's credential to %s, which the workspace's member table does not declare: the workspace's own service would be asked to reach a member the workspace does not have (F13); nothing was written — declare the member ('fugaro workspace project add %s --workspace %s'), or offer the entry to the members it is for ('fugaro workspace share %s --workspace %s --projects <member>'), then run %s again",
 				out.Name, p, rec.Name, p, out.Name, rec.Name, selfCommand()+" update")
 		}
 	}

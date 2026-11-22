@@ -29,7 +29,7 @@ import (
 // fixture's own config home, and no cloud.
 
 // wsOwnerTable is the workspace's own config declaring one member, in the shape
-// `fugaro workspace member add` writes. The repositories are written OUT of
+// `fugaro workspace project add` writes. The repositories are written OUT of
 // order on purpose: the record that is published is sorted where it is built
 // (internal/localcfg's own note beside this table), so the order of the file is
 // not the order of the node.
@@ -480,7 +480,7 @@ func TestUpdatePublishesTheWorkspaceNodeAndMigratesAnOlderOneInPlace(t *testing.
 // nobody — and it is SKIPPED here rather than published, and equally rather than
 // refused. The state is this config's own and one the owner's commands reach
 // (`fugaro workspace cap set` writes the cap alone on a project with no table,
-// `fugaro workspace member rm` of the last member empties it), so a stage that
+// `fugaro workspace project rm` of the last member empties it), so a stage that
 // answered an error would stop the whole run on a config this program reads:
 // initflow's loop marks the stage and blocks every stage after it. The skip
 // names the local edit that fixes it, and nothing is written.
@@ -491,7 +491,7 @@ func TestUpdateSkipsAPublishWithNoMembers(t *testing.T) {
 	if st.State != initflow.Skipped {
 		t.Errorf("check = %v (%s), want skipped: a record that lists no member is nothing this run publishes", st.State, st.Detail)
 	}
-	for _, want := range []string{"declares no member", "fugaro workspace member add"} {
+	for _, want := range []string{"declares no member", "fugaro workspace project add"} {
 		if !strings.Contains(st.Detail, want) {
 			t.Errorf("the skip does not say %q, so the owner is not told how to fix it: %s", want, st.Detail)
 		}
@@ -512,7 +512,7 @@ func TestUpdateSkipsAPublishWithNoMembers(t *testing.T) {
 
 // TestUpdateWithACapAndNoMemberRunsOn is the same state through the WHOLE
 // command, which is where the defect was: `fugaro workspace cap set` on a
-// project that declares no member — or `workspace member rm` of the last one —
+// project that declares no member — or `workspace project rm` of the last one —
 // leaves a config with workspace_cap and no table, and the owner's `fugaro
 // update` after `brew upgrade` has to converge the rest of the installation all
 // the same. The stage's Check answered a userError, the loop stopped the run
@@ -643,7 +643,7 @@ func TestUpdateLeavesAMemberWithNoWorkspaceAlone(t *testing.T) {
 //
 // The second case is the config that carries BOTH halves: a member's project
 // whose file also carries the owner's — the member table and the cap, which is
-// what `fugaro workspace member add` and `cap set --workspace <that project>`
+// what `fugaro workspace project add` and `cap set --workspace <that project>`
 // leave behind. It is a member's project still: the member's half is the
 // narrower claim, so it publishes nothing and reads nothing, where the owner's
 // half read as its own would have it publish a record and hold a grant
@@ -1026,7 +1026,7 @@ func TestUpdateTheCeilingIsTheDirectionTheWideningIs(t *testing.T) {
 //
 // The state it closes is the one a hand edit reaches: `workspace_members` in
 // the YAML is a document this stage builds a node from, so a session that
-// edited the table past the fenced `fugaro workspace member add` would
+// edited the table past the fenced `fugaro workspace project add` would
 // otherwise publish a whole group behind a mark.
 func TestUpdateTheFirstRecordTakesTheOwnersOwnSession(t *testing.T) {
 	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)

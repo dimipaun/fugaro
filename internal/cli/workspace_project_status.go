@@ -510,7 +510,7 @@ func (s *WorkspaceProjectStatus) Doc(ctx context.Context, named string) (wsProje
 				names = append(names, m.Name)
 			}
 			return wsProjectsDoc{}, userErr("%q is not a member of the workspace %s: its member table lists %s. A member is added with %s",
-				pluginwire.Printable(named), pluginwire.Printable(s.lc.Name), strings.Join(names, ", "), selfCommand()+" workspace member add "+pluginwire.Printable(s.lc.Name)+" <project>")
+				pluginwire.Printable(named), pluginwire.Printable(s.lc.Name), strings.Join(names, ", "), selfCommand()+" workspace project add <project> --workspace "+pluginwire.Printable(s.lc.Name))
 		}
 		members = members[i : i+1]
 	}
@@ -534,12 +534,12 @@ func (s *WorkspaceProjectStatus) Doc(ctx context.Context, named string) (wsProje
 // named after (spec §5) -- and a member's own machine holds neither half.
 func (s *WorkspaceProjectStatus) members() ([]wsMember, error) {
 	if s.lc == nil || s.lc.WorkspaceMembers == nil {
-		return nil, userErr("this machine's config declares no member table, so there is no workspace to report on: the table lives in the config of the project the workspace is named after -- `fugaro workspace member add <workspace> <project>` writes it -- and a member's own machine holds neither the table nor the cap")
+		return nil, userErr("this machine's config declares no member table, so there is no workspace to report on: the table lives in the config of the project the workspace is named after -- `fugaro workspace project add <project> --workspace <workspace>` writes it -- and a member's own machine holds neither the table nor the cap")
 	}
 	table := workspaceTable(s.lc)
 	if len(table) == 0 {
 		return nil, userErr("the workspace %s declares no member: a workspace with none admits nobody, so declare the projects it groups with %s",
-			pluginwire.Printable(s.lc.Name), selfCommand()+" workspace member add "+pluginwire.Printable(s.lc.Name)+" <project>")
+			pluginwire.Printable(s.lc.Name), selfCommand()+" workspace project add <project> --workspace "+pluginwire.Printable(s.lc.Name))
 	}
 	out := make([]wsMember, 0, len(table))
 	for _, name := range slices.Sorted(maps.Keys(table)) {
@@ -886,7 +886,7 @@ func (s *WorkspaceProjectStatus) rowReachable(m wsMember, f wsMemberFacts) wsPro
 	if m.Target.Project == "" {
 		return wsRow(id, wsWarn,
 			"the member's Google Cloud project is not named in this machine's member table: its entry declares no job service account and no firebase_project, and the member's project is read off one of them, so nothing was reached at all",
-			selfCommand()+" workspace member add "+wsEsc(s.lc.Name)+" "+wsEsc(m.Name)+" --job-service-account ACCOUNT@PROJECT.iam.gserviceaccount.com")
+			selfCommand()+" workspace project add "+wsEsc(m.Name)+" --workspace "+wsEsc(s.lc.Name)+" --job-service-account ACCOUNT@PROJECT.iam.gserviceaccount.com")
 	}
 	if f.reachErr != "" {
 		return wsRow(id, wsFail,

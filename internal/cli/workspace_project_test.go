@@ -595,28 +595,42 @@ func TestProjectAddNeedsExternalFlag(t *testing.T) {
 	}
 }
 
-// TestProjectAddKeepsMemberFlags holds this command to D2802: it carries
-// `workspace member add`'s flags with their own help and types, unchanged, and
-// the only two it adds are --workspace and --external.
+// TestProjectAddKeepsMemberFlags holds this command to D2802: `workspace member
+// add`'s flags are carried here unchanged, and the only two this command adds of
+// its own are --workspace and --external.
+//
+// The list is written out because there is no longer a command to compare
+// against: `workspace member add` was removed when this command took its place
+// (I1, D2802), so this test is the copy D2802's claim is kept against, and a
+// flag renamed or retyped here is a diff rather than a silent change. The usage
+// lines are not spelled out: they are help text, the CLI reference renders them
+// for the reader, and a second copy here would drift from it with nothing to
+// hold it.
 func TestProjectAddKeepsMemberFlags(t *testing.T) {
 	mine := newWorkspaceProjectAddCmd(workspaceProjectAddSeams{})
-	theirs := newWorkspaceMemberAddCmd()
-	theirs.Flags().VisitAll(func(f *pflag.Flag) {
-		mineFlag := mine.Flags().Lookup(f.Name)
-		if mineFlag == nil {
-			t.Errorf("workspace project add does not carry --%s, which workspace member add has", f.Name)
-			return
+	carried := map[string]string{
+		"job-service-account": "stringArray",
+		"job-repos":           "stringArray",
+		"database-region":     "string",
+		"firebase-project":    "string",
+		"fp":                  "string",
+		"exchange-url":        "string",
+		"repo":                "stringArray",
+		"no-apply":            "bool",
+	}
+	for name, kind := range carried {
+		f := mine.Flags().Lookup(name)
+		if f == nil {
+			t.Errorf("workspace project add does not carry --%s, which workspace member add had", name)
+			continue
 		}
-		if mineFlag.Usage != f.Usage {
-			t.Errorf("--%s reads %q, and workspace member add's reads %q", f.Name, mineFlag.Usage, f.Usage)
+		if f.Value.Type() != kind {
+			t.Errorf("--%s is a %s, and workspace member add's was a %s", name, f.Value.Type(), kind)
 		}
-		if mineFlag.Value.Type() != f.Value.Type() {
-			t.Errorf("--%s is a %s, and workspace member add's is a %s", f.Name, mineFlag.Value.Type(), f.Value.Type())
-		}
-	})
+	}
 	var added []string
 	mine.Flags().VisitAll(func(f *pflag.Flag) {
-		if theirs.Flags().Lookup(f.Name) == nil {
+		if _, ok := carried[f.Name]; !ok {
 			added = append(added, f.Name)
 		}
 	})

@@ -4,7 +4,7 @@ package cli
 // project's owner declaring one project a member from the machine that holds the
 // member table (D2802, D2821).
 //
-// It is `workspace member add`'s declaration plus the two things the owner's
+// It carries `workspace project add`'s declaration plus the two things the owner's
 // half owes once the member's own owner has consented: the member's grantees
 // become people of the workspace (D2805: adopt, never strip), and each workspace
 // admin who also holds the live binding gets their stored grant written into the
@@ -102,7 +102,7 @@ type workspaceProjectAddOptions struct {
 	// workspace's allowed domains are adopted, marked external, only when it is
 	// given. Nothing asks for it (D1540); its absence is a refusal that names it.
 	external bool
-	// member is `workspace member add`'s own set of values, which this command
+	// member is the set of values this command
 	// carries unchanged (D2802): one entry, built from the same flags by the same
 	// validation, written in the same table.
 	member workspaceMemberAddOptions
@@ -116,7 +116,7 @@ func newWorkspaceProjectAddCmd(seams workspaceProjectAddSeams) *cobra.Command {
 		Long: `Write one member entry into the workspace's own project config, and, once the
 member's own owner has linked their project, write the workspace's side into it.
 
-The entry is the one fugaro workspace member add writes, built from the same
+The entry is the one fugaro workspace project add writes, built from the same
 flags: the member's job service accounts with the repositories they are a job of,
 its Firebase project and fp, its exchange URL, its database region and the
 repositories it contributes. --workspace names the workspace whose config holds
@@ -452,7 +452,7 @@ func (a *workspaceProjectAdd) judgeGrants(grants []accesslib.Grant) error {
 	return nil
 }
 
-// declare is `workspace member add`'s own write: one entry, built from the same
+// declare is its own write: one entry, built from the same
 // flags by the same validation, replacing whole any entry the table already
 // declares for the project.
 //
