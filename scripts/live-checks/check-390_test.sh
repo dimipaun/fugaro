@@ -202,15 +202,17 @@ run)
   *)
     printf '['
     first=yes
-    while IFS='|' read -r name image label remote; do
+    while IFS='|' read -r name image label remote entry; do
       [ -n "$name" ] || continue
       if [ "$first" = yes ]; then first=no; else printf ','; fi
       # The real shape of `gcloud run jobs list` (v1): an env entry's value is
       # the string itself, not a nested object. A fake that wrapped it would
       # hide a reader that reaches through `value.value` and raises on a real
-      # job, which empties the whole reading.
-      printf '{"metadata":{"name":"%s","labels":{"fugaro_repo":"%s"}},"spec":{"template":{"spec":{"template":{"spec":{"containers":[{"image":"%s","env":[{"name":"FUGARO_REMOTE","value":"%s"}]}]}}}}}}' \
-        "$name" "$label" "$image" "$remote"
+      # job, which empties the whole reading. FUGARO_IMAGE_ENTRY is the deploy's
+      # own stamp of the entry the job's image came from, empty on a job the
+      # catalog chose no image for.
+      printf '{"metadata":{"name":"%s","labels":{"fugaro_repo":"%s"}},"spec":{"template":{"spec":{"template":{"spec":{"containers":[{"image":"%s","env":[{"name":"FUGARO_REMOTE","value":"%s"},{"name":"FUGARO_IMAGE_ENTRY","value":"%s"}]}]}}}}}}' \
+        "$name" "$label" "$image" "$remote" "$entry"
     done <"$dir/jobs"
     printf ']\n'
     ;;
@@ -245,11 +247,16 @@ setup_case() { # name
   mkdir -p "$dir/bin" "$dir/state" "$dir/tmp" "$dir/home" "$dir/repo"
   write_fakes "$dir"
   : >"$dir/state/calls"
-  : >"$dir/state/catalog"
-  # The jobs of the repository the checkout belongs to: one, running the entry's
-  # image, which is what a healthy installation looks like.
-  printf 'fugaro-acme-app-run|%s|acme-app-0123456789abcdef|https://github.com/acme/app.git\n' \
-    "${REGION}-docker.pkg.dev/${GCP}/fugaro-shared/catalog-${ENTRY}:latest" >"$dir/state/jobs"
+  # The project's catalog holds one entry, the one the repository's job runs:
+  # what a healthy installation looks like. The entry this check adds is a second
+  # one, which nothing selects — an entry a job selects is one `fugaro image rm`
+  # refuses to remove, so the check's own entry can never be the one a job runs.
+  printf 'base|%s\n' "$DIGEST" >"$dir/state/catalog"
+  # The jobs of the repository the checkout belongs to: one, carrying the
+  # deploy's own stamp of the catalog entry its image was deployed from
+  # (FUGARO_IMAGE_ENTRY), which is what the job row holds to the catalog.
+  printf 'fugaro-acme-app-run|%s|acme-app-0123456789abcdef|https://github.com/acme/app.git|base\n' \
+    "${REGION}-docker.pkg.dev/${GCP}/fugaro-shared/catalog-base:latest" >"$dir/state/jobs"
   git -C "$dir/repo" init -q
   git -C "$dir/repo" remote add origin "https://github.com/${REPO}.git"
   status=0
@@ -365,9 +372,11 @@ test_the_happy_path_passes() {
   expect_block_keys "the happy path"
   expect_contains "$(fact_line add)" "PASS" "the add row"
   expect_contains "$(fact_line record)" "$DIGEST" "the record row names the digest"
-  expect_contains "$(fact_line job)" "runs the entry's image" "the job row"
+  expect_contains "$(fact_line job)" "carries the catalog's own stamp" "the job row"
+  expect_contains "$(fact_line job)" "entry=base" "the job row names the entry each job's image came from"
   expect_contains "$(fact_line registry)" "$DIGEST" "the registry row names the digest"
   expect_contains "$(fact_line digest)" "PASS" "the digest row"
+  expect_contains "$(fact_line digest)" "base" "the digest row names the entry the job's image came from"
   expect_contains "$(fact_line status)" "owes nothing" "the status row"
   expect_contains "$(fact_line teardown)" "PASS" "the teardown row"
   expect_contains "$(fact_line claim)" "PASS" "the claim row"
@@ -446,15 +455,16 @@ test_a_digest_that_does_not_match_is_a_fail() {
   expect_contains "$(fact_line claim)" "FAIL" "the claim row"
 }
 
-test_a_job_left_on_another_entry_is_a_fail() {
-  setup_case otherjob
-  printf 'fugaro-acme-app-run|%s|acme-app-0123456789abcdef|https://github.com/acme/app.git\nfugaro-acme-app-other|%s|acme-app-0123456789abcdef|https://github.com/acme/app.git\n' \
-    "${REGION}-docker.pkg.dev/${GCP}/fugaro-shared/catalog-${ENTRY}:latest" \
-    "${REGION}-docker.pkg.dev/${GCP}/fugaro-shared/catalog-somethingelse:latest" >"$dir/state/jobs"
+test_a_job_stamped_with_an_entry_the_catalog_does_not_hold_is_a_fail() {
+  setup_case strayjob
+  # A job whose deploy stamped it with an entry the project's catalog no longer
+  # holds: the redeploy left it on an image no catalog describes.
+  printf 'fugaro-acme-app-run|%s|acme-app-0123456789abcdef|https://github.com/acme/app.git|gone\n' \
+    "${REGION}-docker.pkg.dev/${GCP}/fugaro-shared/catalog-gone:latest" >"$dir/state/jobs"
   run390_default
-  expect_status "$status" 1 "a job left on another catalog image"
+  expect_status "$status" 1 "a job stamped with an entry the catalog does not hold"
   expect_contains "$(fact_line job)" "FAIL" "the job row"
-  expect_contains "$(fact_line job)" "catalog-somethingelse" "the job row names the other image"
+  expect_contains "$(fact_line job)" "gone" "the job row names the entry the catalog does not hold"
   expect_contains "$(fact_line claim)" "FAIL" "the claim row"
 }
 
@@ -467,14 +477,21 @@ test_no_job_of_the_repository_is_unmeasured() {
   expect_contains "$(fact_line claim)" "NOT MEASURED" "the claim row"
 }
 
-test_a_job_running_no_catalog_image_is_a_fail() {
+test_a_job_the_catalog_gives_no_image_is_unmeasured() {
   setup_case plainjob
-  printf 'fugaro-acme-app-run|%s|acme-app-0123456789abcdef|https://github.com/acme/app.git\n' \
+  # A job the catalog chose no image for: it runs the image this project builds
+  # for the repository itself, and carries an empty stamp. That is a legitimate
+  # installation (O4 b), so the job row holds — and the two rows that read the
+  # deployed image's digest have nothing to read, which is NOT MEASURED and not
+  # a FAIL about a job that is doing nothing wrong.
+  printf 'fugaro-acme-app-run|%s|acme-app-0123456789abcdef|https://github.com/acme/app.git|\n' \
     "${REGION}-docker.pkg.dev/${GCP}/fugaro/acme-app:latest" >"$dir/state/jobs"
   run390_default
-  expect_status "$status" 1 "a job that runs no catalog image"
-  expect_contains "$(fact_line job)" "FAIL" "the job row"
-  expect_contains "$(fact_line claim)" "FAIL" "the claim row"
+  expect_status "$status" 2 "a job the catalog gives no image"
+  expect_contains "$(fact_line job)" "PASS" "the job row"
+  expect_contains "$(fact_line registry)" "no job of ${REPO} carries a catalog entry's stamp" "the registry row"
+  expect_contains "$(fact_line digest)" "no job of ${REPO} carries a catalog entry's stamp" "the digest row"
+  expect_contains "$(fact_line claim)" "NOT MEASURED" "the claim row"
 }
 
 test_a_jobs_listing_that_fails_is_unmeasured() {
@@ -516,7 +533,7 @@ test_a_step_left_owed_is_a_fail() {
 
 test_a_leftover_entry_is_removed_first() {
   setup_case leftover
-  printf '%s|%s\n' "$ENTRY" "$DIGEST" >"$dir/state/catalog"
+  printf '%s|%s\nbase|%s\n' "$ENTRY" "$DIGEST" "$DIGEST" >"$dir/state/catalog"
   run390_default
   expect_status "$status" 0 "a run over a leftover entry"
   expect_contains "$(fact_line entry)" "leftover" "the entry row says it was a leftover"
@@ -622,9 +639,9 @@ t test_a_failing_add_is_a_fail
 t test_an_add_that_prints_nothing_is_a_fail
 t test_an_entry_the_add_left_out_of_the_catalog_is_a_fail
 t test_a_digest_that_does_not_match_is_a_fail
-t test_a_job_left_on_another_entry_is_a_fail
+t test_a_job_stamped_with_an_entry_the_catalog_does_not_hold_is_a_fail
 t test_no_job_of_the_repository_is_unmeasured
-t test_a_job_running_no_catalog_image_is_a_fail
+t test_a_job_the_catalog_gives_no_image_is_unmeasured
 t test_a_jobs_listing_that_fails_is_unmeasured
 t test_a_registry_that_cannot_be_read_is_unmeasured
 t test_a_registry_document_with_no_sha_is_unmeasured

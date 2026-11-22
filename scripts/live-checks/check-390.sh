@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Check 390 — `fugaro image add` alone puts the built entry on the jobs, as ONE
-# script YOU run.
+# Check 390 — `fugaro image add` alone leaves the entry in the catalog and
+# nothing owed, as ONE script YOU run.
 #
 # It is AP10 of docs/composite-commands/implementation-plan.md, run by YOU on
 # the sandbox installation after the release that ships the composite commands
 # is installed. What it measures is the whole of spec rule 1 for one command: a
 # management command writes its change AND runs the steps that make it live, so
 # no second command is needed (D1561). `fugaro image add` owes three steps — the
-# catalog image's build, the redeploy of the checkout's repository that gives
-# the jobs that image, and the publication of the catalog (D1574, D1577) — and
-# this check reads, from outside the CLI, that all three landed.
+# catalog image's build, the redeploy of the checkout's repository (per
+# repository, D1574) and the publication of the catalog (D1577) — and this check
+# reads, from outside the CLI, that all three landed.
 #
 # What it reads, in this order:
 #
@@ -34,13 +34,22 @@
 #   5. The jobs: `gcloud run jobs list --format=json`, the jobs of the
 #      repository the checkout belongs to (matched by the job's own
 #      FUGARO_REMOTE and by its `fugaro_repo` label, the way check 193 reads
-#      them). At least one must run THIS entry's image, and every job that runs
-#      it must run that image and no other.
+#      them). Every job carries the deploy's own stamp of the catalog entry its
+#      image was deployed from (FUGARO_IMAGE_ENTRY, D1371), and every stamp must
+#      name an entry the project's catalog holds: a job left on an image no
+#      catalog describes is a job the redeploy missed. The entry this check adds
+#      is deliberately not what it looks for — a catalog gives a job an image
+#      only through a workflow's `image_name:`, its `needs:`, the project's map
+#      or the catalog's default (catalog.JobImage), and an entry a job selects is
+#      one `fugaro image rm` refuses to remove (image_catalog.go's
+#      catalogPointedAt), so an entry this check adds and removes again is one no
+#      job can be running.
 #   6. The digest the job's image resolves to now:
 #      `gcloud artifacts docker images describe <the job's image>` — the job is
-#      deployed with the moving tag (`…/catalog-<entry>:latest`, D1152), so the
+#      deployed with the moving tag (D1152), so the
 #      digest it will pull is the registry's, and it is the one that has to
-#      equal the build's.
+#      equal the digest the catalog records for the entry that job's image came
+#      from (the redeploy's own work: it pins the digest the build produced).
 #   7. What is still owed: `fugaro apply --status --json`. The add ran its three
 #      steps, so nothing may be left — an entry that was written and left owed
 #      is exactly the failure this check exists to catch (D1561, D1563).
@@ -48,11 +57,13 @@
 #      record read again. This check leaves the installation as it found it.
 #
 # **What a PASS means, and what it does not.** A PASS means one command made one
-# entry live and nothing was left owed: the jobs run the entry's image, that
-# image resolves to the digest the build recorded, and `fugaro apply --status`
-# says nothing is owed. It does NOT mean a run on those jobs would work — no run
-# is launched here — and it does not measure the *other* management commands:
-# they are check 391's subject.
+# entry live and nothing was left owed: the entry is in the catalog with the
+# digest the build recorded, the repository's jobs are the catalog's own answer
+# (each stamp names an entry the catalog holds), the image the job is deployed
+# with resolves to the digest the catalog records for the entry its image came
+# from, and `fugaro apply --status` says nothing is owed. It does NOT mean a run
+# on those jobs would work — no run is launched here — and it does not measure
+# the *other* management commands: they are check 391's subject.
 #
 # What a real run does to your installation: it adds a catalog entry, builds it,
 # redeploys the repository's jobs and publishes the catalog, then removes the
@@ -350,29 +361,46 @@ def image_of(job):
     return ""
 
 
-def remote_of(job):
-    """The FUGARO_REMOTE of a job's container. `gcloud run jobs list` forces the
-    v1 API, where an env entry's value is the string itself, so it is read as
-    one: a value of another shape answers nothing rather than raising, which
-    would empty the whole reading and turn every job row into NOT MEASURED."""
+def env_of(job, name):
+    """The value of one env var of a job's container, as a string. `gcloud run
+    jobs list` forces the v1 API, where an env entry's value is the string
+    itself, so it is read as one: a value of another shape answers nothing
+    rather than raising, which would empty the whole reading and turn every row
+    that reads it into NOT MEASURED."""
     spec = spec_of(job)
     for c in (spec or {}).get("containers") or []:
         for e in (c.get("env") or []) if isinstance(c, dict) else []:
-            if isinstance(e, dict) and e.get("name") == "FUGARO_REMOTE":
+            if isinstance(e, dict) and e.get("name") == name:
                 value = e.get("value")
                 return value if isinstance(value, str) else ""
     return ""
 
 
-def jobs(path, repo, marker):
-    """The jobs of one repository, one line each: `job=<name> image=<ref>`.
+def remote_of(job):
+    """FUGARO_REMOTE: the repository the job is for."""
+    return env_of(job, "FUGARO_REMOTE")
+
+
+def stamp_of(job):
+    """FUGARO_IMAGE_ENTRY: the catalog entry the job's image was deployed from,
+    written by the deploy on every job and empty on a job the catalog chose no
+    image for (a repository-built image, a checkout: clone or shared job —
+    D1371). It is the deploy's own statement of where the image came from, and
+    the image itself cannot be asked: a catalog entry built from a Dockerfile
+    is indistinguishable from a repository's own derived image."""
+    return env_of(job, "FUGARO_IMAGE_ENTRY")
+
+
+def jobs(path, repo):
+    """The jobs of one repository, one line each: `job=<name> image=<ref>
+    entry=<the entry the image came from, or ->`.
 
     A job is this repository's when its own FUGARO_REMOTE names it or when its
     `fugaro_repo` label is the repository's slug (`<readable>-<16 hex>`, which is
     what the installation writes) — the two spellings check 193 matches, and a
     reading that leaned on either alone would miss a job the other catches.
-    `marker` is `/catalog-<entry>`: whether the job runs the entry this check
-    added is read off the image here, and never off the repository."""
+    `entry` is the job's own FUGARO_IMAGE_ENTRY stamp, and `-` is a job the
+    catalog chose no image for."""
     doc = load(path)
     if not isinstance(doc, list):
         print("read=no")
@@ -392,10 +420,26 @@ def jobs(path, repo, marker):
         remote = remote_of(job)
         if not owns and remote != "https://" + repo + ".git" and not remote.endswith("/" + repo + ".git"):
             continue
-        image = image_of(job)
         n += 1
-        print("job=%s image=%s runs-entry=%s" % (name, image, "yes" if marker in image else "no"))
+        print("job=%s image=%s entry=%s" % (name, image_of(job), stamp_of(job) or "-"))
     print("count=%d" % n)
+
+
+def catalog(path):
+    """The project's catalog as `fugaro image ls --json` holds it: every entry,
+    with the digest the build recorded for it. A job's stamp is held to these
+    rows, so an entry that is not one of them is a job on an image no catalog
+    describes."""
+    doc = load(path)
+    rows = (doc or {}).get("entries") if isinstance(doc, dict) else None
+    if not isinstance(rows, list):
+        print("read=no")
+        return
+    print("read=yes")
+    print("count=%d" % len(rows))
+    for r in rows:
+        if isinstance(r, dict) and r.get("name"):
+            print("row=%s digest=%s" % (r["name"], r.get("digest") or ""))
 
 
 def sha(path):
@@ -436,7 +480,9 @@ if __name__ == "__main__":
     elif cmd == "entry":
         entry(sys.argv[2], sys.argv[3])
     elif cmd == "jobs":
-        jobs(sys.argv[2], sys.argv[3], sys.argv[4])
+        jobs(sys.argv[2], sys.argv[3])
+    elif cmd == "catalog":
+        catalog(sys.argv[2])
     elif cmd == "sha":
         sha(sys.argv[2])
     elif cmd == "pending":
@@ -677,7 +723,7 @@ step_jobs() {
     unmeasured job "gcloud run jobs list exited $rc: $(last_line "$SCRATCH/jobs.err"). The deployed jobs are what this row reads, and without the listing nothing here is settled about them"
     return 0
   fi
-  read_json "$SCRATCH/jobs.txt" jobs "$SCRATCH/jobs.json" "$REPO_NAME" "/catalog-${ENTRY}"
+  read_json "$SCRATCH/jobs.txt" jobs "$SCRATCH/jobs.json" "$REPO_NAME"
   if [ "$(field "$SCRATCH/jobs.txt" read)" != yes ]; then
     unmeasured job "gcloud run jobs list answered a document this check could not read as a list of jobs: $(last_line "$SCRATCH/jobs.err")"
     return 0
@@ -687,32 +733,50 @@ step_jobs() {
     unmeasured job "no job of ${REPO_NAME} was found in 'gcloud run jobs list' (matched by the job's own FUGARO_REMOTE and by its fugaro_repo label): either this checkout's repository is not deployed in this project, or its jobs carry neither. Run this check in a checkout of a repository this project onboards, and after 'fugaro update --repo' has deployed it"
     return 0
   fi
-  local runs line name
-  runs=$(grep -c 'runs-entry=yes' "$SCRATCH/jobs.txt" 2>/dev/null || true)
-  RUNS_ENTRY=${runs:-0}
   JOB_LINES=$(awk '{ printf "%s%s", (n++ ? "; " : ""), $0 }' "$SCRATCH/jobs.txt" | cut -c1-600)
-  if [ "$RUNS_ENTRY" = 0 ]; then
-    fact job FAIL "none of the ${JOB_COUNT} job(s) of ${REPO_NAME} runs the entry's image (…/catalog-${ENTRY}:latest): the redeploy the add owed did not give them the image it built (D1574). The jobs read: ${JOB_LINES}"
+  # Which entry a job's image came from is the deploy's own stamp on the job
+  # (FUGARO_IMAGE_ENTRY, written on every job and empty on one the catalog chose
+  # no image for — D1371), and the stamp is what this row holds to the catalog.
+  # The entry this check added is deliberately NOT what it looks for: a catalog
+  # gives a job an image only through a workflow's `image_name:`, its `needs:`,
+  # the project's map or the catalog's default (catalog.JobImage), and an entry
+  # a job selects is one `fugaro image rm` REFUSES to remove (image_catalog.go's
+  # catalogPointedAt) — so an entry this check adds and removes again is one no
+  # job can be running, and a row that demanded the jobs run it would FAIL every
+  # correct installation. What the redeploy the add owed owes the repository's
+  # jobs is that each of them is left on an image the catalog describes.
+  read_json "$SCRATCH/catalog.txt" catalog "$SCRATCH/entries.out"
+  if [ "$(field "$SCRATCH/catalog.txt" read)" != yes ]; then
+    unmeasured job "the project's catalog could not be read after the add (the record row says why), so whether the entry a job's image came from is one the catalog holds could not be told: FUGARO_IMAGE_ENTRY is the deploy's stamp of the entry each job's image was deployed from, and a stamp with no catalog to hold it to settles nothing"
     return 0
   fi
-  # Every job of the repository that runs a catalog image must run THIS entry's:
-  # the redeploy is the repository's, so a job left on another entry is a job
-  # the redeploy missed.
-  local other
-  other=$(awk -F'image=' '/runs-entry=no/ && /\/catalog-/ { print $2 }' "$SCRATCH/jobs.txt" | head -3 | tr '\n' ' ')
-  if [ -n "$other" ]; then
-    fact job FAIL "${RUNS_ENTRY} of the ${JOB_COUNT} job(s) of ${REPO_NAME} runs the entry's image, and another runs a catalog image that is NOT this entry's: ${other}. The redeploy is the repository's own (D1574), so every job of it that a catalog gives an image to has to run the entry the add wrote"
+  local line stamp chosen=0 stray=""
+  while IFS= read -r line; do
+    case "$line" in job=*) ;; *) continue ;; esac
+    stamp=${line##*entry=}
+    if [ -z "$stamp" ] || [ "$stamp" = - ]; then continue; fi
+    chosen=$((chosen + 1))
+    if ! grep -q "^row=${stamp} " "$SCRATCH/catalog.txt"; then
+      stray="${stray}${stray:+, }${stamp}"
+    fi
+  done <"$SCRATCH/jobs.txt"
+  JOB_CHOSEN=$chosen
+  if [ -n "$stray" ]; then
+    fact job FAIL "a job of ${REPO_NAME} was deployed from the catalog entry ${stray}, and the project's catalog does NOT hold it: the redeploy left that job on an image no catalog describes. The jobs read: ${JOB_LINES}"
     return 0
   fi
-  fact job PASS "${RUNS_ENTRY} of the ${JOB_COUNT} job(s) of ${REPO_NAME} runs the entry's image …/catalog-${ENTRY}:latest and no job of the repository is left on another catalog image: the redeploy the add owed is done (D1574). The jobs read: ${JOB_LINES}"
+  fact job PASS "${chosen} of the ${JOB_COUNT} job(s) of ${REPO_NAME} carries the catalog's own stamp (FUGARO_IMAGE_ENTRY, the entry the deploy gave its image) and every stamp names an entry the project's catalog holds; the rest the catalog chose no image for and run the image this project builds for the repository itself (D1371, D1574). The jobs read: ${JOB_LINES}"
 }
 
 step_registry() {
-  if [ -z "${RUNS_ENTRY:-}" ] || [ "$RUNS_ENTRY" = 0 ]; then
-    unmeasured registry "there is no job running the entry's image (the job row says so), so there is no deployed reference whose digest could be resolved: this row reads the digest the job will pull"
+  local line
+  line=$(grep -m1 ' entry=[^-]' "$SCRATCH/jobs.txt" 2>/dev/null || true)
+  if [ -z "$line" ]; then
+    unmeasured registry "no job of ${REPO_NAME} carries a catalog entry's stamp (the job row says so): the project's catalog gives none of this repository's jobs an image, so there is no deployed reference whose digest could be resolved"
     return 0
   fi
-  JOB_IMAGE=$(awk -F'image=' '/runs-entry=yes/ { print $2; exit }' "$SCRATCH/jobs.txt" | awk '{ print $1 }')
+  JOB_ENTRY=${line##*entry=}
+  JOB_IMAGE=$(printf '%s\n' "$line" | awk -F'image=' '{ print $2 }' | awk '{ print $1 }')
   local ref rc=0
   case "$JOB_IMAGE" in
   *@sha256:*) ref=$JOB_IMAGE ;;
@@ -732,19 +796,24 @@ step_registry() {
     unmeasured registry "gcloud artifacts docker images describe ${ref} answered a document carrying no sha256: $(last_line "$SCRATCH/registry.err"). The image the job is deployed with is read back as ${JOB_IMAGE}"
     return 0
   fi
-  fact registry PASS "the image the job is deployed with (${JOB_IMAGE}) resolves now to ${LIVE_DIGEST} (gcloud artifacts docker images describe): a job deployed with the moving tag pulls this digest when it starts (D1152)"
+  fact registry PASS "the image the job is deployed with (${JOB_IMAGE}) resolves now to ${LIVE_DIGEST} (gcloud artifacts docker images describe), and it is the image of the catalog entry ${JOB_ENTRY} the deploy stamped on that job: a job deployed with the moving tag pulls this digest when it starts (D1152)"
 }
 
 step_digest() {
-  if [ -z "${RECORD_DIGEST:-}" ] || [ -z "${LIVE_DIGEST:-}" ]; then
-    unmeasured digest "the two digests this row compares were not both read (the record row and the registry row say which): the claim is that the digest the deployed image resolves to equals the digest the build recorded, and one of the two is missing"
+  if [ -z "${JOB_ENTRY:-}" ]; then
+    unmeasured digest "no job of ${REPO_NAME} carries a catalog entry's stamp (the job row says so), so there is no deployed image whose digest could be held to the catalog's record"
     return 0
   fi
-  if [ "$RECORD_DIGEST" != "$LIVE_DIGEST" ]; then
-    fact digest FAIL "the digest the deployed image resolves to (${LIVE_DIGEST}) is NOT the digest the build recorded for ${ENTRY} (${RECORD_DIGEST}): the jobs of ${REPO_NAME} would start on an image the catalog's record does not name. The record is what the daily check and every reader of the entry go by, so the two disagreeing is the finding"
+  JOB_RECORD_DIGEST=$(sed -n "s/^row=${JOB_ENTRY} digest=//p" "$SCRATCH/catalog.txt" 2>/dev/null | head -n 1)
+  if [ -z "${LIVE_DIGEST:-}" ] || [ -z "${JOB_RECORD_DIGEST:-}" ]; then
+    unmeasured digest "the two digests this row compares were not both read (the registry row says which, and the other is the catalog's own record for ${JOB_ENTRY}): the claim is that the digest the deployed image resolves to is the digest the catalog records for the entry that job's image came from"
     return 0
   fi
-  fact digest PASS "the deployed job's image resolves to ${LIVE_DIGEST}, which is exactly the digest the build recorded for ${ENTRY}: the jobs run the image this command built and made live (D1561, D1574)"
+  if [ "$JOB_RECORD_DIGEST" != "$LIVE_DIGEST" ]; then
+    fact digest FAIL "the image the job of ${REPO_NAME} is deployed with resolves to ${LIVE_DIGEST}, and the project's catalog records ${JOB_RECORD_DIGEST} for ${JOB_ENTRY}, the entry that job's image was deployed from: the redeploy did not pin the digest the build produced. The record is what the daily check and every reader of the entry go by, so the two disagreeing is the finding"
+    return 0
+  fi
+  fact digest PASS "the image the job of ${REPO_NAME} is deployed with resolves to ${LIVE_DIGEST}, which is exactly the digest the catalog records for ${JOB_ENTRY}, the entry its image was deployed from: the redeploy pinned the build's digest on the repository's jobs (D1561, D1574)"
 }
 
 step_status() {
@@ -798,16 +867,6 @@ the_verdict() {
     REACHED_END=yes
     exit 1
   fi
-  if [ -n "${JOB_COUNT:-}" ] && [ "${JOB_COUNT:-0}" != 0 ] && [ "${RUNS_ENTRY:-0}" = 0 ]; then
-    fact claim FAIL "the claim does NOT hold as measured: no job of ${REPO_NAME} runs the entry's image, so the redeploy the add owed did not happen (the job row lists what they run)"
-    REACHED_END=yes
-    exit 1
-  fi
-  if [ -n "${RECORD_DIGEST:-}" ] && [ -n "${LIVE_DIGEST:-}" ] && [ "$RECORD_DIGEST" != "$LIVE_DIGEST" ]; then
-    fact claim FAIL "the claim does NOT hold as measured: the digest the deployed job's image resolves to and the digest the build recorded are not the same (the digest row says which two). The jobs would start on an image the entry's own record does not name"
-    REACHED_END=yes
-    exit 1
-  fi
   if [ -n "${OWED:-}" ] && [ "${OWED:-0}" != 0 ]; then
     fact claim FAIL "the claim does NOT hold as measured: ${OWED} step(s) were still owed after the add (the status row lists them), so one command did NOT make the entry live"
     REACHED_END=yes
@@ -839,7 +898,7 @@ the_verdict() {
     REACHED_END=yes
     exit 2
   fi
-  fact claim PASS "'fugaro image add' alone made the entry live on the sandbox installation: the jobs of ${REPO_NAME} run …/catalog-${ENTRY}:latest, that image resolves to ${LIVE_DIGEST}, which is the digest the build recorded, and fugaro apply --status owes nothing. One command, no second one (D1561, D1574, D1577) — and the entry this check added is out of the catalog again"
+  fact claim PASS "'fugaro image add' alone made the entry live on the sandbox installation: ${ENTRY} is in the project's catalog with the digest the build recorded (${RECORD_DIGEST}), the repository's jobs are the catalog's own answer (${JOB_CHOSEN} of ${JOB_COUNT} carries the catalog's stamp and no job of ${REPO_NAME} is left on an image the catalog does not describe), the image the job is deployed with resolves to ${LIVE_DIGEST}, which is the digest the catalog records for ${JOB_ENTRY}, and fugaro apply --status owes nothing. One command, no second one (D1561, D1574, D1577) — and the entry this check added is out of the catalog again"
   REACHED_END=yes
   exit 0
 }
@@ -930,7 +989,8 @@ print_plan() {
   say "  [reads] ${FUGARO_BIN} image ls --json: whether the catalog already holds ${ENTRY} (a leftover is removed first, so running this check twice works)"
   say "  [writes] ${FUGARO_BIN} image add ${ENTRY} --dockerfile ${DOCKERFILE:-<owner/name:path>}: THE COMMAND THIS CHECK MEASURES. It BUILDS an image, REDEPLOYS the repository's jobs and PUBLISHES the catalog (D1561, D1574, D1577), under a ${DEADLINE}s deadline"
   say "  [reads] ${FUGARO_BIN} image ls --json: the digest the build recorded for ${ENTRY}"
-  say "  [reads] ${GCLOUD_BIN} run jobs list --project <gcp> --region <region> --format=json: the jobs of the checkout's repository and the image each runs"
+  say "  [reads] ${GCLOUD_BIN} run jobs list --project <gcp> --region <region> --format=json: the jobs of the checkout's repository, the image each runs and the catalog entry each image was deployed from (the job's own FUGARO_IMAGE_ENTRY stamp)"
+  say "  [reads] ${FUGARO_BIN} image ls --json: the entries the catalog holds, which every one of those stamps is held to"
   say "  [reads] ${GCLOUD_BIN} artifacts docker images describe <the job's image>: the digest that image resolves to now"
   say "  [reads] ${FUGARO_BIN} apply --status --json: what is still owed, which must be nothing"
   say "  [writes] ${FUGARO_BIN} image rm ${ENTRY}: the teardown, the inverse change, which takes the entry back out and redeploys"
@@ -979,7 +1039,7 @@ parse_args() {
       ;;
     -h | --help)
       printf 'usage: %s\n' "$USAGE"
-      printf '\nAdds a real catalog entry with `%s image add`, then reads from outside the\nCLI that the jobs run the image it built, that the image resolves to the digest\nthe build recorded, and that nothing is left owed — and removes the entry again.\nIt prints one block headed CHECK 390 RESULT and exits 0 when the claim held, 1\nwhen it did not, and 2 when this run could not tell. It is yours to run: no agent\nruns any step of it.\n' "$FUGARO_BIN"
+      printf '\nAdds a real catalog entry with `%s image add`, then reads from outside the\nCLI that the entry is in the catalog with the digest the build recorded, that the\njobs of the repository are left on images the catalog describes, that the digest\nthe deployed image resolves to is the one the catalog records, and that nothing\nis left owed — and removes the entry again.\nIt prints one block headed CHECK 390 RESULT and exits 0 when the claim held, 1\nwhen it did not, and 2 when this run could not tell. It is yours to run: no agent\nruns any step of it.\n' "$FUGARO_BIN"
       HELPED=yes
       PRINTED=1
       exit 0
@@ -1026,9 +1086,9 @@ main() {
     fact entry INFO "planned: a real run reads fugaro image ls --json and removes an entry named ${ENTRY} it finds there (a leftover of an earlier attempt), so running the check twice works"
     fact add INFO "planned: a real run runs fugaro image add ${ENTRY} --dockerfile ${DOCKERFILE} under a ${DEADLINE}s deadline. This BUILDS an image, redeploys the repository's jobs and publishes the catalog"
     fact record INFO "planned: a real run reads the digest the build recorded for ${ENTRY} out of fugaro image ls --json"
-    fact job INFO "planned: a real run reads gcloud run jobs list and holds the jobs of the checkout's repository to the entry's image"
+    fact job INFO "planned: a real run reads gcloud run jobs list and holds every job of the checkout's repository to the catalog: each job carries the deploy's stamp of the entry its image came from (FUGARO_IMAGE_ENTRY), and each stamp must name an entry the catalog holds"
     fact registry INFO "planned: a real run reads the digest the deployed image resolves to with gcloud artifacts docker images describe"
-    fact digest INFO "planned: a real run holds the two digests to each other: the one the deployed image resolves to and the one the build recorded"
+    fact digest INFO "planned: a real run holds the two digests to each other: the one the deployed image resolves to and the one the catalog records for the entry that job's image came from"
     fact status INFO "planned: a real run reads fugaro apply --status --json, which must owe nothing after the add"
     fact teardown INFO "planned: a real run removes the entry again with fugaro image rm ${ENTRY} and reads the catalog back"
     fact claim INFO "planned: the verdict is a real run's, and it is the command's own transcript and the cloud's own documents that answer it"
@@ -1081,8 +1141,10 @@ ADD_LAST_FROM=stderr
 RECORD_DIGEST=""
 RECORD_SOURCE=""
 JOB_COUNT=""
-RUNS_ENTRY=""
+JOB_CHOSEN=""
+JOB_ENTRY=""
 JOB_IMAGE=""
+JOB_RECORD_DIGEST=""
 LIVE_DIGEST=""
 OWED=""
 STATUS_STATUS=0
