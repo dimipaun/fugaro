@@ -4240,7 +4240,8 @@ digest, and the repositories and jobs on it. The two are one command with a
 flag, never two ls commands, so there is no question of which one to run.
 
 A project with no catalog of its own lists nothing: fugaro image add writes
-an entry, and fugaro update publishes the catalog to the project's policy
+an entry and makes it live — its image is built, the repository it is read
+out of is redeployed and the catalog is published to the project's policy
 node (image_catalog), which is what a job reads.
 
 Usage: `fugaro image ls`
@@ -6396,6 +6397,17 @@ The typed code is the binding: nothing is written to the project before the
 code the operator types matches the key the phone wrote, so a refused
 pairing leaves the project exactly as it was.
 
+--email naming somebody other than you is an INVITATION rather than a
+pairing. An admin may name another member's email with a --role at or
+below the role the roster grants them, and the command writes an invite
+that person's phone presents when it pairs, creates the member record, and
+draws a code carrying the project's mobile endpoint, that address, a
+one-time nonce and the fingerprint of the consumer key the phone pins. An
+invitation carries no credential and writes no device node: it waits for
+nothing, asks nothing and ignores --timeout, and the person it names pairs
+when they sign in. --name is a device's, so an invitation refuses a value
+for it.
+
 The code is drawn in a terminal wide enough for it. The payload is over a
 kilobyte, so its code is over a hundred columns wide, and a narrower
 terminal gets the payload line instead of a drawing that would wrap and
@@ -6414,14 +6426,14 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--email` | string | "" | no | the administered email for the device (default, and normally the value: your own verified address, which is the only address this command may administer) |
+| `--email` | string | "" | no | the administered email for the device (default, and normally the value: your own verified address); naming somebody else's address is an invitation for that member, which an admin sends with --role and which pairs no device now |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for pair |
 | `--json` | bool | `false` | no | stream the pairing as newline-delimited JSON events on stdout |
-| `--name` | string | "" | no | the device's name, for pair ls and the device node's own field |
+| `--name` | string | "" | no | the device's name, for pair ls and the device node's own field (refused when --email invites somebody else: the phone's node is written when it pairs) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--role` | string | "" | no | the device's role: viewer, operator or admin (default: the role the allowlist resolves for your address, or your own when it names none; --role may only lower it, and never below the entry an address that already has one resolves to) |
+| `--role` | string | "" | no | the device's role: viewer, operator or admin (default for your own address: the role the allowlist resolves, or your own when it names none; required for an invitation, where it must be at or below the role the roster grants that address; --role may only lower it) |
 | `--timeout` | duration | `2m0s` | no | how long to wait for the phone's key and the typed code (refused above 4m30s) |
 
 Subcommands:
@@ -6670,13 +6682,13 @@ The paths a run may add a binary at, and the cap one is held to
 
 Write the binaries block this machine's project config carries: the paths a run of the project may add a binary at, and how large one may be.
 
-The block is the owner's grant, and a run of the project is the only reader: `fugaro update` publishes it into the project's policy node, where the run's finalize holds an added file to it — one at a path no pattern admits, or one above the cap, fails the run and is held out of the commit. No branch can widen the grant: `fugaro.yaml` carries no such key, and the shared config refuses it.
+The block is the owner's grant, and a run of the project is the only reader: each of the three writes below publishes it into the project's policy node, where the run's finalize holds an added file to it — one at a path no pattern admits, or one above the cap, fails the run and is held out of the commit. No branch can widen the grant: `fugaro.yaml` carries no such key, and the shared config refuses it.
 
 `allow PATTERN` admits the paths one doublestar glob matches, relative to the repository root; `deny PATTERN` takes one pattern away. Admitting is the widening write, so it is refused in a coding agent's session whatever the gate says and written at your own terminal, where it says what it widens and asks nothing. Taking a pattern away narrows the grant and is not the widening step, so what it meets is the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write.
 
 `max-bytes N` writes the cap in bytes. It may only be lowered, to at most 2097152 (2 MiB, the ceiling the rule ships); lowering it from a cap this file states narrows the grant and meets the fence every write to this file meets, while raising it back, or writing a cap into a file that states no block at all, is the widening direction and refused in a session whatever the gate says — the published cap and grant cannot be read off this file, so that write is the owner's own step.
 
-The block this file states is the whole block `fugaro update` publishes: a file that carries a `binaries:` block replaces the published one, while a file that says nothing keeps it.
+The block this file states is the whole block that reaches the project's policy node: a file that carries a `binaries:` block replaces the published one, while a file that says nothing keeps it.
 
 Usage: `fugaro project binaries`
 
@@ -6702,7 +6714,7 @@ The pattern is held to the rule the node itself is held to (`projectpolicy.Valid
 
 Admitting paths is the widening direction: the write is refused in a coding agent's session, whatever the gate would have said, and your own terminal writes it and asks nothing.
 
-The block this file states is the whole block the next `fugaro update` publishes, so a file that stated none replaces the published one with this list — which is why the sentence beside this write names the paths it admits.
+The block this file states is the whole block this write publishes, so a file that stated none replaces the published one with this list — which is why the sentence beside this write names the paths it admits.
 
 Usage: `fugaro project binaries allow <pattern>`
 
@@ -6726,7 +6738,7 @@ The pattern is taken away whole and compared as written, so it is the exact entr
 
 A pattern this file does not carry is not a failure and nothing is written: the list this file states is the grant a publish carries, so a file that states one admits no path but the ones in it. A file that states no `binaries:` block at all is refused instead, because there is no entry beside the node's to take away: the published list is what stands until this file states one, and the only edit a removal could make there would take the whole admission away rather than one pattern.
 
-Taking a pattern away narrows the grant and is not the widening step, so it meets the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write. The block this file states is the whole block `fugaro update` publishes, and the change reaches a run through that publish.
+Taking a pattern away narrows the grant and is not the widening step, so it meets the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write. The block this file states is the whole block that reaches the node, and the change reaches a run through this write's own publish.
 
 Usage: `fugaro project binaries deny <pattern>`
 
@@ -6748,7 +6760,7 @@ Write binaries.max_bytes in this machine's project config: the largest a single 
 
 The cap may only be lowered. `projectpolicy.ValidBinariesMaxBytes` is the rule and it refuses anything above 2097152 (2 MiB), which is the ceiling the rule ships; a project that writes no cap at all is held to that ceiling, and a cap of zero is refused rather than read as the absent member, because zero is the one value that would silently raise the cap to it.
 
-Lowering the cap from the one this file states narrows the grant and is not the widening step, so it meets the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write. Raising it back, or writing a cap into a file that states no binaries block at all, is the widening direction, refused in a session whatever the gate says: the published cap is what a file that states none leaves in force and cannot be read here, so that write is the owner's own step — and the block this file states is the whole block `fugaro update` publishes, so a first write of one member beside it is a statement about the other member as well.
+Lowering the cap from the one this file states narrows the grant and is not the widening step, so it meets the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write. Raising it back, or writing a cap into a file that states no binaries block at all, is the widening direction, refused in a session whatever the gate says: the published cap is what a file that states none leaves in force and cannot be read here, so that write is the owner's own step — and the block this file states is the whole block that reaches the node, so a first write of one member beside it is a statement about the other member as well.
 
 Usage: `fugaro project binaries max-bytes <n>`
 
@@ -11723,8 +11735,11 @@ Write one entry into the workspace owner's own shared list.
 
 The credential is named as the workspace's bundle holds it — a model credential
 by its own name, the Bitbucket token as bitbucket-token, the GitHub App's key as
-github-app-key — and what it is for is derived from that name, so there is no
-kind to state and none to get wrong.
+github-app-key, a provider key as provider-key or as the repository's own named
+entry for it — and what it is for is derived from that name, so there is no kind
+to state and none to get wrong. A provider key is offered as a model entry, which
+is what a call spent through one is; a repository's own Anthropic key is refused,
+because the entry belongs to that one repository by construction.
 
 --projects names the members this credential may be served to, as a comma
 separated list or repeated, and each must be a member the workspace's own table

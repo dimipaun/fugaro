@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -796,7 +797,7 @@ func (r *run) routeGateway(ctx context.Context, o *gateway.Options) error {
 		// nothing about it.
 		return nil
 	}
-	route, err := r.readRoute(ctx)
+	route, err := r.credentialRoute(ctx)
 	if err != nil {
 		return err
 	}
@@ -808,7 +809,7 @@ func (r *run) routeGateway(ctx context.Context, o *gateway.Options) error {
 	}
 	ws, err := r.workspaceUpstream(route.Address)
 	if err != nil {
-		return err
+		return fmt.Errorf("starting the gateway: %w", err)
 	}
 	o.Workspace = ws
 	o.ModelFromWorkspace = route.Holder(creds.KindModel) == creds.HolderWorkspace
@@ -820,6 +821,83 @@ func (r *run) routeGateway(ctx context.Context, o *gateway.Options) error {
 	r.startWorkspaceBeat(ctx, ws)
 	return nil
 }
+
+// credentialRoute is the run's route record, read once for the whole run (C2,
+// R4's "read once at the run's start").
+//
+// It is read at the first question that needs it, and there are two: where the
+// run's forge credentials of a kind are served, which is the first thing
+// bootstrap asks because the git forwarder starts before the clone (WS18), and
+// which upstream the gateway holds (WS11). Both read the same answer, so a run
+// cannot be of two minds about the service a kind comes from, and the record is
+// read once and not once per question.
+//
+// The read is not held under the lock: it reaches the database, and the lock
+// guards the whole run's state. Both callers are on the run's own bootstrap
+// path, one after the other, so what this memoizes is the read and not a race
+// between two of them.
+func (r *run) credentialRoute(ctx context.Context) (creds.Route, error) {
+	r.mu.Lock()
+	if r.routeRead {
+		route, err := r.credRoute, r.routeReadErr
+		r.mu.Unlock()
+		return route, err
+	}
+	r.mu.Unlock()
+	route, err := r.readRoute(ctx)
+	r.mu.Lock()
+	r.credRoute, r.routeReadErr, r.routeRead = route, err, true
+	r.mu.Unlock()
+	return route, err
+}
+
+// forgeService is the credentials service this run's forge credentials of one
+// kind are served by (WS18, D2979): the workspace's, at the address the run's
+// own route record carries, or this project's own, whose address is the one the
+// job's environment names (C1.15, D146) — which is every run with no record and
+// every run whose record serves that kind from its project.
+//
+// fromWorkspace is the whole of the difference, and the two callers act on it
+// rather than on the address: git traffic goes to whichever service this names
+// (the forwarder is pointed at it), while the opener a run uses for that kind
+// depends on there being a service at all — a forge credential served remotely
+// is opened without a credential of the job's own, and one the project serves is
+// opened exactly as it always was.
+//
+// The address is the record's and is not looked for anywhere else (R3, F32):
+// the call a routed run makes to it presents the run's own token, so an address
+// from the job's environment would be a token sent where a launcher chose. A
+// record that serves a kind from the workspace always carries one (DecodeRoute
+// refuses one that does not), and a record that carries none is a shape this
+// release could not have read and stops the run rather than naming "".
+func (r *run) forgeService(ctx context.Context, kind creds.Kind) (address string, fromWorkspace bool, err error) {
+	if r.d.Local {
+		// D149, as routeGateway's own: `fugaro exec` runs on the developer's
+		// own credentials, has no run identity for either service to verify it
+		// by and no path to a private one, so it is routed nowhere and the
+		// record is not read.
+		return envLookup(r.d.Env, providers.EnvCredentialsServiceURL), false, nil
+	}
+	route, err := r.credentialRoute(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	if route.Holder(kind) != creds.HolderWorkspace {
+		return envLookup(r.d.Env, providers.EnvCredentialsServiceURL), false, nil
+	}
+	if route.Address == "" {
+		return "", false, fmt.Errorf("this run's credential route serves the %s kind from the workspace's credentials service and carries no address, which is a record this release could not have read: run 'fugaro update' in this repository's own terminal — its route stage publishes that record — and launch the run again", kind)
+	}
+	return route.Address, true, nil
+}
+
+// forgeKind is a provider kind as the credential route spells it. The contract
+// names the forge kinds their forge's own name (creds.KindBitbucket,
+// creds.KindGitHub; creds' TestRouteNamesArePinned holds the two spellings to
+// each other), so the conversion is the whole of the mapping — and a provider
+// the contract does not name reads as a kind no record serves, which is the
+// project's own, exactly as an unknown kind reads everywhere else.
+func forgeKind(kind string) creds.Kind { return creds.Kind(kind) }
 
 // servedFromWorkspace reports whether the record serves any kind of this
 // repository's credentials from the workspace's service. Every kind is asked
@@ -909,7 +987,7 @@ func (r *run) workspaceUpstream(address string) (*gateway.Workspace, error) {
 		// DecodeRoute refuses a record without one, so a route that moves a
 		// kind always carries an address: reaching this is a shape this
 		// release could not have read, and no call is made to "".
-		return nil, errors.New("starting the gateway: this run's route serves a kind from the workspace and carries no address")
+		return nil, errors.New("this run's route serves a kind from the workspace and carries no address")
 	}
 	job, err := r.jobName()
 	if err != nil {
@@ -918,25 +996,27 @@ func (r *run) workspaceUpstream(address string) (*gateway.Workspace, error) {
 	if job == "" {
 		// Belt and braces, as in serviceUpstream's own: jobName answers "" for
 		// a local run alone, and a local run is not routed at all.
-		return nil, errors.New("starting the gateway: a run routed to the workspace has no Cloud Run job name to report")
+		return nil, errors.New("a run routed to the workspace has no Cloud Run job name to report")
 	}
-	r.mu.Lock()
-	sess := r.sess
-	r.mu.Unlock()
-	if sess == nil {
+	// The token is the run's own as it is now (runIDToken) rather than the
+	// budget session's, because the first caller of this is not the gateway:
+	// the git forwarder starts before the clone, and the budget session does not
+	// exist yet there (WS18). Both answer the same identity — runIDToken's own
+	// comment has the two — and a run that holds neither still cannot be served.
+	if r.runIDToken() == "" {
 		// The workspace's service verifies the run by the identity that
 		// admitted it (F30, O4), so a run that holds none cannot be served
 		// there: there is no second identity to present and none to fall back
-		// to. No launcher produces this — a local run is not routed at all, and
-		// a job run is admitted by the launcher's token before it starts — and
+		// to. No launcher produces this (a local run is not routed at all, and
+		// a job run is admitted by the launcher's token before it starts), and
 		// a run that reported no identity to a service that verifies one would
 		// be a call refused one at a time instead of a run stopped once.
-		return nil, errors.New("starting the gateway: a run routed to the workspace has no run identity, and the workspace's service verifies the run by the identity that admitted it")
+		return nil, errors.New("a run routed to the workspace has no run identity, and the workspace's service verifies the run by the identity that admitted it")
 	}
 	return &gateway.Workspace{
 		Address:    address,
 		Job:        job,
-		RunIDToken: sess.IDToken(),
+		RunIDToken: r.runIDToken,
 		IDToken: func(ctx context.Context, audience string) (string, error) {
 			return metadataIDToken(ctx, r.d.Env, audience)
 		},
@@ -966,8 +1046,12 @@ const execName = "fugaro exec"
 // the dashboard reads (C1.3). Both are written by r.recordCredential
 // (runner.go, with the run's other record writers) and decided here, where the
 // answer arrives, because a second reader of the same contract is how two
-// records come to disagree. The tier a call settled by and the switch are
-// C1.16's ledger.
+// records come to disagree. The owner of that credential's token is the same
+// answer's second fact and part of the same write (F16): the two are the
+// record's pair, one call to recordCredential hands over both, and an answer
+// that names a credential the launcher does not own clears the owner rather
+// than leaving the one an earlier answer gave. The tier a call settled by and
+// the switch are C1.16's ledger.
 //
 // The typed answer is turned back into the contract's own type
 // (credsvc.ExhaustedUntil) rather than a runner type of its own: the wire
@@ -975,7 +1059,16 @@ const execName = "fugaro exec"
 // hands it the same shape.
 func (r *run) serviceAnswer(a gateway.ServiceAnswer) {
 	if a.Credential != "" {
-		r.recordCredential(a.Credential)
+		// The credential that answered and the owner of its token go over
+		// together, as ONE write: the stages of a cascade call at the same
+		// time, so two answers reach this point together, and handing the two
+		// fields to two writers would let their writes interleave -- the
+		// record pairing one answer's credential with another answer's owner.
+		// recordCredential takes both under one lock for that reason, and an
+		// empty owner is a write that CLEARS it (F16). An answer that names no
+		// credential is a refusal or a call the service did not serve, and it
+		// writes neither, so the record stands as it does.
+		r.recordCredential(a.Credential, a.CredentialOwner)
 	}
 	if a.Switch != "" {
 		// The switch the answer carries (C1.16, D140): the run's log of what
