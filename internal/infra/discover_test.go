@@ -548,6 +548,70 @@ func TestDiscoverInstallationAfterForget(t *testing.T) {
 	}
 }
 
+// The log bucket an installation ALREADY has is imported where it is, not
+// where the mapping now points (LP6, R5, F10): a bucket's location is
+// permanent, so an installation made before the mapping — whose bucket is in
+// `global` — keeps it, and the spec the caller plans with is given the
+// location discovery read.
+func TestTheLogBucketIsImportedWhereItIs(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	inst := installationSpec(t)
+	if inst.LogBucketLocation == "global" {
+		t.Fatalf("this fixture's mapping answers `global`, so the test could not tell the bucket's own location from it")
+	}
+	f.logs.AddBucket(inst.Project, "global", LogBucket, "ACTIVE", LogBucketDescription)
+	im, err := DiscoverInstallation(ctx, f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "projects/" + inst.Project + "/locations/global/buckets/" + LogBucket
+	if got := importMap(im)[LogBucketAddress]; got != path {
+		t.Errorf("the log bucket's import id = %q, want %q", got, path)
+	}
+	if im.LogBucketLocation != "global" {
+		t.Errorf("the discovered log bucket location = %q, want global: the caller writes it back onto the spec, since the bucket's own location is what it is in", im.LogBucketLocation)
+	}
+}
+
+// A bucket the mapping no longer points at is still found: discovery lists the
+// project's buckets in EVERY location and takes ours by its ID, so a later
+// change to the mapping cannot hide an installation's own bucket and plan a
+// second one beside it (LP6, R5, F10).
+func TestABucketWhereTheMappingNoLongerPointsIsFound(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	inst := installationSpec(t)
+	elsewhere := "europe-west1"
+	if inst.LogBucketLocation == elsewhere {
+		t.Fatalf("the fixture's mapping already points at %s", elsewhere)
+	}
+	f.logs.AddBucket(inst.Project, elsewhere, LogBucket, "ACTIVE", LogBucketDescription)
+	before := len(f.logs.Requests())
+	im, err := DiscoverInstallation(ctx, f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "projects/" + inst.Project + "/locations/" + elsewhere + "/buckets/" + LogBucket
+	if got := importMap(im)[LogBucketAddress]; got != path {
+		t.Errorf("the log bucket's import id = %q, want %q", got, path)
+	}
+	if im.LogBucketLocation != elsewhere {
+		t.Errorf("the discovered log bucket location = %q, want %s", im.LogBucketLocation, elsewhere)
+	}
+	// One read, and it names every location: a read that named one would see
+	// nothing anywhere else.
+	var reads []string
+	for _, r := range f.logs.Requests()[before:] {
+		if r.Method == http.MethodGet && strings.Contains(r.Path, "/buckets") {
+			reads = append(reads, r.Path)
+		}
+	}
+	if len(reads) != 1 || !strings.HasSuffix(reads[0], "/locations/-/buckets") {
+		t.Errorf("the log bucket's reads = %v, want one listing over every location (…/locations/-/buckets)", reads)
+	}
+}
+
 // A soft-deleted custom role is left to the plan's create, which the
 // provider turns into an undelete; an import of a deleted role would fail.
 func TestDiscoverLeavesDeletedRole(t *testing.T) {
@@ -588,7 +652,7 @@ func TestDiscoverRefusesForeignSingletons(t *testing.T) {
 	f.logs.AddBucket("proj-1234", "global", LogBucket, "DELETE_REQUESTED", LogBucketDescription)
 	_, err = DiscoverInstallation(ctx, f.c, inst)
 	var ue *UserError
-	if !errors.As(err, &ue) || !strings.Contains(err.Error(), LogBucketUndelete("proj-1234")) {
+	if !errors.As(err, &ue) || !strings.Contains(err.Error(), LogBucketUndelete("proj-1234", "global")) {
 		t.Fatalf("a log bucket pending deletion: %v", err)
 	}
 
@@ -668,7 +732,9 @@ func TestSingletonLookupsFailClosed(t *testing.T) {
 	for _, tc := range []struct{ name, match string }{
 		{"role", "/roles/" + RoleBuildSubmitter},
 		{"scheduler account", "/serviceAccounts/fugaro-scheduler@"},
-		{"log bucket", "/buckets/" + LogBucket},
+		// The log bucket's read is the listing across every location, not a
+		// get: a bucket's location is not derivable from its ID (LP6, R5).
+		{"log bucket", "/locations/-/buckets"},
 		{"scheduler job", "/jobs/" + spec.Check.SchedulerJob},
 	} {
 		for _, code := range []int{http.StatusForbidden, http.StatusInternalServerError} {
