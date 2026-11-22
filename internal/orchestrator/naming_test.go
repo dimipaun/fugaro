@@ -518,6 +518,40 @@ func TestMapDocRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("a document built in Go cannot spell an absent field", func(t *testing.T) {
+		// EncodeMapDoc fills the two lists in and DecodeMapDoc reads the raw
+		// wire, so neither reaches ValidateMapDoc's own envelope: a document
+		// built in Go has no way to spell an absent field, which is what a
+		// nil list and a zero time are here.
+		valid := orchestrator.MapDoc{
+			Version: orchestrator.MapDocVersion, Project: "fugaro", GeneratedAt: now,
+			Nodes: []orchestrator.MapNode{}, Edges: []orchestrator.MapEdge{},
+		}
+		if err := orchestrator.ValidateMapDoc(valid); err != nil {
+			t.Fatalf("the document these cases are cut from is refused: %v", err)
+		}
+		noNodes, noEdges, noTime := valid, valid, valid
+		noNodes.Nodes = nil
+		noEdges.Edges = nil
+		noTime.GeneratedAt = time.Time{}
+		for _, c := range []struct {
+			name string
+			doc  orchestrator.MapDoc
+			want string
+		}{
+			{"the nodes are null", noNodes, "the nodes are null"},
+			{"the edges are null", noEdges, "the edges are null"},
+			{"no time it was assembled", noTime, "carries no time it was assembled"},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				err := orchestrator.ValidateMapDoc(c.doc)
+				if !errors.Is(err, orchestrator.ErrInvalid) || !strings.Contains(err.Error(), c.want) {
+					t.Errorf("a document with %s read as %v, want ErrInvalid saying so", c.name, err)
+				}
+			})
+		}
+	})
+
 	t.Run("a document this release does not model", func(t *testing.T) {
 		raw, err := orchestrator.EncodeMapDoc(full)
 		if err != nil {
