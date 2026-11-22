@@ -243,6 +243,15 @@ type InstallationSpec struct {
 	// (infra.CarriedProjectJobs). It is a working note of the run and not a
 	// variable — the root has no such input — so it never reaches the document.
 	CarriedProjectJobs []string `json:"-"`
+	// CarriedBudget is the alert the installation already holds, as the run
+	// read it out of the cloud: the amount and the currency from the project's
+	// creation fact, the billing account from the alert's own resource in the
+	// installation root's state (R5 and R7 of docs/managed-flag-ergonomics).
+	// prepare writes it in where this spec carries no budget of its own, so a
+	// run given no budget flags plans no change to the alert; Budget above is
+	// the variable the module takes, and this is a working note of the run, so
+	// it never reaches the document as itself.
+	CarriedBudget *Budget `json:"-"`
 	// CarriedProjectJobAccounts are the points of the account axis this spec
 	// composes no job for, because the local config declares a KEY credential
 	// under the name (ProjectKeyAccountJobs, the filter's own answer), while
@@ -2068,6 +2077,107 @@ func CarriedLicence(vars, prev []byte) ([]byte, error) {
 	}
 	doc[LicenceKey] = block
 	return sortedJSON(doc)
+}
+
+// BudgetKey is the installation root's variable for the project's budget alert
+// (Budget above), and it is the key CarriedBudget keeps.
+const BudgetKey = "budget"
+
+// CarriedBudget returns vars with the alert the installation already holds,
+// when vars carry none of their own: prepare's carry for the one key whose
+// source is not a document but the cloud.
+//
+// The figures are read by the caller, and they come from where a machine that
+// never ran the apply can read them (R5 and R7 of
+// docs/managed-flag-ergonomics): the amount and the currency from the project's
+// creation fact, which is the record a rewrite by `fugaro managed flag` moves,
+// and the billing account from the alert's own resource in the installation
+// root's state, which is the only place an account survives a work directory
+// that was cleaned, or a console on another host. Neither comes from the local
+// work directory.
+//
+// nil carried is a run that answered the budget itself — its document has the
+// key and it stands (D2215: a default never overwrites a recorded amount) — and
+// an installation that holds no alert; a document that already carries the key
+// is returned untouched, so the flags always replace what was carried.
+func CarriedBudget(vars []byte, carried *Budget) ([]byte, error) {
+	if carried == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a plan that
+		// deletes the installation's alert: fail rather than carry nothing
+		// forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	if own, ok := doc[BudgetKey]; ok && own != nil {
+		return vars, nil // the caller's own answer stands
+	}
+	raw, err := json.Marshal(carried)
+	if err != nil {
+		return nil, err
+	}
+	return setVarsKey(vars, BudgetKey, raw)
+}
+
+// budgetResourceType is the resource type of the installation module's alert
+// (deploy/terraform/gcp/modules/installation/budget.tf), the one resource a raw
+// state document has to name for budgetBillingAccountOf to read an account out
+// of it.
+const budgetResourceType = "google_billing_budget"
+
+// rawStateFormatVersion is the version a raw state object this build reads is
+// written with. Terraform 1.x writes 4; a document of another version could
+// have moved the fields read below, and reading it anyway would be a guess
+// about what the installation holds.
+const rawStateFormatVersion = 4
+
+// budgetBillingAccountOf is the billing account the alert's own resource in a
+// Terraform state object records: the one member of a state this carry reads,
+// and the only copy of the account a machine that never ran the apply can
+// reach (R7).
+//
+// A state that holds no budget resource answers found=false and no error — an
+// installation with no alert has none, which is the state of every installation
+// before the alert's first apply — and one that holds the resource with no
+// account, or with an account that is not a string, is an error rather than a
+// missing alert: that is a state this build cannot read as the thing it is, and
+// carrying nothing from it would plan the alert's deletion.
+func budgetBillingAccountOf(state []byte) (account string, found bool, err error) {
+	var st struct {
+		Version   int `json:"version"`
+		Resources []struct {
+			Mode      string `json:"mode"`
+			Type      string `json:"type"`
+			Instances []struct {
+				Attributes map[string]json.RawMessage `json:"attributes"`
+			} `json:"instances"`
+		} `json:"resources"`
+	}
+	if err := json.Unmarshal(state, &st); err != nil {
+		return "", false, fmt.Errorf("reading a Terraform state document: %w", err)
+	}
+	if st.Version != rawStateFormatVersion {
+		return "", false, fmt.Errorf("the state document is format version %d, and this build reads only %d", st.Version, rawStateFormatVersion)
+	}
+	for _, r := range st.Resources {
+		if r.Type != budgetResourceType || (r.Mode != "" && r.Mode != "managed") {
+			continue
+		}
+		for _, inst := range r.Instances {
+			raw, ok := inst.Attributes["billing_account"]
+			if !ok {
+				return "", false, fmt.Errorf("the state's %s records no billing_account", budgetResourceType)
+			}
+			var s string
+			if err := json.Unmarshal(raw, &s); err != nil || s == "" {
+				return "", false, fmt.Errorf("the state's %s records a billing_account that is not an account", budgetResourceType)
+			}
+			return s, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // varsDoc decodes an installation tfvars document, keeping numbers as
