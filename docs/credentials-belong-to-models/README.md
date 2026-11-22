@@ -1,6 +1,6 @@
 # Credentials belong to models, not repositories
 
-**Status: plan only; nothing is implemented; no task approved.** See
+**Superseded 2026-11-21 by [model-credentials-routing](../model-credentials-routing/README.md): every task not merged is withdrawn and carried there (CM1, CM3, CM22 and CM32 had merged); no task of this plan is launched.** Former status: plan only; nothing is implemented; no task approved. See
 [docs/status.md](../status.md) for the current table. Spec owner: Dimi Paun (the owner). Date:
 2026-11-20. Checked against `origin/main` at `d57d71ddb`.
 
