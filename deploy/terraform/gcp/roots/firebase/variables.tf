@@ -73,6 +73,24 @@ variable "coordinator_account" {
   default = ""
 }
 
+# The issuer's own account and the switch on the people's row
+# (launcher-does-not-mint plan task LM11): `fugaro update` writes the
+# credentials service's account here once the installation root has created it,
+# and leaves the switch on until the plan that moves the grant (LM14). The
+# module's variables.tf states what each one does; the defaults are what an
+# installation that has not been updated carries, and they plan exactly what
+# this root planned before this change.
+variable "issuer_account" {
+  type    = string
+  default = ""
+}
+
+variable "people_minter" {
+  type     = bool
+  default  = true
+  nullable = false
+}
+
 # The public mobile service's runtime account (mobile plan task P5; D2782 as
 # amended by F31, O1, O8): the account the installation root creates, handed
 # over here because the signer it signs AS is created here. It is empty in every

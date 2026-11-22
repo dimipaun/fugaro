@@ -204,7 +204,7 @@ func TestExecGHKeepsTheURLOfAChildThatExited(t *testing.T) {
 // goes; a token a person authenticates with is left alone, because that is the
 // one credential this call is meant to have (F22).
 func TestGHEnvCannotRedirectTheHost(t *testing.T) {
-	env := ghEnv([]string{
+	env := GHEnv([]string{
 		"PATH=/usr/bin",
 		"GH_HOST=github.example.test",
 		"GH_REPO=someone/other",

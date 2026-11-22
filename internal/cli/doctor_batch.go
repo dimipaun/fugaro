@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/place"
 )
 
 // The Batch half of `fugaro doctor` (plan 2026-10-19-compute-backend.md Task 8
@@ -646,13 +647,19 @@ var batchSinkArm = `resource.type=` + strconv.Quote(batch.JobResourceType) +
 // names it: the bucket of the log view this installation reads its runs
 // through, else the installation module's own bucket. Both are the same
 // installation fact (localcfg.LogView is written from the module's output), and
-// the view's path carries the bucket.
+// the view's path carries the bucket and its location.
+//
+// The location is the view's own when there is one, and place.For's answer for
+// the region otherwise: a bucket's location is permanent and is not derived
+// from its ID (LP6, R5), so an installation whose view an older release
+// recorded under locations/global is read where that path says the bucket is,
+// and one whose config holds no view is read where a bucket created now is.
 func logBucketPath(lc *localcfg.Config) string {
-	bucket := infra.LogBucket
+	bucket, location := infra.LogBucket, place.For(lc.Region).LogBucket.Where
 	if parts := strings.Split(lc.LogView, "/"); len(parts) == 8 && parts[6] == "views" {
-		bucket = parts[5]
+		location, bucket = parts[3], parts[5]
 	}
-	return "projects/" + lc.GCPProject + "/locations/global/buckets/" + bucket
+	return "projects/" + lc.GCPProject + "/locations/" + location + "/buckets/" + bucket
 }
 
 // doctorBatchLauncherIAM reads the launchers' roles/batch.jobsEditor grant,

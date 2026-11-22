@@ -604,29 +604,114 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 	if spec.LogIsolation != nil && !*spec.LogIsolation {
 		return nil // nothing plans the log bucket
 	}
-	name := "projects/" + d.project + "/locations/global/buckets/" + spec.Names.Log.Bucket
-	b, err := d.c.Logging.Projects.Locations.Buckets.Get(name).Context(d.ctx).Do()
+	// A log bucket's location is permanent and cannot be derived from its ID:
+	// a new installation's bucket is where the mapping says, an installation
+	// made before this work has it in `global`, and one an operator moved is
+	// wherever they moved it. So the project's buckets are listed in EVERY
+	// location and ours is the one carrying our bucket ID (R5, F10). A read
+	// that named one location would see nothing anywhere else, which is how a
+	// later change to the mapping could hide an installation's own bucket and
+	// plan a second one beside it.
+	b, err := logBucketNamed(d.ctx, d.c, d.project, spec.Names.Log.Bucket)
+	var ambiguous *LogBucketAmbiguousError
 	switch {
 	case d.absent(err, serviceLogging):
 		return nil
+	case errors.As(err, &ambiguous):
+		d.refuse(err)
+		return nil
 	case err != nil:
-		return fmt.Errorf("reading log bucket %s: %w", name, err)
+		return fmt.Errorf("listing the log buckets of %s: %w", d.project, err)
+	case b == nil:
+		return nil // none of ours: the plan creates one where the mapping says
 	}
-	// A log bucket carries no labels, so its description is the mark. One
-	// without it is someone else's: the plan would cut its retention, and a
-	// rollback would delete it. It is never undeleted on our behalf either.
+	// The bucket's own location, read off the name the listing gave back
+	// (projects/<project>/locations/<location>/buckets/<id>): every message
+	// below names it and the import adopts the bucket at it, and nothing here
+	// assumes one.
+	loc, _ := logBucketLocationID(b.Name)
+	// A bucket carries no labels, so its description is the mark. One without
+	// it is someone else's: the plan would cut its retention, and a rollback
+	// would delete it. It is never undeleted on our behalf either.
 	if b.Description != spec.LogBucketDescription {
-		d.refuse(fmt.Errorf("log bucket %s exists but is not this installation's: its description is %s, not %s. fugaro refuses to adopt it, since the plan would set its retention and a rollback would delete it. If it is Fugaro's, mark it (gcloud logging buckets update %s --location=global --project %s --description=%s) and rerun fugaro update; if it isn't, a log bucket can't be renamed, so leave it and run fugaro update --no-log-isolation, which keeps Fugaro's job logs in _Default",
-			name, strconv.Quote(b.Description), strconv.Quote(spec.LogBucketDescription), spec.Names.Log.Bucket, d.project, shellQuote(spec.LogBucketDescription)))
+		d.refuse(fmt.Errorf("log bucket %s exists but is not this installation's: its description is %s, not %s. fugaro refuses to adopt it, since the plan would set its retention and a rollback would delete it. If it is Fugaro's, mark it (gcloud logging buckets update %s --location=%s --project %s --description=%s) and rerun fugaro update; if it isn't, a log bucket can't be renamed, so leave it and run fugaro update --no-log-isolation, which keeps Fugaro's job logs in _Default",
+			b.Name, strconv.Quote(b.Description), strconv.Quote(spec.LogBucketDescription), spec.Names.Log.Bucket, loc, d.project, shellQuote(spec.LogBucketDescription)))
 		return nil
 	}
 	if b.LifecycleState != "ACTIVE" {
 		d.refuse(fmt.Errorf("log bucket %s is %s (a rollback deletes it, and it stays pending deletion for 7 days), so it can be neither imported nor created: restore it first with %s, then rerun fugaro update",
-			name, b.LifecycleState, LogBucketUndelete(d.project)))
+			b.Name, b.LifecycleState, LogBucketUndelete(d.project, loc)))
 		return nil
 	}
-	d.add(importLogBucket, spec.Region, "", spec.Names.Log.Bucket)
+	d.im.LogBucketLocation = loc
+	d.add(importLogBucket, d.im.LogBucketLocation, "", spec.Names.Log.Bucket)
 	return nil
+}
+
+// LogBucketAmbiguousError refuses a project that holds the installation's log
+// bucket ID in more than one location with nothing to choose between them: a
+// bucket's ID is unique per location, so a project can hold ours twice — a
+// location change replaces the bucket, and the old one stays until its
+// deletion completes — and adopting the wrong one would set its retention and
+// delete it on a rollback. The names of the buckets are the message's whole
+// point: naming them is what lets a person say which is the installation's.
+type LogBucketAmbiguousError struct {
+	Names []string
+}
+
+func (e *LogBucketAmbiguousError) Error() string {
+	return fmt.Sprintf("the project holds %d log buckets with the installation's ID: %s. fugaro cannot tell which one is the installation's, and it will not adopt one by chance, since the plan would set that bucket's retention and a rollback would delete it: remove all but one of them (gcloud logging buckets delete <id> --location=<location> --project <project>), then rerun fugaro update",
+		len(e.Names), strings.Join(e.Names, ", "))
+}
+
+// logBucketNamed is the project's log bucket of ID id, found by listing the
+// project's log buckets in EVERY location: a bucket's location is permanent
+// and its ID carries none, so this is the only read that finds one wherever
+// it is (R5, F10).
+//
+// The ID can be in two locations at once, and only one of them is this
+// installation's: a bucket the mapping moved away from sits in
+// DELETE_REQUESTED until its deletion completes, while the one the mapping
+// made in its place is ACTIVE, so the ACTIVE one answers for the ID. Two
+// ACTIVE ones answer for nothing and the read refuses through
+// LogBucketAmbiguousError, naming both, rather than import whichever the
+// listing happened to return last.
+//
+// It is nil, with no error, when the project holds no such bucket. A 404 (the
+// project is gone) and a disabled Logging API are the errors they are, and
+// the caller reads them through d.absent, as every other read here does.
+func logBucketNamed(ctx context.Context, c *Clients, project, id string) (*logging.LogBucket, error) {
+	var found []*logging.LogBucket
+	err := c.Logging.Projects.Locations.Buckets.List("projects/"+project+"/locations/-").Context(ctx).
+		Pages(ctx, func(p *logging.ListBucketsResponse) error {
+			for _, b := range p.Buckets {
+				if _, name := logBucketLocationID(b.Name); name == id {
+					found = append(found, b)
+				}
+			}
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	switch len(found) {
+	case 0:
+		return nil, nil
+	case 1:
+		return found[0], nil
+	}
+	var live []*logging.LogBucket
+	names := make([]string, 0, len(found))
+	for _, b := range found {
+		names = append(names, b.Name)
+		if b.LifecycleState == "ACTIVE" {
+			live = append(live, b)
+		}
+	}
+	if len(live) == 1 {
+		return live[0], nil
+	}
+	return nil, &LogBucketAmbiguousError{Names: names}
 }
 
 // Existing is what discovery found of a repository's live jobs and

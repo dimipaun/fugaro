@@ -69,7 +69,6 @@ import {
 } from '../../src/renderer/screens/licence'
 import type { ScreenElement, ScreenFactory } from '../../src/renderer/screens/licence'
 import { REFUSAL_UNREADABLE } from '../../src/renderer/screens/degraded'
-import { HOST_PLACEHOLDER } from '../../src/shared/sanitize'
 
 // ---------------------------------------------------------------------------
 // The harness: a fake element that refuses what a screen may not do.
@@ -192,10 +191,9 @@ describe('the licence key’s section', () => {
     expect(drawn(section)).toContain('in grace')
     expect(drawn(section)).toContain(LICENCE_SOURCE)
     // The claim set, term by term: an organisation drawn as the free text it is
-    // -- this one whole, because `acme.example` carries a suffix the host rule
-    // does not know; the case below is the domain-shaped one, which that rule
-    // draws as the marker -- the tier as a word, the seats as the number the
-    // answer carried, and the features.
+    // -- whole, the case below included, because a domain is not a credential
+    // (D3213) -- the tier as a word, the seats as the number the answer carried,
+    // and the features.
     expect(all(section, LICENCE_TERM_CLASS)[0]?.textContent).toBe('Organisation')
     expect(one(section, LICENCE_CLAIMS_CLASS).childNodes()).toHaveLength(12)
     expect(drawn(section)).toContain('acme.example')
@@ -212,21 +210,19 @@ describe('the licence key’s section', () => {
     expect(drawn(section)).toContain(LICENCE_HINT)
   })
 
-  it('draws an organisation that reads as a machine name as the marker, and the row beside it whole', () => {
-    // The ordinary organisation is a domain, and this console draws no machine
-    // name whichever field it arrives in: the class is `sentence`, which runs
-    // the free-text rules, so `acme.com` is the marker and not the domain -- the
-    // same answer `projects.ts` gives `routes[].host` through the `host` class,
-    // and the design states it for this section. **The row is drawn either
-    // way**: what the marker costs is the name, never the fact that a key is
-    // installed, and the seats beside it are drawn as they arrived.
+  it('draws an organisation that reads as a machine name whole, beside the rest of the row', () => {
+    // The ordinary organisation is a domain, and a domain is not a credential:
+    // the class is `sentence`, which runs the credential rules and nothing else
+    // (D3213), so `acme.com` is drawn as the licence's own claim -- the same
+    // answer `projects.ts` gives `routes[].host` through the `host` class. The
+    // seats beside it are drawn as they arrived.
     const { drawn: section } = drawnSection({
       raw: { state: 'valid', claims: { organisation: 'acme.com', seats: 2 } },
       because: null,
     })
     expect(all(section, LICENCE_TERM_CLASS)[0]?.textContent).toBe(LICENCE_ORGANISATION_TERM)
-    expect(all(section, LICENCE_VALUE_CLASS)[0]?.textContent).toBe(HOST_PLACEHOLDER)
-    expect(drawn(section), 'a domain reached the screen').not.toContain('acme.com')
+    expect(all(section, LICENCE_VALUE_CLASS)[0]?.textContent).toBe('acme.com')
+    expect(drawn(section), 'the organisation the key was issued to').toContain('acme.com')
     expect(drawn(section)).toContain('2')
   })
 

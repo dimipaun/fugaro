@@ -94,7 +94,8 @@ const (
 )
 
 // The answer headers of the contract (credsvc.HeaderTier,
-// credsvc.HeaderCredential, credsvc.HeaderSwitch, credsvc.HeaderProbe).
+// credsvc.HeaderCredential, credsvc.HeaderCredentialOwner, credsvc.HeaderSwitch,
+// credsvc.HeaderProbe).
 const (
 	// HeaderTier is the credential tier that answered: TierA, TierB or
 	// TierC. A Messages call settles by it (C1.16).
@@ -102,6 +103,13 @@ const (
 	// HeaderCredential is the name of the credential that answered, never
 	// its value.
 	HeaderCredential = "X-Fugaro-Credential"
+	// HeaderCredentialOwner is the owner of the credential that answered,
+	// never its value (credsvc.HeaderCredentialOwner, F16): the account id of
+	// the person whose credential it is, which the run records beside the
+	// credential's name. It is written only where the credential served is
+	// the launcher's own per-user one, so an answer that carries none — a
+	// bundle entry's, a pool's, a slip-less call's — is the ordinary case.
+	HeaderCredentialOwner = "X-Fugaro-Credential-Owner"
 	// HeaderSwitch, when present, is the JSON of a switch: this call moved
 	// from one credential to another inside the service.
 	HeaderSwitch = "X-Fugaro-Switch"
@@ -283,6 +291,14 @@ type ServiceAnswer struct {
 	// Credential is the name of the credential that answered, never its
 	// value.
 	Credential string
+	// CredentialOwner is the owner of the credential that answered, never its
+	// value (F16, credsvc.HeaderCredentialOwner): the account id of the
+	// person whose credential it is, which the run records beside the name.
+	// It is empty on an answer that carries none — a credential the launcher
+	// does not own, a call the service admitted under no slip, or one a
+	// service that predates the field answered — and the run then records no
+	// owner.
+	CredentialOwner string
 	// Switch is the contract's switch header as it arrived: the JSON of a
 	// Switch record, unread here. A switch is what the run's own log carries
 	// (C1.16), and the runner reads it with the contract's own reader
@@ -437,7 +453,7 @@ func (s *Server) serviceUpstream(ctx context.Context, rt route, in http.Header) 
 	// decides which of the repository's keys the service serves a routed
 	// call with (R2, KS5), so it is set here from the route the gateway
 	// routed to and never taken from a header the agent wrote.
-	for _, k := range []string{HeaderTier, HeaderCredential, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount, HeaderProvider} {
+	for _, k := range []string{HeaderTier, HeaderCredential, HeaderCredentialOwner, HeaderSwitch, HeaderProbe, HeaderSlip, HeaderSlipClaim, HeaderAuthMode, HeaderAuthAccount, HeaderProvider} {
 		h.Del(k)
 	}
 	h.Set("Authorization", "Bearer "+id)
@@ -724,6 +740,65 @@ func credentialHeaders(h http.Header) (tier, name string, ok bool, err error) {
 	return tier, name, true, nil
 }
 
+// MaxCredentialOwnerDigits bounds the owner a credential's answer may name: the
+// width of a Google account id — a number above 2^53, which is why
+// internal/infra/tf's identity handling already carries the same number, a
+// service account's unique_id, as text rather than rendering it. Twenty digits
+// would be the width of a uint64, and these ids are wider than one, so a bound
+// derived from a 64-bit number would refuse every launcher there is.
+//
+// It is THE definition of that width, and internal/credsvc imports it (its
+// maxLauncherSubDigits, the launcher class's own spelling of the same bound):
+// the service is the writer of the owner header and this package is its reader,
+// the two ends of one contract are this repository's code, and a bound spelled
+// twice is a bound that can drift with nothing red — the shape of the drift
+// being an owner the run records that the service could not have written. The
+// bound is a SHAPE check rather than a fence against a stranger's text: the
+// owner is the launcher's `sub` claim, inside a token Google signed, so a
+// caller cannot choose it — what the bound keeps out of the service's own two
+// sinks (the slip's owner and the secret name fugaro_u_<id>_<name>, whose total
+// length Secret Manager bounds) is an id Google has never issued. A value the
+// issuer widens past this one day is refused rather than carried, which is the
+// fail-closed answer, and widening it is this constant's change and the test
+// that pins it.
+const MaxCredentialOwnerDigits = 21
+
+// ValidCredentialOwner reports whether s may be a credential's owner: the
+// launcher's account id the contract writes it as, digits only and at most
+// MaxCredentialOwnerDigits of them. The run records it (F16), so a value the
+// service could not have written is refused rather than handed on. It is the
+// one definition of the rule, and internal/credsvc's validSlipOwner delegates
+// to it for the same reason the bound is here: one rule, both ends of the wire.
+func ValidCredentialOwner(s string) bool {
+	if s == "" || len(s) > MaxCredentialOwnerDigits {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// credentialOwner reads the owner of the credential that answered, present
+// false for an answer that carries none — every answer that is not a
+// slip-bound call's, and every answer a service that predates the field wrote.
+// An owner that is not one launcher's account id is an error rather than a
+// value: the run records it, so a caller that guessed at one would record a
+// fact the service did not state. The error names the field and never the
+// value.
+func credentialOwner(h http.Header) (owner string, present bool, err error) {
+	owner, present, err = responseHeader(h, HeaderCredentialOwner)
+	if err != nil || !present {
+		return "", present, err
+	}
+	if !ValidCredentialOwner(owner) {
+		return "", false, errors.New("the answer's credential owner isn't one launcher's account id")
+	}
+	return owner, true, nil
+}
+
 // switchValue reads the contract's switch header, unread. An answer that
 // carries it twice is an error for the same reason as above: which of two
 // records is logged must not be decided by header order.
@@ -991,6 +1066,15 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 		if err != nil {
 			return s.haltService(w, stateDetailUnreadable), true, "", nil
 		}
+		owner, _, err := credentialOwner(resp.Header)
+		if err != nil {
+			// The owner is what the run records beside the credential's name
+			// (F16), so an answer whose owner cannot be read is one the run
+			// must not record a guess from: it halts like an answer whose
+			// tier cannot be read. An answer that carries no owner is the
+			// ordinary case and not an error.
+			return s.haltService(w, stateDetailUnreadable), true, "", nil
+		}
 		sw, err := switchValue(resp.Header)
 		if err != nil {
 			return s.haltService(w, stateDetailUnreadable), true, "", nil
@@ -1002,7 +1086,7 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			// not make.
 			return s.haltService(w, stateDetailUnreadable), true, "", nil
 		}
-		a := ServiceAnswer{Tier: tier, Credential: name, Switch: sw, Probed: probed}
+		a := ServiceAnswer{Tier: tier, Credential: name, CredentialOwner: owner, Switch: sw, Probed: probed}
 		if sw != "" {
 			// A switch's cache-miss cost is the gateway's to estimate
 			// (F24): it is computed here, where the last call's usage is,

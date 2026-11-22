@@ -29,6 +29,8 @@ export {
   MAILBOX_TTL_MS,
   MAC_KEY_ITEM,
   PRESENCE_REASON,
+  REGISTRATION_KIND,
+  REGISTRATION_TEXT,
   createMailboxClient,
   toPresenceHeartbeat,
 } from './client.js';

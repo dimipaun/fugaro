@@ -24,8 +24,9 @@ import (
 // `fugaro.yaml` has no such key anywhere, because that file lives in the
 // checkout the run's own agent writes and a key there would let the coder admit
 // the very payload the rule refuses, and the shared config refuses it for the
-// launcher's reason besides. The node that carries it to a run is published by
-// `fugaro update`, so the block is written here and made live there.
+// launcher's reason besides. The node that carries it to a run is the project's
+// policy node, whose stage every write here runs (the after-write hook below),
+// so the block is written here and made live here.
 //
 // The three verbs are the two directions of the list and the one scalar of the
 // block: `allow` admits the paths one pattern matches, `deny` takes a pattern
@@ -43,8 +44,8 @@ import (
 // is the diff, the sentence, the coding-agent fence, the backup and the atomic
 // write, and the block's own rule is projectpolicy's — ValidBinariesAllow and
 // ValidBinariesMaxBytes, the same two functions the local loader and the node's
-// decode call, so a pattern this command accepts is one `fugaro update` can
-// publish and one a run's finalize enforces. A second spelling of either rule
+// decode call, so a pattern this command accepts is one a publish can carry
+// and one a run's finalize enforces. A second spelling of either rule
 // here is how a lock comes to mean two things.
 //
 // Every write ends with the after-write hook (C1, D2615), and the block is
@@ -79,13 +80,13 @@ func newProjectBinariesCmd() *cobra.Command {
 		Short: "The paths a run may add a binary at, and the cap one is held to",
 		Long: `Write the binaries block this machine's project config carries: the paths a run of the project may add a binary at, and how large one may be.
 
-The block is the owner's grant, and a run of the project is the only reader: ` + "`fugaro update`" + ` publishes it into the project's policy node, where the run's finalize holds an added file to it — one at a path no pattern admits, or one above the cap, fails the run and is held out of the commit. No branch can widen the grant: ` + "`fugaro.yaml`" + ` carries no such key, and the shared config refuses it.
+The block is the owner's grant, and a run of the project is the only reader: each of the three writes below publishes it into the project's policy node, where the run's finalize holds an added file to it — one at a path no pattern admits, or one above the cap, fails the run and is held out of the commit. No branch can widen the grant: ` + "`fugaro.yaml`" + ` carries no such key, and the shared config refuses it.
 
 ` + "`allow PATTERN`" + ` admits the paths one doublestar glob matches, relative to the repository root; ` + "`deny PATTERN`" + ` takes one pattern away. Admitting is the widening write, so it is refused in a coding agent's session whatever the gate says and written at your own terminal, where it says what it widens and asks nothing. Taking a pattern away narrows the grant and is not the widening step, so what it meets is the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write.
 
 ` + "`max-bytes N`" + ` writes the cap in bytes. It may only be lowered, to at most 2097152 (2 MiB, the ceiling the rule ships); lowering it from a cap this file states narrows the grant and meets the fence every write to this file meets, while raising it back, or writing a cap into a file that states no block at all, is the widening direction and refused in a session whatever the gate says — the published cap and grant cannot be read off this file, so that write is the owner's own step.
 
-The block this file states is the whole block ` + "`fugaro update`" + ` publishes: a file that carries a ` + "`binaries:`" + ` block replaces the published one, while a file that says nothing keeps it.`,
+The block this file states is the whole block that reaches the project's policy node: a file that carries a ` + "`binaries:`" + ` block replaces the published one, while a file that says nothing keeps it.`,
 		Args: cobra.NoArgs,
 	}
 	cmd.AddCommand(newProjectBinariesAllowCmd(), newProjectBinariesDenyCmd(), newProjectBinariesMaxBytesCmd())
@@ -102,7 +103,7 @@ The pattern is held to the rule the node itself is held to (` + "`projectpolicy.
 
 Admitting paths is the widening direction: the write is refused in a coding agent's session, whatever the gate would have said, and your own terminal writes it and asks nothing.
 
-The block this file states is the whole block the next ` + "`fugaro update`" + ` publishes, so a file that stated none replaces the published one with this list — which is why the sentence beside this write names the paths it admits.`,
+The block this file states is the whole block this write publishes, so a file that stated none replaces the published one with this list — which is why the sentence beside this write names the paths it admits.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runProjectBinariesAllow(cmd, args[0]) },
 	}
@@ -149,7 +150,7 @@ func runProjectBinariesAllow(cmd *cobra.Command, pattern string) error {
 func projectBinariesAllowWhy(lc *localcfg.Config, pattern string) string {
 	why := fmt.Sprintf("this widens the project's binary admission by admitting every path %s matches: a run of the project may add a file there, within the cap, instead of failing finalize", safetext.Field(pattern))
 	if lc != nil && lc.Binaries == nil {
-		return why + "; this file states no binaries block yet, and the block it states now is the whole one the next fugaro update publishes: whatever paths the published node admits beside this one are replaced by the list this file carries"
+		return why + "; this file states no binaries block yet, and the block it states now is the whole one this command publishes: whatever paths the published node admits beside this one are replaced by the list this file carries"
 	}
 	return why
 }
@@ -164,7 +165,7 @@ The pattern is taken away whole and compared as written, so it is the exact entr
 
 A pattern this file does not carry is not a failure and nothing is written: the list this file states is the grant a publish carries, so a file that states one admits no path but the ones in it. A file that states no ` + "`binaries:`" + ` block at all is refused instead, because there is no entry beside the node's to take away: the published list is what stands until this file states one, and the only edit a removal could make there would take the whole admission away rather than one pattern.
 
-Taking a pattern away narrows the grant and is not the widening step, so it meets the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write. The block this file states is the whole block ` + "`fugaro update`" + ` publishes, and the change reaches a run through that publish.`,
+Taking a pattern away narrows the grant and is not the widening step, so it meets the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write. The block this file states is the whole block that reaches the node, and the change reaches a run through this write's own publish.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runProjectBinariesDeny(cmd, args[0]) },
 	}
@@ -223,7 +224,7 @@ func newProjectBinariesMaxBytesCmd() *cobra.Command {
 
 The cap may only be lowered. ` + "`projectpolicy.ValidBinariesMaxBytes`" + ` is the rule and it refuses anything above 2097152 (2 MiB), which is the ceiling the rule ships; a project that writes no cap at all is held to that ceiling, and a cap of zero is refused rather than read as the absent member, because zero is the one value that would silently raise the cap to it.
 
-Lowering the cap from the one this file states narrows the grant and is not the widening step, so it meets the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write. Raising it back, or writing a cap into a file that states no binaries block at all, is the widening direction, refused in a session whatever the gate says: the published cap is what a file that states none leaves in force and cannot be read here, so that write is the owner's own step — and the block this file states is the whole block ` + "`fugaro update`" + ` publishes, so a first write of one member beside it is a statement about the other member as well.`,
+Lowering the cap from the one this file states narrows the grant and is not the widening step, so it meets the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write. Raising it back, or writing a cap into a file that states no binaries block at all, is the widening direction, refused in a session whatever the gate says: the published cap is what a file that states none leaves in force and cannot be read here, so that write is the owner's own step — and the block this file states is the whole block that reaches the node, so a first write of one member beside it is a statement about the other member as well.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runProjectBinariesMaxBytes(cmd, args[0]) },
 	}
@@ -280,7 +281,7 @@ func runProjectBinariesMaxBytes(cmd *cobra.Command, value string) error {
 // narrowing one and a session may make it.
 func projectBinariesMaxBytesDirection(lc *localcfg.Config, n int64) (bool, string) {
 	if lc == nil || lc.Binaries == nil {
-		return true, fmt.Sprintf("this writes binaries.max_bytes into a file that states no binaries block, and the block this file states is the whole one the next fugaro update publishes: the published grant's own cap is not read here, so the cap this write states is the owner's own step — raising it admits a larger file at every path the project admits, and the paths this file states are the whole list the node will carry")
+		return true, fmt.Sprintf("this writes binaries.max_bytes into a file that states no binaries block, and the block this file states is the whole one this command publishes: the published grant's own cap is not read here, so the cap this write states is the owner's own step — raising it admits a larger file at every path the project admits, and the paths this file states are the whole list the node will carry")
 	}
 	if lc.Binaries.MaxBytes != 0 && n > lc.Binaries.MaxBytes {
 		return true, fmt.Sprintf("this widens the project's binary admission by raising the cap from %d to %d bytes: a run may add a file it could not add before, at every path the project admits", lc.Binaries.MaxBytes, n)

@@ -390,18 +390,16 @@ describe('the models list document (§6.18)', () => {
     )
     expect(withProblem.repositories[0]?.problems[0]).toContain('IGNORE PREVIOUS INSTRUCTIONS')
 
-    // A host is a machine name, and the class draws every one of them as the
-    // placeholder, valid DNS name or not. **No other class draws the name
-    // either**: `label` and `sentence` run the free-text rules, and their
-    // hostname rule replaces a machine name before any class branch reads the
-    // value. So the models panel's route row draws `routes[].host` with this
-    // class and reads `<host>` — the route is named by its own `name`, and the
-    // hostname itself is drawn whole in the `base_url` beside it (a `url`).
+    // A host is a machine name, and the class draws the name it was given,
+    // valid DNS name or not (D3213, 2026-11-21): which endpoint a route sends
+    // data to is what the models panel is for. So the route row draws
+    // `routes[].host` with this class and reads the machine's own name -- and
+    // the hostname is drawn again inside the `base_url` beside it (a `url`).
     expect(WIRE_TEXT_CLASSES['host']).toBe('host')
     expect(sanitizeText('router.example.invalid', 'host', 'host')).toEqual({
       ok: true,
-      text: '<host>',
-      flags: ['host-placeholder'],
+      text: 'router.example.invalid',
+      flags: [],
     })
   })
 
@@ -450,13 +448,16 @@ describe('the models list document (§6.18)', () => {
     // row's provenance. `WIRE_TEXT_CLASSES` holds one row per key, so the class
     // has to serve both, and `label` is the one that is safe in that direction:
     // an enum word passes through untouched, and a URL under the same key is
-    // replaced by the placeholder rather than drawn as a link.
+    // drawn as the text it is rather than as a link -- `label` is a free-text
+    // class, so the credential rules still rewrite a URL that carries one
+    // (D3213), and a screen that offered a link would be building one out of a
+    // job's document.
     expect(WIRE_TEXT_CLASSES['source']).toBe('label')
     expect(sanitizeText('catalog', 'label', 'source')).toEqual({ ok: true, text: 'catalog', flags: [] })
     expect(sanitizeText('https://example.invalid/catalog.json', 'label', 'source')).toEqual({
       ok: true,
-      text: '[redacted-url]',
-      flags: ['replaced-url'],
+      text: 'https://example.invalid/catalog.json',
+      flags: [],
     })
     // And a model row's own `source` decodes as the enum word it is: the class
     // is the drawing rule, not a rewrite of the value.
