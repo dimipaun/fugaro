@@ -123,6 +123,39 @@ func (f *pushFixture) pushRows(t *testing.T) map[string]any {
 	return rows
 }
 
+// pushNode is the account's push node as the fake database holds it.
+func (f *pushFixture) pushNode(t *testing.T) map[string]any {
+	t.Helper()
+	node, ok := f.db.Value(pushTestPath).(map[string]any)
+	if !ok {
+		t.Fatalf("%s holds %v, want the node the registration wrote", pushTestPath, f.db.Value(pushTestPath))
+	}
+	return node
+}
+
+// pushSweepResult is one sweep's answers, read off the channel sweepAsync
+// closes with.
+type pushSweepResult struct {
+	out, errOut string
+	err         error
+}
+
+// sweepAsync runs one sweep in its own goroutine. It is for the tests that hold
+// a request in flight: the fake database answers on the test goroutine's
+// schedule (HoldNext), so the sweep has to be blocked inside the database while
+// the test writes the other principal's change. The channel is closed with the
+// answers, so receiving from it is both the wait and the result.
+func (f *pushFixture) sweepAsync(t *testing.T) <-chan pushSweepResult {
+	t.Helper()
+	res := make(chan pushSweepResult, 1)
+	go func() {
+		out, errOut, err := execute(t, "budget", "history", "--sweep")
+		res <- pushSweepResult{out: out, errOut: errOut, err: err}
+		close(res)
+	}()
+	return res
+}
+
 // pushTestPath is one account's push node: the path the sender writes its own
 // state under, and the path every "nothing was written" assertion names.
 var pushTestPath = pairPushPath(pushTestUID)
@@ -654,6 +687,125 @@ func TestPushReapsAnOrphanedPushNode(t *testing.T) {
 	}
 }
 
+// TestPushLeavesAReRegisteredTokenAlone is §6's reap against the write it
+// races. The registration principal merges a re-registration into the same
+// node (mailbox.go's runRegistration), and a phone that rotated its token
+// between this sweep's read and the reap has a token that is ALIVE: FCM's
+// verdict was about the token the sweep handed it, and the registration message
+// that carried the new one is already consumed — so a reap on the stale copy
+// takes the account's push access with nothing left to re-announce it. The reap
+// is conditional on the token it read, and the node carries another.
+func TestPushLeavesAReRegisteredTokenAlone(t *testing.T) {
+	f := newPushFixture(t, pushTestNow)
+	f.pair(t, mailboxSwitchState(nil))
+	f.kill()
+	historyTest.pushSend = func(_ context.Context, req pushRequest) (pushOutcome, error) {
+		f.sent = append(f.sent, req)
+		// The phone registers again while this send is in flight.
+		f.db.Set(pushTestPath+"/token", "c-token-two")
+		f.db.Set(pushTestPath+"/updated_at", f.now.UnixMilli())
+		return pushUnregistered, nil
+	}
+
+	out, errOut := f.sweep(t)
+	if got := mailboxNodeString(t, f.pushNode(t), "token"); got != "c-token-two" {
+		t.Errorf("the token = %q, want the one the phone registered while the sweep was sending: the reap is about the token FCM refused", got)
+	}
+	if v := f.db.Value(pushTestPath + "/prefs"); v == nil {
+		t.Error("the prefs were deleted with the token the sweep meant to reap")
+	}
+	if !strings.Contains(out, "0 tokens reaped") {
+		t.Errorf("output = %q, want the reap not counted: nothing was deleted", out)
+	}
+	if !strings.Contains(errOut, "since this sweep read it") {
+		t.Errorf("stderr = %q, want the entry left alone said out loud", errOut)
+	}
+
+	// The account is not left silent either: the row went with the failed send,
+	// so the next sweep announces the state change to the token that is alive.
+	f.answer = pushSent
+	f.now = f.now.Add(15 * time.Minute)
+	f.sweep(t)
+	if got := len(f.sent); got != 2 {
+		t.Fatalf("the provider was called %d times, want the state change announced to the re-registered token", got)
+	}
+	if got := f.sent[1].Token; got != "c-token-two" {
+		t.Errorf("the second send went to %q, want the token the phone registered", got)
+	}
+}
+
+// TestPushDoesNotReapAPushNodeThePhoneRePaired is the orphan reap's own race.
+// The device node is read at the top of the turn and the push node after it, so
+// a phone that pairs again between the two has a device node that came back and
+// a registration the phone sent to go with it: the push node the reap would
+// delete is the one that pairing is about to use, and the registration message
+// is already consumed.
+func TestPushDoesNotReapAPushNodeThePhoneRePaired(t *testing.T) {
+	f := newPushFixture(t, pushTestNow)
+	// A revoke that removed only the device node: the push node is what is left.
+	f.db.Set(pairPushPath(pushTestUID), map[string]any{"token": mailboxRegistrationToken, "platform": "ios",
+		"updated_at": f.now.UnixMilli(), "prefs": mailboxSwitchState(nil)})
+	f.kill()
+
+	stamped, release := f.db.HoldNext(pushTestPath)
+	res := f.sweepAsync(t)
+	<-stamped
+	// The phone pairs again while this sweep is reading the push node.
+	f.pair(t, mailboxSwitchState(nil))
+	f.db.Set(pushTestPath+"/token", "c-token-two")
+	release()
+	got := <-res
+	if got.err != nil {
+		t.Fatalf("the sweep failed: %v\n%s%s", got.err, got.out, got.errOut)
+	}
+	if v := mailboxNodeString(t, f.pushNode(t), "token"); v != "c-token-two" {
+		t.Errorf("the push node holds %q, want the re-pair's registration left alone: its device node is back", v)
+	}
+	if !strings.Contains(got.out, "0 nodes reaped") {
+		t.Errorf("output = %q, want no orphan counted", got.out)
+	}
+}
+
+// TestPushDoesNotDeleteAPushNodeWrittenInTheReapsWindow is the other half of
+// that guard. The reap reads the device node a second time, and a write can
+// still land in the window the second read leaves — after it has answered and
+// before the delete. The delete is therefore conditional on the ETag of the
+// copy the turn read (rtdb.PutIfMatch), and the database refuses it rather than
+// deleting a node this sweep did not read.
+func TestPushDoesNotDeleteAPushNodeWrittenInTheReapsWindow(t *testing.T) {
+	f := newPushFixture(t, pushTestNow)
+	f.db.Set(pairPushPath(pushTestUID), map[string]any{"token": mailboxRegistrationToken, "platform": "ios",
+		"updated_at": f.now.UnixMilli(), "prefs": mailboxSwitchState(nil)})
+	f.kill()
+
+	first, releaseFirst := f.db.HoldNext(rules.PathDevices + "/" + pushTestUID)
+	again, releaseAgain := f.db.HoldNext(rules.PathDevices + "/" + pushTestUID)
+	res := f.sweepAsync(t)
+	<-first
+	releaseFirst()
+	select {
+	case <-again:
+	case <-time.After(10 * time.Second):
+		releaseAgain()
+		<-res
+		t.Fatalf("the reap never read the device node again: the absence it deletes on is a read from the top of the turn")
+	}
+	// The write lands in the window the second read leaves.
+	f.db.Set(pushTestPath, map[string]any{"token": "c-token-two", "platform": "android",
+		"updated_at": f.now.UnixMilli(), "prefs": mailboxSwitchState(nil)})
+	releaseAgain()
+	got := <-res
+	if got.err != nil {
+		t.Fatalf("the sweep failed: %v\n%s%s", got.err, got.out, got.errOut)
+	}
+	if v := mailboxNodeString(t, f.pushNode(t), "token"); v != "c-token-two" {
+		t.Errorf("the push node holds %q, want the node written since the read left alone: the delete is conditional on the copy it read", v)
+	}
+	if !strings.Contains(got.out, "0 nodes reaped") {
+		t.Errorf("output = %q, want no orphan counted", got.out)
+	}
+}
+
 // TestPushDerivesAPromptAndAStaleConsumer is the two per-account events, derived
 // from what the account's own mailbox already holds: a stored prompt of
 // `kind: prompt` (D168), and a consumer whose heartbeat is past the app's own
@@ -847,6 +999,68 @@ func TestPushFailuresAreWarningsNotTheJobsExitCode(t *testing.T) {
 		if got := mailboxNodeString(t, held, "state"); got != pushStatePending {
 			t.Errorf("the queued row's state = %q, want %q", got, pushStatePending)
 		}
+	}
+}
+
+// TestPushGivesUpOnAnIntentWhoseStateOutlastsItsRetryWindow is §6's "the intent
+// is dropped, never escalated into a late buzz" — and it is the state of the
+// tree until P5.2.7 grants the FCM permission, when every send fails and every
+// event goes through the retry path.
+//
+// A switch nobody turns off is a state change that does not end. If the prune
+// deleted the timed-out intent, the same sweep's consider would derive the same
+// transition, find no row, and write a FRESH intent — a new instant, so a new
+// retry window — which is a send retried for ever and delivered the moment the
+// provider comes back, hours or days after the state change it is about. The
+// row is therefore kept, marked givenup: it is the record of the one
+// notification this transition gets, so nothing re-derives it, and the retry
+// never sends it because it is no longer pending.
+//
+// The provider fails for an hour and a half and then recovers, and the
+// assertion is that the recovery sends NOTHING.
+func TestPushGivesUpOnAnIntentWhoseStateOutlastsItsRetryWindow(t *testing.T) {
+	f := newPushFixture(t, pushTestNow)
+	f.pair(t, mailboxSwitchState(nil))
+	f.kill()
+	f.answer = pushFailed
+
+	f.sweep(t)
+	if got := f.categories(); !slices.Equal(got, []string{pushKillSwitch}) {
+		t.Fatalf("sent %v, want the switch offered once", got)
+	}
+
+	// The retry inside the window, and then the window closing with the switch
+	// still on: 12:15 is inside it, 12:30 is the sweep that closes it, and
+	// 13:30 is an hour past it.
+	for _, step := range []time.Duration{15 * time.Minute, 15 * time.Minute, time.Hour} {
+		f.now = f.now.Add(step)
+		f.sweep(t)
+	}
+	if got := len(f.sent); got != 2 {
+		t.Fatalf("the provider was called %d times, want the first send and the one retry inside the window", got)
+	}
+	rows := f.pushRows(t)
+	if len(rows) != 1 {
+		t.Fatalf("the ledger holds %v, want the one row the switch's transition is recorded by", rows)
+	}
+	var row map[string]any
+	for _, v := range rows {
+		row, _ = v.(map[string]any)
+	}
+	if got := mailboxNodeString(t, row, "state"); got != pushStateGivenUp {
+		t.Errorf("the row's state = %q, want %q: the retry window closed and the switch is still on", got, pushStateGivenUp)
+	}
+
+	// The provider comes back and the switch is still on. Nothing is sent: the
+	// intent was given up, and a buzz now is the late one §6 refuses.
+	f.answer = pushSent
+	f.now = f.now.Add(time.Hour)
+	out, _ := f.sweep(t)
+	if got := len(f.sent); got != 2 {
+		t.Errorf("the provider was called %d times after it recovered, want %d: an intent whose retry window closed is dropped, never sent late", got, 2)
+	}
+	if !strings.Contains(out, "0 sent") {
+		t.Errorf("output = %q, want the sweep to have sent nothing", out)
 	}
 }
 

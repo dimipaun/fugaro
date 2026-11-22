@@ -138,7 +138,11 @@ type pushRow struct {
 	Category string `json:"category"`
 	Key      string `json:"key"`
 	At       int64  `json:"at"`
-	// State is "sent" or "pending": a pending row is an intent §6 retries.
+	// State is "sent", "pending" or "givenup": a pending row is an intent §6
+	// retries inside the retry window, and a givenup row is one whose window
+	// closed while the state change it names was still in force — dropped,
+	// never sent late, and kept so the transition it records is not announced
+	// a second time.
 	State    string `json:"state"`
 	Attempts int    `json:"attempts,omitempty"`
 }
@@ -146,6 +150,7 @@ type pushRow struct {
 const (
 	pushStateSent    = "sent"
 	pushStatePending = "pending"
+	pushStateGivenUp = "givenup"
 )
 
 // pushNode is one paired account's push node as the sender reads it (§3.4's
@@ -267,12 +272,11 @@ func (p *pushSender) Sweep(ctx context.Context) (pushReport, error) {
 // names is no longer derived (§3.7 — the key is the transition, and a transition
 // that has not happened again is still the one notification).
 func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent, rep *pushReport) error {
-	var raw json.RawMessage
-	paired, err := p.db.Get(ctx, rules.PathDevices+"/"+uid, &raw)
+	paired, err := p.paired(ctx, uid)
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", rules.PathDevices+"/"+uid, err)
+		return err
 	}
-	node, found, err := p.readNode(ctx, uid)
+	node, etag, found, err := p.readNode(ctx, uid)
 	if err != nil {
 		return err
 	}
@@ -280,16 +284,7 @@ func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent
 		return nil
 	}
 	if !paired {
-		// §3.4's reaping: a push node whose device node is gone is deleted, not
-		// marked. It is the net for a revoke written by a principal that removed
-		// only the device node, and for a re-registration the consumer had in
-		// flight when the revoke landed — and it is why a leftover node is
-		// harmless rather than why it exists.
-		if err := p.delete(ctx, uid); err != nil {
-			return fmt.Errorf("deleting the orphaned push node %s: %w", pairPushPath(uid), err)
-		}
-		rep.Orphans++
-		return nil
+		return p.reapOrphan(ctx, uid, etag, rep)
 	}
 	now := p.now()
 	events, err := p.accountEvents(ctx, uid)
@@ -310,11 +305,14 @@ func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent
 	for _, e := range events {
 		live[pushRowKey(e)] = true
 	}
-	kept, pruned := pushPrune(node.Ledger, now, live)
-	if len(pruned) > 0 {
+	kept, pruned, givenup := pushPrune(node.Ledger, now, live)
+	if len(pruned) > 0 || len(givenup) > 0 {
 		updates := map[string]any{}
 		for _, key := range pruned {
 			updates["ledger/"+key] = nil
+		}
+		for _, key := range givenup {
+			updates["ledger/"+key] = kept[key]
 		}
 		if err := p.db.Patch(ctx, pairPushPath(uid), updates); err != nil {
 			return fmt.Errorf("pruning %s/ledger: %w", pairPushPath(uid), err)
@@ -351,20 +349,70 @@ func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent
 	return nil
 }
 
-// readNode reads one account's push node.
-func (p *pushSender) readNode(ctx context.Context, uid string) (pushNode, bool, error) {
+// readNode reads one account's push node, and the ETag of the copy it read.
+// The ETag is what makes a deletion conditional on the copy it was decided
+// from: the registration principal writes this node too (mailbox.go's
+// runRegistration merges a re-registration into it), so a delete written from a
+// read the phone has since overtaken takes a token the account cannot get back
+// — the registration message is already consumed.
+func (p *pushSender) readNode(ctx context.Context, uid string) (pushNode, string, bool, error) {
 	var node pushNode
-	found, err := p.db.Get(ctx, pairPushPath(uid), &node)
+	etag, found, err := p.db.GetETag(ctx, pairPushPath(uid), &node)
 	if err != nil {
-		return node, false, fmt.Errorf("reading %s: %w", pairPushPath(uid), err)
+		return node, "", false, fmt.Errorf("reading %s: %w", pairPushPath(uid), err)
 	}
 	if !found {
-		return node, false, nil
+		return node, "", false, nil
 	}
 	if len(node.Ledger) > pushMaxRows {
-		return node, true, fmt.Errorf("%s/ledger holds %d rows, more than this sender writes (%d): the node is not this sender's and nothing was sent to %s", pairPushPath(uid), len(node.Ledger), pushMaxRows, uid)
+		return node, etag, true, fmt.Errorf("%s/ledger holds %d rows, more than this sender writes (%d): the node is not this sender's and nothing was sent to %s", pairPushPath(uid), len(node.Ledger), pushMaxRows, uid)
 	}
-	return node, true, nil
+	return node, etag, true, nil
+}
+
+// paired answers whether the account's device node exists. It is §3.4's
+// allowlist — the admission every send and every write to the sibling push node
+// stands on — so the reap reads it a second time rather than trusting a read
+// from the top of the turn.
+func (p *pushSender) paired(ctx context.Context, uid string) (bool, error) {
+	var raw json.RawMessage
+	found, err := p.db.Get(ctx, rules.PathDevices+"/"+uid, &raw)
+	if err != nil {
+		return false, fmt.Errorf("reading %s: %w", rules.PathDevices+"/"+uid, err)
+	}
+	return found, nil
+}
+
+// reapOrphan deletes a push node whose device node is gone (§3.4's reaping),
+// and it is the net for a revoke written by a principal that removed only the
+// device node — and for a re-registration the consumer had in flight when the
+// revoke landed, which is why a leftover node is harmless rather than why it
+// exists.
+//
+// **Both reads it makes are about the same race.** The absence above is a read
+// from the top of the turn, so the device node is read again here: a re-pair
+// between the two is a device node that came back and a registration the phone
+// sent to go with it, and the push node then belongs to that pairing rather
+// than to the one this turn saw gone. And the delete is conditional on the
+// ETag of the push node this turn read (rtdb.PutIfMatch), so a node written
+// since — that registration landing in the window the second read leaves — is
+// refused by the database rather than deleted.
+func (p *pushSender) reapOrphan(ctx context.Context, uid, etag string, rep *pushReport) error {
+	paired, err := p.paired(ctx, uid)
+	if err != nil {
+		return err
+	}
+	if paired {
+		return nil
+	}
+	deleted, err := p.delete(ctx, uid, etag)
+	if err != nil {
+		return fmt.Errorf("deleting the orphaned push node %s: %w", pairPushPath(uid), err)
+	}
+	if deleted {
+		rep.Orphans++
+	}
+	return nil
 }
 
 // consider is one event's turn: the account's own switch, then quiet hours,
@@ -395,7 +443,9 @@ func (p *pushSender) consider(ctx context.Context, uid string, node *pushNode, e
 		// window or the state change it names is still in force — the prune keeps
 		// those (pushPrune) — and in both cases the account has already been told
 		// and this sweep has nothing to announce. A row that is pending is the
-		// retry's, which has already had its turn this sweep.
+		// retry's, which has already had its turn this sweep, and a row that is
+		// givenup is an intent §6 dropped: its transition was announced as far as
+		// this sender is concerned, and re-deriving it must not resurrect it.
 		rep.Suppressed++
 		return false, nil
 	}
@@ -407,7 +457,10 @@ func (p *pushSender) consider(ctx context.Context, uid string, node *pushNode, e
 }
 
 // retry sends again what a previous sweep left pending, inside the retry
-// window. An intent past it is dropped by pushPrune, never escalated (§6).
+// window. An intent past it is dropped, never escalated (§6): pushPrune marks
+// it givenup while the state change it names is still in force — so the row
+// still dedupes and this filter never sees it again — and deletes it once the
+// state change is over.
 //
 // It answers what deliver answers — whether the account's turn is over because
 // the provider reported the token unregistered — so a retry that reaps the
@@ -422,6 +475,9 @@ func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, rep 
 	sort.Strings(keys)
 	for _, key := range keys {
 		row := node.Ledger[key]
+		// Only an intent is retried. The age test is the retry window's own rule
+		// read here rather than only where the prune applies it, and the prune
+		// has already marked a live row past it givenup.
 		if row.State != pushStatePending || now-row.At >= pushRetryWindow.Milliseconds() {
 			continue
 		}
@@ -510,11 +566,16 @@ func (p *pushSender) deliver(ctx context.Context, uid string, node *pushNode, e 
 		if err := p.deleteRow(ctx, uid, key); err != nil {
 			return false, err
 		}
-		if err := p.deleteToken(ctx, uid, node); err != nil {
+		reaped, err := p.deleteToken(ctx, uid, node.Token)
+		if err != nil {
 			return false, err
 		}
-		rep.Unregistered++
-		p.warnf(fmt.Sprintf("the provider reports the registration token of %s unregistered: the entry was deleted and the phone registers again on its next open", uid))
+		if reaped {
+			rep.Unregistered++
+			p.warnf(fmt.Sprintf("the provider reports the registration token of %s unregistered: the entry was deleted and the phone registers again on its next open", uid))
+		} else {
+			p.warnf(fmt.Sprintf("the provider reports the registration token of %s unregistered, and the entry was left as it is: it carries a token the phone registered since this sweep read it", uid))
+		}
 		return true, nil
 	default:
 		next.Attempts++
@@ -953,32 +1014,55 @@ func pushQuiet(node *pushNode, now time.Time) (bool, string) {
 // and the row is the record of the one. Pruning it would make the next sweep
 // announce it again.
 //
-// It answers the rows to keep and the node keys to delete.
-func pushPrune(ledger map[string]pushRow, now time.Time, live map[string]bool) (map[string]pushRow, []string) {
+// **An intent whose retry window closes while its state change is still in
+// force is marked `givenup` rather than deleted, and that is §6's rule about
+// lateness.** The intent is dropped — the provider was not answering, and a
+// buzz hours late is worse than none — but the transition it names has had its
+// one notification as far as this sender is concerned, so the row stays as the
+// record of that: `consider` dedupes on the row and the event is not derived
+// again, and `retry` never sends it because it is no longer pending. Deleting
+// it here instead would hand the same sweep's `consider` a transition with no
+// row, and it would write a FRESH intent — a new `At`, so a new retry window —
+// which is a send retried for ever and delivered whenever the provider comes
+// back. The row is pruned like any other once the state change is over.
+//
+// It answers the rows to keep, the node keys to delete, and the node keys whose
+// row it has marked.
+func pushPrune(ledger map[string]pushRow, now time.Time, live map[string]bool) (map[string]pushRow, []string, []string) {
 	kept := make(map[string]pushRow, len(ledger))
-	var drop []string
+	var drop, givenup []string
 	for key, row := range ledger {
 		age := now.UnixMilli() - row.At
-		past := age >= pushLedgerWindow.Milliseconds() && !live[key]
 		if row.State == pushStatePending && age >= pushRetryWindow.Milliseconds() {
-			past = true
+			if !live[key] {
+				drop = append(drop, key)
+				continue
+			}
+			row.State = pushStateGivenUp
+			givenup = append(givenup, key)
 		}
-		if past {
+		if age >= pushLedgerWindow.Milliseconds() && !live[key] {
 			drop = append(drop, key)
 			continue
 		}
 		kept[key] = row
 	}
 	sort.Strings(drop)
-	return kept, drop
+	sort.Strings(givenup)
+	return kept, drop, givenup
 }
 
 // pushSentInWindow counts the notifications the account's ledger records inside
 // the cap's hour. A pending row counts: it is an intent the sender has already
-// decided to send, and the cap is about buzzes the account will see.
+// decided to send, and the cap is about buzzes the account will see. A givenup
+// row does not: §6 dropped it, so it is not a buzz the account will see, and
+// counting it would spend the cap on a notification nobody got.
 func pushSentInWindow(ledger map[string]pushRow, now int64) int {
 	n := 0
 	for _, row := range ledger {
+		if row.State == pushStateGivenUp {
+			continue
+		}
 		if now-row.At < pushLedgerWindow.Milliseconds() {
 			n++
 		}
@@ -1014,38 +1098,63 @@ func (p *pushSender) deleteRow(ctx context.Context, uid, key string) error {
 // registration principal's create, §3.5 (b)). It writes no marker, and it never
 // touches `config/admin/devices/**`.
 //
-// node is the node as read, with the row this sweep deleted already taken out
-// of its ledger, so an emptied node is recognised as one.
-func (p *pushSender) deleteToken(ctx context.Context, uid string, node *pushNode) error {
-	if node.contentless() {
-		return p.delete(ctx, uid)
+// **It is conditional on the token it sent to, read again here.** FCM's verdict
+// is about the token this sweep handed the provider, and the node is written by
+// the registration principal too: a phone that rotated its token between the
+// read at the top of the turn and this reap has a token that is alive, and the
+// registration message that carried it is already consumed — so a reap on the
+// stale copy would take the account's push access with nothing left to
+// re-announce it. The node is therefore read again with its ETag and written
+// only while its token is still the one the provider called dead, by
+// PutIfMatch, so a registration landing in the window between the two reads is
+// refused by the database rather than overwritten. It answers whether the token
+// was reaped: a node that carries another token is left exactly as it is.
+func (p *pushSender) deleteToken(ctx context.Context, uid, token string) (bool, error) {
+	var cur map[string]json.RawMessage
+	etag, found, err := p.db.GetETag(ctx, pairPushPath(uid), &cur)
+	if err != nil {
+		return false, fmt.Errorf("reading %s: %w", pairPushPath(uid), err)
 	}
-	updates := map[string]any{"token": nil, "platform": nil, "updated_at": nil}
-	if err := p.db.Patch(ctx, pairPushPath(uid), updates); err != nil {
-		return fmt.Errorf("deleting the stale token of %s: %w", pairPushPath(uid), err)
+	if !found {
+		return false, nil
 	}
-	return nil
+	var current string
+	if raw, ok := cur["token"]; ok {
+		_ = json.Unmarshal(raw, &current)
+	}
+	if current != token {
+		return false, nil
+	}
+	delete(cur, "token")
+	delete(cur, "platform")
+	delete(cur, "updated_at")
+	if len(cur) == 0 {
+		return p.delete(ctx, uid, etag)
+	}
+	if err := p.db.PutIfMatch(ctx, pairPushPath(uid), etag, cur); err != nil {
+		if errors.Is(err, rtdb.ErrPrecondition) {
+			return false, nil
+		}
+		return false, fmt.Errorf("deleting the stale token of %s: %w", pairPushPath(uid), err)
+	}
+	return true, nil
 }
 
-// contentless answers whether the node holds nothing but the registration
-// fields the sender is about to delete: the prefs the app wrote and the ledger
-// the sender wrote are the node's only other content.
-func (n pushNode) contentless() bool {
-	p := n.Prefs
-	if p.KillSwitch != nil || p.CapReached != nil || p.ConsumerOffline != nil ||
-		p.CapNear != nil || p.Prompt != nil || p.QuietHours != nil {
-		return false
+// delete removes a whole push node, conditional on the ETag of the copy the
+// caller decided from (rtdb.PutIfMatch). The node is written by the
+// registration principal as well as by this sender, so a node that has changed
+// since that read is not this sweep's to delete: the database's refusal
+// (ErrPrecondition) is the other writer having got there first, and it is
+// answered as nothing to do rather than as a failure. It answers whether the
+// node went.
+func (p *pushSender) delete(ctx context.Context, uid, etag string) (bool, error) {
+	if err := p.db.PutIfMatch(ctx, pairPushPath(uid), etag, nil); err != nil {
+		if errors.Is(err, rtdb.ErrPrecondition) {
+			return false, nil
+		}
+		return false, fmt.Errorf("deleting %s: %w", pairPushPath(uid), err)
 	}
-	return len(n.Ledger) == 0
-}
-
-// delete removes a whole push node. The database's delete is a PATCH of the
-// child to null, which is how pair.go's own revoke writes its deletions.
-func (p *pushSender) delete(ctx context.Context, uid string) error {
-	if err := p.db.Patch(ctx, pairPushRoot, map[string]any{uid: nil}); err != nil {
-		return fmt.Errorf("deleting %s: %w", pairPushPath(uid), err)
-	}
-	return nil
+	return true, nil
 }
 
 func (p *pushSender) warnf(s string) {
