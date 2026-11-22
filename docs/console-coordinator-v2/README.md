@@ -12,7 +12,12 @@ go with the four sections, and the hooks it named (`coordinator-queue-*`, `coord
 rules outlive it and the new tab keeps them, because both are `.claude/rules/console.md`'s:
 progressive rendering, and jobs never in the first paint. The terminal's design (D820–D828) is **not**
 superseded — it was design-first and no build of it exists. **The owner's Check C0 is moot for the
-tab**: the `coordinator status` read it times is one no screen makes any more. Its status row moves
+tab**: the `coordinator status` read it times is one no screen makes any more. **The surface this
+tab reached through goes with it, and in one place rather than half of it here and half there**:
+the plan's I-ORCH removes the four operations this tab added — `coordinator.status`,
+`coordinator.show`, `coordinator.intents` (D810–D812) and `link.openPullRequest` (K2a, D814–D815)
+— from the allow-lists, and the preload's rows and the renderer's `ReadBridge`/`LinkBridge`
+members with them. Its status row moves
 when console-fixes is merged, not here (see the rule at the top of [docs/status.md](../status.md)).
 
 **Status as of 2026-11-10: done except the owner's Check C0 (profiling); see [docs/status.md](../status.md) for the current table.** The decisions are in
