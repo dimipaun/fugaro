@@ -29,7 +29,8 @@
 # header, docs/releases/vX.Y.Z.md, its line in
 # website/data/release-summaries.yaml, the cli stream's current in
 # docs/release-streams.yaml, the two doc lines that name the released version,
-# and FEATURES.md's stamp with a commit to it since the previous tag -- which is
+# FEATURES.md's stamp with a commit to it since the previous tag, and
+# website/data/compatibility.yaml's as_of.cli -- which is
 # what the ordinary path's step 2 commits. It is for the case docs/release.md
 # gives it: main's tip is red, and the last green commit already carries the
 # bump, so nothing merged since it rides along. No branch, no pull request and
@@ -1149,7 +1150,7 @@ if [ -n "$at" ]; then
   # at_hint is what the refusals that a missing piece of the bump produces
   # share: --at commits nothing and opens no pull request, so the commit it
   # names has to carry every piece the release's own commit would have written.
-  at_hint="--at tags a commit that already carries $tag's bump -- the plugin version and every skill header (scripts/bump-plugin-version.sh $version), docs/releases/$tag.md, its line in website/data/release-summaries.yaml, the cli stream's current in docs/release-streams.yaml, the two doc lines that name the released version, and FEATURES.md's stamp -- because this run opens no pull request and writes nothing itself: the bump lands on main through a PR first (docs/release.md, \"Before you tag\"), and re-running with that commit's sha is what cuts the release at it"
+  at_hint="--at tags a commit that already carries $tag's bump -- the plugin version and every skill header (scripts/bump-plugin-version.sh $version), docs/releases/$tag.md, its line in website/data/release-summaries.yaml, the cli stream's current in docs/release-streams.yaml, the two doc lines that name the released version, FEATURES.md's stamp and website/data/compatibility.yaml's as_of.cli -- because this run opens no pull request and writes nothing itself: the bump lands on main through a PR first (docs/release.md, \"Before you tag\"), and re-running with that commit's sha is what cuts the release at it"
   # The commit's own files are read from a scratch worktree at it: the stream
   # read, the two doc lines and scripts/bump-plugin-version.sh --check all read
   # the working directory, and the user's checkout is at neither that commit
