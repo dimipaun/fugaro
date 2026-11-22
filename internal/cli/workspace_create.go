@@ -702,7 +702,7 @@ func (s *workspaceProjectStage) people(ctx context.Context) []string {
 	e, lc := s.e, s.e.lc
 	// s.wd is nil on a path where prepare failed before the workdir was set, so
 	// there is no recorded list to carry and the empty one is the answer.
-	var recorded []string
+	recorded := []string{}
 	if s.wd != nil {
 		recorded = recordedWorkspacePeople(s.wd.PrevVars)
 	}
@@ -763,13 +763,21 @@ func rosterHumans(r *workspace.Roster) []string {
 // never written. It is recordedWorkspaceService's shape, one field over: a
 // document this run cannot read is a document with no people to carry, and the
 // people the roster names are what the next run writes anyway.
+//
+// The answer is the empty LIST and never nil, on every path, because nil is
+// `"people": null` in the document this run writes and the root's own variable
+// walks the list: a null is refused at plan time with "iteration over null
+// value" rather than carrying nothing, which is the one thing carrying is for.
 func recordedWorkspacePeople(vars []byte) []string {
 	if len(vars) == 0 {
-		return nil
+		return []string{}
 	}
 	var v workspaceVars
 	if err := json.Unmarshal(vars, &v); err != nil {
-		return nil
+		return []string{}
+	}
+	if v.People == nil {
+		return []string{}
 	}
 	return v.People
 }

@@ -1044,6 +1044,29 @@ func wsSeedRecordedPeople(t *testing.T, people []string) {
 	}
 }
 
+// wsSeedTfvarsWithoutPeople writes the workspace root's tfvars as a release
+// BEFORE var.people left them: a document with no `people` key at all, which is
+// what every workspace whose tfvars predate WC2 holds on that first run.
+func wsSeedTfvarsWithoutPeople(t *testing.T) {
+	t.Helper()
+	if err := os.MkdirAll(wsWorkdirRoot(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := map[string]any{
+		"project":   wsProject,
+		"workspace": wsProjectName,
+		"names":     map[string]any{"workspace_account_id": tf.WorkspaceServiceAccountID},
+		"members":   map[string]any{},
+	}
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wsWorkdirRoot(), infra.VarsFile), append(b, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestWorkspaceVarsNameTheRostersPeople: var.people is the workspace roster's
 // human addresses, read from the workspace's own roster node
 // (`workspaceRosters/<name>`, R6, D2971) — so `fugaro update` renders the people
@@ -1091,6 +1114,40 @@ func TestWorkspaceVarsNameTheRostersPeople(t *testing.T) {
 		}
 		if got := g.tfvars(t).People; !slices.Equal(got, recorded) {
 			t.Errorf("var.people = %v, want the recorded list %v verbatim: a run that cannot read the roster must not empty it, because the empty list plans the deletion of every person's invoke grant", got, recorded)
+		}
+		out := g.out.String()
+		if !strings.Contains(out, "the workspace's roster is not read: ") {
+			t.Errorf("a run that could not read the roster said nothing about it, so an owner cannot tell a workspace with no people from a read that failed:\n%s", out)
+		}
+	})
+
+	t.Run("a roster this run cannot read and no recorded people carries the empty list", func(t *testing.T) {
+		// The first run of this variable over a workspace whose tfvars predate
+		// it: the read fails and there is no list to carry. The document must
+		// still hold `[]` and NOT `null`, because the root's own variable walks
+		// the list — a null is refused at plan time with "iteration over null
+		// value" rather than carrying nothing, which is the one thing carrying
+		// here is for — and because the empty list is the truth of a roster
+		// nobody could read.
+		g := newWSCreateOwnerRig(t, wsProjectName+"\n")
+		wsSeedTfvarsWithoutPeople(t)
+		g.noChanges(t)
+
+		g.check(t)
+		if _, err := g.plan(t, initflow.Env{Interactive: true}); err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		b, err := os.ReadFile(filepath.Join(g.root(), infra.VarsFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatal(err)
+		}
+		people, ok := doc["people"].([]any)
+		if !ok || len(people) != 0 {
+			t.Errorf("the written document carries people = %v, want the empty list []: the root's own validation walks the list, so a null here fails the workspace root's plan on the value's shape instead of converging the workspace", doc["people"])
 		}
 		out := g.out.String()
 		if !strings.Contains(out, "the workspace's roster is not read: ") {
