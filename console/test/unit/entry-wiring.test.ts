@@ -1687,7 +1687,16 @@ describe('the launch the entry wires', () => {
     // `SETTINGS_EDIT_UNBUILT` rather than reaching a half-built flow -- and the
     // surface's `settings.editor.open` reads it at message time.
     expect(index).toContain('let settingsEditorRunner: SettingsEditorRunner = DECLINING_SETTINGS_EDITOR_FLOW')
-    expect(withoutComments(index)).toContain("'settings.editor.open': (args) => settingsEditorRunner.open(args)")
+    // **The row itself is I-OPS's** (`src/main/handlers.ts`), so the two halves
+    // are pinned in the two files: this entry hands the runner over as a reader
+    // (`settingsEditor: () => settingsEditorRunner`), and the handlers module is
+    // where the row that reads it at message time is built. A declaration of the
+    // row here would now be a second, unreachable one.
+    expect(withoutComments(index)).toContain('settingsEditor: () => settingsEditorRunner')
+    const handlers = withoutComments(
+      readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'handlers.ts'), 'utf8'),
+    )
+    expect(handlers).toContain("'settings.editor.open': (args) => deps.settingsEditor().open(args)")
 
     // Both places the entry learns an installation moved cancel the launch its
     // project has in flight: the choose -- "re-chosen" is that installation
