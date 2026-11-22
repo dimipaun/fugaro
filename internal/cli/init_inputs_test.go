@@ -760,12 +760,13 @@ func TestRegionDefaultIsUsEast5(t *testing.T) {
 		t.Errorf("defaultRegion = %q, which is not the shape a region has", defaultRegion)
 	}
 	// Everything else this first run needs came from a flag, so the place is
-	// the only question of the wizard's this run has to answer for the rest of
-	// the test to read the region: the bake switch's Enter follows it (IS7).
+	// the first question of the wizard's this run has to answer for the rest of
+	// the test to read the region: the budget amount's Enter and then the bake
+	// switch's follow it (D2210, IS7).
 	first := func(stdin string) (*initRun, *strings.Builder) {
 		return wizardRun(t, stdin, &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject}, rigor: string(rigor.Pro)})
 	}
-	r, out := first("\n\n")
+	r, out := first("\n\n\n")
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -778,7 +779,7 @@ func TestRegionDefaultIsUsEast5(t *testing.T) {
 	if n := strings.Count(out.String(), "Type "+questionFor("--location").what+": "); n != 1 {
 		t.Errorf("the wizard asked the place %d times, want once:\n%s", n, out)
 	}
-	r, out = first("Not A Region\n" + defaultRegion + "\n\n")
+	r, out = first("Not A Region\n" + defaultRegion + "\n\n\n")
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -805,7 +806,7 @@ func TestRegionQuestionIsNotTheFirestoreQuestion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	regionRun, out := wizardRun(t, "\n\n", &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject}, rigor: string(rigor.Pro)})
+	regionRun, out := wizardRun(t, "\n\n\n", &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject}, rigor: string(rigor.Pro)})
 	if err := regionRun.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1223,11 +1224,12 @@ func TestALocationThatCreatesNothingIsRefused(t *testing.T) {
 // that the region carries no promise.
 func TestSetupPrintsWhereEachThingGoes(t *testing.T) {
 	// A first run whose answers all came from flags: the block is the only
-	// thing it says about the placement, and it is printed before the billing
-	// question, which is the only one left after it.
+	// thing it says about the placement — the budget amount is the one question
+	// left after it (Enter takes its suggestion, D2210), and the billing
+	// question follows that.
 	printed := func(t *testing.T, region string) string {
 		t.Helper()
-		r, out := wizardRun(t, "", &initOptions{
+		r, out := wizardRun(t, "\n", &initOptions{
 			name:             initProjectName,
 			rigor:            string(rigor.Pro),
 			cloud:            cloudOptions{gcpProject: initProject, region: region},
