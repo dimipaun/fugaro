@@ -3445,8 +3445,8 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// The budget block this run's variables get, read from the installation's own
 	// two records and never from the workdir: the alert of a project created by
 	// --managed is what a later plain `fugaro update` carries, so that run plans
-	// no change to it (R5). It is read here, immediately before prepare, because
-	// the read is of the state object prepare's backend is what an Init reaches.
+	// no change to it (R5). Resolved here, immediately before prepare, whose
+	// document it is one key of.
 	if spec, err = r.carriedBudget(ctx, c, spec); err != nil {
 		return outs, false, err
 	}
