@@ -179,9 +179,19 @@ name to each as its final sort key.
 | `slug` ASC, `status` ASC, `updated_at` DESC | a repository's runs in one state: `--state` |
 | `plan_task` ASC, `updated_at` DESC | one plan task's runs: `plan status`, `graph` |
 | `slug` ASC, `plan_task` ASC, `updated_at` DESC | a plan's runs in one repository: `plan status` |
-| `pr` ASC, `updated_at` DESC | one pull request's runs: `--pr` (D3204) |
-| `requested_by` ASC, `updated_at` DESC | one identity's runs: `--mine` |
-| `batch` ASC, `updated_at` DESC | one batch's runs: `--batch` |
+| `pr` ASC, `updated_at` DESC | one pull request's runs, unbounded by repository (D3204) |
+| `requested_by` ASC, `updated_at` DESC | one identity's runs, unbounded by repository |
+| `batch` ASC, `updated_at` DESC | one batch's runs, unbounded by repository |
+| `slug` ASC, `pr` ASC, `updated_at` DESC | one repository's pull request: `runs ls --pr`, which needs exactly one repository (D3204) |
+| `slug` ASC, `requested_by` ASC, `updated_at` DESC | one identity's runs in the repositories a listing resolved: `runs ls --mine` |
+| `slug` ASC, `batch` ASC, `updated_at` DESC | one batch's runs in the repositories a listing resolved: `runs ls --batch` |
+
+`Slugs` is what decides which of a pair above a read needs, and a listing always
+sets it: `runs ls` resolves it from the checkout's repositories, from `--repo`,
+or — under `--all` — by listing every slug of the installation, and `--pr`
+refuses anything but exactly one repository (`internal/cli/runs.go`). So `--pr`,
+`--mine` and `--batch` each arrive with a `slug` bound beside their own, and
+each is served by the row that names both.
 
 A filter the index does not serve is a filter a reader must not apply after the
 page was cut — a page shorter than the caller asked for is the failure this
@@ -349,3 +359,8 @@ written:
 - `estimate.Build` reads a record's `status`, `started_at`, `finished_at`,
   `tier.tier`, `rigor` (through `LevelOf`) and `cost.total_usd`, which is why
   the entry projects exactly those beside the record.
+- `runs ls` sets `Filter.Slugs` in every listing — the checkout's repositories,
+  `--repo`, or, under `--all`, every slug of the installation
+  (`lsSlugs`, `internal/cli/runs.go`) — and refuses `--pr` with anything but
+  exactly one repository, which is why `--pr`, `--mine` and `--batch` each need
+  the composite index that names `slug` beside their own field.
