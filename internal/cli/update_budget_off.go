@@ -36,11 +36,12 @@ import (
 //
 // It runs before the loop's first stage, beside the image catalog's own guard,
 // for the reason that guard does: the config every stage of this run reads is
-// the one this run writes, and a stage that wrote the file from the loaded
-// config would land the same value anyway — the loader folds the word to
-// observe before the decode (localcfg's foldRemovedBudgetMode), so this write is
-// the file catching up with what every reader already answers, and it is said
-// rather than left to whichever stage happens to write the file.
+// the one this run writes. The loader reads the word as the file writes it and
+// lets the config load (localcfg's acceptedBudgetMode, F22), so this step is
+// where the word leaves — and it is applied to the config the run holds as
+// well as to the file, the model-prices step's own pattern, because the
+// converge writes the whole config again at its end: a run that spliced the
+// file alone would put the word back out of the copy it read at boot.
 //
 // It is the update door's alone: `fugaro setup` creates an installation rather
 // than moving one, and the word is one only a release behind this one wrote.
@@ -77,6 +78,9 @@ func (e *initEngine) rewriteLocalBudgetMode() {
 	if err := writeFileAtomic(e.path, out); err != nil {
 		r.warn(fmt.Sprintf("budget.mode: %s says off, which is not a budget mode any more, and the file could not be written (%s): change the line to observe by hand", e.path, oneLineCLI(err.Error())))
 		return
+	}
+	if e.lc.Budget != nil {
+		e.lc.Budget.Mode = policy.ModeObserve
 	}
 	fmt.Fprintf(r.w, "budget.mode: %s said off, which is not a budget mode any more: it now says %s (the file this run replaced is at %s). Review it with git diff and commit it like any change.\n",
 		e.path, policy.ModeObserve, backup)

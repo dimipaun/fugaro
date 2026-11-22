@@ -38,9 +38,9 @@ const offRepoYAML = "budget:\n  mode: off\n"
 
 // TestAnOffLocalConfigStillLoadsForTheMigration: the word is read before
 // validation (F22). A local config that says off is the file `fugaro update`
-// has to load to rewrite it, so the loader folds the word to what it means now
-// rather than refusing the config the update is meant to fix — and the two
-// readers that must still see the word read it from the bytes.
+// has to load to rewrite it, so the loader reads the word the file writes and
+// lets the config load rather than refusing the config the update is meant to
+// fix — and the two readers that must still see the word read it as written.
 func TestAnOffLocalConfigStillLoadsForTheMigration(t *testing.T) {
 	data := []byte(initConfig + offBudgetBlock)
 	path := filepath.Join(t.TempDir(), "aurora.yaml")
@@ -54,8 +54,14 @@ func TestAnOffLocalConfigStillLoadsForTheMigration(t *testing.T) {
 	if lc.Budget == nil {
 		t.Fatalf("the loaded config has no budget block at all:\n%s", data)
 	}
-	if lc.Budget.Mode != policy.ModeObserve {
-		t.Errorf("the loaded budget.mode is %q, want %q: the loader folds the removed word to what it means now, before the strict decode judges it", lc.Budget.Mode, policy.ModeObserve)
+	// The word is held as the file writes it and not landed on observe at this
+	// door: a local config is a file a person writes, and what its readers ask
+	// about it is what the word means from now on (C1 §5, AB3, AB4, AB5).
+	if lc.Budget.Mode != "off" || !policy.Mode(lc.Budget.Mode).Removed() {
+		t.Errorf("the loaded budget.mode is %q, want the word the file writes, held as written", lc.Budget.Mode)
+	}
+	if got := policy.Mode(lc.Budget.Mode).Effective(); got != policy.ModeObserve {
+		t.Errorf("the loaded word means %q from now on, want %q (D3009, D3010)", got, policy.ModeObserve)
 	}
 	if w, off := localcfg.RemovedBudgetMode(data); !off || w != "off" {
 		t.Errorf("RemovedBudgetMode over the file's own bytes = (%q, %v), want (\"off\", true): the listing and the rewrite read the word before anything judges it", w, off)

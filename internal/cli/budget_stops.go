@@ -187,9 +187,11 @@ func capsText(caps budget.GlobalCaps, defaults budget.DefaultCaps) string {
 }
 
 // writtenBudgetMode is this machine's budget mode as its file writes it, and
-// not as the loader reads it: the loader folds the removed word to observe
-// before the decode (localcfg's foldRemovedBudgetMode), so the one reader that
-// has to tell "off" from "observe" reads the bytes the run found.
+// not as the loader would answer it: the loader reads the word the release
+// before this one wrote and holds it as written (localcfg's
+// acceptedBudgetMode, F22), so the one reader that has to tell the word from
+// the observe it now means reads the bytes the run found rather than the
+// loaded config.
 func (e *initEngine) writtenBudgetMode() string {
 	if w, off := localcfg.RemovedBudgetMode(e.old); off {
 		return w
