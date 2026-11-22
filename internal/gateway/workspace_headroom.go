@@ -19,16 +19,19 @@ import (
 // number delivered on the answer it is already sending needs no write to
 // deliver.
 //
-// Every answer of a metered scope carries it: the service's paid-call path
-// writes it off the workspace's own room, on a served call and on a refusal
-// alike (internal/credsvc/forward.go's answer and refuseMeter, pinned by
-// internal/credsvc/meter_test.go). A workspace's own deployment is what answers
-// such a call, and this tree builds it: internal/credsvc's WS2 scope resolves
-// the caller to the workspace and `fugaro update` deploys that service from
-// deploy/terraform/gcp/roots/workspace, and every answer that deployment gives
-// carries the header. An installation's scope has no meter and no room to
-// report, so it writes none. The constant, the writer and the reader are all here, which is
-// what makes the delivery a wiring and not a design.
+// The service's paid-call path writes it off the workspace's own room, on a
+// served call and on a refusal the meter made alike (internal/credsvc's answer
+// and refuseMeter, pinned by internal/credsvc/meter_test.go). The refusals that
+// never reach the meter — a selection with nothing usable, the wait an exhausted
+// credential is answered, a call whose credential the service has already sent
+// to — carry none, and nothing here depends on one: a reader that is told
+// nothing keeps the number it was last told. A workspace's own deployment is
+// what answers a metered call, and this tree builds it: internal/credsvc's WS2
+// scope resolves the caller to the workspace and `fugaro update` deploys that
+// service from deploy/terraform/gcp/roots/workspace. An installation's scope has
+// no meter and no room to report, so it writes none. The constant, the writer
+// and the reader are all here, which is what makes the delivery a wiring and not
+// a design.
 //
 // The value is micro-dollars, decimal: what the workspace's own ceiling still
 // leaves, this month, across all of its members — budget.WorkspaceRoom, read
