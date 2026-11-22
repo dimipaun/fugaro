@@ -589,6 +589,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// repositories publishes on the machine that takes from it (R3, R4). It
 	// reads the cloud and writes nothing, and it computes no alarm (D2991).
 	o.Checks = append(o.Checks, doctorWorkspaceChecks(ctx, lc)...)
+	// The run index's own completeness (RI6, F9): the summary document in the
+	// installation's Firebase project, which is what tells a reader of a short
+	// list that the index is why. It answers nothing for a project with no
+	// Firebase backend, like the checks above it.
+	o.Checks = append(o.Checks, doctorRunIndexChecks(ctx, lc)...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
 		iamSvc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)
