@@ -18,7 +18,11 @@
 #               (exit 2), not a finding.
 #   update      `fugaro update --project <installation>` — the real one, the
 #               command the owner would type — must exit 0. It is the migration
-#               this check is about, and it is NOT read-only.
+#               this check is about, and it is NOT read-only. A step the update
+#               left FOR YOU (a secret's value, the confirmation of a billable
+#               image build, a publish that is yours to make) is not that: the
+#               command is unfinished, not refused, and the row reads UNVERIFIED
+#               with the step counted, telling you to run it yourself.
 #   policy      the published policy, read back through `fugaro project policy
 #               show --json`, must decode on THIS CLI: a policy carrying a key
 #               this Fugaro does not know is the pair that did not converge, and
@@ -31,7 +35,9 @@
 #               repository moves a source the owner did not ask it to touch. A
 #               change in the WORKING TREE is not that — the update offers the
 #               plugin pin's removal as a diff the owner commits or does not —
-#               so it is counted and named, and it is not a failure.
+#               so it is counted and named, and it is not a failure. A checkout
+#               whose update was left for you is UNVERIFIED, for the reason the
+#               update row gives.
 #   restore     the check's own scratch directory is gone.
 #
 # It runs `fugaro update` once for the installation and once per checkout, and
@@ -53,8 +59,11 @@
 # Needs:      bash, mktemp, python3 (every document is read by one python3
 #             reader), git, fugaro. Nothing is installed and nothing is
 #             fetched. Run it from the directory where you would type `fugaro
-#             update`, with your own terminal: the check runs that command with
-#             your cwd unchanged, so anything the update asks is asked to you.
+#             update`: the check runs that command with your cwd unchanged, and
+#             with its output captured so it never waits on you (Fugaro asks for
+#             nothing). A step only you can take is therefore LEFT, counted in
+#             the update row, and the row tells you to run that one command in
+#             your own terminal and run the check again.
 # Where:      the installation you name and the checkouts you point it at, and
 #             NOWHERE else: no other project, no other repository, no other
 #             machine.
@@ -242,10 +251,12 @@ What it would do, in order:
   premise      git -C <checkout> status --porcelain   (one per checkout)
                -> every checkout must be a git checkout with a clean working tree, so that "did the update
                move anything" has an answer. A premise that does not hold STOPS the check (exit 2).
-  update       fugaro update --project ${INSTALLATION:-<installation>}   (with your cwd unchanged)
+  update       fugaro update --project ${INSTALLATION:-<installation>}   (with your cwd unchanged, output captured)
                -> the real update: Terraform, the Firebase rules, the published policy and layer, the job
                images, the local config. It must exit 0. This is the migration the check is about, and it
-               is NOT read-only.
+               is NOT read-only. A step it left for YOU (its output says "N step(s) left for you") means the
+               command is unfinished rather than refused: the row reads UNVERIFIED and tells you to run
+               'fugaro update --project ${INSTALLATION:-<installation>}' yourself and run this check again.
   policy       fugaro project policy show --json --project ${INSTALLATION:-<installation>}
                -> the published policy must decode on this CLI (a key this Fugaro does not know is the
                pair that did not converge). The row names which of model_routing and pause it carries.
@@ -254,7 +265,8 @@ What it would do, in order:
                fugaro update --repo --project ${INSTALLATION:-<installation>} <checkout>
                in it; record them again
                -> nothing may have moved (a commit, a tag, a rewritten ref). A change in the WORKING TREE
-               is the diff the update offers the owner, not a source moving: it is counted and named.
+               is the diff the update offers the owner, not a source moving: it is counted and named. A
+               checkout whose update was left for you is UNVERIFIED, and the row names it.
   restore      the check's own scratch directory is removed.
 
 Costs: nothing by itself. The update it runs is the one you would run anyway.
@@ -486,18 +498,36 @@ step_premise() {
   fact premise PASS "every one of the ${n} checkout(s) this check was pointed at is a git checkout with a clean working tree — $(printf '%s, ' "${names[@]}" | sed 's/, $//') — so what ${PROG}'s two updates do to their source is readable before and after them"
 }
 
+# left_for_you FILE prints the update's own count of the steps it left ("N
+# step(s) left for you") when its output says the run stopped for steps only a
+# person can take, and nothing otherwise. `fugaro update` exits 1 both for that
+# and for a refusal, and the two are opposite things: a refusal is the migration
+# failing, a step left is the migration waiting for the person who ran it. This
+# check runs both doors with their output redirected, so a step that needs a
+# terminal is left rather than asked (initsecrets' canPrompt wants stdout and
+# stderr to be terminals, and --json never prompts), and the sentence is the
+# only thing in the output that tells the two apart.
+left_for_you() { # left_for_you <file>
+  grep -o -E '[0-9]+ step\(s\) left for you' "$1" 2>/dev/null | tail -1
+}
+
 # step_update runs the real installation update. It is the check's own subject:
 # the whole upgrade is that one command (CLAUDE.md's HARD RULE), and an update
 # that does not finish is not the migration this check is about.
 step_update() {
   say "running 'fugaro update --project ${INSTALLATION}' (the migration)"
-  local rc=0
+  local rc=0 left=""
   fugaro update --project "$INSTALLATION" >"$SCRATCH/update.out" 2>&1 || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    fact update FAIL "'fugaro update --project ${INSTALLATION}' did not exit 0 (exit ${rc}): $(head -c 600 "$SCRATCH/update.out" 2>/dev/null). The whole upgrade is that one command, and an update that did not finish is not the migration this check is about. Every row below still reads the checkouts, but the installation is where it stopped"
+  if [ "$rc" -eq 0 ]; then
+    fact update PASS "'fugaro update --project ${INSTALLATION}' exited 0: the installation was converged by the one command that is the whole upgrade (CLAUDE.md's HARD RULE). Its own output was $(wc -l <"$SCRATCH/update.out" | tr -d ' ') line(s), left in the check's scratch directory until the check ends"
     return 0
   fi
-  fact update PASS "'fugaro update --project ${INSTALLATION}' exited 0: the installation was converged by the one command that is the whole upgrade (CLAUDE.md's HARD RULE). Its own output was $(wc -l <"$SCRATCH/update.out" | tr -d ' ') line(s), left in the check's scratch directory until the check ends"
+  left=$(left_for_you "$SCRATCH/update.out" || true)
+  if [ -n "$left" ]; then
+    fact update UNVERIFIED "'fugaro update --project ${INSTALLATION}' converged what asks nothing and exited 1 with ${left}: the one command is not finished because a step only YOU can take is left — a secret's value, the confirmation of a billable image build, a publish that is yours to make. This check runs the door with its output redirected so it can never wait for an answer, and a step that needs a person is the whole of what that leaves behind, so the MIGRATION IS NOT MEASURED YET and this row does not pass: run 'fugaro update --project ${INSTALLATION}' yourself, in your own terminal, answer what it asks, and run this check again. The door's own last line: $(tail -n 1 "$SCRATCH/update.out" 2>/dev/null)"
+    return 0
+  fi
+  fact update FAIL "'fugaro update --project ${INSTALLATION}' did not exit 0 (exit ${rc}) and left no step for you: $(head -c 600 "$SCRATCH/update.out" 2>/dev/null). The whole upgrade is that one command, and an update that refused or failed is not the migration this check is about. Every row below still reads the checkouts, but the installation is where it stopped"
 }
 
 # step_policy reads the published policy back. The criterion is that the two
@@ -538,7 +568,7 @@ step_policy() {
 # not, so it is counted and named and the row still passes.
 step_source() {
   say "updating each checkout and reading whether anything of its source moved (source)"
-  local r name safe rc=0 failed=() moved=() lines=() diffs=() g
+  local r name safe rc=0 lf="" failed=() lefts=() moved=() lines=() diffs=() g
   for r in "${REPOS[@]}"; do
     name=$(checkout_name "$r")
     safe=$(safe_name "$name")
@@ -547,6 +577,11 @@ step_source() {
     fugaro update --repo --project "$INSTALLATION" "$r" >"$SCRATCH/repo-$safe.out" 2>&1 || rc=$?
     committed_state "$r" "$SCRATCH/after-$safe.txt"
     if [ "$rc" -ne 0 ]; then
+      lf=$(left_for_you "$SCRATCH/repo-$safe.out" || true)
+      if [ -n "$lf" ]; then
+        lefts+=("$name (exit ${rc}, ${lf})")
+        continue
+      fi
       failed+=("$name (exit ${rc}: $(head -c 200 "$SCRATCH/repo-$safe.out" 2>/dev/null))")
       continue
     fi
@@ -571,6 +606,10 @@ step_source() {
       i=$((i + 1))
     done
     fact source FAIL "'fugaro update --repo' moved a reference of $(printf '%s, ' "${moved[@]}" | sed 's/, $//') — ${detail%, }. A repository's source is the owner's: the update converges a workflow, a config field or the plugin pin it offers as a diff, and it commits nothing and rewrites no ref (CLAUDE.md's HARD RULE and the update's own design). A moved HEAD, branch or tag is a source that moved without the owner asking"
+    return 0
+  fi
+  if [ "${#lefts[@]}" -gt 0 ]; then
+    fact source UNVERIFIED "'fugaro update --repo' exited 1 with a step only YOU can take left in $(printf '%s; ' "${lefts[@]}" | sed 's/; $//'), so its update did not finish, and a checkout whose update did not finish is one whose before/after state this check cannot read as 'nothing moved': the MIGRATION IS NOT MEASURED there. Every checkout it did finish, it left alone. Run 'fugaro update --repo <checkout>' yourself, in your own terminal, for each of those named above, answer what it asks, and run this check again — this check redirects the door's output so it can never wait for an answer, which is exactly why a step that needs a person is left rather than asked"
     return 0
   fi
   local extra=""

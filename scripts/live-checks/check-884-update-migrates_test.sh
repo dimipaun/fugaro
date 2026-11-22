@@ -11,10 +11,11 @@
 # The readings are the point. Check 884 asks two questions of one update: did it
 # migrate the dev installation, and did any repository's source move? So the
 # cases that matter are the ones where a reading is bent: an installation update
-# that fails, a published policy this CLI refuses or cannot read, a repository
-# update that fails, one that moves a ref of the checkout, and one that leaves a
-# working-tree change it offers as a diff (which is the update's own behaviour
-# and not a repository's source moving).
+# that fails, one that left a step for you (not a failure — the command is
+# unfinished, not refused), a published policy this CLI refuses or cannot read, a
+# repository update that fails or is left for you, one that moves a ref of the
+# checkout, and one that leaves a working-tree change: the last is the diff the
+# update offers, which is its own behaviour and not a repository's source moving.
 #
 # Usage: bash scripts/live-checks/check-884-update-migrates_test.sh
 set -euo pipefail
@@ -71,25 +72,31 @@ update)
     for last in "$@"; do path=$last; done
     name=$(basename "$path")
     status=$(cat "$dir/repoupdate-status-$name" 2>/dev/null || printf 0)
-    if [ "$status" != 0 ]; then
-      printf 'fake fugaro: the repository update was refused\n' >&2
-      exit "$status"
-    fi
-    # What the update did to the checkout, when the case says it did anything:
-    # a script run inside it, which is how a case moves a ref or leaves a
-    # change behind.
+    # What the update said, and what it did to the checkout when the case says
+    # it did anything: a script run inside it, which is how a case moves a ref
+    # or leaves a change behind. A nonzero answer prints the case's own stdout
+    # too, so a case can answer with the sentence a step left for the owner
+    # brings and still exit 1.
     if [ -f "$dir/repoupdate-does-$name" ]; then
       (cd "$path" && bash "$dir/repoupdate-does-$name") >/dev/null 2>&1 || true
     fi
     cat "$dir/repoupdate-$name.out" 2>/dev/null || true
+    if [ "$status" != 0 ]; then
+      if [ -f "$dir/repoupdate-$name.err" ]; then
+        cat "$dir/repoupdate-$name.err" >&2
+      else
+        printf 'fake fugaro: the repository update was refused\n' >&2
+      fi
+      exit "$status"
+    fi
     exit 0
   fi
   status=$(cat "$dir/install-status" 2>/dev/null || printf 0)
+  cat "$dir/install.out" 2>/dev/null || true
   if [ "$status" != 0 ]; then
     if [ -f "$dir/install.err" ]; then cat "$dir/install.err" >&2; else printf 'fake fugaro: the update was refused\n' >&2; fi
     exit "$status"
   fi
-  cat "$dir/install.out" 2>/dev/null || true
   ;;
 project)
   status=$(cat "$dir/policy-status" 2>/dev/null || printf 0)
@@ -327,6 +334,41 @@ test_a_repository_update_that_fails_is_a_finding() {
   expect_contains "$out" "acme/other" "a repository update that fails"
 }
 
+test_an_installation_update_that_leaves_a_step_for_you_is_unverified() {
+  case_dir install_update_left_for_you
+  # The update converged what asks nothing and stopped for a step only the owner
+  # can take: it exits 1 (init_stages' notFinished) and says so, which is the
+  # opposite of a refusal. The check runs the door with its output captured, so
+  # that step is left rather than asked, and the migration is not measured.
+  printf 1 >"$answers/install-status"
+  printf 'fugaro update: test is not finished: 3 step(s) left for you, listed above\n' >"$answers/install.out"
+  run884
+  expect_status "$status" 3 "an installation update that leaves a step for you"
+  expect_row "$out" update UNVERIFIED "an installation update that leaves a step for you"
+  expect_contains "$out" "3 step(s) left for you" "an installation update that leaves a step for you"
+  expect_contains "$out" "run 'fugaro update --project test' yourself" "an installation update that leaves a step for you"
+  expect_row "$out" source PASS "an installation update that leaves a step for you"
+  expect_not_contains "$out" "|FAIL|" "an installation update that leaves a step for you"
+}
+
+test_a_repository_update_that_leaves_a_step_for_you_is_unverified() {
+  case_dir repo_update_left_for_you
+  # A checkout whose update did not finish is one whose before and after this
+  # check cannot read as "nothing moved": UNVERIFIED, naming the checkout and
+  # the step, and NOT a source that moved.
+  printf 1 >"$answers/repoupdate-status-other"
+  printf 'fugaro update: other-app is not finished: 1 step(s) left for you, listed above\n' \
+    >"$answers/repoupdate-other.out"
+  run884
+  expect_status "$status" 3 "a repository update that leaves a step for you"
+  expect_row "$out" source UNVERIFIED "a repository update that leaves a step for you"
+  expect_contains "$out" "other-app (exit 1, 1 step(s) left for you)" "a repository update that leaves a step for you"
+  expect_contains "$out" "the MIGRATION IS NOT MEASURED there" "a repository update that leaves a step for you"
+  expect_contains "$out" "Every checkout it did finish, it left alone" "a repository update that leaves a step for you"
+  expect_contains "$out" "fugaro update --repo <checkout>' yourself" "a repository update that leaves a step for you"
+  expect_not_contains "$out" "|FAIL|" "a repository update that leaves a step for you"
+}
+
 test_a_repository_update_that_moves_a_ref_is_a_finding() {
   case_dir repo_update_moves_a_ref
   cat >"$answers/repoupdate-does-other" <<'SH'
@@ -395,10 +437,12 @@ t test_a_traced_shell_is_refused
 t test_a_repository_that_is_not_a_checkout_stops_the_check
 t test_a_dirty_checkout_stops_the_check
 t test_an_installation_update_that_fails_is_a_finding
+t test_an_installation_update_that_leaves_a_step_for_you_is_unverified
 t test_a_policy_this_cli_refuses_is_a_finding
 t test_a_policy_read_that_does_not_answer_leaves_the_row_unverified
 t test_a_policy_without_the_new_keys_still_passes_and_says_so
 t test_a_repository_update_that_fails_is_a_finding
+t test_a_repository_update_that_leaves_a_step_for_you_is_unverified
 t test_a_repository_update_that_moves_a_ref_is_a_finding
 t test_a_repository_update_that_leaves_a_diff_is_not_a_source_moving
 t test_a_checkout_whose_head_moves_is_a_finding
