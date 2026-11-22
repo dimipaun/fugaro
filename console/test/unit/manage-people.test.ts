@@ -333,6 +333,10 @@ describe('no write control', () => {
   })
 
   it('exports the three kinds, their list and the phrases they quote, and no control of its own', async () => {
+    // `stateWordText` and `instantText` are the two the pools kind draws a
+    // member's state and its next reset with (the model-credentials-routing
+    // plan's VS2): one table of `internal/creds`' words, spelled once, rather
+    // than a second copy in `pools.ts` that would drift from this one.
     const module = await import('../../src/renderer/manage/kinds/people')
     expect(Object.keys(module).sort()).toEqual([
       'ACCOUNTS_RM_DELETE',
@@ -340,8 +344,10 @@ describe('no write control', () => {
       'PEOPLE_KINDS',
       'REVOKE_RECORD',
       'accounts',
+      'instantText',
       'members',
       'roles',
+      'stateWordText',
     ])
   })
 })
