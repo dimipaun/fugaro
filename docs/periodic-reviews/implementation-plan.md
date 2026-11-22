@@ -186,7 +186,7 @@ run — the module has no test of its own that a hermetic test can hold — and 
 | `plugin/skills/working/reference/periodic-reviews.md` | R3, R6 | R3 adds the due signal, the schedule and the rule list; R6 adds §7's sentences — levels 3 and 4 |
 | `docs/recipes.md` | R1, R9, R10 | the `--due` pointer and the checklist line (R1), the `commit-reports` row (R9) and the sentence E8 changes (R10) — levels 1, 4 and 5; **R6 does not touch it**, and **R16 does not either**, which is what keeps R16 and R10 apart |
 | `internal/cli/recipes_skew.go` | R11, R16 | R11 adds the release constant that names `fugaro runs reports`; R16 adds the one that names the `reports` member of the task — levels 3 and 5 |
-| `plugin/skills/working/SKILL.md` | R3, R16 | R3's due signal and the report's place; R16's sentence naming `fugaro run --commit-reports` — levels 3 and 5 (`plugin/periodic_reviews_skill_test.go` is the pin, and R3 writes it at 3) |
+| `plugin/skills/working/SKILL.md` | R3, R16 | R3's due signal and the report's place; R16's sentence naming `fugaro run --recipe commit-reports --commit-reports` — levels 3 and 5 (`plugin/periodic_reviews_skill_test.go` is the pin, and R3 writes it at 3) |
 | `docs/periodic-reviews/README.md` | R6 | the status line, once a task lands |
 
 ## R0. The due computation moves into `internal/digest`
@@ -917,7 +917,7 @@ this one.
 
 ## R16. The launcher hands the stored reports in (D2754)
 
-The half of the transfer that is the launcher's: `fugaro run --commit-reports` reads `reports/`
+The half of the transfer that is the launcher's: `fugaro run --recipe commit-reports --commit-reports` reads `reports/`
 **with the starting person's own launcher account** and passes the objects in with the task, so **no
 job account ever reads `reports/`** and the reports job stays its one writer (ruling 3,
 `docs/bucket-iam/spec.md` §3). R9 is the step that receives them.
@@ -948,7 +948,7 @@ job account ever reads `reports/`** and the reports job stays its one writer (ru
   and refuses it outright, so the gate is what turns that into a launch-time refusal rather than a job
   that dies on a task it cannot parse.
 - **The skill's sentence.** The working skill names the command, so a reader who reaches the opt-in
-  commit is told it is `fugaro run --commit-reports` on the designated repository's checkout — the
+  commit is told it is `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` on the designated repository's checkout — the
   sentence, and the plugin pin that holds it, are R16's (R3's own sentence about where a report lands
   and R6's §7 are separate and do not move).
 - **Files (9):** `internal/cli/run.go` (the flag, its refusals and `taskFlags`),
@@ -1266,7 +1266,7 @@ and the design's own: **no level holds two writers of one file.**
 | `internal/cli/docs_config_management_test.go` | R13 (0), R15 (4) | the registry's count pin, which each task's rows move |
 | `docs/config-management/README.md`, `reconciliation.md` | R13 (0), R15 (4) | the same count, in prose, in the two documents the config-management work owns |
 | `internal/cli/recipes_skew.go` | R11 (3), R16 (5) | R11's constant names `fugaro runs reports`; R16's names the task's `reports` member |
-| `plugin/skills/working/SKILL.md` | R3 (3), R16 (5) | R3's due signal and the report's place; R16's sentence naming `fugaro run --commit-reports` |
+| `plugin/skills/working/SKILL.md` | R3 (3), R16 (5) | R3's due signal and the report's place; R16's sentence naming `fugaro run --recipe commit-reports --commit-reports` |
 | `plugin/skills/working/reference/periodic-reviews.md` | R3 (3), R6 (4), and FC8 (5) if D1449 puts the rules' list there | the rule list and the report's place, §7's two sentences, and the two class rules' names |
 | `docs/periodic-reviews/README.md` | R6 (4), and FC8 (5) if D1449 puts the rules' list there | R6 rewrites the status line; this is the one candidate for FC8's fifth file that already has a writer, which is why the row is listed under both answers (D1449) |
 | `docs/recipes.md` | R1 (1), **R9 (4)**, R10 (5) | the `--due` pointer, the `commit-reports` row, and the sentence E8 changes |
@@ -1901,7 +1901,8 @@ that says whether the vocabulary means what the design says it means. Owner-run,
 **Check 343 — the opt-in commit into the designated repository (R9's).** The owner names
 `reports_commit` in the owner's local project config (`repo`, and `dir` if the reports do not go to
 the default folder) and publishes it — or lets `fugaro update`'s policy stage carry it — then runs
-**one** `fugaro run --commit-reports` in the designated repository's checkout
+**one** `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` in the
+designated repository's checkout
 with the starting person's own launcher account (D2754) and reads what comes back: the pull request
 it opens carries one file per stored report under `<dir>/<slug>/<YYYY>/<key>.md`, the project
 aggregate at `<dir>/<YYYY>/<key>.md` beside them, and the index regenerated over the whole folder;

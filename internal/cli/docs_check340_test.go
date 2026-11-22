@@ -34,6 +34,12 @@ import (
 // now requires of a new owner-run check — the ones already in the register keep
 // the shape their sections have until the work that touches them converts
 // them.
+//
+// Check 343's own pin lives in this file rather than one of its own: the two
+// checks are the same work's, and a second `internal/cli/docs_*_test.go` file
+// moves the census row `docs/rigor-modes/reconciliation.md` keeps of how many
+// folders ship a pin — a figure eight tests hold to the tree — for no reading
+// of the register that this file cannot carry.
 const check340Number = "340"
 
 // check340Sections is the register's own register of written sections, read as
@@ -561,5 +567,91 @@ func TestDocsCheck340IsThePlansNumber(t *testing.T) {
 		if !strings.Contains(plan, want) {
 			t.Errorf("docs/periodic-reviews/implementation-plan.md no longer says %q: the register's row and section are this work's number, and the plan is what claims it", want)
 		}
+	}
+}
+
+// Check 343 — the opt-in commit into the designated repository, R9's check — and
+// the command it is.
+//
+// The check is one command, and that command has TWO flags: `--commit-reports`
+// is refused unless the launch also names `--recipe commit-reports`, because the
+// recipe's `commit_reports` step is what reads the reports the launcher hands in
+// (`checkCommitReportsRecipe`, internal/cli/run_commit_reports.go; the flag's own
+// help in internal/cli/run.go). A row or a section writing the flag alone sends
+// the owner to a launch refused at their terminal — the one reading of the check
+// that is wrong before a single step of it runs — so what is pinned is the whole
+// command, in the row, in the section and in every step that runs it.
+const check343Number = "343"
+
+// check343FullCommand is the whole of what the owner types, as the working skill
+// writes it (plugin/skills/working/SKILL.md) and as this repository's own launch
+// tests spell it (internal/cli/run_commit_reports_test.go).
+const check343FullCommand = `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"`
+
+// check343Section returns Check 343's section, bounded by the next `## ` heading
+// so a check written after it does not widen what is read.
+func check343Section(t *testing.T, register string) string {
+	t.Helper()
+	i := strings.Index(register, "\n## Check "+check343Number+":")
+	if i < 0 {
+		t.Fatalf("%s has no `## Check %s:` section: the row above it points at steps that have to be there", liveChecksDoc, check343Number)
+	}
+	section := register[i+1:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	return section
+}
+
+// check343Row returns Check 343's summary row, or "" when the table has none.
+func check343Row(register string) string {
+	re := regexp.MustCompile(`(?m)^\|\s*` + check343Number + `\s*\|.*$`)
+	return re.FindString(register)
+}
+
+// TestDocsCheck343NamesTheCommandTheOwnerRuns: the row, the section, every step
+// that runs the check, the plan's §P8 and the README's Checks row carry the whole
+// command, and the half of it that is refused stands nowhere on its own.
+func TestDocsCheck343NamesTheCommandTheOwnerRuns(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+
+	row := check343Row(register)
+	if row == "" {
+		t.Fatalf("%s has no summary row for Check %s: a section without its row is half a registration", liveChecksDoc, check343Number)
+	}
+	if !strings.Contains(row, check343FullCommand) {
+		t.Errorf("Check %s's row does not carry the whole command %q: the row is where a reader stops, and `--commit-reports` without its recipe is refused at the terminal", check343Number, check343FullCommand)
+	}
+
+	section := flattenDoc(check343Section(t, register))
+	if !strings.Contains(section, check343FullCommand) {
+		t.Errorf("Check %s's section does not carry the whole command %q", check343Number, check343FullCommand)
+	}
+	// Every step that runs the check names it, not "it": steps 2, 4 and 5 are
+	// three separate launches, and a step saying "run it again" leaves the reader
+	// to guess which of the two flags the previous one used.
+	for _, want := range []string{
+		"2. In the designated repository's checkout, run `" + check343FullCommand + "`",
+		"4. Run `" + check343FullCommand + "` again with nothing new in the store",
+		"5. Leave a file in the folder the store does not hold, run `" + check343FullCommand + "` once more",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check %s's section does not say %q: the steps are three launches of the same command, and each has to name it", check343Number, want)
+		}
+	}
+	// The negative, and the one that matters: the bare flag, in the backticks a
+	// command is written in, nowhere in the register. That is Check 343's own
+	// section today and any future sentence quoting what the owner runs tomorrow.
+	if strings.Contains(register, "`fugaro run --commit-reports`") {
+		t.Errorf("%s still writes `fugaro run --commit-reports` as a command: the launch is refused without `--recipe commit-reports` (internal/cli/run_commit_reports.go), so a reader who types it is stopped at the terminal", liveChecksDoc)
+	}
+
+	plan := flattenDoc(readDoc(t, "docs/periodic-reviews/implementation-plan.md"))
+	if !strings.Contains(plan, check343FullCommand) {
+		t.Errorf("Check %s's paragraph in the plan does not carry the whole command %q: the plan is where the check is defined", check343Number, check343FullCommand)
+	}
+	readme := flattenDoc(readDoc(t, "docs/periodic-reviews/README.md"))
+	if !strings.Contains(readme, check343FullCommand) {
+		t.Errorf("Check %s's Checks row in the README does not carry the whole command %q", check343Number, check343FullCommand)
 	}
 }
