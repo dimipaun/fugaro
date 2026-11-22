@@ -29,26 +29,60 @@ import (
 // `--covers` required for a forge entry and refused for a model one without a
 // --kind flag anyone could set inconsistently with the name beside it.
 
-// workspaceSharedKinds maps a bundle credential's kind to the route record's
-// own spelling (R4), and it is the whole of what may be shared: the three kinds
-// a member's runs can be served. Every other key the bundle holds — the provider
-// key, the review-signing keys, the Bitbucket read consumer, the read-only
-// GitHub App key pair — is refused rather than offered, because a member's run
-// has no route that reaches one.
+// workspaceSharedKind maps a bundle credential's kind to the route record's
+// own spelling (R4), and it is the whole of what may be shared: the kinds a
+// member's runs can be served. A model credential and a forge credential are
+// what a member's run has a route for, and a provider key is shared like any
+// model entry (WC1, D2978, F7) — the bundle holds a provider's key in the two
+// shapes CredentialKey tells apart at that kind's arm: the project's own
+// (credsvc.KindProvider, config.ProviderKeySecret) and one repository's named
+// entry for a provider (credsvc.KindRepoCredential, whose document key carries
+// the repository the copy was made for). Every other key the bundle holds —
+// a repository's own credential, the review-signing keys, the Bitbucket read
+// consumer, the read-only GitHub App key pair — is refused rather than offered:
+// the family's other half with a reason of its own
+// (workspaceShareRepositoryCredential), and the rest because a member's run has
+// no route that reaches one.
 func workspaceSharedKind(key string) (localcfg.WorkspaceShared, string, bool) {
 	name, kind, _, ok := credsvc.CredentialKey(key)
 	if !ok {
 		return localcfg.WorkspaceShared{}, name, false
 	}
 	switch kind {
-	case credsvc.KindModel:
+	case credsvc.KindModel, credsvc.KindProvider:
 		return localcfg.WorkspaceShared{Kind: localcfg.WorkspaceSharedModel}, name, true
+	case credsvc.KindRepoCredential:
+		// The family's two halves are told apart by the credential half of the
+		// document key, which is what CredentialKey reads the tier off too: a
+		// provider's name is a provider's key and is shareable, and
+		// config.AnthropicKeyAccount is the repository's own.
+		if _, credential, ok := credsvc.RepoCredentialByKey(key); ok && credential != config.AnthropicKeyAccount {
+			return localcfg.WorkspaceShared{Kind: localcfg.WorkspaceSharedModel}, name, true
+		}
+		return localcfg.WorkspaceShared{}, name, false
 	case credsvc.KindGit:
 		return localcfg.WorkspaceShared{Kind: localcfg.WorkspaceSharedBitbucket}, name, true
 	case credsvc.KindGitHubApp:
 		return localcfg.WorkspaceShared{Kind: localcfg.WorkspaceSharedGitHub}, name, true
 	}
 	return localcfg.WorkspaceShared{}, name, false
+}
+
+// workspaceShareRepositoryCredential is the refusal of the one name this command
+// is asked for that is a model kind and is still not offered: one repository's
+// OWN Anthropic key (credsvc.KindRepoCredential with config.AnthropicKeyAccount
+// as its credential half, D3008). It is a bundle key the workspace really holds,
+// so the general refusal would be false about it, and the reason is the entry's
+// own: the document key carries the repository the copy was made for, so the
+// entry belongs to that one repository and a member's runs — another
+// repository's — could never be served it (plan §10). A provider's key of the
+// same family is a different entry and is shared like any model entry.
+func workspaceShareRepositoryCredential(credential string) (string, bool) {
+	_, half, ok := credsvc.RepoCredentialByKey(credential)
+	if !ok || half != config.AnthropicKeyAccount {
+		return "", false
+	}
+	return fmt.Sprintf("%s is a repository's own Anthropic key, and a repository's own credential is one repository's by construction: the entry's name carries the repository its copy was made for, so a member's runs — other repositories' — are not the runs it is held for. A provider's key of the same family — provider-key, or a repository's named entry for one — is a different entry and is shared like any model entry (fugaro creds list shows the workspace's own bundle)", credential), true
 }
 
 type workspaceShareOptions struct {
@@ -69,8 +103,11 @@ func newWorkspaceShareCmd() *cobra.Command {
 
 The credential is named as the workspace's bundle holds it — a model credential
 by its own name, the Bitbucket token as bitbucket-token, the GitHub App's key as
-github-app-key — and what it is for is derived from that name, so there is no
-kind to state and none to get wrong.
+github-app-key, a provider key as provider-key or as the repository's own named
+entry for it — and what it is for is derived from that name, so there is no kind
+to state and none to get wrong. A provider key is offered as a model entry, which
+is what a call spent through one is; a repository's own Anthropic key is refused,
+because the entry belongs to that one repository by construction.
 
 --projects names the members this credential may be served to, as a comma
 separated list or repeated, and each must be a member the workspace's own table
@@ -108,7 +145,13 @@ func runWorkspaceShare(cmd *cobra.Command, credential string, o *workspaceShareO
 	}
 	entry, name, ok := workspaceSharedKind(credential)
 	if !ok {
-		return userErr("%s is not a credential the workspace can offer its members: a member's runs are served a model credential (a Claude account's name, anthropic-api-key, a key credential's name) and the two forge credentials (bitbucket-token, github-app-key), and this name is none of them (fugaro creds list shows the workspace's own bundle)", credential)
+		// The one refusal of a model kind has a reason of its own, and it is
+		// asked for before the general sentence, which is about names the
+		// workspace's bundle does not serve at all.
+		if refusal, refused := workspaceShareRepositoryCredential(credential); refused {
+			return userErr("%s", refusal)
+		}
+		return userErr("%s is not a credential the workspace can offer its members: a member's runs are served a model credential (a Claude account's name, anthropic-api-key, a key credential's name, a provider key — the project's provider-key or a repository's named entry of that family) and the two forge credentials (bitbucket-token, github-app-key), and this name is none of them (fugaro creds list shows the workspace's own bundle)", credential)
 	}
 	if entry.Kind == localcfg.WorkspaceSharedModel {
 		if len(o.covers) > 0 {
