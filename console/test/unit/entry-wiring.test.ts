@@ -1669,17 +1669,26 @@ describe('the launch the entry wires', () => {
     // the one the surface and the cancel paths read.
     expect(withoutComments(index).match(/createLaunchRunner\(/g) ?? []).toHaveLength(2)
 
-    // And **both** of `main`'s flows are over that one window's confirmer, never
-    // over the declining one: D1115's "one window, two questions" is one
-    // `createConfirmWindow` call in this whole file and two runners built over
-    // it -- a second window would be a second implementation of the tick, the
-    // delay and the sender gate.
+    // And **every** flow `main` builds is over that one window's confirmer,
+    // never over the declining one: D1115's "one window, two questions" is one
+    // `createConfirmWindow` call in this whole file and three runners built over
+    // it -- the launcher, the older settings edit and the one modal SU2b wires
+    // the Project tab's pencil to -- because a second window would be a second
+    // implementation of the tick, the delay and the sender gate.
     const asked = /const confirmer = createConfirmWindow\(\{[\s\S]*?\n  \}\)\n/.exec(body)
     if (asked === null) throw new Error('the entry builds no confirmer to read')
     expect(withoutComments(index).match(/createConfirmWindow\(/g) ?? []).toHaveLength(1)
     expect(body).toContain('launchRunner = createLaunchRunner(')
     expect(body).toContain('settingsEditRunner = createSettingsEdit(')
+    expect(body).toContain('settingsEditorRunner = createSettingsEditor(')
     expect(body).not.toContain('DECLINING_CONFIRMER')
+
+    // The third runner's fail-closed default is its own declining twin, so a
+    // pencil pressed before `main` has built the window is answered
+    // `SETTINGS_EDIT_UNBUILT` rather than reaching a half-built flow -- and the
+    // surface's `settings.editor.open` reads it at message time.
+    expect(index).toContain('let settingsEditorRunner: SettingsEditorRunner = DECLINING_SETTINGS_EDITOR_FLOW')
+    expect(withoutComments(index)).toContain("'settings.editor.open': (args) => settingsEditorRunner.open(args)")
 
     // Both places the entry learns an installation moved cancel the launch its
     // project has in flight: the choose -- "re-chosen" is that installation
@@ -1693,16 +1702,18 @@ describe('the launch the entry wires', () => {
       chosen[0].indexOf('lifecycle.choose'),
     )
     expect(chosen[0]).toContain('lifecycle.choose')
-    // **And the settings edit with it** (D1115): an installation that moved
+    // **And the settings window with it** (D1115): an installation that moved
     // closes the edit's window too, and one already read for that installation
-    // must not write. Both flows are named, in both places, because the mark the
-    // edit leaves is only reachable while its window is not.
+    // must not write. All three flows are named, in both places, because the mark
+    // an edit leaves is only reachable while its window is not.
     expect(chosen[0]).toContain('settingsEditRunner.cancelFor(chosen.project)')
+    expect(chosen[0]).toContain('settingsEditorRunner.cancelFor(chosen.project)')
 
     const removed = /onRecordRemoved: \(project\) => \{[\s\S]*?\n    \},\n/.exec(body)
     if (removed === null) throw new Error('the entry has no onRecordRemoved to read')
     expect(removed[0]).toContain('launchRunner.cancelFor(project)')
     expect(removed[0]).toContain('settingsEditRunner.cancelFor(project)')
+    expect(removed[0]).toContain('settingsEditorRunner.cancelFor(project)')
   })
 
   it('brings the update policy up with the launcher it defers to, and stops it on the way out', () => {

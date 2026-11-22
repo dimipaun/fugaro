@@ -68,8 +68,13 @@ import { startUpdates } from './updater-electron'
 import { createUpdateSettings } from './updatestore'
 import type { UpdateController } from './updates'
 import { CONFIRM_ENTRY_URL, createConfirmWindow } from './confirm'
-import { createSettingsEdit, DECLINING_SETTINGS_EDITOR } from './settingsedit'
-import type { SettingsEditRunner } from './settingsedit'
+import {
+  createSettingsEdit,
+  createSettingsEditor,
+  DECLINING_SETTINGS_EDITOR,
+  DECLINING_SETTINGS_EDITOR_FLOW,
+} from './settingsedit'
+import type { SettingsEditRunner, SettingsEditorRunner } from './settingsedit'
 import { launchFingerprint } from './launchrules'
 import type { LaunchRecordFacts } from './launchrules'
 import type { InstallationsListReply } from './onboarding'
@@ -888,6 +893,24 @@ let launchRunner = createLaunchRunner({
 let settingsEditRunner: SettingsEditRunner = DECLINING_SETTINGS_EDITOR
 
 /**
+ * settingsEditorRunner is the flow behind `settings.editor.open`: **the one
+ * modal** (SU1, D2902), where `settingsEditRunner` above is the older shape that
+ * runs the dry run before it shows the diff. It defaults to its own declining
+ * twin for the same reason that one does: before `main` has built the window and
+ * the source there is nothing to read, nothing to show and nowhere to write, and
+ * `DECLINING_SETTINGS_EDITOR_FLOW` answers every open with
+ * `SETTINGS_EDIT_UNBUILT` rather than leaving a half-built flow the surface could
+ * reach. `main` replaces it over the **same** window the launcher and the older
+ * edit use (D1115: one window, two questions).
+ *
+ * **This is what the Project tab's pencil reaches** (SU2b). Its `cancelFor` is
+ * called from the two places the rail learns an installation moved, beside the
+ * other two runners: the window is one, and an edit read for an installation
+ * that has moved must not write to it.
+ */
+let settingsEditorRunner: SettingsEditorRunner = DECLINING_SETTINGS_EDITOR_FLOW
+
+/**
  * gated is the whole surface, and it is the join the two modules describe:
  * `handlersFor` answers the twelve operations that read the CLI -- eleven
  * before console L5b added `runs.stats` (`src/source/source.ts`'s
@@ -961,25 +984,25 @@ const gated: ConsoleHandlers = {
   // joined here for the reason the four above are: neither is a read of the
   // active installation's *source*, so `handlersFor` leaves them out
   // (`CliBackedHandlers` in `src/source/source.ts` says so from the other side)
-  // -- `command: null` is the same fact from the table's side. Eleven rows of
-  // the surface spawn nothing at all (the nine that answer the console's own
-  // state or open a window, and these two), and these are the only two of the
-  // eleven that keep a **credential**. Both read `licenceStore`, which is built
+  // -- `command: null` is the same fact from the table's side: neither of these
+  // two spawns a child, and of every row there of that kind they are the only
+  // two that keep a **credential**. Both read `licenceStore`, which is built
   // above and answers for the active installation, and both are unreachable in
   // a reduced console's withheld views by not being on one: a lapsed
   // installation is exactly the case in which the box that takes a renewal has
   // to open (`docs/lapse-read-only/spec.md`).
   'licence.read': () => licenceRead(),
   'licence.save': (args) => licenceSave(args),
-  // **The nine console-improvements operations, each on an explicit stub**
-  // (the console improvements plan, AL). They are named one by one rather than
-  // spread from a table, and that is the whole point of them being here: the
-  // surface's `ConsoleHandlers` is closed, `registerConsoleHandlers` refuses to
-  // build a table with a handler missing, and the check has to keep stopping the
-  // console when a handler is *truly* missing. A spread of an object literal
-  // would let a name be dropped from the record and answered by nothing while
-  // the type still checked; a line each means the difference between a
-  // deliberate stub and a missing handler is one line in this diff.
+  // **The console-improvements operations whose tasks have yet to land, each on
+  // an explicit stub** (the console improvements plan, AL). They are named one by
+  // one rather than spread from a table, and that is the whole point of them
+  // being here: the surface's `ConsoleHandlers` is closed,
+  // `registerConsoleHandlers` refuses to build a table with a handler missing,
+  // and the check has to keep stopping the console when a handler is *truly*
+  // missing. A spread of an object literal would let a name be dropped from the
+  // record and answered by nothing while the type still checked; a line each
+  // means the difference between a deliberate stub and a missing handler is one
+  // line in this diff.
   //
   // **I-OPS replaces them.** That task registers the real handlers through this
   // same table, so the rows keep passing `reducedModeHandlers` and
@@ -993,7 +1016,14 @@ const gated: ConsoleHandlers = {
   'recipes.ls': newOperationStub(),
   'setup.plan': newOperationStub(),
   'setup.apply': newOperationStub(),
-  'settings.editor.open': newOperationStub(),
+  // **`settings.editor.open` is no longer one of them** (SU2b): the Project
+  // tab's pencil is its one caller, and it registers the flow SU1 wrote
+  // (`settingsEditorRunner`, built in `main` over the same window) the way
+  // `settings.edit` above registers its own. The read at message time is what
+  // keeps the fail-closed default honest for a press that arrives before `main`
+  // has built the window: it is answered `SETTINGS_EDIT_UNBUILT` and no window
+  // opens.
+  'settings.editor.open': (args) => settingsEditorRunner.open(args),
   // The models write's two rows (MW1, D2903), registered the way AL registered
   // its nine: the surface, the argv and the flow behind them are here
   // (`src/main/modelsadd.ts`, `src/main/modelsview.ts`), and what these two
@@ -1270,6 +1300,22 @@ async function main(): Promise<void> {
     spawnEdit: (args, phase, layer, shown) => boundSource.settingsEdit(args, phase, layer, shown),
     confirmer,
   })
+  // **The one modal the Project tab's pencil opens** (SU2b, D2902), over the
+  // same window's two-phase confirmer and the same three seams: the read that
+  // names the row and its layer, and the dry run and the write the flow drives
+  // through the source's own plan. It is built inside `main` for the older
+  // edit's reason: the window it needs exists nowhere else, so the runner the
+  // surface reads is either this one or the declining default and never a
+  // half-built pair. It is what replaces the stub the console
+  // improvements' AL left in the surface's table for `settings.editor.open`, and
+  // the older `settings.edit` stays registered beside it and reachable from
+  // nowhere in the renderer.
+  settingsEditorRunner = createSettingsEditor({
+    readSettings: async () => ({ document: (await boundSource.readSettings({})).document }),
+    argvForEdit: (args, phase, layer) => boundSource.settingsEditArgv(args, phase, layer),
+    spawnEdit: (args, phase, layer, shown) => boundSource.settingsEdit(args, phase, layer, shown),
+    confirmer,
+  })
   // **The update policy comes up with the launcher it defers to**, and before
   // the surface exists: `startUpdates` answers null on anything but a packaged
   // macOS app, so this is a no-op on the Linux build and in development, and on
@@ -1321,11 +1367,13 @@ async function main(): Promise<void> {
       // the active one, so the installation being chosen again is the window
       // that must close. Before `lifecycle.choose`, so the cancel is decided
       // while the old installation's window is still the only one open. The
-      // settings edit's window is the same window (D1115), so the same move
-      // cancels it: an edit read from a project that is no longer the active one
-      // would write to the wrong installation.
+      // settings edit's window is the same window (D1115) -- the older flow's
+      // and the one modal's both, and one subject id between them -- so the same
+      // move cancels all three: an edit read from a project that is no longer
+      // the active one would write to the wrong installation.
       launchRunner.cancelFor(chosen.project)
       settingsEditRunner.cancelFor(chosen.project)
+      settingsEditorRunner.cancelFor(chosen.project)
       resolvedBinaries.set(chosen.project, chosen.resolvedBinaryPath)
       return lifecycle.choose(chosen.compatibility).catch(reportAndQuit)
     },
@@ -1343,10 +1391,12 @@ async function main(): Promise<void> {
     // the **active** installation away, and it is handed a record **id**, while
     // a launch in flight names its own installation and the launcher closes a
     // window by project. So every removal this console performs closes the
-    // launch that project has open, active row or not.
+    // launch that project has open, active row or not -- and the settings
+    // window the project has open, either flow's (D1115).
     onRecordRemoved: (project) => {
       launchRunner.cancelFor(project)
       settingsEditRunner.cancelFor(project)
+      settingsEditorRunner.cancelFor(project)
     },
     // The crash reporter's checkbox, on the platforms the owner's ruling of
     // 2026-10-30 gives it (`darwin` and `linux`) and not on Windows. It is the

@@ -3962,8 +3962,12 @@ describe('the spend read’s arguments', () => {
  *   - **Every one of them is inert until the CLI release that carries its
  *     flags**: each floor in `src/shared/version.ts` is `null` today, and the
  *     handler behind each answers 'not available in this build' until I-OPS
- *     registers the real one. The rows are here rather than in a later task
- *     because the allow-list is the thing the whole console spawns through.
+ *     registers the real one -- **except `settings.editor.open`, whose handler
+ *     the console improvements plan's SU2b registered** (`settingsEditorRunner`
+ *     in `src/main/index.ts`), because the pencil that presses it is on screen
+ *     and a stub behind it would make the Project tab's only write dead. The
+ *     rows are here rather than in a later task because the allow-list is the
+ *     thing the whole console spawns through.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
