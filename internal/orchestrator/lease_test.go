@@ -332,6 +332,42 @@ func (c *countingCAS) PutIfMatch(ctx context.Context, path, etag string, v any) 
 	return err
 }
 
+// TestLeaseHolderIsHeldToTheIDRule pins which rule the lease's holder check
+// reads: idRE (validate.go), the pattern a work item's id is held to, and not
+// the narrower agentRE this package's paths hold an id to (checkAgentID,
+// NodeIDs).
+//
+// A holder is a run id — digits and dashes — which both patterns admit, so the
+// two agree on every holder a run writes and the difference shows only on a
+// holder no run writes today: idRE admits an upper-case first character and
+// agentRE does not. The contract's closing section names the rule CG1a moves,
+// so a reader of it must not find a check that is not there; both doors are
+// pinned, NewLease and the read that interprets the node.
+//
+// Mutation: hold the holder to agentRE in either place and the claim is
+// refused, which is what this test fails on.
+func TestLeaseHolderIsHeldToTheIDRule(t *testing.T) {
+	const upper = "Run-1"
+	f := gcpfake.NewRTDB(t)
+	path := mustPath(t, orchestrator.PathLease)
+
+	// The way in: the holder a daemon builds its own claim for.
+	mustLease(t, rtdbClient(t, f), upper, clockAt(leaseAt))
+
+	// The way back in: a node another daemon wrote, whose holder this daemon is
+	// told rather than refused — and not held by it, since the node names
+	// somebody else.
+	lease := mustLease(t, rtdbClient(t, f), loserHolder, clockAt(leaseAt))
+	f.Set(path, map[string]any{"holder": upper, "at": leaseAt.Format(time.RFC3339)})
+	state, err := lease.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquiring the lease a %q holds: %v, and idRE admits the holder", upper, err)
+	}
+	if state.Held || state.Holder != upper {
+		t.Errorf("the lease held by %q reads as %+v, want it read and not held by this daemon", upper, state)
+	}
+}
+
 // refusingCAS answers every conditional write the way a moved ETag does and
 // every read with the real node, so a store that pushed its body again under a
 // fresher ETag would write over a document it never read.
@@ -357,7 +393,7 @@ func clockAt(at time.Time) orchestrator.ServerNow {
 
 func mustLease(t *testing.T, db orchestrator.CAS, holder string, now orchestrator.ServerNow) *orchestrator.Lease {
 	t.Helper()
-	lease, err := orchestrator.NewLease(db, daemonID, holder, now)
+	lease, err := orchestrator.NewLease(db, daemonID, holder, "", now)
 	if err != nil {
 		t.Fatalf("building the lease for %q: %v", holder, err)
 	}

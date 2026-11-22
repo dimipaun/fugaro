@@ -501,6 +501,35 @@ import (
 // the mint reads), a token that may not read the operations area, a month whose
 // lines do not sum and a token minted for the wrong audience, and says what the
 // check recorded of each.
+// licence-key-v2's Checks 560 to 564 are the owner's, and each has fakes of its
+// own. Check 560's are a fake `gcloud` serving the Scheduler job, the licence
+// job, the fire, the execution it started and the job's own log lines over one
+// installation's key: a case says what a tick that renewed the key reads, and
+// what a fire that started no execution reads. Check 561's add a fake `fugaro`
+// answering `doctor --json` and two `licence status --json` reads -- one before
+// the tick and one after it -- so a case bends a revocation the server answered
+// about another key, a tick that reached the server with the key still good, and
+// each answer D2140's unreachable half must produce or refuse (a key given up on
+// a failed check, a state that moved, a failure the record did not count, a
+// last-ok time that moved, a check recorded as an answer). Check 562's are a
+// fake `curl` serving the licence site's own 403 and the CLI's loopback refusal
+// page, and a fake `fugaro` whose `licence login` prints an authorize address
+// and holds a listener, so a case says what a wrong-`state` callback answered,
+// whether the flow was still running after it, and that no key-shaped string
+// reached the block. Check 563's are a fake `fugaro` whose `licence login
+// --device` prints an address and a code and then ends either approved or
+// expired, so a case says what each half holds and that a code which ran out
+// wrote nothing. Check 564's are a fake `curl` over the portal's API and the
+// Paddle SANDBOX API, a fake `fugaro` whose `licence login` prints an authorize
+// address and whose `licence status --json` holds a check the case places before
+// or after the refund, and a fake `gcloud` whose Scheduler job is in a location
+// the installation's own Cloud Run region is NOT (Scheduler does not serve every
+// region, which is what K4.2's module works around), together with the licence
+// job's executions and both of the check's fires: so a case bends a transaction
+// the sandbox does not hold, a renewal that did not move the term, a refund that
+// withdrew only the key the event named rather than the whole licence, a fire
+// that failed, a job in no location the project serves, a tick whose fire started
+// no execution, and an installation that has recorded no check since the refund.
 // Check 760's fakes are a fake `fugaro` answering `doctor --json` and the four
 // `runs ls` reads it times, over a window that names two pull requests -- one of
 // them with no index entry, so its read falls back to the scan -- and a fake
@@ -542,6 +571,41 @@ import (
 // Every row of the block has a failing form and an unmeasurable one, and every
 // case holds that the App's private key reaches neither the block, the output
 // nor the scratch directory.
+// Checks 881 and 882 are the model-credentials routing work's owner-run checks.
+// 881's fakes are a fake `fugaro` (a routing table, a budget, a pool of
+// accounts whose members the case sets a state on, a launch and a run listing)
+// and a fake `gcloud` serving the run's own record out of the runs bucket, so a
+// case says which source of the chain served the run, that the fall-through was
+// flagged and counted, and that nothing was launched where the pool could still
+// serve. Its belong refusal needs no fake: the guard is the script's own, and a
+// case exercises it by pointing the check at an installation whose name carries
+// belong. 882's are a fake `fugaro` (a table that routes
+// two Claude models to Vertex, an `enforce` project with a per-run cap, a launch
+// the case can refuse and a run listing), a fake `gcloud` that mints an
+// impersonated token per job account, serves the job list, the IAM policy, a
+// role's own permissions and the run's record, and a fake `curl` that answers
+// the Vertex probe and records the URL, whether the Authorization header
+// arrived through the `--config` file rather than a command line, and that no
+// value ever reached the call log, so a case says what the service served and
+// priced, what a job's account was refused, and what each finding is.
+// Check 680's fakes are a fake `fugaro`, a fake `gcloud` and a fake `git` over
+// the installation's own project config, written to hold STATE rather than
+// answer: the fake `fugaro` judges the very file the check doctors -- the base
+// image's release against the one the workflow's job has to know, then the
+// credentials service's own switch, then the read the tier makes in its own
+// project -- which is what lets a case arrange an installation by writing that
+// file, and its `troubleshoot` answers the tier the judgement allows while
+// appending an execution line the way a launched job would; the fake `gcloud`
+// serves the project's executions, `projects describe` and a mini object store
+// the bucket's reads come out of; the fake `git` gives a checkout's toplevel and
+// its origin. So a case says what each of D2408's three parts read -- the
+// deliberately refused launch and the absence of an execution behind it, the
+// tier made unavailable by a project that is not there or a service this
+// installation does not publish, and the cloud answer with its cost, its record,
+// its class marker, its artifacts and the bundle that is gone -- that the launch
+// is made only after the decline that proved it refused, that the config comes
+// back byte-identical with its sidecar removed, and that no value of the
+// installation's ever reaches the block.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -638,6 +702,11 @@ var liveCheckScripts = []struct {
 	{"check573.sh", "check573_test.sh"},
 	{"check574.sh", "check574_test.sh"},
 	{"check575.sh", "check575_test.sh"},
+	{"check560.sh", "check560_test.sh"},
+	{"check561.sh", "check561_test.sh"},
+	{"check562.sh", "check562_test.sh"},
+	{"check563.sh", "check563_test.sh"},
+	{"check564.sh", "check564_test.sh"},
 	{"check-760-runs-ls-speed.sh", "check-760-runs-ls-speed_test.sh"},
 	{"check790.sh", "check790_test.sh"},
 	{"check791.sh", "check791_test.sh"},
@@ -647,6 +716,12 @@ var liveCheckScripts = []struct {
 	{"check-840.sh", "check-840_test.sh"},
 	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
 	{"check670.sh", "check670_test.sh"},
+	{"check-881-chain-falls-through.sh", "check-881-chain-falls-through_test.sh"},
+	{"check-882-vertex-capped.sh", "check-882-vertex-capped_test.sh"},
+	{"check680.sh", "check680_test.sh"},
+	{"check-883-pause-resume.sh", "check-883-pause-resume_test.sh"},
+	{"check-884-update-migrates.sh", "check-884-update-migrates_test.sh"},
+	{"check-885-retired-keys.sh", "check-885-retired-keys_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -711,7 +786,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 297 items on one runner (99 scripts, three shards each) and under
+// The suite is 315 items on one runner (105 scripts, three shards each) and under
 // a minute each; a split that dropped one, ran one twice or fell back to
 // everything would show up as a green run that tested less, which is the failure
 // this pins.

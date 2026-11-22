@@ -359,23 +359,32 @@ func (e errDB) GetETag(context.Context, string, any) (string, bool, error) {
 	return "", false, errors.New("the database could not be reached")
 }
 
-// TestTicketDrawnIsASecret pins the ticket itself: drawn from crypto/rand at
-// the width a credential needs, spelled in hex, and different every time. A
-// ticket two callers could predict would be claimable by either of them, and
-// the only thing left between it and the record would be the account the claim
-// checks — a fence this route must not have to lean on.
+// TestTicketDrawnIsASecret pins the ticket's secret: drawn from crypto/rand at
+// the width a credential needs, spelled in hex, carried beside the record's own
+// two names, and different every time. A secret two callers could predict would
+// make the ticket claimable by either of them, and the only thing left between
+// it and the record would be the account the claim checks — a fence this route
+// must not have to lean on.
 func TestTicketDrawnIsASecret(t *testing.T) {
+	f := newTickets(t)
 	seen := map[string]bool{}
 	for range 32 {
-		tkt, err := newTicket()
+		tkt, err := newTicket(f.slug, f.run)
 		if err != nil {
 			t.Fatalf("drawing a ticket: %v", err)
 		}
-		if len(tkt) != ticketBytes*2 {
-			t.Fatalf("the ticket is %d characters, want %d: %d bytes in hex", len(tkt), ticketBytes*2, ticketBytes)
+		// The ticket is the record's own two names beside the secret
+		// (joinIdentityTicket, identity_claim.go): what this test pins is the
+		// SECRET, the part of it a caller could otherwise predict.
+		parts := strings.Split(tkt, identityTicketSeparator)
+		if len(parts) != 3 || parts[0] != f.slug || parts[1] != f.run {
+			t.Fatalf("the ticket %q does not name the record it was drawn for", tkt)
 		}
-		if _, err := hex.DecodeString(tkt); err != nil {
-			t.Fatalf("the ticket is not hex: %v", err)
+		if len(parts[2]) != ticketBytes*2 {
+			t.Fatalf("the ticket's secret is %d characters, want %d: %d bytes in hex", len(parts[2]), ticketBytes*2, ticketBytes)
+		}
+		if _, err := hex.DecodeString(parts[2]); err != nil {
+			t.Fatalf("the ticket's secret is not hex: %v", err)
 		}
 		if seen[tkt] {
 			t.Fatalf("the ticket %q was drawn twice", tkt)

@@ -348,11 +348,12 @@ const (
 	// internal/infra's SignerAccountID holds) and the account LM11 puts the
 	// issuer's single minter row on. It is the address the launcher's signJwt
 	// call named before this work. It is the one value that says whether this
-	// installation HAS an issuer at all -- an installation whose module does not
-	// render the entry has none, and its identity routes answer the contract's
-	// "not served" (R7, I1) -- and it is read here as an OPTIONAL value for
-	// exactly that reason: a service a release before this one deployed must
-	// keep starting rather than refuse to bind a port.
+	// installation HAS an issuer at all -- an installation whose block names no
+	// signer has none, and its identity routes answer the contract's "not
+	// served" (R7, I1) -- and it is read here as an OPTIONAL value for exactly
+	// that reason: a service the installation root rendered before LM12 set the
+	// entry, and one an update has not yet handed a signer to, must keep
+	// starting rather than refuse to bind a port.
 	//
 	// It is not a credential: the service is granted the minter ROLE on this
 	// account through IAM (LM11's row), and the account's own keys are nobody's
@@ -472,14 +473,14 @@ var credentialsTest *credentialsWiring
 
 // credentialsWorkspaceTest is nil in production: C1's constructor for the
 // workspace's resolver, which is NewWorkspaceScopeResolver -- a VARIABLE in
-// another package, assigned by that package's own files (scope_stub.go now,
-// scope_workspace.go when WS2 lands) and by nothing outside it.
+// another package, assigned by that package's own file (scope_workspace.go) and
+// by nothing outside it.
 //
 // A test of this package sets it to record the configuration the process built
 // -- the whole of what WS5 is accepted for, and unobservable through the
-// resolver's own answers until WS2 lands -- and delegates to the real
-// constructor, so that the resolver the process serves under is C1's and not
-// the test's. It is never set outside a test and carries no value.
+// resolver's own answers -- and delegates to the real constructor, so that the
+// resolver the process serves under is C1's and not the test's. It is never set
+// outside a test and carries no value.
 var credentialsWorkspaceTest func(cfg credsvc.WorkspaceScopeConfig) (credsvc.ScopeResolver, error)
 
 // credentialsDatabase builds the client the process reads and writes the

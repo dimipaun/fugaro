@@ -71,6 +71,46 @@ func InstallationStateExists(ctx context.Context, c *Clients, stateBucket string
 	return StateExists(ctx, c, stateBucket, StatePrefixInstallation)
 }
 
+// InstallationBudgetAccount is the billing account the installation root's
+// state records on its alert: the one thing the budget carry takes from the
+// cloud rather than from a document, because a machine that never ran the apply
+// has no document and the alert belongs to a billing account, not to the
+// project (R7 of docs/managed-flag-ergonomics).
+//
+// found=false is "this installation holds no alert": no state object under the
+// root's prefix, a state bucket that is not there (nothing has been applied, so
+// there is no alert to keep), or a state whose resources name none. A state
+// object that cannot be read, or that is not a state this build can read, is
+// the error, and no caller may read it as "no alert": that answer plans the
+// alert's deletion, which the guard then refuses — the loud direction, and the
+// one that says the read failed rather than the alert never existed.
+func InstallationBudgetAccount(ctx context.Context, c *Clients, stateBucket string) (account string, found bool, err error) {
+	names, err := StateObjects(ctx, c, stateBucket, StatePrefixInstallation)
+	if err != nil {
+		if notFound(err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("listing gs://%s/%s: %w", stateBucket, StatePrefixInstallation, err)
+	}
+	for _, name := range names {
+		data, err := ReadStateObject(ctx, c, stateBucket, name)
+		if err != nil {
+			if notFound(err) {
+				continue
+			}
+			return "", false, err
+		}
+		account, found, err := budgetBillingAccountOf(data)
+		if err != nil {
+			return "", false, fmt.Errorf("gs://%s/%s: %w", stateBucket, name, err)
+		}
+		if found {
+			return account, true, nil
+		}
+	}
+	return "", false, nil
+}
+
 // StateExists reports whether the state bucket holds any object under the
 // root's state prefix (StatePrefixInstallation, StatePrefixFirebase).
 // Read-only.

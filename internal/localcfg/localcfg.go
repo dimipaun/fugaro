@@ -187,7 +187,9 @@ type Config struct {
 	// cost estimates (design §10.1).
 	ComputePrices map[string]Price `yaml:"compute_prices,omitempty"`
 	// LogView is the log view Fugaro job logs are read through
-	// (projects/<p>/locations/global/buckets/<b>/views/<v>); empty reads
+	// (projects/<p>/locations/<l>/buckets/<b>/views/<v>, where <l> is the
+	// run log bucket's own location — the mapping's, or `global` for an
+	// installation made before it — and not always a region); empty reads
 	// the project's default logs.
 	LogView string `yaml:"log_view,omitempty"`
 	// SchedulerRegion is where the daily image check's Cloud Scheduler
@@ -1687,7 +1689,10 @@ func (c *Config) Overrides() (pricing.Overrides, error) {
 // validateBudget checks the budget block and the model prices.
 func (c *Config) validateBudget(bad func(string, ...any)) {
 	if b := c.Budget; b != nil {
-		if b.Mode != "" && !policy.ValidMode(b.Mode) {
+		// The word that was a budget mode is read before it is judged, so a
+		// config that says it still loads for the update that rewrites it
+		// (F22; load_removed_mode.go).
+		if b.Mode != "" && !acceptedBudgetMode(b.Mode) {
 			bad("budget.mode %q must be off, observe or enforce", b.Mode)
 		}
 		if b.MaxRunTokens < 0 {

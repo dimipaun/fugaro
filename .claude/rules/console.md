@@ -5,7 +5,7 @@ paths:
 
 # Desktop console (Electron)
 
-- Use exactly the Node version in `package.json`'s `engines.node` (22.x). `.npmrc` sets `engine-strict=true`.
+- Use a Node inside `package.json`'s `engines.node` range (`>=22.23.3 <23` — a newer 22.x patch is fine, another major is not). `.npmrc` sets `engine-strict=true`, so `npm ci` refuses anything outside it at install time.
 - Install with `npm ci --ignore-scripts --no-audit --no-fund --legacy-peer-deps=false`. A global `~/.npmrc` can otherwise skip the vite peer.
 - Pin a new dependency to an exact version (`save-exact`). `test/unit/pinning.test.ts` enforces this.
 - Run `npm run typecheck` and `npm run test:unit -- --maxWorkers=2 --testTimeout=60000`. On a loaded machine, the default timeouts flake.

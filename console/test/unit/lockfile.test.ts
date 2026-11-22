@@ -110,10 +110,11 @@ describe('console/package-lock.json', () => {
     expect(lock.name).toBe(manifest.name)
     expect(root.name).toBe(manifest.name)
     expect(root.version).toBe(manifest.version)
-    // `engines` travels into the lockfile too, and it is a pin here rather than
-    // a range (see test/unit/pinning.test.ts). A manifest Node bumped without
-    // regenerating the lockfile would leave the two disagreeing, which is the
-    // same drift the dependency assertions above exist for.
+    // `engines` travels into the lockfile too, and what it holds here is the
+    // manifest's own value, the bounded Node range (`>=22.23.3 <23`) included
+    // (see test/unit/pinning.test.ts). A manifest Node moved without regenerating
+    // the lockfile would leave the two disagreeing, which is the same drift the
+    // dependency assertions above exist for.
     expect(root.engines, 'the root lock entry must carry the manifest’s engines').toEqual(
       manifest.engines,
     )
