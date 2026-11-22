@@ -763,7 +763,11 @@ func TestDeleteHints(t *testing.T) {
 }
 
 // An API only the local config or the budget flags declare, planned away,
-// says where each comes from.
+// says where each comes from. The Billing Budgets API is named with the flags
+// that declare one AND with the alert an installation already holds, which is
+// what keeps it through a run that passes no budget flag at all (the carry,
+// R5 and R7 of docs/managed-flag-ergonomics) — the flags alone would send a
+// reader to re-pass a trio the run did not need.
 func TestDeleteHintsAPIs(t *testing.T) {
 	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{
 		{Address: `module.installation.google_project_service.this["aiplatform.googleapis.com"]`, Change: tf.Change{Actions: []string{"delete"}}},
@@ -773,10 +777,13 @@ func TestDeleteHintsAPIs(t *testing.T) {
 	if len(hints) != 1 {
 		t.Fatalf("hints = %q, want one about the APIs", hints)
 	}
-	for _, want := range []string{"Vertex AI", "repos.<repo>.vertex", "fugaro update", "--budget"} {
+	for _, want := range []string{"Vertex AI", "repos.<repo>.vertex", "fugaro update", "--budget", "the alert the installation already holds"} {
 		if !strings.Contains(hints[0], want) {
 			t.Errorf("the APIs' hint lacks %q: %q", want, hints[0])
 		}
+	}
+	if strings.Contains(hints[0], "pass them again") {
+		t.Errorf("the APIs' hint still tells the reader to pass the budget flags again, which the carry made unnecessary: %q", hints[0])
 	}
 }
 

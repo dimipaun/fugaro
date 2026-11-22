@@ -109,6 +109,14 @@ var cliStages = []cliStage{
 		build: func(e *initEngine) initflow.Stage { return newPolicyMigrateStage(e) }},
 	{stage: initflow.CredentialsService, ctor: "newCredentialsStage(", covered: true, self: true,
 		build: func(e *initEngine) initflow.Stage { return newCredentialsStage(e) }},
+	// The copy of this installation's model keys into that service's bundle
+	// (update_keys.go, KS12): its own confirmation and never the run's one
+	// (covered: no), because what it writes is every model credential the
+	// installation holds — and --yes does reach it, because it prompts for no
+	// value: an operator who is not the project owner is skipped with the
+	// sentence naming the owner, which is a skip and not a question.
+	{stage: initflow.CredentialsCopy, ctor: "newCredentialsCopyStage(", self: true,
+		build: func(e *initEngine) initflow.Stage { return newCredentialsCopyStage(e) }},
 	{stage: initflow.WorkspaceProject, ctor: "newWorkspaceProjectStage(", noYes: true, self: true,
 		build: func(e *initEngine) initflow.Stage { return newWorkspaceProjectStage(e) }},
 	{stage: initflow.Workspace, ctor: "newWorkspaceStage(", self: true,

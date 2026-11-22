@@ -116,6 +116,47 @@ func TestSweepWritesHeartbeat(t *testing.T) {
 	}
 }
 
+// TestSweepStartedAtIsTheTicksBeginning: started_at is the database's clock at
+// the tick's first answer and ok_at the clock at its end, so on a tick that
+// took any time at all the two differ. A tick that stamped started_at with its
+// own end would report every successful tick as having begun when it finished —
+// the gap a reader measures between the two stamps would always be zero, which
+// is the reading that means "the schedule fired and the tick hung", and a
+// health line that shows it about a healthy tick is worse than one that shows
+// nothing.
+//
+// The database's clock moves one second per answer here, as a tick that takes a
+// while sees it: the tick's beginning and its end are then two readings of one
+// clock rather than one reading written twice.
+//
+// Hand mutation this fails on: stamping started_at in beat's ok branch as well
+// (both stamps land on the tick's last reading, so they are equal).
+func TestSweepStartedAtIsTheTicksBeginning(t *testing.T) {
+	s, f, src := testSweeper(t)
+	ctx := testCtx(t)
+	src.runs, src.prs = testWork()
+	start := time.Date(2026, 11, 2, 9, 30, 0, 0, time.UTC)
+	answers := 0
+	f.SetClock(func() time.Time {
+		answers++
+		return start.Add(time.Duration(answers-1) * time.Second)
+	})
+
+	if _, err := s.Sweep(ctx, []Repo{testRepo()}); err != nil {
+		t.Fatal(err)
+	}
+	hb, found, err := s.Store.ReadHeartbeat(ctx)
+	if err != nil || !found {
+		t.Fatalf("the tick's heartbeat: found=%v err=%v", found, err)
+	}
+	if !atOrJustAfter(hb.StartedAt, start) {
+		t.Errorf("started_at = %v, want the database's clock at the tick's first answer (%v): a tick reports when it began and not when it finished", hb.StartedAt, start)
+	}
+	if !hb.OKAt.After(hb.StartedAt) {
+		t.Errorf("ok_at = %v and started_at = %v: the end of a tick is a later reading of the same clock, and equal stamps are what a tick that never began looks like", hb.OKAt, hb.StartedAt)
+	}
+}
+
 // TestReadHeartbeatRefusesADocumentItCannotRead: the read is typed and strict,
 // as ReadRepoView is and for the same reason (ErrUnreadable) — a document this
 // build cannot read is one it must not pass off as a heartbeat of zeroes, and
