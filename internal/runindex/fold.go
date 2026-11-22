@@ -653,8 +653,33 @@ func ReadSummary(ctx context.Context, st Store) (Summary, error) {
 	return s, err
 }
 
+// Index is the run index as the budget rollover asks about it (budget.Index):
+// the fold's stamp, and the completeness latch the rollover sets when the
+// stamp has fallen behind. It is a type of its own rather than methods on the
+// Fold, because the rollover asks these two questions without folding
+// anything.
+type Index struct{ Store Store }
+
+// FoldedThrough is the summary's own stamp, and false for an index that has
+// never been folded.
+func (i Index) FoldedThrough(ctx context.Context) (time.Time, bool, error) {
+	s, _, err := summaryDoc(ctx, i.Store)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if s.FoldedThrough == nil {
+		return time.Time{}, false, nil
+	}
+	return s.FoldedThrough.UTC(), true, nil
+}
+
+// Incomplete latches the summary's completeness off.
+func (i Index) Incomplete(ctx context.Context, now time.Time) error {
+	return MarkIncomplete(ctx, i.Store, now)
+}
+
 // MarkIncomplete latches the summary's completeness off, so that every reader
-// says the index is still building and `fugaro doctor` names the reindex
+// that prints a short list says why and `fugaro doctor` names the reindex
 // (RI6). It is the rollover's write (RI4): a stamp that has fallen further
 // behind than the days the database keeps is an index whose fold has stopped,
 // and no day may be pruned against it. A summary that is not there at all is
