@@ -363,15 +363,17 @@ type runOptions struct {
 	// joined to the graph through its pull request number (GV1.6).
 	planTask string
 	// rigor is --mode: the rigor mode this run's own launcher asks for
-	// (docs/rigor-modes implementation-plan T1.6). It is the one input that
-	// may raise the mode the run resolves from its configuration and never
-	// lower it (D6), so a launcher that says nothing cannot outvote a
-	// repository that configured one. Empty (the default) is no request at
-	// all: the launch resolves from its layers alone, exactly as it did
-	// before the flag existed, and its task carries no such field. Kept as
-	// the flag's own string and validated against the vocabulary once, in
-	// rigorFlags, because a value outside it is a launcher's mistake rather
-	// than a run's opinion.
+	// (docs/rigor-modes implementation-plan T1.6). It is the narrowest rank
+	// of the mode's order, so it settles the mode the run resolves from its
+	// configuration whether it asks for more or for less (LD3), and only a
+	// floor, which sits outside every layer, holds it back. A launcher that
+	// says nothing asks for nothing and cannot outvote a repository that
+	// configured a mode. Empty (the default) is no request at all: the launch
+	// resolves from its layers alone, exactly as it did before the flag
+	// existed, and its task carries no such field. Kept as the flag's own
+	// string and validated against the vocabulary once, in rigorFlags,
+	// because a value outside it is a launcher's mistake rather than a run's
+	// opinion.
 	rigor string
 	// tier is --tier: the expectation tier this run's own launcher dispatches
 	// it at (docs/task-governance spec §3, implementation-plan T8.1): how much
@@ -387,8 +389,8 @@ type runOptions struct {
 	// implementation-plan SC10, D1517). It writes task.Spec.Security, which
 	// only turns level 3 on — there is no --no-security, and a task that says
 	// `security: false` changes nothing — so the field is a request and not
-	// an override of the repository's own classification, exactly as --mode
-	// raises a mode and cannot lower one. False (the default) writes no field
+	// an override of the repository's own classification, while --mode
+	// settles a mode in either direction (LD3). False (the default) writes no field
 	// and the run's levels are resolved from its configuration and its mode
 	// alone, byte-identical to what the previous release wrote.
 	security bool
@@ -517,16 +519,17 @@ func newRunCmd() *cobra.Command {
 			"on is a reviewed fugaro.yaml change. A follow-up (--pr) keeps its run's choice,\n" +
 			"and --retry takes none (the stored task keeps its own).\n\n" +
 			"--mode MODE asks for a rigor mode for this run: " + rigor.RigorList() + ".\n" +
-			"It may raise the mode the run resolves from its own configuration\n" +
-			"(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)\n" +
-			"and never lower it, so a launch that asks for less cannot outvote a repository\n" +
-			"that asked for more. hotfix is the one exception: it is off the rigor axis and\n" +
-			"ranks below every other mode, so it is taken whole rather than compared, needs\n" +
-			"no opt-in anywhere — a first run, a --pr follow-up and a launch from a coding\n" +
-			"agent's session alike — and no fence or refusal stands in that path. A\n" +
-			"follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it,\n" +
-			"and asking for less than that is refused. --path PATH declares a path this run\n" +
-			"will touch, repeatable, matched against those area rules before the run starts;\n" +
+			"It is the narrowest rank of the mode's order, so it settles the mode the run\n" +
+			"resolves from its own configuration (rigor.default and rigor.areas in\n" +
+			"fugaro.yaml, the project layer's defaults) whether it asks for more or for\n" +
+			"less; only a floor, which sits outside every layer, holds it back (fugaro\n" +
+			"rigor floor). hotfix is the mode the request takes whole rather than by rank:\n" +
+			"it is off the rigor axis and ranks below every other mode, needs no opt-in\n" +
+			"anywhere — a first run, a --pr follow-up and a launch from a coding agent's\n" +
+			"session alike — and no fence or refusal stands in that path. A follow-up\n" +
+			"(--pr) keeps the mode the PR's runs recorded and may only raise it, and asking\n" +
+			"for less than that is refused. --path PATH declares a path this run will\n" +
+			"touch, repeatable, matched against those area rules before the run starts;\n" +
 			"without either flag a first run resolves from its configuration alone, and a\n" +
 			"follow-up from that and the mode it keeps. Both are\n" +
 			"recorded in the run's record and named in the pull request's status line.",
@@ -556,7 +559,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
 	f.BoolVar(&o.commitReports, "commit-reports", false, "hand the project's stored reports (reports/ of the runs bucket) to the run this launch starts: reads them with your own account, uploads every one the checkout's mirror folder does not already hold byte for byte into the run's own reports/, and names them in the task for the commit_reports step to commit. Needs --recipe commit-reports (the step is what reads them), is refused together with --attach, and is refused on a run ID that already has a task")
-	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.RigorList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
+	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.RigorList()+"; it is the narrowest rank of the mode's order, so it settles the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) whether it asks for more or for less, and only a floor, outside every layer, holds it back; hotfix is the mode the request takes whole and needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
 	f.StringArrayVar(&o.contextRepos, "context", nil, "a repository this run reads and never writes, as owner/name: repeatable, at most "+fmt.Sprint(task.MaxContextRepos)+", each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
@@ -568,7 +571,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&o.codeOnly, "code-only", false, "review the pull request's code alone: the reviewer is given no task and judges the diff on its own merits (the per-launch switch beside the repository's agent.review_against_task and the project's published key). Needs a mode: review recipe and --pr, and refused with --spec")
 	f.StringVar(&o.specFile, "spec", "", "review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over "+fmt.Sprint(task.MaxReviewSpecBytes)+" bytes is refused with its size. Needs a mode: review recipe and --pr, and refused with --code-only")
 	f.IntVar(&o.attempts, "attempts", 0, "launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe")
-	f.BoolVar(&o.security, "security", false, "ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — as --mode raises a mode and never lowers one, and a run that says nothing resolves its levels from its configuration alone")
+	f.BoolVar(&o.security, "security", false, "ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — where --mode settles a mode up or down (LD3), and a run that says nothing resolves its levels from its configuration alone")
 	f.BoolVar(&o.noCompression, "no-compression", false, "turn agent.compression off for this run only, overriding fugaro.yaml; there is no flag to turn it on, which is a reviewed fugaro.yaml change")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
@@ -3068,13 +3071,12 @@ var changeSetExcludes = []struct{ name, why string }{
 	{"json", "the several runs a change set launches have no single document"},
 }
 
-// noteRigorRequest says, once per launch, when --mode asks for an on-axis mode
-// the layers already meet: the request may raise and never lower (D6), so such
-// a request is recorded as asked and changes nothing, and a launcher that typed
-// it would otherwise believe it took effect. Hotfix is not one of those cases:
-// it is the mode a request takes whole (rigor.Rigor.PerRun), so a resolution
-// that names the request as the layer that decided it — which is what this
-// reads — is the request that did take effect. It reads the checkout's
+// noteRigorRequest says, once per launch, when --mode asks for the very mode
+// the layers already resolve: the request is the narrowest rank of the order
+// (LD3), so it decides whether it asks for more or for less, and the one
+// request that decides nothing is the request for the mode the run would have
+// been at anyway — recorded as asked, and changing nothing, which a launcher
+// that typed it would otherwise believe took effect. It reads the checkout's
 // fugaro.yaml with the project layer, the closest thing to the base branch the
 // launcher has; without a checkout of repo it cannot tell, and says nothing.
 // Never an error: the runner, reading the base branch, is the one that decides.
@@ -3091,7 +3093,7 @@ func noteRigorRequest(ctx context.Context, o *runOptions, repo string, warn io.W
 		return
 	}
 	resolved := rigor.Resolve(cfg, rigor.Request{Paths: o.paths}).Level
-	fmt.Fprintf(warn, "--mode %s is not higher than the repository's resolved mode %s: it has no effect\n", o.rigor, resolved)
+	fmt.Fprintf(warn, "--mode %s has no effect: this repository already resolves to %s\n", o.rigor, resolved)
 }
 
 // attemptPlan is everything a new run's attempts share, resolved once: the

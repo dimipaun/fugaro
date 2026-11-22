@@ -15,6 +15,12 @@ a spec of its own. It reverses **D1634** and **D1670**
 KS13 waits on that plan's I1, C1's second fact is not needed, and KS3's "under every auth" clause
 is that plan's CM6. The entries they touch are marked in place.
 
+**Amended 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)
+(D3170).** Credentials belong to models is itself superseded in part: every task of it that is not
+merged is withdrawn, its I1 among them, so **KS13 now waits on model credentials routing's I1**
+(its A1), which puts the work of the withdrawn CM6, CM9, CM15 and CM16 in the tree. The entries
+below that named the earlier plan's I1 are marked in place.
+
 ## 1. What the spec asks for, and what the repository already has
 
 | The spec's concept | What the repository has |
@@ -345,7 +351,12 @@ named KS6 and KS9; withdrawn with nothing put in their place, KS13 would never b
 that plan's release 2, which waits on KS13, with it (that plan's F37). So KS13 waits on
 credentials belong to models' I1, its release 1 integration, where those tasks' work is in the
 tree (its F50). The wait is outside this plan's graph, like the release before KS13: the plan's §5
-names it beside the other outside waits.
+names it beside the other outside waits. *Amended 2026-11-22 (D3170):* credentials belong to
+models is itself superseded in part by
+[model credentials routing](../model-credentials-routing/README.md), which withdraws its I1 with
+every other task of it that is not merged, so the rule stands and the wait moves — **KS13 waits on
+model credentials routing's I1**, that plan's release 1 integration, and no longer on a task that
+can never merge (its A1).
 
 **F50 — Rule: C1's second fact is not needed.** C1 named R12's two facts, "provider keys are
 served" and "the stage account is served" (F44, U6). With a stage's account the access of that
@@ -520,7 +531,9 @@ One tension was found and settled: D3006 (an operator's update keeps the mounts)
 - **O13.** KS13 waits on credentials belong to models' I1, which is that plan's release 1
   integration (F49). The wait is outside this graph, which names only this plan's nodes, so a
   launcher follows the plan's levels table and its outside-waits list; the same holds for KS14's
-  and KS16's waits (O9, O3).
+  and KS16's waits (O9, O3). *Amended 2026-11-22 (D3170):* that plan's I1 is withdrawn with every
+  other task of it that is not merged, so **KS13 waits on model credentials routing's I1**, and the
+  levels table and outside-waits list below name that plan.
 
 ## 7. UNVERIFIED
 
