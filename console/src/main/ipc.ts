@@ -627,12 +627,15 @@ export interface ConsoleOperation {
    * **It is a field of the row and never a list of names beside the table.** The
    * design states the rule and its reason: a later cancel is admitted to the kept
    * set by its own row differing from the launch's in this one field, so a gate
-   * that classified by name would refuse a cancel the day it was added. Two rows
-   * carry it today -- `run.launch` and `settings.edit`, the whole of what T12
-   * takes away -- and `assertReachableSurface` refuses the column on a row that
-   * spawns no command, because the rows that spawn nothing are the console's own
-   * answers (the design's kept set, and the key screen §5.6 keeps ungated as the
-   * way out).
+   * that classified by name would refuse a cancel the day it was added. The rows
+   * carrying it are the ones that spawn a command and change something --
+   * `run.launch`, `settings.edit`, `roadmap.move`, `setup.apply` and `models.add`
+   * -- and one row that spawns nothing **as itself** because it drives another
+   * one of them: `settings.editor.open` is the settings write's window, and it
+   * names the row whose plan its every child comes from (`drivesOperation`
+   * below). `assertReachableSurface` refuses the column on every other row that
+   * spawns no command, because those rows are the console's own answers (the
+   * design's kept set, and the key screen §5.6 keeps ungated as the way out).
    *
    * Every other operation is the design's kept set: every read, including the
    * paid views, and the kill switch's state.
@@ -665,6 +668,34 @@ export interface ConsoleOperation {
    * at registration instead.
    */
   readonly installationArgument?: string
+  /**
+   * `drivesOperation` names the operation whose command a row spawns while
+   * fixing no command of its own. `settings.editor.open` is the one row with it:
+   * that operation is the settings write's window (SU1, D2902), its `command` is
+   * `null` because no payload of it becomes an argv here, and every child it
+   * spawns is one phase of `settings.edit`'s own plan, built and spawned through
+   * the source (`src/main/settingsedit.ts`, `createSettingsEditor`).
+   *
+   * **It is a column for `refusedAfterLapse`'s reason, and it is what keeps the
+   * lapse's class honest about a write reached through a window.** The class is
+   * the operations that take a capability away when the key has lapsed, and a
+   * window that drives one of them is one of them: a lapse that refused the write
+   * and kept the window would leave the Project tab's pencil on screen with a
+   * working write behind it, which is exactly what the design's T12 refuses
+   * (`docs/lapse-read-only/spec.md` §3.2).
+   *
+   * `assertReachableSurface` holds it: the name must be a row of this same
+   * table, and it must itself be in the refused class and spawn a command --
+   * which is what admits a row that spawns no command to that class at all.
+   *
+   * **It is a `string` and not an `OperationName`**, for the reason
+   * `installationArgument` is one: `OperationName` is derived from this same
+   * table (`(typeof CONSOLE_OPERATIONS)[number]['name']`), so a column typed
+   * with it would make the table's own type depend on itself. The name is
+   * checked at registration instead, which is where a name no row answers has to
+   * fail.
+   */
+  readonly drivesOperation?: string
 }
 
 /**
@@ -2414,11 +2445,19 @@ export const CONSOLE_OPERATIONS = [
   },
   {
     // The settings editor (SU1, D2902): the one operation of the nine whose
-    // command is **null**, because it spawns nothing as itself. It opens the
+    // command is **null**, because it fixes no argv of its own. It opens the
     // main process's own window for one key of the document the settings read
     // answered -- the entry, the validation, the dry run and the confirmation
     // window are that window's -- and it answers the outcome object rather than
     // a document, exactly as `settings.edit` does.
+    //
+    // **It is the settings write, reached through a window**, so it is in the
+    // lapse's refused class beside `settings.edit` and says which row's command
+    // its children come from: SU2b wires the Project tab's pencil to this row,
+    // and a lapse that refused the write and kept the window would leave the
+    // pencil on screen with a working write behind it. Its payload names no
+    // installation, exactly as the write's does not: the flow writes the settings
+    // document of the installation this console is driving.
     //
     // **`key` is the whole payload.** The layer and the phase are main's,
     // decided from the read's own row and the dry run's document, so a renderer
@@ -2430,6 +2469,8 @@ export const CONSOLE_OPERATIONS = [
     name: 'settings.editor.open',
     method: 'openSettingsEditor',
     command: null,
+    drivesOperation: 'settings.edit',
+    refusedAfterLapse: true,
     flags: [],
     summary: 'the write’s window: one setting’s entry, its dry run and the operator’s confirmation',
     args: [
@@ -4840,8 +4881,9 @@ function boundReason(message: string): string {
  * assertReachableSurface throws unless every entry of a table is one the console
  * may drive: its command and its flags are clear of `NEVER_REACHABLE`, the flags
  * it fixes are the surface's own two, the lapse's refused class holds only rows
- * that spawn a command and names its target installation only in a required
- * `installationName` argument of its own, and no two entries share a name.
+ * that spawn a command or drive one the lapse itself takes away, and names its
+ * target installation only in a required `installationName` argument of its own,
+ * and no two entries share a name.
  *
  * It takes the table as an argument so that the guard is a pure function of one
  * and the test can hand it the mutation directly -- a table with `budget kill`
@@ -4863,17 +4905,41 @@ export function assertReachableSurface(operations: readonly ConsoleOperation[]):
         throw new Error(`${operation.name} fixes ${flag}, which is not a flag the surface may fix`)
       }
     }
-    // The lapse's refused class is the three writes (`run.launch`, `settings.edit`
-    // and `roadmap.move`), and the design's kept set includes every answer the
-    // console gives out of its own process: a row with no command spawns
-    // nothing, so refusing it would take away a read, the key
-    // screen (the way out, §5.6), or the console's own surface -- and never a
-    // capability the licence granted. A later task that wants to refuse one of
-    // these has to come back here and say why, which is the point.
-    if (operation.refusedAfterLapse === true && operation.command === null) {
+    // The lapse's refused class is the operations that change something
+    // (`run.launch`, `settings.edit`, `roadmap.move`, `setup.apply` and
+    // `models.add`), and the design's kept set includes every answer the console
+    // gives out of its own process: a row with no command spawns nothing, so
+    // refusing it would take away a read, the key screen (the way out, §5.6), or
+    // the console's own surface -- and never a capability the licence granted.
+    // The one row that spawns nothing as itself and belongs to the class anyway
+    // is a window that drives one of those operations (`drivesOperation`), which
+    // is checked just below: it spawns the write's own phases through the source,
+    // so a lapse that kept it would keep the write. A later task that wants to
+    // refuse one of these has to come back here and say why, which is the point.
+    if (operation.refusedAfterLapse === true && operation.command === null && operation.drivesOperation === undefined) {
       throw new Error(
         `${operation.name} is refused after a lapse and spawns no command: the operations the lapse takes away are the ones that spawn a command, and the console's own answers stay`,
       )
+    }
+    // A row that drives another one's command (`drivesOperation`) may belong to
+    // the refused class without a command of its own, and only that way: the name
+    // has to be a row of this same table, and for a refused row it has to be a
+    // row the lapse itself takes away -- pointing one window at a read would put
+    // it in the class on a command nobody loses after a lapse, and a name that
+    // matched no row would leave the window working with nothing to refuse.
+    if (operation.drivesOperation !== undefined) {
+      const drivenName = operation.drivesOperation
+      const driven = operations.find((candidate) => candidate.name === drivenName)
+      if (driven === undefined) {
+        throw new Error(
+          `${operation.name} drives ${drivenName}, which is not an operation of this surface`,
+        )
+      }
+      if (operation.refusedAfterLapse === true && (driven.refusedAfterLapse !== true || driven.command === null)) {
+        throw new Error(
+          `${operation.name} is refused after a lapse and drives ${driven.name}, which the lapse does not take away: a row with no command of its own is in the refused class only through an operation the lapse refuses`,
+        )
+      }
     }
     // The lapse gate asks about the installation a row's own payload names
     // (`installationArgument`), so the column has to name an argument of this
