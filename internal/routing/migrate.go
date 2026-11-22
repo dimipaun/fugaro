@@ -63,7 +63,11 @@ import (
 // account for review, adversarial and triage and the Anthropic key everywhere
 // else, and `cascade` went to the cascade. Per-stage accounts and the mix are
 // retired (D3171): their accounts are members of the pools below, which is what
-// folding them into one chain means once the table has one chain per model.
+// folding them into one chain means once the table has one chain per model. A
+// file that writes no auth at all is the state that rule answers nothing for and
+// never Vertex (F49), and this migration reproduces it: an empty Auth reaches
+// nothing rather than the platform's own model, which is the answer the config
+// layer's default would give it.
 //
 // # What the caller must do with the answer
 //
@@ -211,8 +215,14 @@ type Repo struct {
 	// Name is the repository's owner/name, which is what an admission list and
 	// an account's own allow_data_to carry.
 	Name string
-	// Auth is the repository's `agent.auth`, one of config.AgentAuths. An
-	// empty value is vertex, which is config.DefaultAgentAuth.
+	// Auth is the repository's `agent.auth` as the layers in force resolve it,
+	// one of config.AgentAuths: a repository that authenticates with Vertex says
+	// `vertex` here, whether the file wrote it or the config layer's own default
+	// (config.DefaultAgentAuth) did. An empty value is the state C1's rule is
+	// written for — neither the file nor the project layer gives an auth, so
+	// nothing answers and the run is refused (F49) — and it is never Vertex: the
+	// default an empty value must not be read as is exactly the one F49 retires,
+	// because it would send a repository to the platform's own model and bill.
 	Auth string
 	// Accounts are the Claude accounts the repository's file names: the
 	// accounts its subscription stages resolve to — the retired walk's answer
@@ -464,6 +474,15 @@ func (m *migrator) addCall(c *chain, repo Repo, model Model, name string) {
 
 // addAuthSource adds the source the repository's own `agent.auth` gives it.
 func (m *migrator) addAuthSource(c *chain, repo Repo, model, name string) {
+	// A Vertex model the checked-in map spells for no Vertex source cannot be
+	// written as an entry RT3 accepts, and F65/D3196 keeps the whole of such a
+	// call on the release-1 bridge: nothing of it reaches the table, the pool
+	// below included — a chain carrying that pool would send a Vertex model out
+	// on a Claude subscription.
+	if repo.Auth == authVertex && !slices.Contains(m.in.VertexSpelled, model) {
+		m.bridge = append(m.bridge, BridgeEntry{Repo: name, Model: model, Reason: BridgeVertexUnspelled})
+		return
+	}
 	// The accounts this repository's file names — a stage's `claude_account`,
 	// the mix's account, a craft's access, a grade's access — are folded into
 	// the shared pool (D3171, F46), and the chain names that pool before the
@@ -494,15 +513,15 @@ func (m *migrator) addAuthSource(c *chain, repo Repo, model, name string) {
 		// accounts, and the walk falls to it when the pool holds nothing it
 		// may use — the tier order the retired walk used.
 		c.anthropic = appendUnique(c.anthropic, name)
-	case authVertex, "":
-		if !slices.Contains(m.in.VertexSpelled, model) {
-			m.bridge = append(m.bridge, BridgeEntry{Repo: name, Model: model, Reason: BridgeVertexUnspelled})
-			return
-		}
+	case authVertex:
+		// The map spells this model for Vertex, or the guard above would have
+		// bridged the call.
 		c.vertex = appendUnique(c.vertex, name)
 	default:
-		// An auth this release does not know reaches nothing: fail closed, as
-		// the config's own validation refuses such a file before a run sees it.
+		// Nothing answers: an auth this release does not know — fail closed, as
+		// the config's own validation refuses such a file before a run sees it —
+		// and the empty value a file and the project layer both leave unwritten,
+		// which C1's rule answers ok=false for and which is never Vertex (F49).
 	}
 }
 

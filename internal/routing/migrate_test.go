@@ -162,7 +162,7 @@ func TestMigrate(t *testing.T) {
 			Chain: []Source{{Kind: KindVertex, Admit: []string{"acme/vertex"}}},
 		}},
 	}, {
-		name: "an absent auth is vertex",
+		name: "an absent auth reaches nothing, never Vertex (F49)",
 		in: Installation{
 			Project:       "acme/widgets",
 			VertexSpelled: []string{"gemini-3-pro"},
@@ -171,10 +171,20 @@ func TestMigrate(t *testing.T) {
 				Models: []Model{{ID: "gemini-3-pro"}},
 			}},
 		},
-		want: Table{{
-			Match: "gemini-3-pro",
-			Chain: []Source{{Kind: KindVertex, Admit: []string{"acme/vertex"}}},
-		}},
+	}, {
+		name: "a Vertex model with no spelling reaches nothing, even where the file names an account",
+		in: Installation{
+			Project:        "acme/widgets",
+			Accounts:       []string{"ada"},
+			DefaultAccount: "ada",
+			Repos: []Repo{{
+				Name:     "acme/vertex",
+				Auth:     testAuthVertex,
+				Accounts: []string{"ada"},
+				Models:   []Model{{ID: "gemini-9-ultra"}},
+			}},
+		},
+		bridge: []string{"acme/vertex\x00gemini-9-ultra"},
 	}, {
 		name: "vertex with no checked-in spelling goes on the bridge",
 		in: Installation{
