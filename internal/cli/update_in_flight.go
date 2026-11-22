@@ -157,9 +157,9 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 // is not a budget mode any more, read out of the bytes the run found: a run
 // launched under it was launched with no session and with its key in the job
 // (R5, D3009), and the word is exactly what tells such a run apart from one the
-// note's steps can reach. The loader has already folded the word to observe by
-// the time this runs (localcfg's foldRemovedBudgetMode), which is why this reads
-// the file rather than the config.
+// note's steps can reach. The loader holds the word as the file writes it
+// (localcfg's acceptedBudgetMode), and this asks the same bytes the update's
+// rewrite reads, so the two cannot disagree about a config that says it.
 func (e *initEngine) budgetOffRunFinishes() bool {
 	_, off := localcfg.RemovedBudgetMode(e.old)
 	return off
