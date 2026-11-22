@@ -5,8 +5,10 @@
 2026-11-17, on CLI **0.25.0**, every row it can measure before the flip PASSED, recorded in the
 register's "Check 191" section (exit `2`: `review-run` is the row the run could not measure, while the
 `--after-flip` rows and the `--dry-run` row are rows it never reaches — the register says what each of
-them is). **Check 192 has not been run**, and it runs on the release that carries the flip — **0.26.0**,
-since a build without the flip has none of the rows it reads. Check 191 runs on the
+them is). **Check 192 has been run** — the owner's own run of 2026-11-22, on CLI **0.27.0**, the five rows it
+measures all PASSED, recorded in the register's "Check 192" section. It runs on a release that carries the
+flips (B2.7, B3.8, B4.9 and B5.7, first in **0.27.0**; only B1.13 part two is in 0.26.0), since a build
+without them has none of the rows it reads. Check 191 runs on the
 **released** build whose **runner** carries the proxy — **0.22.0**. The plan's Levels table gives the proxy chain
 0.15.0, which has no proxy to measure, and 0.21.0 is the first tag that holds the service's half
 (`internal/credsvc/bitbucketproxy.go` landed 2026-11-07) — but it was cut **without** the runner's,
@@ -196,9 +198,11 @@ header or a URL: each answer is the HTTP status or one plain word, with any URL 
   answered it before it ever read the bundle, so the check reads the bundle itself (`gcloud secrets
   versions list`, of the container `gcloud secrets list` names as the service's own) and stops
   unmeasured when it holds no version Secret Manager will serve.
-- **Three sandbox Bitbucket repositories of that installation**: `CHECK191_REPO` (the proxied one the
-  runs work in), `CHECK191_OTHER_REPO` (a **second** one, for the other-repository refusal) and, for
-  `--after-flip`, `CHECK191_PLAIN_REPO` (one the published policy does **not** proxy). Plus
+- **Two sandbox Bitbucket repositories of that installation**: `CHECK191_REPO` (the proxied one the
+  runs work in) and, for Check 191 alone, `CHECK191_OTHER_REPO` (a **second** one, for the
+  other-repository refusal). `--after-flip` needs `CHECK191_REPO` only: shared jobs give a repository no
+  job of its own and mount no Bitbucket token, so there is no repository that is not proxied to read, and
+  a leftover `CHECK191_PLAIN_REPO` is ignored. Plus
   `CHECK191_OTHER_PR`: the number of an **open** pull request **in `CHECK191_REPO`** — the run's own
   repository, and not the run's own pull request — for the other-pull-request and merge attempts. It
   has to be this repository's: a call naming another repository is refused for the repository before
@@ -260,8 +264,13 @@ header or a URL: each answer is the HTTP status or one plain word, with any URL 
 
 The flip (the plan's B1.13 part two, D500) turns the proxy from a per-repository publish into the
 repository's jobs **giving up the token**: the job no longer mounts the Bitbucket token and its
-account holds no accessor on it. Check 192 reads that, and reads the other half — a repository the
-policy does **not** proxy keeps its mount and keeps working.
+account holds no accessor on it. Check 192 reads that and that a run in the repository still works.
+There is no row for a repository that is not proxied: shared jobs mount no Bitbucket token and a
+repository has no job of its own, so a per-repository job is not something to read.
+
+**What the repository needs first.** Check 192 runs from the proxied repository's own checkout, and that
+repository's `fugaro.yaml` must select a shared profile with `workflows.<name>.job_profile`; without it
+the launch has no shared job to land on.
 
 **Run it from the proxied repository's own checkout** (the directory `fugaro update --repo` was run
 in), or name that directory with `CHECK191_CHECKOUT`. One of its rows is `fugaro doctor`'s
@@ -269,13 +278,12 @@ in), or name that directory with `CHECK191_CHECKOUT`. One of its rows is `fugaro
 the **working directory**, and prints no `bitbucket-direct` line at all anywhere else — which would
 read as a finding about the flip when it is a finding about where you were standing. The check
 resolves the checkout's own origin remote and **stops before it launches anything** if it is not this
-repository's, so that mistake costs a second rather than two runs.
+repository's, so that mistake costs a second rather than a run.
 
 1. **The dry run:**
 
    ```sh
    CHECK191_REPO=<workspace>/<the proxied sandbox repo> \
-   CHECK191_PLAIN_REPO=<workspace>/<a NOT-proxied sandbox repo> \
      bash scripts/live-checks/check191.sh --after-flip --dry-run
    ```
 
@@ -283,7 +291,6 @@ repository's, so that mistake costs a second rather than two runs.
 
    ```sh
    CHECK191_REPO=<workspace>/<the proxied sandbox repo> \
-   CHECK191_PLAIN_REPO=<workspace>/<a NOT-proxied sandbox repo> \
      bash scripts/live-checks/check191.sh --after-flip
    ```
 
@@ -371,14 +378,14 @@ secret carries the label the accessor row is read from. A key
 the run never reached reads `FAIL — not reached`.
 
 **The rows a mode never records.** The block prints its own fixed key list whatever happened, and a mode
-does not record every key in it: Check 191 reads the working run's rows and never Check 192's six (`jobs`,
-`mount`, `accessor`, `doctor`, `run-still-works`, `plain-repo`), nor `dry-run` (only a `--dry-run` plan
-writes that marker); Check 192 reads those six and none of Check 191's — `proxied`, `account-admitted`,
+does not record every key in it: Check 191 reads the working run's rows and never Check 192's five (`jobs`,
+`mount`, `accessor`, `doctor`, `run-still-works`), nor `dry-run` (only a `--dry-run` plan
+writes that marker); Check 192 reads those five and none of Check 191's — `proxied`, `account-admitted`,
 `run-launch`, `run-outcome`, the seven refusals, `review-run` and `ended-identity` do not exist in that
 mode. Those rows read
 `N/A — not part of this mode (<mode>)`, where `<mode>` is `proxy` for Check 191 and `flip` for Check 192.
 `N/A` is neither a pass nor a failure and settles nothing about the check: the exit code counts a `FAIL`
-alone, so a run whose measured rows all held ends `0` however many `N/A` rows its block carries (seven in
+alone, so a run whose measured rows all held ends `0` however many `N/A` rows its block carries (six in
 a Check 191 run, fourteen in a Check 192 one). A key
 the run would have recorded and did not still reads `FAIL — not reached`.
 
