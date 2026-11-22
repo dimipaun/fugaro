@@ -153,10 +153,17 @@ rewrite it cannot set a binding.
 Every write here refuses in a coding agent's session and asks nothing: a change
 that cannot be made is refused with the flag or the command that can make it.`,
 	}
+	// grant and revoke take the MEMBER side (C2) rather than the workspace's own
+	// roster: the member is named by the command's own argument, and its database
+	// is reached with the caller's own credentials, so what they are given is the
+	// selected config's side (WU8's own doc, D2801).
+	grant := workspaceSides{side: workspaceAmbientSide("fugaro workspace user grant")}
 	cmd.AddCommand(
-		newWorkspaceUserAddCmd(open),
-		newWorkspaceUserRmCmd(open),
+		workspaceReported(newWorkspaceUserAddCmd(open), "workspace-user-add"),
+		workspaceReported(newWorkspaceUserRmCmd(open), "workspace-user-rm"),
 		newWorkspaceUserLsCmd(open),
+		workspaceReported(newWorkspaceUserGrantCmd(grant), "workspace-user-grant"),
+		workspaceReported(newWorkspaceUserRevokeCmd(grant), "workspace-user-revoke"),
 	)
 	return cmd
 }

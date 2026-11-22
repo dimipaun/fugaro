@@ -172,18 +172,29 @@ func (a *wu5Audit) Create(ctx context.Context, id string, event []byte) error {
 	return nil
 }
 
-// wu5Authority is the mechanism that holds a member (C2's Authority), with the
-// empty truth of the contract's own stub everywhere this command does not read
-// it: Holds answers what the test set, and AdminBindings answers the live
-// bindings D2823 trusts an admin entry by -- in the spelling the contract's own
-// two mechanisms answer in, the `user:` member a grant names (WU2's folder
-// owners, WU20's token creators), because a fixture that answers the node's bare
-// spelling is a fixture that hides a comparison of two spellings of nobody.
+// wu5Authority is the mechanism that holds a member (C2's Authority): Holds
+// answers what the test set, and AdminBindings answers the live bindings D2823
+// trusts an admin entry by -- in the spelling the contract's own two mechanisms
+// answer in, the `user:` member a grant names (WU2's folder owners, WU20's token
+// creators), because a fixture that answers the node's bare spelling is a
+// fixture that hides a comparison of two spellings of nobody. The methods this
+// command does not read answer the empty truth, declared here rather than taken
+// from the contract's stub, which I1 deleted (the plan's own rule: a task's
+// fakes are declared in its own _test.go).
 type wu5Authority struct {
-	workspace.StubAuthority
 	holds    bool
 	bindings []string
 }
+
+// Kind is the empty kind: the contract names no value for an authority with no
+// mechanism, and this command reads no kind off it.
+func (a *wu5Authority) Kind() workspace.AuthorityKind { return "" }
+
+func (a *wu5Authority) Link(context.Context, workspace.MemberTarget) error   { return nil }
+func (a *wu5Authority) Unlink(context.Context, workspace.MemberTarget) error { return nil }
+
+func (a *wu5Authority) AddAdmin(context.Context, string) error    { return nil }
+func (a *wu5Authority) RemoveAdmin(context.Context, string) error { return nil }
 
 func (a *wu5Authority) Holds(ctx context.Context, m workspace.MemberTarget) (bool, error) {
 	return a.holds, nil
@@ -194,10 +205,11 @@ func (a *wu5Authority) AdminBindings(ctx context.Context) ([]string, error) {
 }
 
 // wu5Member is the member's own database (C2's MemberOps): its grants node, its
-// mirror, and what was written into them. Everything else is the contract's own
-// stub.
+// mirror, and what was written into them. The four methods this command never
+// calls answer the empty truth, declared here rather than taken from the
+// contract's stub, which I1 deleted (the plan's own rule: a task's fakes are
+// declared in its own _test.go).
 type wu5Member struct {
-	workspace.StubMemberOps
 	cloud  *wu5Cloud
 	grants wu5Node
 	mirror wu5Node
@@ -229,6 +241,20 @@ func (m *wu5Member) WriteMirror(ctx context.Context, target workspace.MemberTarg
 	m.mirrorWrite = raw
 	m.writes = append(m.writes, "mirror")
 	m.cloud.wrote("mirror")
+	return nil
+}
+
+func (m *wu5Member) Bindings(context.Context, workspace.MemberTarget) ([]workspace.MemberBinding, error) {
+	return nil, nil
+}
+
+func (m *wu5Member) PendingApply(context.Context, workspace.MemberTarget, workspace.ApplyWant) (workspace.Pending, error) {
+	return workspace.Pending{}, nil
+}
+
+func (m *wu5Member) Offboard(context.Context, workspace.MemberTarget, string) error { return nil }
+
+func (m *wu5Member) Audit(context.Context, workspace.MemberTarget, string, []byte) error {
 	return nil
 }
 

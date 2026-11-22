@@ -63,11 +63,15 @@ to. The workspace owner's config carries the other half: the member table, which
 is how the workspace reaches each member. This family writes the half that
 belongs to the machine it runs on.
 
-The reads are offline: ls and show read this machine's own project configs, no
-bucket and no cloud node, so they work anywhere, a coding agent's session
-included. The writes are local config edits — the diff, the backup and the
-atomic write the fugaro models commands make — and each ends by naming the one
-command that converges the installation: fugaro update.`,
+The reads are offline: ls, show, project ls and status, and user ls and
+domains ls read this machine's own project configs and the workspace's own
+roster, no bucket and no cloud node beyond it, so they work anywhere, a coding
+agent's session included. The writes are of three kinds, and each ends by
+naming the one command that converges the installation: fugaro update — the
+local config edits above, written the way the fugaro models commands write one
+(the diff, the backup and the atomic write); the workspace's own roster, its
+trail and the state of its members, in the workspace's own project; and each
+member's own roster and mirror, written at its own Google Cloud project.`,
 	}
 	cmd.AddCommand(
 		newWorkspaceLsCmd(),
@@ -75,7 +79,7 @@ command that converges the installation: fugaro update.`,
 		newWorkspaceLoginCmd(),
 		newWorkspaceAddCmd(),
 		newWorkspaceRmCmd(),
-		newWorkspaceInitCmd(workspaceInitDepsFor(cmd.OutOrStdout())),
+		workspaceReported(newWorkspaceInitCmd(workspaceInitDepsFor(cmd.OutOrStdout())), "workspace-init"),
 		newWorkspaceProjectCmd(),
 		newWorkspaceUserCmd(workspaceRosterOpenFor()),
 		newWorkspaceDomainsCmd(workspaceRosterOpenFor()),

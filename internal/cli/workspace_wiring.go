@@ -123,7 +123,7 @@ at their own terminal.`,
 	sides := func(s *workspaceOwnerSide) workspaceSides { return workspaceSides{side: s} }
 	link, unlink := &workspaceLinkWiring{}, &workspaceLinkWiring{}
 	cmd.AddCommand(
-		newWorkspaceProjectAddCmd(workspaceProjectAddSeamsFor()),
+		workspaceReported(newWorkspaceProjectAddCmd(workspaceProjectAddSeamsFor()), "workspace-project-add"),
 		newWorkspaceProjectLsCmd(),
 		newWorkspaceProjectStatusCmd(),
 		workspaceReported(newWorkspaceProjectRmCmd(workspaceProjectRmDeps{
