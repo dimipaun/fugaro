@@ -2980,6 +2980,59 @@ func (r *initRun) managedProject(ctx context.Context, c *infra.Clients) (bool, e
 	return ok, nil
 }
 
+// carriedBudget is the alert the installation already holds, for a run whose own
+// flags and wizard answered no budget: the amount and the currency from the
+// project's creation fact — the record a rewrite by `fugaro managed flag` moves,
+// so a rewrite reaches the alert on the next update — and the billing account
+// from the alert's own resource in the installation root's state, which is the
+// one copy of it a machine that never ran the apply can read. Neither comes
+// from the local work directory, which a new machine, a cleaned one or a
+// console on another host does not have (F19, R7 of
+// docs/managed-flag-ergonomics).
+//
+// A run that answered the budget itself carries nothing: its own figures stand,
+// which is D2215's rule — a default never overwrites a recorded amount — seen
+// from the other side. An installation whose creation fact records no amount,
+// or whose state holds no alert, carries nothing either, and that is the answer
+// for every installation that has neither.
+//
+// The account is read FIRST, and the amount only for an installation that has
+// one. The alert's own resource in the state is the one record that says
+// whether this installation holds an alert at all, and an installation that
+// holds none has nothing to carry — so the creation fact, which is a read of
+// the runs bucket and the one both the run's own gate and this carry consult,
+// is not read for it. That is most runs: every unmanaged project, and every
+// managed one whose alert was never applied.
+//
+// A read that fails is this run's warning and not its answer: the carry is what
+// keeps the alert, and a run that cannot make it plans the alert's deletion,
+// which the guard refuses by name with the flags that declare one — the loud
+// direction, and the one that never plans a document that forgot the alert on a
+// read this program could not make.
+func (r *initRun) carriedBudget(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) infra.InstallationSpec {
+	if spec.Budget != nil {
+		return spec
+	}
+	account, found, err := infra.InstallationBudgetAccount(ctx, c, spec.StateBucket)
+	if err != nil {
+		r.warn(fmt.Sprintf("the billing account of %s's budget alert could not be read from the installation's state, so this run carries no alert: %s", safetext.Field(spec.FugaroProject), safetext.Field(err.Error())))
+		return spec
+	}
+	if !found {
+		return spec
+	}
+	budget, ok, _, err := managed.ReadBudget(ctx, c.Storage, c.CRM, spec.FugaroProject, spec.Project)
+	if err != nil {
+		r.warn(fmt.Sprintf("the budget %s's creation fact records could not be read while this installation was being planned, so this run carries no alert: %s", safetext.Field(spec.FugaroProject), safetext.Field(err.Error())))
+		return spec
+	}
+	if !ok {
+		return spec
+	}
+	spec.CarriedBudget = &infra.Budget{BillingAccount: account, Amount: budget.Amount, CurrencyCode: budget.Currency}
+	return spec
+}
+
 // managedScope is whether the installation uses managed projects, decided from
 // the project's own creation fact: the module's managed_deployer_scoped, which
 // is what creates the managed deployer's seven scoped roles and their seven
@@ -3207,6 +3260,19 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
+	// And the alert the installation already holds, the one carry whose figures
+	// are not in a document at all: the amount and the currency come from the
+	// project's creation fact and the billing account from the alert's own
+	// resource in the root's state, so the carry reaches the installation from
+	// any machine (R5, R7 of docs/managed-flag-ergonomics). The run reads them
+	// before this call (carriedBudget) and hands them over in the spec; a
+	// spec of its own — a run whose flags or wizard answered the budget — is
+	// never touched, and neither is a run whose document already names one.
+	if spec.CarriedBudget != nil {
+		if vars, err = infra.CarriedBudget(vars, spec.CarriedBudget); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
 	if err := wd.WriteVars(vars); err != nil {
 		return nil, userErr("writing the tfvars: %v", err)
 	}
@@ -3273,6 +3339,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	if spec, err = r.licenceJob(lc, spec); err != nil {
 		return outs, false, err
 	}
+	spec = r.carriedBudget(ctx, c, spec)
 	im, err := infra.DiscoverInstallation(ctx, c, spec)
 	if err != nil {
 		return outs, false, initErr(err)

@@ -70,6 +70,7 @@ import {
   modelsAddFloorSentence,
 } from '../../src/main/modelsadd'
 import type { ModelsAddHandlers, ModelsAddPlanner, ModelsAddValues } from '../../src/main/modelsadd'
+import { LAPSE_REFUSAL } from '../../src/main/licence-state'
 import {
   MODELS_ADD_DOCUMENT_SHAPE_REFUSAL,
   MODELS_ADD_DOCUMENT_VERSION_REFUSAL,
@@ -348,6 +349,7 @@ function aWriter(
     readonly cliVersion?: string
     readonly project?: string
     readonly digest?: (document: string) => string
+    readonly lapsed?: () => boolean
   } = {},
 ) {
   const confirmer = aConfirmer()
@@ -358,6 +360,9 @@ function aWriter(
     plan: rows.planner,
     project: options.project ?? PROJECT,
     cliVersion: options.cliVersion ?? '0.120.0',
+    // The licence is valid unless a case says otherwise: the lapse's gate is at
+    // the door (`lapseHandlers`) *and* here, where the write really starts.
+    lapsed: options.lapsed ?? (() => false),
     // The default floor is a release this CLI is above, so the ordinary cases
     // spawn: the real constant is `null` today (`MODELS_ADD_CLI_FLOOR`), which is
     // the state the floor case drives.
@@ -571,6 +576,59 @@ describe('the models write behind the modal', () => {
     expect(await first).toStrictEqual({ ok: true, data: { ok: true, sentence: 'wrote the claim' } })
     expect(await second).toStrictEqual({ ok: true, data: { ok: true, sentence: 'wrote the claim' } })
     expect(calls).toHaveLength(2)
+  })
+
+  it('stops the write the window’s own yes starts when the licence has lapsed', async () => {
+    // **The lapse is asked where the child is spawned, and not only at the
+    // door.** The window's yes reaches `runApply` from `decide`, and no IPC
+    // handler is on that path at all -- so `lapseHandlers`' gate on `models.add`
+    // (the row's own `refusedAfterLapse` column) is not what stops a plan the
+    // operator made after the lapse, which is kept and opens its window. The
+    // plan is a dry run and stays reachable; the write it stands for is the row
+    // the lapse takes away, and this is that column on the window's path.
+    const { writer, confirmer, calls } = aWriter({ lapsed: () => true })
+    expect(await ask(writer, 'models.add.plan', aValues())).toStrictEqual({
+      ok: true,
+      data: { ok: true, sentence: 'the plan is waiting for your answer in its window' },
+    })
+    // The dry run is a child of its own and runs: the lapse takes the write, not
+    // the plan the operator reads before deciding.
+    expect(calls).toHaveLength(1)
+    expect(confirmer.opened).toHaveLength(1)
+    confirmer.opened[0]?.decide(true)
+    await flush()
+    // **Nothing was spawned**, and the renderer's own door answers the lapse's
+    // sentence rather than the write's -- the one sentence a lapsed console
+    // gives (`licence-state.ts`), so the two paths say the same thing.
+    expect(calls).toHaveLength(1)
+    expect(await ask(writer, 'models.add', aValues())).toStrictEqual({
+      ok: true,
+      data: { ok: false, sentence: LAPSE_REFUSAL },
+    })
+    expect(calls).toHaveLength(1)
+
+    // **The answer is read per write and not captured once**, which is the
+    // reason `lapseHandlers` reads its own per call: a renewal pasted during the
+    // session gives the write back at the next plan, and the refused one left
+    // nothing behind that would keep refusing.
+    let lapsed = true
+    const renewed = aWriter({
+      lapsed: () => lapsed,
+      feeds: [{ stdout: aDocumentText() }, { stdout: aDocumentText() }, { stdout: 'wrote the claim\n' }],
+    })
+    await ask(renewed.writer, 'models.add.plan', aValues())
+    renewed.confirmer.opened[0]?.decide(true)
+    await flush()
+    expect(renewed.calls).toHaveLength(1)
+    lapsed = false
+    await ask(renewed.writer, 'models.add.plan', aValues())
+    renewed.confirmer.opened[1]?.decide(true)
+    await flush()
+    expect(renewed.calls).toHaveLength(3)
+    expect(await ask(renewed.writer, 'models.add', aValues())).toStrictEqual({
+      ok: true,
+      data: { ok: true, sentence: 'wrote the claim' },
+    })
   })
 
   it('reads a write that exited non-zero as a refusal, whatever its stdout holds', async () => {

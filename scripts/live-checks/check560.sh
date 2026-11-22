@@ -800,6 +800,10 @@ step_job() {
     fact job FAIL "$LICENCE_JOB in $PROJECT/$REGION carries FUGARO_PROJECT='${fp:-none}' and FUGARO_GCP_PROJECT='${gp:-none}' rather than '$FUGARO_NAME' and '$PROJECT': K4.2's module pins those two to this root's own project, and the job has no checkout and no config file, so those two names are the whole of how it finds the installation whose key it renews"
     stop "the licence job's environment names another installation"
   fi
+  if [ "$timeout" != 600 ] || [ "$retries" != 0 ]; then
+    fact job FAIL "$LICENCE_JOB in $PROJECT/$REGION carries a ${timeout:-none}-second timeout with ${retries:-none} retries rather than the 600 seconds and no retries K4.2's module pins (deploy/terraform/gcp/modules/installation/licence.tf: timeout = \"600s\" and max_retries = 0). The renewal is one container run at that ceiling and a retry after a timeout would renew twice, so a job that differs here is not the job this check may fire. Nothing was fired"
+    stop "the licence job's timeout and retries are not the ones K4.2's module pins"
+  fi
   fact job PASS "$LICENCE_JOB in $PROJECT/$REGION is this installation's licence job: labels fugaro=managed and fugaro_role=licence, argv '$args', ${timeout:-no} timeout in seconds, ${retries:-no} retries, running as $sa, with FUGARO_PROJECT=$fp and FUGARO_GCP_PROJECT=$gp — the two names the module's own preconditions pin"
 }
 
