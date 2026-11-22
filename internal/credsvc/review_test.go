@@ -1845,3 +1845,81 @@ func TestReviewCallerUnchanged(t *testing.T) {
 		t.Errorf("the admissions read were %v, want just the run identity's repository", got)
 	}
 }
+
+// TestTheReviewJobGoesByTheTable is CS13 for the review job (reconciliation
+// F47: "the review job (internal/credsvc/review.go) also reaches a model by
+// account"). A review job reaches a model as a run does — the service's model
+// path serves its calls — and the account its job was deployed for is read for
+// one thing only: the admission the pairing resolves (pairReview). The two
+// halves below are that whole use.
+//
+// The fixture's review job is deployed for an account the bundle holds NO
+// credential under, and the repository's own node admits exactly that name. So
+// the pairing cannot be choosing the credential: it resolves the run identity's
+// repository and the admission, and what the call then meets is the model
+// path's answer. A service that resolved the credential here would answer this
+// caller as an unverified run identity (or serve it by a name the bundle does
+// not hold), and both are what the first case refuses.
+//
+// The second case is the admission itself, and the whole of what the account is
+// for: a name the repository does not admit is refused by the pairing before
+// anything reads a credential — the upstream saw no request and the bundle was
+// read no time at all.
+func TestTheReviewJobGoesByTheTable(t *testing.T) {
+	// No bundle entry is ever written under this name: it is the account the
+	// review job is deployed for and the name the admissions speak, and it is
+	// deliberately not a credential the fixture's bundle could serve.
+	const unheld = "acme-unheld"
+	reviewSvc := func(t *testing.T) *svc {
+		t.Helper()
+		return newReviewSvcSpelled(t, testReviewSA, testReviewSA, func(s *svc, cfg *Config) {
+			cfg.ReviewAccounts = []ReviewJobAccount{{Email: testReviewSA, Account: unheld}}
+			s.policy.shared = decodeTestPolicy(t, testPolicyDocAccounts("auto",
+				`"default": {"allow_repos": ["`+testRepo+`"]},
+				"`+unheld+`": {"allow_repos": ["`+testRepo+`"]}`))
+			s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(unheld))
+		})
+	}
+
+	t.Run("the pairing resolves the repository and the admission, and no credential", func(t *testing.T) {
+		s := reviewSvc(t)
+		resp, body := s.callTokens(t, callBody("review-by-the-table"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+		if resp.StatusCode == http.StatusOK {
+			t.Fatalf("the call was served: %s — the fixture's bundle holds no credential under %q, so what answered it is not the class's own path", body, unheld)
+		}
+		if got := refusal(t, resp.StatusCode, body); got.Error == ErrorUnverifiedRunIdentity {
+			t.Fatalf("the caller was refused by the pairing (%s): %s — the account is the admission and the repository's own node admits it, so the answer this call is owed is the model path's", got.Error, got.Message)
+		}
+	})
+
+	t.Run("an account the repository does not admit is refused before any credential is read", func(t *testing.T) {
+		s := reviewSvc(t)
+		// The repository's own node admits another account: the intersection
+		// (admittedAccounts) is what decides, and this caller's name is not in
+		// it.
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(testReviewAccount))
+		resp, body := s.callTokens(t, callBody("review-not-admitted"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("the answer is %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+		}
+		if got := refusal(t, resp.StatusCode, body); got.Error != ErrorUnverifiedRunIdentity {
+			t.Errorf("the refusal is %q, want %q: %s", got.Error, ErrorUnverifiedRunIdentity, got.Message)
+		}
+		if n := s.up.Count(); n != 0 {
+			t.Errorf("the upstream saw %d requests, want none: the caller was refused before a credential was chosen", n)
+		}
+		if n := s.src.readCount(); n != 0 {
+			t.Errorf("the bundle was read %d times, want none: the account is the pairing's admission and the model path is not the pairing's", n)
+		}
+	})
+
+	t.Run("the row's account is the axis value the admissions spell", func(t *testing.T) {
+		// The derivation is the deployer's own axis (ReviewJobAccountFor over
+		// config.ProjectJobAccounts), and the axis's empty account is the
+		// default account's name: a value the published admissions are keyed
+		// by, and never a credential of the service's.
+		if row := ReviewJobAccountFor(testReviewProfile, "anthropic", "", testFirebase); row.Account != config.DefaultClaudeAccount {
+			t.Errorf("ReviewJobAccountFor(…, \"\", …).Account = %q, want %q: the axis spells the default account as the empty string and the admissions spell it config.DefaultClaudeAccount", row.Account, config.DefaultClaudeAccount)
+		}
+	})
+}
