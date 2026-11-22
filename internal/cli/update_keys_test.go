@@ -57,6 +57,15 @@ func copyFixture(t *testing.T) (*projectFixture, *gcpfake.Secrets, *runServiceSk
 // — and everything else about the installation stays the policy fixture's.
 func copyFixtureWith(t *testing.T, providers string) (*projectFixture, *gcpfake.Secrets, *runServiceSkew) {
 	t.Helper()
+	return copyFixtureWithBlocks(t, providers, "")
+}
+
+// copyFixtureWithBlocks is copyFixtureWith over a config that also carries
+// blocks the providers block cannot state: a credentials and a claude_accounts
+// block, which is what declares a runner-path key credential and the reach its
+// key may be sent to (D1670, MC23).
+func copyFixtureWithBlocks(t *testing.T, providers, extra string) (*projectFixture, *gcpfake.Secrets, *runServiceSkew) {
+	t.Helper()
 	// This process may itself be a coding agent's session, and a stage that
 	// refuses one is a different run than the one under test.
 	clearAgentMarkers(t)
@@ -68,7 +77,7 @@ func copyFixtureWith(t *testing.T, providers string) (*projectFixture, *gcpfake.
 	realSelf := selfCommand
 	selfCommand = func() string { return "fugaro" }
 	t.Cleanup(func() { selfCommand = realSelf })
-	f := newProjectFixtureWith(t, providers, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	f := newProjectFixtureWith(t, providers, extra+"credentials_service: { url: "+credentialsServiceURL+" }\n")
 	rewriteConfigLine(t, "no_auth: true", "no_auth: true, secret_manager: "+sm.URL+"/, run: "+svc.url+"/")
 	return f, sm, svc
 }
@@ -77,9 +86,11 @@ func copyFixtureWith(t *testing.T, providers string) (*projectFixture, *gcpfake.
 // provider's key, held in a container of this installation's own, for the
 // repository the fixture declares on GitHub. It is the shape the enumeration
 // the next chunks write will produce — the provider's name as the credential,
-// the logical name `providers.openrouter.secret` spells as the container, and
-// the two routing facts the provider's own declaration in the fixture's config
-// states.
+// the logical name `providers.openrouter.secret` spells as the container with
+// the two scopes that name has, and the two routing facts the provider's own
+// declaration in the fixture's config states. newCopyRig seeds the repository's
+// own container, which is the one the mount prefers and so the one that
+// answers; the tests that need the wider one answer instead seed it alone.
 func copyPair(t *testing.T) keyCopy {
 	t.Helper()
 	entry, err := credsvc.RepoCredentialKey(mustSlug("github", "acme/app"), "openrouter")
@@ -88,7 +99,8 @@ func copyPair(t *testing.T) keyCopy {
 	}
 	return keyCopy{
 		container:  "openrouter-key",
-		secretID:   gcp.ProjectSecretID(initProjectName, "openrouter-key"),
+		repoID:     copyRepoContainerID(mustSlug("github", "acme/app"), "openrouter-key"),
+		projectID:  copyContainerID("openrouter-key"),
 		entry:      entry,
 		baseURL:    "https://openrouter.ai/api/v1",
 		auth:       providerAuthBearer,
@@ -123,7 +135,7 @@ func newCopyRig(t *testing.T, doc []byte, value string) *copyRig {
 	f, sm, svc := copyFixture(t)
 	pair := copyPair(t)
 	bundle := bundleFixtureFor(t, sm, initProjectName, doc)
-	sm.Seed(pair.secretID, nil, []byte(value))
+	sm.Seed(pair.repoID, nil, []byte(value))
 	// The container read and the bundle read go through the one allowance: the
 	// fake refuses a value read until a test says otherwise.
 	sm.AllowAccess()
@@ -177,6 +189,31 @@ const copyProviderKeysYAML = projectProvidersYAML +
 	"    models: [\"quiet/*\"]\n" +
 	"    allow_data_to: [\"acme/app\"]\n"
 
+// copyRunnerKeyYAML is copyProviderKeysYAML with a fourth provider whose key is
+// declared as a RUNNER-path key credential of the provider's own name
+// (copyRunnerKeyBlocks): that credential's derived container is what the
+// repository's own job mounts for that provider, and the provider's own `secret`
+// is superseded and mounted nowhere beside it (infra.SecretMounts, D1670, MC23).
+// A copy that read the provider's `secret` for it would enter a key no run of
+// that repository is served, and report "served no key" for a key the owner has
+// stored.
+const copyRunnerKeyYAML = copyProviderKeysYAML +
+	"  team-or:\n" +
+	"    kind: anthropic-compat\n" +
+	"    base_url: https://openrouter.example/api\n" +
+	"    auth: bearer\n" +
+	"    secret: team-or-api-key\n" +
+	"    models: [\"or-team/*\"]\n"
+
+// copyRunnerKeyBlocks is that credential and the reach its key may be sent to:
+// acme/app alone, so the fixture's other repository is served the provider's own
+// secret as it was before — the two arms of infra.RunnerKeyCredential's bound in
+// one installation.
+const copyRunnerKeyBlocks = "credentials:\n" +
+	"  - { name: team-or, type: openrouter }\n" +
+	"claude_accounts:\n" +
+	"  team-or: { allow_data_to: [\"acme/app\"] }\n"
+
 // copyContainerID is the Secret Manager ID of the project-wide container a
 // provider key is held in, spelled here the way the copy must pick it: the
 // project-wide container of the provider's own declared secret name — what
@@ -199,7 +236,14 @@ func copyRepoContainerID(slug, logical string) string { return gcp.SecretID(slug
 // ones copyProviderKeys really answers for it.
 func newEnumRig(t *testing.T, providers string, doc []byte) *copyRig {
 	t.Helper()
-	f, sm, svc := copyFixtureWith(t, providers)
+	return newEnumRigWith(t, providers, "", doc)
+}
+
+// newEnumRigWith is newEnumRig over a config that also carries the blocks a
+// runner-path key credential is declared with (copyFixtureWithBlocks).
+func newEnumRigWith(t *testing.T, providers, extra string, doc []byte) *copyRig {
+	t.Helper()
+	f, sm, svc := copyFixtureWithBlocks(t, providers, extra)
 	bundle := bundleFixtureFor(t, sm, initProjectName, doc)
 	// The container reads and the bundle read go through the one allowance:
 	// the fake refuses a value read until a test says otherwise.
@@ -391,8 +435,8 @@ func TestTheCopyPrintsNoValue(t *testing.T) {
 	if entry.Value() != value {
 		t.Errorf("the entry holds %d bytes and the container holds %d: the value did not land", len(entry.Value()), len(value))
 	}
-	if entry.Source.Container != h.pair.container {
-		t.Errorf("the entry's marker names the container %q, want %q", entry.Source.Container, h.pair.container)
+	if entry.Source.Container != h.pair.repoID {
+		t.Errorf("the entry's marker names the container %q, want %q: the marker is the container the value was read out of, and a version is a version of that one", entry.Source.Container, h.pair.repoID)
 	}
 	if want := "1"; entry.Source.Version != want {
 		t.Errorf("the entry's marker names version %q of the container, want %q", entry.Source.Version, want)
@@ -449,7 +493,7 @@ func TestTheCopyNamesAContainerWhoseNewerVersionItCopied(t *testing.T) {
 	}
 	// A rotation of the container, as another terminal's `fugaro secrets set`
 	// leaves it: one more version, and nothing else changed.
-	h.sm.AddVersion(h.pair.secretID, []byte(secondValue))
+	h.sm.AddVersion(h.pair.repoID, []byte(secondValue))
 
 	oc, out, err := h.apply(t)
 	if err != nil {
@@ -471,6 +515,71 @@ func TestTheCopyNamesAContainerWhoseNewerVersionItCopied(t *testing.T) {
 	}
 	if want := "2"; entry.Source.Version != want {
 		t.Errorf("the entry's marker names version %q, want %q: the marker is what the NEXT run compares the container against", entry.Source.Version, want)
+	}
+}
+
+// TestTheCopyFollowsTheKeyToTheContainerThatAnswers: the entry a copy wrote
+// names the container its value was read out of, and one logical name has a
+// container per scope — so a key that comes to be held in the repository's own
+// container is a key the repository's runs are served from there, and the entry
+// has to follow it. A copy that compared a version of the project-wide container
+// against a version of the repository's would answer "left as it is" over two
+// numbers that are not comparable, and the bundle would keep the wider key —
+// which release B no longer mounts, so nothing else would serve the repository
+// its own (F27, R6).
+func TestTheCopyFollowsTheKeyToTheContainerThatAnswers(t *testing.T) {
+	wider, own := credsValue(t, "project-wide"), credsValue(t, "repository-own")
+	slug := mustSlug("github", "acme/app")
+	other := mustSlug("bitbucket", "acme/other")
+	// The fixture's one provider carries no allow_data_to, so both repositories
+	// are served it, and only the project-wide container holds a version: both
+	// entries are copied out of it.
+	h := newEnumRig(t, projectProvidersYAML, nil)
+	h.sm.Seed(copyContainerID("openrouter-key"), nil, []byte(wider))
+
+	if _, _, err := h.apply(t); err != nil {
+		t.Fatalf("the first copy failed: %v", err)
+	}
+	if got := bundleEntry(t, h.sm, h.bundle, slug, "openrouter").Source.Container; got != copyContainerID("openrouter-key") {
+		t.Fatalf("the entry for %s was copied from %q, want the project-wide container: this test is about the container the copy read answering a LATER run", slug, got)
+	}
+
+	// The key stored for one repository alone, as another terminal's
+	// `fugaro secrets set` leaves it: the repository's own container now holds a
+	// version, and that is the container the mount resolves this repository's key
+	// to.
+	h.sm.Seed(copyRepoContainerID(slug, "openrouter-key"), nil, []byte(own))
+
+	oc, out, err := h.apply(t)
+	if err != nil {
+		t.Fatalf("the copy over a key the repository's own container has taken over failed: %v", err)
+	}
+	assertNoValue(t, out, wider, own)
+	if !oc.Changed {
+		t.Errorf("the copy left the entry on a container the repository is no longer served from: %+v", oc)
+	}
+	if n := h.adds(); n != 2 {
+		t.Errorf("the copy added %d version(s) of the bundle in all, want two: the one entry whose container changed is written again, and the entry left behind it is the key this repository's runs are no longer served\n%q", n, out)
+	}
+	for _, want := range []string{"is served the key from", "the project-wide container openrouter-key", "the repository's own container openrouter-key"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the run does not say %q, and the line is the whole of how a person learns which container a repository is served its key from: %q", want, out)
+		}
+	}
+
+	followed := bundleEntry(t, h.sm, h.bundle, slug, "openrouter")
+	if followed.Value() != own {
+		t.Errorf("the entry for %s holds %d bytes and the repository's own container holds %d: the entry did not follow the container the repository is served from", slug, len(followed.Value()), len(own))
+	}
+	if got, want := followed.Source.Container, copyRepoContainerID(slug, "openrouter-key"); got != want {
+		t.Errorf("the entry for %s carries the container %q, want %q: the marker is the container that answered, and a version is a version of it", slug, got, want)
+	}
+	// The other repository's container did not move: its entry is untouched,
+	// which is what keeps the move of one repository's key from rewriting every
+	// entry the installation holds.
+	held := bundleEntry(t, h.sm, h.bundle, other, "openrouter")
+	if held.Value() != wider || held.Source.Container != copyContainerID("openrouter-key") {
+		t.Errorf("the entry for %s moved with the other repository's key: it holds %d bytes from %q, want the project-wide container's value and marker untouched", other, len(held.Value()), held.Source.Container)
 	}
 }
 
@@ -643,11 +752,13 @@ func copyBundleSeed(t *testing.T) []byte {
 // and not a test's (KS12b): every provider credential a repository the
 // installation serves may send code to is one entry per repository, holding
 // what the container that repository's own runs are served the key from holds
-// (its own while that holds a version, the project-wide copy otherwise), with
-// the two routing facts the provider's own declaration states. Four things are
-// asserted over one run, because they are one answer read from one document —
-// the entries the config asks for, the facts each carries, the home each value
-// came out of, and the provider whose container nobody has filled, which is
+// (its own while that holds a version, the project-wide copy otherwise, and the
+// derived container of a runner-path key credential where one serves the
+// provider), with the two routing facts the provider's own declaration states.
+// Five things are asserted over one run, because they are one answer read from
+// one document — the entries the config asks for, the facts each carries, the
+// container each value came out of, the superseded provider secret whose value
+// reaches no entry, and the provider whose container nobody has filled, which is
 // skipped in one line naming the provider and the repository rather than
 // failing the run or disappearing.
 func TestTheCopyWritesEveryModelKey(t *testing.T) {
@@ -657,21 +768,29 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 	// served: the copy has to enter THIS value for acme/app, and the wider one
 	// for the repository that has no container of its own.
 	ownValue := credsValue(t, "openrouter-own")
+	// A provider served by a runner-path key credential: its key is the
+	// credential's derived container, and the provider's own secret is
+	// superseded — a value sitting there is not what any run is served, and the
+	// copy may not enter it.
+	teamOrValue, supersededValue := credsValue(t, "team-or"), credsValue(t, "team-or-provider-secret")
 	// The bundle holds no version: the first copy starts from the containers
 	// Terraform created, which is the state a fresh installation is in.
-	h := newEnumRig(t, copyProviderKeysYAML, nil)
-	// Three of the four home/pair combinations are filled; `quiet`'s home is not
-	// there at all, and openrouter's project-wide container is what the
-	// repository with no container of its own is served from.
+	h := newEnumRigWith(t, copyRunnerKeyYAML, copyRunnerKeyBlocks, nil)
+	// Every home but `quiet`'s is filled: `quiet` has none at all, openrouter's
+	// project-wide container is what the repository with no container of its own
+	// is served from, and team-or's key is in the credential's container for the
+	// repository the credential admits and in the provider's own for the other.
 	h.sm.Seed(copyRepoContainerID(mustSlug("github", "acme/app"), "openrouter-key"), nil, []byte(ownValue))
 	h.sm.Seed(copyContainerID("openrouter-key"), nil, []byte(openrouterValue))
 	h.sm.Seed(copyContainerID("moonshot-key"), nil, []byte(moonshotValue))
+	h.sm.Seed(copyContainerID(config.CredentialSecret("team-or")), nil, []byte(teamOrValue))
+	h.sm.Seed(copyContainerID("team-or-api-key"), nil, []byte(supersededValue))
 
 	oc, out, err := h.apply(t)
 	if err != nil {
 		t.Fatalf("the copy of an installation's provider keys failed: %v", err)
 	}
-	assertNoValue(t, out, openrouterValue, moonshotValue, ownValue)
+	assertNoValue(t, out, openrouterValue, moonshotValue, ownValue, teamOrValue, supersededValue)
 	if !oc.Changed {
 		t.Fatalf("the copy wrote the installation's provider keys into an empty bundle and reports no change: %+v", oc)
 	}
@@ -683,14 +802,19 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 	// Every pair the config answers for, and the facts each entry carries: the
 	// value from the container the repository's own runs are served the key
 	// from — its own while that holds a version, the project-wide copy
-	// otherwise, which is the precedence the job's mount keeps — and the
-	// base_url and auth of the provider's own declaration.
+	// otherwise, which is the precedence the job's mount keeps, and for a
+	// runner-path credential's provider the credential's derived container — and
+	// the base_url and auth of the provider's own declaration. The container is
+	// asserted as the Secret Manager ID of the one that ANSWERED: the two scopes
+	// of a logical name are told apart by it, and it is what the marker carries.
 	want := []struct {
 		credential, repo, slug, container, value, baseURL, auth string
 	}{
-		{"openrouter", "acme/app", mustSlug("github", "acme/app"), "openrouter-key", ownValue, "https://openrouter.ai/api/v1", providerAuthBearer},
-		{"openrouter", "acme/other", mustSlug("bitbucket", "acme/other"), "openrouter-key", openrouterValue, "https://openrouter.ai/api/v1", providerAuthBearer},
-		{"moonshot", "acme/app", mustSlug("github", "acme/app"), "moonshot-key", moonshotValue, "https://api.moonshot.ai/anthropic", providerAuthXAPIKey},
+		{"openrouter", "acme/app", mustSlug("github", "acme/app"), copyRepoContainerID(mustSlug("github", "acme/app"), "openrouter-key"), ownValue, "https://openrouter.ai/api/v1", providerAuthBearer},
+		{"openrouter", "acme/other", mustSlug("bitbucket", "acme/other"), copyContainerID("openrouter-key"), openrouterValue, "https://openrouter.ai/api/v1", providerAuthBearer},
+		{"moonshot", "acme/app", mustSlug("github", "acme/app"), copyContainerID("moonshot-key"), moonshotValue, "https://api.moonshot.ai/anthropic", providerAuthXAPIKey},
+		{"team-or", "acme/app", mustSlug("github", "acme/app"), copyContainerID(config.CredentialSecret("team-or")), teamOrValue, "https://openrouter.example/api", providerAuthBearer},
+		{"team-or", "acme/other", mustSlug("bitbucket", "acme/other"), copyContainerID("team-or-api-key"), supersededValue, "https://openrouter.example/api", providerAuthBearer},
 	}
 	for _, w := range want {
 		entry := bundleEntry(t, h.sm, h.bundle, w.slug, w.credential)
@@ -704,6 +828,15 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 		if entry.Source.Container != w.container {
 			t.Errorf("%s for %s carries the container %q, want %q: the marker is the container the value was copied out of", w.credential, w.repo, entry.Source.Container, w.container)
 		}
+	}
+
+	// The provider's own secret is superseded for the repository its
+	// runner-path key credential admits: the entry for acme/app holds the
+	// credential's container value and not the one sitting in
+	// providers.team-or.secret, which no run of that repository is served
+	// (D1670, MC23) — and no line of this run printed either.
+	if got := bundleEntry(t, h.sm, h.bundle, mustSlug("github", "acme/app"), "team-or").Value(); got == supersededValue {
+		t.Errorf("team-or for acme/app holds the value of providers.team-or.secret, which the runner-path key credential serving that provider superseded")
 	}
 
 	// A provider a repository may not send code to is no entry for it: a key
@@ -761,8 +894,8 @@ func TestASharedKeyIsCopiedOncePerRepository(t *testing.T) {
 		if entry.Value() != value {
 			t.Errorf("the entry for %s holds %d bytes and the container holds %d: the shared key did not land for that repository", slug, len(entry.Value()), len(value))
 		}
-		if entry.Source.Container != "openrouter-key" {
-			t.Errorf("the entry for %s carries the container %q, want openrouter-key", slug, entry.Source.Container)
+		if entry.Source.Container != id {
+			t.Errorf("the entry for %s carries the container %q, want %q, the container the value was read out of", slug, entry.Source.Container, id)
 		}
 	}
 	// The two entries are two names: one entry written twice is one name.

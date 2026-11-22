@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -91,17 +92,16 @@ import (
 type keyCopy struct {
 	// container is the container's LOGICAL name as this installation spells it
 	// (config.AnthropicSecret, a provider's own name, a repository's): a name
-	// and never a value, and the name the marker carries, because it is the
-	// name the operator's own commands and `fugaro secrets ls` speak
-	// (credsvc.ProviderKeySource).
+	// and never a value, and the name the operator's own commands and `fugaro
+	// secrets ls` speak. For a provider's key it is the name the repository's
+	// own job mounts that key under, which is the provider's own `secret` — or
+	// the derived name of the runner-path key credential that supersedes it
+	// (infra.RunnerKeyCredential, D1670, MC23).
 	container string
-	// secretID is the container's Secret Manager ID in this installation,
-	// whichever naming the key's own declaration chooses: what the read is made
-	// of, and deliberately not what the marker carries.
-	secretID string
-	// fallbackID is the other container the same logical name may be held in,
-	// read only when secretID holds no version this run can read. A key has one
-	// home per scope the installation keeps containers for, and the run's own
+	// repoID and projectID are the two containers that logical name may be held
+	// in, as Secret Manager names them: the repository's own, gcp.SecretID of
+	// that repository's slug, and the project-wide copy gcp.ProjectSecretID
+	// gives every declared name. A key has one home per scope, and the run's own
 	// job mounts the narrower one: the repository's container while it holds an
 	// enabled version, the project-wide copy of the same name otherwise
 	// (infra.RepoSpec.MountSecretID, deploy/terraform/gcp/modules/repo/
@@ -109,9 +109,14 @@ type keyCopy struct {
 	// the names whose repository copy has no version). A pair read from the
 	// wider container while a narrower one holds a value would enter a key the
 	// repository's own runs are not served — and release B drops the mount, so
-	// nothing else would serve them it afterwards. Empty when the key has one
-	// home only.
-	fallbackID string
+	// nothing else would serve them it afterwards.
+	//
+	// The read is made of the ids and the marker carries the id of the container
+	// that ANSWERED (credsvc.ProviderKeySource): a version number is a version of
+	// one container, and the same logical name's two scopes number their
+	// versions independently, so a marker naming the name alone is a version the
+	// next run compares against another container's (copyDecide).
+	repoID, projectID string
 	// entry is the bundle key the value belongs under, as C1 builds it
 	// (credsvc.RepoCredentialKey).
 	entry string
@@ -135,13 +140,30 @@ func (c keyCopy) name() string {
 }
 
 // homes is the containers the pair's key may be held in, in the order the read
-// takes them: the repository's own first, the wider one after it. Both hold the
-// same logical name, so what the marker carries is the same whichever answered.
+// takes them: the repository's own first, the wider one after it.
 func (c keyCopy) homes() []string {
-	if c.fallbackID == "" || c.fallbackID == c.secretID {
-		return []string{c.secretID}
+	if c.projectID == "" || c.projectID == c.repoID {
+		return []string{c.repoID}
 	}
-	return []string{c.secretID, c.fallbackID}
+	return []string{c.repoID, c.projectID}
+}
+
+// homeScope names one of those containers as this stage's lines say it. The two
+// hold the same logical name, so the scope is what tells them apart — and the
+// scope is the fact a person acts on, because it is the copy the repository's
+// own job mounts. An id that is neither is named by the id itself, which is the
+// marker of a container this pair no longer reads: a scope the other one has
+// taken over since, or a key a runner-path key credential now holds.
+func (c keyCopy) homeScope(id string) string {
+	switch {
+	case id == c.repoID && id == c.projectID:
+		return safetext.Field(c.container)
+	case id == c.repoID:
+		return "the repository's own container " + safetext.Field(c.container)
+	case id == c.projectID:
+		return "the project-wide container " + safetext.Field(c.container)
+	}
+	return safetext.Field(id)
 }
 
 // copySources answers the pairs this run has to copy: for each model key the
@@ -167,12 +189,16 @@ var copySources = func(ctx context.Context, lc *localcfg.Config) ([]keyCopy, err
 //
 // Both halves of a pair are the owner's own config and nothing here is a
 // literal. The container is the provider's declaration's own `secret` — the
-// logical name this installation holds that key under, which is the name the
-// marker carries and the name `fugaro secrets ls` speaks — and it is a name
-// with one container per scope this installation keeps (F8, F27): the
-// repository's own, `gcp.SecretID` of that repository's slug, and the
-// project-wide one `gcp.ProjectSecretID` gives every declared provider the day
-// the installation is applied. The pair names both, the repository's first,
+// logical name this installation holds that key under, and the name `fugaro
+// secrets ls` speaks — except where the installation declares a runner-path key
+// credential of the provider's own name that admits this repository: that
+// credential's derived container is what the repository's job mounts for this
+// provider, and the provider's own `.secret` is superseded and mounted nowhere
+// beside it (infra.SecretMounts, D1670, MC23). Either way the name has one
+// container per scope this installation keeps (F8, F27): the repository's own,
+// `gcp.SecretID` of that repository's slug, and the project-wide one
+// `gcp.ProjectSecretID` gives every declared name the day the installation is
+// applied. The pair names both, the repository's first,
 // and the read takes them in that order (keyCopy.homes) because that is the
 // precedence the run's own job mounts them with — so the entry holds the key
 // the repository's runs are served, whichever home the owner stored it in. The
@@ -211,10 +237,21 @@ func copyProviderKeys(lc *localcfg.Config) ([]keyCopy, error) {
 			if err != nil {
 				return nil, err
 			}
+			// The container the repository's own job mounts this key under: the
+			// provider's own `secret`, or — where the installation declares a
+			// runner-path key credential of the provider's own name that admits
+			// this repository — that credential's derived container, which
+			// SUPERSEDES it (D1670, MC23). Asked through the rule the mount is
+			// built from and not spelled again here, so the entry this copy
+			// writes and the key a released run is served cannot disagree.
+			logical := p.Secret
+			if s, ok := infra.RunnerKeyCredential(lc, name, repo); ok {
+				logical = s
+			}
 			out = append(out, keyCopy{
-				container:  p.Secret,
-				secretID:   gcp.SecretID(slug, p.Secret),
-				fallbackID: gcp.ProjectSecretID(lc.Name, p.Secret),
+				container:  logical,
+				repoID:     gcp.SecretID(slug, logical),
+				projectID:  gcp.ProjectSecretID(lc.Name, logical),
 				entry:      entry,
 				baseURL:    p.BaseURL,
 				auth:       p.Auth,
@@ -322,6 +359,10 @@ const (
 // copyRow is one pair and what this run does with it.
 type copyRow struct {
 	pair keyCopy
+	// from is the Secret Manager ID of the pair's container the value was read
+	// out of — which of keyCopy.homes answered — and therefore what the entry's
+	// marker is written with and read back against (D3014).
+	from string
 	// held is the container's newest version as it was read: the version
 	// number, the bytes (in memory and nowhere else) and the slot the run's
 	// redaction keeps them out of any output with.
@@ -471,13 +512,16 @@ func copyBundleUnreadable(err error) error {
 // project-wide copy otherwise. Only the container that answered is held, so a
 // key two repositories share out of the wider container is still read once
 // (p.held is keyed by Secret Manager ID), and a repository that overrides it
-// with a container of its own is read once for each of the two.
+// with a container of its own is read once for each of the two. The id of the
+// one that answered is what the row keeps (copyRow.from) and what the entry's
+// marker is written with: it is the container the value really came out of, and
+// a version is a version of that one.
 func (p *copyPlan) read(ctx context.Context, e *initEngine, pair keyCopy, held *credsvc.Bundle) (copyRow, error) {
 	row := copyRow{pair: pair}
 	var h *copyHold
 	for _, id := range pair.homes() {
 		if got, ok := p.held[id]; ok {
-			h = got
+			h, row.from = got, id
 			break
 		}
 		value, version, found, err := copyContainerNewest(ctx, p.store, pair, id)
@@ -498,6 +542,7 @@ func (p *copyPlan) read(ctx context.Context, e *initEngine, pair keyCopy, held *
 		}
 		h = &copyHold{value: value, version: version, release: release}
 		p.held[id] = h
+		row.from = id
 		break
 	}
 	if h == nil {
@@ -511,16 +556,15 @@ func (p *copyPlan) read(ctx context.Context, e *initEngine, pair keyCopy, held *
 		return row, nil
 	}
 	row.held = h
-	row.state, row.why = copyDecide(held, pair, h.value, h.version)
+	row.state, row.why = copyDecide(held, pair, row.from, h.value, h.version)
 	return row, nil
 }
 
 // copyContainerNewest reads the newest version of one of a pair's containers
 // (id, one of keyCopy.homes), in memory, with the version number the read
 // resolved to (the server's, as bundleStore.access reads the bundle's). The
-// pair is here for the logical name its lines carry and not for the ID: which
-// of the homes a value came out of is the read's business, and the marker names
-// the key's name, not the scope it was found in.
+// pair is here for the logical name its failures name and not for the ID: the
+// caller is the one that keeps which home answered (copyPlan.read).
 //
 // found=false is "there is nothing here to copy out of": a container that is
 // not there, one whose newest version carries no payload, and one Secret
@@ -570,11 +614,22 @@ func copyContainerNewest(ctx context.Context, store *bundleStore, pair keyCopy, 
 //
 // A pair the bundle holds no entry for is written; an entry that already says
 // what this run would write is left alone and no version is added; an entry the
-// COPY wrote is followed when the container has moved past the version its
-// marker names, or when the credential's own declaration has changed under it;
-// and an entry the copy did not write is never overwritten. Those are the four
-// answers, and the last one is the one a person is told about.
-func copyDecide(held *credsvc.Bundle, pair keyCopy, value []byte, version string) (copyRowState, string) {
+// COPY wrote is followed when the container it was copied out of is no longer
+// the one the repository is served the key from, when the container has moved
+// past the version its marker names, or when the credential's own declaration
+// has changed under it; and an entry the copy did not write is never
+// overwritten. Those are the four answers, and the last one is the one a person
+// is told about.
+//
+// from is the container the value was read out of this run (copyRow.from), and
+// the marker's container is the one it was read out of before: the two are
+// Secret Manager IDs of the SAME logical name's two scopes as often as not, and
+// the marker naming the scope that answered is what lets this tell a rotation
+// of one container from the key having moved to the other. A move is followed
+// rather than left: the mount's own order is which container the repository's
+// runs are served the key from, so an entry naming the other one holds a key
+// those runs are no longer served (F27, R6).
+func copyDecide(held *credsvc.Bundle, pair keyCopy, from string, value []byte, version string) (copyRowState, string) {
 	slug, credential, ok := credsvc.RepoCredentialByKey(pair.entry)
 	if !ok {
 		// A name C1 cannot read back is a name this tree built wrongly, and
@@ -597,24 +652,31 @@ func copyDecide(held *credsvc.Bundle, pair keyCopy, value []byte, version string
 			return copyUnchanged, fmt.Sprintf("the entry holds what %s and the credential's own declaration say, and carries no marker of this copy", safetext.Field(pair.container))
 		}
 		return copyLeft, fmt.Sprintf("the entry was not written by this copy and does not hold what %s does, and this run does not overwrite an entry it did not write", safetext.Field(pair.container))
-	case entry.Source.Container != pair.container:
-		return copyLeft, fmt.Sprintf("the entry was copied from the container %s and this run reads %s", safetext.Field(entry.Source.Container), safetext.Field(pair.container))
+	case entry.Source.Container != from:
+		// The key is not held where the entry was copied from any more: the
+		// repository is served it from another container of the same logical
+		// name now, or from one a runner-path key credential put in place of
+		// the provider's own secret. No version is read across the two — a
+		// version number is a version of one container, and the marker names
+		// which — and the mount's own order decides the answer, so the entry
+		// follows the container the runs are served.
+		return copyFollow, fmt.Sprintf("the entry was copied from %s, and this repository is served the key from %s now", pair.homeScope(entry.Source.Container), pair.homeScope(from))
 	}
 	switch {
 	case entry.Source.Version == version && copyEntryFactsMatch(entry, pair):
-		return copyUnchanged, fmt.Sprintf("the entry was copied from %s version %s and still says what this run would write", safetext.Field(pair.container), safetext.Field(version))
+		return copyUnchanged, fmt.Sprintf("the entry was copied from %s version %s and still says what this run would write", pair.homeScope(from), safetext.Field(version))
 	case newerVersion(entry.Source.Version, version):
 		// A marker naming a version the container no longer holds: both are
 		// the copy's own, and the entry's is the newer of them, so a rotation
 		// since undone is not followed backwards over it.
-		return copyLeft, fmt.Sprintf("the entry was copied from version %s of %s, newer than the %s this container holds now", safetext.Field(entry.Source.Version), safetext.Field(pair.container), safetext.Field(version))
+		return copyLeft, fmt.Sprintf("the entry was copied from version %s of %s, newer than the %s this container holds now", safetext.Field(entry.Source.Version), pair.homeScope(from), safetext.Field(version))
 	case entry.Source.Version != version:
-		return copyFollow, fmt.Sprintf("%s holds version %s, newer than the %s the entry was copied from", safetext.Field(pair.container), safetext.Field(version), safetext.Field(entry.Source.Version))
+		return copyFollow, fmt.Sprintf("%s holds version %s, newer than the %s the entry was copied from", pair.homeScope(from), safetext.Field(version), safetext.Field(entry.Source.Version))
 	}
 	// The same version, and the credential's own declaration has moved since
 	// the copy wrote the entry: the entry is the copy's own, so it carries what
 	// the config says now.
-	return copyFollow, fmt.Sprintf("%s holds the version the entry was copied from (%s), and the credential's own declaration in the config has changed since", safetext.Field(pair.container), safetext.Field(version))
+	return copyFollow, fmt.Sprintf("%s holds the version the entry was copied from (%s), and the credential's own declaration in the config has changed since", pair.homeScope(from), safetext.Field(version))
 }
 
 // copyEntryMatches is whether an entry the copy did not write already says what
@@ -635,7 +697,9 @@ func copyEntryFactsMatch(entry credsvc.ProviderKeyEntry, pair keyCopy) bool {
 // three providerKeyValueNode builds — with the copy's marker beside them
 // (source: container, version), which is what tells a later run that this entry
 // is one the copy wrote and which version of which container it came from
-// (D3014).
+// (D3014). The container named is the one the value was read out of (from): a
+// Secret Manager id and never a value, and the container whose version below it
+// is (credsvc.ProviderKeySource).
 //
 // The two routing facts are held to the same two rules the loader holds an
 // entry to before they are written — the platform's provider-URL check and the
@@ -646,7 +710,7 @@ func copyEntryFactsMatch(entry credsvc.ProviderKeyEntry, pair keyCopy) bool {
 // Nothing here renders the value: it goes into the node, the node into the
 // document, and the document to Secret Manager. Every line this stage prints
 // names an entry, a container or a version.
-func copyEntryNode(pair keyCopy, value []byte, version string) (*yaml.Node, error) {
+func copyEntryNode(pair keyCopy, from string, value []byte, version string) (*yaml.Node, error) {
 	if err := config.CheckProviderBaseURL(pair.baseURL); err != nil {
 		return nil, userErr("%s is not an address one of the credentials service's entries may hold (%v): the entry's base_url is the destination of every routed call spent on this key, and the loader and the gateway's routes hold it to the same rule. Fix the credential's own declaration in the project config and run %s again; nothing was copied",
 			pluginwire.Printable(pair.name()), err, selfCommand()+" update")
@@ -660,7 +724,7 @@ func copyEntryNode(pair keyCopy, value []byte, version string) (*yaml.Node, erro
 	}
 	source := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	source.Content = append(source.Content,
-		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "container"}, str(pair.container),
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "container"}, str(from),
 		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "version"}, str(version))
 	root := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	root.Content = append(root.Content,
@@ -811,7 +875,7 @@ func (p *copyPlan) document() ([]byte, error) {
 		return nil, err
 	}
 	for _, row := range p.writes() {
-		node, err := copyEntryNode(row.pair, row.held.value, row.held.version)
+		node, err := copyEntryNode(row.pair, row.from, row.held.value, row.held.version)
 		if err != nil {
 			return nil, err
 		}
@@ -897,11 +961,11 @@ func (r copyRow) line() string {
 // write is printed per pair: the stage's own line carries the count.
 func (r copyRow) note() string {
 	if r.state == copyNew {
-		return fmt.Sprintf("note: the entry %s is copied from version %s of the container %s, for %s\n",
-			safetext.Field(r.pair.entry), safetext.Field(r.held.version), safetext.Field(r.pair.container), r.pair.name())
+		return fmt.Sprintf("note: the entry %s is copied from version %s of %s, for %s\n",
+			safetext.Field(r.pair.entry), safetext.Field(r.held.version), r.pair.homeScope(r.from), r.pair.name())
 	}
-	return fmt.Sprintf("note: the container %s holds version %s, newer than the one the entry %s was copied from: the entry is copied again, for %s\n",
-		safetext.Field(r.pair.container), safetext.Field(r.held.version), safetext.Field(r.pair.entry), r.pair.name())
+	return fmt.Sprintf("note: the entry %s is copied again from version %s of %s, for %s: %s\n",
+		safetext.Field(r.pair.entry), safetext.Field(r.held.version), r.pair.homeScope(r.from), r.pair.name(), r.why)
 }
 
 // copyStage is the stage itself. It is SelfConfirming, like the policy, the
@@ -1051,7 +1115,7 @@ func (s *copyStage) Verify(ctx context.Context) error {
 		if !found {
 			return fmt.Errorf("the credentials service's bundle at version %s holds no entry %s, though this run copied one into it", safetext.Field(after.version), safetext.Field(row.pair.entry))
 		}
-		if entry.Source.Container != row.pair.container || entry.Source.Version != row.held.version {
+		if entry.Source.Container != row.from || entry.Source.Version != row.held.version {
 			return fmt.Errorf("the entry %s was written by this run but does not carry the container and the version it was copied from", safetext.Field(row.pair.entry))
 		}
 		if !copyEntryFactsMatch(entry, row.pair) {
