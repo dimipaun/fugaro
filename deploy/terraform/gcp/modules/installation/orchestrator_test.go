@@ -457,15 +457,20 @@ func TestOrchestratorLeavesAPlanUntouchedWhenItIsOff(t *testing.T) {
 	if n := strings.Count(src, `resource "`); n != len(orchestratorResources) {
 		t.Fatalf("%s declares %d resources and %d are expected: the count below cannot be checked against a list that is not the file's", orchestratorTF, n, len(orchestratorResources))
 	}
-	// The one resource that needs a second switch, and the whole of why: the
-	// credentials-service invoker grant binds something on a resource
+	// The two resources that need a second switch, and the whole of why for each.
+	// The credentials-service invoker grant binds something on a resource
 	// credentials.tf creates, so an installation whose credentials service is
-	// off has no service to bind anything on. It is the same shape every grant
-	// of that service in iam.tf and build_identity.tf has. The local holding
-	// the pair still turns the file off whole when the orchestrator is off, so
-	// the no-op this test is about is unchanged.
+	// off has no service to bind anything on; it is the same shape every grant of
+	// that service in iam.tf and build_identity.tf has. The token-minter row is
+	// on people_minter as well (LM12 of docs/launcher-does-not-mint), the switch
+	// the Firebase root gates the people's row with, which the plan that moves
+	// the grant to the credentials service turns off — see
+	// TestOrchestratorMinterIsBehindTheSwitch below. Each local holding its pair
+	// still turns the file off whole when the orchestrator is off, so the no-op
+	// this test is about is unchanged.
 	twoSwitches := map[string]string{
 		"google_cloud_run_v2_service_iam_member.orchestrator_credentials_invoker": "count = local.orchestrator_credentials_on ? 1 : 0",
+		"google_service_account_iam_member.orchestrator_token_minter":             "count = local.orchestrator_on && var.people_minter ? 1 : 0",
 	}
 	for _, r := range orchestratorResources {
 		block := tfBlock(src, r.typ, r.name)
@@ -482,5 +487,58 @@ func TestOrchestratorLeavesAPlanUntouchedWhenItIsOff(t *testing.T) {
 	block := tfVariable(t, vars, "orchestrator")
 	if !regexp.MustCompile(`(?m)^\s*default = null\s*$`).MatchString(block) {
 		t.Errorf("variables.tf: var.orchestrator does not default to null: the switch is OFF for every installation that has not opted in, and one that did not ask must plan exactly what it planned before this task (design section 4.3; the brief's no-op rule for `fugaro update`):\n%s", block)
+	}
+}
+
+// TestOrchestratorMinterIsBehindTheSwitch is the red step of LM12 in
+// docs/launcher-does-not-mint, and it is about the ONE row in this file that is
+// a minter: the resident orchestrator's fugaroTokenMinter grant on the runs'
+// signer. That row is what the launcher-does-not-mint plan moves to the
+// credentials service — after the move the service mints a run's identity and
+// nobody else does — so it is planned behind people_minter, the switch the
+// FIREBASE root gates the people's row with (LM11), under that one name in both
+// roots so that the update which makes the move applies both roots with it off
+// and both rows leave in the one plan (LM14, R8).
+//
+// What it fails on: the row counted on var.orchestrator alone (the state this
+// task's red step starts from — the grant would survive the move and every
+// launcher could still mint a run's identity as the signer, which is the whole
+// of what D3121 ends), a switch that defaults to false (the update carrying
+// this change would plan the row away for every installation that has not
+// moved, halting its minting), and a second row in this file on the switch or
+// on the minter role — the plan grants a second minter row to the credentials
+// service's account and to nothing else.
+func TestOrchestratorMinterIsBehindTheSwitch(t *testing.T) {
+	src := tfSource(t, orchestratorTF)
+
+	row := tfBlock(src, "google_service_account_iam_member", "orchestrator_token_minter")
+	if row == "" {
+		t.Fatalf("%s declares no google_service_account_iam_member.orchestrator_token_minter: this test is about the resident orchestrator's one minter row, and the file it reads must be the file that carries it", orchestratorTF)
+	}
+	want := "count = local.orchestrator_on && var.people_minter ? 1 : 0"
+	if !strings.Contains(row, want) {
+		t.Errorf("%s: the token-minter row does not carry %q, so it is planned whatever the installation's grant move says (LM12, D3121): the row is the reach the credentials service takes over, and an installation that has moved must plan it away while keeping the issuer's own row (R8):\n%s", orchestratorTF, want, row)
+	}
+
+	// One row and one row only: the switch is not a second minter row's, and the
+	// minter role is named once in this file. The comments are already stripped,
+	// so these count the file's own expressions.
+	if n := strings.Count(src, "var.people_minter"); n != 1 {
+		t.Errorf("%s names var.people_minter %d times, want exactly 1: the switch gates the orchestrator's one minter row in this module and nothing else — the people's row it shares the name with is the FIREBASE root's (LM11), and a second row here would be a grant neither LM11 nor LM12 lists", orchestratorTF, n)
+	}
+	if n := strings.Count(src, "fugaroTokenMinter"); n != 1 {
+		t.Errorf("%s names the fugaroTokenMinter role %d times, want exactly 1: the credentials service's account is the only principal a second minter row is meant for and it is not this module's (LM12), so a second row here is a grant the plan does not have", orchestratorTF, n)
+	}
+
+	vars := tfSource(t, "variables.tf")
+	block := tfVariable(t, vars, "people_minter")
+	if !regexp.MustCompile(`(?m)^\s*type\s*=\s*bool\s*$`).MatchString(block) {
+		t.Errorf("variables.tf: var.people_minter is not a bool, and the Firebase root reads the same switch under this name:\n%s", block)
+	}
+	if !regexp.MustCompile(`(?m)^\s*default\s*=\s*true\s*$`).MatchString(block) {
+		t.Errorf("variables.tf: var.people_minter does not default to true: ON by default is the whole of what makes the update carrying this change a plan with nothing new in it, and OFF would take the row away from every installation whose grant has not moved (LM12, R8):\n%s", block)
+	}
+	if !regexp.MustCompile(`(?m)^\s*nullable\s*=\s*false\s*$`).MatchString(block) {
+		t.Errorf("variables.tf: var.people_minter is nullable, so a null would reach the count expression and fail it at plan time rather than meaning one of the switch's two states:\n%s", block)
 	}
 }

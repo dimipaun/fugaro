@@ -1080,7 +1080,10 @@ probe account carries predefined grants only).
 | 304 | The handoff between two people ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O17** and its Check 304 — the text O2 wrote, the `ee/` command O17 builds): an agent handed from one developer to another by an owner or an admin, on a real installation, with the two people in different sessions — the receiving person holding the agent, the giving person no longer able to act as it, and the project-owned agent that belongs to no person at all behaving as the registered extension it is | See "Check 304" below; `bash scripts/live-checks/check304.sh first-person --installation <name> --from <user:address> --to <user:address>` is the first person's half — it checks the Subscription Edition build before anything else, writes the record and prints what the other person runs — and `bash scripts/live-checks/check304.sh second-person --installation <name> --as <user:address> --handoff <the record>` is the second person's; **you** run one phase each, on a real installation with a second person, **never `belong`**, and **no agent runs any step of it** | Two sessions and one handoff: no model call unless the agent is asked to work, and nothing billable in the handoff itself. **USER-RUN, NOT RUN.** |
 | 305 | The MCP state group served — the front door's reach into the node ([`docs/stateless-orchestrator/`](stateless-orchestrator/implementation-plan.md), its task **O16b** and its Check 305 — the text O16b wrote into the number the register held; **D2020** (a) and **D2021** (a), answered 2026-11-10, and the reconciliation's **F27**, **R2** and **R3**): with the front door on, a real MCP client holding `state:read` reads `get_state` and `get_events` for the installation's orchestrator — the same documents `fugaro orchestrator state --json` and `fugaro orchestrator events --json` answer — a token holding only `tasks:*` is refused both, `apply_patch` is absent from `tools/list` (D2021 (a); no `spawn_task` anywhere in it, T2), and the front door's own role in the real project is `firebasedatabase.instances.get` and nothing else, bound to `fugaro-mcp@<the installation's project>` and to nobody else, so the account the public service runs as holds no database write. IAM has no path-level scope, so that read reaches the whole database, and what it exposes node by node is the reconciliation's **U11** — no reading here settles it  | See "Check 305" below; `bash scripts/live-checks/check305.sh --installation <name> [--door <url>]` is the whole of it — it finds the door the way a client does, signs itself in twice and makes every reading the section names (the tool list, both documents, both refusals, the role and the project's policy read back) with its own tokens — and **you** run it, on your own installation with the front door on, **never `belong`**; **no agent runs any step of it** | Nothing billable and no model call: three MCP calls, one role describe and one policy read, and no run and no image build. Nothing is created, granted or deleted by the check itself, so there is nothing to restore — what it reads is a service the installation already runs, a role it already holds and the node its own orchestrator already wrote. **USER-RUN, NOT RUN.** |
 | 330 | The api-key review's own path, and the review-only job beside it ([`docs/api-key-review/`](api-key-review/implementation-plan.md), its task **AK8** and its Check 330 — the plan's §5 is the check's text; **D1410** (both slices) and **D1421** (after 0.20.0), and **F10**, **F11** and **F22**): on a sandbox installation and a sandbox repository, one task whose `fugaro.yaml` writes `agent.auth: api-key`, whose coder runs a model the project's provider route claims and whose `models.reviewer` is a Claude model, runs with **no** `claude_accounts` stage account published, and the same task runs again with a `review` stage account — the gateway's log carries a route for the run's own stages' calls and none for the review class's, the review stage's `model_usd` is the gateway's figure with **no** `model_notional_usd` at all, the run's `route_by` totals the coder's stages rather than the whole run, and the second run's review class reads `credential=oauth` with `model_notional_usd` equal to `model_usd`; and, on an installation that publishes the pairing's sentinel with the credentials service on, a `fugaro review --pr N` runs the review-only job — the job named for the sentinel's review variant, its environment holding no credential of the repository's, its calls route-less in the gateway's log — while a repository whose profile does **not** name the key is still refused. **Slice C (the OpenRouter path) may not be run before Check 50**: `internal/creds/select.go` refuses every tier-C candidate today, so the script refuses `--provider` outright rather than measure that refusal | See "Check 330" below; `bash scripts/live-checks/check330.sh --sandbox <checkout> --run <slug>/<run-id> --contrast <slug>/<run-id> [--review <slug>/<run-id>]` is the whole of it — it reads the sandbox's own project, policy and run listing, the named runs' records, their executions' gateway log lines and the review job's description, and prints PASS or FAIL per fact — and **you** run it, on the sandbox only, **never `belong`**; **no agent runs any step of it** | Nothing billable and no model call: the check launches no run, writes no object, publishes no policy and mints no credential, so there is nothing to restore — what it reads are runs the sandbox already ran and the log lines they wrote, and the key's own name and the refusal stay steps of yours. **USER-RUN, NOT RUN.** |
-| 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/bucket-iam/spec.md` §4 — the H3 veto — and §11 item **V7**): which value the `storage.googleapis.com/objectListPrefix` request attribute carries, read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists the FOUR prefixes R12's design gives the reports job — `runs/<slug>/`, `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/` — reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. **The third run (2026-11-13) settled the value form: the attribute carries the request's own RELATIVE prefix (`runs/`, `reports/`) — under the full-path form every listing was refused — and that is the only form the script reads any more.** The bare `reports/` prefix that run was refused despite the binding being read back as present is a **DIAGNOSTIC** row, asked three ways and gating nothing, because the job never lists it. **The wrong form is a grant that lists nothing, and if the listings do not hold, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds five objects of its own, reads the four listings the job makes and the read it makes (one row per listing, every answer its own), records the bare `reports/` prefix as a diagnostic asked three ways, and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, five small objects under `runs/`, `reports/` (two depths), `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, NOT RUN.** Three attempts have been made: two on 2026-11-07, both exit `2` and both aborted — the first with an unreadable block, the second by a `tokens/` listing whose refusal named `storage.objects.get` where the script then accepted only `storage.objects.list` — and one on 2026-11-13, exit `1`, the first run that really read the probe and the one that settled the value form (relative) while leaving the bare `reports/` refusal unexplained. **The row stays NOT RUN**: the revision the third run's reading produced has not itself been run, so no `PASS` for `list-prefix` is recorded here yet; the section below records what each run did and did not measure. |
+| 340 | The prefix-limited listing grant ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 340; **R12's, and it gates R12**; `docs/bucket-iam/spec.md` §4 — the H3 veto — and §11 item **V7**): which value the `storage.googleapis.com/objectListPrefix` request attribute carries, read as a throwaway service account holding R12's two conditioned bindings (objectViewer on `runs/`, objectUser on `reports/`, each carrying the `resource.name` read clause and the listing clause joined by `\|\|`): that account lists the FOUR prefixes R12's design gives the reports job — `runs/<slug>/`, `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/` — reads a `runs/` object, and is refused the root listing, a `tokens/` read and a `tokens/` and a `cache/` listing. **The third run (2026-11-13) settled the value form: the attribute carries the request's own RELATIVE prefix (`runs/`, `reports/`) — under the full-path form every listing was refused — and that is the only form the script reads any more.** The bare `reports/` prefix that run was refused despite the binding being read back as present is a **DIAGNOSTIC** row, asked three ways and gating nothing, because the job never lists it. **The wrong form is a grant that lists nothing, and if the listings do not hold, R12's Terraform does not land and the plan stops and asks** (E4) | See "Check 340" below; `bash scripts/live-checks/check340.sh --project <project> --bucket <sandbox bucket>` is the whole of it — the script creates the throwaway account, grants the two bindings, seeds five objects of its own, reads the four listings the job makes and the read it makes (one row per listing, every answer its own), records the bare `reports/` prefix as a diagnostic asked three ways, and tears every bit of it down again — and **you** run it, on a **sandbox bucket** only, never `belong` (a project or a bucket naming that installation is refused before a single call); **no agent runs any step of it** | Nothing billable and no model call: one throwaway service account, five small objects under `runs/`, `reports/` (two depths), `tokens/` and `cache/`, two bucket bindings and one impersonation grant, every one of them removed and read back as gone by the script's own Restore, which runs from its exit trap even on a failed assertion or a Ctrl-C. **USER-RUN, PASS (2026-11-13).** Four runs have been made: two on 2026-11-07, both exit `2` and both aborted — the first with an unreadable block, the second by a `tokens/` listing whose refusal named `storage.objects.get` where the script then accepted only `storage.objects.list` — and two on 2026-11-13, the third exit `1`, the first run that really read the probe and the one that settled the value form (relative) while leaving the bare `reports/` refusal unexplained, and the fourth the one this row records: **exit `0`, every criterion held, its Restore clean**. The fourth run is the revision the third run's reading produced, so its `PASS` for `list-prefix` is the answer R12 waits for — the attribute carries the request's own prefix, `runs/` for the runs binding and `reports/` for the reports binding, each written `api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("<prefix>/")` — and the bare `reports/` prefix stays a diagnostic that gates nothing: the fourth run asked it three ways (the plain listing refused naming `storage.objects.list`, the wildcard listing allowed, the JSON API's delimiter listing `200`), so the clause does reach the prefix and R12's job, which never lists it, needs no change. The section below records what each run did and did not measure. |
+| 341 | The reports job's first firing, and what it stored ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 341, and the plan's rulings **E1** and **E3**): with `jobs.reports.paused: false` set in the project layer and `fugaro update` run, the project's own reports job fires once on its schedule, and the reader takes what it stored — one report per repository under `reports/<slug>/<YYYY>/<key>.md`, the project aggregate at `reports/<YYYY>/<key>.md` beside them, and the `reports/` objects still there after the run records' own 90 days, which is the 18-month `reports/` lifecycle rule (E3) doing what it is for. It is also the check that settles the question R10 is blocked on (**Open item 5**): whether `fugaro runs digest` may write to `reports/` at all, since **E4** makes the reports job its only writer | See "Check 341" below; **no script is written yet** — the check is the setting, one `fugaro update`, one firing of the schedule and the reads of what it stored, and **you** run every step of it; **no agent runs any step of it** | One scheduled firing of the project's own reports job: **no model call, no run and no pull request**, and nothing billable beyond the job's own execution. What it writes are ordinary stored reports in the project's own `reports/` prefix, which the bucket's own rule reaps; the setting goes back to `paused` afterwards. **USER-RUN, NOT RUN.** |
+| 342 | The failures report reproduces a window a person built by hand ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 342, and [`docs/failure-classes/design.md`](failure-classes/design.md)): a window whose causes are already known — the design's own seven-day table is one — read back through `fugaro runs ls --group-by failure_class` and the **Failures table** of the period's stored report, including the runs whose class the legacy reader read from `reason` (**FC5**). It is the one check that says whether the vocabulary means what the design says it means | See "Check 342" below; **no script is written yet** — the check is two reads of a period you already know and the comparison between them, and **you** run it; **no agent runs any step of it** | Two reads — the grouped listing and the stored report — with no write, no run and no model call: nothing is created, nothing is granted and there is nothing to restore. **USER-RUN, NOT RUN.** |
+| 343 | The opt-in commit into the designated repository ([`docs/periodic-reviews/`](periodic-reviews/implementation-plan.md) §P8, its Check 343, and R9; [reconciliation.md](periodic-reviews/reconciliation.md) §7 and **D2750–D2754**, its §7.3 for the check's number): with `reports_commit` — the designated repository, and `dir` if the reports do not go to the default folder — named in the owner's local project config and published, **one** `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` in that repository's checkout with the starting person's own launcher account opens a pull request carrying one file per stored report under `<dir>/<slug>/<YYYY>/<key>.md`, the project aggregate at `<dir>/<YYYY>/<key>.md` beside them and the index regenerated over the whole folder; a second run with nothing new in the store ends **without** a pull request; and a file the folder holds and the store does not is still there, named in the run's own record | See "Check 343" below; **no script is written, and none is needed** — the check is **one command**, `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"`, in the designated repository's checkout, plus the pull request it opens and the record the run leaves — and **you** run it, in the designated repository's checkout with your own launcher account, **never `belong`**; **no agent runs any step of it** | One ordinary run with its own model spend under the repository's and the installation's caps, one branch and one pull request in the designated repository. **No account, no IAM and no credential is created**: the read is the launcher's existing bucket-wide `objectViewer` and the write is the ordinary push path, so there is nothing to restore. **USER-RUN, NOT RUN.** |
 | 360 | The managed screens show what the CLI says, on a managed project ([`docs/console-managed-screens/`](console-managed-screens/implementation-plan.md), its Check 360 and task **CM12**; **F3** and **D1489**, the owner's ask of 2026-11-07): the Project tab's five later sections — the managed state, the retirements, the account keys, the credentials service and the policy panel — drawn on a real managed project, each within its own read and from the document that read answers with, agreeing with `fugaro managed status --json`, `fugaro settings --json`, `fugaro project policy show --json` and `fugaro doctor`'s policy lines; **no section offers a control that changes anything**, and no token appears anywhere (**D1471**). Its hermetic half is `console/test/e2e/managed.spec.ts`, which walks the same tab against the stub — and the live reading is the one a stub cannot take | See "Check 360" below; there is **no script** — the check is three steps you do by hand in the console and the reading you take from them — and **you** run it, on your own machine, with an installation and a managed project; **no agent runs any step of it** | One `fugaro update` — the same run you would make anyway — plus two reads and one window: no model call, no run and nothing billable. Nothing is created or written by the check itself, so there is nothing to restore. **USER-RUN, NOT RUN.** |
 | 361 | The workspace's own Firebase's sign-in providers ([`docs/workspaces/`](workspaces/spec.md) spec §3's provider pin, and that plan's **W3**): the Identity Platform configuration of the workspace's **own** project, read once over REST and judged against the pin — `google.com` and `password` enabled, `anonymous` and phone-number sign-in off, no other provider enabled, and public sign-up **not** disabled. It is the check W3's design says no hermetic test can hold: the project and its rules come from the installation path, but `fugaro setup`'s Identity Platform step initializes with **no provider** (`IdentityPlatformStep`, `internal/infra/identityplatform.go`) — right for a member's project and wrong for the workspace's — and `refusePublicSignUp` (`internal/cli/init_firebase.go`) refuses an off-pin provider on a workspace's own project by name while never *requiring* the pinned pair, so the providers are enabled by you and this is the read-back. A workspace whose project carries no provider has nobody who can sign in, and one that carries a provider the pin refuses is a sign-in path the exchange never sees | See "Check 361" below; `bash scripts/live-checks/check361.sh --project <the workspace's own project>` is the whole of it — ONE read-only GET, nothing created and nothing deleted, so it is safe to run repeatedly — and **you** run it: a project whose name contains `belong` is refused before any call, and **no agent runs any step of it** | Nothing billable and no model call: one GET of the project's Identity Platform configuration with your own credentials. **USER-RUN, NOT RUN.** |
 | 370 | The security escalation ([`docs/security-classification/`](security-classification/implementation-plan.md) §6, its Check 370; the plan's task **SC6**; reconciliation **D1507**, **D1508**, **D1509** and **D1519**): a run whose own diff touches a path the list in force calls security-sensitive turns review level 3 on for the rest of the run — the adversarial step runs, and the run's record names the matched row's `name`, its `category` and the moment, while the rigor mode stays the mode it was (D1508) — and a run whose diff touches nothing on the list does neither, its record carrying no escalation member. Its reader's half is `fugaro security paths --json` (the same work's task **SC3**, in slice 1: it landed as `cb69f1754`, #1979, and is an ancestor of this checkout) on a project that has published no key: the floor's 43 rows, with `internal/creds/state.go` sensitive and `docs/recipes.md` not — the pair that shows the floor is a **positive list and not the classifier's complement** (F1, F22) — and the same command against a working tree whose `fugaro.yaml` carries a `security` row and a base that does not, which must print the **base's** list (D1518) | See "Check 370" below; **you** run it, on the sandbox installation and the sandbox repository only, **never `belong`**, and **no agent runs any step of it** | Two sandbox runs and three reader commands: **the runs are model calls and real money** and the reader commands are free. Nothing is granted, nothing is written outside the runs' own prefixes, and there is nothing to restore. **USER-RUN, NOT RUN.** |
@@ -15368,14 +15371,15 @@ credential. Its whole footprint is the reads above and a scratch directory remov
 **Paste back:** the whole `CHECK 330 RESULT` block, the run references, and what steps 2 and 3 answered — and **never a credential,
 never a key, and never `belong`'s project**.
 
-## Check 340: the prefix-limited listing grant — one script you run (a sandbox bucket only, never `belong`; run by you; NOT RUN)
+## Check 340: the prefix-limited listing grant — one script you run (a sandbox bucket only, never `belong`; run by you; PASS, 2026-11-13)
 
-**NOT RUN.** Three attempts have been made and none of them is an answer. Written by the task that
+**PASS, 2026-11-13.** Four runs have been made and the fourth is the answer. Written by the task that
 implemented Check 340 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
 §P8 (the plan's **E4**) — §P8 names the number and leaves the row and this section to that task, which is the
-register's own rule for a work that reserved none — and **no `PASS` is recorded for `list-prefix` anywhere
-here**: the third run read the probe and settled the attribute's value form, but the row above stays **NOT RUN**
-until the revision that reading produced has itself been run. It is the check **R12** waits on: R12's Terraform writes one conditioned binding per prefix for the
+register's own rule for a work that reserved none — and **its `PASS` for `list-prefix` is recorded here**: the
+third run read the probe and settled the attribute's value form, and the fourth — the revision that reading
+produced — held every criterion with a clean Restore, so the row above reads **PASS** rather than NOT RUN. It is
+the check **R12** waits on: R12's Terraform writes one conditioned binding per prefix for the
 reports job, and each binding's listing half names the `storage.googleapis.com/objectListPrefix` request
 attribute. What that attribute **carries** is unverified in this tree — `docs/bucket-iam/spec.md` §4's H3 veto
 and its §11 item **V7** record the value form as unverified, and grepping the tree finds the attribute's name in
@@ -15412,8 +15416,8 @@ probes a prefix as an object before it lists it), and the script accepted only `
 so it read the refusal as "a call that did not answer" and stopped the run there. The `cache/` refusal was therefore
 never read and the **full-path form was never reached**, because the run stopped before it: of the fourteen per-form
 rows, five under the relative form were reached — four `PASS`ing and the `reports/` listing `FAIL`ing — and the other
-nine were not reached at all. **The row 340 above is still NOT RUN and no `PASS` is recorded for `list-prefix`
-anywhere here**: four `PASS`ing criteria and one `FAIL`ed listing are not an answer about the attribute, and the
+nine were not reached at all. **The row 340 above stayed NOT RUN after that run, and no `PASS` was recorded for
+`list-prefix` anywhere here off it**: four `PASS`ing criteria and one `FAIL`ed listing are not an answer about the attribute, and the
 full-path form — the only one that could have carried it — was never read. Three faults left that run where it
 stopped, and all three were fixed in the task that followed it: **either permission is a refusal** for the `tokens/` **read**,
 while the `tokens/` and `cache/` **listings** are asked with a **wildcard** (`gs://<bucket>/tokens/*`) so that gcloud
@@ -15458,9 +15462,31 @@ the plan's own order), so this is the design's statement of what the job will li
 job: the check reads those four prefixes because that is what R12's Terraform and R11's reader are being built to
 do, and a refusal of the bare `reports/` prefix is a request the design never makes, which is why it must not gate
 R12. That design statement is why the revision this run's reading produced reads the four prefixes the job lists,
-drops the second form, and asks the bare prefix as a **DIAGNOSTIC** that gates nothing. The revision has not itself
-been run, so **the row above is still NOT RUN**: what it needs is one more run of the same command, on a fresh
-sandbox bucket, whose `list-prefix` row is `PASS` and whose Restore confirms the teardown.
+drops the second form, and asks the bare prefix as a **DIAGNOSTIC** that gates nothing. The revision had not itself
+been run then, so the row above stayed **NOT RUN**: what it needed was **one more run of the same command**, on a
+fresh sandbox bucket, whose `list-prefix` row is `PASS` and whose Restore confirms the teardown — and that is
+exactly what the fourth run below did.
+
+**Fourth run: 2026-11-13, exit `0` — the run that answers the check.** The owner ran the revision once more, on
+`fugaro-dev` and a fresh sandbox bucket, and it **PASSED**: under the one relative form the throwaway account
+**LISTED** `runs/<slug>/`, `reports/<slug>/`, `reports/<slug>/<YYYY>/` and `reports/<YYYY>/`, **READ** a `runs/`
+object, and was **refused** the bucket root listing and a `tokens/` read and a `tokens/` and a `cache/` listing,
+each refusal naming the permission the missing clause would have carried — every criterion held — and its
+**Restore was clean**, so nothing the run made was left behind. **The bucket had to have uniform bucket-level
+access enabled first**: the two conditioned bindings this check grants are refused on a bucket that lacks it (HTTP
+`412`), and the first attempt at this run failed on exactly that until the guard of #2584 (`872a5a32a`) was added —
+since then the script reads the bucket's own access mode back before creating anything and stops, naming
+`gcloud storage buckets update gs://<bucket> --project=<project> --uniform-bucket-level-access`, rather than
+reading a bucket's configuration as a refusal of the grant. **The reading is the value form, and it is what R12's
+builder writes: the attribute carries the request's own prefix — `runs/` for the runs binding and `reports/` for
+the reports binding, each written `api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith("<prefix>/")`
+— and the root, `tokens/` and `cache/` are refused with the permission names the missing clauses would have
+carried.** The bare `reports/` diagnostic came back answered three ways, and its answer closes the question the
+third run left open **without changing R12**: the plain `gcloud storage ls gs://<bucket>/reports/` is refused
+naming `storage.objects.list`, while the wildcard `gcloud storage ls gs://<bucket>/reports/*` lists and the JSON
+API's `objects.list` with `prefix=reports/&delimiter=/` answers `200` — so gcloud's own request, which resolves the
+prefix as an object before it lists, is what was refused, and the clause itself does reach the bare prefix. R12's
+job never lists the bare prefix, so **it needs no change on that account**, and the row above is a **PASS**.
 
 **Run it:**
 
@@ -15590,12 +15616,13 @@ the other side.
 
 **Paste back:** the whole block into row 340 above and to the coordinator, with the `list-prefix` row's string —
 that string is the `<list prefix>` R12's builder writes into the two listing clauses, and it is the only thing
-this check exists to produce — **and the `reports-bare-diagnostic` row with it**, which is what explains the bare
-`reports/` refusal the third run left open.
+this check exists to produce — **and the `reports-bare-diagnostic` row with it**, whose three answers are what
+explain the bare `reports/` refusal the third run left open.
 
-**What waits on it.** R12, and behind R12 the reports job's first firing (Check 341) and `fugaro runs digest`'s
+**What it answered.** R12, and behind R12 the reports job's first firing (Check 341) and `fugaro runs digest`'s
 own writing to `reports/` (R10, Open item 5 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)):
-neither the Terraform nor anything it enables may land before this check answers.
+the check answered on 2026-11-13, so the Terraform and what it enables may land on the two prefix forms this
+section records, and the plan's **E4** no longer holds anything back.
 
 ## Check 360: the managed screens show what the CLI says, on a managed project (your own machine, an installation and a managed project; run by you; NOT RUN)
 
@@ -24542,3 +24569,183 @@ needed to run the check as the register writes it.
 `scripts/live-checks/check-740-run-messages_test.sh`, which drives every step of it against fake tools — a
 fake `fugaro` and a fake `gcloud`, no cloud, no installation and no run — and is run by
 `go test ./scripts`.
+
+## Check 341: the reports job's first firing, and what it stored (an installation and its own project, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the task that registered Check 341 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
+§P8 — the plan names the number and leaves the row and this section to the task that implements the
+check, which is the register's own rule for a work that reserved none — and **no step of it has been
+run, and nothing here is a claim that the job fires or that what it stores is right.** It is the check
+the reports job's own Terraform (**R12**) and plan (**R7**) are read by: the module plans the job
+**paused** (`jobs.reports.paused`, the setting **R13** puts on the project layer), so this check is
+the one that turns it on, watches it fire and reads what landed. It is also the check that settles
+the question **R10** is blocked on — **Open item 5** of the plan: whether `fugaro runs digest` may
+write to `reports/` at all, since **E4** makes the reports job its only writer.
+
+**What the check confirms.** With `jobs.reports.paused: false` in the project layer and `fugaro
+update` applied, the schedule fires once, and what it stored is what the plan's **E1** and **E3**
+say: **one report per repository** under `reports/<slug>/<YYYY>/<key>.md`, **the project aggregate**
+at `reports/<YYYY>/<key>.md` beside them, and the `reports/` objects **still there after the run
+records' own 90 days** — which is the **18-month `reports/` lifecycle rule** (E3) doing what it is
+for, and the half no hermetic test holds, because the bucket's own rule is read from the installed
+bucket rather than from a plan. And the second reading: whether the stored report **reads back** —
+`fugaro runs digest --stored` (**R10**) against what the job wrote — which is Open item 5's question
+and the reason R10's own write half is held.
+
+**What you do.** **You** run every step and **no agent runs any step of it**; point it at an
+installation whose project the job may write into, and **never at a project whose name contains
+`belong`** — this check turns the job on, and the job writes.
+
+1. In the project layer, set `jobs.reports.paused: false` and run `fugaro update`. Record what it
+   prints for the reports job, its account, its schedule and its grants.
+2. Let the schedule fire once. The job's own command is `fugaro runs reports --job`, and it
+   **refuses outside the job's environment** (a person writes one repository's report into a
+   checkout with `fugaro runs digest`), so the schedule is the way to make the firing; record the
+   execution and when it ran.
+3. Read what landed under `reports/`: one report per repository at `reports/<slug>/<YYYY>/<key>.md`,
+   and the project aggregate at `reports/<YYYY>/<key>.md`.
+4. Read one stored report back — `fugaro runs digest --stored <period>` — and record what it prints.
+
+**Expected.** One report per repository that ran in the period, each under its own slug and year; the
+project aggregate beside them; the objects still present after the run records' own 90 days, which is
+the bucket's own `reports/` rule and not a plan; and the stored report reading back as the report the
+job wrote, with no launcher having written to `reports/` to make that so.
+
+**Refutation.** A period with no report where a repository ran, an aggregate whose figures disagree
+with the repository reports beside it, a `reports/` object gone with the run records' 90 days, or a
+stored report that does not read back — the last of which is the reading that answers Open item 5
+**no**, and holds R10's write half where it is.
+
+**Restore.** Set `jobs.reports.paused: true` again and run `fugaro update`, which plans the job paused
+— that is the whole of putting it back. The stored reports it wrote are ordinary reports in the
+project's own `reports/` prefix and are meant to stay: the bucket's own 18-month rule reaps them, and
+removing them by hand would take the very reading this check exists to take. Nothing else is created:
+no account of the check's own, no binding and no credential.
+
+**A script is not written yet.** The register's own rule ([CONTRIBUTING.md](../CONTRIBUTING.md))
+asks a new owner-run check to ship as ONE runnable script under `scripts/live-checks/` with a
+hermetic test beside it, and **that script does not exist for this check**: what is written here is
+the step list, the row above names no command, and the task that converts this check owes the script,
+its test and the one command in the row.
+
+**Paste back:** the execution's id and when it fired, the keys under `reports/` with the ones the
+repositories' own runs would predict, the aggregate's figure beside the repository reports' own, and
+what `fugaro runs digest --stored` printed — and **never a credential and never `belong`'s project**.
+
+## Check 342: the failures report reproduces a window a person built by hand (an installation with stored reports, your own machine; run by you; NOT RUN)
+
+**NOT RUN.** Written by the task that registered Check 342 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
+§P8 — the same rule as Check 341's, the task that implements the check writing its row and its
+section — and **no step of it has been run.** It is the one check that says whether the **failure
+classes** mean what [failure-classes/design.md](failure-classes/design.md) says they mean: a
+vocabulary can be internally consistent, and every hermetic test can pass, while the word it puts on a
+run is not the word a person who watched the run would use. Nothing here is a claim that it does.
+
+**What the check confirms.** A window whose causes **you already know** — the design's own seven-day
+table is one — read back two ways that must agree with each other and with what you know happened:
+`fugaro runs ls --group-by failure_class` (**FC6**, the live reading of the window) and the
+**Failures table** of the period's stored report (**R8**'s aggregate, which by **D1432**'s
+recommendation carries the period's table beside its figures). **Including the runs whose class the
+legacy reader read from `reason`** (**FC5**): a run that predates the `failure_class` field carries
+none of its own, and the reader derives one from its `reason` rather than writing anything back — so
+the check is also the reading that says the derivation lands on the class a person would give the run.
+
+**What you do.** **You** run every step and **no agent runs any step of it** — both reads are yours,
+and the account of the window is what only a person has.
+
+1. Take a window you already know the causes of. The design's own seven-day table is one; a window
+   you watched run is another.
+2. Run `fugaro runs ls --group-by failure_class` over that window and record the table. If you use
+   the design's table, compare row by row.
+3. Read the same period's stored report — the Failures table under `reports/<YYYY>/<key>.md`, or
+   `fugaro runs digest --stored <period>` in a checkout — and record it.
+4. Put the two tables beside your own account of the window: each class's runs and the counts.
+
+**Expected.** The two tables agree with each other and with the causes you know; the runs that
+predate the field sit in the class their `reason` implies rather than in a class of their own or in
+none; and the period's report and the live listing of the same period name the same runs under the
+same classes.
+
+**Refutation.** A class whose runs a person would not put there, a run that predates the field
+falling out of every class, the live table and the stored table disagreeing over the same period, or
+a class the design names that no window ever produces — any of which is a reading about the
+**vocabulary**, and none of which the hermetic tests can take.
+
+**Restore.** Nothing to undo: two reads and a comparison. No run is launched, nothing is written,
+nothing is granted and no credential is minted, and there is nothing to paste back but the two
+tables and the account of the window they are checked against.
+
+**A script is not written yet.** The register's own rule ([CONTRIBUTING.md](../CONTRIBUTING.md))
+asks a new owner-run check to ship as ONE runnable script under `scripts/live-checks/` with a
+hermetic test beside it, and **that script does not exist for this check**: what is written here is
+the step list, the row above names no command, and the task that converts this check owes the
+script, its test and the one command in the row.
+
+**Paste back:** the window, the account of its causes, the two tables — the grouped listing and the
+stored report's Failures table — and where they disagreed, if they did.
+
+## Check 343: the opt-in commit into the designated repository (the designated repository's checkout, your own launcher account, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by the task that registered Check 343 of [periodic-reviews/implementation-plan.md](periodic-reviews/implementation-plan.md)
+§P8, the number claimed for **R9**'s own live check by the designation design of 2026-11-17
+([reconciliation.md](periodic-reviews/reconciliation.md) §7.3) — and, as with 341 and 342, the plan
+names the number and leaves the row and this section to the task that implements the check. **No
+script is written, and none is needed**: unlike Check 340 this check creates no account, writes no
+IAM and needs no teardown, because the read is the launcher's existing bucket-wide `objectViewer`
+and the write is the ordinary push path — the check is **one command** and the pull request it
+opens. **No step of it has been run**, and nothing here is a claim that the commit works.
+
+**What the check confirms.** The whole of the opt-in commit: that with `reports_commit` named — the
+designated repository, and `dir` if the reports do not go to the default folder — **one**
+`fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` in that repository's
+checkout carries the stored reports into it, that
+a second run with nothing new in the store ends **without** a pull request, and that a file the
+folder holds and the store does not is **still there** and named in the run's own record. It is
+**R9**'s check and the last of the reports job's: the read of `reports/` is the starting person's own
+launcher account (**D2754**), so no new credential and no new grant exists for it.
+
+**The one command:**
+
+```bash
+fugaro run --recipe commit-reports --commit-reports "commit the stored reports"
+```
+
+**The two flags go together.** `--commit-reports` is what hands the stored reports to the run, and
+the recipe is what reads them: a launch carrying it on any other recipe is refused at your terminal,
+by name, before anything runs, so the command above is the whole of it — one line, one run.
+
+**What you do.** **You** run every step and **no agent runs any step of it**; the run reads the
+project's own `reports/` prefix with your launcher account and opens its pull request in the
+designated repository, so **never point the installation at a project whose name contains `belong`**.
+
+1. Name `reports_commit` (the `repo`, and `dir` if the reports do not go to the default folder) in
+   your local project config and publish it — or let `fugaro update`'s policy stage carry it.
+2. In the designated repository's checkout, run
+   `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` with the
+   starting person's own launcher account. Record the run's id and what it printed.
+3. Read the pull request it opens: **one file per stored report** under `<dir>/<slug>/<YYYY>/<key>.md`,
+   **the project aggregate** at `<dir>/<YYYY>/<key>.md` beside them, and the **index regenerated**
+   over the whole folder.
+4. Run `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` again with
+   nothing new in the store: it must end **without** a pull request.
+5. Leave a file in the folder the store does not hold, run
+   `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"` once more, and
+   check the file is still there and named in the run's own record.
+
+**Expected.** Step 2 opens one pull request carrying exactly the store's reports and the index over
+the whole folder; step 4 ends with no new pull request; step 5 leaves the folder's own file where it
+was and names it in the record rather than removing it.
+
+**Refutation.** A file the store does not hold that the run removes or rewrites, an index that does
+not cover the whole folder, a second run that opens a pull request over nothing new, or a pull
+request that carries a report the store does not have — any of which is a reading about the commit
+step, and none of which the hermetic tests can take of a real repository.
+
+**Restore.** Nothing the check itself creates has to be put back: no account, no binding and no
+credential is made, and the read is the launcher's existing bucket-wide `objectViewer`. What it
+leaves is one branch and one pull request in the **designated repository**, which you merge or close
+the way you would any other — and the stored reports under `reports/` are untouched, because the
+check reads them.
+
+**Paste back:** the run's reference, the pull request's URL and the files it carried, what the second
+and third runs printed — and **never a credential and never `belong`'s project**.

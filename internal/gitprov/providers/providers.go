@@ -116,11 +116,7 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 			// the runner installs the service's (Provider.UseServiceTokens),
 			// so there is no in-job path to mint one.
 			if vars[EnvCredentialsServiceURL] != "" {
-				p, err := github.New(github.Options{
-					Owner: owner, Repo: name, AppID: appID, ServiceHeldKey: true,
-					BaseURL: vars[EnvGitHubAPIURL], HTTP: hc, Warn: warn,
-				})
-				return p, nil, err
+				return keylessGitHub(vars, hc, warn, owner, name, appID)
 			}
 			pemData, err := appKey(vars)
 			if err != nil {
@@ -138,6 +134,57 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 	}
 }
 
+// keylessGitHub is FromEnv's keyless github arm, with the App's ID the caller
+// has already read: the provider C2.2 opens for a job whose App key is the
+// service's (github.Options.ServiceHeldKey). It is one function because the
+// two openers that reach it -- FromEnv, for an installation whose own service
+// is on, and ServiceHeldGitHub, for a run whose route serves the kind from a
+// workspace's -- must open THE SAME provider: the two differ in where the fact
+// comes from and in nothing about what is built.
+func keylessGitHub(vars map[string]string, hc *http.Client, warn func(string), owner, name, appID string) (gitprov.Provider, []string, error) {
+	p, err := github.New(github.Options{
+		Owner: owner, Repo: name, AppID: appID, ServiceHeldKey: true,
+		BaseURL: vars[EnvGitHubAPIURL], HTTP: hc, Warn: warn,
+	})
+	return p, nil, err
+}
+
+// ServiceHeldGitHub returns an Opener for a run whose own credential route
+// serves the github kind from a workspace's credentials service (WS18, D2979):
+// the App's key is the workspace's and not this job's, so the provider is
+// opened keyless and refuses every token until the runner installs the
+// service's (Provider.UseServiceTokens, C2.2, D145).
+//
+// FromEnv takes that fact from the job's environment (EnvCredentialsServiceURL,
+// the "this installation's service is on" variable). A run routed to a
+// workspace's service may name no service of its own there: what says the kind
+// is served remotely is the run's own route record (R3, F32), which only the
+// runner reads, and this is how the fact reaches the provider. Every kind but
+// github is refused, so an opener that reached for a key it was not given
+// cannot be built by mistake -- the Bitbucket arm of the same fact is
+// Proxied.
+//
+// The App's ID is still the job's own environment value, as it is for FromEnv:
+// it is a number and not a credential, and the key that signs is the bundle's
+// (C2.1).
+func ServiceHeldGitHub(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
+	vars := envVars(env)
+	return func(_ context.Context, kind, repo string) (gitprov.Provider, []string, error) {
+		if kind != gitprov.KindGitHub {
+			return nil, nil, fmt.Errorf("unknown git provider %q (a run whose github credential is a service's reaches %s and nothing else)", kind, gitprov.KindGitHub)
+		}
+		owner, name, ok := gitprov.SplitRepo(repo)
+		if !ok {
+			return nil, nil, fmt.Errorf("repository %q must look like owner/name", repo)
+		}
+		appID := vars[EnvGitHubAppID]
+		if appID == "" {
+			return nil, nil, fmt.Errorf("%s is not set: the github provider needs the GitHub App's ID (see docs/git-providers.md)", EnvGitHubAppID)
+		}
+		return keylessGitHub(vars, hc, warn, owner, name, appID)
+	}
+}
+
 // Proxied returns an Opener for a proxied Bitbucket run (B1.7, G1, G9): the
 // repository's published block admits it with proxy: true, the installation
 // has its credentials service on, and the job therefore holds no Bitbucket
@@ -145,6 +192,17 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 // carries, because after the flip (B1.13 part two) there is nothing there to
 // read and a run that reached for a token it was not given would be one the
 // platform meant to withhold.
+//
+// service is where that run's proxy chain ends, and it is the caller's fact
+// rather than this environment's: the job's own credentials service for an
+// installation that serves its own forge credentials, or the workspace's, at
+// the address the run's own route record carries, for a run whose Bitbucket
+// credential is the workspace's (WS18, D2979, R3) -- a run that may name
+// EnvCredentialsServiceURL nowhere at all. It is refused when empty, which is
+// the belt and braces this opener has always had (G9): there is no in-job
+// token to fall back to (G5, D143), so an opener asked for a proxied provider
+// by a caller that cannot name the service its requests are forwarded to has
+// no service to forward to.
 //
 // forwarder is the runner's loopback forwarder URL
 // (gateway.GitForward.URL: "http://127.0.0.1:<port>" plus the proxy route's
@@ -167,19 +225,21 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 // here, where the adapter's options are filled. Nothing read from the task,
 // the environment or the workspace reaches them: an identity the agent could
 // plant would be an identity whose comments the run treats as its own.
-func Proxied(env []string, forwarder string, hc *http.Client, warn func(string), own projectpolicy.BitbucketTokenIdentities, ownPartial bool) gitprov.Opener {
-	vars := envVars(env)
+func Proxied(service, forwarder string, hc *http.Client, warn func(string), own projectpolicy.BitbucketTokenIdentities, ownPartial bool) gitprov.Opener {
 	return func(_ context.Context, kind, repo string) (gitprov.Provider, []string, error) {
 		if kind != gitprov.KindBitbucket {
 			return nil, nil, fmt.Errorf("unknown git provider %q (a proxied run reaches %s and nothing else)", kind, gitprov.KindBitbucket)
 		}
 		// Belt and braces: the caller decides proxied-ness from the published
-		// block AND this variable (G9), so an opener asked for a proxied
-		// provider without one has no service to forward to -- there is no
-		// in-job token to fall back to (G5, D143), and opening one anyway
-		// would be a run that fails at its first git command instead of here.
-		if vars[EnvCredentialsServiceURL] == "" {
-			return nil, nil, fmt.Errorf("%s is not set: a proxied run's Bitbucket requests are forwarded to the installation's credentials service, and this job names none", EnvCredentialsServiceURL)
+		// block AND the service the run's route names (G9), and an opener the
+		// caller could not name a service for has nowhere to forward to --
+		// there is no in-job token to fall back to (G5, D143), and opening one
+		// anyway would be a run that fails at its first git command instead of
+		// here. The address itself is not read: the forwarder is what calls it,
+		// and the caller hands the same value to the forwarder it points this
+		// adapter at, so the two halves cannot name different services.
+		if service == "" {
+			return nil, nil, fmt.Errorf("a proxied run's Bitbucket requests are forwarded to a credentials service, and this run names none (%s is not set on its job, and its own route serves the kind from no service)", EnvCredentialsServiceURL)
 		}
 		owner, name, ok := gitprov.SplitRepo(repo)
 		if !ok {
