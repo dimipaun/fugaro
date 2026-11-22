@@ -12,9 +12,9 @@
 # the source, the fallback flag and the fallback dollars on it. Every case below
 # bends one of those: a chain that does not start with the pool, a pool with a
 # member still good, a member whose headroom nobody reported, a member whose
-# window has reopened, a member inside a window still closed, a run the pool
-# served, a step nobody flagged, fallback dollars of zero, a record that carries
-# no source at all.
+# window has reopened, an available member's next reset, a member inside a window
+# still closed, a run the pool served, a step nobody flagged, fallback dollars of
+# zero, a record that carries no source at all.
 #
 # Usage: bash scripts/live-checks/check-881-chain-falls-through_test.sh
 set -euo pipefail
@@ -639,6 +639,24 @@ JSON
   assert_no_launch "$dir" "a member whose window has reopened"
 }
 
+test_an_available_members_next_reset_can_serve() {
+  # PL10 prints a next reset for every member, not only an exhausted one, and an
+  # available member's reset is when its window rolls over: a member that is not
+  # exhausted is not waiting for a clock, so its reset is no closed window, and
+  # reading it as one would call a pool that can serve unable.
+  local dir=$work/nextreset
+  setup_case "$dir"
+  cat >"$dir/answers/pools.json" <<JSON
+{"pools":[{"name":"${pool}","rule":"failover",
+  "members":[{"state":"available","usage":0.1,"reset":"2999-01-01T00:00:00Z"}]}]}
+JSON
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 2 "an available member's next reset"
+  expect_contains "$out" "FACT first-source: FAIL" "an available member's next reset: the row"
+  expect_contains "$out" "still has a member that can serve" "an available member's next reset: what it found"
+  assert_no_launch "$dir" "an available member's next reset"
+}
+
 test_a_member_inside_a_closed_window_cannot_serve() {
   # The state the check needs: the only member's window is still closed, so the
   # pool cannot serve and the run below falls through to the key.
@@ -891,6 +909,7 @@ t test_a_chain_of_only_the_pool_stops
 t test_a_pool_with_a_member_still_good_stops_before_spending
 t test_a_member_with_no_headroom_figure_can_serve
 t test_a_member_whose_window_has_reopened_can_serve
+t test_an_available_members_next_reset_can_serve
 t test_a_member_inside_a_closed_window_cannot_serve
 t test_no_designated_pool_is_the_skip_it_measures
 t test_a_project_that_is_not_enforced_stops

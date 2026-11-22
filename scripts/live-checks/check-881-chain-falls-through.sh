@@ -434,33 +434,37 @@ print("absent")
 PY
 }
 
-# member_can_serve STATE HEADROOM EXHAUSTED_UNTIL: whether a pool member can serve
-# a call, which is what the gate below reads. It cannot when its state word says
-# the credential is out for good (a revoked, retired, disabled, invalid, dead or
+# member_can_serve STATE HEADROOM WINDOW: whether a pool member can serve a call,
+# which is what the gate below reads. It cannot when its state word says the
+# credential is out for good (a revoked, retired, disabled, invalid, dead or
 # broken one waits for a person and never for a clock), when its headroom is known
-# to be zero, or when its exhausted_until is still in the future. Nothing else
-# counts as unable, and the direction matters: an absent headroom figure is nobody
-# having reported one (PL10) rather than zero, an exhausted_until in the past is a
-# window that has reopened — an exhausted mark whose hold has lapsed serves again
-# (internal/creds Mark.Usable), so the state word alone does not say "out" — and an
-# instant this check cannot read is not one it may call a closed window. A member
-# wrongly called unable to serve passes the gate and spends a paid run on a pool
-# that could have served it, which is the whole thing the gate prevents.
-member_can_serve() { # member_can_serve <state> <headroom> <exhausted_until>
+# to be zero, or when it is exhausted and its window is still closed. Nothing else
+# counts as unable, and every direction matters. An absent headroom figure is
+# nobody having reported one (PL10) rather than zero. A window in the past is a
+# window that has reopened: an exhausted mark whose hold has lapsed serves again
+# (internal/creds Mark.Usable), so the state word alone does not say "out". An
+# instant this check cannot read is not one it may call a closed window. And the
+# instant is consulted only for an exhausted member: the listing prints a next
+# reset for every member (PL10), so an available member's reset is when its window
+# rolls over and not a closed one, and reading it as closed would call a pool that
+# can serve unable — the costly mistake, because a member wrongly called unable
+# passes the gate and spends a paid run on a pool that could have served it, which
+# is the whole thing the gate prevents.
+member_can_serve() { # member_can_serve <state> <headroom> <window>
   case "$1" in
   *retir* | *revok* | *disabl* | *invalid* | *dead* | *broken*) return 1 ;;
   esac
-  python3 - "$2" "$3" <<'PY'
+  python3 - "$1" "$2" "$3" <<'PY'
 import datetime, sys
-headroom, until = sys.argv[1], sys.argv[2]
+state, headroom, window = sys.argv[1], sys.argv[2], sys.argv[3]
 if headroom not in ("", "null", "None"):
     try:
         if float(headroom) == 0.0:
             sys.exit(1)
     except ValueError:
         pass
-if until not in ("", "null", "None"):
-    text = until[:-1] + "+00:00" if until.endswith("Z") else until
+if "exhaust" in state and window not in ("", "null", "None"):
+    text = window[:-1] + "+00:00" if window.endswith("Z") else window
     try:
         when = datetime.datetime.fromisoformat(text)
     except ValueError:
@@ -800,24 +804,24 @@ step_first_source() {
   fi
   local n=${report#present|}
   n=${n%%$'\n'*}
-  local usable=0 line state headroom until
+  local usable=0 line state headroom window
   while IFS= read -r line; do
     case "$line" in
     present\|*) continue ;;
     "") continue ;;
     esac
     state=${line%%|*}
-    until=${line##*|}
+    window=${line##*|}
     headroom=${line#*|}
     headroom=${headroom%%|*}
-    member_can_serve "$state" "$headroom" "$until" || continue
+    member_can_serve "$state" "$headroom" "$window" || continue
     usable=$((usable + 1))
   done <<<"$report"
   if [ "$usable" -gt 0 ]; then
-    fact first-source FAIL "${pool} still has a member that can serve (${usable} of ${n} members carries neither a known-zero headroom nor an exhausted-until still in the future), so a run would be served by the pool and the rows below would measure no fall-through at all: this check stops before spending anything. Make the first source unable to serve — wait for the members' window to run out, or point --pool at a pool whose members are at their limit — and run the check again"
+    fact first-source FAIL "${pool} still has a member that can serve (${usable} of ${n} members carries neither a known-zero headroom nor an exhausted mark with its window still closed), so a run would be served by the pool and the rows below would measure no fall-through at all: this check stops before spending anything. Make the first source unable to serve — wait for the members' window to run out, or point --pool at a pool whose members are at their limit — and run the check again"
     stop "the launcher's pool still has a member that can serve"
   fi
-  fact first-source PASS "every member of ${pool} is at its limit (${n} members, each carrying a known-zero headroom or an exhausted-until still in the future), so the chain's first source cannot serve and the next source has to: this is the state the check measures"
+  fact first-source PASS "every member of ${pool} is at its limit (${n} members, each carrying a known-zero headroom or an exhausted mark with its window still closed), so the chain's first source cannot serve and the next source has to: this is the state the check measures"
 }
 
 step_launch() {
