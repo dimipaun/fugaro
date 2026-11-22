@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -938,6 +939,87 @@ func TestWorkspaceKeysAreNeverPublished(t *testing.T) {
 	for _, want := range []string{"workspace", "never published", "fugaro update"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+}
+
+// TestWorkspaceCommandsRegistered is I1's pin on the family's tree: exactly the
+// commands the plan names, each mutating one wrapped with the reporter (D1354),
+// each reading one a listing, and `workspace member` gone -- its two verbs are
+// `workspace project add|rm` now (D2802), so a tree that still answers to the
+// name is a tree that kept the command this change exists to remove.
+//
+// The wrapping is checked through the census rather than through the command
+// object, because the census is what holds the name to the source:
+// TestEveryMutatingCommandWritesALog walks the syntax tree for the literal a
+// reporter constructor is called with, so a row here whose command is
+// registered without the wrapper is a row no call site backs.
+func TestWorkspaceCommandsRegistered(t *testing.T) {
+	parents := map[string][]string{
+		"workspace":         {"add", "cap", "domains", "init", "login", "ls", "project", "rm", "share", "show", "unshare", "user"},
+		"workspace project": {"add", "link", "ls", "reconcile", "rm", "save", "status", "unlink"},
+		"workspace user":    {"add", "grant", "ls", "revoke", "rm"},
+		"workspace domains": {"add", "ls", "rm"},
+	}
+	for _, path := range slices.Sorted(maps.Keys(parents)) {
+		parent := findCommand(strings.Fields(path)...)
+		if parent == nil {
+			t.Errorf("`fugaro %s` is not in the tree, so the commands under it cannot be reached", path)
+			continue
+		}
+		var got []string
+		for _, child := range parent.Commands() {
+			got = append(got, child.Name())
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, parents[path]) {
+			t.Errorf("`fugaro %s` runs %v, want %v", path, got, parents[path])
+		}
+	}
+
+	// Every command I1 registered is either on the reporter (it writes) or a
+	// listing (it reads): a command of this family that is neither is a command
+	// printing an account of its own, which is what the census admits of the
+	// five rows that predate this change and of nothing here.
+	mutating := []string{
+		"workspace init",
+		"workspace project add", "workspace project link", "workspace project reconcile",
+		"workspace project rm", "workspace project save", "workspace project unlink",
+		"workspace user add", "workspace user grant", "workspace user revoke", "workspace user rm",
+		"workspace domains add", "workspace domains rm",
+	}
+	listing := []string{
+		"workspace project ls", "workspace project status",
+		"workspace user ls", "workspace domains ls",
+	}
+	for _, path := range mutating {
+		name, ok := reporterCommands[path]
+		if !ok {
+			t.Errorf("`fugaro %s` writes and is not on the census's reporter set, so its run prints through nothing", path)
+			continue
+		}
+		if want := strings.ReplaceAll(path, " ", "-"); name != want {
+			t.Errorf("`fugaro %s` files its log under %q, want %q", path, name, want)
+		}
+		if findCommand(strings.Fields(path)...) == nil {
+			t.Errorf("`fugaro %s` is on the census and not in the tree", path)
+		}
+	}
+	for _, path := range listing {
+		if _, ok := exemptListings[path]; !ok {
+			t.Errorf("`fugaro %s` reads and is not on the census's listing set, so its stdout is claimed as an account", path)
+		}
+		if findCommand(strings.Fields(path)...) == nil {
+			t.Errorf("`fugaro %s` is on the census and not in the tree", path)
+		}
+	}
+
+	if findCommand("workspace", "member") != nil {
+		t.Error("`fugaro workspace member` is still in the tree: project add|rm carry its verbs now (D2802)")
+	}
+	for _, path := range []string{"workspace member add", "workspace member rm", "workspace member ls"} {
+		if _, ok := reporterCommands[path]; ok {
+			t.Errorf("the census still carries a reporter row for %q", path)
 		}
 	}
 }
