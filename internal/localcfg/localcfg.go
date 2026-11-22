@@ -2765,6 +2765,10 @@ func Parse(data []byte) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("local config: %w", err)
 	}
+	// The word that was a budget mode is folded to what it means now, before
+	// the strict decode below, so a config that says it still loads for the
+	// update that rewrites it (F22; load_removed_mode.go).
+	folded = foldRemovedBudgetMode(folded, top)
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(folded))
 	dec.KnownFields(true)
