@@ -275,7 +275,7 @@
           "properties": {
             "per_run_usd": { "type": "number", "exclusiveMinimum": 0 },
             "per_day_usd": { "type": "number", "exclusiveMinimum": 0, "description": "The committed daily cap of the repository (fugaro.yaml); the run enforces it client-side against the repository's day counter." },
-            "mode": { "enum": ["off", "observe", "enforce"] },
+            "mode": { "enum": ["off", "observe", "enforce"], "description": "Which budget mode the merged policy left. The enum keeps off — the word that was a mode until this release, which a run's record of version 1 may still carry — so a record written then still validates, and nothing writes it any more: a mode left unset, and the word itself, are observe through the mode vocabulary (docs/always-a-budget/reconciliation.md R7, D3009, R3), so a record of this release and after carries observe or enforce and nothing else." },
             "max_run_tokens": { "type": "integer", "minimum": 1 },
             "max_output_tokens": {
               "type": "object",

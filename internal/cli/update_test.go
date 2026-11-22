@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
+	"github.com/dimipaun/fugaro/internal/place"
 )
 
 // update_test.go is `fugaro update`'s own behaviour: the door that re-converges
@@ -581,5 +582,34 @@ func TestUpdateConvergesAnInstallationAtThePreviousRelease(t *testing.T) {
 	}
 	if strings.Contains(string(b), "mcp_server") {
 		t.Errorf("fugaro update turned the front door on for an installation that never asked for one (D934: off is the absence of the opt-in), and the front door is a public endpoint the moment it is served:\n%s", b)
+	}
+}
+
+// TestUpdateKeepsAnExistingInstallationOnItsOwnBucketLocation (LP6, R5, F11):
+// discovery reads where an installation's log bucket really is, and the run
+// writes that location into the spec, so the plan of an installation whose
+// bucket is in `global` is a plan of a bucket in `global`. That one location
+// builds the sink's destination, the view's bucket path and every view grant's
+// location (logging.tf), so a run that handed Terraform the mapping's answer
+// instead — `us`, for this fixture's us-east5 — would point the sink at a
+// bucket that does not exist and delete and re-create every grant in a location
+// with no view in it. The bucket resource's own ignore_changes keeps the bucket
+// itself where it is in either plan, which is why this test reads the tfvars
+// rather than the bucket's row: that row is a no-op for both answers.
+func TestUpdateKeepsAnExistingInstallationOnItsOwnBucketLocation(t *testing.T) {
+	r := updateRig(t)
+	fakeTerminal(t)
+	// This fixture's region (initConfig, us-east5) maps somewhere else, so the
+	// two answers differ and the assertion below can tell them apart.
+	if where := place.For("us-east5").LogBucket.Where; where == "global" {
+		t.Fatalf("this fixture's region maps to `global` (%s), which is the answer the installation's bucket must NOT be given", where)
+	}
+	r.logs.AddBucket(initProject, "global", infra.LogBucket, "ACTIVE", infra.LogBucketDescription)
+	out, _, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("one fugaro update did not converge an installation whose log bucket is in `global`: %v\n%s", err, out)
+	}
+	if got := r.tfvars(t)["log_bucket_location"]; got != "global" {
+		t.Errorf("the run planned with log_bucket_location = %v, want `global`, where discovery found this installation's bucket: the sink's destination and every view grant are built from it, and the mapping's answer would move them off the bucket", got)
 	}
 }
