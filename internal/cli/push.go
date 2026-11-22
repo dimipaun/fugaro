@@ -75,15 +75,19 @@ const (
 	// a doorbell (§3.2).
 	pushHourlyCap = 6
 	// pushLedgerWindow is the dedupe and cap window (Q10 (ii)): the age past
-	// which a ledger row is pruned on the sweep, so the node holds state about
-	// the last window only. One hour is the cap's own period, which is why the
-	// two share one row and one lifetime (§3.7).
+	// which a ledger row whose state change is over is pruned on the sweep, so
+	// the node holds the last window's history and not everything the account was
+	// ever told. One hour is the cap's own period, which is why the two share one
+	// row and one lifetime (§3.7). A row whose event is STILL DERIVED outlives
+	// the window: §3.7's key is the transition, and pruning the record of a
+	// transition that has not happened again would announce it a second time
+	// (pushPrune).
 	//
-	// It is the whole of what the SENDER keeps. The rest of Q10's retention is
-	// the pairing's lifetime — the node goes with `fugaro pair revoke` (P5.2.5),
-	// so nothing outlives the pairing — and the provider's own copy of a
-	// payload, which the disclosure states (P5.2.10) rather than this sender
-	// implying it away.
+	// It is the whole of what the SENDER keeps beyond the states in force. The
+	// rest of Q10's retention is the pairing's lifetime — the node goes with
+	// `fugaro pair revoke` (P5.2.5), so nothing outlives the pairing — and the
+	// provider's own copy of a payload, which the disclosure states (P5.2.10)
+	// rather than this sender implying it away.
 	pushLedgerWindow = time.Hour
 	// pushRetryWindow is §6's retry window: a pending intent is retried by the
 	// sweeps inside it — two of them at the job's 15-minute cadence — and
@@ -103,11 +107,16 @@ const (
 	// its pull request states it. It is measured against the run's per-run cap,
 	// the one cap a run's own spend is directly comparable to.
 	pushCapNearPercent = 80
-	// pushMaxRows bounds one account's ledger as the sender reads it: a node
-	// holding more rows than the cap's window can hold is one a writer other
-	// than this sender has been at, and the sender refuses it rather than
-	// working through it.
-	pushMaxRows = 200
+	// pushMaxRows bounds one account's ledger as the sender reads it. A row is
+	// one state change, and the ledger holds the last window's plus every state
+	// change still in force, because the prune keeps those (pushPrune). The cap
+	// writes at most pushHourlyCap of them an hour and the longest a state change
+	// can live is the prompt TTL — D118's 72 hours, after which the mailbox sweep
+	// removes the prompt it is derived from — so a ledger this sender wrote stays
+	// under pushHourlyCap x 72, with the switches' own handful on top of it. A
+	// node past this is one a writer other than this sender has been at, and the
+	// sender refuses it rather than working through it.
+	pushMaxRows = 512
 )
 
 // pushEvent is one thing a sweep derived: the category, and the state-change key
@@ -249,8 +258,14 @@ func (p *pushSender) Sweep(ctx context.Context) (pushReport, error) {
 	return rep, errors.Join(errs...)
 }
 
-// account is one paired account's turn: reap an orphan, prune the ledger, retry
-// what is pending, then derive and consider this sweep's events.
+// account is one paired account's turn: reap an orphan, derive this sweep's
+// events, prune the ledger of the state changes that are over, retry what is
+// pending, then consider what is new.
+//
+// The events are derived BEFORE the prune because the prune needs them: a row
+// records a state change, and a state change is over only when the event it
+// names is no longer derived (§3.7 — the key is the transition, and a transition
+// that has not happened again is still the one notification).
 func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent, rep *pushReport) error {
 	var raw json.RawMessage
 	paired, err := p.db.Get(ctx, rules.PathDevices+"/"+uid, &raw)
@@ -277,7 +292,25 @@ func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent
 		return nil
 	}
 	now := p.now()
-	kept, pruned := pushPrune(node.Ledger, now)
+	events, err := p.accountEvents(ctx, uid)
+	if err != nil {
+		return err
+	}
+	events = append(events, shared...)
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].category != events[j].category {
+			return events[i].category < events[j].category
+		}
+		return events[i].key < events[j].key
+	})
+	// The states this sweep derived are the ones a row is kept for: a row whose
+	// event is here records a transition that has not happened again, and §3.7
+	// makes that one notification however many sweeps see it.
+	live := make(map[string]bool, len(events))
+	for _, e := range events {
+		live[pushRowKey(e)] = true
+	}
+	kept, pruned := pushPrune(node.Ledger, now, live)
 	if len(pruned) > 0 {
 		updates := map[string]any{}
 		for _, key := range pruned {
@@ -290,12 +323,14 @@ func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent
 	}
 	node.Ledger = kept
 	if node.Token == "" {
-		// §6's first row: no token, no send — and no ledger entry, because
-		// there is no event to dedupe and nothing to cap. The node's prefs and
-		// ledger are left exactly as they are; the app re-registers (§3.5 (b)).
+		// §6's first row: no token, no send — and no new row, because there is
+		// nothing to send and so nothing to dedupe or cap. The node's prefs are
+		// left exactly as they are and its rows are pruned as any other
+		// account's are (a state change that is over is over whether or not the
+		// app can be buzzed about it); the app re-registers (§3.5 (b)).
 		return nil
 	}
-	// A pending intent is retried before new events are derived, so a retry is
+	// A pending intent is retried before new events are considered, so a retry is
 	// not crowded out by the events of the same sweep — and a retry that reaps
 	// the token ends the account's turn exactly as a fresh send does: the
 	// registration is gone, so the events this sweep derived must not be offered
@@ -304,17 +339,6 @@ func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent
 	if err != nil || stop {
 		return err
 	}
-	events, err := p.accountEvents(ctx, uid)
-	if err != nil {
-		return err
-	}
-	events = append(events, shared...)
-	sort.Slice(events, func(i, j int) bool {
-		if events[i].category != events[j].category {
-			return events[i].category < events[j].category
-		}
-		return events[i].key < events[j].key
-	})
 	for _, e := range events {
 		stop, err := p.consider(ctx, uid, &node, e, rep)
 		if err != nil {
@@ -338,7 +362,7 @@ func (p *pushSender) readNode(ctx context.Context, uid string) (pushNode, bool, 
 		return node, false, nil
 	}
 	if len(node.Ledger) > pushMaxRows {
-		return node, true, fmt.Errorf("%s/ledger holds %d rows, more than the window can hold (%d): the node is not this sender's and nothing was sent to %s", pairPushPath(uid), len(node.Ledger), pushMaxRows, uid)
+		return node, true, fmt.Errorf("%s/ledger holds %d rows, more than this sender writes (%d): the node is not this sender's and nothing was sent to %s", pairPushPath(uid), len(node.Ledger), pushMaxRows, uid)
 	}
 	return node, true, nil
 }
@@ -365,11 +389,13 @@ func (p *pushSender) consider(ctx context.Context, uid string, node *pushNode, e
 		return false, nil
 	}
 	now := p.now().UnixMilli()
-	rowKey := pushRowKey(e)
-	if row, ok := node.Ledger[rowKey]; ok && now-row.At < pushLedgerWindow.Milliseconds() {
-		// §3.7's dedupe: the key is the transition, so a cap still reached on
-		// the next sweep is not a second notification. A row that is pending is
-		// the retry's, which has already had its turn this sweep.
+	if _, ok := node.Ledger[pushRowKey(e)]; ok {
+		// §3.7's dedupe: the key is the transition, and a row is the record of
+		// one. It is in the ledger because either the transition is inside the
+		// window or the state change it names is still in force — the prune keeps
+		// those (pushPrune) — and in both cases the account has already been told
+		// and this sweep has nothing to announce. A row that is pending is the
+		// retry's, which has already had its turn this sweep.
 		rep.Suppressed++
 		return false, nil
 	}
@@ -408,6 +434,19 @@ func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, rep 
 				return false, err
 			}
 			delete(node.Ledger, key)
+			rep.Suppressed++
+			continue
+		}
+		quiet, why := pushQuiet(node, p.now())
+		if why != "" {
+			p.warnf(why)
+		}
+		if quiet {
+			// §6's quiet-hours row: the window is honoured at the sender before
+			// the provider is called, and a retry is a send. The intent is left
+			// pending rather than dropped — the retry window, not the quiet one,
+			// is what ends it — so nothing here announces the state change the
+			// window is holding back.
 			rep.Suppressed++
 			continue
 		}
@@ -734,7 +773,8 @@ func pushPerRunCap(repo *budget.RepoCaps, defaults *budget.DefaultCaps) (budget.
 }
 
 // accountEvents derives the events that are facts about one paired account: a
-// prompt the mailbox carries for it, and its consumer gone quiet.
+// prompt the mailbox carries for it that nobody has settled, and its consumer
+// gone quiet.
 func (p *pushSender) accountEvents(ctx context.Context, uid string) ([]pushEvent, error) {
 	var events []pushEvent
 	var outbox map[string]json.RawMessage
@@ -746,6 +786,10 @@ func (p *pushSender) accountEvents(ctx context.Context, uid string) ([]pushEvent
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	nowMs := p.now().UnixMilli()
+	// The inbox is read once, and only if there is a prompt to ask about: a
+	// stored prompt is the only event whose state change an answer can end.
+	var answered map[string]bool
 	for _, id := range ids {
 		// The consumer's own strict decoder, not a lenient read of the one
 		// field this needs: a node the schema refuses is not a stored prompt,
@@ -756,6 +800,27 @@ func (p *pushSender) accountEvents(ctx context.Context, uid string) ([]pushEvent
 			continue
 		}
 		if kind, _ := record["kind"].(string); kind != mailboxKindPrompt {
+			continue
+		}
+		if at := mailbox.RecordAt(record); at > 0 && nowMs-at >= mailboxPromptTtlMs {
+			// Past D118's TTL the mailbox sweep removes the prompt, so a question
+			// nobody can answer any more is not one to buzz about — and the
+			// boundary is that sweep's own, drawn in the same place so the two
+			// cannot disagree.
+			continue
+		}
+		if answered == nil {
+			settled, err := p.pushAnswered(ctx, uid)
+			if err != nil {
+				return nil, err
+			}
+			answered = settled
+		}
+		if answered[id] {
+			// The owner has answered this question already. A prompt stays in the
+			// outbox until the TTL expires it, so without this the sender would
+			// re-announce it every sweep the row outlived (§3.7: one
+			// notification per state change — and the state changed).
 			continue
 		}
 		// The message's own id is the state-change key: one question, one buzz,
@@ -781,6 +846,31 @@ func (p *pushSender) accountEvents(ctx context.Context, uid string) ([]pushEvent
 		events = append(events, pushEvent{category: pushConsumerOffline, key: key})
 	}
 	return events, nil
+}
+
+// pushAnswered reads the mailbox's inbox for the messages its owner has already
+// settled, keyed by the message each one names in `reply_to`. An inbox record is
+// create-only — nothing deletes one — so the answer outlives its own delivery
+// and is still there for as long as the prompt it answers is.
+func (p *pushSender) pushAnswered(ctx context.Context, uid string) (map[string]bool, error) {
+	var inbox map[string]json.RawMessage
+	if _, err := p.db.Get(ctx, "mailbox/"+uid+"/inbox", &inbox); err != nil {
+		return nil, fmt.Errorf("reading mailbox/%s/inbox: %w", uid, err)
+	}
+	answered := map[string]bool{}
+	for _, data := range inbox {
+		record, err := mailbox.Decode(data)
+		if err != nil {
+			continue
+		}
+		// `reply_to` is the schema's own word for "this record settles the
+		// message it names", and it is the two kinds that settle one — an
+		// `answer` and an `action` — that may carry it.
+		if replyTo, _ := record["reply_to"].(string); replyTo != "" {
+			answered[replyTo] = true
+		}
+	}
+	return answered, nil
 }
 
 // pushEnabled answers whether the account's own switch lets this category
@@ -854,16 +944,22 @@ func pushQuiet(node *pushNode, now time.Time) (bool, string) {
 	return minutes >= window.Start || minutes < window.End, ""
 }
 
-// pushPrune is §6's/Q10 (ii)'s pruning: the rows past the dedupe window, and
-// the pending intents past the retry window, are deleted — so the node holds
-// state about the last window only. It answers the rows to keep and the node
-// keys to delete.
-func pushPrune(ledger map[string]pushRow, now time.Time) (map[string]pushRow, []string) {
+// pushPrune is §6's/Q10 (ii)'s pruning: a sent row past the dedupe window whose
+// event is no longer derived, and a pending intent past the retry window, are
+// deleted. `live` is the row keys of the events this sweep derived, and a row
+// that is in it is kept however old it is: §3.7's key is the transition, so a
+// state change that is still in force — a cap still reached, a switch still on,
+// a prompt still unanswered — is ONE notification however many sweeps see it,
+// and the row is the record of the one. Pruning it would make the next sweep
+// announce it again.
+//
+// It answers the rows to keep and the node keys to delete.
+func pushPrune(ledger map[string]pushRow, now time.Time, live map[string]bool) (map[string]pushRow, []string) {
 	kept := make(map[string]pushRow, len(ledger))
 	var drop []string
 	for key, row := range ledger {
 		age := now.UnixMilli() - row.At
-		past := age >= pushLedgerWindow.Milliseconds()
+		past := age >= pushLedgerWindow.Milliseconds() && !live[key]
 		if row.State == pushStatePending && age >= pushRetryWindow.Milliseconds() {
 			past = true
 		}

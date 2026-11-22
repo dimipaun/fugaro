@@ -144,18 +144,27 @@ func (f *pushFixture) categories() []string {
 // sixth in the hour — and what it proves is that the cap is a cap and not a
 // second dedupe.
 //
-// The second half is the hour itself: the sweep an hour later starts a new
-// window (the rows are pruned and the count starts again), which is what makes
-// this "per hour" rather than "for ever".
+// The second half is the hour itself, and it is two rules at once. A state
+// change that is still in force an hour later is NOT a second notification: the
+// row that records it is kept for as long as the event it names is derived
+// (pushPrune), which is what makes a cap reached at 01:00 one buzz rather than
+// one an hour until midnight. And the cap is a RATE and not a lifetime: once the
+// states end, the rows go with them and the next hour's seven events are six
+// sends and a control again.
 func TestPushSendsOnePerCategoryPerRunPerHour(t *testing.T) {
 	f := newPushFixture(t, pushTestNow)
 	f.pair(t, mailboxSwitchState(nil))
-	plant := func() {
+	first := func(i int) string { return fmt.Sprintf("2026100%d-090000-aaaa", i) }
+	second := func(i int) string { return fmt.Sprintf("2026101%d-090000-aaaa", i) }
+	plant := func(name func(int) string) {
 		for i := 1; i <= 7; i++ {
-			f.stoppedByCap(fmt.Sprintf("2026100%d-090000-aaaa", i), 1_000_000, 1_000_000)
+			f.stoppedByCap(name(i), 1_000_000, 1_000_000)
 		}
 	}
-	plant()
+	end := func(name func(int) string, i int) {
+		f.db.Set(budget.PathSpendRun(budget.Day(f.now), appSlug, name(i)), nil)
+	}
+	plant(first)
 
 	out, _ := f.sweep(t)
 	if got := len(f.sent); got != 6 {
@@ -183,16 +192,33 @@ func TestPushSendsOnePerCategoryPerRunPerHour(t *testing.T) {
 		t.Fatalf("a second sweep of the same hour sent %d more (%v), want none: the state-change key is the transition, not the sweep", len(f.sent)-before, f.categories()[before:])
 	}
 
-	// An hour later the window has moved: the rows are pruned and the same
-	// seven events are events again.
+	// An hour later the window has moved, and the six states are STILL in force:
+	// the cap is still reached for those runs, and §3.7's key is the transition,
+	// so the account is not told again. The seventh run has ended, so its state
+	// is not derived at all — it was the control, and it was never announced.
 	f.now = f.now.Add(time.Hour)
-	plant()
+	end(first, 7)
+	if _, _ = f.sweep(t); len(f.sent) != before {
+		t.Fatalf("the sweep an hour later sent %d (%v), want none: a state change still in force is the one notification it already was", len(f.sent)-before, f.categories()[before:])
+	}
+	if rows := f.pushRows(t); len(rows) != 6 {
+		t.Errorf("the ledger holds %d rows (%v) an hour later, want the six state changes that are still in force: the row is kept while its event is derived", len(rows), rows)
+	}
+
+	// The states end and a new hour's seven appear: the rows go with the states
+	// they recorded, and the cap starts a fresh hour — six through, one
+	// suppressed.
+	for i := 1; i <= 6; i++ {
+		end(first, i)
+	}
+	plant(second)
+	before = len(f.sent)
 	out, _ = f.sweep(t)
 	if got := len(f.sent) - before; got != 6 {
-		t.Fatalf("the sweep an hour later sent %d (%v), want 6: the cap is per hour", got, f.categories()[before:])
+		t.Fatalf("the next hour's sweep sent %d (%v), want 6: the cap is a rate and not a lifetime", got, f.categories()[before:])
 	}
 	if !strings.Contains(out, "6 ledger rows pruned") {
-		t.Errorf("output = %q, want the previous hour's rows counted as pruned", out)
+		t.Errorf("output = %q, want the ended states' rows counted as pruned", out)
 	}
 }
 
@@ -393,8 +419,11 @@ func TestPushSendsNothingForAnOrdinaryRun(t *testing.T) {
 
 // TestPushPrunesTheLedgerToItsWindow is Q10 (ii): the ledger's lifetime is the
 // pairing's, and its WINDOW is the sweep's — a row past the dedupe window is
-// deleted on the sweep, so the node holds state about the last hour only and
-// not a growing history of everything the account was ever told.
+// deleted on the sweep, so the node holds the last hour's state changes and not
+// a growing history of everything the account was ever told. Both rows here are
+// cap_reached rows whose runs are gone from the day's spend, so both are state
+// changes that are over; a row whose event is still derived is the other test's
+// (TestPushSendsOnePerCategoryPerRunPerHour).
 func TestPushPrunesTheLedgerToItsWindow(t *testing.T) {
 	f := newPushFixture(t, pushTestNow)
 	f.pair(t, mailboxSwitchState(nil))
@@ -467,6 +496,49 @@ func TestPushRetriesAPendingIntentInsideTheWindowAndDropsItPastIt(t *testing.T) 
 	}
 	if v := f2.db.Value(pushTestPath + "/ledger/" + inside); v != nil {
 		t.Errorf("the dropped intent survived: %v", v)
+	}
+}
+
+// TestPushDoesNotRetryInsideQuietHours is §6's quiet-hours row applied to the
+// retry path: the window is honoured at the sender before the provider is
+// called, and a retry is a send. An intent that comes due inside the window is
+// left pending rather than sent — and left pending rather than dropped, because
+// the retry window and not the quiet one is what ends an intent.
+func TestPushDoesNotRetryInsideQuietHours(t *testing.T) {
+	// 22:05, inside the stored 22:00–07:00 window, with an intent queued before
+	// the window opened.
+	f := newPushFixture(t, time.Date(2026, 1, 15, 22, 5, 0, 0, time.UTC))
+	f.pair(t, mailboxSwitchState(map[string]any{"zone": "UTC", "start": 22 * 60, "end": 7 * 60}))
+	inside := budget.Key(pushPrompt + ":p-inside")
+	f.db.Set(pushTestPath+"/ledger/"+inside, map[string]any{"category": pushPrompt, "key": "p-inside",
+		"at": f.now.Add(-15 * time.Minute).UnixMilli(), "state": pushStatePending, "attempts": 1})
+
+	out, _ := f.sweep(t)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v inside the quiet-hours window: a retry is a send, and the window is honoured at the sender before the provider is called", f.categories())
+	}
+	if !strings.Contains(out, "1 suppressed") {
+		t.Errorf("output = %q, want the held-back retry counted as suppressed", out)
+	}
+	row, _ := f.db.Value(pushTestPath + "/ledger/" + inside).(map[string]any)
+	if row == nil {
+		t.Fatal("the intent was dropped: the quiet window is not the retry window, and the intent is left pending")
+	}
+	if got := mailboxNodeString(t, row, "state"); got != pushStatePending {
+		t.Errorf("the row's state = %q, want %q", got, pushStatePending)
+	}
+
+	// Half an hour later the intent ages out of its own window and is pruned —
+	// dropped, never sent late and never escalated (§6). That the row is GONE is
+	// the assertion that carries the quiet check: the window is still open at
+	// this hour, so a sender that had simply not retried would still hold it.
+	f.now = f.now.Add(35 * time.Minute)
+	f.sweep(t)
+	if len(f.sent) != 0 {
+		t.Fatalf("sent %v when the held-back intent aged out, want nothing: the retry window is what ends an intent", f.categories())
+	}
+	if v := f.db.Value(pushTestPath + "/ledger/" + inside); v != nil {
+		t.Errorf("the aged-out intent survived: %v, want the retry window to have dropped it", v)
 	}
 }
 
@@ -613,6 +685,17 @@ func TestPushDerivesAPromptAndAStaleConsumer(t *testing.T) {
 		t.Fatalf("the unchanged mailbox was announced twice: %v", f.categories()[before:])
 	}
 
+	// An hour later both states are still in force — the prompt is unanswered
+	// and the consumer is still silent — and §3.7's key is the transition, so
+	// neither is announced again. The dedupe window has moved by now, which is
+	// what makes this the rows' own doing: a prompt stays in the outbox until
+	// its TTL, and a quiet consumer stays quiet, so pruning their rows on age
+	// alone would make both a buzz an hour, for ever.
+	f.now = f.now.Add(time.Hour)
+	if _, _ = f.sweep(t); len(f.sent) != before {
+		t.Fatalf("the states still in force an hour later were announced again: %v", f.categories()[before:])
+	}
+
 	// A consumer inside the presence rule, and a mailbox with no stored prompt:
 	// neither is an event.
 	f2 := newPushFixture(t, pushTestNow)
@@ -621,6 +704,73 @@ func TestPushDerivesAPromptAndAStaleConsumer(t *testing.T) {
 	f2.sweep(t)
 	if len(f2.sent) != 0 {
 		t.Fatalf("sent %v for a consumer a minute old and no prompt", f2.categories())
+	}
+}
+
+// TestPushAnnouncesAKillSwitchLeftOnOnce is §3.7 for the state change that
+// outlives every window: a switch nobody turns off. Its key names the instant the
+// switch was written, so the event is one transition — and the row that records
+// it is kept for as long as the switch is on, which is what makes an hour of
+// sweeps one buzz rather than one an hour.
+func TestPushAnnouncesAKillSwitchLeftOnOnce(t *testing.T) {
+	f := newPushFixture(t, pushTestNow)
+	f.pair(t, mailboxSwitchState(nil))
+	f.kill()
+
+	f.sweep(t)
+	if got := f.categories(); !slices.Equal(got, []string{pushKillSwitch}) {
+		t.Fatalf("sent %v, want the one switch", got)
+	}
+	f.now = f.now.Add(2 * time.Hour)
+	f.sweep(t)
+	if got := f.categories(); len(got) != 1 {
+		t.Fatalf("a switch left on was announced again two hours later: %v", got[1:])
+	}
+	if rows := f.pushRows(t); len(rows) != 1 {
+		t.Errorf("the ledger holds %d rows (%v), want the one the switch's transition wrote", len(rows), rows)
+	}
+}
+
+// TestPushSkipsAPromptTheOwnerAnsweredAndOnePastItsTtl is §3.7's rule where the
+// state change is the OWNER's: a prompt stays in the outbox until D118's 72 hours
+// expire it, so the row's own window would re-announce an unanswered question
+// every hour and an answered one for the rest of its TTL. What settles a prompt
+// is an inbox record naming it in `reply_to` — the inbox is create-only, so the
+// answer is still there — and what ends it is the mailbox sweep's own boundary,
+// drawn in the same place here so the two cannot disagree.
+func TestPushSkipsAPromptTheOwnerAnsweredAndOnePastItsTtl(t *testing.T) {
+	f := newPushFixture(t, pushTestNow)
+	f.pair(t, mailboxSwitchState(nil))
+	asked := f.now.Add(-2 * time.Minute).UnixMilli()
+	f.db.Set("mailbox/"+pushTestUID+"/outbox/p-open", pushPromptRecord(t, "p-open", asked))
+	f.db.Set("mailbox/"+pushTestUID+"/outbox/p-answered", pushPromptRecord(t, "p-answered", asked))
+	f.db.Set("mailbox/"+pushTestUID+"/outbox/p-stale", pushPromptRecord(t, "p-stale", f.now.Add(-73*time.Hour).UnixMilli()))
+	f.db.Set("mailbox/"+pushTestUID+"/inbox/a-1", map[string]any{"id": "a-1", "sender": pushTestUID, "text": "yes",
+		"at": asked, "kind": mailboxKindAnswer, "reply_to": "p-answered", "mac": strings.Repeat("a", 64)})
+
+	out, _ := f.sweep(t)
+	if got := f.categories(); !slices.Equal(got, []string{pushPrompt}) {
+		t.Fatalf("sent %v, want the one prompt nobody has answered: an answered question and one past its TTL are not events", got)
+	}
+	if !strings.Contains(out, "1 sent") {
+		t.Errorf("output = %q, want the one notification counted", out)
+	}
+	rows := f.pushRows(t)
+	if _, ok := rows[budget.Key(pushPrompt+":prompt:p-open")]; !ok {
+		t.Errorf("the ledger holds %v, want the open prompt's row", rows)
+	}
+	if len(rows) != 1 {
+		t.Errorf("the ledger holds %d rows (%v), want the one open prompt", len(rows), rows)
+	}
+
+	// The answer is what settled it and not the clock: with the inbox empty, the
+	// same outbox is two prompts again.
+	f2 := newPushFixture(t, pushTestNow)
+	f2.pair(t, mailboxSwitchState(nil))
+	f2.db.Set("mailbox/"+pushTestUID+"/outbox/p-answered", pushPromptRecord(t, "p-answered", asked))
+	f2.sweep(t)
+	if got := f2.categories(); !slices.Equal(got, []string{pushPrompt}) {
+		t.Fatalf("sent %v for a prompt with no answer in the inbox, want it announced", got)
 	}
 }
 
