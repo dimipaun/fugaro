@@ -106,13 +106,15 @@
 #             --executions-limit how many executions each gcloud read asks for
 #             (default 200: a read gcloud fills is widened, because the count
 #             parts (a) and (c) compare has to be the exact one),
-#             --cloud-seconds the bound on the two calls that may launch
-#             something — the deliberately refused launch of (a) and the
-#             diagnosis of (c) (default 1500: the tier's own fifteen-minute
+#             --cloud-seconds the bound on every call of this check that reaches
+#             the cloud — the deliberately refused launch of (a), the diagnosis
+#             of (c) and the two troubleshoot reads of (a) and (b), each of which
+#             launches a job execution whenever its tier answers rather than
+#             declining (default 1500: the tier's own fifteen-minute
 #             timeout and slack; 0 for no bound). The bound is `timeout`'s own,
 #             so it holds where the machine has one (GNU coreutils; macOS ships
-#             none, which is Check 310's own caveat) and without one those two
-#             calls are unbounded and yours to interrupt.
+#             none, which is Check 310's own caveat) and without one every such
+#             call is unbounded and yours to interrupt.
 # Needs:      bash, python3 (every document and every rewrite below is read and
 #             written with it), git, gcloud (authenticated: it lists executions
 #             and reads the runs bucket) and `fugaro` — the binary of the
@@ -679,9 +681,11 @@ fg() {
 }
 
 # fg_bounded: the same call with the --cloud-seconds bound in front of the binary.
-# The two calls that may launch something — the deliberately refused launch of
-# part (a) and the diagnosis of part (c) — go through this, so a call that hangs
-# is the bound firing rather than a check that never ends. The bound has to be
+# Every call of this check that reaches the cloud goes through this — the
+# deliberately refused launch of part (a), the diagnosis of part (c), and the two
+# `troubleshoot` reads of (a) and (b), each of which launches a job execution
+# whenever its tier answers rather than declining — so a call that hangs is the
+# bound firing rather than a check that never ends. The bound has to be
 # put in front of `fugaro` itself and not around `fg`, which is a shell function
 # and not something timeout(1) can exec. It is `timeout`'s own bound, so it holds
 # where the machine has one (GNU coreutils; macOS ships none, which is the caveat
@@ -982,7 +986,11 @@ sentence_workflow() { printf '%s' "$1" | sed -n 's/.*workflow \([^ ]*\) .*/\1/p'
 
 step_decline() {
   local status=0
-  fg troubleshoot "$SUBJECT" --json >"$SCRATCH/decline.json" 2>"$SCRATCH/decline.err" || status=$?
+  fg_bounded troubleshoot "$SUBJECT" --json >"$SCRATCH/decline.json" 2>"$SCRATCH/decline.err" || status=$?
+  if [ "$status" = 124 ]; then
+    unmeasured a-decline "fugaro troubleshoot $SUBJECT was still running when the ${CLOUD_SECONDS}s bound (--cloud-seconds) ended it: the tier's own timeout is fifteen minutes and this bound is that timeout and slack, so a read the bound had to end is one whose job was still going — the run it launched may be there still, and its record is what to read before running this check again"
+    stop "the tier's own read did not come back inside the bound, so (a) was not measured"
+  fi
   DECLINE_STATUS=$status
   json_fields "$SCRATCH/decline.json" >"$SCRATCH/decline.txt"
   local error tier offline reason run_id
@@ -1147,7 +1155,11 @@ step_unavailable() {
 
 step_unavailable_tier() {
   local status=0
-  fg troubleshoot "$SUBJECT" --json >"$SCRATCH/unavailable.json" 2>"$SCRATCH/unavailable.err" || status=$?
+  fg_bounded troubleshoot "$SUBJECT" --json >"$SCRATCH/unavailable.json" 2>"$SCRATCH/unavailable.err" || status=$?
+  if [ "$status" = 124 ]; then
+    unmeasured b-tier "fugaro troubleshoot $SUBJECT was still running when the ${CLOUD_SECONDS}s bound (--cloud-seconds) ended it, with the tier's own project pointed at $UNREACHABLE: a read the bound had to end is one whose job was still going — the run it launched may be there still, and its record is what to read before running this check again"
+    stop "the tier's own read did not come back inside the bound, so (b) was not measured"
+  fi
   json_fields "$SCRATCH/unavailable.json" >"$SCRATCH/unavailable.txt"
   local error tier offline reason
   error=$(field "$SCRATCH/unavailable.txt" error)
@@ -1486,7 +1498,7 @@ SUBJECT_CLI=""
 BAD_RELEASE_CLI=""
 ABSENT_CLI=""
 TASK_CLI=""
-USAGE="check680.sh [--name <installation>] [--config <file>] [--checkout <dir>] [--repo <owner/name>] [--project <gcp project>] [--region <region>] [--bucket <bucket>] [--subject <run id>] [--bad-release <X.Y.Z>] [--absent-project <project id>] [--task <text>] [--dry-run]"
+USAGE="check680.sh [--name <installation>] [--config <file>] [--checkout <dir>] [--repo <owner/name>] [--project <gcp project>] [--region <region>] [--bucket <bucket>] [--subject <run id>] [--bad-release <X.Y.Z>] [--absent-project <project id>] [--task <text>] [--executions-limit <n>] [--cloud-seconds <n>] [--dry-run]"
 usage() {
   sed -n '2,/^set -Eeuo/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&3
 }

@@ -113,19 +113,30 @@ Task 4.4 added it back, exactly pinned, with the code that uses it.
 `pinning.test.ts`'s runtime allow-list holds the set to that one entry, and a
 second one is a deliberate edit there with the case for it written down.
 
-**The Node is pinned exactly too: `engines.node` is `22.23.3`, not a range.**
-It is the version every command in this task was run on, and it is a member of
-both pinned tools' own engine ranges (Electron 45.2.3 declares `>= 22.12.0`,
-Vitest 5.1.0 declares `^22.12.0 || ^24.0.0 || >=26.0.0`), so nothing in the
-toolchain is asking for anything narrower. A range here would have been the one
-float left in a task whose whole subject is exact pins — and the plan already
-hands this field to CI (Task 1.4's `actions/setup-node` takes its version from
-it), so an exact value is what makes the runner's Node the same Node the tests
-were written against. Bumping it is a deliberate edit, like every other pin, and
-`test/unit/pinning.test.ts` refuses a wildcard, a tag or an operator in this
-field the way it refuses one in a specifier. `.npmrc` sets `engine-strict=true`,
-so a reader whose Node is another version finds out at install time rather than
-in a test failure nobody can explain.
+**The Node is the one field pinned to a range: `engines.node` is
+`>=22.23.3 <23` — a floor and the next major as its ceiling.** The floor is the
+version every command in this task was run on, and it is a member of both pinned
+tools' own engine ranges (Electron 45.3.1 declares `>= 22.12.0`, Vitest 5.1.0
+declares `^22.12.0 || ^24.0.0 || >=26.0.0`), so nothing in the toolchain is
+asking for anything narrower. The ceiling is what keeps it a pin on that line: an
+open `>=22.23.3` would let CI resolve this field (Task 1.4's
+`actions/setup-node` takes `node-version-file: console/package.json`) onto
+whatever major the runner had, and a floor with a ceiling on the major after it
+is the narrowest field that still installs.
+**It was an exact version, `22.23.3`, until 2026-11-22, and the pin was the
+fault.** `.npmrc` sets `engine-strict=true`, so `npm ci` on Node 22.23.5 — the
+next patch of the very line the toolchain was tested on, and a version Electron
+and Vitest both accept — failed with `EBADENGINE`, and the fix a reader reached
+for was to install an older Node rather than to run the tests. The cost of the
+change is worth naming: CI's Node *line* is unchanged (still 22, still read from
+this file), but the *patch* is now the newest 22.x the runner can install rather
+than the one fixed version, because `actions/setup-node` resolves a range the way
+npm does. Bumping the floor is a deliberate edit, like every other pin, and
+`test/unit/pinning.test.ts` refuses a wildcard, a tag, a caret or tilde, a floor
+with no ceiling and a ceiling that is not the floor's next major — an exact
+version included, which is the shape this field had before. `.npmrc` sets
+`engine-strict=true`, so a reader whose Node is outside the range finds out at
+install time rather than in a test failure nobody can explain.
 
 ### Commands
 
@@ -4419,11 +4430,13 @@ checkout, or one from a branch ago on the machine of whoever runs it next (revie
 2026-10-20, high finding). It **needs a display**: Electron opens a real window, so this
 is a run on a Mac with a desktop session and never a run in CI — the script's own header says
 so, and with no display the launch fails and the command exits non-zero. It refuses to start
-on any Node but the exact one `package.json`'s `engines.node` pins (`.npmrc` sets
+on any Node outside the range `package.json`'s `engines.node` declares (`.npmrc` sets
 `engine-strict=true`, so `npm ci` is the check) with a one-line error rather than a stack
-trace — and the version it wants is *read from that file* and compared exactly, because a
-major-only guard lets Node 22.11 through to precisely the `npm ci` EBADENGINE failure the
-guard exists to prevent, with a message that said the version was fine.
+trace — and the range it wants is *read from that file* and asked the way npm asks it
+(is this shell's Node inside the floor and the ceiling), because a major-only guard lets
+Node 22.11 through to precisely the `npm ci` EBADENGINE failure the guard exists to prevent,
+with a message that said the version was fine, while a guard comparing the whole string
+would refuse the newer 22.x patch the range exists to allow.
 
 ### What it launches, and the checks that keep it fake
 

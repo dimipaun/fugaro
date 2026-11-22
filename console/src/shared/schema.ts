@@ -304,10 +304,9 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // URL -- the safe direction, and the read is offline either way.
   base_url: 'url',
   // `host` is the host of `base_url`: a machine name, so it takes the host
-  // class, which draws `HOST_PLACEHOLDER` for every value. That is the
-  // console's rule for a machine and not a decision this document gets to
-  // change -- the panel cannot show which host a route points at, and
-  // `docs/desktop-console/spec.md` §5.1's row is where that is stated.
+  // class, which draws the name it was given (D3213, 2026-11-21). Which host a
+  // route points at is a fact about the operator's own configuration, and this
+  // console is the tool that reads it.
   host: 'host',
   // A route's or a model's `note`, a row's `refused` (why it has no price) and
   // a repository's `problems[]` (the refusals a launch would give for its pins)
