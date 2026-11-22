@@ -325,12 +325,15 @@ type Spec struct {
 	// rejected after the fact.
 	ReviewClass bool `json:"review_class,omitempty"`
 	// Rigor is the mode the run's own launcher asked for (fugaro run
-	// --mode, docs/rigor-modes implementation-plan T1.6): the one input
-	// that may raise the mode the run's layers resolve and never lower it
-	// (D6, F14). "" asks for none: every spec written before this release,
-	// every first run that passes no flag, and every follow-up whose pull
-	// request recorded no mode the reader may trust. The resolution then
-	// falls to the layers alone, exactly as it did before the flag existed.
+	// --mode, docs/rigor-modes implementation-plan T1.6): the narrowest rank
+	// of the mode's order, so it settles the level the run's layers resolve
+	// whether it asks for more or for less (LD3). What holds a lowering back
+	// is a review floor, which sits outside every layer and is a review level
+	// rather than a mode (LF5); the request's own rank no longer does. "" asks
+	// for none: every spec written before this release, every first run that
+	// passes no flag, and every follow-up whose pull request recorded no mode
+	// the reader may trust. The resolution then falls to the layers alone,
+	// exactly as it did before the flag existed.
 	//
 	// A --pr follow-up is the one launch that writes this field without a
 	// flag: it keeps the mode the runs on its pull request recorded and may
@@ -338,6 +341,14 @@ type Spec struct {
 	// follow-up's behalf. A recorded hotfix is not a mode it keeps — hotfix is
 	// off the axis, an operator's own mode (D12) — so a record carrying one
 	// leaves the field empty, like any other record that imposes nothing.
+	//
+	// A mode a launch carried from a record rather than one its caller typed —
+	// the follow-up's, and the parent run's that a filing launcher writes into
+	// a task of its own (internal/cli's followUpsParentMode, D1844) — is
+	// raise-only against the layers too, which is what RigorCarried reports
+	// and what the resolver holds it to (rigor.Request.Carried, LF5 §3a): the
+	// carry says where the work was left, never that this run may run below
+	// the configuration its repository has since resolved.
 	//
 	// It is called rigor and not mode because Spec.Mode is already taken: it
 	// is the *recipe's* mode (implement, review, artifact), a different
@@ -1578,6 +1589,24 @@ func Parse(data []byte) (*Spec, error) {
 
 // IsFollowUp reports whether the task continues an existing Fugaro PR.
 func (s *Spec) IsFollowUp() bool { return s.Branch != "" }
+
+// RigorCarried reports whether Rigor is a mode this launch carried from a
+// record rather than one its own caller typed on this run: a --pr follow-up
+// keeps the mode its pull request recorded (IsFollowUp, T5.2, F14), and a task
+// a filing launcher wrote carries the parent run's own answer (FollowUpOf,
+// D1844). Either way the mode says where the work was left, so it may raise
+// the level the layers resolve and never lower it (LF5 §3a) — which is what
+// rigor.Request.Carried tells the resolver, and the one reason a resolution
+// reads a spec's Rigor any differently from a flag typed on this run.
+func (s *Spec) RigorCarried() bool { return s.IsFollowUp() || s.FollowUpOf != nil }
+
+// RigorRequest is the resolver's input for this spec's own request (LD3, T5.1,
+// T5.2): the mode it asks for, over the paths given — the ones the launch
+// declared, or the paths a moment of the run measured — and whether that mode
+// was carried rather than asked for here.
+func (s *Spec) RigorRequest(paths []string) rigor.Request {
+	return rigor.Request{Level: s.Rigor, Paths: paths, Carried: s.RigorCarried()}
+}
 
 // Validate checks the spec's own rules; it does not look at the repository.
 func (s *Spec) Validate() error {

@@ -84,7 +84,12 @@ func TestForgetSpec(t *testing.T) {
 	if !s.RegistryCleanup.DryRun {
 		t.Errorf("forget spec's registry cleanup %+v is not a dry run", s.RegistryCleanup)
 	}
-	if got := LogBucketUndelete("proj-1234"); got != "gcloud logging buckets undelete "+LogBucket+" --location=global --project proj-1234" {
+	// The location is the bucket's own, whatever it is: the command a rollback
+	// prints names where the bucket actually is (LP6, R5).
+	if got := LogBucketUndelete("proj-1234", "global"); got != "gcloud logging buckets undelete "+LogBucket+" --location=global --project proj-1234" {
+		t.Errorf("undelete = %q", got)
+	}
+	if got := LogBucketUndelete("proj-1234", "europe-west1"); got != "gcloud logging buckets undelete "+LogBucket+" --location=europe-west1 --project proj-1234" {
 		t.Errorf("undelete = %q", got)
 	}
 }

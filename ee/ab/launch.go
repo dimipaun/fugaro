@@ -199,7 +199,7 @@ func embeddedRecipe(spec *task.Spec) *recipe.Recipe {
 // the project layer's rigor over the repository's, with the launch's --path
 // set applied.
 func launchedMode(cfg *config.Config, spec *task.Spec) rigor.Rigor {
-	return rigor.Resolve(cfg.RigorConfig(), rigor.Request{Level: rigor.Rigor(spec.Rigor), Paths: spec.Paths}).Level
+	return rigor.Resolve(cfg.RigorConfig(), spec.RigorRequest(spec.Paths)).Level
 }
 
 // challengersToday counts the challenger arms this repository's day already

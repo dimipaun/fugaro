@@ -741,9 +741,15 @@ func TestWorkspaceProxyStreamsAndHoldsNothing(t *testing.T) {
 	if !bytes.Equal(got, head[:len(got)]) {
 		t.Errorf("the answer's first half = %d bytes, want the upstream's own %d unchanged", len(got), len(got))
 	}
+	// The upstream's flush is waited for rather than read non-blockingly: the
+	// caller's half cannot have arrived before the upstream put it on the wire, so
+	// the channel is already closed by now and this never waits — but a `default:`
+	// arm here reads the scheduler's luck instead, and the whole tree's run (three
+	// concurrent `go test` invocations on four cores) failed it with data the
+	// upstream had demonstrably sent.
 	select {
 	case <-up.flushed:
-	default:
+	case <-time.After(wsStreamWait):
 		t.Error("the first half reached the caller before the upstream had put it on the wire")
 	}
 

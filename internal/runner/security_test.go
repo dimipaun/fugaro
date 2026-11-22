@@ -165,6 +165,27 @@ func TestRunEscalationLeavesTheRigorModeAlone(t *testing.T) {
 	}
 }
 
+// TestRunEscalationGoesAheadAtHotfix: a hotfix run whose diff matches the
+// owner's list goes ahead as hotfix with the adversarial pass forced on, and
+// it is neither raised to the mode the path would have resolved nor refused
+// (the owner's ruling of 2026-11-20). Level 3 here is the escalation's own and
+// not a floor row's: the floors a hotfix run is held to are hotfix's, and the
+// escalation is the one thing no mode escapes (SC6, D1507).
+func TestRunEscalationGoesAheadAtHotfix(t *testing.T) {
+	r, repo := securityRun(t, rigor.Hotfix)
+	change(t, repo, map[string]string{listedPath: "package creds\n"}, "work on the credentials tree")
+	r.escalateSecurity(context.Background(), runstore.SecurityAtImplement)
+	if r.rec.Security == nil || r.rec.Security.Refused {
+		t.Fatalf("the escalation of a hotfix run = %+v; want it taken and not refused", r.rec.Security)
+	}
+	if !levelOn(r.levels, policy.LevelL3) || !hasAdversarialStep(r.plan) {
+		t.Fatalf("a hotfix run whose diff matched a security row has no level 3 step: %+v", r.levels)
+	}
+	if got := r.rec.Rigor.Mode; got != rigor.Hotfix {
+		t.Errorf("the run's mode = %q; want hotfix: the escalation is a level and not a mode (D1508)", got)
+	}
+}
+
 // TestRunRecordsThePatternThatEscalatedIt: the record says which row decided
 // and at which moment, which is what makes "why did this run review at level
 // 3?" answerable from the record rather than from the diff (D1509).

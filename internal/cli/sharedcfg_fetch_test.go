@@ -660,7 +660,7 @@ func TestPublishSharedForbiddenExistingObjectIsNotOverwritten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	written, err := publishSharedWarn(context.Background(), lc, func(string) {})
+	written, _, err := publishSharedWarn(context.Background(), lc, func(string) {})
 	if written || err == nil || !strings.Contains(err.Error(), "access") {
 		t.Fatalf("written %v, err %v; want no write and an access error", written, err)
 	}
