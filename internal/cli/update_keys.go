@@ -99,6 +99,19 @@ type keyCopy struct {
 	// whichever naming the key's own declaration chooses: what the read is made
 	// of, and deliberately not what the marker carries.
 	secretID string
+	// fallbackID is the other container the same logical name may be held in,
+	// read only when secretID holds no version this run can read. A key has one
+	// home per scope the installation keeps containers for, and the run's own
+	// job mounts the narrower one: the repository's container while it holds an
+	// enabled version, the project-wide copy of the same name otherwise
+	// (infra.RepoSpec.MountSecretID, deploy/terraform/gcp/modules/repo/
+	// workflows.tf's local.secrets, which resolves the project copy for exactly
+	// the names whose repository copy has no version). A pair read from the
+	// wider container while a narrower one holds a value would enter a key the
+	// repository's own runs are not served — and release B drops the mount, so
+	// nothing else would serve them it afterwards. Empty when the key has one
+	// home only.
+	fallbackID string
 	// entry is the bundle key the value belongs under, as C1 builds it
 	// (credsvc.RepoCredentialKey).
 	entry string
@@ -119,6 +132,16 @@ func (c keyCopy) name() string {
 		return pluginwire.Printable(c.credential)
 	}
 	return fmt.Sprintf("%s for %s", pluginwire.Printable(c.credential), pluginwire.Printable(c.repo))
+}
+
+// homes is the containers the pair's key may be held in, in the order the read
+// takes them: the repository's own first, the wider one after it. Both hold the
+// same logical name, so what the marker carries is the same whichever answered.
+func (c keyCopy) homes() []string {
+	if c.fallbackID == "" || c.fallbackID == c.secretID {
+		return []string{c.secretID}
+	}
+	return []string{c.secretID, c.fallbackID}
 }
 
 // copySources answers the pairs this run has to copy: for each model key the
@@ -145,22 +168,26 @@ var copySources = func(ctx context.Context, lc *localcfg.Config) ([]keyCopy, err
 // Both halves of a pair are the owner's own config and nothing here is a
 // literal. The container is the provider's declaration's own `secret` — the
 // logical name this installation holds that key under, which is the name the
-// marker carries and the name `fugaro secrets ls` speaks — and its Secret
-// Manager ID is the project-wide container that name resolves to, the one
-// internal/infra's projectSecretContainers gives every declared provider the
-// day the installation is applied. The entry is C1's name for that repository
-// and that provider, built by the one function that builds it
-// (providerKeyEntry, which derives the slug from the repository's git provider
-// as every other writer of the family does), and its two routing facts are the
-// provider's base_url and auth, which the loader holds an entry to and which
-// are therefore already refused by the config's own validation before a pair
-// is built.
+// marker carries and the name `fugaro secrets ls` speaks — and it is a name
+// with one container per scope this installation keeps (F8, F27): the
+// repository's own, `gcp.SecretID` of that repository's slug, and the
+// project-wide one `gcp.ProjectSecretID` gives every declared provider the day
+// the installation is applied. The pair names both, the repository's first,
+// and the read takes them in that order (keyCopy.homes) because that is the
+// precedence the run's own job mounts them with — so the entry holds the key
+// the repository's runs are served, whichever home the owner stored it in. The
+// entry is C1's name for that repository and that provider, built by the one
+// function that builds it (providerKeyEntry, which derives the slug from the
+// repository's git provider as every other writer of the family does), and its
+// two routing facts are the provider's base_url and auth, which the loader
+// holds an entry to and which are therefore already refused by the config's own
+// validation before a pair is built.
 //
 // One pair per repository and not one per key: a key two repositories share is
-// two pairs over ONE container, written twice under each repository's entry
-// (D3008) — and the read is made once per container whatever the count
-// (copyPlan.read, keyed by secretID), so a shared key is read once and entered
-// as many times as it is used.
+// two pairs, written twice under each repository's entry (D3008) — and each
+// container is read once whatever the number of pairs that name it
+// (copyPlan.read, keyed by Secret Manager ID), so a shared key is read once and
+// entered as many times as it is used.
 //
 // A repository the installation serves is an entry of the config's `repos`
 // map: that map is where the slug C1's name carries comes from and it is the
@@ -176,13 +203,18 @@ func copyProviderKeys(lc *localcfg.Config) ([]keyCopy, error) {
 			if !p.AllowsData(repo) {
 				continue
 			}
+			slug, err := providerKeyRepoSlug(lc, repo)
+			if err != nil {
+				return nil, err
+			}
 			entry, err := providerKeyEntry(lc, name, repo)
 			if err != nil {
 				return nil, err
 			}
 			out = append(out, keyCopy{
 				container:  p.Secret,
-				secretID:   gcp.ProjectSecretID(lc.Name, p.Secret),
+				secretID:   gcp.SecretID(slug, p.Secret),
+				fallbackID: gcp.ProjectSecretID(lc.Name, p.Secret),
 				entry:      entry,
 				baseURL:    p.BaseURL,
 				auth:       p.Auth,
@@ -433,23 +465,27 @@ func copyBundleUnreadable(err error) error {
 
 // read is one pair's whole answer: the container's newest version, read once
 // per container, and the clause the bundle's own entry decides.
+//
+// The pair's homes are tried in the mount's own order (keyCopy.homes): the
+// repository's container while it holds a version this run can read, the
+// project-wide copy otherwise. Only the container that answered is held, so a
+// key two repositories share out of the wider container is still read once
+// (p.held is keyed by Secret Manager ID), and a repository that overrides it
+// with a container of its own is read once for each of the two.
 func (p *copyPlan) read(ctx context.Context, e *initEngine, pair keyCopy, held *credsvc.Bundle) (copyRow, error) {
 	row := copyRow{pair: pair}
-	h, ok := p.held[pair.secretID]
-	if !ok {
-		value, version, found, err := copyContainerNewest(ctx, p.store, pair)
+	var h *copyHold
+	for _, id := range pair.homes() {
+		if got, ok := p.held[id]; ok {
+			h = got
+			break
+		}
+		value, version, found, err := copyContainerNewest(ctx, p.store, pair, id)
 		if err != nil {
 			return row, err
 		}
 		if !found {
-			// A container holding nothing is the state a provider's key is in
-			// before anybody has stored one, and it is answered as the skip it
-			// is. It names the provider and the repository and not only the
-			// container, because that is the state a person acts on: which
-			// repository of the installation is served no key.
-			row.state = copyAbsent
-			row.why = fmt.Sprintf("%s holds no version this run can read, so %s is served no key", safetext.Field(pair.container), pair.name())
-			return row, nil
+			continue
 		}
 		// The slots are built once per engine, and a stage driven on its own —
 		// a test, or an engine whose options were never read — has not built
@@ -461,16 +497,30 @@ func (p *copyPlan) read(ctx context.Context, e *initEngine, pair keyCopy, held *
 			return row, err
 		}
 		h = &copyHold{value: value, version: version, release: release}
-		p.held[pair.secretID] = h
+		p.held[id] = h
+		break
+	}
+	if h == nil {
+		// A container holding nothing is the state a provider's key is in
+		// before anybody has stored one, and it is answered as the skip it
+		// is. It names the provider and the repository and not only the
+		// container, because that is the state a person acts on: which
+		// repository of the installation is served no key.
+		row.state = copyAbsent
+		row.why = fmt.Sprintf("%s holds no version this run can read, so %s is served no key", safetext.Field(pair.container), pair.name())
+		return row, nil
 	}
 	row.held = h
 	row.state, row.why = copyDecide(held, pair, h.value, h.version)
 	return row, nil
 }
 
-// copyContainerNewest reads the newest version of one container the copy reads
-// a value OUT of, in memory, with the version number the read resolved to (the
-// server's, as bundleStore.access reads the bundle's).
+// copyContainerNewest reads the newest version of one of a pair's containers
+// (id, one of keyCopy.homes), in memory, with the version number the read
+// resolved to (the server's, as bundleStore.access reads the bundle's). The
+// pair is here for the logical name its lines carry and not for the ID: which
+// of the homes a value came out of is the read's business, and the marker names
+// the key's name, not the scope it was found in.
 //
 // found=false is "there is nothing here to copy out of": a container that is
 // not there, one whose newest version carries no payload, and one Secret
@@ -486,9 +536,9 @@ func (p *copyPlan) read(ctx context.Context, e *initEngine, pair keyCopy, held *
 // read would leave a repository with neither a mount nor an entry the service
 // serves. What the server said is never repeated as it came: the failure is
 // bounded and redacted like every other remote error of this document.
-func copyContainerNewest(ctx context.Context, store *bundleStore, pair keyCopy) (value []byte, version string, found bool, err error) {
+func copyContainerNewest(ctx context.Context, store *bundleStore, pair keyCopy, id string) (value []byte, version string, found bool, err error) {
 	r, err := store.svc.Projects.Secrets.Versions.
-		Access("projects/" + store.project + "/secrets/" + pair.secretID + "/versions/latest").
+		Access("projects/" + store.project + "/secrets/" + id + "/versions/latest").
 		Context(ctx).Do()
 	if err != nil {
 		var ge *googleapi.Error

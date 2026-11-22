@@ -177,13 +177,21 @@ const copyProviderKeysYAML = projectProvidersYAML +
 	"    models: [\"quiet/*\"]\n" +
 	"    allow_data_to: [\"acme/app\"]\n"
 
-// copyContainerID is the Secret Manager ID of the container a provider key is
-// held in, spelled here the way the copy must pick it: the project-wide
-// container of the provider's own declared secret name — what internal/infra's
-// projectSecretContainers gives every declared provider, and what a job of an
-// allowed repository mounts. It is the derivation the test asserts the code
-// makes, so it is written out rather than read back from the code.
+// copyContainerID is the Secret Manager ID of the project-wide container a
+// provider key is held in, spelled here the way the copy must pick it: the
+// project-wide container of the provider's own declared secret name — what
+// internal/infra's projectSecretContainers gives every declared provider, and
+// what a job of an allowed repository mounts when the repository has no
+// container of its own. It is the derivation the test asserts the code makes,
+// so it is written out rather than read back from the code.
 func copyContainerID(logical string) string { return gcp.ProjectSecretID(initProjectName, logical) }
+
+// copyRepoContainerID is the other home of the same logical name: the
+// repository's own container, which a job of that repository mounts while it
+// holds a version (infra.RepoSpec.MountSecretID, modules/repo/workflows.tf).
+// A key stored for one repository alone lives here and nowhere else, and a copy
+// that read only the project-wide container would never see it.
+func copyRepoContainerID(slug, logical string) string { return gcp.SecretID(slug, logical) }
 
 // newEnumRig is the rig the enumeration's own tests run on: the same stage and
 // the same fakes as newCopyRig, over an installation whose providers block the
@@ -634,19 +642,28 @@ func copyBundleSeed(t *testing.T) []byte {
 // TestTheCopyWritesEveryModelKey: the pairs are the installation's own config
 // and not a test's (KS12b): every provider credential a repository the
 // installation serves may send code to is one entry per repository, holding
-// what the container the installation keeps that key in holds, with the two
-// routing facts the provider's own declaration states. Three things are
+// what the container that repository's own runs are served the key from holds
+// (its own while that holds a version, the project-wide copy otherwise), with
+// the two routing facts the provider's own declaration states. Four things are
 // asserted over one run, because they are one answer read from one document —
-// the entries the config asks for, the facts each carries, and the provider
-// whose container nobody has filled, which is skipped in one line naming the
-// provider and the repository rather than failing the run or disappearing.
+// the entries the config asks for, the facts each carries, the home each value
+// came out of, and the provider whose container nobody has filled, which is
+// skipped in one line naming the provider and the repository rather than
+// failing the run or disappearing.
 func TestTheCopyWritesEveryModelKey(t *testing.T) {
 	openrouterValue, moonshotValue := credsValue(t, "openrouter"), credsValue(t, "moonshot")
+	// The same provider key stored for one repository alone. Two homes hold the
+	// same logical name, and this is the one the repository's own runs are
+	// served: the copy has to enter THIS value for acme/app, and the wider one
+	// for the repository that has no container of its own.
+	ownValue := credsValue(t, "openrouter-own")
 	// The bundle holds no version: the first copy starts from the containers
 	// Terraform created, which is the state a fresh installation is in.
 	h := newEnumRig(t, copyProviderKeysYAML, nil)
-	// Two of the three declared keys are stored; `quiet`'s container is not
-	// there at all.
+	// Three of the four home/pair combinations are filled; `quiet`'s home is not
+	// there at all, and openrouter's project-wide container is what the
+	// repository with no container of its own is served from.
+	h.sm.Seed(copyRepoContainerID(mustSlug("github", "acme/app"), "openrouter-key"), nil, []byte(ownValue))
 	h.sm.Seed(copyContainerID("openrouter-key"), nil, []byte(openrouterValue))
 	h.sm.Seed(copyContainerID("moonshot-key"), nil, []byte(moonshotValue))
 
@@ -654,7 +671,7 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the copy of an installation's provider keys failed: %v", err)
 	}
-	assertNoValue(t, out, openrouterValue, moonshotValue)
+	assertNoValue(t, out, openrouterValue, moonshotValue, ownValue)
 	if !oc.Changed {
 		t.Fatalf("the copy wrote the installation's provider keys into an empty bundle and reports no change: %+v", oc)
 	}
@@ -664,12 +681,14 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 	}
 
 	// Every pair the config answers for, and the facts each entry carries: the
-	// value from the container the installation holds that key in, and the
+	// value from the container the repository's own runs are served the key
+	// from — its own while that holds a version, the project-wide copy
+	// otherwise, which is the precedence the job's mount keeps — and the
 	// base_url and auth of the provider's own declaration.
 	want := []struct {
 		credential, repo, slug, container, value, baseURL, auth string
 	}{
-		{"openrouter", "acme/app", mustSlug("github", "acme/app"), "openrouter-key", openrouterValue, "https://openrouter.ai/api/v1", providerAuthBearer},
+		{"openrouter", "acme/app", mustSlug("github", "acme/app"), "openrouter-key", ownValue, "https://openrouter.ai/api/v1", providerAuthBearer},
 		{"openrouter", "acme/other", mustSlug("bitbucket", "acme/other"), "openrouter-key", openrouterValue, "https://openrouter.ai/api/v1", providerAuthBearer},
 		{"moonshot", "acme/app", mustSlug("github", "acme/app"), "moonshot-key", moonshotValue, "https://api.moonshot.ai/anthropic", providerAuthXAPIKey},
 	}
