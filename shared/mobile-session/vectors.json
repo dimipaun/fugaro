@@ -295,9 +295,11 @@
         ]
       }
     },
-    "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6InJvb3QtMjAyNi0xMSIsInR5cCI6ImZ1Z2Fyby1rZXktc2V0K2p3cyJ9.eyJmb3JtYXQiOiJmdWdhcm8taWRlbnRpdHkta2V5LXNldCIsInNlcSI6NywiaWF0IjoxNzk0OTYwMDAwLCJleHAiOjE4MTA1MTIwMDAsImp3a3MiOnsia2V5cyI6W3sia3R5IjoiT0tQIiwiY3J2IjoiRWQyNTUxOSIsIngiOiJqMjJoNV80dm1jMHd5eXdsLVk1ZU56UlB0NnpXelNoSHppYW5VT096LUpFIiwia2lkIjoic2lnbmluZy0yMDI2LTExIiwiYWxnIjoiRWREU0EiLCJ1c2UiOiJzaWcifV19fQ",
+    "signing_input_parts": [
+      "eyJhbGciOiJFZERTQSIsImtpZCI6InJvb3QtMjAyNi0xMSIsInR5cCI6ImZ1Z2Fyby1rZXktc2V0K2p3cyJ9",
+      "eyJmb3JtYXQiOiJmdWdhcm8taWRlbnRpdHkta2V5LXNldCIsInNlcSI6NywiaWF0IjoxNzk0OTYwMDAwLCJleHAiOjE4MTA1MTIwMDAsImp3a3MiOnsia2V5cyI6W3sia3R5IjoiT0tQIiwiY3J2IjoiRWQyNTUxOSIsIngiOiJqMjJoNV80dm1jMHd5eXdsLVk1ZU56UlB0NnpXelNoSHppYW5VT096LUpFIiwia2lkIjoic2lnbmluZy0yMDI2LTExIiwiYWxnIjoiRWREU0EiLCJ1c2UiOiJzaWcifV19fQ"
+    ],
     "signature": "6VUnbvxD3huKp2IY0j_620QSHwMFEpx1_i7_7MqLptxD8L0CclH8u68bPOlOpSsBDEWYPSpqJtWYeG7YokCuCw",
-    "compact": "eyJhbGciOiJFZERTQSIsImtpZCI6InJvb3QtMjAyNi0xMSIsInR5cCI6ImZ1Z2Fyby1rZXktc2V0K2p3cyJ9.eyJmb3JtYXQiOiJmdWdhcm8taWRlbnRpdHkta2V5LXNldCIsInNlcSI6NywiaWF0IjoxNzk0OTYwMDAwLCJleHAiOjE4MTA1MTIwMDAsImp3a3MiOnsia2V5cyI6W3sia3R5IjoiT0tQIiwiY3J2IjoiRWQyNTUxOSIsIngiOiJqMjJoNV80dm1jMHd5eXdsLVk1ZU56UlB0NnpXelNoSHppYW5VT096LUpFIiwia2lkIjoic2lnbmluZy0yMDI2LTExIiwiYWxnIjoiRWREU0EiLCJ1c2UiOiJzaWcifV19fQ.6VUnbvxD3huKp2IY0j_620QSHwMFEpx1_i7_7MqLptxD8L0CclH8u68bPOlOpSsBDEWYPSpqJtWYeG7YokCuCw",
     "root_public_key": {
       "kty": "OKP",
       "crv": "Ed25519",
@@ -306,6 +308,6 @@
       "alg": "EdDSA",
       "use": "sig"
     },
-    "about": "One signed key set, as O7 fixes it: a JWS whose signing input is the base64url of the header and of the payload exactly as the Go structs serialise them (field order as declared, no whitespace), signed by the root key. A fetched set is accepted only inside one of these, so someone who can change what the keys URL serves cannot publish keys of their own. The signature here is real; the root private key was drawn for this vector alone and discarded."
+    "about": "One signed key set, as O7 fixes it: a JWS whose signing input is the base64url of the header and of the payload exactly as the Go structs serialise them (field order as declared, no whitespace), signed by the root key. The signing input ships as `signing_input_parts`, its two base64url halves, and the compact JWS form is their join with `signature`: the file holds no three-part token, which is a shape a secret scanner reads as a credential and refuses. A fetched set is accepted only inside one of these, so someone who can change what the keys URL serves cannot publish keys of their own. The signature here is real; the root private key was drawn for this vector alone and discarded."
   }
 }

@@ -426,6 +426,115 @@ func TestSubscriptionPoolInertInCredsvc(t *testing.T) {
 	}
 }
 
+// migratedBlock is the marker C2's contract fixes for a migrated installation:
+// the one new top-level policy key `fugaro update` publishes with the table,
+// its admissions and the pools in their new shape (contract-table.md, RT4). Its
+// PRESENCE is the whole of what this release reads — no table, no admission and
+// no pool inside it decides anything here — which is why a test can write the
+// smallest node that is a migrated one and still be writing the real shape: one
+// entry whose chain names the fixture's pool, and the pools beside it.
+const migratedBlock = `"model_routing": {"entries": [{"match": "*", "chain": [{"kind": "pool", "pool": "` + testPoolName + `"}]}], "pools": []}`
+
+// poolOfTwoSubscriptions is the node's block of a project whose one craft goes
+// out on a pool of two Claude OAuth subscriptions, in the reverse of their name
+// order, with the spread switch written by the caller ("" is its absence).
+func poolOfTwoSubscriptions(spread string) string {
+	return `"credentials": {"fallback": "auto"},
+		"craft_credentials": [
+			{"name": "` + testAccount + `", "type": "claude-oauth"},
+			{"name": "` + testPoolAccount + `", "type": "claude-oauth"}
+		],
+		"craft_pools": [{"name": "` + testPoolName + `", "owner": "` + testPoolOwner + `", "members": ["` + testPoolAccount + `", "` + testAccount + `"]}],
+		"crafts": {"coder": {"access": "` + testPoolName + `"}}` + spread
+}
+
+// TestAPoolServesWithoutTheSpreadSwitch is D3177's pin on this path (plan task
+// PL3), and its red step: once the published node carries `model_routing` — the
+// marker that says the installation has been migrated — a pool of several
+// Claude OAuth subscriptions serves ALL of them with the spread switch off,
+// which is the one thing such a pool does not do today.
+//
+// Both members are read, in the pool's own order, from two runs of the project:
+// the first listed member serves the first, the second serves the next, so what
+// the switch's retirement buys is a pool of tokens and not one token answered
+// twice. The rules that decide which of them a run goes to are internal/creds'
+// own (a pool that names no rule fails over, and the counter breaks the tie the
+// two never-exhausted members make) — what this test reads is that both of them
+// are OFFERED at all.
+func TestAPoolServesWithoutTheSpreadSwitch(t *testing.T) {
+	s := poolSvc(t, poolOfTwoSubscriptions("")+`,
+		`+migratedBlock)
+
+	served := rrCalls(t, s, 2)
+	if served[0] != testPoolAccount || served[1] != testAccount {
+		t.Errorf("two runs of a migrated project were served by %v, want [%s %s]: the pool's members are all served, in the order the pool lists them", served, testPoolAccount, testAccount)
+	}
+	if n := s.up.Count(); n != 2 {
+		t.Errorf("the upstream saw %d requests, want 2: one per call", n)
+	}
+
+	t.Run("a mixed pool keeps no skip either", func(t *testing.T) {
+		// D3177 retires the switch for a mixed pool the same way: the
+		// subscription member is no longer stepped over beside the key, so the
+		// tier rule serves it — which is the answer the same node gets with the
+		// switch on and the marker absent (TestMixedPoolSkipsItsSubscription…).
+		s := poolSvc(t, `"credentials": {"fallback": "auto"},
+			`+poolCraftBlock(
+			`{"name": "`+testPoolAccount+`", "type": "claude-oauth"},
+				{"name": "`+config.AnthropicSecret+`", "type": "anthropic"}`,
+			testPoolAccount, config.AnthropicSecret)+`,
+			`+migratedBlock)
+
+		resp, body := s.call(t, callBody("pool-migrated-mixed"))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("the call is %d, want the pool's subscription member to serve it: %s", resp.StatusCode, body)
+		}
+		if got := resp.Header.Get(HeaderCredential); got != testPoolAccount {
+			t.Errorf("%s = %q, want %q: a migrated project's pool spreads its subscription, and tier A serves before the key beside it", HeaderCredential, got, testPoolAccount)
+		}
+	})
+}
+
+// TestAnUnmigratedInstallationKeepsItsInertPool is the other half of the same
+// rule, and the one that keeps this task from moving anything on its own: the
+// very same node WITHOUT `model_routing` is a project `fugaro update` has not
+// migrated, so its pool of several subscription tokens is inert exactly as it
+// is today — refused, naming the pool and the switch — and the switch is still
+// the way out of it, because the member keeps being decoded and keeps deciding
+// for a node no migration has touched (PL1, R21).
+//
+// A project can therefore be in three states and this test reads them side by
+// side: migrated (the test above, which serves), unmigrated with the switch off
+// (refused with the fix named), and unmigrated with the switch on (served, as
+// it always was).
+func TestAnUnmigratedInstallationKeepsItsInertPool(t *testing.T) {
+	block := poolOfTwoSubscriptions("")
+
+	s := poolSvc(t, block)
+	resp, body := s.call(t, callBody("pool-unmigrated"))
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("a pool of two subscriptions served a call of an unmigrated project: %d %s", resp.StatusCode, body)
+	}
+	e := refusal(t, resp.StatusCode, body)
+	for _, want := range []string{testPoolName, "subscription_spread"} {
+		if !strings.Contains(e.Message, want) {
+			t.Errorf("the refusal %q does not name %q: an unmigrated project is told which pool is inert and which switch would let it serve", e.Message, want)
+		}
+	}
+	if lines := auditLines(t, s.audit); len(lines) != 1 {
+		t.Errorf("a refusal wrote %d audit lines, want exactly one", len(lines))
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests, want none: an inert pool spends nothing", n)
+	}
+
+	on := poolSvc(t, poolOfTwoSubscriptions(`,
+		"subscription_spread": true`))
+	if served := rrCalls(t, on, 1); served[0] != testPoolAccount {
+		t.Errorf("the same node with the switch on was served by %v, want %s: an unmigrated project's switch keeps deciding exactly as it did", served, testPoolAccount)
+	}
+}
+
 // TestMixedPoolSkipsItsSubscriptionWhileTheSwitchIsOff is D1626 on this path: a
 // pool holding ONE subscription beside another kind is not inert — it is the
 // API-key fallback shape the owner asked for — and while the switch is off its

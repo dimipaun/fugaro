@@ -98,6 +98,12 @@ func ModelFor(crafts map[string]Effective, stage string) (string, string) {
 // (internal/runner/routing.go), and the two are held in step by the runner's
 // tests. "" is a stage outside the run's vocabulary, answered rather than
 // guessed at.
+//
+// merge_judge is the runner's own stage name (stageMergeJudge), not one of
+// config.RunStages, and it is here because the map decides a stage's access as
+// well as its model: the judge spends model calls of its own (E6), so a map
+// that left it out would refuse a merge-judge run (F49) rather than answer the
+// craft whose access the judge's calls go out on.
 func stageCraft(stage string) string {
 	switch stage {
 	case "plan", "implement", "fix":
@@ -108,6 +114,8 @@ func stageCraft(stage string) string {
 		return config.CraftSeniorReview
 	case "adversarial":
 		return config.CraftSecurityReview
+	case "merge_judge":
+		return config.CraftMergeJudge
 	}
 	return ""
 }

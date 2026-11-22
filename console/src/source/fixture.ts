@@ -626,6 +626,10 @@ export class FixtureSource implements FugaroSource {
     return this.#document('coordinator.intents', args)
   }
 
+  orchestratorMap(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('orchestrator.map', args)
+  }
+
   managedStatus(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('managed.status', args)
   }
