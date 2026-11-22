@@ -349,7 +349,9 @@ type (
 		// the `strategy` the pool was written with and as failover only where it
 		// names neither (Rule.RuleOrDefault). That is the one resolution every
 		// pool's rule gets, so a reader of this member never invents a rule of
-		// its own and a pool is never read as one its owner did not write.
+		// its own and a pool is never read as one its owner did not write. This
+		// document carries the pool and not its strategy, so the resolution
+		// happens where a pool is read with its config (PL1) and never here.
 		Rule Rule `json:"rule"`
 		// Principal is whose pool it is (D3181).
 		Principal Principal `json:"principal"`

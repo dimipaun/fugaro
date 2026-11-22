@@ -260,11 +260,11 @@ The document is the project, its pools, and each pool's members:
 
 - **`name`** is a member's name — a container's, in the project's namespace or the principal's own —
   and **never its value**.
-- **`rule`** is the pool's own, as its owner wrote it, and it is read exactly as every pool's rule
-  is: an absent one resolves to the pool's `strategy` and to `failover` only where it names neither
-  (`routing.Rule.RuleOrDefault`, R21). The listing prints the pool and never a rule the pool was not
-  written with, so a reader resolves it the one way the contract resolves every rule rather than with
-  a default of its own.
+- **`rule`** is the pool's own, as its owner wrote it, and absent where the pool names none — the
+  listing resolves nothing. An absent rule is read exactly as every pool's rule is, as the pool's
+  `strategy` and as `failover` only where it names neither (`routing.Rule.RuleOrDefault`, R21). The
+  document carries no `strategy`, so a reader that needs the resolved rule reads the pool's own
+  config, where the strategy is (PL1), rather than treating an empty `rule` as failover.
 - **`state`** is what holds the member, in `internal/creds`' own words, which `fugaro accounts ls
   --json` already prints: `available` for a member nothing holds, and otherwise the mark's state.
 - **`next_reset`** is when the member becomes usable again — a mark's own instant, or the time its
