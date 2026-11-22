@@ -52,7 +52,9 @@
 #     this check starts a Cloud Run execution, so an execution created after this
 #     call is that call's;
 #   * **the renewal**: the job's own lines for that execution, read back with
-#     `gcloud logging read` — `checked: the licence server answered that key … is
+#     `gcloud logging read` filtered by the execution's own
+#     `run.googleapis.com/execution_name` — a line an earlier execution wrote is
+#     not this fire's — `checked: the licence server answered that key … is
 #     good` where the check was due, and `renewed: key <successor> is installed
 #     in project <name> beside the key it replaces (fugaro/licence.json)`. The
 #     successor's key ID is the support handle the specification says is not a
@@ -904,6 +906,7 @@ step_execution() {
     sleep "$POLL"
   done
   name=$(field "$SCRATCH/execs.txt" name)
+  EXECUTION_NAME=$name
   created=$(field "$SCRATCH/execs.txt" created)
   completion=$(field "$SCRATCH/execs.txt" completion_time)
   if [ "$completed" != True ]; then
@@ -919,20 +922,24 @@ step_execution() {
 # can stop in. A line this check does not recognise is counted and not printed.
 step_renewed() {
   local deadline=$(($(date -u +%s) + LOG_WAIT)) marker kind m1 m2 m3 m4 checked checked_key
+  # The filter names the execution THIS run's fire started (step_execution's own
+  # `name`): the job's lines for this fire, and not the terminal line of whatever
+  # execution ran before it.
+  local filter="resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$LICENCE_JOB\" AND labels.\"run.googleapis.com/execution_name\"=\"$EXECUTION_NAME\""
   while :; do
     local rc=0
-    gcloud logging read "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$LICENCE_JOB\"" \
+    gcloud logging read "$filter" \
       --project "$PROJECT" --freshness "$LOG_FRESHNESS" --limit 50 --format=json \
       >"$SCRATCH/logs.json" 2>"$SCRATCH/logs.err" || rc=$?
     if [ "$rc" -ne 0 ]; then
-      unmeasured renewed "the job's own lines could not be read (\`gcloud logging read\` exited $rc: $(last_lines "$SCRATCH/logs.err")), so this check cannot say what the job answered about the key. Read them yourself: gcloud logging read 'resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$LICENCE_JOB\"' --project $PROJECT --freshness 1h --limit 20. This check needs an account that may read logs there (roles/logging.viewer or better)"
+      unmeasured renewed "the job's own lines could not be read (\`gcloud logging read\` exited $rc: $(last_lines "$SCRATCH/logs.err")), so this check cannot say what the job answered about the key. Read them yourself: gcloud logging read '$filter' --project $PROJECT --freshness 1h --limit 20. This check needs an account that may read logs there (roles/logging.viewer or better)"
       stop "the job's own lines could not be read, so the renewal was not measured"
     fi
     logs_fields "$SCRATCH/logs.json" >"$SCRATCH/logs.txt"
     marker=$(field "$SCRATCH/logs.txt" marker)
     if [ -n "$marker" ]; then break; fi
     if [ "$(date -u +%s)" -ge "$deadline" ]; then
-      unmeasured renewed "the job's own lines hold no sentence this check recognises about the key (it read $(field "$SCRATCH/logs.txt" lines) line(s) within --freshness $LOG_FRESHNESS), so what the job answered about this installation's licence was not measured. Read the job's lines yourself: gcloud logging read 'resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$LICENCE_JOB\"' --project $PROJECT --freshness 1h --limit 20"
+      unmeasured renewed "the job's own lines hold no sentence this check recognises about the key (it read $(field "$SCRATCH/logs.txt" lines) line(s) within --freshness $LOG_FRESHNESS), so what the job answered about this installation's licence was not measured. Read the job's lines yourself: gcloud logging read '$filter' --project $PROJECT --freshness 1h --limit 20"
       stop "the job's own lines did not carry an answer this check knows, so the renewal was not measured"
     fi
     sleep 6
@@ -987,7 +994,7 @@ step_renewed() {
     stop "the licence server answered a renewal status this Fugaro does not read"
     ;;
   *)
-    unmeasured renewed "the job's own line matched '${kind:-nothing}', which this check has no row for, so what the job answered about the key was not measured. Read the job's lines yourself: gcloud logging read 'resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"$LICENCE_JOB\"' --project $PROJECT --freshness 1h --limit 20"
+    unmeasured renewed "the job's own line matched '${kind:-nothing}', which this check has no row for, so what the job answered about the key was not measured. Read the job's lines yourself: gcloud logging read '$filter' --project $PROJECT --freshness 1h --limit 20"
     stop "the job's answer did not match a sentence this check knows"
     ;;
   esac
@@ -1052,7 +1059,7 @@ plan() {
   say "  [network, read] fugaro licence status --json in $SANDBOX — the project's own auto key and the term it is paid through (no key is in that document)"
   say "  [network, WRITE] gcloud scheduler jobs run $SCHEDULER_JOB — the daily tick's own call, which starts ONE execution of the Cloud Run job"
   say "  [network, read] gcloud run jobs executions list — the execution that fire started, and its terminal condition"
-  say "  [network, read] gcloud logging read over cloud_run_job/$LICENCE_JOB — the job's own line: the renewal it made, or the state it stopped in"
+  say "  [network, read] gcloud logging read over cloud_run_job/$LICENCE_JOB, for the execution this fire starts — the job's own line: the renewal it made, or the state it stopped in"
   say "  [network, read] fugaro licence status --json again — the term, strictly later than the read above"
   fact dry-run PASS "the plan was printed and nothing was run: no gcloud call was made, no execution was started and no licence was read"
 }
@@ -1087,6 +1094,11 @@ LICENCE_JOB=fugarolicence
 SCHEDULER_JOB=fugaro-licence-renew
 
 FUGARO_NAME=""
+# The execution this run's own fire started. Every read of the job's lines below
+# is filtered by its `run.googleapis.com/execution_name`, so the terminal line of
+# an execution that ran earlier — last night's renewal, say — cannot be read as
+# this fire's answer.
+EXECUTION_NAME=""
 PRE_PAID=""
 PRE_KEY=""
 PRE_CHECK_AT=""

@@ -22818,7 +22818,9 @@ runs any step of it**, and none can: the fire writes the installation's own key,
   call the daily tick makes — and then the newest execution of `fugarolicence` created at or after it, with its
   terminal condition. Nothing else in this check starts a Cloud Run execution, so an execution created after the
   call is that call's.
-- **The renewal itself.** The job's own lines for that execution, read back with `gcloud logging read`:
+- **The renewal itself.** The job's own lines for that execution, read back with `gcloud logging read`
+  filtered by the execution's own `run.googleapis.com/execution_name` (a line an earlier execution wrote is
+  not this fire's answer):
   `checked: the licence server answered that key … is good` where a check was due, and `renewed: key
   <successor> is installed in project <name> beside the key it replaces (fugaro/licence.json)`. The successor's
   key **ID** is the support handle the specification says is not a secret, and it is the one thing about the
@@ -22883,11 +22885,12 @@ server's address is a constant of the build, so this is a change at the network 
 - **The premise, both halves.** `fugaro licence status --json` reads the project's own key, `revoked: false`,
   a state of active or grace, and a check record whose `key_id` is that key — the name the job's own line is
   held against.
-- **`--part revoke`.** The tick's own line is `the licence server answered that key <id> is revoked: project
-  <name> runs on Free from now on, nothing has been deleted, and a new key restores everything (fugaro licence
-  set)`; a line naming a key the installation does **not** hold is a **FAIL**, because a revocation is about the
-  key it names. After the tick the installation reads `revoked: true` with state **expired**, its tier, seats and
-  `paid_through` **still readable** (D436's read-only: a revocation records an answer and deletes nothing), the
+- **`--part revoke`.** The tick's own line — read from the execution **this fire** started, filtered by its own
+  `run.googleapis.com/execution_name`, so yesterday's answer cannot be read as this fire's — is `the licence
+  server answered that key <id> is revoked: project <name> runs on Free from now on, nothing has been deleted,
+  and a new key restores everything (fugaro licence set)`; a line naming a key the installation does **not**
+  hold is a **FAIL**, because a revocation is about the key it names. After the tick the installation reads
+  `revoked: true` with state **expired**, its tier, seats and `paid_through` **still readable** (D436's read-only: a revocation records an answer and deletes nothing), the
   installation's own key still installed, and the check record's status `revoked` about the same key.
 - **`--part unreachable`.** The tick's own line is `note: the check of key <id> did not complete, so the key
   keeps its state and nothing was renewed (only an explicit answer revokes, D2140)`. After it: the state is the

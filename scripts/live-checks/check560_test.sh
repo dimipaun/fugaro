@@ -183,7 +183,32 @@ case "$sub" in
     printf 'ERROR: (gcloud.logging.read) permission denied\n' >&2
     exit "$(cat "$dir/logs.rc")"
   fi
-  cat "$dir/logs.json"
+  # The filter is honoured the way Cloud Logging honours it, with one liberty the
+  # older fixtures need: an entry that carries no execution_name label is served
+  # to any filter. A filter that names no execution (what this check read before
+  # it named one) is served everything.
+  python3 - "$dir/logs.json" "$*" <<'PY'
+import json, re, sys
+
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    doc = []
+if not isinstance(doc, list):
+    doc = []
+m = re.search(r'execution_name"="([^"]+)"', sys.argv[2])
+name = m.group(1) if m else ""
+out = []
+for e in doc:
+    if not isinstance(e, dict):
+        continue
+    if name:
+        lab = (e.get("labels") or {}).get("run.googleapis.com/execution_name")
+        if lab is not None and lab != name:
+            continue
+    out.append(e)
+print(json.dumps(out))
+PY
   ;;
 *)
   printf 'fake gcloud: no route for: %s\n' "$*" >&2
@@ -307,6 +332,29 @@ entries = []
 for i, text in enumerate(lines):
     at = (now + datetime.timedelta(seconds=i)).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
     entries.append({"timestamp": at, "severity": "INFO", "textPayload": text})
+open(out, "w").write(json.dumps(entries, indent=2) + "\n")
+PY
+}
+
+# logs_exec_doc FILE "EXECUTION|LINE" ...: the same answer with the
+# `run.googleapis.com/execution_name` label Cloud Run puts on each entry, oldest
+# first, so a case can put a line from an execution that ran BEFORE the fire in
+# the same answer.
+logs_exec_doc() { # logs_exec_doc FILE EXECUTION|LINE...
+  python3 - "$@" <<'PY'
+import datetime, json, sys
+out, rows = sys.argv[1], sys.argv[2:]
+now = datetime.datetime.now(datetime.timezone.utc)
+entries = []
+for i, row in enumerate(rows):
+    name, text = row.split("|", 1)
+    at = (now + datetime.timedelta(seconds=i)).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+    entries.append({
+        "timestamp": at,
+        "severity": "INFO",
+        "textPayload": text,
+        "labels": {"run.googleapis.com/execution_name": name},
+    })
 open(out, "w").write(json.dumps(entries, indent=2) + "\n")
 PY
 }
@@ -823,6 +871,27 @@ test_status_unreadable_after() {
   expect_row post "exited 1 and printed" "a licence status that stops answering after the fire: the row says what it printed"
 }
 
+test_older_execution_line_is_not_read() {
+  local dir=$work/older
+  prepare "$dir"
+  # The execution this fire starts answers with a check and nothing else; the one
+  # before it is the execution that renewed the key. Read with no execution
+  # filter, the newest terminal line is THAT renewal, and the check would report
+  # this fire's renewal from a line another execution wrote.
+  logs_exec_doc "$dir/state/logs.json" \
+    "fugarolicence-older|renewed: key $successor is installed in project $fugaro_project beside the key it replaces (fugaro/licence.json)" \
+    "fugarolicence-abc12|checked: the licence server answered that key $pre_key is good"
+  run_check "$dir"
+  expect_status "$status" 2 "a line from an execution that ran before this fire"
+  expect_row renewed "no sentence this check recognises" "an older execution's renewal line is not this fire's answer"
+  # The read names the execution step_execution found, which is what makes the
+  # line above unreadable to this run.
+  expect_contains "$(cat "$dir/state/logs/gcloud.calls")" \
+    'logging read resource.type="cloud_run_job" AND resource.labels.job_name="'"$job"'" AND labels."run.googleapis.com/execution_name"="fugarolicence-abc12"' \
+    "the job's lines are read for the execution this fire started"
+  assert_scratch_removed "a line from an older execution"
+}
+
 # ------------------------------------------------------------- the run itself
 t test_help
 t test_dry_run
@@ -856,6 +925,7 @@ t test_renewed_the_same_key
 t test_term_did_not_move
 t test_unreachable_server
 t test_unknown_job_line
+t test_older_execution_line_is_not_read
 t test_status_unreadable_after
 
 if [ "$failures" -ne 0 ]; then
