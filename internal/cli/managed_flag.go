@@ -194,8 +194,9 @@ conditioned on the object it read, so nothing is overwritten blind.`,
 // own framing (D58) is that flagging only adds guards AND that the marker is
 // what turns the typed confirmation off, so the second half is stated rather
 // than left to be inferred. It is a statement and not a confirmation — what
-// confirms the write is the argument the command was given (D1541) — so it is
-// printed as what the write does.
+// confirms the write is the project the invocation named, the argument it was
+// given (D1541) or the installation's own named here (D2213) — so it is printed
+// as what the write does.
 //
 // It is one function because two commands make this same write, both of them
 // the owner's own and both through the same two writers: `fugaro managed flag`
@@ -206,9 +207,10 @@ conditioned on the object it read, so nothing is overwritten blind.`,
 //
 // Its last line is each caller's own, because what happens when the project
 // already records whether it is managed is not the same for the two: this
-// command replaces one object and refuses every other state, while the
-// self-flag can also finish a fact that already records the amount it was
-// given.
+// command creates the object, replaces the creation fact that records no
+// amount, and rewrites a recorded figure only when its owner named one
+// (D2215), while the self-flag can also finish a fact that already records the
+// amount it was given.
 func managedFlagStatement(w io.Writer, gcpProject, bucket string, amount int64, currency string) {
 	fmt.Fprintf(w, "flagging GCP project %s as managed writes gs://%s/%s\n", safetext.Field(gcpProject), safetext.Field(bucket), managed.MarkerObject)
 	fmt.Fprintf(w, "  and the label %s=%s on the project itself: a managed project carries both, and the read requires both, so the object alone would change nothing about this project's runs\n", managed.ProjectLabelKey, managed.ProjectLabelValue)
@@ -249,21 +251,22 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// wildcard and list forms are not ones. The equality with the selected
 	// installation's own gcp_project, below, is the other half — a prefix of
 	// the ID passes this check and fails that one. An invocation with no
-	// argument takes the installation's own project (D2213), which is a name
-	// this check cannot fail.
+	// argument takes the installation's own project (D2213): a name the config
+	// already holds, so there is nothing here for this check to judge.
 	if id != "" && !config.GCPProjectRE.MatchString(id) {
 		return userErr("%q is not a GCP project ID: this command flags one project, by its exact ID, with no wildcard, no prefix and no list", safetext.Field(id))
 	}
 	// The amount and the currency both have defaults (D2212, D2211): a flag
-	// with neither records 100 USD. A mark that records no amount is refused by
-	// every managed apply (Task 4.4), so a command that recorded none would
-	// lower this project's guard and buy nothing at all. What is still refused,
-	// before any cloud read, is a pair the marker itself would not write — and
-	// the rule is the marker's own (managed.Budget.Check, which
-	// internal/infra/managed's writer and reader both apply), called rather
-	// than restated. A currency the marker already records replaces the
-	// default further down (R6), and the pair it makes is one this same rule
-	// accepted as the marker's own.
+	// with neither records 100 USD. A mark that records no amount is the state
+	// the apply gate warns for and sends its owner to this very command to fix
+	// (D1545, F14): the amount is the evidence that a budget was chosen at
+	// all, not a lock, and a flag that recorded none would leave that warning
+	// standing. What is still refused, before any cloud read, is a pair the
+	// marker itself would not write — and the rule is the marker's own
+	// (managed.Budget.Check, which internal/infra/managed's writer and reader
+	// both apply), called rather than restated. A currency the marker already
+	// records replaces the default further down (R6), and the pair it makes is
+	// one this same rule accepted as the marker's own.
 	budget := managed.Budget{Amount: amount, Currency: currency}
 	if err := budget.Check(); err != nil {
 		return userErr("nothing was written: flagging a project records the monthly budget alert amount its owner chose (design D2212), and %v; the amount and the currency default to %d %s, and --budget and --budget-currency are what record another figure, as in --budget 50 --budget-currency USD",
@@ -386,7 +389,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// The statement's last line is this command's own, and it is the one the
 	// self-flag answers differently: this command replaces one object unasked
 	// and refuses every other state.
-	fmt.Fprintf(w, "  if this project already records whether it is managed: an object that records no amount (what `fugaro setup --create-project` without a budget leaves) is replaced with the one above. One that already records an amount is left exactly as it is by this invocation — a default never replaces a figure its owner chose (D2215) — and is the figure the statement above reports: only an explicit --budget changes it, through the marker's own rewrite. Any object this build cannot read as this project's marker is refused.\n")
+	fmt.Fprintf(w, "  if this project already records whether it is managed: an object that records no amount (what `fugaro setup --create-project` without a budget leaves) is replaced with the one above. One that already records an amount is not touched by a default — a figure its owner chose is not a default's to replace (D2215) — and the amount above is written over it only when --budget was named on the command line. Any object this build cannot read as this project's marker is refused.\n")
 	// The write, and the read that settles it, are one step: the marker, the
 	// label and the read-back are one thing an operator either has or has not
 	// (Task 3.0). It is opened after the statement above, so nothing in flight
