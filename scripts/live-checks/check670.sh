@@ -199,7 +199,8 @@ on_error() {
 
 # run_bounded SECONDS KEY CMD...: run one command under a bound, capturing its
 # output into $SCRATCH/KEY.{out,err}, from the checkout and with its stdin on
-# /dev/null. The child execs, so the pid the bound kills IS the command — a hung
+# BOUNDED_STDIN, which is /dev/null unless a caller sets it. The child execs, so
+# the pid the bound kills IS the command — a hung
 # cloud read would otherwise outlive the check that gave up on it. Its exit
 # status is the command's, and it is also left in BOUNDED_STATUS for a caller
 # that runs it for its status alone. The ERR trap is dropped in the child: this
@@ -210,7 +211,11 @@ on_error() {
 # non-interactive (`--json` confirms nothing), and step (5) reads the STRICT
 # confirmation by running `rm` with no terminal at all — the sentence that says
 # typing the project's name is the only thing that confirms it is in THAT
-# refusal, and a run that fielded a prompt instead would hang here.
+# refusal, and a run that fielded a prompt instead would hang here. The one
+# command that is FED rather than read is step (3)'s `secrets set`, which takes
+# the App's key on its stdin and refuses an empty one: a redirection written on
+# THAT call would land on run_bounded and be thrown away by the /dev/null below,
+# so the file is named in BOUNDED_STDIN and reaches the child here.
 run_bounded() { # run_bounded SECONDS KEY CMD...
   local secs=$1 key=$2
   shift 2
@@ -218,7 +223,7 @@ run_bounded() { # run_bounded SECONDS KEY CMD...
   # Truncated, not appended: the listing is read again on every poll below, and
   # this file is handed to python3 as ONE JSON document — a second document
   # appended to the first is a file that parses as neither.
-  ( trap - ERR; cd "${BOUNDED_CWD:-$CHECKOUT}" || exit 1; exec "$@" ) </dev/null \
+  ( trap - ERR; cd "${BOUNDED_CWD:-$CHECKOUT}" || exit 1; exec "$@" ) <"${BOUNDED_STDIN:-/dev/null}" \
     >"$SCRATCH/$key.out" 2>"$SCRATCH/$key.err" &
   local pid=$! waited=0
   while kill -0 "$pid" 2>/dev/null; do
@@ -289,6 +294,7 @@ PRINTED=""
 BOUNDED_STATUS=0
 BOUNDED_TIMED_OUT=no
 BOUNDED_CWD=""
+BOUNDED_STDIN=""
 
 INSTALLATION=""
 REPO=""
@@ -787,8 +793,11 @@ read_secret_rows() {
 # REDIRECTION, so the value reaches neither a command line nor the block — then
 # converge again and read the same screen, which now has to be green and exit 0.
 step_fill() {
-  say "storing the App's private key in $REPO's github-app-key container (redirected from $APP_KEY_FILE, never on a command line)"
-  run_bounded "$CLI_TIMEOUT" fill "$FUGARO_BIN" secrets set github-app-key --repo "$REPO" <"$APP_KEY_FILE" || true
+  say "storing the App's private key in $REPO's github-app-key container (fed on stdin from $APP_KEY_FILE, never on a command line)"
+  local saved_stdin=$BOUNDED_STDIN
+  BOUNDED_STDIN=$APP_KEY_FILE
+  run_bounded "$CLI_TIMEOUT" fill "$FUGARO_BIN" secrets set github-app-key --repo "$REPO" || true
+  BOUNDED_STDIN=$saved_stdin
   if [ "$BOUNDED_STATUS" != 0 ]; then
     stop "'fugaro secrets set github-app-key --repo $REPO' exited $BOUNDED_STATUS: $(last_lines "$SCRATCH/fill.err") — the container stays empty and every row after this one would be about the failure step (2) already read"
   fi
