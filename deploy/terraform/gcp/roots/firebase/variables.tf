@@ -6,6 +6,10 @@ variable "project" {
   type = string
 }
 
+variable "database_region" {
+  type = string
+}
+
 variable "fugaro_project" {
   type = string
 }

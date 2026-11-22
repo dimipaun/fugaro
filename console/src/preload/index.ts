@@ -625,6 +625,18 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   ['setup.plan', 'planSetup'],
   ['setup.apply', 'applySetup'],
   ['settings.editor.open', 'openSettingsEditor'],
+  // **The models write** (the console improvements plan's MW1, D2903), the two
+  // rows of the Manage view's models write: the CLI's own dry run, which prints
+  // the plan document the window draws, and the write itself. They are appended
+  // here for AL's reason -- the rows a plan adds are one diff. Both are inert
+  // until used: `MODELS_ADD_CLI_FLOOR` is `null` until the CLI release that
+  // carries `--no-apply` on `models add` and the plan document (MD1), and the
+  // handlers in `src/main/index.ts` answer 'not available in this build' until
+  // the task that wires the window registers the real ones. No flag either row
+  // carries is a caller's: `--no-apply`, `--dry-run` and `--json` are fixed
+  // words of the rows' command paths (`src/main/spawn.ts`).
+  ['models.add.plan', 'planModelsAdd'],
+  ['models.add', 'addModel'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**

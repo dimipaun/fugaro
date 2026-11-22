@@ -9,25 +9,34 @@ resource "google_firebase_project" "this" {
   depends_on = [google_project_service.this]
 }
 
-# RTDB offers three locations and can't move one later; D4 chose
-# us-central1. The default instance's ID is <project>-default-rtdb, which is
-# also the one Firebase creates itself. An instance that already exists is
-# adopted by fugaro update: its discovery checks it and writes an
-# import block for it (imports.tf.json), so this resource is not created
-# twice. It holds the budget counters and the run registry, so a plan never
-# deletes it. The rules and the /fugaro/mark are written by fugaro update over
-# REST, not by Terraform.
+# RTDB offers three locations and can't move one later; a NEW instance goes
+# where the installation's region maps to (var.database_region, internal/place
+# D3089), which is us-central1 for a US installation as D4 chose. The default
+# instance's ID is <project>-default-rtdb, which is also the one Firebase
+# creates itself. An instance that already exists is adopted by fugaro update:
+# its discovery checks it and writes an import block for it
+# (imports.tf.json), at the location it really is in, so this resource is not
+# created twice and is never moved. It holds the budget counters and the run
+# registry, so a plan never deletes it, and a region it is already in is one
+# the input can never change: the region is a creation-time field, and setting
+# it to anything else would plan a replacement, so the one field is IGNORED.
+# What discovery cannot reach is an instance Terraform already manages —
+# DiscoverFirebase skips every address that is in state, which is every
+# installation after its first apply — and this is what keeps that instance in
+# its own region whatever the mapping says (F8, R4). The rules and the
+# /fugaro/mark are written by fugaro update over REST, not by Terraform.
 resource "google_firebase_database_instance" "this" {
   provider = google-beta
 
   project       = var.project
-  region        = "us-central1"
+  region        = var.database_region
   instance_id   = "${var.project}-default-rtdb"
   type          = "DEFAULT_DATABASE"
   desired_state = "ACTIVE"
 
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [region]
   }
 
   depends_on = [google_firebase_project.this]
