@@ -145,12 +145,12 @@ None. D3207's "no cap" and the spec's sub-second rule meet without conflict: `or
 ## Open items
 
 - O1. Check 760 (runs-ls-speed, owner-run, the script is on main) is still unrun. D3204 keeps it as the "before" reading, so it should run before `indexed-reads` merges.
-- O2. orchestrator-graph-estimates and the 0.26.0 release notes say one machine per project drives runs. After D3206 the next release's notes say what changed (task T-ORCH-DOCS).
+- O2. orchestrator-graph-estimates and the 0.26.0 release notes say one machine per project drives runs. After D3206 the next release's notes say what changed (CG-DOCS for the skill and the earlier plan; the release notes come with the release).
 
 ## UNVERIFIED
 
-- U1. That a warm CLI process start (configuration, credentials, one Firestore query, one RTDB read in parallel) fits under 1 s. The project layer and policy reads alone took about 0.8 s in a `fugaro settings` call on 2026-11-21, and whether `runs ls` waits on them was not traced. Settled by T-COST (a test of the requests made before the first index read) and by owner Check 870.
+- U1. That a warm CLI process start (configuration, credentials, one Firestore query, one RTDB read in parallel) fits under 1 s. The project layer and policy reads alone took about 0.8 s in a `fugaro settings` call on 2026-11-21, and whether `runs ls` waits on them was not traced. Settled by I-INDEX's `TestFixedInvocationCost` (the requests made before the first index read) and by owner Check 870.
 - U2. That the history job is deployed on the owner's installation (`var.enable_budget && history.deploy_job`). always-a-budget makes the budget unconditional, but whether `deploy_job` is set everywhere was not checked. The owner can settle it with `fugaro doctor`; `run-index` refuses with the fix when the job is absent.
-- U3. Which fence applies to `fugaro runs reindex` in a coding agent's session (it starts a job execution). It should follow whatever `update`'s own job-starting steps follow; T-REINDEX reads that fence and pins it.
+- U3. Which fence applies to `fugaro runs reindex` in a coding agent's session (it starts a job execution). It should follow whatever `update`'s own job-starting steps follow; RI5 reads that fence and pins it.
 - U4. Firestore read latency for an ordered composite query of 50 documents from the owner's location. Expected well under 300 ms, but not measured; Check 870 measures it.
 - U5. Whether the coordinator sweep's collisions stay bounded at 100x (they compare pairs of in-flight records per repository). In-flight counts, not history, bound them; Check 871 does not cover the sweep.
