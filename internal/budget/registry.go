@@ -312,20 +312,27 @@ func (s *Session) dropRefusedMode(ctx context.Context) {
 // A second refusal leaves the entry as it was and the session undecided, as
 // dropRefusedMode leaves it: nothing is cached here but noSource, set only once
 // a write without the children has landed.
-func (s *Session) dropRefusedSource(ctx context.Context) {
+//
+// It reports whether that write landed, because the heartbeat's probes share
+// one refusal between them: the caller that gets true has its answer, and the
+// probes below it — which ask about children these rules may well know — must
+// not read the same refusal as theirs. Start keeps the same invariant by
+// reassigning its error inside each branch.
+func (s *Session) dropRefusedSource(ctx context.Context) bool {
 	e := s.snapshotEntry()
 	if e.Source == "" && !e.Fallback {
-		return
+		return false
 	}
 	e.Source, e.Fallback = "", false
 	if err := s.db.Patch(ctx, "", map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): e}); err != nil {
-		return // refused without them too: not about the children, or a blip
+		return false // refused without them too: not about the children, or a blip
 	}
 	s.mu.Lock()
 	s.entry.Source, s.entry.Fallback, s.noSource = "", false, true
 	s.mu.Unlock()
 	s.dbOK()
 	s.log.Warn("budget: the database's rules predate the routing table's source in the registry, so the registry entry goes without it; run fugaro update --firebase-project <gcp-project-id> to update the rules")
+	return true
 }
 
 // checkCascadeKeys is checkNewKeys's twin for the credentials cascade's
@@ -471,8 +478,11 @@ func (s *Session) heartbeat(ctx context.Context) {
 		// rules are the reason, and go on without it if they are. This is the
 		// newest of the children, so it is asked first: under rules that refuse
 		// an older child as well, this write is refused too and the next probe
-		// below is what answers.
-		s.dropRefusedSource(ctx)
+		// below is what answers. Once it lands the refusal is answered, and the
+		// probes below it must not take that same refusal for their own.
+		if s.dropRefusedSource(ctx) {
+			err = nil
+		}
 	}
 	if err != nil && errors.Is(err, rtdb.ErrPermission) && (e.Mode != "" || e.From != "") {
 		// The bundled write carried the rigor children into the refusal: find

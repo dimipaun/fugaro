@@ -153,6 +153,52 @@ func TestRulesConvergeWithTheSource(t *testing.T) {
 	}
 }
 
+// TestHeartbeatDropsOnlyTheRefusedChild is the other half of the fallback: the
+// heartbeat's probes ask the newest child first, and each of them answers only
+// its own question.
+//
+// A run started by this release against the previous release's document meets
+// it with a source AND a rigor mode in its entry. The first probe's write lands
+// — the document is missing the routing children and nothing else — so the
+// refusal is answered, and the probes below it must not read that same refusal
+// as their own: the rigor mode is a child these rules know, and a beat that
+// dropped it anyway would tell the operator the rules predate the mode while
+// the row lost a mode the console could have drawn. This is the shape Start
+// keeps by reassigning err inside each branch.
+func TestHeartbeatDropsOnlyTheRefusedChild(t *testing.T) {
+	f := newFixture(t)
+	logs := captureLog(f)
+	s := f.started(budget.AgentEntry{Stage: "implement", Recipe: "claude-solo", Mode: "critical", From: "area", Source: "pool:team"})
+	f.db.DenyKeys("source", "fallback") // the previous document: no child, and $other refuses the whole entry
+	waitFor(t, "the entry to settle without the refused children", func() bool {
+		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
+		return e != nil && e["stage"] == "implement" && e["source"] == nil && e["fallback"] == nil
+	})
+	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["mode"] != "critical" || e["from"] != "area" {
+		t.Fatalf("the rigor mode went with a refusal that was about the routing source: %v", e)
+	}
+	if strings.Contains(logs.String(), "predate the rigor mode") {
+		t.Fatalf("the heartbeat blamed the wrong child:\n%s", logs.String())
+	}
+	if n := strings.Count(logs.String(), "fugaro update --firebase-project"); n != 1 {
+		t.Fatalf("warned %d times, want once: %s", n, logs.String())
+	}
+	// The session goes on with the mode kept: a later stage still carries it,
+	// and the children the document does know are not dropped for the rest of
+	// the run.
+	s.Update(func(e *budget.AgentEntry) { e.Stage, e.Mode, e.From = "review", "hotfix", "repo" })
+	waitFor(t, "a heartbeat carrying the new stage", func() bool {
+		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
+		return e != nil && e["stage"] == "review"
+	})
+	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["mode"] != "hotfix" || e["from"] != "repo" || e["recipe"] != "claude-solo" {
+		t.Fatalf("the entry after the next stage is not the one the run wrote: %v", e)
+	}
+	if h, ok := f.nextHalt(50 * time.Millisecond); ok {
+		t.Fatalf("the run halted under the previous document (%+v): the two are the dashboard's, and dropping them is what a run under older rules does", h)
+	}
+}
+
 // previousSourceDocument is the document an installation at the version before
 // CS9 holds: the generated one with the entry's two children removed. It is
 // derived rather than frozen, so it follows a change to any other rule and
