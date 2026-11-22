@@ -1,0 +1,181 @@
+package cli
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// Checks 390–392 — the three owner-run halves of the composite management
+// commands — as the register writes them.
+//
+// AP10 of docs/composite-commands/implementation-plan.md writes the release
+// actions and the live checks of the work that made a management command run
+// the steps its change owes (**D1561**): 390 reads one command alone (an
+// `image add` that must leave nothing owed), 391 the pending record's collapse
+// (**D1562**, **D1570**), and 392 the failure path, where a step that cannot run
+// keeps the change and the step and exits non-zero (**D1563**). Each is ONE
+// script the owner runs, with a sibling test that drives it against a fake
+// `fugaro` (and, for 390, a fake `gcloud`) so its FAILs are provable offline.
+//
+// A check is registered by two things — a row in the summary table and a
+// `## Check N:` section below it — and either half alone is a number a reader
+// cannot use. The register-wide backstop that would assert the pairing is
+// deliberately absent (docs_compute_backend_test.go asserts its absence), so
+// each work's own docs tests carry it for its own numbers; these are 390–392's.
+const (
+	compositeChecksPlan = "docs/composite-commands/implementation-plan.md"
+	compositeChecksRel  = "docs/releases/v0.28.0.md"
+)
+
+// compositeChecks is each check's number and the script and sibling test the
+// row and the section both name. The number is the only thing that differs
+// between the three, so the pins below run over this table rather than three
+// times by hand.
+var compositeChecks = []struct{ n, script, sibling string }{
+	{"390", "scripts/live-checks/check-390.sh", "scripts/live-checks/check-390_test.sh"},
+	{"391", "scripts/live-checks/check-391.sh", "scripts/live-checks/check-391_test.sh"},
+	{"392", "scripts/live-checks/check-392.sh", "scripts/live-checks/check-392_test.sh"},
+}
+
+// TestDocsCompositeChecksAreRegistered: each of 390–392 has both halves of its
+// registration, each half says it has not been run, that the owner runs it, that
+// it is never pointed at `belong` and that no agent runs any step of it, and
+// each names the one command the owner types and the sibling test beside the
+// script.
+func TestDocsCompositeChecksAreRegistered(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	runner := readDoc(t, "scripts/live_checks_test.go")
+
+	for _, c := range compositeChecks {
+		// Lowercased, because the register writes its markers in capitals and
+		// the pins below are the sentence and not its case.
+		row := strings.ToLower(flattenDoc(registerRow(t, register, c.n)))
+		for _, want := range []string{
+			// The register's own marker for an owner-run check that has not
+			// been run: a row that lost either half reads as something an
+			// agent did.
+			"**owner-run, not run.**",
+			"no agent runs any step of it",
+			"never `belong`",
+			"bash " + c.script,
+			c.sibling,
+			// The task that wrote it and the plan it comes from.
+			"ap10",
+			"composite-commands/implementation-plan.md",
+		} {
+			if !strings.Contains(row, want) {
+				t.Errorf("Check %s's row does not say %q: an owner-run check is registered with the label it was run under, the command you type and the sibling test that proves it", c.n, want)
+			}
+		}
+
+		// Flattened and folded, because the register's prose wraps: a pin that
+		// missed a phrase across a line break would be a pin on the line
+		// breaks.
+		section := strings.ToLower(flattenDoc(registerSection(t, register, "\n## Check "+c.n+":")))
+		for _, want := range []string{
+			"**not run.**",
+			"no agent runs any step of it",
+			"never `belong`",
+			c.script,
+			c.sibling,
+			"ap10",
+			"composite-commands/implementation-plan.md",
+			// The block the owner pastes back, and the exits that read it.
+			"check " + c.n + " result",
+			"exit `0` means the claim held",
+			// The verdict a row that could not be read ends at, and the exit
+			// that says so rather than a FAIL about a fact nobody measured.
+			"**not measured**",
+			// The failure this check is: a management command that wrote its
+			// change and left its steps to a second command.
+			"owe nothing",
+		} {
+			if !strings.Contains(section, want) {
+				t.Errorf("Check %s's section does not say %q: the section is the only place the check's steps are written, and AP10 writes it", c.n, want)
+			}
+		}
+
+		// The scripts and the sibling test are really there: a row naming a
+		// file nobody wrote is a promise.
+		for _, p := range []string{c.script, c.sibling} {
+			if _, err := os.Stat(filepath.Join("..", "..", p)); err != nil {
+				t.Errorf("Check %s's section names %s and there is no such file: %v", c.n, p, err)
+			}
+		}
+		// The Go runner in scripts/live_checks_test.go drives every check's
+		// sibling test; a check added without its entry is a test no job runs.
+		if !strings.Contains(runner, `{"`+filepath.Base(c.script)+`", "`+filepath.Base(c.sibling)+`"}`) {
+			t.Errorf("scripts/live_checks_test.go does not list {%q, %q}: every check's sibling test is driven from that table, and a check missing from it is one no job runs", filepath.Base(c.script), filepath.Base(c.sibling))
+		}
+	}
+}
+
+// TestDocsCheck392SaysWhyItCannotRunOnAManagedProject: 392 forces its failure
+// with the marker that refuses a policy publication in a coding agent's session
+// (**D1571**), and on a **managed** project that marker is no refusal at all —
+// the managed gate applies the stage in such a session exactly as it does for
+// the owner (**D1016**) — so the forced run would publish and exit 0 and the
+// check would read its loudest FAIL about the one thing that did not happen. The
+// refusal has to be stated, and stated as a refusal to run rather than as a
+// caveat a reader could take as a FAIL to expect.
+func TestDocsCheck392SaysWhyItCannotRunOnAManagedProject(t *testing.T) {
+	section := strings.ToLower(flattenDoc(registerSection(t, readDoc(t, liveChecksDoc), "\n## Check 392:")))
+	for _, want := range []string{
+		// The gate and the rule that makes the marker useless there.
+		"managed",
+		"d1016",
+		// The read that decides it, named: the marks' own answer, not a guess.
+		"fugaro managed status --json",
+		// The refusal itself, and what it would otherwise misreport.
+		"refuses to run",
+		"exit 0",
+		// The marker is set on the child's command line and nowhere else: a
+		// check that exported it would refuse its own run before it measured
+		// anything.
+		"`claudecode=1`",
+		"the child's own command line",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("Check 392's section does not say %q: a managed project makes the forced failure no failure, and the section has to refuse the run rather than report it", want)
+		}
+	}
+}
+
+// TestDocsCompositeReleaseNotesCarryTheOperatorLine: the release notes of the
+// version this work ships in state what a management command now does, and their
+// `### For operators` is the whole upgrade and nothing more — `fugaro update`
+// (the rule the release notes' own README states, and the rule that no release
+// may ship a second operator command).
+func TestDocsCompositeReleaseNotesCarryTheOperatorLine(t *testing.T) {
+	notes := readDoc(t, compositeChecksRel)
+	flat := strings.ToLower(flattenDoc(notes))
+	for _, want := range []string{
+		// The two sentences an operator reads to know what changed: one command
+		// runs its own steps, and a step that cannot run costs the run and not
+		// the work.
+		"`--no-apply` saves the change and stops",
+		"leaves the change saved and the step owed",
+		"fugaro apply",
+		// The operator line itself, and the promise that nothing else is asked
+		// for. The release notes carry exactly one operator step and it is this
+		// command.
+		"### for operators",
+		"run `fugaro update` once",
+		"there is no second command",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s does not say %q: AP10 writes the release actions, and the operator line is `fugaro update` and nothing else", compositeChecksRel, want)
+		}
+	}
+
+	// The summary line is due in the PR that cuts the release, not in the task
+	// that writes its notes: the summaries file carries one entry per released
+	// version at or below the CLI stream's current, and v0.28.0 is above it.
+	// A line added here would announce a release nobody cut.
+	summaries := readDoc(t, "website/data/release-summaries.yaml")
+	if strings.Contains(summaries, "v0.28.0:") {
+		t.Errorf("website/data/release-summaries.yaml carries a v0.28.0 line: the line is due in the pull request that cuts the release, not in the task that writes its notes")
+	}
+}
