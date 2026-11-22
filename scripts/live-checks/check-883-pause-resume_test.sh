@@ -522,6 +522,41 @@ test_a_resumed_row_that_points_back_at_the_pause_is_read() {
   expect_contains "$out" "run=$RESUMED" "a resumed row that points back at the pause: the row's own run is the resumer"
 }
 
+test_a_follow_up_runs_previous_run_is_not_the_resumer() {
+  case_dir unrelated_previous_run
+  # A row for another run of the same repository carries `previous_run` naming a
+  # THIRD run: it is that run's own continuation and says nothing about this
+  # pause. Reading it as the resumer would PASS the resume and then read the
+  # wrong run's record for the pool, without the paused row ever being read.
+  OTHER=run-cccc3333
+  EARLIER=run-dddd4444
+  printf '{"runs":[%s]}\n' "$(row paused ',"paused_until":"2026-11-22T06:00:00Z"')" >"$answers/runs-2.json"
+  printf '{"runs":[%s,{"run":"%s/%s","repo":"acme/sub-app","run_id":"%s","status":"failed","previous_run":"%s"}]}\n' \
+    "$(row paused ',"paused_until":"2026-11-22T06:00:00Z"')" "$SLUG" "$OTHER" "$OTHER" "$EARLIER" \
+    >"$answers/runs-3.json"
+  run883
+  expect_status "$status" 3 "a follow-up run's previous_run"
+  expect_row "$out" resume UNVERIFIED "a follow-up run's previous_run"
+  expect_row "$out" pool UNVERIFIED "a follow-up run's previous_run"
+  expect_contains "$out" "names the run that resumed ${LAUNCHED}" "a follow-up run's previous_run: the row says what it was waiting for"
+}
+
+test_a_paused_rows_own_previous_run_is_not_the_resumer() {
+  case_dir paused_row_previous_run
+  # On the PAUSED run's own row, `previous_run` names the run the paused run
+  # itself continued — the opposite direction — so it is not the run that
+  # resumed it either.
+  printf '{"runs":[%s]}\n' \
+    "$(row paused ',"paused_until":"2026-11-22T06:00:00Z","previous_run":"run-dddd4444"')" >"$answers/runs-2.json"
+  printf '{"runs":[%s]}\n' \
+    "$(row paused ',"paused_until":"2026-11-22T06:00:00Z","previous_run":"run-dddd4444"')" >"$answers/runs-3.json"
+  run883
+  expect_status "$status" 3 "a paused row's own previous_run"
+  expect_row "$out" pause PASS "a paused row's own previous_run: the pause was still read"
+  expect_row "$out" resume UNVERIFIED "a paused row's own previous_run"
+  expect_row "$out" pool UNVERIFIED "a paused row's own previous_run"
+}
+
 test_a_pool_that_is_not_the_launchers_is_refused_before_anything_runs() {
   case_dir bad_pool_name
   run883_raw --repo acme/sub-app --pool 'team a' --dry-run
@@ -574,6 +609,8 @@ t test_a_record_that_names_the_pool_as_name_passes
 t test_a_record_whose_kind_is_not_the_launchers_leaves_the_row_unverified
 t test_a_record_that_cannot_be_read_leaves_the_row_unverified
 t test_a_resumed_row_that_points_back_at_the_pause_is_read
+t test_a_follow_up_runs_previous_run_is_not_the_resumer
+t test_a_paused_rows_own_previous_run_is_not_the_resumer
 t test_a_pool_that_is_not_the_launchers_is_refused_before_anything_runs
 t test_an_unknown_argument_is_refused
 
