@@ -543,7 +543,11 @@ func (r *run) modelTakesImages(model string) bool {
 // stage that reads a pull request's own head, and its posture (D894(a)) is
 // what that stage must be launched under whatever the budget says. Such a run
 // writes the posture alone: the deny list is left out because both of its
-// halves exist for refusals the gateway itself makes.
+// halves exist for refusals the gateway itself makes. That posture is also the
+// one write a local run does not tolerate a failure of: nothing in a stage's
+// environment carries it, so a stage whose file could not be written would
+// read the head with that head's own hooks and MCP servers enabled, and it
+// stops there instead.
 //
 // A stage the run's stage account serves writes none of the gateway's
 // variables and none of the pins, for the reason its own environment carries
@@ -576,7 +580,11 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 		}
 	}
 	write, deny := agent.WriteManagedSettings, agent.DenyRules(true, r.denyBinaryReads(stage))
-	if r.review || stage == stageTriage || r.replay != "" {
+	// The posture a stage that reads a head the run does not trust is launched
+	// under (D894(a)), read once here because the tolerated write below asks
+	// the same question.
+	posture := r.review || stage == stageTriage || r.replay != ""
+	if posture {
 		// A review-mode run's stage reads a pull request's own head, and a
 		// reviewer arm's one stage reads another run's patch applied to this
 		// checkout (abreplay.go, B1.2), so the settings both are launched
@@ -606,15 +614,16 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 		}
 	}
 	if err := write(r.managedPath(), vars, deny); err != nil {
-		if r.d.Local {
+		if r.d.Local && !posture {
 			// The managed settings directory is the image's, and a local
-			// invocation is not refused over one it has no image for: the
-			// stage reaches the gateway through the environment this run
-			// hands it (stageAgentEnv), and checkSettingsRouting has already
-			// refused any settings file that would send it elsewhere. The
-			// file is still written wherever the developer's machine holds
-			// the directory, so the fence is kept where it exists. Said once
-			// per run: every stage writes the file.
+			// invocation is not refused over one it has no image for. The one
+			// write tolerated is this one: the gateway's variables and the
+			// pins, which the stage's environment carries too (stageAgentEnv,
+			// stagePins) and which checkSettingsRouting has already kept the
+			// machine's own settings from routing the agent around. The file
+			// is still written wherever the developer's machine holds the
+			// directory, so the fence is kept where it exists. Said once per
+			// run: every stage writes the file.
 			r.mu.Lock()
 			warned := r.warnedManagedWrite
 			r.warnedManagedWrite = true

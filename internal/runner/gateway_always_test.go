@@ -147,6 +147,43 @@ func TestALocalRunNeedsNoManagedSettingsDirectory(t *testing.T) {
 	}
 }
 
+// TestALocalReviewRunNeedsTheManagedSettingsDirectory (AB1b, D894(a), the
+// review finding on #3481): the write a local run tolerates a failure of is the
+// gateway's own — its variables and the pins, which the stage's environment
+// carries too — and never the posture a review stage is launched under. That
+// posture lives in the managed settings file and nowhere else: no environment
+// variable carries it, so a machine with no directory to hold it must stop the
+// stage rather than let it read a pull request's own head with that head's
+// hooks and project MCP server enabled (D894(a), the reasons in
+// WriteReviewManagedSettings).
+//
+// Red step: with the tolerance left as `if r.d.Local`, the review stage runs
+// with no posture written and the scripted agent is reached.
+//
+// Hand mutation this fails on: dropping `&& !posture` from the tolerated write
+// in writeManagedSettings.
+func TestALocalReviewRunNeedsTheManagedSettingsDirectory(t *testing.T) {
+	h := newHarness(t, "", reviewTaskSpec("reviewonly", reviewOnlyYAML, 7))
+	pushReviewBranch(t, h, "someone-elses-change", func(dir string) {
+		if err := os.WriteFile(filepath.Join(dir, "other.txt"), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	})
+	addPR(h, 7, "someone-elses-change", "")
+	if !h.deps.Local {
+		t.Fatal("the harness is not a local run: this test is about the local invocation")
+	}
+	// The developer's machine, which holds no managed settings directory.
+	h.deps.ManagedSettingsPath = filepath.Join(t.TempDir(), "absent", "managed-settings.json")
+	rec, err := h.run(t, review("changes", 1))
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "writing Claude Code's managed settings") {
+		t.Fatalf("record = %+v, err = %v: the review stage did not stop at the posture it could not write", rec, err)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls: a stage ran without the posture it must be launched under", len(h.agent.calls))
+	}
+}
+
 // TestTheVertexRefusalNamesObserveOnly (AB1b, F11): the mode off is gone from
 // the vocabulary (D3009), so the remedy a Vertex run is given names the one
 // mode such a run can hold. The text is pinned here as well as in the CLI,
