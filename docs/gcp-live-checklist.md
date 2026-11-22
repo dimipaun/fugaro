@@ -23108,8 +23108,9 @@ bash scripts/live-checks/check564.sh --sandbox <the checkout> --workspace-id <th
 `--workspace-id` names the portal workspace the purchase is for (one workspace has one subscription, D2192) and is
 required; `--api` names the portal's own origin and `--terms` the licence terms **version** you accepted; `--dry-run` makes every guard and prints every
 command it would run, calling nothing; `--help` prints the header above. The **LIVE** Paddle host is refused
-**by name** — no live purchase is ever made — `--project fugaro-prod` is refused unless `--production` is given,
-a value naming `belong` is refused by name, and a coding agent's session is refused too. The block is headed
+**by name** — no live purchase is ever made — a value naming `fugaro-prod`, and the GCP project the
+installation's own `fugaro doctor` names, are refused unless `--production` is given, a value naming `belong`
+is refused by name, and a coding agent's session is refused too. The block is headed
 `CHECK 564 RESULT`, ends `CHECK 564 RESULT END (exit N)`, and exits **0** when every criterion held, **1** when
 one did not, **2** when it could not measure — a token file that is not `0600`, the sandbox account missing or
 refusing its key, a transaction the sandbox does not hold, a renewal the sandbox did not bill. Its keys are

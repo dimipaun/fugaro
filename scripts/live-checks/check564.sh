@@ -67,7 +67,8 @@
 # Where:      your own machine, a THROWAWAY installation's checkout (`--sandbox`),
 #             and the Paddle SANDBOX. The LIVE Paddle host is refused by name and
 #             no live purchase is ever made. `fugaro-prod` among the values you
-#             were given is refused unless `--production`; a value naming belong is
+#             were given, and the GCP project the installation's own `doctor`
+#             names, are refused unless `--production`; a value naming belong is
 #             refused by name; and so is a coding agent's session.
 # Costs:      nothing real. Every price, transaction, subscription and refund is
 #             the Paddle SANDBOX's, whose cards are test cards; the portal and the
@@ -671,7 +672,10 @@ step_api() {
 
 # step_sandbox: the installation this check drives, read from its own `doctor`.
 # The three fields say which checkout the `licence status` row below is about and
-# where the renewal job is; the check never assumes them from a flag.
+# where the renewal job is; the check never assumes them from a flag. The project
+# doctor names is held against `fugaro-prod` HERE, where it is known: this check
+# buys a real subscription and fires that project's renewal job, so the fence
+# cannot wait for a value the owner typed.
 step_sandbox() {
   if [ ! -d "$SANDBOX" ]; then
     unmeasured sandbox "the sandbox checkout $SANDBOX is not a directory: --sandbox names a THROWAWAY installation's checkout, whose own \`fugaro\` this check drives. Nothing about it was read"
@@ -694,6 +698,10 @@ step_sandbox() {
   if [ -z "$project" ]; then
     unmeasured sandbox "$SANDBOX's $FUGARO_BIN doctor --json names no GCP project: this checkout is not an installation's, and the licence rows below read a project before they read a key"
     stop "the sandbox checkout $SANDBOX has no GCP project, so it is not an installation this check can drive"
+  fi
+  if [ "$project" = fugaro-prod ] && [ "$PRODUCTION" != 1 ]; then
+    unmeasured sandbox "$SANDBOX's $FUGARO_BIN doctor --json names the GCP project fugaro-prod, which is refused unless --production is given: this check makes a real purchase and fires that project's \`fugaro-licence-renew\` job, and production is only ever measured on purpose. No row below was measured"
+    stop "the installation in $SANDBOX is the fugaro-prod project, which is refused unless --production is given: nothing was bought, nothing was read and nothing was fired"
   fi
   SANDBOX_PROJECT=$project
   SANDBOX_REGION=$region

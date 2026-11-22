@@ -576,6 +576,34 @@ test_fugaro_prod_is_refused_without_production() {
   no_calls "fugaro-prod without --production"
 }
 
+test_a_fugaro_prod_installation_is_refused_without_production() {
+  local dir=$work/prodinstall
+  prepare "$dir"
+  # The project comes from the installation's own doctor, not from a flag: this is
+  # the one the check would fire the renewal job of.
+  printf '{"project":{"name":"chk564-prod","gcp_project":"fugaro-prod","region":"us-east5"}}\n' >"$dir/state/doctor.json"
+  run_check "$dir"
+  expect_status "$status" 2 "an installation in fugaro-prod without --production"
+  expect_row sandbox "fugaro-prod" "an installation in fugaro-prod: the row names the project doctor read"
+  expect_row sandbox "refused unless --production" "an installation in fugaro-prod: the refusal"
+  expect_contains "$err" "fugaro-prod" "an installation in fugaro-prod: the refusal names it"
+  # The purchase and the renewal are not made: the fence is read before either.
+  expect_absent "$(cat "$dir/state/logs/curl.calls")" "/prices" "an installation in fugaro-prod: the sandbox is not read"
+  expect_absent "$(cat "$dir/state/logs/gcloud.calls")" "scheduler jobs run" "an installation in fugaro-prod: nothing is fired"
+  assert_scratch_removed "an installation in fugaro-prod"
+}
+
+test_a_fugaro_prod_installation_named_production_is_measured() {
+  local dir=$work/prodinstall-ok
+  prepare "$dir"
+  printf '{"project":{"name":"chk564-prod","gcp_project":"fugaro-prod","region":"us-east5"}}\n' >"$dir/state/doctor.json"
+  run_check "$dir" -- --production
+  expect_status "$status" 0 "an installation in fugaro-prod named --production"
+  expect_row sandbox "fugaro-prod" "an installation in fugaro-prod named --production: the row names it"
+  expect_contains "$out" "production" "an installation in fugaro-prod named --production: the block says so"
+  assert_scratch_removed "an installation in fugaro-prod named --production"
+}
+
 test_belong_is_refused_by_name() {
   local dir=$work/belong
   prepare "$dir"
@@ -630,6 +658,8 @@ t test_a_purchase_whose_workspace_names_no_subscription_is_a_finding
 t test_a_refund_that_left_a_key_serving_is_a_finding
 t test_a_renewal_that_did_not_move_the_term_is_not_measured
 t test_fugaro_prod_is_refused_without_production
+t test_a_fugaro_prod_installation_is_refused_without_production
+t test_a_fugaro_prod_installation_named_production_is_measured
 t test_belong_is_refused_by_name
 t test_a_coding_agents_session_is_refused
 t test_xtrace_is_refused
