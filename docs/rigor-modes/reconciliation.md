@@ -981,6 +981,15 @@ file's word `level`, with the released `mode:` still read — added `rigorSpelli
 `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 57 to 58. The
 row is named here for the reason above: a reader who finds the figure stale should find who moved it.)
 
+(Amended 2026-11-20: the periodic-reviews plan's R16 — the launcher handing the stored reports in —
+added `commitReportsSince` to `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since`
+constants* row from 58 to 59. The constant names the first release whose runner reads
+`task.Spec.Reports`, which the task is decoded with `DisallowUnknownFields` for, so the launch
+against an older job image is refused at the person's terminal rather than dying at bootstrap; the
+row moved with the release that starts writing the member, as the entries above do. Nothing in this
+folder changed; the row is named here for the reason the ones above are: a reader who finds the
+figure stale should find who moved it.)
+
 (Amended 2026-11-20: the rigor-modes plan's LV6.1 — the recipe's one conditional, the `by_level` block that
 gives each rigor level its own `roles` mapping (LD9) — added `levelRolesSince` to
 `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 59 to 60. Same
@@ -1004,6 +1013,15 @@ constants* row from 61 to 62. The constant is the guard every writer of such a k
 service too old to read the entry, so the row moved with the release that starts writing it, as the
 entries above do. Nothing in this folder changed; the row is named here for the reason the ones
 above are: a reader who finds the figure stale should find who moved it.)
+
+(Amended 2026-11-21: the workspace-service plan's WS13 — the keep-warm beat and its switch, the
+`agent.workspace_beat` key of `fugaro.yaml` and of the project layer's `defaults` (R10, D2985) —
+added `workspaceBeatSince` to `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since`
+constants* row from 62 to 63. Both files are decoded with `KnownFields`, so a runner built from an
+older image refuses either key at bootstrap, after the launch was paid for, and it refuses the key
+whatever it says; the row moved with the release that starts reading it, as the entries above do.
+Nothing in this folder changed; the row is named here for the reason the ones above are: a reader who
+finds the figure stale should find who moved it.)
 
 (Amended 2026-11-21: the launcher-does-not-mint plan's LM8 — a launch that holds a ticket for its
 run's identity is refused on a job image whose runner cannot claim it — added `identitySince` to
