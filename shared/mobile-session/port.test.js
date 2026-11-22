@@ -57,6 +57,7 @@ import {
   STUB_ACCESS_TOKEN,
   STUB_COMPACTION_THRESHOLD,
   STUB_COSTLY_MODES,
+  STUB_CRASH_REPORTS,
   STUB_ENDPOINT,
   STUB_PROJECT_ID,
   stubSession,
@@ -74,6 +75,7 @@ function conforming(overrides = {}) {
       costly_modes: ['pro', 'critical'],
       biometric_on_costly: false,
       compaction_threshold: 0.4,
+      crash_reports: true,
     },
     idToken: async () => 'a-project-id-token',
     signMessage: async () => new Uint8Array(64),
@@ -103,11 +105,12 @@ test('the port names the one event a surface may rely on', () => {
   assert.ok(Object.isFrozen(SESSION_EVENTS));
 });
 
-test("the port names the three policy values C1's session response carries", () => {
+test("the port names the policy values C1's session response carries", () => {
   assert.deepEqual(SESSION_POLICY_FIELDS, [
     'costly_modes',
     'biometric_on_costly',
     'compaction_threshold',
+    'crash_reports',
   ]);
   assert.ok(Object.isFrozen(SESSION_POLICY_FIELDS));
 });
@@ -251,6 +254,7 @@ test('a policy with a field the port does not carry is refused', () => {
         costly_modes: [],
         biometric_on_costly: false,
         compaction_threshold: null,
+        crash_reports: true,
         model: 'the-policy-file-is-not-the-session',
       },
     }),
@@ -283,13 +287,21 @@ test('a policy value outside its shape is refused', () => {
     const refused = refusalOf(() => conforming({ policy: { ...conforming().policy, compaction_threshold } }));
     assert.deepEqual(refused, { code: PORT_CODES.BAD_POLICY_VALUE, member: 'policy.compaction_threshold' });
   }
+  // The crash-report switch is the one policy value with no closed set and no
+  // range: it is a boolean, and a value that is neither is refused rather than
+  // read as the fail-safe, because a surface that saw "on" for a stray string
+  // would send a report the project did not admit.
+  for (const crash_reports of ['yes', 1, null]) {
+    const refused = refusalOf(() => conforming({ policy: { ...conforming().policy, crash_reports } }));
+    assert.deepEqual(refused, { code: PORT_CODES.BAD_POLICY_VALUE, member: 'policy.crash_reports' });
+  }
 });
 
 test('the policy values a project may really carry are accepted', () => {
   const accepted = [
-    { costly_modes: [], biometric_on_costly: true, compaction_threshold: null },
-    { costly_modes: ['critical'], biometric_on_costly: false, compaction_threshold: 0.01 },
-    { costly_modes: ['pro', 'critical'], biometric_on_costly: true, compaction_threshold: 0.99 },
+    { costly_modes: [], biometric_on_costly: true, compaction_threshold: null, crash_reports: false },
+    { costly_modes: ['critical'], biometric_on_costly: false, compaction_threshold: 0.01, crash_reports: true },
+    { costly_modes: ['pro', 'critical'], biometric_on_costly: true, compaction_threshold: 0.99, crash_reports: false },
   ];
   for (const policy of accepted) {
     assertSessionPort(conforming({ policy }));
@@ -321,6 +333,7 @@ test("the stub's session is the fixed fake session the surfaces mount on", () =>
   assert.deepEqual([...session.policy.costly_modes], [...STUB_COSTLY_MODES]);
   assert.equal(session.policy.biometric_on_costly, false);
   assert.equal(session.policy.compaction_threshold, STUB_COMPACTION_THRESHOLD);
+  assert.equal(session.policy.crash_reports, STUB_CRASH_REPORTS);
   assert.equal(typeof session.idToken, 'function');
   assert.equal(typeof session.signMessage, 'function');
   assert.equal(typeof session.on, 'function');
@@ -332,9 +345,11 @@ test('the stub can be asked for another role, and a policy field at a time', () 
   assert.deepEqual([...viewer.policy.costly_modes], []);
   assert.equal(viewer.policy.biometric_on_costly, false, 'the fields the override did not name stay');
   assert.equal(viewer.policy.compaction_threshold, STUB_COMPACTION_THRESHOLD);
+  assert.equal(viewer.policy.crash_reports, STUB_CRASH_REPORTS, 'the fields the override did not name stay');
 
-  const quiet = stubSession({ policy: { compaction_threshold: null } });
+  const quiet = stubSession({ policy: { compaction_threshold: null, crash_reports: false } });
   assert.equal(quiet.policy.compaction_threshold, null);
+  assert.equal(quiet.policy.crash_reports, false, 'a test can ask for a project that turned the reports off');
   assert.deepEqual([...quiet.policy.costly_modes], [...STUB_COSTLY_MODES]);
 
   assert.ok(Object.isFrozen(viewer), 'a test cannot make a surface pass by mutating the session');

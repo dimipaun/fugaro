@@ -340,6 +340,26 @@ type SessionPolicy struct {
 	// offers automatic compaction, in percent, and 0 means the project set no
 	// automatic compaction at all.
 	CompactThresholdPercent int `json:"compact_threshold_percent"`
+
+	// CrashReports is whether the app may send crash reports to the project's
+	// Firebase project (D731, D738): the project's own `mobile.crash_reports`,
+	// on by default and opt-out, as the switch the app reads before it collects
+	// anything.
+	//
+	// **It is written whether or not the project's block carries it, and the
+	// assembly that fills this shape is where that happens.** The member is not
+	// omitempty, so a session this service answers always names it, and the app
+	// never sees a shape whose switch is missing — `shared/mobile-session`'s
+	// port refuses such a value as MISSING_MEMBER, and the plan records the
+	// alternative (letting it through the app as an "update the installation"
+	// screen) as refused.
+	//
+	// A document that does not carry it decodes to false, which is the
+	// fail-safe and not the member's default on: a session assembled by a
+	// release behind is a phone that was told nothing, and nothing is sent
+	// before the switch has been read (D734). The Go reader is
+	// projectpolicy.MobileCrashReports, and this field is filled from it.
+	CrashReports bool `json:"crash_reports"`
 }
 
 // SessionResponse is what a pairing or a restore answers with (P3, K2): the

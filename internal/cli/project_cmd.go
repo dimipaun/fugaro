@@ -3220,7 +3220,16 @@ func mobileText(b *projectpolicy.Mobile) string {
 	if b.Sync == nil || *b.Sync {
 		sync = "on"
 	}
-	parts := []string{"pairing " + enabled, "sync " + sync}
+	// The crash-report switch is named whichever way it is written, the two
+	// above it: its default is on (D731), so a line that printed only a written
+	// false would leave a project that turned the reports off unnamed in the one
+	// diff a publish puts in front of the operator — and today a hand edit is
+	// the only door that value has (O13).
+	reports := "off"
+	if b.CrashReports == nil || *b.CrashReports {
+		reports = "on"
+	}
+	parts := []string{"pairing " + enabled, "sync " + sync, "crash reports " + reports}
 	if len(b.AcceptedProviders) > 0 {
 		parts = append(parts, "providers "+strings.Join(b.AcceptedProviders, ", "))
 	}

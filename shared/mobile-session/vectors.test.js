@@ -156,10 +156,12 @@ const WIRE = {
 };
 
 // What the phone is told about the project's session policy: which modes it
-// treats as costly, whether it asks for a biometric there, and where the project
-// compacts. Nested inside a session response and inside a refresh response, and
-// never a secret, so it is read here as data the phone acts on.
-const POLICY_FIELDS = ['costly_modes', 'biometric_on_costly', 'compact_threshold_percent'];
+// treats as costly, whether it asks for a biometric there, where the project
+// compacts, and whether the app may send crash reports (D731, D738). Nested
+// inside a session response and inside a refresh response, and never a secret,
+// so it is read here as data the phone acts on. The order is the port's own list
+// (`SESSION_POLICY_FIELDS`), which the loader test holds this file to.
+const POLICY_FIELDS = ['costly_modes', 'biometric_on_costly', 'compact_threshold_percent', 'crash_reports'];
 
 test('the vectors are the contract both languages read', () => {
   assert.equal(vectors.format, 'fugaro mobile session contract vectors');

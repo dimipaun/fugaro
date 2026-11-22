@@ -2,6 +2,7 @@ package projectpolicy
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -51,6 +52,9 @@ func TestProjectPolicyMobileDefaults(t *testing.T) {
 	if m.BiometricOnCostly == nil || *m.BiometricOnCostly {
 		t.Errorf("DefaultMobile().BiometricOnCostly = %v, want a written false (D2786)", m.BiometricOnCostly)
 	}
+	if m.CrashReports == nil || !*m.CrashReports {
+		t.Errorf("DefaultMobile().CrashReports = %v, want a written true (D731, D738: crash reports are on by default and opt-out)", m.CrashReports)
+	}
 
 	// The spelling of the age and the duration it means are one value in two
 	// places: the block writes the text and the accessor answers the duration.
@@ -79,8 +83,8 @@ func TestProjectPolicyMobileDefaultsRoundTrip(t *testing.T) {
 		t.Fatalf("the block update writes is not an object: %v", err)
 	}
 	slices.Sort(names)
-	if want := []string{"accepted_providers", "biometric_on_costly", "costly_modes", "enabled", "max_auth_age", "strict_new_device", "sync"}; !slices.Equal(names, want) {
-		t.Errorf("the published block names %v, want %v: the plan's P6 acceptance is that the node carries all seven", names, want)
+	if want := []string{"accepted_providers", "biometric_on_costly", "costly_modes", "crash_reports", "enabled", "max_auth_age", "strict_new_device", "sync"}; !slices.Equal(names, want) {
+		t.Errorf("the published block names %v, want %v: the plan's P6 acceptance is that the node carries every member, and crash_reports is the one D731 and D738 add", names, want)
 	}
 	p, found, err := Decode(mobileNode(string(block)))
 	if err != nil || !found || p == nil {
@@ -100,6 +104,9 @@ func TestProjectPolicyMobileDefaultsRoundTrip(t *testing.T) {
 	}
 	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Pro, rigor.Critical}) {
 		t.Errorf("MobileCostlyModes() = %v", got)
+	}
+	if !p.MobileCrashReports() {
+		t.Error("the published default reads back crash_reports=false, want true: the member a publish writes is the default on (D731, D738)")
 	}
 }
 
@@ -149,7 +156,8 @@ func TestProjectPolicyMobileReadsTheSwitches(t *testing.T) {
 		"max_auth_age": "6h",
 		"strict_new_device": true,
 		"costly_modes": ["critical"],
-		"biometric_on_costly": true
+		"biometric_on_costly": true,
+		"crash_reports": false
 	}`))
 	if err != nil || !found || p == nil {
 		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
@@ -175,6 +183,9 @@ func TestProjectPolicyMobileReadsTheSwitches(t *testing.T) {
 	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Critical}) {
 		t.Errorf("MobileCostlyModes() = %v, want [critical]", got)
 	}
+	if p.MobileCrashReports() {
+		t.Error("MobileCrashReports() = true, want false: the node writes it false, and a project's written off is what the app reads")
+	}
 	// The list a reader matches a name against is the node's own, never a copy
 	// of the default it could write into.
 	got := p.MobileAcceptedProviders()
@@ -191,6 +202,14 @@ func TestProjectPolicyMobileReadsTheSwitches(t *testing.T) {
 // that turns the surface on, so an operator who writes `mobile: {}` (or an
 // update that publishes a block with a member added later) gets the product's
 // defaults and not an off switch.
+//
+// **`crash_reports` is the one member this does not hold for**, and the
+// assertion at the end of the test is the reason: an absent member answers off,
+// because the app may send nothing before it has read the switch (D734), and a
+// session a release behind assembled carries no such member. It is the rule
+// MobileStrictNewDevice and MobileBiometricOnCostly follow, and it is what the
+// member-wise fill in MobileForPublish exists to make unreachable: after
+// `fugaro update` no node of this release is left without it.
 func TestProjectPolicyMobileAbsentMembersTakeTheDefaults(t *testing.T) {
 	p, _, err := Decode(mobileNode(`{}`))
 	if err != nil || p == nil || p.Mobile == nil {
@@ -210,6 +229,18 @@ func TestProjectPolicyMobileAbsentMembersTakeTheDefaults(t *testing.T) {
 	}
 	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Pro, rigor.Critical}) {
 		t.Errorf("MobileCostlyModes() = %v, want [pro critical]", got)
+	}
+	// The one exception, and the whole of the fail-safe: an absent crash_reports
+	// is off (D731, D734, D738). The member's own default is on and the fill
+	// writes it; what answers a block that does not carry it is this reader, and
+	// it answers a phone that was told nothing, which may therefore send
+	// nothing.
+	if p.MobileCrashReports() {
+		t.Error("MobileCrashReports() = true for a block that does not carry the member, want false: nothing is sent before the switch has been read (D734)")
+	}
+	var noBlock *Policy
+	if noBlock.MobileCrashReports() {
+		t.Error("MobileCrashReports() = true for a nil Policy, want false: the pairing route asks before it has read anything")
 	}
 	// A written false is a decision and never the absent member, which is what
 	// the pointers are for: an operator turning one switch off must be able to.
@@ -272,8 +303,9 @@ func TestProjectPolicyMobileToleratedByAReaderThatPredatesIt(t *testing.T) {
 	// TestProjectPolicyMobileAbsentBlockIsOff reads.
 }
 
-// TestProjectPolicyMobileDecodesStrictly: the block is a closed set of seven
-// members, so a misspelt one is refused rather than silently setting nothing.
+// TestProjectPolicyMobileDecodesStrictly: the block is a closed set of the
+// members the struct's json tags spell, so a misspelt one is refused rather
+// than silently setting nothing.
 // The failure mode is the one this package refuses everywhere: an operator who
 // writes `strict_new_device` as `strict_device` would have a project that looks
 // strict and restores silently, and the two are indistinguishable in a decoded
@@ -336,6 +368,68 @@ func TestProjectPolicyMobileRefusesAnEntryItCannotResolve(t *testing.T) {
 	}
 	if got := p.MobileCostlyModes(); !slices.Equal(got, []rigor.Rigor{rigor.Hotfix}) {
 		t.Errorf("MobileCostlyModes() = %v, want [hotfix]", got)
+	}
+}
+
+// TestProjectPolicyMobileForPublishFillsEveryMember is the update-side rule
+// D738 records, and it is the one that keeps a member added by a later release
+// from being lost: a node published before the member existed carries a block
+// without it, and a publish that returned that block as it found it would leave
+// the member off the node for ever — while MobileCrashReports answers an absent
+// member off, so a switch that is on by default would be permanently off on
+// every installation that has not published since.
+//
+// Three claims, and each of them is a way the fill can go wrong:
+//
+//   - a block that carries nothing is filled with every member DefaultMobile
+//     states, which is the claim a member added to the struct without a line in
+//     the fill fails (the deep-equality against DefaultMobile covers the whole
+//     block, so a forgotten member cannot pass);
+//   - a block that carries a member keeps its value, whichever member it is and
+//     whatever the value, because these are the project's own answers;
+//   - the node it was handed is not edited — the caller writes the result into
+//     the document it publishes, and the node the stage read is what it reports
+//     the diff against.
+func TestProjectPolicyMobileForPublishFillsEveryMember(t *testing.T) {
+	if got, want := MobileForPublish(nil), DefaultMobile(); !reflect.DeepEqual(got, want) {
+		t.Errorf("MobileForPublish(nil) = %+v, want DefaultMobile() = %+v: a node that carries no block at all is written the whole default", got, want)
+	}
+	if got, want := MobileForPublish(&Mobile{}), DefaultMobile(); !reflect.DeepEqual(got, want) {
+		t.Errorf("MobileForPublish(&Mobile{}) = %+v, want DefaultMobile() = %+v: a block a release behind published is filled member by member, so a member added to the struct without a line here is left off every such node", got, want)
+	}
+	// The absent member is the one this release adds, and it is filled with the
+	// default a publish writes rather than with the reader's fail-safe.
+	if got := MobileForPublish(&Mobile{Enabled: boolPtr(false)}); got.CrashReports == nil || !*got.CrashReports {
+		t.Errorf("MobileForPublish fills crash_reports as %v, want a written true: the reader answers an absent member off, so the fill is the only thing that puts the default on the node", got.CrashReports)
+	}
+
+	written := &Mobile{
+		Enabled:           boolPtr(false),
+		Sync:              boolPtr(false),
+		AcceptedProviders: []string{ProviderGoogle},
+		MaxAuthAge:        "6h",
+		StrictNewDevice:   boolPtr(true),
+		CostlyModes:       []rigor.Rigor{rigor.Critical},
+		BiometricOnCostly: boolPtr(true),
+		CrashReports:      boolPtr(false),
+	}
+	got := MobileForPublish(written)
+	if !reflect.DeepEqual(got, written) {
+		t.Errorf("MobileForPublish(block the project wrote) = %+v, want the block itself: a publish keeps every member the node carries", got)
+	}
+	if got == written {
+		t.Error("MobileForPublish returned the node it was handed: the caller writes the result into the document it publishes, and the node the stage read is what it reports the diff against")
+	}
+	// A written empty list is the absent member at the RTDB's own rule, so the
+	// fill answers it with the default list — and the other half: a list the
+	// block does carry is never widened.
+	narrowed := MobileForPublish(&Mobile{AcceptedProviders: []string{ProviderApple}, CostlyModes: []rigor.Rigor{rigor.Hotfix}})
+	if !slices.Equal(narrowed.AcceptedProviders, []string{ProviderApple}) || !slices.Equal(narrowed.CostlyModes, []rigor.Rigor{rigor.Hotfix}) {
+		t.Errorf("MobileForPublish narrowed the lists a project chose: providers %v, modes %v", narrowed.AcceptedProviders, narrowed.CostlyModes)
+	}
+	empty := MobileForPublish(&Mobile{})
+	if !slices.Equal(empty.AcceptedProviders, DefaultMobileProviders()) || !slices.Equal(empty.CostlyModes, DefaultMobileCostlyModes()) {
+		t.Errorf("MobileForPublish left a list empty: providers %v, modes %v, want the defaults", empty.AcceptedProviders, empty.CostlyModes)
 	}
 }
 
