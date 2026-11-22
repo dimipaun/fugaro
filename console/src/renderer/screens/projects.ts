@@ -97,7 +97,7 @@ import { nameableText, sanitizeRefusal, sanitizeText } from '../../shared/saniti
 import type { TextClass } from '../../shared/sanitize'
 import type { BudgetStreamFeed, NewOpsDocument, NewOpsReply } from '../../shared/new-ops'
 import type { JSONDoc } from '../../source/source'
-import { budgetFeedRows, readStream } from '../stream'
+import { budgetFeedRows, feedRows, readStream } from '../stream'
 import type { StreamPaint, StreamSource, StreamStatus } from '../stream'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
@@ -756,17 +756,6 @@ const REFUSAL_UNREADABLE =
  * rather than drawing an empty reason (the shape `refusalSentence` reads). */
 const REFUSAL_NONE_TOLD = 'the read was refused, and the CLI printed no sentence this console can draw'
 
-/** objectRows is one of a document's arrays as the feed's own row type: the
- * elements that are objects, which is every row of a document this build reads
- * (`repoEntryOf` refuses the rest where they are drawn). It is how the fallback
- * read answers `readStream` with rows. */
-function objectRows(array: unknown): readonly NewOpsDocument[] {
-  return (arrayAt(array) ?? []).flatMap((row) => {
-    const object = objectAt(row)
-    return object === null ? [] : [object]
-  })
-}
-
 /** refusalSentence is the CLI's own sentence out of whatever the fallback read
  * threw, through `drawnRefusal` -- the same treatment every other refusal of
  * this screen goes through (`drawnRefusal`'s own note). The throw is read
@@ -1114,7 +1103,7 @@ export async function readBudgetStream(read: ProjectsStreamRead): Promise<Projec
     document: async () => {
       try {
         whole = await read.budget()
-        return { ok: true, rows: objectRows(whole['repos']) }
+        return { ok: true, rows: feedRows(whole['repos']) }
       } catch (cause) {
         return { ok: false, sentence: refusalSentence(cause) }
       }

@@ -161,7 +161,7 @@ import { sanitizeRefusal } from '../../shared/sanitize'
 import type { TextClass } from '../../shared/sanitize'
 import type { BudgetStreamFeed, NewOpsDocument, NewOpsReply, SpendStreamFeed } from '../../shared/new-ops'
 import type { JSONDoc } from '../../source/source'
-import { budgetFeedRows, readStream } from '../stream'
+import { budgetFeedRows, feedRows, readStream } from '../stream'
 import type { StreamPaint, StreamSource, StreamStatus } from '../stream'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
@@ -2268,17 +2268,6 @@ export function reportFromFeed(
   }
 }
 
-/** objectRows is one of a document's arrays as the feed's own row type: the
- * elements that are objects, which is every row of a document this build reads
- * (`rowOf` refuses the rest one line at a time, where they are drawn). It is how
- * a fallback read answers `readStream` with rows. */
-function objectRows(array: unknown): readonly NewOpsDocument[] {
-  return arrayAt(array).flatMap((row) => {
-    const object = objectAt(row)
-    return object === null ? [] : [object]
-  })
-}
-
 /** SpendReportStreamRead is the report's streamed read: RS2's `readStream`
  * around the two reads of one command -- `report --stream --json` and the
  * `report --json` this screen read before the stream existed -- plus what this
@@ -2360,7 +2349,7 @@ export async function readReportStream(read: SpendReportStreamRead): Promise<Spe
     document: async () => {
       try {
         whole = await read.report(args)
-        return { ok: true, rows: objectRows(whole['rows']) }
+        return { ok: true, rows: feedRows(whole['rows']) }
       } catch (cause) {
         return { ok: false, sentence: refusalSentence(cause) }
       }
@@ -2482,7 +2471,7 @@ export async function readCapsStream(read: CapsStreamRead): Promise<CapsStreamOu
     document: async () => {
       try {
         whole = await read.budget()
-        return { ok: true, rows: objectRows(whole['repos']) }
+        return { ok: true, rows: feedRows(whole['repos']) }
       } catch (cause) {
         return { ok: false, sentence: refusalSentence(cause) }
       }

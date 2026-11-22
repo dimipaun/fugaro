@@ -155,9 +155,9 @@ export const NODE_PAINT: StreamPaint = (step: () => void) => {
  * the console may not draw, and a stream that read the rows anyway would be
  * spawning the very read whose answer it must throw away. The caller asks
  * `hidesView` (`shared/version.ts`) and hands the answer here rather than in
- * each screen's own read, so the three screens RS5 reads draw through this one
- * door and no screen can forget it. The read answers `withheld` without asking
- * either operation, and the caller draws its own word for the view.
+ * each screen's own read, so both of RS5's screens reach the gate through this
+ * one door and neither has to remember it. The read answers `withheld` without
+ * asking either operation, and the caller draws its own word for the view.
  *
  * `paint` is the clock, and only a case passes one. */
 export interface StreamRead<Row> {
@@ -227,10 +227,11 @@ function dropped<Row>(): StreamResult<Row> {
 /** BUDGET_KILL_ROW_SLUG is the feed's own marker for the project's kill switch:
  * the row `budget show --stream` writes in place of the document's `global`
  * block, whose slug is the literal `kill` (`budgetKillRowSlug`,
- * `internal/cli/budget_stream.go`). No repository's slug can be that word --
- * the CLI spells a repository's slug with a provider prefix (`github/acme/app`)
- * -- which is the whole of how a reader tells the two kinds of row apart, and it
- * is why the split below is a rule of the wire and not a screen's guess. */
+ * `internal/cli/budget_stream.go`). The word is a scope no repository's own slug
+ * is -- the writer says so where it defines the sentinel, and a repository's row
+ * is the document's own element, slug and all -- which is the whole of how a
+ * reader tells the two kinds of row apart, and it is why the split below is a
+ * rule of the wire and not a screen's guess. */
 export const BUDGET_KILL_ROW_SLUG = 'kill'
 
 /** BudgetFeedRows is a streamed caps feed's rows, split into the two things
@@ -267,6 +268,24 @@ export function budgetFeedRows(rows: readonly NewOpsDocument[]): BudgetFeedRows 
     repos.push(row)
   }
   return { repos, kill, killed }
+}
+
+/** feedRows is one of a document's arrays as the feed's own row type: the
+ * elements that are JSON objects, which is every row of a document this console
+ * reads (`new-ops.ts`'s `rowOf` refuses the rest one line at a time, where the
+ * rows are drawn). It is how a fallback read answers `StreamWhole.rows`: the
+ * whole document's array is the list a feed would have written as `row` lines,
+ * and a `row` line carries an object by the contract's own reading.
+ *
+ * **Why it lives here.** Both of RS5's caps readers fall back to a document's
+ * array (`report`'s `rows` and `budget show`'s `repos`) through this module, and
+ * the filter is one rule with one spelling: a screen that kept an element the
+ * other dropped would answer a different list for the same document. */
+export function feedRows(array: unknown): readonly NewOpsDocument[] {
+  if (!Array.isArray(array)) return []
+  return array.flatMap((row) =>
+    row !== null && typeof row === 'object' && !Array.isArray(row) ? [row as NewOpsDocument] : [],
+  )
 }
 
 /** painted is one chunk's tick, as a promise the loop can await. */
