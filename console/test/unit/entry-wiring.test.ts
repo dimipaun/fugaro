@@ -155,8 +155,11 @@ import {
   SKELETON_SHAPES,
 } from '../../src/renderer/skeleton'
 import {
+  COORDINATOR_BUSY,
   COORDINATOR_FLOOR_AND_WORD,
   COORDINATOR_FLOOR_WORD,
+  COORDINATOR_HEALTH_CLASS,
+  COORDINATOR_NODE_CLASS,
   COORDINATOR_SOURCE_CLASS,
   COORDINATOR_SOURCE_LINE,
   COORDINATOR_TITLE,
@@ -227,12 +230,75 @@ import {
   textOf,
 } from '../support/fakeDom'
 
+/**
+ * floor is the version floor the Coordinator's map cases set, and the mock below
+ * is the one thing they cannot reach without it.
+ * `ORCHESTRATOR_MAP_CLI_FLOOR` is `null` on this tree -- `orchestrator map
+ * --json` is registered from `ee/` and no release carries it -- so
+ * `orchestratorMapSupported` answers false for every version and the Coordinator
+ * tab draws its own sentence and spawns nothing (the case below that clicks the
+ * tab on the real constant pins exactly that state). The branch **above** the
+ * floor is therefore unreachable through the constant, which is what
+ * `orchestratorMapSupported`'s own `floor` argument exists for: this mock
+ * changes its default and nothing else, so every other case in this file reads
+ * the real constant, which is `null`, and nothing here behaves differently. The
+ * cases that set it are `the Coordinator's map read, above its version floor`.
+ */
+const floor = vi.hoisted(() => ({ value: null as string | null }))
+
+vi.mock('../../src/shared/version', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../src/shared/version')>()
+  return {
+    ...real,
+    orchestratorMapSupported: (version: string, at: string | null = floor.value) =>
+      real.orchestratorMapSupported(version, at),
+  }
+})
+
+/** MAP_FLOOR is the release that first carries `orchestrator map --json` and
+ * MAP_VERSION the installation's own line: one patch above it, so the map read
+ * is admitted. Both are spelled rather than imported -- the claim is about the
+ * comparison, not about a constant's value. */
+const MAP_FLOOR = '1.4.0'
+const MAP_VERSION = '1.4.2'
+
+/** COORDINATOR_MAP is the document the map read answers with in the cases that
+ * set the floor: two active orchestrators of one project -- the project's own
+ * and one named -- with a dependency edge, an overlap edge and a sweep that is
+ * on. It goes through the console's own decoder on its way to the screen, so a
+ * case whose document the decoder refuses fails rather than passing on a
+ * drawing nobody made. */
+const COORDINATOR_MAP = {
+  version: 1,
+  project: 'repo-a',
+  generated_at: '2026-11-22T10:00:00Z',
+  nodes: [
+    { id: 'repo-a', name: '', driver: 'person-1', active_tasks: 2, running_jobs: 1, lease_age_seconds: 90 },
+    { id: 'repo-a~auth', name: 'auth', driver: 'person-2', active_tasks: 0, running_jobs: 3, lease_age_seconds: null },
+  ],
+  edges: [
+    { from: 'repo-a~auth', to: 'repo-a', kind: 'dependency', reason: '' },
+    { from: 'repo-a', to: 'repo-a~auth', kind: 'overlap', reason: 'both touch src/auth' },
+  ],
+  health: {
+    sweep: true,
+    started_at: '2026-11-22T09:59:00Z',
+    ok_at: '2026-11-22T09:59:30Z',
+    at: '2026-11-22T10:00:00Z',
+    note: '',
+  },
+}
+
+afterEach(() => {
+  floor.value = null
+})
+
 /** CONSOLE_ROOT is the package root, which is where the sources, the fixtures
  * and the built tree are read from. */
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
 /**
- * READ_METHODS is the twenty-one reads `entry.ts` may reach for (`ReadBridge`'s own
+ * READ_METHODS is the twenty-two reads `entry.ts` may reach for (`ReadBridge`'s own
  * list less `summaryRuns`, which `queueBridge` answers with its own recorder),
  * by the name the preload exposes. Every one of them is on the fake bridge
  * below, and every one records its call -- so "this read was never made" is a
@@ -277,6 +343,7 @@ const READ_METHODS = [
   'readLicence',
   'readSeats',
   'graphWatch',
+  'orchestratorMap',
 ] as const
 
 /** A_REPLY is a bridge method's answer. */
@@ -5147,6 +5214,35 @@ describe('a read that lands after the operator left its tab', () => {
     expect(classed(panelOf(document), 'graph-canvas')).toEqual([])
   })
 
+  it('never draws the map over the tab the operator moved to', async () => {
+    // The Coordinator's own late answer (CG7b). The tab is one section over one
+    // read, and the read is the slow one -- a database round trip -- so the
+    // operator is most likely to be inside it when they move on. The floor is
+    // set so the read is made at all (see the mock at the top of this file):
+    // with the real constant the tab spawns nothing and this case would prove
+    // nothing.
+    //
+    // **What fails here is the pair of guards**, `coordinatorRead.settle(token)`
+    // and `stale(mine)` in `loadCoordinatorMap`, with the drawing's own
+    // `stale(mine)` behind them: any of the three alone drops this answer, and
+    // the assertion below is about the answer never reaching the panel the
+    // operator is looking at.
+    floor.value = MAP_FLOOR
+    const map = holding()
+    const { bridge } = graphBridge(
+      { subscribeLive: () => snapshotReply(liveFrame()), orchestratorMap: () => map.reply() },
+      FakeWorker,
+      { ...anOkCompatibility(), cliVersion: MAP_VERSION },
+    )
+    const { document, chosen } = await leftBehind(bridge, 'coordinator')
+    map.release({ ok: true, data: { document: COORDINATOR_MAP } })
+    await flush()
+    expect(panelOf(document).children[0], 'a late map replaced the view on screen').toBe(chosen)
+    expect(classed(panelOf(document), COORDINATOR_NODE_CLASS), 'a late map drew its boxes on another tab').toEqual(
+      [],
+    )
+  })
+
   it('draws the console’s own sentence for a graph that could not be built, and none for a tab the operator left', async () => {
     // The catch is the one guard a bridge read cannot reach: `askMember` answers
     // `null` rather than rejecting, so the only way into it is a throw this file
@@ -7719,5 +7815,104 @@ describe('the move the Graph screen wires', () => {
     // A refused move is no move to undo: the way back is offered for what the
     // record applied and nothing else.
     expect(classed(panelOf(document), 'graph-move-undo')).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The Coordinator's map read, above its version floor (CG7b, D3210).
+//
+// The tab is one section over one read -- `orchestrator map --json` -- and that
+// read sits behind a version floor: the command is registered from `ee/` and no
+// release carries it, so `ORCHESTRATOR_MAP_CLI_FLOOR` is `null` on this tree and
+// the tab draws the sentence naming the CLI it needs and spawns nothing (the
+// case above that clicks the tab on the real constant pins that state). The
+// branch **above** the floor -- the mark and the skeleton in the click's own
+// frame, and the refusal with its Retry -- is therefore unreachable through the
+// real constant, so these cases set it (see the mock at the top of this file)
+// and drive the wiring.
+// ---------------------------------------------------------------------------
+
+describe('the Coordinator’s map read, above its version floor', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  /** openCoordinator boots a console whose CLI is above the map's floor and
+   * clicks the Coordinator tab, with the map read the case supplies. Nothing is
+   * awaited after the click, so what the tab drew in the click's own frame is
+   * what the caller sees first. */
+  async function openCoordinator(replies: Readonly<Record<string, AReply>>): Promise<FakeDocument> {
+    floor.value = MAP_FLOOR
+    const { bridge } = graphBridge(
+      { subscribeLive: () => snapshotReply(liveFrame()), ...replies },
+      FakeWorker,
+      { ...anOkCompatibility(), cliVersion: MAP_VERSION },
+    )
+    const document = await boot(bridge, new FakeDocument())
+    buttonFor(document, 'coordinator').click()
+    return document
+  }
+
+  it('marks the section in the click’s own frame and draws the map when it lands', async () => {
+    // The owner's rule (2026-10-31): a control change is answered in the frame
+    // it happened in -- the mark and the shape of what is coming, with the
+    // header the tab already knows above them -- and the figure replaces the
+    // shape the moment the answer lands.
+    const map = holding()
+    const document = await openCoordinator({ orchestratorMap: () => map.reply() })
+
+    expect(textIn(panelOf(document), COORDINATOR_TITLE_CLASS)).toBe(COORDINATOR_TITLE)
+    expect(busyLabels(document)).toContain(COORDINATOR_BUSY)
+    expect(skeletonsOf(document), 'the tab drew no shape for the figure on its way').toEqual([
+      COORDINATOR_SHAPE.section,
+    ])
+    expect(classed(panelOf(document), COORDINATOR_NODE_CLASS), 'a box was drawn before it was read').toEqual([])
+
+    map.release({ ok: true, data: { document: COORDINATOR_MAP } })
+    await flush()
+    expect(classed(panelOf(document), COORDINATOR_NODE_CLASS)).toHaveLength(2)
+    expect(classed(panelOf(document), COORDINATOR_HEALTH_CLASS)).toHaveLength(1)
+    expect(busyLabels(document), 'the mark outlived the answer it was for').toEqual([])
+    expect(skeletonsOf(document)).toEqual([])
+  })
+
+  it('draws the CLI’s own sentence for a refused map, with a Retry that reads it again', async () => {
+    // A refusal is the section's own and not the tab's: the header and the
+    // source line stay up, the sentence goes under them, and the one control
+    // beside it reads the map again. Both halves are pinned here -- the sentence
+    // is the CLI's and not the console's, and the Retry is a real second read
+    // rather than a redraw of the refusal.
+    const sentence = 'the map could not be read: the store is unreachable'
+    const first = holding()
+    const second = holding()
+    let reads = 0
+    const document = await openCoordinator({
+      orchestratorMap: () => {
+        reads += 1
+        return (reads === 1 ? first : second).reply()
+      },
+    })
+
+    first.release({ ok: false, reason: sentence })
+    await flush()
+    expect(holdsText(panelOf(document), sentence)).toBe(true)
+    expect(textIn(panelOf(document), COORDINATOR_TITLE_CLASS), 'the refusal took the header down with it').toBe(
+      COORDINATOR_TITLE,
+    )
+    const retry = classed(panelOf(document), RETRY_CLASS)[0]
+    expect(retry, 'a refused map drew no Retry: the case proves nothing').toBeDefined()
+    expect(retry?.textContent).toBe(RETRY_LABEL)
+
+    retry?.click()
+    await flush()
+    expect(reads, 'the Retry drew the refusal again instead of reading the map').toBe(2)
+    second.release({ ok: true, data: { document: COORDINATOR_MAP } })
+    await flush()
+    expect(holdsText(panelOf(document), sentence), 'the refusal outlived the answer that replaced it').toBe(false)
+    expect(classed(panelOf(document), COORDINATOR_NODE_CLASS)).toHaveLength(2)
   })
 })
