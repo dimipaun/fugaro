@@ -84,11 +84,11 @@ is launched by the orchestrator's service account but must draw on **the origina
 pool** (D3191), and a suspended job's own word about who launched it would let a hostile agent
 name another person and spend their tokens (F37, D2976 as amended by D3191).
 
-`resume_at` is the one instant the pause has, and it is spelled the same way everywhere it appears
-— in the answer, on the node and in a run's row — in each format's own unit: epoch milliseconds in
-the answer (as `reset_at` is) and on the node (as the database's instants are), RFC 3339 UTC in the
-documents, which spell every instant that way (`waiting_until`). The job may read it and may log
-it; it never chooses it, and `pause.json` does not carry it.
+`resume_at` is the one instant the pause has, and it is named the same thing everywhere it appears
+— in the answer, on the node and in a run's row — in each format's own unit: epoch milliseconds UTC
+in the answer (as `reset_at` is) and on the node (as the database's instants are), and RFC 3339 UTC
+in a run's row, which spells every instant that way (`waiting_until`). The job may read it and may
+log it; it never chooses it, and `pause.json` does not carry it.
 
 The node is **readable by every launcher** of the project and is **never an authorization input to
 anything but the service and the orchestrator** (R26, F61): to a view it is display data, and the

@@ -350,8 +350,8 @@ const (
 	// PauseMemberResumeAt is the member the resume instant is carried under in
 	// all three formats: the answer (with action pause), the node and a run's
 	// row. It is one instant with one name, in each format's own unit — epoch
-	// milliseconds in the answer and in the database, RFC 3339 UTC in the
-	// documents, which spell every instant that way (watch's waiting_until).
+	// milliseconds UTC in the answer and in the database, RFC 3339 UTC in a
+	// run's row, which spells every instant that way (watch's waiting_until).
 	// The job never chooses it: it is the service's figure (R8).
 	PauseMemberResumeAt = "resume_at"
 	// PauseMemberResumedBy is the member a run's row carries in `fugaro watch
