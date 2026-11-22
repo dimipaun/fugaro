@@ -529,7 +529,12 @@ func TestUpdateNeverCreatesAnything(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	for _, rq := range r.crm.Requests()[before:] {
-		if rq.Method == "POST" && strings.Contains(rq.Path, "projects") {
+		// A create is a POST to the collection, and every create is one. The
+		// colon is what separates it from a write on a project that already
+		// exists, and `update` makes one of those: the Firebase stage's probe
+		// of the caller's own rights over the project (`:testIamPermissions`,
+		// CanMakeIAMChanges, R2) creates nothing.
+		if rq.Method == "POST" && strings.Contains(rq.Path, "projects") && !strings.Contains(rq.Path, ":") {
 			t.Errorf("update created a project: %s %s", rq.Method, rq.Path)
 		}
 	}
