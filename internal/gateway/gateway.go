@@ -256,6 +256,26 @@ type Options struct {
 	// answer's own fault (an answer this gateway could not read halts the
 	// run instead) — never the hook's.
 	OnServiceAnswer func(ServiceAnswer)
+	// ChainServed says the credentials service serves this run's model calls
+	// (R2, chain_names.go): the gateway holds no key and no table, sends the
+	// run's current stage on every call it makes to the service (HeaderStage,
+	// dropped from the caller's own headers first) and no header naming a
+	// model, and reads the answer's source, fallback and served-model members
+	// into OnChainAnswer below. It is false in the core and for a run whose
+	// repository has not migrated, and a gateway with it false behaves exactly
+	// as it did before this contract — which is what lets the migration land
+	// one repository at a time (R25).
+	//
+	// It is set once, before Start, and never replaced: the run's route to the
+	// service is decided at its start (D2982).
+	ChainServed ChainServed
+	// OnChainAnswer, when set, is called once for every served call of a
+	// chain-serving gateway whose answer named the source that served it
+	// (ChainAnswerFunc, chain_names.go). It is the step's record: it folds the
+	// fallback flag over the stage's calls and takes the last call's source
+	// (CS8). It is called from concurrent calls, with no lock of this package
+	// held, and a nil hook is not an error.
+	OnChainAnswer ChainAnswerFunc
 }
 
 // DefaultGeos are the usage.inference_geo values a default request is
