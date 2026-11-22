@@ -139,10 +139,13 @@ them, and the coordinator's health (D3221). It is the read the console's Coordin
 `EncodeMapDoc` and `DecodeMapDoc` are the two doors, and both apply `ValidateMapDoc`, so the document a writer
 publishes and the document a reader accepts are held to one rule: the version, the project's name, each node's id
 against the project and its name against its id, two nodes with one id, negative counts, an edge kind that is neither
-of the two, an edge joining an orchestrator to itself, an edge naming an orchestrator the document does not draw, and a
-heartbeat carried with the sweep off. `Sanitise` puts the free text (`driver`, `reason`, `note`) through
-`safetext.Field`; the ids, the names and the kinds are **identity and not prose** — a sanitised id would name another
-orchestrator — so they are left as the builder wrote them and `ValidateMapDoc` is what refuses one that is not an id.
+of the two, an edge joining an orchestrator to itself, an edge naming an orchestrator the document does not draw, a
+heartbeat carried with the sweep off, and the four fields the contract always writes — `nodes`, `edges`, `health` and
+`generated_at` — carried neither absent nor `null` (`DecodeMapDoc` checks the raw value for those two, because a
+struct decode reads either as a zero value: a nil list, a zero health, a zero time). `Sanitise` puts the free text
+(`driver`, `reason`, `note`) through `safetext.Field`; the ids, the names and the kinds are **identity and not prose**
+— a sanitised id would name another orchestrator — so they are left as the builder wrote them and `ValidateMapDoc` is
+what refuses one that is not an id.
 
 **The read.** `orchestrator map --json` is registered from `ee/` the way `ee/graph/cli` registers `graph` (CG6), so
 this release's core CLI has no such command: `BuildMap` in `map_stub.go` is the answer the command gives until I-ORCH
@@ -204,10 +207,13 @@ each is a test in `naming_test.go`.
 ## What this contract does not yet do
 
 The id rule is defined here and **applied by CG1a**. Until CG1a lands, this package's own paths and readers still hold
-named ids to `agentRE`: `checkAgentID` (`store.go`), `NodeIDs` (`list.go`) and the lease's holder check
-(`lease.go`) — which is why `PathDriver` is pinned here against the default id and not against `fugaro~night`.
+named ids to `agentRE`: `checkAgentID` (`store.go`) and `NodeIDs` (`list.go`) — which is why `PathDriver` is pinned
+here against the default id and not against `fugaro~night`. The lease's **holder** is not one of them: `lease.go` holds
+the holder to `idRE` (`internal/orchestrator/validate.go`), the rule a work item's id is held to, on the way in
+(`NewLease`) and on the way back in (the read that decides a claim). A holder is a run id, which both rules admit, so
+the two agree on every holder a run writes; `TestLeaseHolderIsHeldToTheIDRule` pins which of them the lease reads.
 
 One thing the plan's CG1a does not list, and must touch all the same: `ValidateState` checks `s.AgentID` with
 `agentRE` too (`internal/orchestrator/validate.go`), and `DecodeState` calls it. A named orchestrator's *state
 document* is therefore refused by the decoder until that check moves to this rule as well, however the id's path and
-the lease behave — so CG1a's file list needs `validate.go` beside the three it names.
+the lease behave — so CG1a's file list needs `validate.go` beside `store.go` and `list.go`.

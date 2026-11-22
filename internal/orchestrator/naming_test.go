@@ -537,6 +537,59 @@ func TestMapDocRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("a field the contract always writes", func(t *testing.T) {
+		// Every field the map document always carries, absent and null. The
+		// struct decode reads either as a zero value — a nil list, a zero
+		// health, a zero time — so a reader that only checked the decoded
+		// document would accept a map with no nodes at all as a quiet project.
+		raw, err := orchestrator.EncodeMapDoc(full)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := orchestrator.DecodeMapDoc(raw); err != nil {
+			t.Fatalf("the document these cases are cut from does not read back: %v", err)
+		}
+		var complete map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &complete); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range []struct {
+			name string
+			key  string
+			null bool
+		}{
+			{"nodes absent", "nodes", false},
+			{"nodes null", "nodes", true},
+			{"edges absent", "edges", false},
+			{"edges null", "edges", true},
+			{"health absent", "health", false},
+			{"health null", "health", true},
+			{"generated_at absent", "generated_at", false},
+			{"generated_at null", "generated_at", true},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				doc := make(map[string]json.RawMessage, len(complete))
+				for k, v := range complete {
+					doc[k] = v
+				}
+				spelled := "absent"
+				if c.null {
+					spelled = "null"
+					doc[c.key] = json.RawMessage("null")
+				} else {
+					delete(doc, c.key)
+				}
+				patched, err := json.Marshal(doc)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := orchestrator.DecodeMapDoc(patched); !errors.Is(err, orchestrator.ErrInvalid) {
+					t.Errorf("a document whose %q is %s read as %v, want ErrInvalid", c.key, spelled, err)
+				}
+			})
+		}
+	})
+
 	t.Run("the stub answers with the empty document", func(t *testing.T) {
 		d, err := orchestrator.BuildMap("fugaro", now)
 		if err != nil {
