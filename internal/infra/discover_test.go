@@ -704,6 +704,10 @@ func TestEveryLogBucketWithOurIDPendingDeletionIsRefused(t *testing.T) {
 		"projects/" + inst.Project + "/locations/" + elsewhere + "/buckets/" + LogBucket,
 		"DELETE_REQUESTED",
 		"fugaro update",
+		// Restoring one is immediate and keeps the logs it holds, so the way
+		// out is the undelete command of each pending bucket, not a wait.
+		LogBucketUndelete(inst.Project, "global"),
+		LogBucketUndelete(inst.Project, elsewhere),
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the refusal of a project whose every bucket is pending deletion lacks %q:\n%s", want, msg)
