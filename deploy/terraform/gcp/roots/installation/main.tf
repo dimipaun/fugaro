@@ -60,6 +60,7 @@ module "installation" {
   project_secrets           = var.project_secrets
   managed_deployer_scoped   = var.managed_deployer_scoped
   orchestrator              = var.orchestrator
+  people_minter             = var.people_minter
 }
 
 # The shared project jobs (design docs/project-centric/spec.md §4.1): one

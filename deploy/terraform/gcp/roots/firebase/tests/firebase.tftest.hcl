@@ -9,9 +9,15 @@
 mock_provider "google" {}
 mock_provider "google-beta" {}
 
+# database_region is what fugaro update writes for an installation in a US
+# region: the Realtime Database is offered in three locations and us-central1
+# is the nearest to every us-* region (internal/place). The run that asserts it
+# overrides it with another location, because a value every run shares is one a
+# module could ignore.
 variables {
-  project        = "fp-1234"
-  fugaro_project = "aurora"
+  project         = "fp-1234"
+  fugaro_project  = "aurora"
+  database_region = "us-central1"
   names = {
     signer_account_id = "fugaro-token-signer"
     minter_role_id    = "fugaroTokenMinter"
@@ -504,11 +510,23 @@ run "TestApiKeyRestricted" {
   }
 }
 
-run "TestRtdbRegionIsUsCentral1" {
+# A NEW instance is created where the mapping says (D3089), which is the
+# database_region input: europe-west1 here, so the assertion fails if the
+# resource goes back to a constant. That an existing one keeps its own is not
+# this run's to say — a module-level run plans the config's own value, the
+# ignore_changes in firebase.tf makes a plan show no change and no replacement
+# either way — and two runs of database_region.tftest.hcl hold that (and
+# internal/infra's TestAnExistingInstanceKeepsItsOwnRegion against a synthetic
+# prior state).
+run "TestRtdbRegionComesFromTheMapping" {
   command = plan
 
   module {
     source = "../../modules/firebase"
+  }
+
+  variables {
+    database_region = "europe-west1"
   }
 
   override_resource {
@@ -529,8 +547,8 @@ run "TestRtdbRegionIsUsCentral1" {
   }
 
   assert {
-    condition     = google_firebase_database_instance.this.region == "us-central1"
-    error_message = "the RTDB must be in us-central1 (D4), a location that can't be changed later"
+    condition     = google_firebase_database_instance.this.region == "europe-west1"
+    error_message = "a new RTDB instance must go where the mapping says (D3089), not to a constant: the region is a creation-time field that can't be changed later"
   }
   assert {
     condition     = google_firebase_database_instance.this.instance_id == "fp-1234-default-rtdb" && google_firebase_database_instance.this.type == "DEFAULT_DATABASE"
@@ -888,6 +906,20 @@ run "bad_fugaro_project" {
   }
 
   expect_failures = [var.fugaro_project]
+}
+
+run "bad_database_region" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    database_region = "us-east5"
+  }
+
+  expect_failures = [var.database_region]
 }
 
 run "bad_signer_account_id" {

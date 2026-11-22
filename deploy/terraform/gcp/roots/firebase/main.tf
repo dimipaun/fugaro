@@ -40,6 +40,7 @@ module "firebase" {
   source = "../../modules/firebase"
 
   project             = var.project
+  database_region     = var.database_region
   fugaro_project      = var.fugaro_project
   names               = var.names
   manage_apis         = var.manage_apis
