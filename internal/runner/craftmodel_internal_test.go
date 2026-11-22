@@ -31,7 +31,12 @@ func TestStageCraftMapsAgree(t *testing.T) {
 	for _, name := range config.CraftNames {
 		crafts[name] = craft.Effective{Model: "model-" + name}
 	}
-	for _, stage := range config.RunStages {
+	// merge_judge runs beside the loop and is not one of config.RunStages (E6),
+	// so it is named here: it is a stage with a craft of its own, and a map that
+	// lost the case would answer it no craft at all — which is a run's access
+	// refused rather than the judge's calls served (C1 (c), F49).
+	stages := append(append([]string{}, config.RunStages...), stageMergeJudge)
+	for _, stage := range stages {
 		model, name := craft.ModelFor(crafts, stage)
 		if got := stageCraft(stage); got != name {
 			t.Errorf("stageCraft(%q) = %q, but the craft package answers %q: the runner's map and internal/craft's disagree about which craft the stage runs", stage, got, name)
