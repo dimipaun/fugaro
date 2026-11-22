@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/dimipaun/fugaro/internal/policy"
 )
 
 // The Gemini catalog's content, written out here rather than read from the
@@ -214,17 +212,13 @@ func TestAnUnpricedGeminiModelIsRefused(t *testing.T) {
 // exports.
 func noBudgetModeIsReadHere(t *testing.T) {
 	t.Helper()
-	// The live modes, read from the vocabulary rather than written here: a
-	// rename over there must fail this test rather than leave it guarding a
-	// word nothing spells any more.
-	live := []policy.Mode{policy.ModeObserve, policy.ModeEnforce}
-	modes := map[string]bool{}
-	for _, m := range live {
-		if m.Effective() != string(m) {
-			t.Fatalf("%q is not a live budget mode any more: this guard's list is stale, and a mode it does not know is a mode it does not guard", m)
-		}
-		modes[string(m)] = true
-	}
+	// The two live modes, as internal/policy's vocabulary spells them, written
+	// out rather than imported: a test's imports are reads the affected-tests
+	// map records, and a price-table test that pulled the policy package in
+	// would have this package's tests run whenever anything under it changes.
+	// The import half below is the half with teeth — reading a mode means
+	// importing the package that defines one, whatever the word becomes.
+	modes := map[string]bool{"observe": true, "enforce": true}
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
