@@ -130,8 +130,11 @@ func TestPauseShapesAreStable(t *testing.T) {
 		if err := s.PutFile(ctx, PauseFile, unknown, "application/json"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.ReadPause(ctx); err == nil {
-			t.Error("ReadPause read a record carrying an unknown member: it is a record another release wrote")
+		// The refusal carries the same sentinel a bad version does, so the
+		// outcome R18 names is the one name a runner can ask for with
+		// errors.Is whichever of the three it met.
+		if _, err := s.ReadPause(ctx); !errors.Is(err, ErrInvalidPause) {
+			t.Errorf("ReadPause of a record carrying an unknown member: %v, want ErrInvalidPause", err)
 		}
 	})
 

@@ -126,7 +126,12 @@ func (s *Store) ReadPause(ctx context.Context) (*PauseRecord, error) {
 	}
 	var p PauseRecord
 	if err := decodePauseObject(raw, &p); err != nil {
-		return nil, fmt.Errorf("decoding %s: %w", PauseFile, err)
+		// A member this release cannot place and a second JSON value are
+		// refusals of the record, not of its decoding: they carry the same
+		// sentinel a bad version does, because R18's outcome is one name and
+		// the runner asks it with errors.Is (the node side wraps its own the
+		// same way).
+		return nil, fmt.Errorf("%w: decoding %s: %w", ErrInvalidPause, PauseFile, err)
 	}
 	if err := validatePause(p); err != nil {
 		return &p, err
