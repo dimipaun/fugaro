@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gitops"
 )
 
 // This file is C3 of docs/model-credentials-routing: the pause's shapes, in
@@ -77,7 +78,11 @@ type PauseRecord struct {
 	// in progress, which the resumed run checks out. Uncommitted work is lost
 	// unless it is pushed first (docs/checkpoint-pushes), so a resume that
 	// finds its checkout at another commit refuses the record rather than
-	// starting from what it finds (R18).
+	// starting from what it finds (R18). It is a full commit id and nothing
+	// else (gitops.ValidCommitSHA): the resumed run's checkout is only safe —
+	// and only meaningful — against a fixed commit, and this member is written
+	// by the job, so a ref name, HEAD or an option-shaped value is a value a
+	// hostile agent chose.
 	Checkpoint string `json:"checkpoint"`
 }
 
@@ -149,8 +154,14 @@ func validatePause(p PauseRecord) error {
 		return fmt.Errorf("%w: it names no stage", ErrInvalidPause)
 	case !agent.ValidSessionID(p.Session):
 		return fmt.Errorf("%w: the session is not a lower-case UUID", ErrInvalidPause)
-	case p.Checkpoint == "":
-		return fmt.Errorf("%w: it names no checkpoint", ErrInvalidPause)
+	case !gitops.ValidCommitSHA(p.Checkpoint):
+		// The checkpoint is a commit id and nothing else: a ref name, HEAD or
+		// an option-shaped value would reach the resumed run's checkout, whose
+		// whole point is that the checkout is the commit the suspended run
+		// pushed (R18). The job writes this member, so it is a value a hostile
+		// agent chooses, and git accepts an option where a rev is expected
+		// (gitops' own rule for the revs it fetches).
+		return fmt.Errorf("%w: the checkpoint is not a commit id", ErrInvalidPause)
 	}
 	return nil
 }

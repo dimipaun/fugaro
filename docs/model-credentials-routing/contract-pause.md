@@ -40,7 +40,7 @@ members:
 | `version` | the format version this record was written by |
 | `stage` | the stage that was running: the resumed run enters **that** stage, not the first one |
 | `session` | the name of the saved Claude Code session, which the resumed run restores (F34) |
-| `checkpoint` | the commit the suspended run pushed before it exited, which the resumed run checks out |
+| `checkpoint` | the commit the suspended run pushed before it exited, which the resumed run checks out: a full commit id and nothing else (`gitops.ValidCommitSHA`) |
 
 The session is saved and the work in progress is pushed as a checkpoint **before** the record is
 written (R18, F34): uncommitted work is lost unless it is pushed first
@@ -52,9 +52,12 @@ A reader that does not know the version it finds **ends with a named outcome and
 saying which version it could not read, and starts no stage afresh. The same direction covers a
 record whose shape this release does not know at all — both the record and the node decode
 strictly, so a member a release cannot place is refused rather than dropped (R25's rule for the
-policy, applied to the pause) — and a record missing something a reader acts on: no stage, no
-session, no checkpoint, or a session name that is not one (`runstore.PauseRecord`'s rule, asked by
-the writer and the reader alike).
+policy, applied to the pause) — and a record whose members a reader acts on are not what the reader
+needs: no stage, no session, a session name that is not one, or a checkpoint that is not a full
+commit id (`runstore.PauseRecord`'s rule, asked by the writer and the reader alike). The
+checkpoint is the one member of the record the job's own agent chooses that reaches a git call:
+the resumed run checks that commit out, so a ref name, `HEAD` or an option-shaped value never
+passes the record, however it got there.
 
 `pause.json` is written for the run that resumes it **and for nobody else**: it is not a document
 of the installation's state, no view reads it, and the console and the mobile feed draw a pause

@@ -81,6 +81,10 @@ func TestPauseShapesAreStable(t *testing.T) {
 			{"stage", func(p *PauseRecord) { p.Stage = "" }},
 			{"session", func(p *PauseRecord) { p.Session = "not-a-session" }},
 			{"checkpoint", func(p *PauseRecord) { p.Checkpoint = "" }},
+			// A ref name is the value a hostile job would write: it passes a
+			// reader that only asks whether the member is there, and it reaches
+			// the resumed run's checkout, which is safe only against a commit.
+			{"checkpoint-ref", func(p *PauseRecord) { p.Checkpoint = "main" }},
 		} {
 			bad := valid
 			c.mut(&bad)
