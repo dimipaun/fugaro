@@ -18,10 +18,12 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pool"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runcache"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -241,6 +243,20 @@ type lsDoc struct {
 	// phone refuses a key it does not know, so a block printed by a listing
 	// that never grouped would break the app's degraded screen (F14, D1458).
 	Groups []lsGroup `json:"groups,omitempty"`
+	// IndexComplete and FoldedThrough are the run index's own two facts about
+	// itself, carried by a listing whose rows came from it: whether a walk has
+	// ever reached the end of history (D3215) and the moment the index is
+	// folded through, which is how fresh the rows are.
+	//
+	// They are absent from a listing the window answered -- every listing of
+	// this release, which reads the index's stub, and every listing a flag the
+	// index does not serve puts on the window -- because a listing that read no
+	// index has nothing to say about one. Both are pointers for the reason
+	// Groups is a slice: the degraded watch document embeds this type and the
+	// phone refuses a key it does not know, so a field a listing did not read
+	// must not reach the document it writes (F14, D1458).
+	IndexComplete *bool      `json:"index_complete,omitempty"`
+	FoldedThrough *time.Time `json:"folded_through,omitempty"`
 	// Warnings are the lines a human listing prints before its table.
 	Warnings []string `json:"warnings"`
 }
@@ -439,8 +455,28 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	if prSet && o.repo == "" && len(env.lc.Repos) != 1 {
 		return userErr("runs ls --pr needs --repo: the local config lists %d repositories", len(env.lc.Repos))
 	}
-	if f.slugs, err = lsSlugs(ctx, env, o, cmd.ErrOrStderr()); err != nil {
-		return err
+	// The flags are read as typed rather than by value (--since's default is a
+	// window, and a --since that was typed is a bound the listing keeps), and
+	// they are what tells the two listings apart: one the run index answers and
+	// one that reads the bucket.
+	sinceSet, limitSet := cmd.Flags().Changed("since"), cmd.Flags().Changed("limit")
+	indexed := indexListing(o)
+	// The repositories the local config lists, resolved once: the index reads an
+	// empty set as every repository of the installation and the window reads one
+	// as none, so both are handed the same list rather than resolving it twice.
+	conf := configSlugs(ctx, env, cmd.ErrOrStderr())
+	var warnings []string
+	if indexed {
+		var about []string
+		if f.slugs, about, err = lsIndexSlugs(ctx, env, o, conf); err != nil {
+			return err
+		}
+		warnings = imageWarnings(ctx, env, about, time.Now().UTC())
+	} else {
+		if f.slugs, err = lsSlugsOf(ctx, env, o, conf, cmd.ErrOrStderr()); err != nil {
+			return err
+		}
+		warnings = imageWarnings(ctx, env, f.slugs, time.Now().UTC())
 	}
 	if prSet && len(f.slugs) != 1 {
 		return userErr("runs ls --pr needs --repo: %d repositories to list", len(f.slugs))
@@ -456,27 +492,12 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	}
 	out := cmd.OutOrStdout()
 	clear := o.watch && !o.asJSON && isTTY(out)
-	// The image warnings are read once: they change about daily, and
-	// --watch would otherwise read them again on every redraw.
-	warnings := imageWarnings(ctx, env, f.slugs, time.Now().UTC())
 	for {
 		now := lsNow()
 		if since > 0 {
 			f.since = now.Add(-since)
 		}
-		rows, err := loadRows(ctx, env, f, now)
-		if err != nil {
-			return err
-		}
-		// The roles are read once, before the loop (gate), and each redraw
-		// filters the rows it just read: the history a reader sees is the
-		// history of the repositories it holds a role in (D1586's read half),
-		// and what that leaves out is said rather than dropped in silence.
-		var dropped int
-		if rows, dropped = gate.listed(rows); dropped > 0 {
-			fmt.Fprintf(f.warn, "note: %d of the runs read are of repositories this credential holds no role in, and are not listed here: the roles come from the credential (finding F21), and '%s user ls --repo <repo>' prints what it holds there\n", dropped, selfCommand())
-		}
-		page, err := pageRows(rows, o.after, o.limit)
+		read, err := readListing(ctx, env, gate, f, o, conf, sinceSet, limitSet, now)
 		if err != nil {
 			return err
 		}
@@ -484,16 +505,16 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 			fmt.Fprint(out, "\x1b[H\x1b[2J")
 		}
 		if o.stream {
-			err = streamRows(out, page)
+			err = streamRows(out, read.page)
 		} else if o.groupBy != "" {
-			err = printGroupsWithTotals(out, env.lc.Name, page, runview.Sum(rows), warnings, now, o.asJSON)
+			err = printGroupsWithTotals(out, env.lc.Name, read.page, read.tot, warnings, now, o.asJSON)
 		} else {
-			err = printRowsWithTotals(out, env.lc.Name, page, runview.Sum(rows), warnings, now, o.asJSON)
+			err = printRowsWithTotals(out, env.lc.Name, read.page, read.tot, read.index, warnings, now, o.asJSON)
 		}
 		if err != nil {
 			return err
 		}
-		if !o.watch || allSettled(rows) {
+		if !o.watch || allSettled(read.rows) {
 			return nil
 		}
 		select {
@@ -505,8 +526,17 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 }
 
 // lsSlugs are the repositories ls reads: --repo's, --all's (every slug in
-// the bucket), else the local config's, else every slug.
+// the bucket), else the local config's, else every slug. It is lsSlugsOf with
+// the config's own list resolved here, which is what a caller that only wants
+// the list hands it.
 func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) ([]string, error) {
+	return lsSlugsOf(ctx, env, o, configSlugs(ctx, env, warn), warn)
+}
+
+// lsSlugsOf is lsSlugs with the config's own list given: conf is what
+// configSlugs answered, and a listing that resolves it once hands the same list
+// to the index and to the window rather than resolving it twice (runLs).
+func lsSlugsOf(ctx context.Context, env *cloudEnv, o *lsOptions, conf []string, warn io.Writer) ([]string, error) {
 	if o.repo != "" {
 		slug, err := env.repoSlug(o.repo, checkoutOf(ctx, o.repo))
 		if err != nil {
@@ -514,30 +544,61 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 		}
 		return []string{slug}, nil
 	}
-	if !o.all && len(env.lc.Repos) > 0 {
-		var slugs []string
-		for name, r := range env.lc.Repos {
-			// An entry without a provider takes it from this checkout's
-			// fugaro.yaml when the checkout is that repository (§5.4).
-			checkout := func() *config.Config { return nil }
-			if r.Provider == "" {
-				checkout = checkoutOf(ctx, name)
-			}
-			slug, err := env.repoSlug(name, checkout)
-			if err != nil {
-				fmt.Fprintf(warn, "warning: skipping %s: %v\n", name, err)
-				continue
-			}
-			slugs = append(slugs, slug)
-		}
-		slices.Sort(slugs)
-		return slices.Compact(slugs), nil
+	if !o.all && len(conf) > 0 {
+		return conf, nil
 	}
 	slugs, err := runstore.ListSlugs(ctx, env.bucket.Bucket)
 	if err != nil {
 		return nil, remote(err)
 	}
 	return slugs, nil
+}
+
+// lsIndexSlugs are the repositories a listing asks the run index for, and the
+// repositories its image warnings are about: the two are not always one set.
+//
+// The ask is the one the index's own filter takes, where no repository at all
+// means every repository of the installation -- which is what --all means, and
+// what a local config that lists none means -- so a listing that reads the
+// index resolves its repositories without the one listing of the runs bucket
+// that finding out every slug costs (D3203). The warnings are about the
+// configured repositories, since those are the ones whose image this checkout
+// knows the workflow of (imageWarnings).
+func lsIndexSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, conf []string) (ask, about []string, err error) {
+	if o.repo != "" {
+		slug, err := env.repoSlug(o.repo, checkoutOf(ctx, o.repo))
+		if err != nil {
+			return nil, nil, err
+		}
+		return []string{slug}, []string{slug}, nil
+	}
+	if o.all {
+		return nil, conf, nil
+	}
+	return conf, conf, nil
+}
+
+// configSlugs are the slugs of the repositories the local config lists,
+// resolved locally: a name that cannot be resolved is skipped with a warning
+// rather than listed under a name this checkout cannot vouch for.
+func configSlugs(ctx context.Context, env *cloudEnv, warn io.Writer) []string {
+	var slugs []string
+	for name, r := range env.lc.Repos {
+		// An entry without a provider takes it from this checkout's
+		// fugaro.yaml when the checkout is that repository (§5.4).
+		checkout := func() *config.Config { return nil }
+		if r.Provider == "" {
+			checkout = checkoutOf(ctx, name)
+		}
+		slug, err := env.repoSlug(name, checkout)
+		if err != nil {
+			fmt.Fprintf(warn, "warning: skipping %s: %v\n", name, err)
+			continue
+		}
+		slugs = append(slugs, slug)
+	}
+	slices.Sort(slugs)
+	return slices.Compact(slugs)
 }
 
 // windowRefs is every run of the window f names, per repository: one listing
@@ -582,16 +643,36 @@ func windowRefs(ctx context.Context, env *cloudEnv, f lsFilter) ([]lsRef, error)
 // listing read, so the rows they print carry the state their pull request has
 // and not the state of the selection.
 func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]runview.Row, error) {
-	warn := f.warn
-	if warn == nil {
-		warn = io.Discard
+	warnf := lsWarnf(f.warn)
+	refs, live, err := selectRefs(ctx, env, f, now, warnf)
+	if err != nil {
+		return nil, err
 	}
-	var mu sync.Mutex // guards warn
-	warnf := func(format string, args ...any) {
+	return readRefRows(ctx, env, f, refs, live, now, warnf)
+}
+
+// lsWarnf is the writer a listing's notes and warnings go through: they are
+// one line each, and the reads that write them are parallel, so the writer is
+// serialised. A nil writer discards them, which is what a caller reading rows
+// for a decision rather than for a person hands it.
+func lsWarnf(w io.Writer) func(string, ...any) {
+	if w == nil {
+		w = io.Discard
+	}
+	var mu sync.Mutex // guards w
+	return func(format string, args ...any) {
 		mu.Lock()
 		defer mu.Unlock()
-		fmt.Fprint(warn, multiLine(fmt.Sprintf(format, args...)))
+		fmt.Fprint(w, multiLine(fmt.Sprintf(format, args...)))
 	}
+}
+
+// selectRefs is the runs a filter names, and the live set when it named one of
+// the two live states: every run of the window, the live set's refs, one run
+// for a run reference, and for f.pr the runs the pull request's index names,
+// the runs of the last day and the runs that are going (prRefs) -- falling back
+// to the window when the index has nothing to say about the pull request.
+func selectRefs(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time, warnf func(string, ...any)) ([]lsRef, *liveSet, error) {
 	var refs []lsRef
 	// live is set when --state named one of the two live states: the refs are
 	// then the live set, and its executions are the join's (liveRuns).
@@ -600,13 +681,13 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	case f.runRef != "":
 		slug, id, err := parseRunRef(f.runRef)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		refs = append(refs, lsRef{slug, id})
 	case liveState(f.state):
 		set, err := liveRuns(ctx, env, f, now)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		live, refs = &set, set.refs
 	case f.pr != 0:
@@ -618,22 +699,41 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 		// window as it always did, and prRefs says so in one line on stderr.
 		r, err := prRefs(ctx, env, f, now, warnf)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if r == nil {
 			if r, err = windowRefs(ctx, env, f); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		refs = r
 	default:
 		r, err := windowRefs(ctx, env, f)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		refs = r
 	}
+	return refs, live, nil
+}
 
+// readRefRows reads the runs refs names, joins each with its execution, and
+// returns the rows newest first. It reads the whole window whatever the listing
+// goes on to print: the totals cover every row it read, so a page is never the
+// sum beside it (D818). A run whose launch.json or result.json is corrupt, or
+// names an execution that isn't the run's, is an error row with a warning. Any
+// other failed read but absence fails the whole listing: ls never shows a
+// status guessed from a partial read. live is the set of a live listing, whose
+// executions are the join's, and nil otherwise.
+//
+// The order of what it returns is the listing's own -- created descending, then
+// the run reference descending. refs is what a listing asked for and comes back
+// in that order either way, but a page the run index answered is a position in
+// the index's order rather than in this one (readIndex), so its caller keeps
+// the rows in the order they came in: --after resolves a run id to that index
+// sort key, and rows printed in another order would drop the runs between two
+// pages.
+func readRefRows(ctx context.Context, env *cloudEnv, f lsFilter, refs []lsRef, live *liveSet, now time.Time, warnf func(string, ...any)) ([]runview.Row, error) {
 	// The bucket's objects, for every run, through the run cache when this
 	// listing asked for it. One flat listing per repository carries every
 	// run's three objects' generations, so the runs the previous listing
@@ -657,7 +757,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// is unreadable and its task doesn't place it on another one.
 	for _, r := range runs {
 		if r.warning != "" && (f.pr == 0 || onPR(r.in, f.pr) || r.mayBeOnPR()) {
-			fmt.Fprint(warn, multiLine(r.warning))
+			warnf("%s", r.warning)
 		}
 	}
 	if f.pr != 0 {
@@ -816,6 +916,327 @@ func pageRows(rows []runview.Row, after string, limit int) ([]runview.Row, error
 		rows = rows[:limit]
 	}
 	return rows, nil
+}
+
+// lsIndexPage is how many runs of the default listing the index is asked for
+// beside the active ones: the newest lsIndexPage by the index's own sort key,
+// whatever their age, plus every run that has not ended (D3203). It is what
+// makes the default listing's reads bounded by a number and not by history --
+// 100x the history costs the same handful of requests, and every row read costs
+// its own objects (I-INDEX's TestIndexedReadsConstantRequests).
+const lsIndexPage = 50
+
+// runIndexReader is the run index a listing reads: the C-INDEX Reader
+// (internal/runindex), which is the stub until I-INDEX wires the real one.
+// Returning nil says this release has no index to read at all, which reads the
+// window exactly as every listing did before the index existed; the stub is
+// what a listing is handed today, and it answers an index that has folded
+// nothing, which comes to the same thing (indexAnswers).
+//
+// It is a variable so a test can hand a listing an index of its own
+// (internal/cli: runs_index_test.go) -- the read the real one makes is RI3's,
+// and nothing here cares which reader answered.
+var runIndexReader = func(context.Context, *cloudEnv) (runindex.Reader, error) { return runindex.NewStub(), nil }
+
+// indexAnswers reports whether a page came from an index that can be believed.
+//
+// An index that names no run, has folded nothing and has never finished a walk
+// is an index with nothing to answer with: that is the state internal/runindex's
+// stub answers in, and the state an installation is in before its first reindex
+// has folded anything. A listing that took it as the truth would print an empty
+// list where the bucket holds runs -- the one thing the index's own contract
+// forbids -- so it reads the window instead, as every listing did before the
+// index existed. Every other answer is the index's, including a folded index
+// whose page is empty because the filter matched nothing.
+func indexAnswers(p runindex.Page) bool {
+	return len(p.Entries) > 0 || p.FoldedThrough != nil || p.IndexComplete
+}
+
+// indexListing reports whether this listing is one the run index answers: it is
+// the default listing -- the newest lsIndexPage by time plus every active run
+// (D3203) -- a listing bounded by --since, --mine or --batch, and every listing
+// that prints a page of one of them (--limit, --after, --stream).
+//
+// The flags below keep the window read, and each for its own reason: --state
+// and --debt filter on facts no entry carries (the state a pull request has,
+// which is read from every run of it, and the debt mark, which is in the task),
+// --group-by reads a whole window rather than a page of one, and --watch
+// redraws until every run it read has settled, which a page of an index is not
+// a reading of. Their rows are the rows they always were.
+func indexListing(o *lsOptions) bool {
+	return !o.watch && o.state == "" && !o.debt && o.groupBy == "" && o.pr == 0
+}
+
+// lsIndexState is what a listing prints about the index it read: whether a walk
+// has ever reached the end of history (D3215) and the moment the index is
+// folded through, both as the page it read carried them. It is nil for a
+// listing the window answered, and the two are then absent from --json's
+// document and unmentioned in the text listing: a listing that read no index
+// has nothing to say about one.
+type lsIndexState struct {
+	complete      bool
+	foldedThrough *time.Time
+}
+
+// lsRead is what a listing holds after it has read: every row it knows about --
+// the figure beside the page and the pull request states its rows carry are
+// read from all of them, never from the page alone (D818) -- the page it prints,
+// that figure, and what the index said of itself.
+type lsRead struct {
+	rows  []runview.Row
+	page  []runview.Row
+	tot   runview.Totals
+	index *lsIndexState
+}
+
+// readListing reads the runs a listing prints: from the run index when this
+// listing is one it answers (indexListing) and the index has something to say
+// (indexAnswers), and from the window otherwise -- the flags above, and every
+// answer of an index that has nothing in it or could not be read.
+//
+// The rows come back with the access gate applied (D1586) and the page already
+// cut, which is the one thing the two paths do differently: the window's page
+// is cut here, by the cursor and the limit, while a page the index answered is
+// the reader's own -- its cursor is a position in the index's order
+// (runindex.Filter.After), which the rows a listing read do not carry.
+func readListing(ctx context.Context, env *cloudEnv, gate accessRowGate, f lsFilter, o *lsOptions, conf []string, sinceSet, limitSet bool, now time.Time) (lsRead, error) {
+	indexed := indexListing(o)
+	if indexed {
+		if idx, err := runIndexReader(ctx, env); err != nil {
+			return lsRead{}, remote(err)
+		} else if idx != nil {
+			if read, ok := readIndex(ctx, env, idx, f, o, sinceSet, limitSet, now); ok {
+				return gateRead(gate, read, f.warn), nil
+			}
+		}
+		// The window reads the repositories its own way: the index asked for
+		// every repository of the installation with an empty set, and a window
+		// that read that as no repository at all would list nothing, so the
+		// fallback resolves them as every listing always has.
+		var err error
+		if f.slugs, err = lsSlugsOf(ctx, env, o, conf, f.warn); err != nil {
+			return lsRead{}, err
+		}
+	}
+	rows, err := loadRows(ctx, env, f, now)
+	if err != nil {
+		return lsRead{}, err
+	}
+	rows, dropped := gate.listed(rows)
+	noteDropped(f.warn, dropped)
+	page, err := pageRows(rows, o.after, o.limit)
+	if err != nil {
+		return lsRead{}, err
+	}
+	return lsRead{rows: rows, page: page, tot: runview.Sum(rows)}, nil
+}
+
+// gateRead is read with the access gate applied to it: the rows a credential
+// holds no role in are dropped from what the listing knows and from the page it
+// prints, and what that left out is said in one line (D1586's read half).
+func gateRead(gate accessRowGate, read lsRead, warn io.Writer) lsRead {
+	var dropped int
+	read.rows, dropped = gate.listed(read.rows)
+	if read.page != nil {
+		read.page, _ = gate.listed(read.page)
+	}
+	noteDropped(warn, dropped)
+	return read
+}
+
+// noteDropped says what the access gate left out of a listing. It prints
+// nothing when it left out nothing, which is every listing of a credential that
+// holds a role in every repository it read.
+func noteDropped(warn io.Writer, dropped int) {
+	if dropped > 0 {
+		lsNotef(warn, "note: %d of the runs read are of repositories this credential holds no role in, and are not listed here: the roles come from the credential (finding F21), and '%s user ls --repo <repo>' prints what it holds there\n", dropped, selfCommand())
+	}
+}
+
+// lsNotef writes one of a listing's notes, with the treatment of embedded
+// newlines every other line of a listing gets.
+func lsNotef(w io.Writer, format string, args ...any) {
+	if w == nil {
+		return
+	}
+	fmt.Fprint(w, multiLine(fmt.Sprintf(format, args...)))
+}
+
+// readIndex answers a listing from the run index, and reports false when the
+// listing is the window's after all: an index that has nothing to answer with
+// (indexAnswers) or a reader that failed. A failed read is said in one line and
+// answered the same way, because a listing that printed a short page as the
+// truth is exactly what the index's contract forbids (D3215) -- and the window
+// is what every listing read before the index existed.
+//
+// Which shape it asks for is the listing's own. The default listing -- nothing
+// bounds it -- is the newest lsIndexPage by the index's sort key plus every
+// active run, whatever its age, and the figure beside it is the summary's: the
+// whole installation's, because a page of the newest runs is not a total
+// (D3203, D818). A listing that bounds itself -- --since, --mine, --batch --
+// reads every run it bounds and totals those rows, which is what those flags
+// have always meant, and the page is cut here so that the figure beside it
+// stays the window's and never the page's.
+func readIndex(ctx context.Context, env *cloudEnv, idx runindex.Reader, f lsFilter, o *lsOptions, sinceSet, limitSet bool, now time.Time) (lsRead, bool) {
+	bounded := sinceSet || f.mine != "" || f.batch != ""
+	filter := runindex.Filter{Slugs: f.slugs, Since: f.since, Mine: f.mine, Batch: f.batch, After: o.after}
+	if !bounded {
+		// The listing that bounds nothing is the newest lsIndexPage by the
+		// index's sort key, whatever its age (D3203), so it asks for no window:
+		// the default --since is the window a listing that reads the bucket is
+		// bounded by (lsDefaultWindow), and it is not this read's bound. An
+		// explicit --limit is the number of rows instead; --limit 0 is every
+		// run, which is what the flag says.
+		filter.Since = time.Time{}
+		filter.Limit = lsIndexPage
+		if limitSet {
+			filter.Limit = o.limit
+		}
+	}
+	entries, state, ok := readIndexEntries(ctx, idx, filter, f.warn)
+	if !ok {
+		return lsRead{}, false
+	}
+	if !bounded {
+		// The active runs, whatever their age: a run that has not ended is in
+		// the listing however far back it started, which is the half of D3203
+		// the newest-limit alone would drop. It is the same filter without the
+		// limit, since a limit is what "the newest N" is and not what "every
+		// active run" is.
+		active := filter
+		active.Active, active.Limit = true, 0
+		more, _, ok := readIndexEntries(ctx, idx, active, f.warn)
+		if !ok {
+			return lsRead{}, false
+		}
+		entries = mergeIndexEntries(entries, more)
+	}
+	refs := make([]lsRef, 0, len(entries))
+	for _, e := range entries {
+		if e.Slug != "" && e.RunID != "" {
+			refs = append(refs, lsRef{e.Slug, e.RunID})
+		}
+	}
+	rows, err := readRefRows(ctx, env, f, refs, nil, now, lsWarnf(f.warn))
+	if err != nil {
+		return lsRead{}, false
+	}
+	// The order is the index's own, which its --after cursor is a position in.
+	// The rows come back in it already -- refs is in that order and the fold
+	// keeps it -- but only here is the order a fact of this read rather than of
+	// the reader: a page printed in another order would drop the runs between
+	// two pages, since --after resolves a run id to the index's sort key.
+	at := make(map[string]int, len(entries))
+	for i, e := range entries {
+		at[e.RunID] = i
+	}
+	slices.SortStableFunc(rows, func(a, b runview.Row) int { return at[a.RunID] - at[b.RunID] })
+	read := lsRead{rows: rows, page: rows, tot: runview.Sum(rows), index: &state}
+	if bounded && o.limit > 0 && o.limit < len(read.page) {
+		// The page is cut here rather than asked for in the filter, so that the
+		// figure beside it stays the window's and never the page's (D818). The
+		// default listing needs no cut: its page is the reader's own -- the
+		// newest runs it was asked for, plus every active run beside them.
+		read.page = read.page[:o.limit]
+	}
+	if !bounded {
+		tot, ok := readIndexTotals(ctx, idx, f.warn)
+		if !ok {
+			return lsRead{}, false
+		}
+		read.tot = tot
+	}
+	return read, true
+}
+
+// readIndexEntries is one page of the index, and what the page says about the
+// index itself (runindex.Page). It reports false when the index has nothing to
+// answer with, or when the reader failed, having said so in one line: every
+// caller then reads the window as it did before the index existed.
+func readIndexEntries(ctx context.Context, idx runindex.Reader, filter runindex.Filter, warn io.Writer) ([]runindex.Entry, lsIndexState, bool) {
+	page, err := idx.List(ctx, filter)
+	if err != nil {
+		lsNotef(warn, "note: the run index could not be read: %v; listing the window instead, as it did before the index existed\n", oneLine(err.Error()))
+		return nil, lsIndexState{}, false
+	}
+	if !indexAnswers(page) {
+		return nil, lsIndexState{}, false
+	}
+	return page.Entries, lsIndexState{complete: page.IndexComplete, foldedThrough: page.FoldedThrough}, true
+}
+
+// readIndexTotals is the figure beside a listing the index answered: the
+// summary document's, which covers every run the installation's index carries
+// and not the page (D3203). A summary that cannot be read is a listing that
+// reads the window instead -- the figure is not optional, and a page printed
+// with no figure beside it is the one thing a reader would notice.
+func readIndexTotals(ctx context.Context, idx runindex.Reader, warn io.Writer) (runview.Totals, bool) {
+	summary, err := idx.Summary(ctx)
+	if err != nil {
+		lsNotef(warn, "note: the run index's summary could not be read: %v; listing the window instead, as it did before the index existed\n", oneLine(err.Error()))
+		return runview.Totals{}, false
+	}
+	return lsSummaryTotals(summary), true
+}
+
+// mergeIndexEntries is the two pages of the default listing in the index's own
+// order: the newest runs by time and the active ones, which overlap (an active
+// run is usually also a recent one) and are one row each here. The order is
+// runindex.Page's -- updated_at descending, then the run id -- which is the
+// order every page of the index is in and the order a cursor is a position in.
+func mergeIndexEntries(newest, active []runindex.Entry) []runindex.Entry {
+	seen := make(map[string]bool, len(newest)+len(active))
+	out := make([]runindex.Entry, 0, len(newest)+len(active))
+	for _, page := range [][]runindex.Entry{newest, active} {
+		for _, e := range page {
+			if e.RunID == "" || seen[e.RunID] {
+				continue
+			}
+			seen[e.RunID] = true
+			out = append(out, e)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b runindex.Entry) int {
+		if c := b.UpdatedAt.Compare(a.UpdatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.RunID, b.RunID)
+	})
+	return out
+}
+
+// lsSummaryTotals is the figure beside a listing the summary answered, in the
+// shape a row's cost block sums to. The money is integer micro-dollars in the
+// document -- the unit the fold moves and `runs summary` publishes -- and a
+// float here, so the conversion is in one place. ComputeMicros absent is "not
+// estimated" and not zero (design §10.1): the figure prints as $0.00 either way,
+// and ComputeNotEstimated is what says which runs it covers.
+func lsSummaryTotals(s runindex.Summary) runview.Totals {
+	tot := runview.Totals{
+		Runs:                int(s.Runs),
+		ModelUSD:            budget.Micros(s.SpentMicros).USD(),
+		ModelNotionalUSD:    budget.Micros(s.NotionalMicros).USD(),
+		ComputeNotEstimated: int(s.ComputeNotEstimated),
+	}
+	if s.ComputeMicros != nil {
+		tot.ComputeUSD = budget.Micros(*s.ComputeMicros).USD()
+	}
+	tot.TotalUSD = tot.ModelUSD + tot.ComputeUSD
+	return tot
+}
+
+// lsIndexBuildingLine is the one line a text listing prints while the index is
+// still building (D3215): the rows are the ones the index has folded and the
+// ones its overlay carries, and a listing that printed them without saying so
+// would read as the whole history. The moment it is folded through is in the
+// line when the index has one, since that is what says how much of the recent
+// past the rows may be missing.
+func lsIndexBuildingLine(index *lsIndexState) string {
+	line := "note: the run index is still building: this listing is not the whole history yet"
+	if index.foldedThrough != nil {
+		line += ", and the index is folded through " + index.foldedThrough.UTC().Format(time.RFC3339)
+	}
+	return line
 }
 
 // parallel calls fn(0) … fn(n-1) on up to lsWorkers goroutines, for work that
@@ -1094,36 +1515,49 @@ func allSettled(rows []runview.Row) bool {
 // totals are the rows' own; a caller printing a page of a wider listing hands
 // that listing's totals to printRowsWithTotals instead.
 func printRows(w io.Writer, project string, rows []runview.Row, warnings []string, now time.Time, asJSON bool) error {
-	return printRowsWithTotals(w, project, rows, runview.Sum(rows), warnings, now, asJSON)
+	return printRowsWithTotals(w, project, rows, runview.Sum(rows), nil, warnings, now, asJSON)
 }
 
 // printRowsWithTotals is printRows with the totals given rather than summed
 // from the rows: a listing that printed a page still totals the window it read
-// (D818), so the number beside a page is never the page's own.
-func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot runview.Totals, warnings []string, now time.Time, asJSON bool) error {
-	return printDoc(w, project, rows, tot, nil, warnings, now, asJSON)
+// (D818), so the number beside a page is never the page's own. index is what
+// the listing read about the run index, and is nil for a listing the window
+// answered (lsIndexState).
+func printRowsWithTotals(w io.Writer, project string, rows []runview.Row, tot runview.Totals, index *lsIndexState, warnings []string, now time.Time, asJSON bool) error {
+	return printDoc(w, project, rows, tot, nil, index, warnings, now, asJSON)
 }
 
 // printGroupsWithTotals is printRowsWithTotals with --group-by's block: the
 // same rows under the same totals -- neither moves -- and the window's failure
 // classes printed under them, or carried beside them in the document. It is
 // the only caller that hands groups to printDoc, and the only thing --group-by
-// changes about a listing.
+// changes about a listing. Its read is the window's, so it has no index state
+// to print: a grouped listing is one the index does not answer (indexListing).
 func printGroupsWithTotals(w io.Writer, project string, rows []runview.Row, tot runview.Totals, warnings []string, now time.Time, asJSON bool) error {
-	return printDoc(w, project, rows, tot, groupRows(rows), warnings, now, asJSON)
+	return printDoc(w, project, rows, tot, groupRows(rows), nil, warnings, now, asJSON)
 }
 
 // printDoc prints rows as a table with a totals line, or as one JSON document,
 // with groups -- nil unless the listing was grouped -- as the block beside
-// them.
-func printDoc(w io.Writer, project string, rows []runview.Row, tot runview.Totals, groups []lsGroup, warnings []string, now time.Time, asJSON bool) error {
+// them, and index -- nil unless the rows came from the run index -- as the two
+// fields saying what the index said of itself, and one line above the table
+// while it is still building (D3215).
+func printDoc(w io.Writer, project string, rows []runview.Row, tot runview.Totals, groups []lsGroup, index *lsIndexState, warnings []string, now time.Time, asJSON bool) error {
 	if asJSON {
+		doc := lsDoc{Project: project, Runs: rows, Totals: tot, Groups: groups, Warnings: warnings}
+		if index != nil {
+			complete := index.complete
+			doc.IndexComplete, doc.FoldedThrough = &complete, index.foldedThrough
+		}
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(lsDoc{Project: project, Runs: rows, Totals: tot, Groups: groups, Warnings: warnings})
+		return enc.Encode(doc)
 	}
 	for _, line := range warnings {
 		fmt.Fprintln(w, line)
+	}
+	if index != nil && !index.complete {
+		fmt.Fprintln(w, lsIndexBuildingLine(index))
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	showRecipe := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Recipe != "" && r.Recipe != recipe.DefaultName })

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -69,6 +70,28 @@ func prRefs(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time, warnf
 		}
 		seen[r] = true
 		refs = append(refs, r)
+	}
+	// The run index's own answer, for a listing: it carries every run of the
+	// pull request the index has folded, which is what --pr reads (D3204), and
+	// the union below is what still covers the runs it has not -- history folded
+	// before this release, and a run the last fold has not reached (the overlay
+	// is the reader's, and it is what makes such a run an entry here).
+	//
+	// A caller that reads a pull request's runs to decide something keeps the
+	// read it had and asks no index: a launch is decided from the runs the
+	// bucket and the pull request's own index hold (lsFilter.indexNote), and an
+	// index that answered with more is not a decision this task changes.
+	if f.indexNote {
+		if idx, err := runIndexReader(ctx, env); err == nil && idx != nil {
+			page, err := idx.List(ctx, runindex.Filter{Slugs: []string{slug}, PR: f.pr, Since: f.since})
+			if err == nil && indexAnswers(page) {
+				for _, e := range page.Entries {
+					if r := (lsRef{e.Slug, e.RunID}); r.slug != "" && inWindow(r, f.since) {
+						add(r)
+					}
+				}
+			}
+		}
 	}
 	// An entry naming a run the user's window does not hold is left out, the
 	// way the window's own listing leaves it out: the index answers for one
