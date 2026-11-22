@@ -11,8 +11,9 @@ supersedes this plan's craft access (D3170), and every task here that is not mer
 withdrawn.** That plan's routing table makes how a model is reached a property of the model, set
 once in the project, so a craft no longer names a credential. What is merged is kept — CM35, CM1,
 CM3, CM22 and CM32 — with the two-release removal of `agent.auth` (R3) and the rule that an
-unmigrated repository runs as its file says. **Contract C1 is withdrawn with its draft pull
-request #3460, closed unmerged**, and re-cut as that plan's C1; its section is kept below as the
+unmigrated repository runs as its file says. **Contract C1 is withdrawn, its draft pull
+request #3460 still open and to be closed unmerged by the owner** (that plan's O1), and re-cut as
+that plan's C1; its section is kept below as the
 record. The withdrawn tasks' sections are kept and marked, each naming the task that carries it;
 the graph marks the withdrawn nodes in their titles. The owner stops the withdrawn tasks by hand
 before any launches (that plan's O1). Nothing below is a launch order any more: §5's levels, §6's
@@ -144,7 +145,8 @@ so (that plan's A1).*
 
 ### C1: the access contract (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn with its draft pull request #3460, closed unmerged, and re-cut as
+*Withdrawn, its draft pull request #3460 still open and to be closed unmerged by the owner (that
+plan's O1), and re-cut as
 [model credentials routing](../model-credentials-routing/implementation-plan.md)'s C1 (D3170). The
 section is kept as the record of what was withdrawn; every task below that depended on it is
 withdrawn with it.*

@@ -19,7 +19,8 @@ tasks **KS6, KS9 and KS10**; each is marked where it bites.
 **Amended on 2026-11-22 by [model credentials routing](../model-credentials-routing/reconciliation.md)
 (D3170).** That plan's routing table supersedes this plan's craft access, so **every task of this
 plan that is not merged is withdrawn** and carried by a task there, and **contract C1 is withdrawn
-with its draft pull request #3460, closed unmerged**, re-cut as that plan's C1. What is merged
+with its draft pull request #3460 still open, to be closed unmerged**, re-cut as that plan's C1.
+What is merged
 (CM1, CM3, CM22, CM32, CM35), the two-release removal of `agent.auth` and R3's rule for an
 unmigrated repository are kept. The withdrawn set, what carries each, and the decisions the
 amendment reverses are in §4's amendment below; the withdrawn tasks are stopped by the owner by
@@ -441,7 +442,10 @@ fix, never sent to Vertex (CM8).
 **F50 — Rule (review round 3): CM35 puts keys release B behind this plan's release 1.** With
 KS13 re-pointed at this plan's I1, the keys plan cannot drop its mounts before this plan's first
 release is integrated. And KS6 and KS9 become launchable as soon as their own waits end, so CM35
-must not wait on anything. Consequence: CM35 launches first and alone; O8.
+must not wait on anything. Consequence: CM35 launches first and alone; O8. *Amended 2026-11-22
+(D3170):* this plan's I1 is withdrawn with every task of it that is not merged, so KS13 is
+re-pointed at model credentials routing's I1 and keys release B is behind that plan's release 1;
+CM35 is merged, and its rule that it waited on nothing holds (O8).
 
 ## 4. Decisions
 
@@ -498,8 +502,9 @@ The owner's answer of 2026-11-21 (D3170) is that
 [model credentials routing](../model-credentials-routing/reconciliation.md) supersedes this plan's
 craft access now: how a model is reached is a property of the model, set once in the project's
 routing table, and a chain of sources serves each call. **Every task of this plan that is not
-merged is withdrawn**, and **contract C1 is withdrawn with its draft pull request #3460, closed
-unmerged**, re-cut as that plan's C1. What is merged is kept, with the two-release removal of
+merged is withdrawn**, and **contract C1 is withdrawn with its draft pull request #3460, still
+open and to be closed unmerged**, re-cut as that plan's C1. What is merged is kept, with the
+two-release removal of
 `agent.auth` (R3, D3063, D3072) and the rule that an unmigrated repository runs as its file says.
 The owner stops the withdrawn tasks by hand before any launches (that plan's O1).
 
@@ -698,7 +703,10 @@ No two answers pull against each other.
   waits on Check 50 (D3013) and release A. And by CM35 the keys plan's KS13 waits on this plan's
   I1, so keys release B cannot drop its mounts before this plan's release 1 is integrated (F50).
   D3071's "its removal step ships with keys release B" holds; the order inside that release is
-  this plan's I1, then KS13, then CM28.
+  this plan's I1, then KS13, then CM28. *Amended 2026-11-22 (D3170):* every task of this plan that
+  is not merged is withdrawn, its I1 among them, so the keys plan's KS13 waits on model credentials
+  routing's I1 instead (its F50) — that plan's release 1, in this plan's place — and the order
+  inside keys release B is that plan's I1, then KS13, then CM28.
 
 - **O9.** The graph cannot say that I1 and the contract change wait for C1: it records a wait on
   a contract only for an edge the pass moved there. I1 waits on every side, so it loses nothing;

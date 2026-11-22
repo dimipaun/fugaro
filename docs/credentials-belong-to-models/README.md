@@ -15,7 +15,8 @@ of always a budget, and is the third spec of that series.
 (D3170).** That plan sets how a model is reached once, in the project's routing table, and its
 table supersedes this plan's craft access: the credential stops being a craft's. **Every task of
 this plan that is not merged is withdrawn** and carried by a task of that plan, and **contract C1
-is withdrawn with its draft pull request #3460, closed unmerged**, re-cut as that plan's C1. What
+is withdrawn, its draft pull request #3460 still open and to be closed unmerged**, re-cut as
+that plan's C1. What
 is merged is kept — CM1, CM3, CM22, CM32 and CM35 — with this plan's two-release removal of
 `agent.auth` (R3) and its rule that an unmigrated repository runs as its file says. The withdrawn
 tasks are stopped by the owner by hand before any launches (that plan's O1). The task-by-task
