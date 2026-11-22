@@ -1397,15 +1397,40 @@ func TestHistoryNoDatastoreAdmin(t *testing.T) {
 // H8: the Firestore database is an idempotent REST ensure step (a Terraform
 // create of a singleton does not adopt), and the rules are REST too: no
 // Terraform resource for either.
+//
+// The database, not the whole service: `google_firestore_index` IS Terraform
+// (docs/console-fixes/contract-index.md, C-INDEX; plan task RI2), because an
+// index is not a singleton the ensure step adopts — Firestore creates one from
+// its fields, the provider names the resource after them, and the role the
+// history job holds (datastore.user) cannot change one, so the owner-run
+// Firebase root is the only place it can be declared (iam.tf). The type is
+// therefore allowed by name and nothing else of the service is.
 func TestNoFirestoreDatabaseResource(t *testing.T) {
 	walk(t, func(path string, b []byte) {
 		code := stripComments(string(b))
-		for _, bad := range []string{`"google_firestore_database"`, `"google_firebase_rules_`, `"google_firestore_`} {
+		for _, bad := range []string{`"google_firestore_database"`, `"google_firebase_rules_`, `"google_firestore_document"`, `"google_firestore_field"`} {
 			if strings.Contains(code, bad) {
 				t.Errorf("%s declares %s: the database and its rules are fugaro update's REST steps", path, bad)
 			}
 		}
 	})
+	// A google_firestore_index anywhere but the Firebase module is a second
+	// owner of a read the installation's one Firebase project serves, and the
+	// type's permit above is what the loop below holds to the module: every
+	// declaration of it is in modules/firebase, and none is in a root or
+	// another module.
+	n := 0
+	walk(t, func(path string, b []byte) {
+		for range resourceBlocks(t, path, b, "google_firestore_index") {
+			n++
+			if !strings.HasPrefix(path, "gcp/modules/firebase/") {
+				t.Errorf("%s declares a google_firestore_index: the run index's composite indexes belong to the Firebase module alone (RI2), whose root is the one `fugaro update` applies against the Firebase project", path)
+			}
+		}
+	})
+	if n == 0 {
+		t.Errorf("no google_firestore_index is declared anywhere: the run index's reads need their composite indexes (contract-index.md, RI2)")
+	}
 }
 
 // The history account may read the runs bucket (objectViewer) and nothing
