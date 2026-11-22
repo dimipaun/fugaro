@@ -691,17 +691,20 @@ describe('the row model', () => {
     expect(texts(renderLive(factory, model, 'light'), 'live-run-id')).toEqual(['aa01', 'aa02', 'aa03'])
   })
 
-  it('draws the BY cell, in watch’s own short form', () => {
+  it('draws the BY cell as the record wrote the launcher', () => {
     // `watch`'s runs table has a `BY` column (`internal/watch/plain.go`'s
-    // `launcherText`, from the record's `launched_by`), and the live tab follows
-    // it (D1704). The value is drawn through `shared/launcher.ts` -- the part
-    // before an address's first `@`, which is the CLI's own
-    // `runview.LauncherShort` -- and a row whose record carries no launcher
-    // draws **no element at all**, never another person's name.
+    // `launcherFull`), and the live tab follows it (D1704). The value is drawn
+    // through `shared/launcher.ts` **whole** -- the console no longer cuts at the
+    // address the way the CLI's own column still does (D3213, 2026-11-21) -- and
+    // a row whose record carries no launcher draws **no element at all**, never
+    // another person's name.
     const frame = theLastFrame()
     const runs = frame.runs.map((run) => ({ ...run, launchedBy: 'dana.person+fugaro@example.com' }))
     const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
-    expect(texts(tree, 'live-run-started-by')).toEqual(['dana.person+fugaro', 'dana.person+fugaro'])
+    expect(texts(tree, 'live-run-started-by')).toEqual([
+      'dana.person+fugaro@example.com',
+      'dana.person+fugaro@example.com',
+    ])
     const without = renderLive(factory, modelOf(theLastFrame()), 'light')
     expect(all(without, 'live-run-started-by')).toEqual([])
   })
