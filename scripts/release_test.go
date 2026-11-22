@@ -381,6 +381,15 @@ func releaseProcs(pgid int) string {
 func fakeBinDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
+	fakeBinDirAt(t, dir)
+	return dir
+}
+
+// fakeBinDirAt writes those three fakes into a directory the caller owns, so a
+// test can put one of its own beside them (runReleaseFrom takes such a
+// directory).
+func fakeBinDirAt(t *testing.T, dir string) {
+	t.Helper()
 	for _, name := range []string{"gh", "docker", "fugaro"} {
 		src, err := os.ReadFile(filepath.Join(testutil.ModuleRoot(), "scripts", "testdata", "fake-"+name+".sh"))
 		if err != nil {
@@ -390,7 +399,6 @@ func fakeBinDir(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	return dir
 }
 
 // streamsBin is the compiled internal/streams/cmd/streams, the helper
@@ -515,7 +523,15 @@ func (r runResult) requireFailureContaining(t *testing.T, substr string) {
 // g's state, stdin, and extra arguments.
 func runRelease(t *testing.T, r *releaseRepo, g *ghState, stdin string, args ...string) runResult {
 	t.Helper()
-	bin := fakeBinDir(t)
+	return runReleaseFrom(t, r, g, fakeBinDir(t), stdin, args...)
+}
+
+// runReleaseFrom is runRelease with the directory that goes in front of PATH
+// named by the test, for the one case that needs a fake of its own beside the
+// three: a `git` wrapper, which fakes a checkout with no `main` ref
+// (TestAtNeedsNoLocalMainRef).
+func runReleaseFrom(t *testing.T, r *releaseRepo, g *ghState, bin, stdin string, args ...string) runResult {
+	t.Helper()
 	cmd := exec.Command("bash", append([]string{filepath.Join(r.local, "scripts", "release.sh")}, args...)...)
 	cmd.Dir = r.local
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1", "RELEASE_RETRY_SECONDS=0",
@@ -1305,6 +1321,12 @@ func TestAtTagsTheCommitItNames(t *testing.T) {
 	rehearsalRecordFor(t, r, sha, res)
 }
 
+// gateRanName is the file a replaced release-gate.sh writes when it runs. It
+// sits beside the fixture's checkout rather than in it: a release refuses a
+// dirty tree, and an untracked file inside `work/` would be that refusal instead
+// of the one under test.
+const gateRanName = "gate-ran"
+
 // TestAtStillNeedsACleanMain: --at changes which commit the tag goes on and
 // nothing else -- the release is still cut from a checkout on main equal to
 // origin/main, because release.sh, scripts/release-gate.sh,
@@ -1318,7 +1340,24 @@ func TestAtStillNeedsACleanMain(t *testing.T) {
 		name   string
 		mutate func(t *testing.T, r *releaseRepo)
 		want   string
+		// gateRan is where a case that replaces the checkout's own
+		// release-gate.sh would have that gate leave its mark, so the run can
+		// be caught running it (empty for the cases that leave the scripts be).
+		gateRan string
 	}{
+		{
+			name: "the checkout's gate is not origin/main's",
+			mutate: func(t *testing.T, r *releaseRepo) {
+				loosened := fmt.Sprintf("#!/bin/sh\n: > '%s'\nexit 0\n", filepath.Join(filepath.Dir(r.local), gateRanName))
+				if err := os.WriteFile(filepath.Join(r.local, "scripts", "release-gate.sh"), []byte(loosened), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				testutil.Git(t, r.local, "add", "scripts/release-gate.sh")
+				testutil.Git(t, r.local, "commit", "--quiet", "-m", "a gate that approves anything")
+			},
+			want:    "is not origin/main",
+			gateRan: gateRanName,
+		},
 		{
 			name: "the checkout is on another branch",
 			mutate: func(t *testing.T, r *releaseRepo) {
@@ -1351,7 +1390,78 @@ func TestAtStillNeedsACleanMain(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
 				t.Errorf("a refused --at was rehearsed (stat: %v)\n%s", err, res.out)
 			}
+			if c.gateRan != "" {
+				if _, err := os.Stat(filepath.Join(filepath.Dir(r.local), c.gateRan)); !os.IsNotExist(err) {
+					t.Errorf("a refused --at ran the checkout's own release-gate.sh: the scripts a release is decided with are origin/main's, not the tree's (stat: %v)\n%s", err, res.out)
+				}
+			}
 		})
+	}
+}
+
+// TestAtNeedsNoLocalMainRef: --at is cut from a checkout whose tree is
+// origin/main's, and the `main` ref is not part of that question. The branch is
+// still main (the check above, pinned by TestAtStillNeedsACleanMain even when
+// the tree's own scripts are not origin's); what is compared with origin/main is
+// HEAD, which that check has tied to main, so a checkout where a local `main`
+// cannot be resolved at all -- a linked worktree, or a single-branch clone
+// pointed elsewhere -- cuts the release instead of ending in git's own `fatal:`
+// line: `git rev-parse main` under `set -eu` used to end every run there, with
+// no refusal and no tag. The wrapper below is what says the run asked that ref
+// at all, and the control just after it is what says the wrapper bites.
+func TestAtNeedsNoLocalMainRef(t *testing.T) {
+	r := newReleaseRepo(t)
+	sha := atBump(t, r, "0.12.0")
+	tip := advanceMainPast(t, r)
+	g := newGHState(t, r, greenChecks())
+	ciRuns(t, g, sha+"\tci (full)\t"+sha)
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	fakeBinDirAt(t, bin)
+	asked := filepath.Join(bin, "asked-for-main")
+	// Every call but one is the real git's, `git rev-parse refs/remotes/origin/main`
+	// included: only the local ref by its bare name is refused, which is the call
+	// release.sh used to make.
+	wrapper := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = rev-parse ]; then
+  for a in "$@"; do
+    if [ "$a" = main ]; then
+      echo "$a" >> '%s'
+      echo "fatal: not a valid object name: '$a'" >&2
+      exit 128
+    fi
+  done
+fi
+exec '%s' "$@"
+`, asked, realGit)
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The control: asked directly, the wrapper refuses, so a run that gets past
+	// it has really not asked.
+	if out, err := exec.Command(filepath.Join(bin, "git"), "rev-parse", "main").CombinedOutput(); err == nil {
+		t.Fatalf("the git wrapper answered `rev-parse main`, so this test would pass whatever release.sh did: %s", out)
+	}
+	if err := os.Remove(asked); err != nil {
+		t.Fatal(err)
+	}
+
+	res := runReleaseFrom(t, r, g, bin, "", "0.12.0", "--at", sha)
+	res.requireSuccess(t)
+
+	if _, err := os.Stat(asked); !os.IsNotExist(err) {
+		t.Errorf("--at resolved a local `main` ref, which a linked worktree or a single-branch checkout need not have (stat: %v)\n%s", err, res.out)
+	}
+	if got := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}"); got != sha {
+		t.Errorf("tag v0.12.0 is on %s, want the commit --at named (%s)", got, sha)
+	}
+	if got := testutil.Git(t, r.bare, "rev-parse", "main"); got != tip {
+		t.Errorf("main is %s, want the tip the run left alone (%s)", got, tip)
 	}
 }
 
