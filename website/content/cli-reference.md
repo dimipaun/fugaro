@@ -11736,8 +11736,11 @@ Write one entry into the workspace owner's own shared list.
 
 The credential is named as the workspace's bundle holds it — a model credential
 by its own name, the Bitbucket token as bitbucket-token, the GitHub App's key as
-github-app-key — and what it is for is derived from that name, so there is no
-kind to state and none to get wrong.
+github-app-key, a provider key as provider-key or as the repository's own named
+entry for it — and what it is for is derived from that name, so there is no kind
+to state and none to get wrong. A provider key is offered as a model entry, which
+is what a call spent through one is; a repository's own Anthropic key is refused,
+because the entry belongs to that one repository by construction.
 
 --projects names the members this credential may be served to, as a comma
 separated list or repeated, and each must be a member the workspace's own table
