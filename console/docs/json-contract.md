@@ -3334,10 +3334,16 @@ and the console sends only a value a previous read listed (F21):
 | `orchestrator:<id>` | one orchestrator's state node under `orchestrator/`, read through the caller's own credential (D1357) |
 | `local:<id>` | one orchestrator this machine's daemon drives: the same node, and the cached brief when the node is not there (CG5, D1358) |
 
-An id is one lower-case letter or digit, then up to 39 more of those or a hyphen,
-and nothing else. So a leading `-` (which would reach argv as a flag), a path
-separator, an uppercase letter, whitespace, a `.`, an `@` and a 41-character id
-are each refused, by `graph.ParseScope`'s anchored pattern.
+An id is an orchestrator id and nothing else: a project's own name, or a project
+name, `~` and a name for a named one — the form the rule gained when named
+orchestrators landed — which is how the tree under `/orchestrator` is keyed
+(`orchestrator.ValidScopeID`, F40). `graph.ParseScope` reads that one rule
+rather than a pattern of its own: each half is 1 to 40 characters of `a-z`, `0-9`
+and `-`, starting with a letter or a digit, and the name half may end in a `-`
+where a project name may not. So a leading `-` (which would reach argv as a
+flag), a path separator, an uppercase letter, whitespace, a `.`, an `@`, a second
+`~` and an id longer than a project name, a `~` and a name together are each
+refused, before anything is read.
 
 The document:
 
