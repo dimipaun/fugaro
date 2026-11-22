@@ -830,7 +830,7 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 		what = "writes the database as listed and " + infra.IdentityPlatformStep + ", as you (project owner, editor or budget admin), and then the local config"
 	}
 	if fs.CreatesDatabase() {
-		what += fmt.Sprintf("; this does NOT create the Firestore database: its creation in %s, whose location is permanent and can never be changed, is asked next, separately (its own confirmation, with nothing typed)", infra.FirestoreLocation)
+		what += fmt.Sprintf("; this does NOT create the Firestore database: its creation in %s, whose location is permanent and can never be changed, is asked next, separately (its own confirmation, with nothing typed)", fs.Location)
 	}
 	if err := r.confirmDatabase(what); err != nil {
 		return false, err
@@ -885,9 +885,12 @@ func (r *initRun) confirmDatabase(what string) error {
 // It is reached by deployFirestore and not by deployDatabase, and that is
 // D3027: what the run leaves for a person is the run history's database alone,
 // with the budget database already written and already recorded in the local
-// config.
-func (r *initRun) confirmLocation() error {
-	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
+// config. loc is where the database goes, which is the step's own location —
+// place.For's answer for the installation's region (D3085) — and never the
+// region itself: the two are different settings, and the location is the one
+// that is permanent.
+func (r *initRun) confirmLocation(loc string) error {
+	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, loc)
 	switch r.stepConfirmation(r.o.door == updateDoor.name) {
 	case stepLeave:
 		lf := promptLeft(initflow.Firebase, "run the command below: it prints the note about the Firestore database's permanent location and then creates the database, asking you nothing", r.o.doorName(), "--firebase-project", quoteWord(cmp.Or(r.o.firebaseProject(), r.gcpProject)))
@@ -896,7 +899,7 @@ func (r *initRun) confirmLocation() error {
 		fmt.Fprintln(r.w, "  confirmed by this run's own answer")
 		return nil
 	}
-	ok, err := r.confirmNow("create the Firestore database in " + infra.FirestoreLocation + ", a location that can never be changed?")
+	ok, err := r.confirmNow("create the Firestore database in " + loc + ", a location that can never be changed?")
 	if err != nil {
 		return err
 	}
@@ -923,7 +926,7 @@ func (r *initRun) deployFirestore(ctx context.Context, fs *infra.FirestoreStep) 
 		return nil
 	}
 	if fs.CreatesDatabase() {
-		if err := r.confirmLocation(); err != nil {
+		if err := r.confirmLocation(fs.Location); err != nil {
 			return err
 		}
 	}
@@ -963,8 +966,10 @@ func (r *initRun) firestoreStep(ctx context.Context, lc *localcfg.Config, fp str
 	if err != nil {
 		return nil, userErr("%v", err)
 	}
+	m := place.For(lc.Region)
 	return &infra.FirestoreStep{FS: fs, Rules: &infra.RulesClient{Endpoint: lc.Endpoints.FirebaseRules, Project: fp, HTTP: hc},
-		FP: fp, Project: lc.Name, GCPProject: lc.GCPProject, Version: Version, Wait: wait}, nil
+		FP: fp, Project: lc.Name, GCPProject: lc.GCPProject, Version: Version, Wait: wait,
+		Location: m.Firestore.Where, Place: m.Place}, nil
 }
 
 // idpStep is the Identity Platform step: read before the confirmation, run

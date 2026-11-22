@@ -180,8 +180,8 @@ func TestTypedOnlyFirestoreLocationMatrix(t *testing.T) {
 		for _, c := range conditions() {
 			t.Run(door+" "+c.name, func(t *testing.T) {
 				c := c.withDoor(door)
-				r, spy, out := c.run(t, infra.FirestoreLocation+"\n")
-				err := r.confirmLocation()
+				r, spy, out := c.run(t, fsLocation("us-east5")+"\n")
+				err := r.confirmLocation(fsLocation("us-east5"))
 				// The person's own in setup, and covered by the run's own answer
 				// in update: the same call site, and the door decides (D12).
 				can := canConfirmStep(door == updateDoor.name, *r.o, r.conditions())
