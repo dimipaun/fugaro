@@ -93,49 +93,75 @@ workflows:
     timeouts: { total: 30m }
 `
 
-// TestValidateRefusesAMintingInstallationOnCloudBatch is design §1.6's pair on
-// validate's offline arm: an installation whose budget backend is on mints a
-// token for every launch, and a Batch job has no carrier for the token's seal
-// key, so the whole installation is refused here rather than at jobs.create's
-// doorstep. The other arm of the pair -- a published policy with the mode off --
-// needs a read validate does not make, and `fugaro doctor` is where it is
-// answered (TestDoctorBatchRefusesAMintingInstallation).
+// TestValidateRefusesAnInstallationThatNeverOptedIn is BR7's offline half: a
+// config that selects the backend while its own batch block carries no opt-in
+// fact -- or carries the withdrawal -- is refused before a launch, with the
+// sentence doctor's batch-opt-in answers with. It is one refusal and one fix,
+// because only an operator can answer the fact (BR18's write, R2, R15): a
+// reader sent to the update for it would run the command that applies the
+// compute root only where the fact is already there.
 //
-// Mutation (drop the arm): a minting installation that selects the backend
-// validates clean, and the operator meets the refusal after a token was minted
-// and dropped. Mutation (fire for every installation): the cloud-run cases and
-// the budget-off case below fail.
-func TestValidateRefusesAMintingInstallationOnCloudBatch(t *testing.T) {
+// The pair is the fact's: an installation that opted in, and a cloud-run
+// installation whose block happens to carry the field, are both left alone.
+//
+// Mutation (drop the arm): an installation nobody opted in validates clean and
+// its launches are refused one at a time instead. Mutation (fire for every
+// installation, or answer with a second sentence): the opted-in case below
+// fails, and doctor and validate stop agreeing about the same block.
+func TestValidateRefusesAnInstallationThatNeverOptedIn(t *testing.T) {
 	cfg := batchValidateConfig(t, batchValidateYAML)
-	minting := func(t *testing.T, backendName, mode string) *localcfg.Config {
-		t.Helper()
-		lc := batchValidateRig(t, "e2-standard-4", backendName)
-		lc.Budget = &localcfg.Budget{Mode: mode, RTDBURL: "https://example.invalid/"}
-		return lc
-	}
 	rcp := &recipe.Recipe{Name: "impl", Mode: recipe.ModeImplement}
 
-	for _, mode := range []string{"observe", "enforce"} {
-		ps := batchValidateProblems(minting(t, backend.CloudBatch, mode), cfg, rcp)
-		if len(ps) != 1 {
-			t.Fatalf("a mode: %s minting installation on cloud-batch = %v, want the one pair refusal", mode, ps)
-		}
-		if ps[0].Path != "backend" {
-			t.Errorf("the refusal is at %q, want backend: the fix is the backend the installation selects", ps[0].Path)
-		}
-		for _, want := range []string{"docs/budget-token-channel/spec.md", "§1.6", "cloud-run", "seal"} {
-			if !strings.Contains(ps[0].Message, want) {
-				t.Errorf("the refusal does not name %q: %s", want, ps[0].Message)
+	for _, tc := range []struct {
+		name  string
+		fact  string
+		state string
+	}{
+		{name: "no fact at all", fact: ""},
+		{name: "the written withdrawal", fact: localcfg.BatchOptInWithdrawn, state: "is withdrawn"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lc := batchValidateRig(t, "e2-standard-4", backend.CloudBatch)
+			lc.Batch.OptIn = tc.fact
+			ps := batchValidateProblems(lc, cfg, rcp)
+			if len(ps) != 1 {
+				t.Fatalf("an installation that never opted in = %v, want the one fact refusal", ps)
 			}
+			if ps[0].Path != "batch.opt_in" {
+				t.Errorf("the refusal is at %q, want batch.opt_in: the fact is the field the operator has to write", ps[0].Path)
+			}
+			state := "is absent"
+			if tc.state != "" {
+				state = tc.state
+			}
+			for _, want := range []string{state, "batch.opt_in", "R3", "fugaro backends use cloud-batch"} {
+				if !strings.Contains(ps[0].Message, want) {
+					t.Errorf("the refusal does not name %q: %s", want, ps[0].Message)
+				}
+			}
+		})
+	}
+
+	// The fact's two readers answer one sentence: doctor's own check is built
+	// from the same function, and a second spelling here is a mismatch an
+	// operator cannot see (TestValidateAgreesWithDoctorOnTheClaim runs both).
+	lc := batchValidateRig(t, "e2-standard-4", backend.CloudBatch)
+	for _, p := range batchValidateProblems(lc, cfg, rcp) {
+		if p.Path == "batch.opt_in" && p.Message != batchOptInRefusal(lc) {
+			t.Errorf("validate answers the fact with its own sentence:\n%s\n%s", p.Message, batchOptInRefusal(lc))
 		}
 	}
-	// The pair is the minting installation's: a budget backend that is off, and
-	// the same minting configuration on cloud-run, are both left alone.
-	if ps := batchValidateProblems(minting(t, backend.CloudBatch, "off"), cfg, rcp); len(ps) != 0 {
-		t.Errorf("an installation whose budget backend is off is refused on cloud-batch: %v", ps)
+
+	// An installation that opted in is passed, and a cloud-run installation is
+	// not this check's to judge at all.
+	opted := batchValidateRig(t, "e2-standard-4", backend.CloudBatch)
+	opted.Batch.OptIn = localcfg.BatchOptInOn
+	if ps := batchValidateProblems(opted, cfg, rcp); len(ps) != 0 {
+		t.Errorf("an installation that opted in is refused: %v", ps)
 	}
-	if ps := batchValidateProblems(minting(t, backend.CloudRun, "enforce"), cfg, rcp); len(ps) != 0 {
-		t.Errorf("a minting installation on cloud-run is refused by the Batch check: %v", ps)
+	onCloudRun := batchValidateRig(t, "e2-standard-4", backend.CloudRun)
+	if ps := batchValidateProblems(onCloudRun, cfg, rcp); len(ps) != 0 {
+		t.Errorf("a cloud-run installation is refused by the Batch check: %v", ps)
 	}
 }
 

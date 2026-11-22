@@ -300,14 +300,10 @@ func backendsUseAfter(name, project string) string {
 // or not, because this very command is the installation selecting the backend.
 //
 // It reads them against the config this write would LEAVE BEHIND and not the
-// one it reads: the checks that answer only for an installation that has
-// selected the backend are exactly the ones this command has to hear, and
-// doctorBatchBudgetSeal is the one that matters -- it returns nothing while the
-// config still names cloud-run, so asking it of the file as it is would pass a
-// minting installation, write the key, and leave every launch of it refused at
-// create (internal/backend/batch's job definition refuses a launch carrying the
-// budget token's seal key, which a Batch job has no carrier for). The
-// selection is what the write does; the checks are the state it produces.
+// one it reads: the selection is what the write does, and the checks are the
+// state it produces -- the installation this command leaves behind is the one
+// whose checks the operator has to hear, and a check that answers for the
+// installation as it is today answers for a different one.
 //
 // A config that carries no batch block at all is refused before any of that, in
 // this command's own words: the finding the checks would answer with says the
