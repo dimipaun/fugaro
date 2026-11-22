@@ -106,7 +106,8 @@
           "internal/runindex/reindex_test.go",
           "internal/cli/runs_reindex.go",
           "internal/cli/update_runindex.go",
-          "internal/cli/update_runindex_test.go"
+          "internal/cli/update_runindex_test.go",
+          "internal/cli/init_stages.go"
         ]
       }
     },
@@ -172,8 +173,11 @@
           "console/src/main/spawn.ts",
           "console/src/main/ipc.ts",
           "console/src/renderer/entry.ts",
+          "console/src/shared/version.ts",
+          "docs/desktop-console/spec.md",
           "console/test/unit/graph-read.test.ts",
-          "docs/desktop-console/spec.md"
+          "console/test/unit/spawn.test.ts",
+          "console/test/unit/ipc.test.ts"
         ]
       }
     },
@@ -226,6 +230,21 @@
         "paths": [
           "internal/cli/runs_stats.go",
           "internal/cli/runs_stats_index_test.go"
+        ]
+      }
+    },
+    {
+      "id": "IR7",
+      "title": "older history on demand in the Live list",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/screens/live.ts",
+          "console/test/unit/live.test.ts"
         ]
       }
     },
@@ -298,9 +317,9 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/orchestrator/state.go",
           "internal/orchestrator/lease.go",
           "internal/orchestrator/store.go",
+          "internal/orchestrator/list.go",
           "internal/orchestrator/named_test.go"
         ]
       }
@@ -351,7 +370,8 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/cli/update_orchestrator_named.go",
+          "internal/orchestrator/compat_test.go",
+          "internal/orchestrator/testdata/prev-release/**",
           "internal/cli/update_orchestrator_named_test.go"
         ]
       }
@@ -402,6 +422,7 @@
         "paths": [
           "ee/coordinator/sweep.go",
           "ee/coordinator/state.go",
+          "internal/coordpath/coordpath.go",
           "ee/coordinator/heartbeat_test.go"
         ]
       }
@@ -438,7 +459,11 @@
           "console/src/main/ipc.ts",
           "console/src/source/cli.ts",
           "console/src/shared/schema.ts",
-          "docs/desktop-console/spec.md"
+          "console/src/shared/version.ts",
+          "docs/desktop-console/spec.md",
+          "console/test/unit/spawn.test.ts",
+          "console/test/unit/ipc.test.ts",
+          "console/test/unit/schema.test.ts"
         ]
       }
     },
@@ -454,7 +479,8 @@
         "paths": [
           "console/src/renderer/screens/coordinator.ts",
           "console/src/renderer/entry.ts",
-          "console/test/unit/coordinator.test.ts"
+          "console/test/unit/coordinator.test.ts",
+          "docs/console-coordinator-v2/README.md"
         ]
       }
     },
@@ -489,7 +515,9 @@
           "console/src/main/spawn.ts",
           "console/src/main/ipc.ts",
           "console/docs/json-contract.md",
-          "docs/desktop-console/spec.md"
+          "docs/desktop-console/spec.md",
+          "console/test/unit/spawn.test.ts",
+          "console/test/unit/ipc.test.ts"
         ]
       },
       "kind": "integration"
@@ -520,6 +548,21 @@
           "console/test/unit/manage-code.test.ts",
           "console/test/unit/credentialsservice.test.ts",
           "console/test/e2e/spend.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "ID6",
+      "title": "the main process's refusal text keeps paths",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/ipc.ts",
+          "console/test/unit/ipc.test.ts"
         ]
       }
     },
@@ -828,6 +871,11 @@
       "task": "I-ORCH",
       "needs": "IR4",
       "reason": "one file: the allow-lists"
+    },
+    {
+      "task": "IR7",
+      "needs": "ID1",
+      "reason": "one file: console/test/unit/live.test.ts"
     },
     {
       "task": "ID3",

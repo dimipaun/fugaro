@@ -1,6 +1,6 @@
 # Console fixes: implementation plan
 
-**Status: plan only. Nothing is implemented, and no task is approved.** Amended after the round-1 review (2026-11-21). Each task needs the owner's explicit go before a run starts. The plan builds `spec.md` as amended by `reconciliation.md`, which wins where the two differ. It rests on the owner's answers D3200–D3214 and the resolutions D3215–D3222 (2026-11-21). The plan graph is `implementation-plan.graph.json`, beside this file.
+**Status: plan only. Nothing is implemented, and no task is approved.** Amended after the round-1 and round-2 reviews (2026-11-21). Each task needs the owner's explicit go before a run starts. The plan builds `spec.md` as amended by `reconciliation.md`, which wins where the two differ. It rests on the owner's answers D3200–D3214 and the resolutions D3215–D3224 (2026-11-21). D3215, D3217 and D3218 were amended after review and wait on the owner's confirmation (O4). The plan graph is `implementation-plan.graph.json`, beside this file.
 
 Four answers shape the plan most:
 
@@ -19,8 +19,8 @@ Four answers shape the plan most:
   Not restated here.
 - **Hermetic tests.** Use `internal/gcpfake` (it has `firestore.go`, `rtdb.go`, `gcs.go`, `scheduler.go` and `run.go`), `internal/testutil` and `t.TempDir()`. No network, no live cloud from an agent. Live timings are the owner's Checks 870 and 871.
 - **No secret-shaped literal** in any test, fixture or doc. That matters for the identity-display tests that prove secrets are still masked: build the token shapes at runtime, the way `sanitize.test.ts` already does.
-- **A field never changes meaning.** Every `--json` change here is additive: `index_complete`, `folded_through`, `name`, `driver`, the `plan status --merges` section, the new `orchestrator map` document. `runs ls`'s default changes what rows the text listing prints (D3203); it does not change what any field means.
-- **`fugaro update` is the whole upgrade.** It does three things here: applies the composite indexes (RI2), starts the first reindex (RI5) and migrates the default orchestrator node (CG2). Each of those PRs carries its `### For operators` line ("run `fugaro update`" plus what it prints) and a test that an installation at the previous version converges with a run in flight (`internal/cli/update_in_flight_test.go`, `TestUpdateLeavesARunInFlightRunning`).
+- **A field never changes meaning.** Every `--json` change here is additive: `index_complete`, `folded_through`, `merges_read` (present only under `--no-merges`), `name` and `driver` in `orchestrator ls`, and the new `orchestrator map` document. The orchestrator state and lease, which are decoded strictly, gain no field at all (F35). A new console gates `--no-merges` and `orchestrator map` behind a CLI version floor (`console/src/shared/version.ts`). `runs ls`'s default changes what rows the text listing prints (D3203); it does not change what any field means.
+- **`fugaro update` is the whole upgrade.** It does two things here: applies the composite indexes (RI2) and starts the first reindex (RI5). It writes nothing to an orchestrator node, and CG2 proves that a previous release reads every node this one writes. Each of those PRs carries its `### For operators` line ("run `fugaro update`" plus what it prints) and a test that an installation at the previous version converges with a run in flight (`internal/cli/update_in_flight_test.go`, `TestUpdateLeavesARunInFlightRunning`).
 - **The console's allow-lists** (`console/src/main/spawn.ts`, `CONSOLE_OPERATIONS` in `console/src/main/ipc.ts`) change in CG7a, IR4 and I-ORCH. Each needs an independent review, its pinning tests in `console/test/unit/` and the §5.1 table in `docs/desktop-console/spec.md`.
 - **`ee/` tasks** (IR3, CG5, CG6, I-ORCH) also run `go test ./internal/eeboundary/` (`.claude/rules/ee.md`).
 - **Docs are tested.** After a change to `docs/desktop-console/spec.md`, `console/docs/json-contract.md`, the CLI reference or a plugin skill, run `go test ./internal/cli/ -run Docs` (and `go test ./plugin/...` for a skill).
@@ -44,15 +44,17 @@ Four answers shape the plan most:
 | The overlay never supplies a pull request, a title or an identity | RI3 (`TestOverlayNeverSuppliesPRorIdentity`) |
 | The rollover never prunes outcomes the fold has not read | RI4 (`TestRolloverKeepsDaysAfterFold`) |
 | A cross-orchestrator cycle never deadlocks silently | CG3 (`TestCrossCycleBlocksWithEscalation`) |
-| Two orchestrators never both launch one plan task | CG4 (emulator test on the claim transaction) |
+| Two orchestrators never both launch one plan task | CG4 (the claim against `gcpfake`'s RTDB) |
+| A previous release reads every orchestrator node the new release writes | CG2 (`TestPreviousReleaseReadsNewNodes`) |
+| `plan status`'s default keeps the meaning of `closed` and `mark` | IR2 (`TestPlanStatusDefaultStillReadsMerges`) |
 | Every secret shape still masked after the identity masks go | ID1 (the existing credential tests unchanged, plus one per removed rule proving a secret inside that shape is still caught) |
 
 ## Slices
 
 1. **run-index**: inert until read. It holds C-INDEX, RI1–RI5, and the Terraform indexes.
-2. **indexed-reads**: useful alone once I-INDEX lands. IR1–IR4, IR5a, IR5b, IR6, I-INDEX, T-CHK.
+2. **indexed-reads**: useful alone once I-INDEX lands. IR1–IR4, IR5a, IR5b, IR6, IR7, I-INDEX, T-CHK.
 3. **coordinator-graph**: named orchestrators are useful alone (CG1a–CG1c, CG2–CG4); the tab arrives with CG5, CG6, CG7a, CG7b and I-ORCH.
-4. **identity-display**: useful alone. ID1–ID5.
+4. **identity-display**: useful alone. ID1–ID6.
 
 ## Tasks
 
@@ -63,7 +65,8 @@ Four answers shape the plan most:
   - the collections (`runIndex`, one document per run id; `runIndexMeta/summary`);
   - each field and its Firestore type, the sort key (`updated_at` desc, then run id) and the composite indexes;
   - the overlay rule (D3202) and the `index_complete`/`folded_through` JSON fields;
-  - the shape of `plan status --merges`.
+  - `plan status --no-merges` and its `merges_read: false` (D3217 as amended);
+  - the lease document's reindex cursor (F39).
 
   The stub `Reader` returns a fixed page. The `runs ls --json` and `plan status --json` additions are fixed here and copied into `console/docs/json-contract.md` by I-INDEX.
 - Files: `internal/runindex/contract.go` (new), `internal/runindex/stub.go` (new), `internal/runindex/contract_test.go` (new), `docs/console-fixes/contract-index.md` (new).
@@ -113,11 +116,11 @@ Four answers shape the plan most:
   - Each history sweep takes the index writer lease in the RTDB.
   - It folds the runs that changed since `folded_through` into `runIndex` documents. It finds them through `outcomes/` and `agents/`, then reads each changed run's objects, and every field comes from those records.
   - It applies state changes as deltas to `runIndexMeta/summary`, with its counts and estimate table (F13, F15), and advances `folded_through`. A failed fold leaves the stamp where it was.
-  - The fold runs before the rollover in the same execution. The rollover never prunes a day after `folded_through`, and a stamp older than `PruneAfter` starts a reindex (F9).
+  - The rollover, a separate daily execution, reads `folded_through` and never prunes a day after it. A stamp older than `PruneAfter` sets `complete: false`, and `fugaro doctor` names `fugaro runs reindex` as the fix. The job starts no execution: its role cannot (F9).
   - No run object is written.
 - Files: `internal/runindex/fold.go` (new), `internal/runindex/lease.go` (new), `internal/runindex/fold_test.go` (new), `internal/cli/history.go`, `internal/cli/history_fold_test.go` (new), `internal/budget/rollover.go`.
 - Interfaces: consumes C-INDEX and RI1; produces the writer RI5 extends.
-- Tests: `TestFoldUpsertsChangedRuns`, `TestFoldAppliesCountDeltas`, `TestFoldLeaseRefusesSecondWriter`, `TestHistorySweepFolds`, `TestRolloverKeepsDaysAfterFold`, `TestStaleFoldStartsReindex`.
+- Tests: `TestFoldUpsertsChangedRuns`, `TestFoldAppliesCountDeltas`, `TestFoldLeaseRefusesSecondWriter`, `TestHistorySweepFolds`, `TestRolloverKeepsDaysAfterFold` (across two executions), `TestStaleFoldMarksIncomplete`.
 - Command: `go test ./internal/runindex/ ./internal/cli/ ./internal/budget/ -run 'Fold|HistorySweepFolds|RolloverKeepsDaysAfterFold' -count=1`
 - Red step: `TestHistorySweepFolds` finds no index document after a sweep.
 - Depends on: RI1 (behaviour: writes through the client's query and patch). A provider of C-INDEX's types, launched once C-INDEX has merged.
@@ -128,13 +131,14 @@ Four answers shape the plan most:
 - Acceptance:
   - The history job's `--reindex` mode walks every run in the bucket, upserts by run id under the writer lease, recomputes the summary from the index, then sets `complete: true` (D3215). Run twice, it leaves identical documents.
   - The reindex sets `folded_through` to the walk's **start**, so the next fold picks up every run that changed during a long walk.
-  - While a reindex holds the index lease, a regular sweep still does its crash sweep (D12) and its rollover, and skips only the fold.
+  - While a reindex holds the index lease, a regular sweep still does its crash sweep (D12) and skips only the fold. The rollover is its own execution and is unaffected.
+  - The walk keeps a cursor with the lease, so an execution that hits its timeout leaves the next one to resume. `update` and `runs reindex` start the execution with a task-timeout override. `index_complete` stays false until a walk reaches the end (F39).
   - `fugaro update` starts that execution after its apply and prints one line.
   - `fugaro runs reindex` starts it again, under the fence `update`'s job-starting steps use (U3).
   - Neither waits on a run in flight.
-- Files: `internal/runindex/reindex.go` (new), `internal/runindex/reindex_test.go` (new), `internal/cli/runs_reindex.go` (new), `internal/cli/update_runindex.go` (new), `internal/cli/update_runindex_test.go` (new).
+- Files: `internal/runindex/reindex.go` (new), `internal/runindex/reindex_test.go` (new), `internal/cli/runs_reindex.go` (new), `internal/cli/update_runindex.go` (new), `internal/cli/update_runindex_test.go` (new), `internal/cli/init_stages.go` (registers the step).
 - Interfaces: consumes RI4's fold and lease.
-- Tests: `TestReindexIdempotent`, `TestReindexRecomputesCounts`, `TestReindexStampsWalkStart`, `TestSweepDuringReindexStillSweeps`, `TestUpdateStartsReindexWithRunInFlight`, `TestRunsReindexStartsJob`.
+- Tests: `TestReindexIdempotent`, `TestReindexRecomputesCounts`, `TestReindexStampsWalkStart`, `TestReindexResumesFromCursor`, `TestSweepDuringReindexStillSweeps`, `TestUpdateStartsReindexWithRunInFlight`, `TestRunsReindexStartsJob`.
 - Command: `go test ./internal/runindex/ ./internal/cli/ -run 'Reindex|SweepDuringReindex' -count=1`
 - Red step: `TestReindexIdempotent` fails: no reindex mode.
 - Depends on: RI4 (behaviour: it reuses the fold and the lease).
@@ -162,15 +166,18 @@ Four answers shape the plan most:
 - Commit: `runs ls: read the index, newest 50 plus active (IR1, D3203)`
 - Reviewer tier: standard.
 
-#### IR2: `plan status` reads the index; merges become `--merges`
-- Acceptance: `plan status` joins plan tasks to runs with index queries by plan, and reads the estimate table from the summary, with no 90-day scan. Without `--merges` it runs no `gh`; with it, it prints the merges section C-INDEX defines (D3217).
+#### IR2: `plan status` reads the index; `--no-merges` for the first paint
+- Acceptance:
+  - `plan status` joins plan tasks to runs with index queries by plan, and reads the estimate table from the summary, with no 90-day scan.
+  - The default keeps its merge lookups (at most 32, bounded by `planMaxLookups`), so `closed`, `mark` and the `--all` filter keep their meaning for every console already installed (F37).
+  - `--no-merges` makes no `gh` call and adds `merges_read: false` (D3217 as amended).
 - Files: `internal/cli/plan_status.go`, `internal/cli/plan_status_index_test.go` (new), `internal/cli/plan.go`.
 - Interfaces: consumes the C-INDEX `Reader`.
-- Tests: `TestPlanStatusReadsIndexNoScan`, `TestPlanStatusNoGhWithoutMerges`, `TestPlanStatusMergesSection`.
-- Command: `go test ./internal/cli/ -run 'TestPlanStatus(ReadsIndex|NoGh|Merges)' -count=1`
-- Red step: `TestPlanStatusNoGhWithoutMerges` counts the `gh` lookups made today.
+- Tests: `TestPlanStatusReadsIndexNoScan`, `TestPlanStatusDefaultStillReadsMerges`, `TestPlanStatusNoMergesNoGh`.
+- Command: `go test ./internal/cli/ -run 'TestPlanStatus(ReadsIndex|DefaultStillReadsMerges|NoMergesNoGh)' -count=1`
+- Red step: `TestPlanStatusReadsIndexNoScan` sees the 90-day listing.
 - Depends on: C-INDEX.
-- Commit: `plan status: read the index, merges behind --merges (IR2, D3217)`
+- Commit: `plan status: read the index; --no-merges for the first paint (IR2, D3217)`
 - Reviewer tier: standard.
 
 #### IR3: `graph`'s fallback reads the index
@@ -184,15 +191,19 @@ Four answers shape the plan most:
 - Commit: `graph: the no-view fallback reads the index (IR3, F3)`
 - Reviewer tier: standard.
 
-#### IR4: the console's merges section
-- Acceptance: the Graph tab paints the canvas from `plan status --json --all`, then a separate section reads `plan status --json --all --merges` and decorates merged nodes, with its own busy state and refusal. A new spawn row and IPC operation are pinned, and the §5.1 table in `docs/desktop-console/spec.md` is updated.
-- Files: `console/src/main/spawn.ts`, `console/src/main/ipc.ts`, `console/src/renderer/entry.ts`, `console/test/unit/graph-read.test.ts`, `docs/desktop-console/spec.md`.
-- Interfaces: consumes `plan status --merges` (IR2), in the shape C-INDEX fixes.
-- Tests: `graph-read.test.ts` (canvas before merges), plus the pinning tests in `spawn.test.ts`/`ipc.test.ts` for the new row.
+#### IR4: the console's first paint without merges
+- Acceptance:
+  - The Graph tab paints the canvas from `plan status --json --all --no-merges`.
+  - The plain `plan status --json --all` (merges included) is a separate section that decorates merged nodes, with its own busy state and refusal.
+  - The new argv sits behind a CLI version floor in `console/src/shared/version.ts`; an older CLI gets the single read as today.
+  - The spawn row and IPC operation are pinned, and the §5.1 table in `docs/desktop-console/spec.md` is updated.
+- Files: `console/src/main/spawn.ts`, `console/src/main/ipc.ts`, `console/src/renderer/entry.ts`, `console/src/shared/version.ts`, `docs/desktop-console/spec.md`; tests `console/test/unit/graph-read.test.ts`, `spawn.test.ts`, `ipc.test.ts`.
+- Interfaces: consumes `plan status --no-merges` (IR2), in the shape C-INDEX fixes.
+- Tests: `graph-read.test.ts` (canvas before merges; the single read under the floor), plus the pinning tests for the new row.
 - Command: `cd console && npx jest test/unit/graph-read.test.ts test/unit/spawn.test.ts test/unit/ipc.test.ts --maxWorkers=2 && cd .. && go test ./internal/cli/ -run Docs -count=1`
 - Red step: `graph-read.test.ts` fails: there is one read, not two.
-- Depends on: IR2 (kept: IR4 waits on CG7b at a later level anyway, so breaking it gains nothing); CG7a and CG7b (the same files: the allow-lists, and `entry.ts`).
-- Commit: `console: merge state as its own Graph section (IR4, D3217)`
+- Depends on: IR2 (kept: IR4 waits on CG7b at a later level anyway, so breaking it gains nothing); CG7a and CG7b (the same files: the allow-lists, `version.ts` and `entry.ts`).
+- Commit: `console: the Graph canvas before merge state (IR4, D3217)`
 - Reviewer tier: opus, with an independent review (allow-list).
 
 #### IR5a: the runner stops writing the GCS pull-request index
@@ -228,6 +239,16 @@ Four answers shape the plan most:
 - Commit: `runs stats: read the index (IR6, F32)`
 - Reviewer tier: standard.
 
+#### IR7: older history on demand in the Live list
+- Acceptance: under the Live list's newest rows, a "Load older" control pages past the 24-hour window with `runs ls --json --limit 50 --after <last run id>`. That is the argv shape the allow-list already pins for the coordinator job page. Each page is a section read with its own busy state (F4).
+- Files: `console/src/renderer/screens/live.ts`, `console/test/unit/live.test.ts`.
+- Tests: `live.test.ts` (a second page arrives after the first; the cursor is the last run id).
+- Command: `cd console && npx jest test/unit/live.test.ts --maxWorkers=2`
+- Red step: the list stops at the window.
+- Depends on: ID1 (the same file, `live.test.ts`).
+- Commit: `console: load older runs on demand (IR7, F4)`
+- Reviewer tier: standard.
+
 #### I-INDEX: wire the index in
 - Acceptance: the stub is deleted, and `runs ls`, `plan status` and `graph` get the real `Reader`. `TestIndexedReadsConstantRequests` seeds the fakes at 1x (3,500 runs) and 100x (350,000 entries in the fake index) and asserts that the first page of each command costs the same number of requests. `TestFixedInvocationCost` lists every request made before the first index read (U1).
 - Files: `internal/runindex/stub.go` (deleted), `internal/cli/runindex_wire.go` (new), `internal/cli/indexed_reads_e2e_test.go` (new), `ee/graph/cli/graph.go`, `console/docs/json-contract.md` (the `runs ls` and `plan status` additions).
@@ -258,8 +279,8 @@ Four answers shape the plan most:
 #### C-ORCH: the orchestrator contract
 - Acceptance:
   - `internal/orchestrator/naming.go` defines:
-    - the id rules (default `<project>`, named `<project>~<name>`, name `^[a-z0-9][a-z0-9-]{0,39}$`, no cap) (D3207, D3218);
-    - `Driver`;
+    - the orchestrator id rule, separate from `agentRE` (default `<project>`, named `<project>~<name>`, name `^[a-z0-9][a-z0-9-]{0,39}$`, a maximum id length that fits both, no cap) (D3207, D3218, F36);
+    - `Driver` and the path of its sibling node, `orchestrator/<id>/driver`;
     - `ParseItemRef` for `<orchestrator>/<item>` (D3208);
     - `ClaimPath` (D3209).
   - `internal/orchestrator/mapdoc.go` defines the `orchestrator map --json` document: nodes, edges (`dependency` | `overlap`) and `health` (D3221).
@@ -274,13 +295,16 @@ Four answers shape the plan most:
 - Reviewer tier: standard; at the rigor of its strictest consumer (CG4's write guard).
 
 #### CG1a: state, lease and store accept named orchestrators
-- Acceptance: `State` gains `project` and `name`; the lease document gains `driver` (the principal of the credential that holds it). The store accepts `<project>~<name>` ids and refuses anything else. All three fields are additive.
-- Files: `internal/orchestrator/state.go`, `internal/orchestrator/lease.go`, `internal/orchestrator/store.go`, `internal/orchestrator/named_test.go` (new).
-- Tests: `TestNamedStateRoundTrip`, `TestLeaseRecordsDriver`, `TestStoreRefusesBadName`.
-- Command: `go test ./internal/orchestrator/ -run 'TestNamed|TestLeaseRecordsDriver|TestStoreRefusesBadName' -count=1`
-- Red step: `TestLeaseRecordsDriver` finds no driver.
+- Acceptance:
+  - `checkAgentID` and `NodeIDs` use C-ORCH's orchestrator id rule, so `<project>~<name>` is accepted. Work-item ids keep `agentRE` (F36).
+  - The lease holder writes `driver` (the principal of the credential that holds the lease) to the sibling node `orchestrator/<id>/driver`.
+  - Neither the state nor the lease document gains a field (F35, D3218 as amended). `project` and `name` are derived from the id.
+- Files: `internal/orchestrator/lease.go`, `internal/orchestrator/store.go`, `internal/orchestrator/list.go`, `internal/orchestrator/named_test.go` (new).
+- Tests: `TestNamedIDAccepted`, `TestLeaseWritesDriverSibling`, `TestStateAndLeaseUnchanged`, `TestStoreRefusesBadName`.
+- Command: `go test ./internal/orchestrator/ -run 'TestNamedIDAccepted|TestLeaseWritesDriverSibling|TestStateAndLeaseUnchanged|TestStoreRefusesBadName' -count=1`
+- Red step: `TestNamedIDAccepted` is refused by `agentRE`.
 - Depends on: none in the graph. As the provider C-ORCH describes, it implements the contract's id rules and `Driver`, and is launched once C-ORCH has merged.
-- Commit: `orchestrator: named state and the lease's driver (CG1a, D3207, D3218)`
+- Commit: `orchestrator: named ids and the driver node (CG1a, D3207, D3218)`
 - Reviewer tier: standard.
 
 #### CG1b: `--name` on the orchestrator commands
@@ -303,15 +327,18 @@ Four answers shape the plan most:
 - Commit: `orchestrator: every command honours --name (CG1c, D3206)`
 - Reviewer tier: standard.
 
-#### CG2: `update` migrates the default orchestrator in place
-- Acceptance: `fugaro update` writes `project` and `name` into an existing `orchestrator/<project>/state` and `driver` into its lease, and moves nothing. An installation at the previous version converges with a run in flight.
-- Files: `internal/cli/update_orchestrator_named.go` (new), `internal/cli/update_orchestrator_named_test.go` (new).
-- Tests: `TestUpdateNamesDefaultOrchestratorInPlace`, `TestUpdateNamedMigrationWithRunInFlight`.
-- Command: `go test ./internal/cli/ -run 'TestUpdateNamesDefault|TestUpdateNamedMigration' -count=1`
-- Red step: the fields are absent after an update.
-- Depends on: C-ORCH (the field names).
-- Commit: `update: name the default orchestrator in place (CG2, D3218)`
-- Reviewer tier: standard. The PR carries the `### For operators` line.
+#### CG2: `update` needs no orchestrator migration, and proves it
+- Acceptance:
+  - `fugaro update` writes nothing to an orchestrator node (D3218 as amended).
+  - A test decodes, with the previous release's strict decoders, a state, a lease and a node set written by this release: the default and a named one, each with its `driver` sibling. All of them are read.
+  - An installation at the previous version converges with a run in flight.
+- Files: `internal/orchestrator/compat_test.go` (new), `internal/orchestrator/testdata/prev-release/` (new), `internal/cli/update_orchestrator_named_test.go` (new).
+- Tests: `TestPreviousReleaseReadsNewNodes`, `TestUpdateNamedMigrationWithRunInFlight`.
+- Command: `go test ./internal/orchestrator/ ./internal/cli/ -run 'TestPreviousReleaseReadsNewNodes|TestUpdateNamedMigrationWithRunInFlight' -count=1`
+- Red step: a node with a new field in its state fails the previous decoder (the test pins that none is written).
+- Depends on: C-ORCH (the id rule and the driver node's path).
+- Commit: `orchestrator: a previous release reads every node this one writes (CG2, D3218)`
+- Reviewer tier: standard. The PR carries the `### For operators` line: no action, and named orchestrators are invisible to members still on the previous release (F36).
 
 #### CG3: cross-orchestrator dependencies
 - Acceptance:
@@ -341,7 +368,7 @@ Four answers shape the plan most:
 
 #### CG5: the coordinator sweep's heartbeat
 - Acceptance: each sweep writes `coordinator/project/heartbeat` (`started_at`, `ok_at`, server time) over IAM, as it writes its view (the subtree keeps `.write: false` for tokens; no rules change), and the store reads it.
-- Files: `ee/coordinator/sweep.go`, `ee/coordinator/state.go`, `ee/coordinator/heartbeat_test.go` (new).
+- Files: `ee/coordinator/sweep.go`, `ee/coordinator/state.go`, `internal/coordpath/coordpath.go` (the path), `ee/coordinator/heartbeat_test.go` (new).
 - Tests: `TestSweepWritesHeartbeat`, `TestFailedSweepKeepsOkAt`.
 - Command: `go test ./ee/coordinator/ -run 'Heartbeat|TestFailedSweepKeepsOkAt' -count=1 && go test ./internal/eeboundary/ -count=1`
 - Red step: no heartbeat after a sweep.
@@ -367,8 +394,8 @@ Four answers shape the plan most:
 - Reviewer tier: standard.
 
 #### CG7a: the console reads the map
-- Acceptance: a spawn row for `orchestrator map --json`, an IPC operation, the `orchestratorMap` bridge method in `console/src/source/cli.ts` and a strict decoder in `console/src/shared/schema.ts`. Pinned, with the §5.1 table updated.
-- Files: `console/src/main/spawn.ts`, `console/src/main/ipc.ts`, `console/src/source/cli.ts`, `console/src/shared/schema.ts`, `docs/desktop-console/spec.md`.
+- Acceptance: a spawn row for `orchestrator map --json`, an IPC operation, the `orchestratorMap` bridge method in `console/src/source/cli.ts` and a strict decoder in `console/src/shared/schema.ts`. The read sits behind a CLI version floor in `console/src/shared/version.ts`; below it, the tab says which CLI version it needs. Pinned, with the §5.1 table updated.
+- Files: `console/src/main/spawn.ts`, `console/src/main/ipc.ts`, `console/src/source/cli.ts`, `console/src/shared/schema.ts`, `console/src/shared/version.ts`, `docs/desktop-console/spec.md`; tests `spawn.test.ts`, `ipc.test.ts`, `schema.test.ts`.
 - Tests: the pinning tests in `spawn.test.ts` and `ipc.test.ts`, plus `schema.test.ts` for the decoder.
 - Command: `cd console && npx jest test/unit/spawn.test.ts test/unit/ipc.test.ts test/unit/schema.test.ts --maxWorkers=2 && cd .. && go test ./internal/cli/ -run Docs -count=1`
 - Red step: the row is missing from the allow-list.
@@ -381,10 +408,10 @@ Four answers shape the plan most:
   - The tab draws only active orchestrators, as elk-laid-out nodes: name, driver, active tasks, running jobs.
   - Dependency edges are solid; overlap edges are dashed and marked as a warning.
   - Clicking a node opens its live tasks.
-  - The health line shows the sweep's heartbeat and each lease age.
+  - The health line shows the sweep's heartbeat and each lease age. With the sweep off, the tab says so and names the fix instead of drawing no overlap.
   - The v2 sections are removed: action queue, totals, job list and transcript (D3210).
   - Single section; the rules of `.claude/rules/console.md` apply.
-- Files: `console/src/renderer/screens/coordinator.ts`, `console/src/renderer/entry.ts`, `console/test/unit/coordinator.test.ts`.
+- Files: `console/src/renderer/screens/coordinator.ts`, `console/src/renderer/entry.ts`, `console/test/unit/coordinator.test.ts`, `docs/console-coordinator-v2/README.md` (a dated note that this plan replaces the tab, D3210).
 - Tests: `coordinator.test.ts` (graph from a fixture map; drill-down; health line; no v2 section).
 - Command: `cd console && npx jest test/unit/coordinator.test.ts --maxWorkers=2 && npm run typecheck`
 - Red step: the test expects nodes and finds the queue.
@@ -424,7 +451,7 @@ Four answers shape the plan most:
   - `sanitize.ts` drops the `address-marker` rule from `FREE_TEXT_RULES` and `REFUSAL_RULES`.
   - The `person` class draws any value that is not a secret, cleaned of markup and control characters, at the class's length limit.
   - `REPO_TOKEN_RE` and the branch, path, GCP-name and IP/host rules go, and the `host` and `path` classes stop replacing.
-  - The `replaced-url` rule, which today replaces every URL with `[redacted-url]`, is narrowed to the credential parts: userinfo and credential query parameters, the way the typed `applyUrl` already drops userinfo.
+  - The `replaced-url` rule, which today replaces every URL with `[redacted-url]`, is narrowed to the credential parts. It drops userinfo (as the typed `applyUrl` does), and it masks the values of credential query and fragment parameters: `token`, `access_token`, `id_token`, `refresh_token`, `key`, `api_key`, `apikey`, `secret`, `password`, `sig`, `signature`, `X-Goog-Signature`, `X-Goog-Credential`, `X-Amz-Signature`, `X-Amz-Credential`, `X-Amz-Security-Token`, `code`. It also keeps masking any high-entropy URL path segment (webhook and bot-token URLs). The rule stays in `CREDENTIAL_RULES`, so the validating classes keep it.
   - The credential, token, entropy and credential-block rules stay, and `CREDENTIAL_RULES` (the positional slice `FREE_TEXT_RULES.slice(0, 2)`) still names exactly the credential rules after the reorder.
   - The entropy net no longer declines path runs once the path rule that caught them is gone (today `!isPathRun` and `isPathShapedSecret` skip a rooted run). A token inside a rooted path is still masked.
   - The tests that assert a display marker for a non-secret value now assert the value. `sanitize-agreement.test.ts` keeps its one-way direction (the display may redact less than the recorder). The recorder's tests are untouched (D3219).
@@ -438,6 +465,9 @@ Four answers shape the plan most:
   - a token in a rooted path (`/x/y/<token built at runtime>`);
   - `https://user:<token>@host/...`;
   - `?token=<token>` in free text;
+  - a fragment `#access_token=<token>` and a signed-URL `X-Goog-Signature=<value>`;
+  - a high-entropy URL path segment (`https://hooks.example/services/<token>`);
+  - each of the URL cases under both rule sets: free text and the validating classes;
   - one case per removed rule, proving a secret inside that shape is still masked.
 - Command: `cd console && npx jest test/unit --maxWorkers=2 && npm run typecheck`
 - Red step: an email drawn as itself fails today's expectation of `redacted@example.invalid`.
@@ -485,6 +515,25 @@ Four answers shape the plan most:
 - Commit: `console: every n/a names its cause (ID5, F28)`
 - Reviewer tier: standard.
 
+#### ID6: the main process's refusal text keeps paths
+- Acceptance: `boundReason` (`console/src/main/ipc.ts`) stops replacing absolute paths with `<path>`. It keeps its credential handling and its bound on length (F38, D3213).
+- Files: `console/src/main/ipc.ts`, `console/test/unit/ipc.test.ts`.
+- Tests: `ipc.test.ts` (a refusal naming `/Users/ana/repo` keeps the path; a token in a refusal is still masked).
+- Command: `cd console && npx jest test/unit/ipc.test.ts --maxWorkers=2`
+- Red step: the path reads `<path>`.
+- Depends on: none.
+- Commit: `console: refusals keep their paths (ID6, D3213)`
+- Reviewer tier: opus, with an independent review (`ipc.ts` is an allow-list file).
+
+## Launch order
+
+`fugaro plan graph` refuses an edge from a provider to the contract it implements, so three providers show no edge to their contract (O5). The order is therefore:
+
+1. Launch C-INDEX and C-ORCH alone.
+2. Once both have merged, launch every other task by the graph's edges.
+
+The tasks this holds back (RI1, CG1a, CG5, ID1, ID6) lose a contract's run time at most.
+
 ## Parallel execution
 
 ### Levels
@@ -493,8 +542,8 @@ As `fugaro plan graph` reads them. R-index-fields and R-map-shape run only if th
 
 | Level | Tasks (run at once) |
 | --- | --- |
-| 0 | C-INDEX, RI1, C-ORCH, CG1a (launched after C-ORCH merges), CG5, ID1 |
-| 1 | RI2, RI3, RI4 (launched after C-INDEX merges), IR1, IR2, IR3, IR6, CG1b, CG2, CG3, CG4, CG6, CG7a, ID2, ID3, R-index-fields, R-map-shape |
+| 0 | C-INDEX, C-ORCH, then (see Launch order) RI1, CG1a, CG5, ID1, ID6 |
+| 1 | RI2, RI3, RI4, IR1, IR2, IR3, IR6, IR7, CG1b, CG2, CG3, CG4, CG6, CG7a, ID2, ID3, R-index-fields, R-map-shape |
 | 2 | RI5, CG1c, CG7b, CG-DOCS, ID5 |
 | 3 | I-INDEX, IR4 |
 | 4 | IR5a, IR5b, T-CHK, I-ORCH |
@@ -508,7 +557,7 @@ What must stay sequential, and why:
 - CG7a/CG7b → IR4: the allow-list files and `entry.ts`.
 - IR4 → I-ORCH: the allow-list files.
 - I-ORCH → ID4: `docs/desktop-console/spec.md`.
-- ID1 → ID3: `spend.test.ts`.
+- ID1 → ID3 and ID1 → IR7: `spend.test.ts` and `live.test.ts`.
 - I-INDEX → IR5a/IR5b: `--pr` must read the live index before the old writers stop.
 
 ### Critical path
@@ -523,9 +572,15 @@ Checked from the graph's footprints: no level holds two writers of one file.
 | --- | --- |
 | `console/docs/json-contract.md` | I-INDEX (3), I-ORCH (4) |
 | `docs/desktop-console/spec.md` | CG7a (1), IR4 (3), I-ORCH (4), ID4 (5) |
-| `console/src/main/spawn.ts`, `console/src/main/ipc.ts` | CG7a (1), IR4 (3), I-ORCH (4) |
+| `console/src/main/ipc.ts`, `console/test/unit/ipc.test.ts` | ID6 (0), CG7a (1), IR4 (3), I-ORCH (4) |
+| `console/src/main/spawn.ts`, `console/test/unit/spawn.test.ts` | CG7a (1), IR4 (3), I-ORCH (4) |
+| `console/src/shared/version.ts` | CG7a (1), IR4 (3) |
 | `console/src/renderer/entry.ts` | CG7b (2), IR4 (3) |
 | `console/test/unit/spend.test.ts` | ID1 (0), ID3 (1) |
+| `console/test/unit/live.test.ts` | ID1 (0), IR7 (1) |
+| `console/test/unit/schema.test.ts` | ID1 (0), CG7a (1) |
+| `internal/orchestrator/list.go` | CG1a (0), CG4 (1) |
+| `internal/cli/init_stages.go` | RI5 (2), IR5b (4) |
 | `ee/graph/cli/graph.go` | IR3 (1), I-INDEX (3) |
 | `ee/orchestrator/cli/map.go` | CG6 (1), I-ORCH (4) |
 | `internal/runindex/contract.go`, `docs/console-fixes/contract-index.md` | C-INDEX (0), R-index-fields (1, if raised) |
@@ -560,7 +615,7 @@ Kept, each with its reason:
 - IR4 needs IR2: kept, because IR4 waits on CG7b at a later level anyway, so breaking it gains nothing. IR4 also needs CG7a and CG7b for shared files.
 - CG-DOCS needs CG1b: the plugin tests check flags.
 - ID2 and ID5 need ID1: the `person` class's behaviour.
-- ID3 needs ID1: one file.
+- ID3 and IR7 need ID1: one file each.
 - ID4 needs ID1, ID3 and I-ORCH: it describes ID1, records ID3's default, and shares a file with I-ORCH.
 - IR5a, IR5b and T-CHK need I-INDEX: the live index.
 
@@ -571,13 +626,13 @@ Contract changes anticipated:
 - **R-index-fields**, raised by IR2 if the summary needs a per-plan count to join without a query. It would reach RI2, RI3, RI4 and IR1.
 - **R-map-shape**, raised by CG7b if the drill-down needs per-task fields the node lacks. It would reach CG6 and CG7a.
 
-The gain, as `fugaro plan graph` reports it: `gain: 11 broken, 15 kept, 6 added; before 7 tasks, weight 13.5; after 6 tasks, weight 10; improves`. The decoupling pass is on for this repository (`planning.decoupling` true), and the rigor default is `startup`, so the plan decouples aggressively.
+The gain, as `fugaro plan graph` reports it: `gain: 11 broken, 16 kept, 6 added; before 7 tasks, weight 13.5; after 6 tasks, weight 10; improves`. The decoupling pass is on for this repository (`planning.decoupling` true), and the rigor default is `startup`, so the plan decouples aggressively.
 
 ## Estimate
 
 The estimate line `fugaro plan graph` printed, quoted as printed:
 
-`ready in 301–1239 min, no history yet for 21 tasks (35 tasks; tiers for 14, seeds for 21; from the cached history of 2026-11-21 18:33 UTC)`
+`ready in 301–1239 min, no history yet for 21 tasks (37 tasks; tiers for 16, seeds for 21; from the cached history of 2026-11-21 18:33 UTC)`
 
 It is informational and reserves no budget. It is what the tasks' tiers and this machine's history predict, and it moves as runs finish and the graph changes.
 
@@ -593,7 +648,7 @@ Check 760 (runs-ls-speed) runs before IR1 merges, as the "before" reading (O1, D
 
 ## After-deploy steps
 
-None outside `fugaro update`. RI2, RI5 and CG2 each add their `### For operators` line ("run `fugaro update`"). The update applies the indexes, starts the reindex and names the default orchestrator, and prints one line for each. The index reports `index_complete: false` until the reindex finishes; no operator action is needed.
+None outside `fugaro update`. RI2, RI5 and CG2 each add their `### For operators` line ("run `fugaro update`"). The update applies the indexes and starts the reindex, and prints one line for each. The index reports `index_complete: false` until the reindex finishes; no operator action is needed.
 
 ## Considered and declined
 
