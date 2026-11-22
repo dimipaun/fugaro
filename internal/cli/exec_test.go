@@ -785,6 +785,37 @@ func TestExecLocalRunStopsAtAManagedSettingsFileItCannotReplace(t *testing.T) {
 	}
 }
 
+// The writable half of the same rule (AB1b, D149; the #3481 finding): a
+// directory the run may write is where it *can* take a file it did not write —
+// replacing the organisation's own managed settings and deleting them at the
+// end of the run. The refusal is made before the write, so this run stops with
+// the file as it was, and nothing logs that the stages reached the gateway over
+// it.
+func TestExecLocalRunStopsAtAWritableManagedSettingsFileItDidNotWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "managed-settings.json")
+	corp := "{\"env\":{\"ANTHROPIC_BASE_URL\":\"https://corp-proxy.invalid\"}}\n"
+	if err := os.WriteFile(path, []byte(corp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pins := func(cfg string) string {
+		return strings.Replace(pinnedConfig(t, cfg), "coder: deepseek/deepseek-v4-flash", "coder: claude-sonnet-5-5", 1)
+	}
+	_, _, store := localExecCfg(t, pins, map[string]string{"FIXTURE_FAILS_FILE": filepath.Join(t.TempDir(), "fails")},
+		"--managed-settings", path,
+		"--gateway-upstream", "http://127.0.0.1:1",
+		"--claude", filepath.Join(t.TempDir(), "no-such-claude"))
+	rec, rerr := store.ReadRecord(context.Background())
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "already there and this run did not write it") {
+		t.Fatalf("record = %+v: the run went on over a managed settings file it did not write", rec)
+	}
+	if b, rerr := os.ReadFile(path); rerr != nil || string(b) != corp {
+		t.Errorf("the managed settings file that was already there was replaced: %q, %v", b, rerr)
+	}
+}
+
 // The budget backend's Firebase Auth URL moves only to a loopback address.
 func TestExecIdentityURLFlag(t *testing.T) {
 	for _, bad := range []string{"https://identitytoolkit.googleapis.com", "http://example.invalid:80", "http://127.0.0.1:8080/x", "http://localhost:80"} {

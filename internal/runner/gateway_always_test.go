@@ -232,6 +232,41 @@ func TestALocalRunStopsAtAManagedSettingsFileItCannotReplace(t *testing.T) {
 	}
 }
 
+// TestALocalRunStopsAtAWritableManagedSettingsFileItDidNotWrite (AB1b, D149,
+// the review finding on #3481): what a local run may not do is take a file it
+// did not write, and a writable directory is the case where it *can*: the same
+// organisation's managed-settings.json is replaced by this run's copy and then
+// deleted with it at the end of the run, while the stages read the gateway's
+// variables either way — so the file was there, was somebody else's, and is
+// gone, with nothing said. The refusal is therefore made before the write, on
+// the file rather than on the failure, and the run stops with the file as it
+// was.
+//
+// Red step: with the check only in the write's error branch (the shape this
+// finding corrects), this run ends succeeded, no line is logged, and the path
+// is empty at the end: replaced, then removed.
+func TestALocalRunStopsAtAWritableManagedSettingsFileItDidNotWrite(t *testing.T) {
+	g := newGW(t, pinnedConfig(t), "", "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 1}))
+	h := g.harness
+	// Writable on purpose: the run could take the file, and that is the case.
+	path := filepath.Join(t.TempDir(), "managed-settings.json")
+	corp := "{\"env\":{\"ANTHROPIC_BASE_URL\":\"https://corp-proxy.invalid\"}}\n"
+	if err := os.WriteFile(path, []byte(corp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.deps.ManagedSettingsPath = path
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "already there and this run did not write it") {
+		t.Fatalf("record = %+v, err = %v: the run went on over a managed settings file it did not write", rec, err)
+	}
+	if len(h.agent.calls) != 0 {
+		t.Fatalf("%d agent calls: a stage ran on a file this run did not write", len(h.agent.calls))
+	}
+	if b, rerr := os.ReadFile(path); rerr != nil || string(b) != corp {
+		t.Errorf("the managed settings file that was already there was replaced: %q, %v", b, rerr)
+	}
+}
+
 // TestTheVertexRefusalNamesObserveOnly (AB1b, F11): the mode off is gone from
 // the vocabulary (D3009), so the remedy a Vertex run is given names the one
 // mode such a run can hold. The text is pinned here as well as in the CLI,

@@ -616,26 +616,37 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 			deny = nil
 		}
 	}
+	if r.d.Local && !posture {
+		// The managed settings directory is the image's, and a local
+		// invocation is not refused over one it has no image for (D149). What
+		// it does not do is take a file already at the path: that file is not
+		// this run's — an organisation's own policy, say — and the managed
+		// level outranks the stage's environment, so a stage left reading it
+		// would call wherever it says, with this run's ledger reading nothing,
+		// while replacing it would take the machine's own settings away (the
+		// run removes the file it wrote at its end). A file this run wrote
+		// itself, in an earlier stage, is written again as before.
+		r.mu.Lock()
+		wrote := r.wroteManaged
+		r.mu.Unlock()
+		if !wrote {
+			if _, lerr := os.Lstat(r.managedPath()); !os.IsNotExist(lerr) {
+				return fmt.Errorf("writing Claude Code's managed settings: %s is already there and this run did not write it; Claude Code reads it in place of the environment this run hands the stage, so the stage's calls would not reach the gateway", r.managedPath())
+			}
+		}
+	}
 	if err := write(r.managedPath(), vars, deny); err != nil {
 		if r.d.Local && !posture {
-			// The managed settings directory is the image's, and a local
-			// invocation is not refused over one it has no image for. The one
-			// write tolerated is this one: the gateway's variables and the
-			// pins, which the stage's environment carries too (stageAgentEnv,
-			// stagePins) and which checkSettingsRouting has already kept the
-			// machine's own settings from routing the agent around. The file
-			// is still written wherever the developer's machine holds the
-			// directory, so the fence is kept where it exists. Said once per
-			// run: every stage writes the file.
+			// The one failure tolerated is a write with nothing at the path to
+			// replace: no directory at all, or one the developer may not write.
+			// The file is still written wherever the developer's machine holds
+			// the directory, so the fence is kept where it exists. Said once
+			// per run: every stage writes the file.
 			//
-			// Only where there was nothing to replace, though: a managed
-			// settings file already at the path is not this run's — an
-			// organisation's own policy, say — and the managed level outranks
-			// the stage's environment, so an ANTHROPIC_BASE_URL or
-			// apiKeyHelper in it would take the stage's calls off the gateway
-			// with this run's ledger reading nothing. Nothing the run hands
-			// the stage can outrank it, so the run stops rather than warn
-			// about a route it does not hold.
+			// A file the write found there anyway — this run's own, from an
+			// earlier stage, or one that appeared since the check above — is
+			// what the stage would read instead, for the reasons above, so the
+			// run stops rather than warn about a route it does not hold.
 			if _, lerr := os.Lstat(r.managedPath()); !os.IsNotExist(lerr) {
 				return fmt.Errorf("writing Claude Code's managed settings: %w", err)
 			}
