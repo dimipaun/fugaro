@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -427,6 +428,57 @@ func TestTheCopyLeavesAnEntryItDidNotWrite(t *testing.T) {
 	}
 	if got := h.entry(t); got.Value() != byHand {
 		t.Errorf("the entry no longer holds the value its own writer put there (%d bytes, want %d)", len(got.Value()), len(byHand))
+	}
+}
+
+// TestACodingAgentsSessionCopiesNothing: KS2's question 1 stands ahead of every
+// read this stage makes, in each marker a session is read from (F36, D3006,
+// providerKeyOwnerOnly) — so a session looks at no container at all — and the
+// write refuses as well, so a caller that reached Apply anyway is refused
+// rather than served. Both halves are the same fence, and the second is the one
+// the stage loop no longer walks: it checks and plans a stage before it applies
+// one, and the check is what answers a session from now on.
+func TestACodingAgentsSessionCopiesNothing(t *testing.T) {
+	for _, marker := range agentMarkers {
+		t.Run(marker, func(t *testing.T) {
+			value := credsValue(t, "session")
+			h := newCopyRig(t, copyBundleSeed(t), value)
+			// The IDE extension's marker alone is a session only with no real
+			// terminal, and a test binary's stdin is not what that question is
+			// asked about here: every marker of the list is driven as the
+			// session it is (agentMarkers, agentenv.Session).
+			noTerminal(t)
+			t.Setenv(marker, "1")
+
+			status, err := h.check(t)
+			if err != nil {
+				t.Fatalf("a coding agent's session got a failure rather than a skip: %v", err)
+			}
+			if status.State != initflow.Skipped {
+				t.Errorf("the copy answers %v in a coding agent's session, want a skip", status.State)
+			}
+			if !status.Undone {
+				t.Errorf("the copy reports itself settled in a session: the owner's own update at their own terminal is what owes the work (%+v)", status)
+			}
+			for _, want := range []string{"their own terminal", "run fugaro update yourself"} {
+				if !strings.Contains(status.Detail, want) {
+					t.Errorf("the skip does not say %q, which is the whole of what a session is told: %s", want, status.Detail)
+				}
+			}
+			if got := h.sm.Accessed(); len(got) != 0 {
+				t.Errorf("the copy read %v in a coding agent's session: KS2's question 1 stands ahead of every read this stage makes, whatever the marker", got)
+			}
+
+			oc, out, err := h.apply(t)
+			var agent *initflow.AgentError
+			if !errors.As(err, &agent) || agent.Marker != marker {
+				t.Fatalf("the copy's apply in a session answered %v (%+v), want the session's own refusal naming %s", err, oc, marker)
+			}
+			assertNoValue(t, out, value)
+			if n := h.adds(); n != 0 {
+				t.Errorf("a coding agent's session added %d version(s) of the bundle, want none", n)
+			}
+		})
 	}
 }
 

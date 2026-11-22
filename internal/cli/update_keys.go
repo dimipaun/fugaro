@@ -170,10 +170,21 @@ func copyServiceTooOldReason() string {
 	return fmt.Sprintf("this installation's credentials service is older than the entries the copy writes, so nothing was copied: the next %s moves that service onto this release and settles it", selfCommand()+" update")
 }
 
+// copySessionReason is KS2's question 1 said the way a stage says one (F36,
+// D3006): nothing a coding agent's session, this run's own process or a
+// GODEBUG http2debug leak carries reaches this bundle, and the line names the
+// person's own command because that is the whole of what the reader does about
+// it. Which of the three it was is the probe's business and not the reader's:
+// all three mean this write is not made from here.
+func copySessionReason() string {
+	return fmt.Sprintf("nothing was copied: the copy into the credentials service's bundle is a person's own write at their own terminal, never a coding agent's session's, a run's or a GODEBUG http2debug leak's: run %s yourself", selfCommand()+" update")
+}
+
 // copySkip is a state the copy does not act on, with the sentence that names
-// why. undone marks the skips that leave work owed — a bundle this run could
-// not read, a person who is not a project owner, a service too old to read the
-// document — as against the two that mean there is nothing to do at all.
+// why. undone marks the skips that leave work owed — a coding agent's session,
+// a bundle this run could not read, a person who is not a project owner, a
+// service too old to read the document — as against the two that mean there is
+// nothing to do at all.
 type copySkip struct {
 	reason string
 	undone bool
@@ -270,14 +281,22 @@ func (p *copyPlan) release() {
 //
 // The order is the one every writer of this document keeps
 // (providerKeyBundleStore), and each step is where it is for its own reason:
-// the config's two answers first, because an installation with no service and
-// one with nothing outside the bundle make no cloud call at all; the container
-// before the probe, so a container nobody has created yet is answered as the
-// missing container it is rather than as a refusal of the person; the person
-// before any value is read (D3006); the guard before the document is built; and
-// the values last.
+// KS2's question 1 first of all, because the probe stands ahead of every read
+// this stage makes (owner_probe.go); the config's two answers next, because an
+// installation with no service and one with nothing outside the bundle make no
+// cloud call at all; the container before the probe, so a container nobody has
+// created yet is answered as the missing container it is rather than as a
+// refusal of the person; the person before any value is read (D3006); the guard
+// before the document is built; and the values last.
 func copyPlanRead(ctx context.Context, e *initEngine) (*copyPlan, error) {
 	lc := e.lc
+	// KS2's question 1 is asked here and not only in Apply, because the stage
+	// loop checks and plans every stage inside the session this refuses
+	// (initflow/loop.go): a read that ran first would have looked at every
+	// model credential the installation holds before anyone said no.
+	if err := providerKeyOwnerOnly(os.Getenv, "copied"); err != nil {
+		return nil, &copySkip{reason: copySessionReason(), undone: true}
+	}
 	if lc.CredentialsService == nil {
 		return nil, &copySkip{reason: copyNoServiceReason}
 	}
@@ -805,7 +824,9 @@ func (s *copyStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan, 
 // Apply is the write. The session that may not write to the cloud refuses
 // first, exactly as the route and layer stages do: the bundle holds every model
 // credential the service issues, and no flag a coding agent's session carries
-// reaches it.
+// reaches it. The read below answers the same session with a skip, so this
+// refusal is the fence for a caller that reached the write anyway rather than
+// the only one — the two are one answer (providerKeyOwnerOnly) said twice.
 func (s *copyStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	if marker := agentMarker(os.Getenv, s.e.r.stdinTerminal()); marker != "" {
 		return initflow.Outcome{}, &initflow.AgentError{Marker: marker}
