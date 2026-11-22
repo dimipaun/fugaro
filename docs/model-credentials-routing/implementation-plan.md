@@ -10,7 +10,7 @@ The answers that shaped it, all the owner's of 2026-11-21: the table supersedes 
 and the earlier plan's not-started tasks are re-cut here (D3170); one chain per model (D3171);
 the most specific pattern wins (D3172); the table replaces `routing.claude.via` (D3173); Vertex
 is a source the credentials service itself calls, capped as far as a key is (D3174, **amended
-after review, twice**); the service rewrites the model's spelling on a move (D3175); `--token` becomes a narrow `--pool` (D3176, amended by the owner the same day); `subscription_spread` is retired (D3177); the threshold rule waits on Check 870
+after review, twice**); the service rewrites the model's spelling on a move (D3175); `--token` becomes a narrow `--pool` (D3176, amended by the owner the same day); `subscription_spread` is retired (D3177); the threshold rule waits on Check 880
 (D3178); personal pools live in the project's per-user containers (D3179, **amended after review**); a launcher with no pool is served
 by the next source (D3180); a service account's pool is a project pool an admin fills (D3181);
 per-repository admission stays, for every source kind (D3182); existing accounts become the
@@ -42,6 +42,9 @@ touched paths load (`.claude/rules/credentials-service.md`, `terraform.md`, `con
   every task that changes a policy, rules or record shape ships its migration inside `update`
   with a test that the previous version converges. A task's pull request names the task id and
   the `D#` it implements and does not touch `docs/status.md`.
+- **One at a time.** `website/content/cli-reference.md` is generated and pinned byte for byte:
+  a task that adds a command or a flag, or edits a help string, regenerates it, and is not live
+  beside another such task (the plan orders the ones it knows; F50).
 - **Ask first.** A new dependency or framework; any confirmation step (the no-prompt policy
   forbids one, `docs/no-prompt-policy/`); a change to a contract's file (raise a contract change,
   below); anything a finding of this plan does not cover.
@@ -59,29 +62,31 @@ by the task named.
 | Constraint | Pinned by |
 | --- | --- |
 | The launcher is the verified principal on the run's slip; a forged requester gets nothing (R7) | PL4 (`TestAForgedRequesterGetsNothing`), CS14 (`TestANamedPoolIsGrantedOnlyToItsOwner`) |
-| Only the credentials service writes a pause, its resume time and its launcher; a run's token cannot; a `/pause` nobody answered is refused | PR3 (`TestARunTokenCannotWriteThePausedNode`, `TestThePausedLauncherIsTheServicesRecord`, `TestAPauseNobodyAnsweredIsRefused`) |
+| Only the credentials service writes a pause, its resume time and its launcher; a `/pause` nobody answered is refused | PR3 (`TestThePausedLauncherIsTheServicesRecord`, `TestAPauseNobodyAnsweredIsRefused`) |
 | Only the orchestrator's class may resume, for the same repository and chain, once, and not before its time | PR3 (`TestOnlyTheOrchestratorMayResume`, `TestAResumeIsSingleUse`, `TestNoResumeBeforeItsTime`), PR4 |
 | Only its launcher or a project admin cancels a pause | PR10 |
-| A designation is the caller's own, of a pool they own, enforced at the store and the rules | PL4 (`TestDesignationOfAnothersPoolIsRefused`) |
+| A designation and a personal pool's membership are written only through the service's route, keyed on the verified subject (R26) | PL4 (`TestDesignationRouteRefusesAnothersPool`), PL9 |
 | The model a call is routed by is the one in its body; a source the grant does not cover is never served | CS1 |
 | A personal pool serves only its owner's runs, including after a pause and a reissue | PL4, PL6, PR3, I2 |
-| `--pool` picks only among the launcher's own pools and never changes a chain | PL4 (`TestANamedPoolMustBeTheLaunchers`), CS10 |
+| `--pool` picks only among pools the launcher owns or is allowed on, and never changes a chain | PL4 (`TestANamedPoolMustBeTheLaunchers`), CS14, CS12 |
 | A service account's run never draws on a person's pool (D2976) | PL6 |
 | The agent never sees a credential, a source or a switch | CS2, CS7, I1 |
-| The in-job gateway holds no key and no table; a job's account cannot reach Vertex on an `enforce` project in release 1, or anywhere after release 2 | CS2, CS11 (`TestNoJobVertexGrantUnderEnforce`), X8, Check 872 |
+| The in-job gateway holds no key and no table; a job's account cannot reach Vertex on an `enforce` project in release 1, or anywhere after release 2 | CS2, CS11 (`TestNoJobVertexGrantUnderEnforce`), X8, Check 882 |
 | No money is spent that no chain names: a model with no entry is refused, Vertex only where named | RT3, CS10, I1 |
 | A paid fallback the gateway sees is held to the caps, Vertex included, and priced by the model that served; a hand-built call straight to the service is the accepted residual risk (R23) | CS4, CS8 (`TestTheLedgerPricesTheModelThatServed`), I1, DOC1 |
-| Nothing moves on upgrade but what `update` names first: a pool that starts rotating (D3177) and a project that now pays at once (D3192) | MG1 (`TestMigrateMovesNoRepository`), PL3, MG2, Check 874 |
-| A release-behind reader still decodes the published policy, a release-behind gateway meets today's answer, and the rules still converge | RT4, PR9, CS1 (`TestAReleaseBehindGatewayMeetsTheOldAnswer`), MG3, CS9, PL4, PR1, PR3, PL10 |
+| Nothing moves on upgrade but what `update` names first: a pool that starts rotating (D3177) and a project that now pays at once (D3192) | MG1 (`TestMigrateMovesNoRepository`), PL3, MG2, Check 884 |
+| A release-behind reader still decodes the published policy, a release-behind gateway meets today's answer, and the rules still converge | RT4, PR9, X3, CS1 (`TestAReleaseBehindGatewayMeetsTheOldAnswer`), MG3, CS9, PR1 |
 | A chain's total paused time is bounded and no pause is shorter than the minimum (D3190) | PR3 (`TestTotalPausedTimeIsBounded`, `TestAPauseIsNeverShorterThanTheMinimum`) |
 | The agent never sees another model's spelling, and an untranslatable Gemini member is refused, never dropped | CS3, GV1, GV2 |
 | Every refusal writes one audit line and no value | CS1, CS3, CS4, CS14, PL4, PL5, PL9, PR3, PR10, GV1 |
 | A run in flight across the update keeps working, on either release | MG3, PR6 |
-| A paused run is resumed at most once, and never after its launcher cancelled it | PR3, PR4, PR7 |
+| A paused run is resumed at most once, never after its launcher cancelled it, and never while its run has not ended `paused` | PR3 (`TestNoResumeOfACancelledPause`), PR4 (`TestARunThatDidNotEndPausedIsNotResumed`), PR10 |
+| A paused chain is in flight to every guard | PR12 |
+| A run with no slip is served no launcher's pool | CS1, PL4 (`TestARunWithNoSlipHasNoLaunchersPool`) |
 | A pause the current image cannot read ends with a named outcome | PR5 |
 | No proxy call is held open; no command blocks on a paused run | PR2, PR7 |
 | A limit found inside a streamed answer is not retried; the next call moves on (U7) | CS1 |
-| An older console and an older CLI still parse what a newer run writes, or the format's version is bumped | CS9, PR7 (`TestAnOlderReaderMeetsPaused`), VS3 |
+| An older console and an older CLI still parse what a newer run writes, or the owner decides a version bump (O8) | CS9, VS3 |
 | No command asks a question | RT5, PL2, PL5, PL9, CS12, MG2, MG4, PR10 |
 
 ## What becomes of the earlier plan (D3170)
@@ -105,7 +110,7 @@ draft pull request #3460 is closed unmerged.
 | CM10 | not started | CS8 |
 | CM12 | not started | CS9 |
 | CM13 | not started | CS11 |
-| CM14, CM15 | not started | CS10, CS12, CS14, RT7 |
+| CM14, CM15 | not started | CS10, CS12, CS14, CS15, RT7 |
 | CM16 | not started | RT3 |
 | CM17, CM18 | not started | RT6, RT7 |
 | CM20 | not started | MG5 |
@@ -115,7 +120,7 @@ draft pull request #3460 is closed unmerged.
 | I1 | not started | I1 |
 | CM24 to CM27 | not started | DOC1 to DOC4 |
 | CM28, CM29, CM30, CM33 | not started | X1, X2, X3, X5; X6 to X8 are new |
-| Checks 810 and 811 | scripts merged, not run | Replaced by Checks 874 and 875; DOC2 marks them so in the live checklist |
+| Checks 810 and 811 | scripts merged, not run | Replaced by Checks 884 and 885; DOC2 marks them so in the live checklist |
 
 The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 
@@ -124,7 +129,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### A1: credentials-belong-to-models says what this plan replaces
 
 - Module: `migration`.
-- Acceptance: That plan's README, reconciliation and plan say, task by task, what D3170 withdraws and which task here carries it (the table in this plan's "What becomes of the earlier plan"), that D3060, D3064, D3068 and D3069 are amended or reversed by D3170, D3171, D3176 and D3183, and that contract C1 as drafted in #3460 is withdrawn; its graph marks the withdrawn nodes; the keys plan's README says KS13 now waits on this plan's I1; the Docs tests pass.
+- Acceptance: That plan's README, reconciliation and plan say, task by task, what D3170 withdraws and which task here carries it (the table in this plan's "What becomes of the earlier plan"), that D3060, D3064, D3066, D3068 and D3069 are amended or reversed by D3170, D3183, D3174, D3171 and D3176, and that contract C1 as drafted in #3460 is withdrawn; its graph marks the withdrawn nodes; the keys plan's README says KS13 now waits on this plan's I1; the Docs tests pass.
 - Files: `docs/credentials-belong-to-models/README.md`, `docs/credentials-belong-to-models/reconciliation.md`, `docs/credentials-belong-to-models/implementation-plan.md`, `docs/credentials-belong-to-models/implementation-plan.graph.json`, `docs/keys-through-service/README.md`.
 - Interfaces: Consumes this plan's reconciliation. Produces nothing a task calls.
 - Tests: The Docs tests that pin that folder; `fugaro plan graph --plan docs/credentials-belong-to-models/implementation-plan.md` reads the graph.
@@ -137,7 +142,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### A2: the per-user token documents say what now serves them
 
 - Module: `pools`.
-- Acceptance: The dynamic-delivery reconciliation of secrets-brokering says its R7 and R11 stand (a per-user token is owner-only and never lent), that a per-user token now serves a model call through its owner's personal pool (this plan's PL4, where workspace-credentials F4 recorded that nothing did), and that contributing to a shared pool is the holder's own act (R9). Workspace-credentials' README and reconciliation say that plan is unchanged: a person's token at the workspace still follows the route (D3141), a project with a routing table serves from its own service, and D2976 is amended by one case in a project (D3191: a run that resumes a person's paused run draws on that person's pool). The Docs tests pass.
+- Acceptance: The dynamic-delivery reconciliation of secrets-brokering says its R7 and R11 stand (a per-user token is owner-only and never lent), that a per-user token now serves a model call through its owner's personal pool (this plan's PL4, where workspace-credentials F4 recorded that nothing did), and that contributing to a shared pool is the holder's own act (R9), which needs the intake to take a member's write under a shared container and so waits on the owner's answer to O13 (it reverses D1935 by one case). Workspace-credentials' README and reconciliation say that plan is unchanged: a person's token at the workspace still follows the route (D3141), a project with a routing table serves from its own service, and D2976 is amended by one case in a project (D3191: a run that resumes a person's paused run draws on that person's pool). The Docs tests pass.
 - Files: `docs/secrets-brokering/dynamic-delivery/reconciliation.md`, `docs/workspace-credentials/README.md`, `docs/workspace-credentials/reconciliation.md`.
 - Interfaces: Consumes this plan's reconciliation. Produces nothing a task calls.
 - Tests: The Docs tests that pin that folder.
@@ -150,8 +155,8 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### A3: the credentials-service, model-crafts and mixed-credentials documents are amended
 
 - Module: `chain-serving`.
-- Acceptance: D138 (replaced beyond the floor by D3184), C3.1 (un-deferred as this plan's pause-resume), D152 and D153 (re-keyed by R4 and R17), D154 (amended by R16), D1622 and D1636 (reversed by D3177) and D1637 (amended by D3175) each carry a dated amendment that names this plan, and `docs/mixed-credentials/spec.md` says D1a governs a provider's `models` and not the routing table; launcher-does-not-mint's reconciliation carries D3136 amended by D3189 (the issuer also serves the orchestrator a resume of a pause the credentials service recorded) and D3066 of credentials-belong-to-models is noted there as amended by D3174; the Docs tests pass.
-- Files: `docs/credentials-service/reconciliation.md`, `docs/credentials-service/implementation-plan.md`, `docs/model-crafts/reconciliation.md`, `docs/mixed-credentials/spec.md`, `docs/launcher-does-not-mint/reconciliation.md`.
+- Acceptance: D138 (replaced beyond the floor by D3184), C3.1 (un-deferred as this plan's pause-resume), D152 and D153 (re-keyed by R4 and R17), D154 (amended by R16), D1622 and D1636 (reversed by D3177) and D1637 (amended by D3175) each carry a dated amendment that names this plan, and the mixed-credentials plan, where D1a is written, says it governs a provider's `models` and not the routing table; launcher-does-not-mint's reconciliation carries D3136 amended by D3189 (the issuer also serves the orchestrator a resume of a pause the credentials service recorded) and D3066 of credentials-belong-to-models is noted there as amended by D3174; always-a-budget's README notes that its Vertex refusal under `enforce` is lifted for a chain the service serves (D3174); the Docs tests pass.
+- Files: `docs/credentials-service/reconciliation.md`, `docs/credentials-service/implementation-plan.md`, `docs/model-crafts/reconciliation.md`, `docs/mixed-credentials/implementation-plan.md`, `docs/launcher-does-not-mint/reconciliation.md`, `docs/always-a-budget/README.md`.
 - Interfaces: Consumes this plan's reconciliation. Produces nothing a task calls.
 - Tests: The Docs tests that pin those folders.
 - Command: `go test ./internal/cli/ -run 'Docs' -count=1`
@@ -178,7 +183,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### C2: the pools contract
 
 - Module: `pools`.
-- Acceptance: `internal/routing/pools.go` holds a pool's new members as types (`Rule` with `ordered`, `round-robin`, `failover`; `Principal` with a kind (person, service account, project) and an id, a person's being the Google subject; the optional `Threshold`), the designation record (principal, project, pool), the interface `LauncherPool(ctx, principal, named) (PoolRef, bool, error)` the service calls, where `named` is the pool a run asked for with `--pool` or empty (D3176), and the signature `creds.PickInPool`; `internal/creds/slip_chain.go` holds the grant's new members under new names (the sources the grant covers and the named pool; `Slip.Pool` keeps its meaning and is not reused); `contract-pools.md` says that a personal pool's tokens live in the project's per-user containers (D3179 as amended), that the principal is the verified one on the run's slip (R7), that an installation is migrated exactly when its published policy carries `model_routing` (the marker PL3 reads), that `owner` keeps its meaning and the principal is a new member, and the JSON of `fugaro accounts pool ls --json` with state, next reset, usage and headroom and never a value; the stubs answer "no pool designated" and the first member.
+- Acceptance: `internal/routing/pools.go` holds a pool's new members as types (`Rule` with `ordered`, `round-robin`, `failover`; `Principal` with a kind (person, service account, project) and an id, a person's being the Google subject; the optional `Threshold`), the designation record (principal, project, pool), the interface `LauncherPool(ctx, principal, named) (PoolRef, bool, error)` the service calls, where `named` is the pool a run asked for with `--pool` or empty (D3176), and the signature `creds.PickInPool`; `internal/creds/slip_chain.go` holds the grant's new members under new names (the sources the grant covers and the named pool; `Slip.Pool` keeps its meaning and is not reused); `contract-pools.md` says that a personal pool's tokens live in the project's per-user containers (D3179 as amended), that the principal is the verified one on the run's slip (R7), that an installation is migrated exactly when its published policy carries `model_routing` (the marker PL3 reads), that `owner` keeps its meaning and the principal is a new member, and the JSON of `fugaro accounts pool ls --json` with state, next reset, usage and headroom and never a value (every launcher of the project can read these figures and the designations in the database, so they are display data and never an authorization input); the stubs answer "no pool designated" and the first member.
 - Files: `internal/routing/pools.go` (new), `internal/routing/pools_test.go` (new), `internal/creds/slip_chain.go` (new), `internal/credsvc/launcherpool_stub.go` (new, stub), `internal/creds/poolrule_stub.go` (new, stub), `docs/model-credentials-routing/contract-pools.md` (new).
 - Interfaces: Consumes nothing. Produces the pool types, the designation record and the lookup interface for `pools`, CS1, MG1 and VS2.
 - Tests: `TestPoolShapesAreStable`.
@@ -191,7 +196,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### C3: the pause contract
 
 - Module: `pause-resume`.
-- Acceptance: `internal/runstore/pause.go` holds: the record a pausing job writes for the run that resumes it and for nobody else (`pause.json`: the stage, the session's name, the checkpoint commit, a format version); the node only the credentials service writes (`paused/<slug>/<run>`: the launcher, the pool the launch named, the resume time, the chain id, the chain's paused seconds so far, a cancelled mark); the members `fugaro watch --json` and `runs ls --json` gain for a paused run (the resume time and the run that resumed it); the constant for the status word `paused`; the task's new member `resumes`; the members of the service's exhausted answer (`action`: `wait`, `pause` or `halt`, and `resume_at`) and the request a run makes once it has saved (`/pause`); `contract-pause.md` says who writes each, that the resume time and the launcher are the service's own and never the job's (R8, D3189), who may ask for a slip that names `resumes` (the orchestrator's class only, same repository and chain, once, not before the resume time), who may cancel a pause (its launcher or a project admin), that `/pause` is honoured only for a run the service last answered `pause` and once per answer, and what a reader of another format version does (ends with a named outcome, R18); the stubs do nothing.
+- Acceptance: `internal/runstore/pause.go` holds: the record a pausing job writes for the run that resumes it and for nobody else (`pause.json`: the stage, the session's name, the checkpoint commit, a format version); the node only the credentials service writes (`paused/<slug>/<run>`: the launcher, the pool the launch named, the resume time, the chain id, the chain's paused seconds so far, a cancelled mark); the members `fugaro watch --json` and `runs ls --json` gain for a paused run (the resume time and the run that resumed it); the constant for the status word `paused`; the task's new member `resumes`; the members the service's exhausted answer gains on the wire (`action`: `wait`, `pause` or `halt`, and `resume_at`), sent only to a caller that sent the stage header (R24), and the request a run makes once it has saved (`/pause`); `contract-pause.md` says who writes each, that the resume time and the launcher are the service's own and never the job's (R8, D3189), who may ask for a slip that names `resumes` (the orchestrator's class only, same repository and chain, once, not before the resume time), who may cancel a pause (its launcher; an admin's cancel waits on O16), that `/pause` is honoured only for a run the service last answered `pause` and once per answer, and what a reader of another format version does (ends with a named outcome, R18); the stubs do nothing.
 - Files: `internal/runstore/pause.go` (new), `internal/runstore/pause_test.go` (new), `internal/runner/suspend_stub.go` (new, stub), `internal/orchestrator/resume_stub.go` (new, stub), `docs/model-credentials-routing/contract-pause.md` (new).
 - Interfaces: Consumes nothing. Produces the paused record, the node, the status constant and the `resumes` member for `pause-resume`, VS3 and VS4.
 - Tests: `TestPauseShapesAreStable`.
@@ -232,7 +237,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### RT3: the table's checks
 
 - Module: `routing-table`.
-- Acceptance: One function reports every problem of a table against the project's credentials, pools, providers and crafts: a model a run can call that no entry matches, counting every model the rungs can choose (`craft.ModelRungs`: the task's grade, a level's model, a craft's model, a pinned role of `agent.models`, `agent.model`) and a `--model` override (R1, R22); a chain whose only source is the launcher's pool (D3180); a source that does not reach the model (`craft.ByReach`); a source with no mapped spelling for the model (D3175); a Claude model through a provider before Check 50 is recorded as passed (R3); a paid source after a pool without `enforce` and a per-run cap (R17); a pool or provider that is not declared. A subscription token in no pool is reported as a warning in release 1 and is refused in release 2 (X2). Each problem names the fix.
+- Acceptance: One function reports every problem of a table against the project's credentials, pools, providers and crafts: a model a run can call that no entry matches, counting every model the rungs can choose (`craft.ModelRungs`: the task's grade, a level's model, a craft's model, a pinned role of `agent.models`, `agent.model`) and a `--model` override (R1, R22); a chain whose only source is the launcher's pool (D3180); a source that does not reach the model (`craft.ByReach`); a source with no mapped spelling for the model (D3175); a Claude model through a provider before Check 50 is recorded as passed (R3); a paid source after a pool without `enforce` and a per-run cap (R17); a pool or provider that is not declared. A subscription token in no pool is reported as a warning in release 1 and is refused in release 2 (X2). A non-Claude model routed to Vertex is refused by a rule of its own, which GV4 lifts for a mapped and priced Gemini model once the translation exists. Each problem names the fix.
 - Files: `internal/routing/checks.go` (new), `internal/routing/checks_test.go` (new).
 - Interfaces: Consumes RT1's `Resolve` and RT2's block. Produces `routing.Problems`, which RT5, RT6, RT7 and MG2 call.
 - Tests: `TestProblems` (one sub-test per rule above).
@@ -290,7 +295,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Tests: `TestDoctorRouting` (one sub-test per report).
 - Command: `go test ./internal/cli/ -run 'TestDoctorRouting' -count=1`
 - Red step: `TestDoctorRouting/table_problem` fails before the file exists.
-- Depends on: RT6 (kept: it calls the helpers RT6 adds to `validate.go`).
+- Depends on: RT6 (kept: it calls the helpers RT6 adds to `validate.go`); C2 (the contract's designation record).
 - Gate: **Not launched before always-a-budget's AB15 has merged (both edit `doctor_brokering.go`).**
 - Commit: `model-credentials-routing RT7: doctor reads the table`
 - Reviewer tier: standard.
@@ -301,7 +306,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 
 - Module: `pools`.
 - Acceptance: `config.Pool` gains three new members and changes none: `rule` (with `ordered`; `strategy` is still read and means the same, and `internal/policy/craft.go` ranks `ordered`), `principal` (a kind and an id; `owner` stays an email and keeps its meaning), and an optional `threshold` between 0 and 1 that validation refuses unless the rule set allows it (PL8). A subscription token in no pool is reported and not refused in release 1, since `update` has not wrapped it yet (D3176; X2 refuses it). `subscription_spread` is still decoded. The settings registry gains the rows its coverage test asks for.
-- Files: `internal/config/craft.go`, `internal/config/pool_rules.go` (new), `internal/config/pool_rules_test.go` (new), `internal/localcfg/localcfg.go`, `internal/policy/craft.go`, `internal/settings/registry.go`.
+- Files: `internal/config/craft.go`, `internal/config/pool_rules.go` (new), `internal/config/pool_rules_test.go` (new), `internal/localcfg/localcfg.go`, `internal/policy/craft.go`, `internal/settings/registry.go`, `schemas/settings.schema.json`.
 - Interfaces: Consumes C2's types. Produces the fields PL2, PL3, MG2 and MG5 read.
 - Tests: `TestPoolRuleOrdered`, `TestPoolPrincipalKinds`, `TestOwnerKeepsItsMeaning`, `TestRegistryCoversEveryConfigField`.
 - Command: `go test ./internal/config/ -run 'TestPoolRuleOrdered|TestPoolPrincipalKinds|TestOwnerKeepsItsMeaning' -count=1` and `go test ./internal/settings/ -run 'TestRegistryCoversEveryConfigField' -count=1`
@@ -339,26 +344,27 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### PL4: the launcher's pool: a person's own tokens
 
 - Module: `pools`.
-- Acceptance: The service resolves "the launcher's pool" for a run from the verified owner of its slip and that person's designation for the project, keyed by Google subject, and serves the pool's members from that person's per-user containers in the project, only to runs that person launched (and to a run that resumes one, PR3); a run launched with `--pool` resolves to the named pool only where its launcher owns it or is allowed on it, and to nothing otherwise (D3176); no designation, or an empty pool, answers "none" and never an error. The designation store refuses a designation of a pool the caller does not own and one written for another principal, at the store and in the database rules, not in the CLI. Mutation tests: a forged `requested_by` changes nothing, and naming another person's pool gets nothing. Every new refusal writes exactly one audit line and no value. The rules change ships with a test that an installation at the previous rules version converges.
-- Files: `internal/credsvc/launcherpool.go` (new), `internal/credsvc/launcherpool_test.go` (new), `internal/creds/designation.go` (new), `internal/creds/designation_test.go` (new), `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/marker.go`, `internal/budget/rules/testdata/rules.golden.json`.
+- Acceptance: The service resolves "the launcher's pool" for a run from the verified owner of its slip and that person's designation for the project, keyed by Google subject, and serves the pool's members from that person's per-user containers in the project, only to runs that person launched (and to a run that resumes one, PR3); a run with no slip resolves to "none"; a run launched with `--pool` resolves to the named pool only where its launcher owns it or is allowed on it, and to nothing otherwise (D3176); no designation, or an empty pool, answers "none" and never an error. A designation is written only through a route of the service keyed on the caller's verified subject, which refuses a pool the caller does not own and a designation for another principal; the database rules cannot hold this (people reach the database by IAM), so the route is the only writer and the store is otherwise closed. Mutation tests: a forged `requested_by` changes nothing, and naming another person's pool gets nothing. Every new refusal writes exactly one audit line and no value.
+- Files: `internal/credsvc/launcherpool.go` (new), `internal/credsvc/launcherpool_test.go` (new), `internal/creds/designation.go` (new), `internal/creds/designation_test.go` (new), `internal/credsvc/designation_route.go` (new), `internal/credsvc/server.go`.
 - Interfaces: Consumes C2's interface and record and the per-user grant that exists (`checkGrantedNames` in `internal/credsvc/slip.go`). Produces the real `LauncherPool` behind the stub.
-- Tests: `TestLauncherPoolIsTheSlipOwners`, `TestNoDesignationIsNone`, `TestAForgedRequesterGetsNothing`, `TestANamedPoolMustBeTheLaunchers`, `TestDesignationOfAnothersPoolIsRefused`, `TestRulesConvergeWithDesignations`.
-- Command: `go test ./internal/credsvc/ -run 'TestLauncherPool|TestNoDesignationIsNone|TestAForgedRequesterGetsNothing|TestANamedPoolMustBeTheLaunchers' -count=1` and `go test ./internal/creds/ -run 'TestDesignationOfAnothersPoolIsRefused|TestRulesConvergeWithDesignations' -count=1`
+- Tests: `TestLauncherPoolIsTheSlipOwners`, `TestNoDesignationIsNone`, `TestARunWithNoSlipHasNoLaunchersPool`, `TestAForgedRequesterGetsNothing`, `TestANamedPoolMustBeTheLaunchers`, `TestDesignationRouteRefusesAnothersPool`.
+- Command: `go test ./internal/credsvc/ -run 'TestLauncherPool|TestNoDesignationIsNone|TestARunWithNoSlipHasNoLaunchersPool|TestAForgedRequesterGetsNothing|TestANamedPoolMustBeTheLaunchers|TestDesignationRouteRefusesAnothersPool' -count=1`
 - Red step: `TestLauncherPoolIsTheSlipOwners` fails against the stub, which always answers "none".
-- Depends on: C2 (the contract's interface and record); CS9 (kept: one file, `rules.json.tmpl`).
+- Depends on: C2 (the contract's interface and record); CS1 (kept: one file, `server.go`).
 - Commit: `model-credentials-routing PL4: the launcher's pool: a person's own tokens`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### PL5: designate a pool, and contribute a token to the shared pool
 
 - Module: `pools`.
-- Acceptance: `fugaro accounts pool designate <pool>` records the caller's own designation for the project, from their own session only; `fugaro accounts pool contribute --to <shared pool>` takes the caller's own token through the intake that already receives secret values, into a member of the project pool marked as that person's contribution, where the pool allows contributions; the contributor withdraws their own member (`accounts pool withdraw`) and an admin removes any (`accounts pool rm-member`); nobody adds a token in another person's name (R9); none asks a question, and a value only a person can type fails at once with no terminal. Every new refusal writes exactly one audit line and no value.
+- Acceptance: `fugaro accounts pool designate <pool>` asks the service's designation route (PL4) to record the caller's own designation for the project, from their own session only; `fugaro accounts pool contribute --to <shared pool>` takes the caller's own token through the intake that already receives secret values, into a member of the project pool marked as that person's contribution, where the pool allows contributions; the contributor withdraws their own member (`accounts pool withdraw`) and an admin removes any (`accounts pool rm-member`); nobody adds a token in another person's name (R9); none asks a question, and a value only a person can type fails at once with no terminal. Every new refusal writes exactly one audit line and no value.
 - Files: `internal/cli/accounts_pool.go`, `internal/cli/accounts_pool_designate.go` (new), `internal/cli/accounts_pool_designate_test.go` (new), `internal/intake/handlers.go`, `internal/cli/secrets_intake.go`, `plugin/skills/setup/reference/decisions.md`, `website/content/cli-reference.md`.
 - Interfaces: Consumes PL4's designation store and PL2's commands. Produces nothing a task calls.
 - Tests: `TestDesignateIsTheCallersOwn`, `TestContributeIsTheHoldersOwn`, `TestAContributorWithdrawsOnlyTheirOwn`.
 - Command: `go test ./internal/cli/ -run 'TestDesignateIsTheCallersOwn|TestContributeIsTheHoldersOwn' -count=1` and `go test ./internal/intake/ -run 'TestAContributorWithdrawsOnlyTheirOwn' -count=1`
 - Red step: `TestDesignateIsTheCallersOwn` fails: the command does not exist.
-- Depends on: PL2 (kept: one file, `accounts_pool.go`); PL4 (kept, behaviour: it writes through the store PL4 builds, whose rules decide who may write); CS12 (kept: one file, the generated `cli-reference.md`).
+- Depends on: PL2 (kept: one file, `accounts_pool.go`); PL4 (kept, behaviour: it writes through the store PL4 builds, whose rules decide who may write); CS15 (kept: one file, the generated `cli-reference.md`).
+- Gate: **The `contribute` and `withdraw` half is not launched before the owner answers O13: the intake refuses a member's write under a shared container today (D1935), and this reverses that by one case. `designate` does not wait.**
 - Commit: `model-credentials-routing PL5: designate a pool, and contribute a token to the shared pool`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -371,23 +377,23 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Tests: `TestAServiceAccountsPool`, `TestAServiceAccountNeverGetsAPersonsPool`, `TestAReissuedRunKeepsItsLauncher`.
 - Command: `go test ./internal/credsvc/ -run 'TestAServiceAccount|TestAReissuedRunKeepsItsLauncher' -count=1`
 - Red step: `TestAServiceAccountsPool` fails: such a run resolves to "none".
-- Depends on: PL4 (kept: one file, `launcherpool.go`, and it extends that lookup).
+- Depends on: PL4 (kept: one file, `launcherpool.go`, and it extends that lookup); CS14 (kept, behaviour: it resolves a service account from the grant CS14 teaches to admit that class).
 - Commit: `model-credentials-routing PL6: a service account's pool`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
-### PL7: Check 870, as a script
+### PL7: Check 880, as a script
 
 - Module: `pools`.
-- Acceptance: `scripts/live-checks/check-870-token-utilisation.sh` makes one small call on a subscription token through the deployed service in the owner's own session and prints, without any value, which rate-limit headers the answer carried and whether one is a utilisation figure; its test runs it against a fake and proves it prints no token.
-- Files: `scripts/live-checks/check-870-token-utilisation.sh` (new), `scripts/live-checks/check-870-token-utilisation_test.sh` (new), `docs/gcp-live-checklist.md`.
+- Acceptance: The service records, per source and without any value, the names of the rate-limit headers the last answer carried; `scripts/live-checks/check-880-token-utilisation.sh`, run by the owner after any run on a subscription token, reads that record and prints whether one of them is a utilisation figure (a model route admits a run's identity only, so the script makes no call of its own); its test runs it against a fake and proves it prints no token.
+- Files: `scripts/live-checks/check-880-token-utilisation.sh` (new), `scripts/live-checks/check-880-token-utilisation_test.sh` (new), `internal/credsvc/forward.go`, `internal/creds/marks.go`, `docs/gcp-live-checklist.md`.
 - Interfaces: Consumes nothing. Produces the answer that gates PL8 (U1).
 - Tests: The script's own test.
-- Command: `bash scripts/live-checks/check-870-token-utilisation_test.sh`
+- Command: `bash scripts/live-checks/check-880-token-utilisation_test.sh` and `go test ./internal/credsvc/ -run 'TestHeaderNamesAreRecordedWithoutValues' -count=1`
 - Red step: The test fails before the script exists.
-- Depends on: none.
-- Commit: `model-credentials-routing PL7: Check 870, as a script`
+- Depends on: CS4 (kept: one file, `forward.go`).
+- Commit: `model-credentials-routing PL7: Check 880, as a script`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
-- Owner-run: The owner runs `bash scripts/live-checks/check-870-token-utilisation.sh` in his own session against the dev installation. No agent runs it.
+- Owner-run: The owner runs `bash scripts/live-checks/check-880-token-utilisation.sh` in his own session against the dev installation. No agent runs it.
 
 ### PL8: the usage threshold rule
 
@@ -398,34 +404,34 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Tests: `TestThresholdMovesOffBeforeTheLimit`, `TestThresholdWithNoFigureDoesNothing`.
 - Command: `go test ./internal/creds/ -run 'TestThreshold' -count=1`
 - Red step: `TestThresholdMovesOffBeforeTheLimit` fails: the picker ignores utilisation.
-- Depends on: PL3 (kept: one file, `poolrule.go`, and it extends that picker); PL10 (kept: one file, `forward.go`).
-- Gate: **Not launched unless the owner's run of Check 870 found a utilisation figure (D3178). If it did not, this task is withdrawn and the plan says so.**
+- Depends on: PL3 (kept: one file, `poolrule.go`, and it extends that picker); PL10 (kept: two files, `forward.go` and `marks.go` through PL7).
+- Gate: **Not launched unless the owner's run of Check 880 found a utilisation figure (D3178). If it did not, this task is withdrawn and the plan says so.**
 - Commit: `model-credentials-routing PL8: the usage threshold rule`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### PL9: a personal pool in the project
 
 - Module: `pools`.
-- Acceptance: A person creates a personal pool in the project (`fugaro accounts pool add --personal <name>`), puts their own subscription token in it through the intake (`fugaro accounts add --pool <name>` from their own session stores it in their per-user container), sets its rule and removes a member; the pool is a set of that person's per-user containers with a rule; nobody else can add a token to it, and no command or view shows a value to anyone, an admin included; none asks a question. Every new refusal writes exactly one audit line and no value.
-- Files: `internal/cli/accounts_pool_personal.go` (new), `internal/cli/accounts_pool_personal_test.go` (new), `internal/cli/accounts_add.go`, `internal/cli/secrets_intake.go`, `website/content/cli-reference.md`.
+- Acceptance: A person creates a personal pool in the project (`fugaro accounts pool add --personal <name>`), puts their own subscription token in it through the intake (`fugaro accounts add --pool <name>` from their own session stores it in their per-user container), sets its rule and removes a member; the pool's members and rule are kept by the service in a store of its own, written only through a route keyed on the owner's verified subject (a member cannot write the project's config or policy); nobody else can add a token to it, and no command or view shows a value to anyone, an admin included; none asks a question. Every new refusal writes exactly one audit line and no value.
+- Files: `internal/cli/accounts_pool_personal.go` (new), `internal/cli/accounts_pool_personal_test.go` (new), `internal/cli/accounts_add.go`, `internal/cli/secrets_intake.go`, `website/content/cli-reference.md`, `internal/credsvc/personalpool_route.go` (new), `internal/credsvc/server.go`.
 - Interfaces: Consumes C2's types and the intake. Produces the pools PL4's lookup reads.
 - Tests: `TestAPersonCreatesTheirOwnPool`, `TestNobodyElseFillsAPersonalPool`.
 - Command: `go test ./internal/cli/ -run 'TestAPersonCreatesTheirOwnPool|TestNobodyElseFillsAPersonalPool' -count=1`
 - Red step: `TestAPersonCreatesTheirOwnPool` fails: the flag does not exist.
-- Depends on: C2 (the contract's types); PL5 (kept: two files, `secrets_intake.go` and the generated `cli-reference.md`); PL2 (kept: one file, `accounts_add.go`).
+- Depends on: C2 (the contract's types); PL5 (kept: two files, `secrets_intake.go` and the generated `cli-reference.md`); PL2 (kept: one file, `accounts_add.go`); PL4 (kept: one file, `server.go`).
 - Commit: `model-credentials-routing PL9: a personal pool in the project`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### PL10: usage and headroom per pool
 
 - Module: `pools`.
-- Acceptance: The service counts calls and tokens per pool member per window in a node of its own and `fugaro accounts pool ls --json` prints, per pool and member, the usage of the current window, the next reset, and headroom where the provider reported a utilisation figure (absent otherwise, never guessed); an admin sees every pool's figures and no value; a person sees their own and the shared pools'. The rules change ships with a test that an installation at the previous rules version converges.
-- Files: `internal/creds/usage.go` (new), `internal/creds/usage_test.go` (new), `internal/credsvc/forward.go`, `internal/cli/accounts_pool.go`, `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/marker.go`, `internal/budget/rules/testdata/rules.golden.json`.
+- Acceptance: The service counts calls and tokens per pool member per window in a node of its own and `fugaro accounts pool ls --json` prints, per pool and member, the usage of the current window, the next reset, and headroom where the provider reported a utilisation figure (absent otherwise, never guessed); an admin sees every pool's figures and no value; a person sees their own and the shared pools'. The service is the node's only writer; every launcher can read it, so it is display data.
+- Files: `internal/creds/usage.go` (new), `internal/creds/usage_test.go` (new), `internal/credsvc/forward.go`, `internal/cli/accounts_pool.go`.
 - Interfaces: Consumes PL3's picker path and C2's JSON shape. Produces the figures VS2 draws.
-- Tests: `TestUsageIsCountedPerMember`, `TestPoolLsPrintsUsageAndNoValue`, `TestRulesConvergeWithUsage`.
-- Command: `go test ./internal/creds/ -run 'TestUsageIsCountedPerMember|TestRulesConvergeWithUsage' -count=1` and `go test ./internal/cli/ -run 'TestPoolLsPrintsUsageAndNoValue' -count=1`
+- Tests: `TestUsageIsCountedPerMember`, `TestPoolLsPrintsUsageAndNoValue`.
+- Command: `go test ./internal/creds/ -run 'TestUsageIsCountedPerMember' -count=1` and `go test ./internal/cli/ -run 'TestPoolLsPrintsUsageAndNoValue' -count=1`
 - Red step: `TestUsageIsCountedPerMember` fails before the file exists.
-- Depends on: PL3 (kept, behaviour: it counts on the path the picker serves); PL9 (kept: `accounts_pool.go` through PL5); CS4 (kept: one file, `forward.go`); PR1 (kept: one file, `rules.json.tmpl`).
+- Depends on: PL3 (kept, behaviour: it counts on the path the picker serves); PL9 (kept: `accounts_pool.go` through PL5); PL7 (kept: one file, `forward.go`).
 - Commit: `model-credentials-routing PL10: usage and headroom per pool`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -434,7 +440,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### CS1: the service walks the chain
 
 - Module: `chain-serving`.
-- Acceptance: For each model call the service reads the model from the request's body (a body that names none is refused; no header is trusted for it), resolves it to its entry and offers the chain's sources in the chain's own order, replacing the fixed tier order (R4): a pool by its rule, the launcher's pool through C2's lookup, a key, a provider key, Vertex. Skipped: a key, provider key or Vertex the repository is not admitted to, a pool member whose account does not admit the repository, an empty launcher's pool, an exhausted source (D3180, D3182). A source the run's grant does not cover is never served. The placement is sticky for one step and the chain is walked from its first source at the next (R16). The answer names the source, whether it was the chain's first and the model that served, and carries those members, and any new refusal member, only to a caller that sent the stage header, so a release-behind gateway meets exactly the answer it meets today; with nothing usable it answers exhausted with the earliest reset. A limit found inside a streamed answer marks the source and is not retried (U7). Every new refusal writes exactly one audit line and no value.
+- Acceptance: For each model call the service reads the model from the request's body (a body that names none is refused; no header is trusted for it), resolves it to its entry and offers the chain's sources in the chain's own order, replacing the fixed tier order (R4): a pool by its rule, the launcher's pool through C2's lookup, a key, a provider key, Vertex. Skipped: a key, provider key or Vertex the repository is not admitted to, a pool member whose account does not admit the repository, an empty launcher's pool, an exhausted source (D3180, D3182). A source the run's grant does not cover is never served; a run with no slip (the grant is best-effort at launch, and an orchestrator's launch has none) is served the project's sources its repository is admitted to and no launcher's pool. The placement is sticky for one step and the chain is walked from its first source at the next (R16). The answer names the source, whether it was the chain's first and the model that served, and carries those members, and any new refusal member, only to a caller that sent the stage header, so a release-behind gateway meets exactly the answer it meets today; with nothing usable it answers exhausted with the earliest reset. A limit found inside a streamed answer marks the source and is not retried (U7). Every new refusal writes exactly one audit line and no value.
 - Files: `internal/credsvc/chain.go` (new), `internal/credsvc/chain_test.go` (new), `internal/credsvc/cascade.go`, `internal/creds/select.go`, `internal/credsvc/server.go`.
 - Interfaces: Consumes C1's wire and `Resolve`, C2's `LauncherPool` and `PickInPool`. Produces the serving path CS2, CS4 and PR3 meet.
 - Tests: `TestChainOrderIsStrict`, `TestChainSkipsAnUnadmittedSource`, `TestChainSkipsAMemberThatDoesNotAdmitTheRepository`, `TestChainIsWalkedAgainEachStep`, `TestAnswerNamesTheSourceAndFallback`, `TestACallWithNoModelInTheBodyIsRefused`, `TestASourceTheGrantDoesNotCoverIsNeverServed`, `TestAReleaseBehindGatewayMeetsTheOldAnswer`.
@@ -448,8 +454,8 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### CS2: the gateway says which stage a call is for
 
 - Module: `chain-serving`.
-- Acceptance: The in-job gateway sends the run's current stage on every call to the service and no model header (the service reads the body), reads the answer's source and fallback members into the step's record hook, and strips them before the agent sees the answer; it holds no key and no table (R2).
-- Files: `internal/gateway/service.go`, `internal/gateway/chainwire.go` (new), `internal/gateway/chainwire_test.go` (new), `internal/gateway/gateway.go`.
+- Acceptance: The in-job gateway sends the run's current stage on every call to the service and no model header (the service reads the body), reads the answer's source and fallback members into the step's record hook, and strips them before the agent sees the answer (they join the explicit list in `dropResponseHeaders`); it holds no key and no table (R2).
+- Files: `internal/gateway/service.go`, `internal/gateway/chainwire.go` (new), `internal/gateway/chainwire_test.go` (new), `internal/gateway/gateway.go`, `internal/gateway/forward.go`.
 - Interfaces: Consumes C1's wire names. Produces the hook CS8 reads and the file CS4 extends.
 - Tests: `TestGatewaySendsTheStage`, `TestTheAgentNeverSeesTheSource`.
 - Command: `go test ./internal/gateway/ -run 'TestGatewaySendsTheStage|TestTheAgentNeverSeesTheSource' -count=1`
@@ -474,7 +480,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### CS4: Vertex, served by the service
 
 - Module: `chain-serving`.
-- Acceptance: Vertex is a source the credentials service serves on its own identity, as it serves a key: it translates the call to Vertex's Anthropic wire (the model in the URL path, `anthropic_version` in the body, as `internal/gateway/vertex.go` does today), and the gateway prices and settles the call as real money against the run's caps, exactly as it does a key call. It is capped as far as a key is and no further: a call an agent builds itself and posts straight to the service is served under the policy's rules and not counted against the run's cap, the residual risk `SECURITY.md` already records for keys (D3003; D3174 as amended twice). A repository not admitted to Vertex is never served it. A Vertex 429 marks the source so the chain moves on or answers exhausted. Every new refusal writes exactly one audit line and no value.
+- Acceptance: Vertex is a source the credentials service serves on its own identity, as it serves a key: it translates the call to Vertex's Anthropic wire (the model in the URL path, `anthropic_version` in the body); that translation is new work, since today the agent's harness builds the Vertex request and `internal/gateway/vertex.go` only validates its path; and the gateway prices and settles the call as real money against the run's caps, exactly as it does a key call. It is capped as far as a key is and no further: a call an agent builds itself and posts straight to the service is served under the policy's rules and not counted against the run's cap, the residual risk `SECURITY.md` already records for keys (D3003; D3174 as amended twice). A repository not admitted to Vertex is never served it. A Vertex 429 marks the source so the chain moves on or answers exhausted. Every new refusal writes exactly one audit line and no value.
 - Files: `internal/credsvc/vertex.go` (new), `internal/credsvc/vertex_test.go` (new), `internal/credsvc/forward.go`.
 - Interfaces: Consumes C1's source kinds. Produces the capped Vertex source CS5 and CS11 rely on.
 - Tests: `TestVertexIsServedOnTheServicesIdentity`, `TestVertexWireIsTranslated`, `TestVertexIsSettledAsMoney`, `TestAnUnadmittedRepositoryGetsNoVertex`, `TestAVertexLimitMovesOn`.
@@ -537,7 +543,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Red step: `TestTheRecordNamesTheSource` fails: the member does not exist.
 - Depends on: C1 (the contract's member names).
 - Commit: `model-credentials-routing CS8: the record says what served each step`
-- Reviewer tier: standard.
+- Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### CS9: the registry entry and the live views
 
@@ -561,15 +567,15 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Tests: `TestRunGrantsByTheTable`, `TestRunRefusesAnUnroutedModel`.
 - Command: `go test ./internal/cli/ -run 'TestRunGrantsByTheTable|TestRunRefusesAnUnroutedModel' -count=1`
 - Red step: `TestRunRefusesAnUnroutedModel` fails: the launch goes ahead.
-- Depends on: C1 (the contract's names); CS11 (kept, behaviour: it decides whether a job is told about the service from what CS11 plans).
+- Depends on: C1 (the contract's names); CS11 (kept, behaviour: it decides whether a job is told about the service from what CS11 plans); C2 (the contract's grant members).
 - Commit: `model-credentials-routing CS10: the launch`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### CS11: the cloud side is planned from the table
 
 - Module: `chain-serving`.
-- Acceptance: The infra spec derives what a job mounts and whether it is told about the service from the table and the pools (no secret mounted for a served source), not from `agent.auth`; `infra.ModelSecretsServed` answers from the table and the Terraform variable `model_secrets_served` keeps its three values and their meaning; the credentials service's own account is planned the Vertex permission wherever a chain names Vertex; on a project whose budget mode is `enforce` a job's account and the shared project job's account are planned no Vertex permission (no run in flight can hold it there: Vertex is refused under `enforce` today), and on an `observe` project they keep it until release 2 (X8), so an `observe` run in flight is not broken; the Terraform tests pin all three.
-- Files: `internal/infra/spec.go`, `internal/infra/chain_spec.go` (new), `internal/infra/chain_spec_test.go` (new), `internal/infra/readiness.go`, `deploy/terraform/gcp/modules/installation/credentials.tf`, `deploy/terraform/gcp/modules/workflow/sa.tf`, `deploy/terraform/gcp/modules/project/sa.tf`.
+- Acceptance: The infra spec derives what a job mounts and whether it is told about the service from the table and the pools (no secret mounted for a served source), not from `agent.auth`; `infra.ModelSecretsServed` answers from the table and the Terraform variable `model_secrets_served` keeps its three values and their meaning; the credentials service's own account is planned the Vertex permission wherever a chain names Vertex, through a custom role and never a predefined one, as the rules file requires; on a project whose budget mode is `enforce` a job's account and the shared project job's account are planned no Vertex permission (no run in flight can hold it there: Vertex is refused under `enforce` today), and on an `observe` project they keep it until release 2 (X8), so an `observe` run in flight is not broken; the Terraform tests pin all three.
+- Files: `internal/infra/spec.go`, `internal/infra/chain_spec.go` (new), `internal/infra/chain_spec_test.go` (new), `internal/infra/readiness.go`, `deploy/terraform/gcp/modules/installation/credentials.tf`, `deploy/terraform/gcp/modules/workflow/sa.tf`, `deploy/terraform/gcp/modules/project/sa.tf`, `deploy/terraform/terraform_test.go`, `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl`.
 - Interfaces: Consumes C1. Produces the plan CS10 reads.
 - Tests: `TestSpecFromTheTable`, `TestTheServiceIsPlannedVertexWhereNamed`, `TestNoJobVertexGrantUnderEnforce`; the installation root's Terraform test.
 - Command: `go test ./internal/infra/ -run 'TestSpecFromTheTable|TestTheServiceIsPlannedVertexWhereNamed|TestNoJobVertexGrantUnderEnforce' -count=1` and `go test -tags terraform ./internal/infra/... -run 'Installation' -count=1`
@@ -582,13 +588,13 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### CS12: `--pool` replaces `--token`
 
 - Module: `chain-serving`.
-- Acceptance: `fugaro run --pool <name>` carries the name on the run's grant request as the pool the launcher's pool resolves to for this run, and is refused with the fix where no chain of the run's models names the launcher's pool; `--token` is rejected with a fix naming `--pool` (D3176 as amended); a follow-up launched by a person uses that person's own designation or `--pool`, and only a resume keeps the pool the paused run's launch named; the working skill and its three reference pages that name `--token` name `--pool` in the same change, as the plugin's tests require.
+- Acceptance: `fugaro run --pool <name>` carries the name on the run's grant request as the pool the launcher's pool resolves to for this run, and is refused with the fix where no chain of the run's models names the launcher's pool; `--token` is rejected with a fix naming `--pool` (D3176 as amended); a follow-up launched by a person uses that person's own designation or `--pool`, and only a resume keeps the pool the paused run's launch named; the working skill and its three reference pages that name `fugaro run --token` name `--pool` in the same change, as the plugin's tests require.
 - Files: `internal/cli/run.go`, `internal/cli/run_pool_test.go` (new), `plugin/skills/working/SKILL.md`, `plugin/skills/working/reference/diagnose.md`, `plugin/skills/working/reference/followup.md`, `plugin/skills/working/reference/launch.md`, `website/content/cli-reference.md`.
 - Interfaces: Consumes C2's named-pool member and CS10's launch. Produces the flag PL4 resolves.
 - Tests: `TestTokenFlagIsRejectedWithTheFix`, `TestPoolFlagNeedsALaunchersPoolInAChain`, `TestAFollowUpUsesItsOwnLaunchersPool`; the plugin's tests.
 - Command: `go test ./internal/cli/ -run 'TestTokenFlagIsRejectedWithTheFix|TestPoolFlagNeedsALaunchersPoolInAChain|TestAFollowUpUsesItsOwnLaunchersPool' -count=1` and `go test ./plugin/... -count=1`
 - Red step: `TestTokenFlagIsRejectedWithTheFix` fails: the flag is accepted.
-- Depends on: C2 (the contract's named-pool member); CS10 (kept: one file, `run.go`); PL2 (kept: one file, the generated `cli-reference.md`).
+- Depends on: C2 (the contract's named-pool member); CS10 (kept: one file, `run.go`); PL2 (kept: one file, the generated `cli-reference.md`); CS14 (kept, behaviour: the flag is carried in the grant member CS14 adds).
 - Commit: `model-credentials-routing CS12: `--pool` replaces `--token``
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -608,7 +614,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### CS14: the grant carries the chain's sources and the named pool
 
 - Module: `chain-serving`.
-- Acceptance: A run's grant records, under the new member names of C2's contract, the sources its models can reach by the table and the pool named with `--pool`; the service refuses to grant a source the table does not give the repository, a personal pool to anyone but its owner, and a named pool the launcher is not entitled to; `Slip.Pool` keeps its meaning; an older CLI's grant request, which names no sources, is served as today. Every new refusal writes exactly one audit line and no value.
+- Acceptance: A run's grant records, under the new member names of C2's contract, the sources its models can reach by the table and the pool named with `--pool`; the service refuses to grant a source the table does not give the repository, a personal pool to anyone but its owner, and a named pool the launcher is not entitled to; `Slip.Pool` keeps its meaning; the grant admits the service-account and orchestrator launcher classes, which only the identity routes admit today (`VerifyServiceAccountLauncher`), so PL6 and PR3 have a principal to resolve; an older CLI's grant request, which names no sources, is served as today. Every new refusal writes exactly one audit line and no value.
 - Files: `internal/credsvc/slip.go`, `internal/creds/slips.go`, `internal/credsvc/slip_chain_test.go` (new).
 - Interfaces: Consumes C1's table and C2's grant members. Produces the grant CS1 checks, PL4 resolves from and PR3 binds a resume to.
 - Tests: `TestTheGrantCoversOnlyTheTablesSources`, `TestANamedPoolIsGrantedOnlyToItsOwner`, `TestAnOlderGrantRequestIsServedAsToday`.
@@ -618,12 +624,25 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Commit: `model-credentials-routing CS14: the grant carries the chain's sources and the named pool`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
+### CS15: `fugaro review --token` goes
+
+- Module: `chain-serving`.
+- Acceptance: `fugaro review --pr N` takes no `--token`: the review job reaches its model by the table (CS13), and the flag is rejected with the fix; the skill pages that name it are changed in the same change.
+- Files: `internal/cli/review.go`, `internal/cli/review_token_test.go` (new), `plugin/skills/routing/SKILL.md`, `plugin/skills/working/reference/review.md`, `website/content/cli-reference.md`.
+- Interfaces: Consumes CS13's review job. Produces nothing a task calls.
+- Tests: `TestReviewTokenFlagIsRejectedWithTheFix`; the plugin's tests.
+- Command: `go test ./internal/cli/ -run 'TestReviewTokenFlagIsRejectedWithTheFix' -count=1` and `go test ./plugin/... -count=1`
+- Red step: `TestReviewTokenFlagIsRejectedWithTheFix` fails: the flag is accepted.
+- Depends on: CS13 (kept, behaviour: the flag may go only once the review job needs no account); CS12 (kept: one file, the generated `cli-reference.md`).
+- Commit: `model-credentials-routing CS15: `fugaro review --token` goes`
+- Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
+
 ## Slice 5: `migration`, and the first integration
 
 ### MG1: the migration, as a function
 
 - Module: `migration`.
-- Acceptance: One pure function takes an installation's config and each repository's file and returns the table, the pools and the admissions that keep every run where it was: `oauth` becomes the account's pool, `api-key` the Anthropic key, `cascade` the shared pool then the key where `fallback: auto` was set, `vertex` a chain naming Vertex; `routing.claude.via` becomes the Claude entry (D3173); every ownerless account lands in one shared pool, same members and order (D3183), and a lone account also gets a pool of one (D3176); per-stage accounts and a grade's access (`model_grades.<grade>.access`) are folded into one pool (D3171, F46); each repository is admitted only to the keys it used, and each account keeps its own admissions untouched (D3182). The function also returns the list of pools that are inert today and will rotate once migrated (D3177). A table-driven test covers every value of `agent.auth` and `via`, two repositories that differ, and two repositories admitted to two different accounts that land in the one shared pool.
+- Acceptance: One pure function takes an installation's config and each repository's file and returns the table, the pools and the admissions that keep every run where it was: `oauth` becomes the account's pool, `api-key` the Anthropic key, `cascade` the shared pool then the key where `fallback: auto` was set, `vertex` a chain naming Vertex; `routing.claude.via` becomes the Claude entry (D3173); every ownerless account lands in one shared pool, same members and order and the rule `failover`, which is what the cascade does today (D3183), and a lone account also gets a pool of one (D3176); per-stage accounts and a grade's access (`model_grades.<grade>.access`) are folded into one pool (D3171, F46); each repository is admitted only to the keys it used, and each account keeps its own admissions untouched (D3182). What it cannot write as a table RT3 accepts (a Claude model through a provider before Check 50; a Vertex model with no checked-in spelling) it leaves on the release-1 bridge and returns by name, pending the owner's answer to O15. The function also returns the list of pools that are inert today and will rotate once migrated (D3177). A table-driven test covers every value of `agent.auth` and `via`, two repositories that differ, and two repositories admitted to two different accounts that land in the one shared pool.
 - Files: `internal/routing/migrate.go` (new), `internal/routing/migrate_test.go` (new), `internal/routing/testdata/migrate` (new).
 - Interfaces: Consumes C1 and C2's types. Produces `routing.Migrate`, which MG2 calls.
 - Tests: `TestMigrate` (one case per auth mode and per `via`), `TestMigrateMovesNoRepository`.
@@ -636,7 +655,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### MG2: `fugaro update` migrates, and says what changes first
 
 - Module: `migration`.
-- Acceptance: `fugaro update` on an installation at the previous version writes the table, pools and admissions `routing.Migrate` returns into the installation's config, publishes them, and prints before any write one line per repository saying what its runs go out on and that nothing moves, and one line per pool that starts rotating among its tokens now that the spread switch is gone (D3177); and one line for a project whose `fallback` was `auto`, saying a run now pays on the key as soon as its subscriptions are exhausted instead of waiting up to the old threshold first (D3192); it asks nothing, is safe with runs in flight, and a second run changes nothing; the `e2e` update test converges from a fixture of the previous version.
+- Acceptance: `fugaro update` on an installation at the previous version writes the table, pools and admissions `routing.Migrate` returns into the installation's config, publishes them, and prints before any write one line per repository saying what its runs go out on and that nothing moves, and one line per pool that starts rotating among its tokens now that the spread switch is gone (D3177); and one line for a project whose `fallback` was `auto`, saying a run now pays on the key as soon as its subscriptions are exhausted instead of waiting up to the old threshold first (D3192); it names each entry left on the release-1 bridge (O15) and still converges; it asks nothing, is safe with runs in flight, and a second run changes nothing; the `e2e` update test converges from a fixture of the previous version.
 - Files: `internal/cli/update_routing_migrate.go` (new), `internal/cli/update_routing_migrate_test.go` (new), `internal/cli/update.go`, `internal/cli/init_craft_migrate.go`, `internal/e2e/update_test.go`.
 - Interfaces: Consumes MG1's function, RT2's block, RT4's publisher and PL1's fields. Produces the migrated installation I1 proves.
 - Tests: `TestUpdateMigratesToTheTable`, `TestUpdateSaysWhatChangesFirst`, `TestUpdateMigrationIsIdempotent`.
@@ -651,7 +670,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 
 - Module: `migration`.
 - Acceptance: For release 1 `fugaro update` keeps writing `creds/repoauth/<slug>` as today, so a run that bootstrapped on the release behind still resolves; the service reads the table first and the old record only for a run whose image predates the table; the old record is derived from the table on every write of either (`update`, `routing set`, an admission change), so it is never wider than the table and a call that omits the stage header to reach the old path gains nothing; the update's in-flight line counts such runs.
-- Files: `internal/cli/update_repoauth.go`, `internal/cli/update_repoauth_table_test.go` (new), `internal/credsvc/legacy_auth.go` (new), `internal/credsvc/legacy_auth_test.go` (new).
+- Files: `internal/cli/update_repoauth.go`, `internal/cli/update_repoauth_table_test.go` (new), `internal/credsvc/legacy_auth.go` (new), `internal/credsvc/legacy_auth_test.go` (new), `internal/cli/update_in_flight.go`.
 - Interfaces: Consumes C1. Produces the bridge X4 removes.
 - Tests: `TestTheOldRecordIsStillWritten`, `TestAnOlderRunStillResolves`, `TestTheOldRecordIsNeverWiderThanTheTable`.
 - Command: `go test ./internal/cli/ -run 'TestTheOldRecordIsStillWritten|TestTheOldRecordIsNeverWiderThanTheTable' -count=1` and `go test ./internal/credsvc/ -run 'TestAnOlderRunStillResolves' -count=1`
@@ -664,12 +683,12 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 
 - Module: `migration`.
 - Acceptance: `fugaro accounts switch`, `alias`, `craft`, `grade` and `cascade` no longer write a craft's access or a repository's auth mode: each either writes the table or pool it now means, or is refused with the fix naming `fugaro routing set` or `fugaro accounts pool`; none asks a question.
-- Files: `internal/cli/accounts_switch.go`, `internal/cli/accounts_alias.go`, `internal/cli/accounts_craft.go`, `internal/cli/accounts_cascade.go`, `internal/cli/accounts_routing_test.go` (new).
+- Files: `internal/cli/accounts_switch.go`, `internal/cli/accounts_alias.go`, `internal/cli/accounts_craft.go`, `internal/cli/accounts_cascade.go`, `internal/cli/accounts_routing_test.go` (new), `website/content/cli-reference.md`.
 - Interfaces: Consumes RT5's command and RT2's block. Produces nothing a task calls.
 - Tests: `TestAccountsCommandsWriteNoAccess` (one sub-test per command).
 - Command: `go test ./internal/cli/ -run 'TestAccountsCommandsWriteNoAccess' -count=1`
 - Red step: `TestAccountsCommandsWriteNoAccess/switch` fails: it writes `agent.auth`.
-- Depends on: RT5 (kept, behaviour: its refusals name a command that must exist, and the plugin's tests check the name).
+- Depends on: RT5 (kept, behaviour: its refusals name a command that must exist, and the plugin's tests check the name); PL9 (kept: one file, the generated `cli-reference.md`).
 - Commit: `model-credentials-routing MG4: the account and craft commands stop writing access`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -682,7 +701,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Tests: `TestRegistryCoversEveryConfigField`, `TestRetiredNotesNameTheRoutingTable`.
 - Command: `go test ./internal/settings/ -run 'TestRegistryCoversEveryConfigField' -count=1` and `go test ./internal/config/ -run 'TestRetiredNotesNameTheRoutingTable' -count=1`
 - Red step: `TestRetiredNotesNameTheRoutingTable` fails: the notes name a craft's access.
-- Depends on: RT4 (kept: one file, `registry.go`); PL1 (kept: the registry's coverage test reads the struct PL1 changes).
+- Depends on: PL1 (kept: two files, `registry.go` and `settings.schema.json`).
 - Commit: `model-credentials-routing MG5: the settings registry and the schemas`
 - Reviewer tier: standard.
 
@@ -695,7 +714,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Tests: `TestNoHelpTextNamesARepositoryAuthMode`, the Docs tests.
 - Command: `go test ./internal/cli/ -run 'TestNoHelpTextNamesARepositoryAuthMode|Docs' -count=1`
 - Red step: `TestNoHelpTextNamesARepositoryAuthMode` fails on today's texts.
-- Depends on: PL9 (kept: one file, the generated `cli-reference.md`, and `run.go` through CS12); RT6 (kept: one file, `models_use.go`).
+- Depends on: MG4 (kept: one file, the generated `cli-reference.md`, and `run.go` through CS12); RT6 (kept: one file, `models_use.go`).
 - Commit: `model-credentials-routing MG6: the help texts and the CLI reference`
 - Reviewer tier: standard.
 
@@ -703,12 +722,12 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 
 - Module: `chain-serving`.
 - Acceptance: The stubs of C1 and C2 are deleted; an end-to-end test migrates a fixture installation of the previous version with `update`, launches a run against the fakes and proves: the coder's calls go out on the first source of its model's chain, an exhausted pool moves the next call to the next source with the step flagged and the paid money counted, a repository not admitted to a source skips it, a person with no pool is served by the next source, and the agent's environment holds no credential; a guard test finds no reader of `agent.auth` or a craft's access on the serving path outside the release-1 bridge; the console fixtures of VS1 and VS2 are replaced by the output this test records, and their tests still pass.
-- Files: `internal/routing/resolve_stub.go` (deleted), `internal/credsvc/chain_stub.go` (deleted), `internal/credsvc/launcherpool_stub.go` (deleted), `internal/cli/chain_end_to_end_test.go` (new), `internal/config/retired_readers_guard_test.go` (new).
+- Files: `internal/routing/resolve_stub.go` (deleted), `internal/credsvc/chain_stub.go` (deleted), `internal/credsvc/launcherpool_stub.go` (deleted), `internal/pricing/spelling_stub.go` (deleted), `internal/creds/poolrule_stub.go` (deleted), `internal/cli/chain_end_to_end_test.go` (new), `internal/config/retired_readers_guard_test.go` (new).
 - Interfaces: Consumes every task of slices 2 to 5. Produces release 1's proof.
 - Tests: `TestChainEndToEnd`, `TestNoReaderOfTheRetiredKeys`.
 - Command: `go test ./internal/cli/ -run 'TestChainEndToEnd' -count=1` and `go test ./internal/config/ -run 'TestNoReaderOfTheRetiredKeys' -count=1`
 - Red step: `TestChainEndToEnd` fails while any stub answers.
-- Depends on: A1, A2, RT1, RT2, RT3, RT4, RT5, RT6, RT7, PL1, PL2, PL3, PL4, PL5, PL6, CS1, CS2, CS3, CS4, CS5, CS6, CS7, CS8, CS9, CS10, CS11, MG1, MG2, MG3, MG4, MG5, MG6, VS1, VS2, VS4, PL9, CS12, CS13, CS14 (the sides it wires).
+- Depends on: A1, A2, RT1, RT2, RT3, RT4, RT5, RT6, RT7, PL1, PL2, PL3, PL4, PL5, PL6, CS1, CS2, CS3, CS4, CS5, CS6, CS7, CS8, CS9, CS10, CS11, MG1, MG2, MG3, MG4, MG5, MG6, VS1, VS2, VS4, PL9, CS12, CS13, CS14, CS15, PL10 (the sides it wires).
 - Commit: `model-credentials-routing I1: integration: the chain serves a migrated installation`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -756,16 +775,16 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### GV4: Gemini on Vertex: the checks accept it, end to end
 
 - Module: `chain-serving`.
-- Acceptance: `routing.Problems` accepts a chain that routes a mapped, priced Gemini model to Vertex and still refuses any other non-Claude model there with the reason; an end-to-end test against a fake Vertex runs a coder stage on a Gemini model through the chain, with a tool call and a streamed answer, priced and settled against the cap; Check 876's script is added with its test.
-- Files: `internal/routing/checks.go`, `internal/routing/checks_gemini_test.go` (new), `internal/cli/gemini_vertex_end_to_end_test.go` (new), `scripts/live-checks/check-876-gemini-on-vertex.sh` (new), `scripts/live-checks/check-876-gemini-on-vertex_test.sh` (new).
+- Acceptance: `routing.Problems` accepts a chain that routes a mapped, priced Gemini model to Vertex and still refuses any other non-Claude model there with the reason; an end-to-end test against a fake Vertex runs a coder stage on a Gemini model through the chain, with a tool call and a streamed answer, priced and settled against the cap; Check 886's script is added with its test.
+- Files: `internal/routing/checks.go`, `internal/routing/checks_gemini_test.go` (new), `internal/cli/gemini_vertex_end_to_end_test.go` (new), `scripts/live-checks/check-886-gemini-on-vertex.sh` (new), `scripts/live-checks/check-886-gemini-on-vertex_test.sh` (new).
 - Interfaces: Consumes GV1, GV2, GV3 and the wired chain.
 - Tests: `TestProblemsAcceptGeminiOnVertex`, `TestGeminiOnVertexEndToEnd`; the script's test.
-- Command: `go test ./internal/routing/ -run 'TestProblemsAcceptGeminiOnVertex' -count=1`, `go test ./internal/cli/ -run 'TestGeminiOnVertexEndToEnd' -count=1` and `bash scripts/live-checks/check-876-gemini-on-vertex_test.sh`
+- Command: `go test ./internal/routing/ -run 'TestProblemsAcceptGeminiOnVertex' -count=1`, `go test ./internal/cli/ -run 'TestGeminiOnVertexEndToEnd' -count=1` and `bash scripts/live-checks/check-886-gemini-on-vertex_test.sh`
 - Red step: `TestProblemsAcceptGeminiOnVertex` fails: the checks refuse every non-Claude model on Vertex.
 - Depends on: GV2 (kept, behaviour: it runs the whole translation); GV3 (kept, behaviour: it needs the spelling and the price); I1 (kept, behaviour: the test runs through the wired chain, and `checks.go` is RT3's).
 - Commit: `model-credentials-routing GV4: Gemini on Vertex: the checks accept it, end to end`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
-- Owner-run: The owner runs `bash scripts/live-checks/check-876-gemini-on-vertex.sh` himself after the release that carries GV4. No agent runs it.
+- Owner-run: The owner runs `bash scripts/live-checks/check-886-gemini-on-vertex.sh` himself after the release that carries GV4. No agent runs it.
 
 ## Slice 6: `pause-resume`, and its integration
 
@@ -778,44 +797,44 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Tests: `TestPausedIsAStatus`, `TestTheRulesAdmitPaused`, `TestRulesConvergeWithPaused`.
 - Command: `go test ./internal/runstore/ -run 'TestPausedIsAStatus' -count=1` and `go test ./internal/budget/ -run 'TestTheRulesAdmitPaused|TestRulesConvergeWithPaused' -count=1`
 - Red step: `TestTheRulesAdmitPaused` fails: the rules refuse an unknown word.
-- Depends on: C3 (the contract's constant); CS8 (kept: two files, `runstore.go` and `result.schema.json`); CS9 (kept: two files, `registry.go` and `rules.json.tmpl`); PL4 (kept: one file, `rules.json.tmpl`); PR3 (kept: one file, `rules.json.tmpl`).
+- Depends on: C3 (the contract's constant); CS8 (kept: two files, `runstore.go` and `result.schema.json`); CS9 (kept: `registry.go` and the rules files).
 - Commit: `model-credentials-routing PR1: the status word `paused``
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### PR2: the run suspends itself
 
 - Module: `pause-resume`.
-- Acceptance: When the service answers that every source is exhausted, the runner follows the answer's action and decides nothing about time itself: `wait` is the in-job wait as today (D3184); `halt` ends the run with `HaltNoCredential` and the reset time in the reason; `pause` saves the session, pushes the work in progress as a checkpoint, writes `pause.json`, tells the service it has saved (`/pause`), ends `paused` and exits with its lease released (R12, R18). A hotfix run treats `wait` and `pause` as `halt` (R10). No proxy call is held open.
-- Files: `internal/runner/suspend.go` (new), `internal/runner/suspend_test.go` (new), `internal/runner/creds_wait.go`, `internal/runner/halt.go`, `internal/runner/runner.go`.
+- Acceptance: When the service answers that every source is exhausted, the gateway decodes the refusal's new members (`action`, `resume_at`) and hands them to the runner, which follows the action and decides nothing about time itself: `wait` is the in-job wait as today (D3184); `halt` ends the run with `HaltNoCredential` and the reset time in the reason; `pause` saves the session, pushes the work in progress as a checkpoint, writes `pause.json`, tells the service it has saved (`/pause`), ends `paused` and exits with its lease released (R12, R18). A hotfix run treats `wait` and `pause` as `halt` (R10). No proxy call is held open.
+- Files: `internal/runner/suspend.go` (new), `internal/runner/suspend_test.go` (new), `internal/runner/creds_wait.go`, `internal/runner/halt.go`, `internal/runner/runner.go`, `internal/runner/gateway.go`, `internal/gateway/service.go`.
 - Interfaces: Consumes C3's record and answer members. Produces the suspended run the service records and PR4 resumes.
 - Tests: `TestSuspendFollowsTheAnswer` (one sub-test per action, and hotfix), `TestSuspendSavesBeforeItExits`, `TestSuspendReleasesTheLease`.
 - Command: `go test ./internal/runner/ -run 'TestSuspend' -count=1`
 - Red step: `TestSuspendFollowsTheAnswer/pause` fails against the stub, which waits in the job.
-- Depends on: C3 (the contract's record); CS6 (kept: one file, `runner.go`).
+- Depends on: C3 (the contract's record); CS6 (kept: one file, `runner.go`); CS2 (kept: one file, `gateway/service.go`).
 - Commit: `model-credentials-routing PR2: the run suspends itself`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### PR3: the service decides the pause and records it
 
 - Module: `pause-resume`.
-- Acceptance: The service chooses the exhausted answer's action from its own knowledge: `wait` when the reset is nearer than `pause.wait_in_job`; `halt` when the installation has no resident orchestrator, when the reset is beyond `pause.max_pause`, or when the chain's total paused time would pass `pause.max_pause` (D3186, D3187, D3190); otherwise `pause`, with a resume time never nearer than `pause.min_pause` (D3190 as amended). It honours a run's `/pause` only if it last answered that run `pause`, and once per answer; it then writes `paused/<slug>/<run>` with the resume time it computed and the launcher and named pool from its own record of the run's grant, never from the job (R8). Only the service's identity may write the node: the rules refuse a run's token, with a test. A slip that names `resumes` is granted only to the orchestrator's class, only for the same repository and chain, once, and not before the resume time; the resumed run draws on the original launcher's pool (D3191). Every new refusal writes exactly one audit line and no value. The rules change ships with a test that an installation at the previous rules version converges.
-- Files: `internal/credsvc/pause.go` (new), `internal/credsvc/pause_test.go` (new), `internal/credsvc/slip.go`, `internal/creds/slips.go`, `internal/credsvc/cascade.go`, `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/marker.go`, `internal/budget/rules/testdata/rules.golden.json`.
+- Acceptance: The service chooses the exhausted answer's action from its own knowledge: `wait` when the reset is nearer than `pause.wait_in_job`; `halt` when the installation has no resident orchestrator, when the reset is beyond `pause.max_pause`, or when the chain's total paused time would pass `pause.max_pause` (D3186, D3187, D3190); otherwise `pause`, with a resume time never nearer than `pause.min_pause` (D3190 as amended). It honours a run's `/pause` only if it last answered that run `pause`, and once per answer; it then writes `paused/<slug>/<run>` with the resume time it computed and the launcher and named pool from its own record of the run's grant, never from the job (R8). The node is written by the service's identity alone (the database's root is closed to a run's token already); every launcher can read it, so it is display data to them and an input only to the service and the orchestrator. A slip that names `resumes` is granted only to the orchestrator's class, only for the same repository and chain, once, not before the resume time, and never for a node marked cancelled; the resumed run draws on the original launcher's pool (D3191). Every new refusal writes exactly one audit line and no value.
+- Files: `internal/credsvc/pause.go` (new), `internal/credsvc/pause_test.go` (new), `internal/credsvc/slip.go`, `internal/creds/slips.go`, `internal/credsvc/cascade.go`, `internal/credsvc/wire.go`, `internal/credsvc/server.go`.
 - Interfaces: Consumes C3's node and members and PR9's settings. Produces the node PR4 reads and the binding its launch meets.
-- Tests: `TestTheActionIsTheServices` (one sub-test per branch), `TestAPauseNobodyAnsweredIsRefused`, `TestThePausedLauncherIsTheServicesRecord`, `TestAResumedRunDrawsOnTheOriginalLaunchersPool`, `TestOnlyTheOrchestratorMayResume`, `TestAResumeIsSingleUse`, `TestNoResumeBeforeItsTime`, `TestARunTokenCannotWriteThePausedNode`, `TestTotalPausedTimeIsBounded`, `TestAPauseIsNeverShorterThanTheMinimum`.
-- Command: `go test ./internal/credsvc/ -run 'TestTheActionIsTheServices|TestAPauseNobodyAnsweredIsRefused|TestThePausedLauncher|TestAResumedRun|TestOnlyTheOrchestratorMayResume|TestAResumeIsSingleUse|TestNoResumeBeforeItsTime|TestTotalPausedTimeIsBounded|TestAPauseIsNeverShorterThanTheMinimum' -count=1` and `go test ./internal/budget/ -run 'TestARunTokenCannotWriteThePausedNode' -count=1`
+- Tests: `TestTheActionIsTheServices` (one sub-test per branch), `TestAPauseNobodyAnsweredIsRefused`, `TestThePausedLauncherIsTheServicesRecord`, `TestAResumedRunDrawsOnTheOriginalLaunchersPool`, `TestOnlyTheOrchestratorMayResume`, `TestAResumeIsSingleUse`, `TestNoResumeBeforeItsTime`, `TestNoResumeOfACancelledPause`, `TestTotalPausedTimeIsBounded`, `TestAPauseIsNeverShorterThanTheMinimum`.
+- Command: `go test ./internal/credsvc/ -run 'TestTheActionIsTheServices|TestAPauseNobodyAnsweredIsRefused|TestThePausedLauncher|TestAResumedRun|TestOnlyTheOrchestratorMayResume|TestAResumeIsSingleUse|TestNoResume|TestTotalPausedTimeIsBounded|TestAPauseIsNeverShorterThanTheMinimum' -count=1`
 - Red step: `TestAResumedRunDrawsOnTheOriginalLaunchersPool` fails: a reissued run has the orchestrator as its launcher.
-- Depends on: C3 (the contract's node and members); CS1 (kept: one file, `cascade.go`); CS14 (kept: two files, `slip.go` and `slips.go`); PL6 (kept, behaviour: a resumed run of a service account's launch resolves through PL6's lookup); PL4 (kept: the rules files); PR9 (kept, behaviour: it reads the settings from the struct PR9 adds).
+- Depends on: C3 (the contract's node and members); CS1 (kept: one file, `cascade.go`); CS14 (kept: two files, `slip.go` and `slips.go`); PL6 (kept, behaviour: a resumed run of a service account's launch resolves through PL6's lookup); PL9 (kept: one file, `server.go`); PR9 (kept, behaviour: it reads the settings from the struct PR9 adds).
 - Commit: `model-credentials-routing PR3: the service decides the pause and records it`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### PR4: the resident orchestrator resumes what is due
 
 - Module: `pause-resume`.
-- Acceptance: On each tick the resident orchestrator reads the nodes under `paused/` whose resume time has passed and reissues each once as a run that continues the paused one (the same chain, `resumes` naming it); the issuer serves it an identity for a resume only where the node is one the credentials service wrote (D3189, the one case added to D3136); a node already resumed or marked cancelled is not reissued; two ticks never resume one node twice.
+- Acceptance: On each tick the resident orchestrator reads the nodes under `paused/` whose resume time has passed and reissues each once as a run that continues the paused one (the same chain, `resumes` naming it); the issuer serves it an identity for a resume only where the node is one the credentials service wrote (D3189, the one case added to D3136); a node already resumed or marked cancelled is not reissued, and neither is one whose run has not ended with the status `paused` (a `/pause` posted by an agent whose runner runs on resumes nothing); two ticks never resume one node twice.
 - Files: `internal/orchestrator/resume.go` (new), `internal/orchestrator/resume_test.go` (new), `internal/orchestrator/tick.go`, `internal/orchestrator/resident_launch.go`, `internal/orchestrator/intent.go`, `internal/credsvc/identity_ticket.go`.
 - Interfaces: Consumes C3's record and node. Produces the resumed launch PR5's run receives.
-- Tests: `TestADuePauseIsResumedOnce`, `TestACancelledPauseIsNotResumed`, `TestTheIssuerServesOnlyAServiceWrittenPause`.
-- Command: `go test ./internal/orchestrator/ -run 'TestADuePauseIsResumedOnce|TestACancelledPauseIsNotResumed' -count=1` and `go test ./internal/credsvc/ -run 'TestTheIssuerServesOnlyAServiceWrittenPause' -count=1`
+- Tests: `TestADuePauseIsResumedOnce`, `TestACancelledPauseIsNotResumed`, `TestARunThatDidNotEndPausedIsNotResumed`, `TestTheIssuerServesOnlyAServiceWrittenPause`.
+- Command: `go test ./internal/orchestrator/ -run 'TestADuePauseIsResumedOnce|TestACancelledPauseIsNotResumed|TestARunThatDidNotEndPausedIsNotResumed' -count=1` and `go test ./internal/credsvc/ -run 'TestTheIssuerServesOnlyAServiceWrittenPause' -count=1`
 - Red step: `TestADuePauseIsResumedOnce` fails against the stub, which resumes nothing.
 - Depends on: C3 (the contract's record).
 - Gate: **Not launched before launcher-does-not-mint's I1 has merged: it extends the issuer that task wires.**
@@ -825,7 +844,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### PR5: the resumed run picks up where the paused one stopped
 
 - Module: `pause-resume`.
-- Acceptance: A run whose task names `resumes` reads the paused run's `pause.json`, checks out the checkpoint, restores the saved session and enters the stage the paused run was in, with the chain's remaining budget (D1045 to D1047, unchanged); a paused record whose format version this image does not read, a missing session or a head that is not the checkpoint ends the run with a named outcome and never starts the stage afresh (R18).
+- Acceptance: A run whose task names `resumes` reads the paused run's `pause.json`, checks out the checkpoint, restores the saved session and enters the stage the paused run was in, with the chain's remaining budget (D1045 to D1047, unchanged); a paused record whose format version this image does not read, a missing session or a head that is not the checkpoint ends the run with a named outcome and never starts the stage afresh (R18). `pause.json` is written inside the job, like the run record a follow-up already trusts; that trust is unchanged and is said in R23.
 - Files: `internal/runner/session.go`, `internal/runner/resume_test.go` (new), `internal/task/task.go`, `schemas/task.schema.json`, `internal/orchestrator/launch.go`.
 - Interfaces: Consumes C3's record and `resumes`. Produces the resumed run I2 proves.
 - Tests: `TestAResumedRunRestoresTheSession`, `TestAResumeOfAnUnreadableRecordIsNamed`.
@@ -851,11 +870,11 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### PR7: `watch` and `runs ls` show a paused run
 
 - Module: `pause-resume`.
-- Acceptance: `fugaro watch` and `fugaro runs ls` show a paused run as paused with its resume time and the run that resumed it, in text and in `--json` (new members, none retyped); `fugaro watch` returns when its run pauses and does not block; A test feeds the new status to the release-behind console's parser as checked in before VS3: if that parser refuses it, this task bumps the version of the `--json` formats that carry a status, as the repository's rule for a retyped member says, and says so in its pull request.
+- Acceptance: `fugaro watch` and `fugaro runs ls` show a paused run as paused with its resume time and the run that resumed it, in text and in `--json` (new members, none retyped); `fugaro watch` returns when its run pauses and does not block;
 - Files: `internal/watch/render.go`, `internal/watch/json.go`, `internal/cli/runs.go`, `internal/cli/runs_show.go`, `internal/cli/runs_paused_test.go` (new).
 - Interfaces: Consumes C3's node and record. Produces the JSON the console reads (VS3).
-- Tests: `TestWatchShowsAPausedRun`, `TestRunsLsShowsThePauseAndItsResume`, `TestAnOlderReaderMeetsPaused`.
-- Command: `go test ./internal/cli/ -run 'TestRunsLsShowsThePauseAndItsResume|TestAnOlderReaderMeetsPaused' -count=1` and `go test ./internal/watch/ -run 'TestWatchShowsAPausedRun' -count=1`
+- Tests: `TestWatchShowsAPausedRun`, `TestRunsLsShowsThePauseAndItsResume`.
+- Command: `go test ./internal/cli/ -run 'TestRunsLsShowsThePauseAndItsResume' -count=1` and `go test ./internal/watch/ -run 'TestWatchShowsAPausedRun' -count=1`
 - Red step: `TestWatchShowsAPausedRun` fails: a paused run has no entry and is not listed.
 - Depends on: C3 (the contract's node); CS9 (kept: two files, `render.go` and `json.go`).
 - Commit: `model-credentials-routing PR7: `watch` and `runs ls` show a paused run`
@@ -879,7 +898,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Module: `pause-resume`.
 - Acceptance: The policy gains one new top-level key, `pause`, with `wait_in_job` (default 5 minutes), `min_pause` (default 30 minutes; a pause is never shorter, D3190 as amended) and `max_pause` (default 6 hours, which also bounds a chain's total paused time), validated (`wait_in_job` under `min_pause` under `max_pause`), written by `fugaro settings set` and published by `update`; the `credentials` block is not touched, so a release-behind reader still decodes the policy, with a test; `credentials.wait_threshold` is still decoded and no longer read once an installation is migrated.
 - Files: `internal/projectpolicy/policy.go`, `internal/settings/registry.go`, `schemas/settings.schema.json`, `internal/cli/settings_cloud.go`, `internal/cli/init_policy_publish.go`.
-- Interfaces: Consumes nothing of the contract. Produces the two names PR2 reads through the answer.
+- Interfaces: Consumes nothing of the contract. Produces the three settings PR3 reads.
 - Tests: `TestPauseSettingsDefaults`, `TestPauseSettingsAreOrdered`, `TestAReleaseBehindReaderToleratesPause`.
 - Command: `go test ./internal/projectpolicy/ -run 'TestPauseSettings|TestAReleaseBehindReaderToleratesPause' -count=1`
 - Red step: `TestPauseSettingsDefaults` fails: the policy decodes strictly and has no such member.
@@ -890,27 +909,41 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### PR10: cancel a paused run
 
 - Module: `pause-resume`.
-- Acceptance: `fugaro cancel` of a paused run asks a route of the service to mark its node cancelled, so it is never resumed; the route serves the run's launcher and a project admin and nobody else; a cancelled pause shows as cancelled in `runs ls`. Every new refusal writes exactly one audit line and no value.
-- Files: `internal/cli/cancel.go`, `internal/cli/cancel_paused_test.go` (new), `internal/credsvc/pause_cancel.go` (new), `internal/credsvc/pause_cancel_test.go` (new).
+- Acceptance: `fugaro cancel` of a paused run asks a route of the service to mark its node cancelled, so it is never resumed; the route serves the run's launcher and nobody else (an admin's cancel waits on O16: the service has no admin surface, D143); a cancelled pause shows as cancelled in `runs ls`. Every new refusal writes exactly one audit line and no value.
+- Files: `internal/cli/cancel.go`, `internal/cli/cancel_paused_test.go` (new), `internal/credsvc/pause_cancel.go` (new), `internal/credsvc/pause_cancel_test.go` (new), `internal/credsvc/server.go`.
 - Interfaces: Consumes C3's node and its rule for who may cancel. Produces the mark PR4 honours.
-- Tests: `TestCancelOfAPausedRun`, `TestOnlyTheLauncherOrAnAdminCancelsAPause`.
-- Command: `go test ./internal/cli/ -run 'TestCancelOfAPausedRun' -count=1` and `go test ./internal/credsvc/ -run 'TestOnlyTheLauncherOrAnAdminCancelsAPause' -count=1`
+- Tests: `TestCancelOfAPausedRun`, `TestOnlyTheLauncherCancelsAPause`.
+- Command: `go test ./internal/cli/ -run 'TestCancelOfAPausedRun' -count=1` and `go test ./internal/credsvc/ -run 'TestOnlyTheLauncherCancelsAPause' -count=1`
 - Red step: `TestCancelOfAPausedRun` fails: there is no execution to cancel and the command reports nothing to do.
-- Depends on: C3 (the contract's node and rule).
+- Depends on: C3 (the contract's node and rule); PR3 (kept: one file, `server.go`).
 - Commit: `model-credentials-routing PR10: cancel a paused run`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### PR11: every reader of a status meets `paused`
 
 - Module: `pause-resume`.
-- Acceptance: The summary schema's status set, the run view, the user statistics, the budget rollup, the digest and `watch`'s finished list each handle `paused`: it is counted apart from a failure and a success, and a paused run is never listed as finished.
+- Acceptance: The summary schema's status set, the run view, the user statistics, the budget rollup, the digest and `watch`'s finished list each handle `paused`: it is counted apart from a failure and a success, and a paused run is never listed as finished. About three dozen files switch on a status; this task changes the six that would miscount and adds one guard test that walks the tree and fails on any switch over `runstore.Status` that neither names `paused` nor has a default, so the rest are found by the test and fixed where it points.
 - Files: `schemas/summary.schema.json`, `internal/runview/runview.go`, `internal/userstats/userstats.go`, `internal/budget/rollup.go`, `internal/watch/finished.go`, `internal/digest/digest.go`.
 - Interfaces: Consumes C3's constant and PR1's set. Produces nothing a task calls.
-- Tests: `TestEveryStatusReaderHandlesPaused` (one sub-test per reader).
+- Tests: `TestEveryStatusReaderHandlesPaused` (one sub-test per reader), `TestEverySwitchOverStatusKnowsPaused`.
 - Command: `go test ./internal/runview/ -run 'TestEveryStatusReaderHandlesPaused' -count=1`, `go test ./internal/userstats/ -run 'TestEveryStatusReaderHandlesPaused' -count=1`, `go test ./internal/budget/ -run 'TestRollupCountsPausedApart' -count=1` and `go test ./internal/digest/ -run 'TestDigestCountsPausedApart' -count=1`
 - Red step: `TestEveryStatusReaderHandlesPaused/runview` fails: the word is unknown to it.
 - Depends on: PR1 (kept, behaviour: the readers switch over the set PR1 extends, and their exhaustiveness tests read it).
 - Commit: `model-credentials-routing PR11: every reader of a status meets `paused``
+- Reviewer tier: standard.
+
+### PR12: a paused chain counts as live
+
+- Module: `pause-resume`.
+- Acceptance: Between a pause and its resume the chain is in flight to every guard that asks: the pull request reads live and not stalled, a duplicate launch and a follow-up are refused as they are for a running run, and the orchestrator's own view counts it; a cancelled pause is not in flight. The word for such a pull request is the owner's (O14); this task builds the recommendation, live.
+- Files: `internal/cli/runs_prstate.go`, `internal/cli/run_duplicate.go`, `internal/cli/followup.go`, `internal/cli/runs_live.go`, `internal/cli/orchestrator_run.go`, `internal/cli/paused_in_flight_test.go` (new).
+- Interfaces: Consumes C3's node. Produces nothing a task calls.
+- Tests: `TestAPausedChainIsInFlight` (one sub-test per guard), `TestACancelledPauseIsNotInFlight`.
+- Command: `go test ./internal/cli/ -run 'TestAPausedChainIsInFlight|TestACancelledPauseIsNotInFlight' -count=1`
+- Red step: `TestAPausedChainIsInFlight/duplicate` fails: the second launch is admitted.
+- Depends on: C3 (the contract's node).
+- Gate: **Not launched before the owner answers O14.**
+- Commit: `model-credentials-routing PR12: a paused chain counts as live`
 - Reviewer tier: standard.
 
 ### I2: integration: a run pauses and is resumed
@@ -922,7 +955,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Tests: `TestPauseEndToEnd` (four sub-tests).
 - Command: `go test ./internal/cli/ -run 'TestPauseEndToEnd' -count=1`
 - Red step: `TestPauseEndToEnd/pause_and_resume` fails while a stub answers.
-- Depends on: A3, PR1, PR2, PR3, PR4, PR5, PR6, PR7, PR8, PR9, VS3, VS4, PR10, PR11 (the sides it wires); I1 (kept, behaviour: the test exhausts a real chain, which exists only once I1 has wired it).
+- Depends on: A3, PR1, PR2, PR3, PR4, PR5, PR6, PR7, PR8, PR9, VS3, VS4, PR10, PR11, PR12 (the sides it wires); I1 (kept, behaviour: the test exhausts a real chain, which exists only once I1 has wired it).
 - Commit: `model-credentials-routing I2: integration: a run pauses and is resumed`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -957,7 +990,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### VS3: the console shows a paused run
 
 - Module: `visibility`.
-- Acceptance: The live and run screens show a paused run as paused with its resume time and a link to the run that resumed it; the status set gains `paused`; an unknown status still draws as unknown rather than failing.
+- Acceptance: The live and run screens show a paused run as paused with its resume time and a link to the run that resumed it; the status set gains `paused`; an unknown status still draws as unknown rather than failing. A unit test feeds `paused` to a pinned copy of the parser of the last released console (checked in under the test's fixtures): if that parser refuses the word, the pull request says so and the owner's answer to O8 decides whether the `--json` formats that carry a status are bumped.
 - Files: `console/src/shared/schema.ts`, `console/src/renderer/screens/live.ts`, `console/src/renderer/screens/run.ts`, `console/test/unit/run-paused.test.ts` (new).
 - Interfaces: Consumes C3's node and status, from a fixture. Produces nothing a task calls.
 - Tests: `run-paused.test.ts`.
@@ -985,7 +1018,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### DOC1: `SECURITY.md`, its page and the rules file
 
 - Module: `chain-serving`.
-- Acceptance: `SECURITY.md`, the website's security page and `.claude/rules/credentials-service.md` describe the tree as it is: the service owns the table and calls every source, Vertex included; the gateway holds no key; Vertex is capped as far as a key is, with the same residual risk of a hand-built call (D3003), and is no longer "without a dollar cap in any mode"; a personal pool serves only its owner's runs and a resume of one; a project database admin can forge a slip or a paused node, as for any project state (accepted, D1943); the pinned sentences change in the document and its test together.
+- Acceptance: `SECURITY.md`, the website's security page and `.claude/rules/credentials-service.md` describe the tree as it is: the service owns the table and calls every source, Vertex included; the gateway holds no key; Vertex is capped as far as a key is, with the same residual risk of a hand-built call (D3003), and is no longer "without a dollar cap in any mode"; a personal pool serves only its owner's runs and a resume of one; the members of `admins` and `budget_admins`, who hold the database by IAM, can forge a slip, a designation or a paused node, as for any project state (accepted, D1943), and every launcher can read those nodes; the rule against a predefined role names the custom role CS11 added; the pinned sentences change in the document and its test together.
 - Files: `SECURITY.md`, `website/content/security.md`, `.claude/rules/credentials-service.md`, `internal/cli/docs_security_test.go`.
 - Interfaces: Consumes the tree after I1 and I2.
 - Tests: The Docs tests; the website's check.
@@ -1012,8 +1045,8 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### DOC3: the accounts documents, the README and the release notes
 
 - Module: `migration`.
-- Acceptance: `docs/project-claude-accounts.md`, `README.md` and the release notes of release 1 describe the table and pools; `### For operators` says "run `fugaro update`" and what it prints, and nothing else; the website's summary line is added.
-- Files: `docs/project-claude-accounts.md`, `README.md`, `docs/releases/v-next.md` (the release's own file), `website/data/release-summaries.yaml`.
+- Acceptance: `docs/project-claude-accounts.md`, `README.md` and the notes of release 1 (the file `scripts/release.sh` names for that version under `docs/releases/`) describe the table and pools; `### For operators` says "run `fugaro update`" and what it prints, and nothing else; the website's summary line is added.
+- Files: `docs/project-claude-accounts.md`, `README.md`, `docs/releases/` (release 1's notes file), `website/data/release-summaries.yaml`.
 - Interfaces: Consumes the tree after I1 and I2.
 - Tests: The Docs tests; the website's check.
 - Command: `go test ./internal/cli/ -run 'Docs' -count=1` and `cd website && npm run check`
@@ -1026,7 +1059,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 
 - Module: `migration`.
 - Acceptance: The `setup` and `working` skills say how a model's source is set (`fugaro routing`, `fugaro accounts pool`), what a paused run is and that it needs nothing from the user, what `--pool` does, and name no `--token` and no auth mode; the plugin's tests pass against the CLI.
-- Files: `plugin/skills/setup/SKILL.md`, `plugin/skills/setup/reference/decisions.md`, `plugin/skills/setup/reference/transitions.md`, `plugin/skills/working/SKILL.md`.
+- Files: `plugin/skills/setup/SKILL.md`, `plugin/skills/setup/reference/decisions.md`, `plugin/skills/setup/reference/transitions.md`, `plugin/skills/working/SKILL.md`, `plugin/skills/setup/reference/managed.md`.
 - Interfaces: Consumes the CLI after I1 and I2.
 - Tests: The plugin's tests.
 - Command: `go test ./plugin/... -count=1`
@@ -1035,33 +1068,33 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Commit: `model-credentials-routing DOC4: the plugin's skills`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
-### CK1: Checks 871 and 872, as scripts
+### CK1: Checks 881 and 882, as scripts
 
 - Module: `chain-serving`.
-- Acceptance: One script per check, each run by the owner in his own session and printing no value, each with a test against a fake: 871 a live chain falls through from an exhausted pool to the key, flagged and counted; 872 the service serves each mapped model on Vertex, priced and settled against the run's cap, and a call made from inside a job straight to Vertex on an `enforce` project is refused.
-- Files: `scripts/live-checks/check-871-chain-falls-through.sh` (new), `scripts/live-checks/check-871-chain-falls-through_test.sh` (new), `scripts/live-checks/check-872-vertex-capped.sh` (new), `scripts/live-checks/check-872-vertex-capped_test.sh` (new).
+- Acceptance: One script per check, each run by the owner in his own session and printing no value, each with a test against a fake: 881 a live chain falls through from an exhausted pool to the key, flagged and counted; 882 the service serves each mapped model on Vertex, priced and settled against the run's cap, and a call made from inside a job straight to Vertex on an `enforce` project is refused.
+- Files: `scripts/live-checks/check-881-chain-falls-through.sh` (new), `scripts/live-checks/check-881-chain-falls-through_test.sh` (new), `scripts/live-checks/check-882-vertex-capped.sh` (new), `scripts/live-checks/check-882-vertex-capped_test.sh` (new).
 - Interfaces: Consumes nothing. Produces the owner's checks.
 - Tests: Each script's `_test.sh` beside it.
-- Command: `for t in scripts/live-checks/check-87[12]-*_test.sh; do bash "$t"; done`
+- Command: `for t in scripts/live-checks/check-88[12]-*_test.sh; do bash "$t"; done`
 - Red step: Each test fails before its script exists.
 - Depends on: none.
-- Commit: `model-credentials-routing CK1: Checks 871 and 872, as scripts`
+- Commit: `model-credentials-routing CK1: Checks 881 and 882, as scripts`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 - Owner-run: The owner runs each script himself after release 1 is installed through the real `fugaro update`. No agent runs one.
 
-### CK2: Checks 873 to 875, as scripts
+### CK2: Checks 883 to 885, as scripts
 
 - Module: `pause-resume`.
-- Acceptance: One script per check, each run by the owner in his own session and printing no value, each with a test against a fake: 873 a run pauses and the orchestrator resumes it on the original launcher's pool; 874 `fugaro update` migrates the dev installation and no repository's source moves; 875 after release 2 a retired key is rejected with the fix.
-- Files: `scripts/live-checks/check-873-pause-resume.sh` (new), `scripts/live-checks/check-873-pause-resume_test.sh` (new), `scripts/live-checks/check-874-update-migrates.sh` (new), `scripts/live-checks/check-874-update-migrates_test.sh` (new), `scripts/live-checks/check-875-retired-keys.sh` (new), `scripts/live-checks/check-875-retired-keys_test.sh` (new).
+- Acceptance: One script per check, each run by the owner in his own session and printing no value, each with a test against a fake: 883 a run pauses and the orchestrator resumes it on the original launcher's pool; 884 `fugaro update` migrates the dev installation and no repository's source moves; 885 after release 2 a retired key is rejected with the fix.
+- Files: `scripts/live-checks/check-883-pause-resume.sh` (new), `scripts/live-checks/check-883-pause-resume_test.sh` (new), `scripts/live-checks/check-884-update-migrates.sh` (new), `scripts/live-checks/check-884-update-migrates_test.sh` (new), `scripts/live-checks/check-885-retired-keys.sh` (new), `scripts/live-checks/check-885-retired-keys_test.sh` (new).
 - Interfaces: Consumes nothing. Produces the owner's checks.
 - Tests: Each script's `_test.sh` beside it.
-- Command: `for t in scripts/live-checks/check-87[345]-*_test.sh; do bash "$t"; done`
+- Command: `for t in scripts/live-checks/check-88[345]-*_test.sh; do bash "$t"; done`
 - Red step: Each test fails before its script exists.
 - Depends on: none.
-- Commit: `model-credentials-routing CK2: Checks 873 to 875, as scripts`
+- Commit: `model-credentials-routing CK2: Checks 883 to 885, as scripts`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
-- Owner-run: The owner runs each script himself: 874 at release 1's install through the real `fugaro update`, 873 after it, 875 after release 2. No agent runs one.
+- Owner-run: The owner runs each script himself: 884 at release 1's install through the real `fugaro update`, 883 after it, 885 after release 2. No agent runs one.
 
 ## Slice 9: release 2, the removals
 
@@ -1074,7 +1107,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Tests: `TestNoCredentialInAnyEnvironment`, `TestAnOlderImageIsRefused`.
 - Command: `go test ./internal/agent/ -run 'TestNoCredentialInAnyEnvironment' -count=1` and `go test ./internal/cli/ -run 'TestAnOlderImageIsRefused' -count=1`
 - Red step: `TestNoCredentialInAnyEnvironment` fails on the release-1 branch.
-- Depends on: I1 (kept, behaviour: it deletes what I1 proves unused); DOC1 (kept: one file, `SECURITY.md`'s test).
+- Depends on: I1 (kept, behaviour: it deletes what I1 proves unused); I2 (kept, behaviour: release 2 follows the whole of release 1, the pause included, and its tasks edit files the pause's tasks write).
 - Gate: **Not launched before release 1 is cut and the keys plan's KS13 has merged.**
 - Commit: `model-credentials-routing X1: release 2: the subscription token's old path goes`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
@@ -1095,13 +1128,13 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### X3: release 2: the installation's old keys and the policy's old members
 
 - Module: `migration`.
-- Acceptance: `fugaro update` removes `subscription_spread`, `credentials.fallback`, `credentials.wait_threshold`, the craft credentials, the pools in their old shape (`craft_pools`) and the account-stage keys from the installation's config and the published policy, migrating the node in place; an installation at release 1 converges; the pool marker `cascade` is no longer read. Removing published members bumps the policy's format version, as the repository's rule says; the bump is behind X1's image-age gate, so no run in flight on a release-1 image meets it, and the console's notes screen stops drawing `routing.claude`.
+- Acceptance: `fugaro update` removes `subscription_spread`, `credentials.fallback`, `credentials.wait_threshold`, the craft credentials, the pools in their old shape (`craft_pools`) and the account-stage keys from the installation's config and the published policy, migrating the node in place; an installation at release 1 converges; the pool marker `cascade` is no longer read. The retired members stay decodable and are written empty, so a release-1 image, and a paused run that resumes on one, still reads the policy; taking them out of the format, which bumps its version, is left to a later release with a gate of its own (R25). The console's notes screen stops drawing `routing.claude`.
 - Files: `internal/localcfg/localcfg.go`, `internal/projectpolicy/policy.go`, `internal/cli/update_routing_migrate.go`, `internal/config/craft.go`, `internal/cli/update_release2_test.go` (new), `console/src/renderer/screens/policynotes.ts`.
 - Interfaces: Consumes X2.
 - Tests: `TestUpdateDropsTheOldMembers`, `TestUpdateConvergesFromRelease1`.
 - Command: `go test ./internal/cli/ -run 'TestUpdateDropsTheOldMembers|TestUpdateConvergesFromRelease1' -count=1`
 - Red step: `TestUpdateDropsTheOldMembers` fails: the members are still written.
-- Depends on: X2 (kept: the schema test both change).
+- Depends on: X2 (kept, behaviour: the installation's members may be emptied only once a file that names the old keys is rejected).
 - Commit: `model-credentials-routing X3: release 2: the installation's old keys and the policy's old members`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -1136,7 +1169,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 
 - Module: `migration`.
 - Acceptance: No command or doctor report derives a job, an account or a secret per named account: the callers of `WorkflowVariant` in the CLI are removed with their tests and goldens; `fugaro doctor` reports a per-account job that is still deployed as one `fugaro update` will retire.
-- Files: `internal/cli/run.go`, `internal/cli/cloud.go`, `internal/cli/doctor.go`, `internal/cli/doctor_brokering.go`, `internal/cli/launch_budget.go`, `internal/cli/project_job.go`.
+- Files: `internal/cli/run.go`, `internal/cli/cloud.go`, `internal/cli/doctor.go`, `internal/cli/doctor_brokering.go`, `internal/cli/launch_budget.go`, `internal/cli/project_job.go`, `internal/cli/image_refresh_steps.go`, `internal/cli/init.go`.
 - Interfaces: Consumes X1's gate.
 - Tests: `TestNoCallerDerivesAJobPerAccount`.
 - Command: `go test ./internal/cli/ -run 'TestNoCallerDerivesAJobPerAccount' -count=1`
@@ -1145,31 +1178,57 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 - Commit: `model-credentials-routing X6: release 2: no caller derives a job per account`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
-### X7: release 2: the per-account jobs are retired
+### X7: release 2: the infra plans no job per account
 
 - Module: `migration`.
-- Acceptance: `WorkflowVariant` and what plans a job, a service account or a secret per named account are removed from the backend names, the infra spec and the sweeper; `fugaro update` retires the orphaned per-account jobs and says so in its named in-flight line (a retirement deletes an orphaned job with the executions on it), asking nothing; an installation at release 1 converges.
-- Files: `internal/backend/gcp/names.go`, `internal/infra/repo.go`, `internal/infra/tfvars.go`, `internal/infra/retire.go`, `internal/budget/sweep.go`, `internal/infra/retire_variants_test.go` (new).
+- Acceptance: What plans a job, a service account or a secret per named account is removed from the infra spec; `fugaro update` retires the orphaned per-account jobs and says so in its named in-flight line (a retirement deletes an orphaned job with the executions on it), asking nothing; an installation at release 1 converges.
+- Files: `internal/infra/repo.go`, `internal/infra/tfvars.go`, `internal/infra/retire.go`, `internal/infra/readiness.go`, `internal/infra/spec.go`, `internal/infra/retire_variants_test.go` (new).
 - Interfaces: Consumes X6.
 - Tests: `TestNoJobPerAccount`, `TestUpdateRetiresTheVariantJobs`.
 - Command: `go test ./internal/infra/ -run 'TestNoJobPerAccount|TestUpdateRetiresTheVariantJobs' -count=1`
 - Red step: `TestNoJobPerAccount` fails: a variant is still planned.
 - Depends on: X6 (kept, behaviour: the function may go only once nothing calls it).
-- Commit: `model-credentials-routing X7: release 2: the per-account jobs are retired`
+- Commit: `model-credentials-routing X7: release 2: the infra plans no job per account`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### X8: release 2: no job account holds the Vertex permission
 
 - Module: `migration`.
-- Acceptance: No job's account and no shared project job's account is planned `roles/aiplatform.user` in any budget mode; only the credentials service's account holds it; the Terraform tests pin it and `fugaro update` applies it, with its in-flight line naming that a run still calling Vertex on its job's identity (an `observe` run on a release-1 image) would lose it, which X1's image-age gate has already ruled out.
+- Acceptance: No job's account and no shared project job's account is planned `roles/aiplatform.user` in any budget mode; only the credentials service's account holds it, through its custom role; the Terraform tests pin it and `fugaro update` applies it, with its in-flight line naming that a run still calling Vertex on its job's identity (an `observe` run on a release-1 image) would lose it, which X1's image-age gate has already ruled out.
 - Files: `deploy/terraform/gcp/modules/workflow/sa.tf`, `deploy/terraform/gcp/modules/project/sa.tf`, `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl`, `internal/infra/chain_spec.go`, `internal/infra/chain_spec_test.go`.
 - Interfaces: Consumes X1's gate and CS11's plan.
 - Tests: `TestNoJobAccountHoldsVertex`; the Terraform tests.
 - Command: `go test ./internal/infra/ -run 'TestNoJobAccountHoldsVertex' -count=1` and `terraform fmt -check -recursive deploy/terraform`
 - Red step: `TestNoJobAccountHoldsVertex` fails: an `observe` project's job still holds it.
-- Depends on: X1 (kept, behaviour: no image that calls Vertex on the job's identity may still launch); X7 (kept: nothing shared; ordered so `update` retires jobs before it changes the survivors' grants).
+- Depends on: X1 (kept, behaviour: no image that calls Vertex on the job's identity may still launch).
 - Commit: `model-credentials-routing X8: release 2: no job account holds the Vertex permission`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
+
+### X9: release 2: `WorkflowVariant` goes
+
+- Module: `migration`.
+- Acceptance: `WorkflowVariant` and the names it derives are removed from both backends, the account config, the sweeper and the project job; `fugaro update` retires the orphaned per-account jobs and says so in its named in-flight line (a retirement deletes an orphaned job with the executions on it), asking nothing; an installation at release 1 converges.
+- Files: `internal/backend/gcp/names.go`, `internal/backend/batch/names.go`, `internal/config/claude_accounts.go`, `internal/budget/sweep.go`, `internal/runner/projectjob.go`, `internal/backend/gcp/names_variant_test.go` (new).
+- Interfaces: Consumes X6 and X7.
+- Tests: `TestNoWorkflowVariant`, `TestUpdateRetiresTheVariantJobs`.
+- Command: `go test ./internal/backend/gcp/ -run 'TestNoWorkflowVariant' -count=1` and `go test ./internal/infra/ -run 'TestUpdateRetiresTheVariantJobs' -count=1`
+- Red step: `TestNoWorkflowVariant` fails: the function exists.
+- Depends on: X7 (kept, behaviour: the function may go only once nothing plans with it); X6 (kept, behaviour: and once nothing in the CLI calls it).
+- Commit: `model-credentials-routing X9: release 2: `WorkflowVariant` goes`
+- Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
+
+### X10: release 2: the notes
+
+- Module: `migration`.
+- Acceptance: Release 2's notes say what is rejected and removed; `### For operators` is "run `fugaro update`" and what it prints, including the per-account jobs it retires; the website's summary line is added.
+- Files: `docs/releases/` (release 2's notes file), `website/data/release-summaries.yaml`.
+- Interfaces: Consumes the tree after X1 to X9.
+- Tests: The Docs tests; the website's check.
+- Command: `go test ./internal/cli/ -run 'Docs' -count=1` and `cd website && npm run check`
+- Red step: None: a documents task.
+- Depends on: X2 (kept: it describes what X2 rejects); X3 (kept: and what X3 empties); X4 (kept: and X4); X5 (kept: and X5); X8 (kept: and X8); X9 (kept: and X9); DOC3 (kept: one file, `release-summaries.yaml`).
+- Commit: `model-credentials-routing X10: release 2: the notes`
+- Reviewer tier: standard.
 
 ## Parallel execution
 
@@ -1178,41 +1237,44 @@ plan, a release cut, an owner's check) can hold a task past its level; each is o
 
 | Level | Tasks |
 | --- | --- |
-| 1 | A1, A2, A3, PL7, CK1, CK2 |
+| 1 | A1, A2, A3, CK1, CK2 |
 | 2 | C1, C2, C3 |
-| 3 | RT1, RT2, PL3, CS1, CS2, CS3, CS4, CS8, CS9, CS13, CS14, MG1, MG3, PR4, PR5, PR8, PR10, VS1, VS2, VS4 |
-| 4 | RT3, PL1, PL4, CS11, GV1, GV3, PR6, PR7, VS3 |
-| 5 | RT4, RT5, PL6, CS5, CS10, GV2 |
-| 6 | RT6, PL2, CS6, CS7, MG2, MG4, MG5 |
-| 7 | RT7, CS12, PR2, PR9 |
-| 8 | PL5, PR3 |
-| 9 | PL9, PR1 |
-| 10 | PL10, MG6, PR11 |
-| 11 | PL8, I1 |
-| 12 | GV4, I2, X5 |
-| 13 | DOC1 |
-| 14 | DOC2, X1 |
-| 15 | DOC3, X2, X4, X6 |
-| 16 | DOC4, X3, X7 |
-| 17 | X8 |
+| 3 | RT1, RT2, PL3, CS1, CS2, CS3, CS4, CS8, CS9, CS13, CS14, MG1, MG3, PR4, PR5, PR8, PR12, VS1, VS2, VS4 |
+| 4 | RT3, PL1, PL4, PL7, CS11, GV1, GV3, PR1, PR6, PR7, VS3 |
+| 5 | RT4, RT5, PL6, CS5, CS10, MG5, GV2, PR11 |
+| 6 | RT6, PL2, CS6, CS7, MG2, PR9 |
+| 7 | RT7, CS12, PR2 |
+| 8 | CS15 |
+| 9 | PL5 |
+| 10 | PL9 |
+| 11 | PL10, MG4, PR3 |
+| 12 | PL8, MG6, PR10 |
+| 13 | I1 |
+| 14 | GV4, I2, X5 |
+| 15 | DOC1, X1 |
+| 16 | DOC2, X2, X4, X6, X8 |
+| 17 | DOC3, X3, X7 |
+| 18 | DOC4, X9 |
+| 19 | X10 |
 
-**The critical path** as `fugaro plan graph` reports it, 17 tasks:
-A1, C1, RT1, RT3, RT5, PL2, CS12, PL5, PL9, MG6, I1, I2, DOC1, X1, X6, X7, X8. What is
-sequential and why: the contract waits on the document that withdraws the earlier contract; the
-checks call the resolver's real answer; `routing set` refuses by the checks; then five tasks in
-a row each add a command or a flag and so each regenerate the one pinned CLI reference (F50),
-which is an order of one generated file, not of logic; integration joins every side; the
-pause's integration exhausts a real chain; `SECURITY.md` is corrected; and release 2 removes
-things in the only safe order (the old path, its callers, the per-account jobs, the last grant).
-Release 1 alone ends at DOC4, 16 tasks.
+**The critical path** as `fugaro plan graph` reports it, 19 tasks:
+A1, C1, RT1, RT3, RT5, PL2, CS12, CS15, PL5, PL9, MG4, MG6, I1, I2, X1, X6, X7, X9, X10. What
+is sequential and why: the contract waits on the document that withdraws the earlier contract;
+the checks call the resolver's real answer; `routing set` refuses by the checks; then eight
+tasks in a row each add a command or a flag, or change help text, and so each regenerate the one
+pinned CLI reference (F50), which is an order of one generated file, not of logic; integration
+joins every side; the pause's integration exhausts a real chain; and release 2 removes things
+in the only safe order (the old path, its callers, the plans, the function, the notes). Release
+1 alone ends at DOC4.
 
 **What holds a task besides its edges:** CS1 and MG2 wait on always-a-budget's I1 and the keys
 plan's KS12 (D3071, kept); CS5, CS6 and CS7 on always-a-budget's AB1b; CS11 and RT7 on
-always-a-budget's AB15; PR4 on launcher-does-not-mint's I1; PL8 on the result of Check 870; DOC1
-is not live beside the keys plan's KS13; X1 waits on release 1 being cut and on KS13; X5 on
-release 1 being cut. **Release 1 is not cut before DOC1 to DOC4 have merged**: until DOC1,
-`SECURITY.md` still says Vertex has no dollar cap. OpenRouter for a Claude model waits on Check
-50 (R3) and holds no task. Nothing here waits on workspace-credentials any more (D3179).
+always-a-budget's AB15; PR4 on launcher-does-not-mint's I1; PL8 on the result of Check 880; the
+`contribute` half of PL5 on the owner's answer to O13; PR12 on his answer to O14; DOC1 is not
+live beside the keys plan's KS13; X1 waits on release 1 being cut and on KS13; X5 on release 1
+being cut. **Release 1 is not cut before DOC1 to DOC4 have merged**: until DOC1, `SECURITY.md`
+still says Vertex has no dollar cap. OpenRouter for a Claude model waits on Check 50 (R3) and
+holds no task. Nothing here waits on workspace-credentials (D3179).
 
 ### Shared files
 
@@ -1226,48 +1288,59 @@ through another task. A change to any task's Files re-checks this table.
 | `console/src/shared/schema.ts` | VS1, VS3 | VS1 then VS3 |
 | `deploy/terraform/gcp/modules/project/sa.tf` | CS11, X8 | CS11 then X8 |
 | `deploy/terraform/gcp/modules/workflow/sa.tf` | CS11, X8 | CS11 then X8 |
+| `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl` | CS11, X8 | CS11 then X8 |
 | `docs/gcp-live-checklist.md` | PL7, DOC2 | PL7 then DOC2 |
+| `docs/releases/` | DOC3, X10 | DOC3 then X10 |
 | `internal/agent/env.go` | CS7, X1 | CS7 then X1 |
 | `internal/budget/registry.go` | CS9, PR1 | CS9 then PR1 |
-| `internal/budget/rules/marker.go` | PL4, PL10, CS9, PR1, PR3 | CS9 then PL4 then PR3 then PR1 then PL10 |
-| `internal/budget/rules/rules.json.tmpl` | PL4, PL10, CS9, PR1, PR3 | CS9 then PL4 then PR3 then PR1 then PL10 |
-| `internal/budget/rules/testdata/rules.golden.json` | PL4, PL10, CS9, PR1, PR3 | CS9 then PL4 then PR3 then PR1 then PL10 |
+| `internal/budget/rules/marker.go` | CS9, PR1 | CS9 then PR1 |
+| `internal/budget/rules/rules.json.tmpl` | CS9, PR1 | CS9 then PR1 |
+| `internal/budget/rules/testdata/rules.golden.json` | CS9, PR1 | CS9 then PR1 |
 | `internal/cli/accounts_add.go` | PL2, PL9 | PL2 then PL9 |
 | `internal/cli/accounts_pool.go` | PL2, PL5, PL10 | PL2 then PL5 then PL10 |
 | `internal/cli/doctor.go` | RT7, X6 | RT7 then X6 |
 | `internal/cli/doctor_brokering.go` | RT7, X6 | RT7 then X6 |
+| `internal/cli/init.go` | CS5, X6 | CS5 then X6 |
 | `internal/cli/init_policy_publish.go` | RT4, PR9 | RT4 then PR9 |
 | `internal/cli/launch_budget.go` | CS10, X1, X6 | CS10 then X1 then X6 |
 | `internal/cli/models_use.go` | RT6, MG6 | RT6 then MG6 |
 | `internal/cli/run.go` | CS10, CS12, MG6, X6 | CS10 then CS12 then MG6 then X6 |
 | `internal/cli/secrets_intake.go` | PL5, PL9 | PL5 then PL9 |
-| `internal/cli/update_in_flight.go` | PR6, X4 | PR6 then X4 |
+| `internal/cli/update_in_flight.go` | MG3, PR6, X4 | MG3 then PR6 then X4 |
 | `internal/cli/update_repoauth.go` | MG3, X4 | MG3 then X4 |
 | `internal/cli/update_routing_migrate.go` | MG2, X3 | MG2 then X3 |
 | `internal/cli/validate.go` | RT6, CS5 | CS5 then RT6 |
 | `internal/config/craft.go` | PL1, X3 | PL1 then X3 |
+| `internal/creds/marks.go` | PL7, PL8 | PL7 then PL8 |
 | `internal/creds/poolrule.go` | PL3, PL8 | PL3 then PL8 |
+| `internal/creds/poolrule_stub.go` | C2, I1 | C2 then I1 |
 | `internal/creds/slips.go` | CS14, PR3 | CS14 then PR3 |
 | `internal/credsvc/cascade.go` | CS1, PR3 | CS1 then PR3 |
 | `internal/credsvc/chain_stub.go` | C1, I1 | C1 then I1 |
-| `internal/credsvc/forward.go` | PL8, PL10, CS4 | CS4 then PL10 then PL8 |
+| `internal/credsvc/forward.go` | PL7, PL8, PL10, CS4 | CS4 then PL7 then PL10 then PL8 |
 | `internal/credsvc/launcherpool.go` | PL4, PL6 | PL4 then PL6 |
 | `internal/credsvc/launcherpool_stub.go` | C2, I1 | C2 then I1 |
 | `internal/credsvc/legacy_auth.go` | MG3, X4 | MG3 then X4 |
+| `internal/credsvc/server.go` | PL4, PL9, CS1, PR3, PR10 | CS1 then PL4 then PL9 then PR3 then PR10 |
 | `internal/credsvc/slip.go` | CS14, PR3 | CS14 then PR3 |
-| `internal/gateway/service.go` | CS2, X4 | CS2 then X4 |
+| `internal/credsvc/wire.go` | PR3, X4 | PR3 then X4 |
+| `internal/gateway/service.go` | CS2, PR2, X4 | CS2 then PR2 then X4 |
 | `internal/infra/chain_spec.go` | CS11, X8 | CS11 then X8 |
 | `internal/infra/chain_spec_test.go` | CS11, X8 | CS11 then X8 |
+| `internal/infra/readiness.go` | CS11, X7 | CS11 then X7 |
+| `internal/infra/spec.go` | CS11, X7 | CS11 then X7 |
 | `internal/localcfg/localcfg.go` | RT2, PL1, X3 | RT2 then PL1 then X3 |
 | `internal/orchestrator/resume_stub.go` | C3, I2 | C3 then I2 |
 | `internal/pricing/canonical.go` | CS3, GV3 | CS3 then GV3 |
 | `internal/pricing/canonical_test.go` | CS3, GV3 | CS3 then GV3 |
+| `internal/pricing/spelling_stub.go` | C1, I1 | C1 then I1 |
 | `internal/projectpolicy/policy.go` | RT4, PR9, X3 | RT4 then PR9 then X3 |
 | `internal/routing/checks.go` | RT3, GV4 | RT3 then GV4 |
 | `internal/routing/resolve_stub.go` | C1, I1 | C1 then I1 |
 | `internal/runner/agentenv.go` | CS7, X1 | CS7 then X1 |
-| `internal/runner/gateway.go` | CS5, CS6 | CS5 then CS6 |
+| `internal/runner/gateway.go` | CS5, CS6, PR2 | CS5 then CS6 then PR2 |
 | `internal/runner/poolchoice.go` | CS5, CS7 | CS5 then CS7 |
+| `internal/runner/projectjob.go` | CS13, X9 | CS13 then X9 |
 | `internal/runner/runner.go` | CS6, PR2 | CS6 then PR2 |
 | `internal/runner/suspend_stub.go` | C3, I2 | C3 then I2 |
 | `internal/runstore/runstore.go` | CS8, PR1 | CS8 then PR1 |
@@ -1280,8 +1353,9 @@ through another task. A change to any task's Files re-checks this table.
 | `schemas/fugaro.schema.json` | MG5, X2 | MG5 then X2 |
 | `schemas/project-layer.schema.json` | MG5, X2 | MG5 then X2 |
 | `schemas/result.schema.json` | CS8, PR1 | CS8 then PR1 |
-| `schemas/settings.schema.json` | RT2, MG5, PR9 | RT2 then MG5 then PR9 |
-| `website/content/cli-reference.md` | RT5, PL2, PL5, PL9, CS12, MG6 | RT5 then PL2 then CS12 then PL5 then PL9 then MG6 |
+| `schemas/settings.schema.json` | RT2, PL1, MG5, PR9 | RT2 then PL1 then MG5 then PR9 |
+| `website/content/cli-reference.md` | RT5, PL2, PL5, PL9, CS12, CS15, MG4, MG6 | RT5 then PL2 then CS12 then CS15 then PL5 then PL9 then MG4 then MG6 |
+| `website/data/release-summaries.yaml` | DOC3, X10 | DOC3 then X10 |
 
 ## The dependencies the plan broke, and the ones it kept
 
@@ -1306,17 +1380,14 @@ integration task named, which deletes the contract's stubs.
 | MG3 → CS1 | C1 | I1 | the bridge needs the service's read order as an interface, not the walk |
 | VS1 → CS8 | C1 | I1 | the console needs the record's members, not their writer |
 | VS4 → CS8 | C1 | I1 | the mobile feed needs the record's members, not their writer |
-| PL1 → A2 | C2 | I1 | the pool's config waited on the workspace plan's amendment directly; the contract now carries that wait and the pool's types |
 | PL3 → PL1 | C2 | I1 | the picker needs the rule names, not the config's checks |
 | PL4 → PL1 | C2 | I1 | the lookup needs the owner's principal type, not the config's checks |
-| CS1 → PL4 | C2 | I1 | the walk needs the pool lookup's interface, not the personal pool |
 | CS1 → PL3 | C2 | I1 | the walk needs the picker's signature, not the rules |
 | MG1 → PL1 | C2 | I1 | the migration needs the pool's types, not the config's checks |
 | VS2 → PL2 | C2 | I1 | the console needs the JSON shape, not the command |
 | CS4 → CS1 | C1 | I1 | the Vertex source needs the walk's source interface, not the walk |
 | CS13 → CS1 | C1 | I1 | the other callers need the stage header's name, not the walk |
 | CS12 → PL4 | C2 | I1 | the launch needs the named-pool member, not the lookup |
-| PL9 → PL4 | C2 | I1 | the personal pool needs the pool's record shape, not the lookup that reads it |
 | PR3 → A3 | C3 | I2 | the service's pause waited on the amended documents directly; the contract now carries that wait and the node's shape |
 | PR2 → PR3 | C3 | I2 | the runner needs the answer's action member, not the service's decision |
 | PR1 → PR2 | C3 | I2 | the closed sets need the word a suspended run writes: the constant, not the suspend |
@@ -1329,7 +1400,12 @@ integration task named, which deletes the contract's stubs.
 | VS4 → PR3 | C3 | I2 | the mobile feed needs the node's shape, not its writer |
 | CS14 → RT4 | C1 | I1 | the grant needs the table's types, not the publisher |
 | CS14 → PL4 | C2 | I1 | the grant needs the named-pool member, not the lookup |
-| PR10 → PR3 | C3 | I2 | the cancel route needs the node's shape, not its writer |
+| PL9 → PL1 | C2 | I1 | the personal pool needs the pool's types, not the config's checks |
+| PR10 → PR4 | C3 | I2 | the cancel route needs the cancelled mark's shape, not the resumer that honours it |
+| PL1 → A2 | C2 | I1 | the pool's config waited on the per-user token documents directly; the contract now carries that wait and the pool's types |
+| RT7 → PL4 | C2 | I1 | doctor needs the designation record's shape, not the store |
+| CS10 → CS14 | C2 | I1 | the launch needs the grant's member names, not the grant |
+| PR12 → PR3 | C3 | I2 | the guards need the node's shape, not its writer |
 
 **Kept** (the dependent needs the other task's behaviour, or the two write one file).
 
@@ -1351,19 +1427,21 @@ integration task named, which deletes the contract's stubs.
 | PL1 → RT2 | one file, `localcfg.go` |
 | PL2 → PL1 | it writes the fields PL1 adds |
 | PL2 → RT5 | one file, the generated `cli-reference.md` |
-| PL4 → CS9 | one file, `rules.json.tmpl` |
+| PL4 → CS1 | one file, `server.go` |
 | PL5 → PL2 | one file, `accounts_pool.go` |
 | PL5 → PL4 | Behaviour: it writes through the store PL4 builds, whose rules decide who may write |
-| PL5 → CS12 | one file, the generated `cli-reference.md` |
+| PL5 → CS15 | one file, the generated `cli-reference.md` |
 | PL6 → PL4 | one file, `launcherpool.go`, and it extends that lookup |
+| PL6 → CS14 | Behaviour: it resolves a service account from the grant CS14 teaches to admit that class |
+| PL7 → CS4 | one file, `forward.go` |
 | PL8 → PL3 | one file, `poolrule.go`, and it extends that picker |
-| PL8 → PL10 | one file, `forward.go` |
+| PL8 → PL10 | two files, `forward.go` and `marks.go` through PL7 |
 | PL9 → PL5 | two files, `secrets_intake.go` and the generated `cli-reference.md` |
 | PL9 → PL2 | one file, `accounts_add.go` |
+| PL9 → PL4 | one file, `server.go` |
 | PL10 → PL3 | Behaviour: it counts on the path the picker serves |
 | PL10 → PL9 | `accounts_pool.go` through PL5 |
-| PL10 → CS4 | one file, `forward.go` |
-| PL10 → PR1 | one file, `rules.json.tmpl` |
+| PL10 → PL7 | one file, `forward.go` |
 | CS5 → CS4 | Behaviour: the refusal may go only once the served path exists |
 | CS5 → CS11 | Behaviour: the refusal may go only where the job's account no longer holds the Vertex permission |
 | CS6 → CS5 | one file, `runner/gateway.go` |
@@ -1372,13 +1450,16 @@ integration task named, which deletes the contract's stubs.
 | CS11 → CS4 | Behaviour: the permission it plans is for the caller CS4 builds |
 | CS12 → CS10 | one file, `run.go` |
 | CS12 → PL2 | one file, the generated `cli-reference.md` |
+| CS12 → CS14 | Behaviour: the flag is carried in the grant member CS14 adds |
+| CS15 → CS13 | Behaviour: the flag may go only once the review job needs no account |
+| CS15 → CS12 | one file, the generated `cli-reference.md` |
 | MG2 → MG1 | Behaviour: it writes what the function answers, and a stub's answer would be written to a real installation |
 | MG2 → RT4 | Behaviour: it publishes through RT4's publisher |
 | MG2 → PL1 | it writes the pool fields PL1 adds |
 | MG4 → RT5 | Behaviour: its refusals name a command that must exist, and the plugin's tests check the name |
-| MG5 → RT4 | one file, `registry.go` |
-| MG5 → PL1 | the registry's coverage test reads the struct PL1 changes |
-| MG6 → PL9 | one file, the generated `cli-reference.md`, and `run.go` through CS12 |
+| MG4 → PL9 | one file, the generated `cli-reference.md` |
+| MG5 → PL1 | two files, `registry.go` and `settings.schema.json` |
+| MG6 → MG4 | one file, the generated `cli-reference.md`, and `run.go` through CS12 |
 | MG6 → RT6 | one file, `models_use.go` |
 | GV1 → CS4 | Behaviour: it extends the caller and the identity CS4 builds |
 | GV2 → GV1 | Behaviour: an answer is translated for the request GV1 built, and the two share the tool-call mapping |
@@ -1387,19 +1468,19 @@ integration task named, which deletes the contract's stubs.
 | GV4 → GV3 | Behaviour: it needs the spelling and the price |
 | GV4 → I1 | Behaviour: the test runs through the wired chain, and `checks.go` is RT3's |
 | PR1 → CS8 | two files, `runstore.go` and `result.schema.json` |
-| PR1 → CS9 | two files, `registry.go` and `rules.json.tmpl` |
-| PR1 → PL4 | one file, `rules.json.tmpl` |
-| PR1 → PR3 | one file, `rules.json.tmpl` |
+| PR1 → CS9 | `registry.go` and the rules files |
 | PR2 → CS6 | one file, `runner.go` |
+| PR2 → CS2 | one file, `gateway/service.go` |
 | PR3 → CS1 | one file, `cascade.go` |
 | PR3 → CS14 | two files, `slip.go` and `slips.go` |
 | PR3 → PL6 | Behaviour: a resumed run of a service account's launch resolves through PL6's lookup |
-| PR3 → PL4 | the rules files |
+| PR3 → PL9 | one file, `server.go` |
 | PR3 → PR9 | Behaviour: it reads the settings from the struct PR9 adds |
 | PR6 → MG3 | one line each in `update_in_flight.go` |
 | PR7 → CS9 | two files, `render.go` and `json.go` |
 | PR9 → RT4 | two files, `policy.go` and `init_policy_publish.go` |
 | PR9 → MG5 | two files, `registry.go` and `settings.schema.json` |
+| PR10 → PR3 | one file, `server.go` |
 | PR11 → PR1 | Behaviour: the readers switch over the set PR1 extends, and their exhaustiveness tests read it |
 | I2 → I1 | Behaviour: the test exhausts a real chain, which exists only once I1 has wired it |
 | VS3 → VS1 | three files shared with VS1 |
@@ -1413,20 +1494,28 @@ integration task named, which deletes the contract's stubs.
 | DOC4 → RT5 | one file, `setup/SKILL.md` |
 | DOC4 → CS12 | one file, `working/SKILL.md` |
 | X1 → I1 | Behaviour: it deletes what I1 proves unused |
-| X1 → DOC1 | one file, `SECURITY.md`'s test |
+| X1 → I2 | Behaviour: release 2 follows the whole of release 1, the pause included, and its tasks edit files the pause's tasks write |
 | X2 → X1 | Behaviour: its gate must exist before a file may lose the key |
 | X2 → MG5 | two schema files |
-| X3 → X2 | the schema test both change |
+| X3 → X2 | Behaviour: the installation's members may be emptied only once a file that names the old keys is rejected |
 | X4 → X1 | Behaviour: no image old enough to need the record may still launch |
 | X4 → PR6 | one file, `update_in_flight.go` |
 | X5 → I1 | Behaviour: nothing may still read the keys it removes |
 | X6 → X1 | Behaviour: no image that needs a per-account job may still launch |
 | X7 → X6 | Behaviour: the function may go only once nothing calls it |
 | X8 → X1 | Behaviour: no image that calls Vertex on the job's identity may still launch |
-| X8 → X7 | nothing shared; ordered so `update` retires jobs before it changes the survivors' grants |
+| X9 → X7 | Behaviour: the function may go only once nothing plans with it |
+| X9 → X6 | Behaviour: and once nothing in the CLI calls it |
+| X10 → X2 | it describes what X2 rejects |
+| X10 → X3 | and what X3 empties |
+| X10 → X4 | and X4 |
+| X10 → X5 | and X5 |
+| X10 → X8 | and X8 |
+| X10 → X9 | and X9 |
+| X10 → DOC3 | one file, `release-summaries.yaml` |
 
-**The gain**, as the read reports it: `40 broken, 80 kept, 8 added; before 20 tasks, weight 44;
-after 17 tasks, weight 35; improves`.
+**The gain**, as the read reports it: `42 broken, 92 kept, 8 added; before 24 tasks, weight 53;
+after 19 tasks, weight 37; improves`.
 
 **Contract changes anticipated.** A task that finds a contract wrong raises the change and never
 works around it.
@@ -1439,39 +1528,39 @@ works around it.
 
 ## The estimate the graph read printed
 
-`ready in 1157–4737 min, no history yet for 64 tasks (81 tasks; tiers for 17, seeds for 64; from the cached history of 2026-11-21 18:33 UTC)`
+`ready in 1238–5135 min, no history yet for 66 tasks (85 tasks; tiers for 19, seeds for 66; from the cached history of 2026-11-21 18:33 UTC)`
 
 This line is informational and reserves no budget. It is what the tasks' tiers and this
 machine's cached history predict, counts the three contract changes that run only if raised, and
 moves as runs finish and as the graph changes.
 
-**Runs proposed, none launched:** 78 task runs (3 documents, 3 contracts, 2 integrations, 70
+**Runs proposed, none launched:** 82 task runs (3 documents, 3 contracts, 2 integrations, 74
 others), up to 3 contract-change runs if raised, and an independent review
-(`fugaro review --pr N`) for each of the 61 tasks marked opus. At the repository's per-run cap of
-10 USD the 78 task runs cost at most 780 USD and the reviews at most 610 USD; the gateway
+(`fugaro review --pr N`) for each of the 64 tasks marked opus. At the repository's per-run cap of
+10 USD the 82 task runs cost at most 820 USD and the reviews at most 640 USD; the gateway
 enforces the cap, and no brief states one.
 
 ## Checks the plan takes
 
-From the reserved block 870–879 (870 to 876 used). Every one is owner-run, in the owner's own session, through a
+From the reserved block 880–889 (880 to 886 used). Every one is owner-run, in the owner's own session, through a
 script that prints no value.
 
 | Check | What it measures | Script from | When |
 | --- | --- | --- | --- |
-| 870 | Whether an answer on a subscription token carries a utilisation figure (U1) | PL7 | Any time; gates PL8 |
-| 871 | A live chain falls through from an exhausted pool to the key, flagged and counted | CK1 | After release 1 is installed by `fugaro update` |
-| 872 | The service serves each mapped Claude model on Vertex, priced and settled against the run's cap (U5); a call from inside a job straight to Vertex on an `enforce` project is refused | CK1 | After release 1 |
-| 873 | A run pauses and the orchestrator resumes it on the original launcher's pool | CK2 | After release 1 |
-| 874 | `fugaro update` migrates the dev installation and no repository's source moves | CK2 | At release 1's install |
-| 875 | A retired key is rejected with the fix | CK2 | After release 2 |
-| 876 | A coder stage runs on a Gemini model through Vertex, with a tool call and a streamed answer, priced (U8) | GV4 | After the release that carries GV4 |
+| 880 | Whether an answer on a subscription token carries a utilisation figure (U1); the script reads the header names the service recorded and makes no call | PL7 | After any run on a subscription token; gates PL8 |
+| 881 | A live chain falls through from an exhausted pool to the key, flagged and counted | CK1 | After release 1 is installed by `fugaro update` |
+| 882 | The service serves each mapped Claude model on Vertex, priced and settled against the run's cap (U5); a call from inside a job straight to Vertex on an `enforce` project is refused | CK1 | After release 1 |
+| 883 | A run pauses and the orchestrator resumes it on the original launcher's pool | CK2 | After release 1 |
+| 884 | `fugaro update` migrates the dev installation and no repository's source moves | CK2 | At release 1's install |
+| 885 | A retired key is rejected with the fix | CK2 | After release 2 |
+| 886 | A coder stage runs on a Gemini model through Vertex, with a tool call and a streamed answer, priced (U8) | GV4 | After the release that carries GV4 |
 
-877–879 are reserved and unused.
+887–889 are reserved and unused.
 
 ## After-deploy steps
 
 Each release's `### For operators` is "run `fugaro update`" and what it prints (DOC3 for release
-1; X3's pull request for release 2, which also names the per-account jobs `update` retires, X7). No other command, deletion or manual repair ships: the
+1; X3's pull request for release 2, which is X10 and also names the per-account jobs `update` retires). No other command, deletion or manual repair ships: the
 migration (MG2), the rules and policy changes (RT4, PR1, PR9, X3), the old record (MG3, X4) and
 the published layer (X5) are all `update`'s own work. What a person does by choice afterwards,
 and no release depends on: designate a personal pool and move their own token into it (PL5).
@@ -1489,6 +1578,9 @@ and no release depends on: designate a personal pool and move their own token in
 - **The service metering Vertex itself** (an option of D3174's second amendment): it reverses
   D3003 for one source; the owner accepted the same residual risk as for a key.
 - **Leaving Gemini on Vertex out** (the recommendation of D3193): declined by the owner.
+- **Taking the retired members out of the policy in release 2**: a release-1 image refuses a
+  policy version it does not know (F63); release 2 empties them and a later release removes them.
+- **Holding a designation in the database rules**: people reach the database by IAM (F61).
 - **A count of pauses per chain** (the recommendation of D3190): declined by the owner; total
   paused time is the bound.
 - **Vertex on the job's identity with a cap in the gateway** (D3174 as first answered): the
@@ -1514,9 +1606,9 @@ and no release depends on: designate a personal pool and move their own token in
 | D3171 | MG1, CS7 |
 | D3172 | RT1 |
 | D3173 | MG1, MG5, X2 |
-| D3174 | CS4, CS5, CS11, X8, DOC1, Check 872 |
+| D3174 | CS4, CS5, CS11, X8, DOC1, Check 882 |
 | D3175 | CS3, RT3 |
-| D3176 | CS12, CS14, PL4, PL2, MG1, X2 |
+| D3176 | CS12, CS14, CS15, PL4, PL2, MG1, X2 |
 | D3177 | PL3, MG1, MG2, X3 |
 | D3178 | PL7, PL8 |
 | D3179 | A2, PL4, PL9 |
@@ -1533,7 +1625,7 @@ and no release depends on: designate a personal pool and move their own token in
 | D3190 | PR3, PR9 |
 | D3191 | A2, PL6, PR3 |
 | D3192 | MG2 |
-| D3193 | GV1, GV2, GV3, GV4, Check 876 |
+| D3193 | GV1, GV2, GV3, GV4, Check 886 |
 | R1 | RT3, CS10 |
 | R2 | CS1, CS2, CS4 |
 | R3 | RT3 |
@@ -1547,7 +1639,7 @@ and no release depends on: designate a personal pool and move their own token in
 | R11 | PR9 |
 | R12 | PR2, PR5 |
 | R13 | PR7, PR8, PR11, VS3, VS4 |
-| R14 | MG2, X1 to X8 |
+| R14 | MG2, X1 to X10 |
 | R15 | PR1, PR11 |
 | R16 | CS1 |
 | R17 | RT3 |
@@ -1559,6 +1651,7 @@ and no release depends on: designate a personal pool and move their own token in
 | R23 | CS4, DOC1 |
 | R24 | CS1, MG3 |
 | R25 | X3 |
+| R26 | PL4, PL9, PL10, PR3, PR5 |
 | F1, F2 | A1, C1, MG1 |
 | F3, F8 | RT3, CS10 |
 | F4 | RT1 |
@@ -1595,7 +1688,7 @@ and no release depends on: designate a personal pool and move their own token in
 | F45 | Conventions, above |
 | F46 | MG1, MG4, MG5, X2 |
 | F47 | RT3, CS10, CS13 |
-| F48 | X6, X7 |
+| F48 | X6, X7, X9 |
 | F49 | RT4, PL1, PR9 |
 | F50 | RT5, PL2, CS12, PL5, PL9, MG6 (the order of the CLI reference) |
 | F51 | PL4, DOC1 |
@@ -1607,17 +1700,30 @@ and no release depends on: designate a personal pool and move their own token in
 | F57 | CS1 |
 | F58 | CS4, GV1 to GV4 |
 | F59 | PL6, PR3 |
+| F60 | CS14, CS1, PL4 |
+| F61 | PL4, PL9, PL10, PR3 |
+| F62 | PL5 (gated on O13) |
+| F63 | X3 |
+| F64 | PR12 (gated on O14) |
+| F65 | MG1, MG2 |
+| F66 | PR10 |
+| F67 | PR2, PR3 |
 | O1, O2, O7 | The owner's, before launch; no task |
 | O3 | RT3 |
 | O4, O5, O9 | PR9, PR3 |
-| O11 | GV4, Check 876 |
+| O11 | GV4, Check 886 |
 | O6 | No task: noted in the reconciliation |
-| O8 | PR7 |
+| O8 | VS3 |
+| O13 | PL5 |
+| O14 | PR12 |
+| O15 | MG1, MG2 |
+| O16 | PR10 |
+| O17 | No task: the pull request's open items |
 | O10 | Withdrawn |
 | U1 | PL7 |
 | U3 | No task: R7 does not depend on it |
 | U4 | PR4 |
-| U5 | CS3, Check 872 |
+| U5 | CS3, Check 882 |
 | U6 | CS13, and I1's guard test |
 | U7 | CS1 |
-| U8 | GV1, GV2, Check 876 |
+| U8 | GV1, GV2, Check 886 |

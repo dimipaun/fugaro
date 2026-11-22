@@ -50,8 +50,9 @@
           "docs/credentials-service/reconciliation.md",
           "docs/credentials-service/implementation-plan.md",
           "docs/model-crafts/reconciliation.md",
-          "docs/mixed-credentials/spec.md",
-          "docs/launcher-does-not-mint/reconciliation.md"
+          "docs/mixed-credentials/implementation-plan.md",
+          "docs/launcher-does-not-mint/reconciliation.md",
+          "docs/always-a-budget/README.md"
         ]
       }
     },
@@ -263,7 +264,8 @@
           "internal/config/pool_rules_test.go",
           "internal/localcfg/localcfg.go",
           "internal/policy/craft.go",
-          "internal/settings/registry.go"
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json"
         ]
       }
     },
@@ -317,9 +319,8 @@
           "internal/credsvc/launcherpool_test.go",
           "internal/creds/designation.go",
           "internal/creds/designation_test.go",
-          "internal/budget/rules/rules.json.tmpl",
-          "internal/budget/rules/marker.go",
-          "internal/budget/rules/testdata/rules.golden.json"
+          "internal/credsvc/designation_route.go",
+          "internal/credsvc/server.go"
         ]
       }
     },
@@ -361,7 +362,7 @@
     },
     {
       "id": "PL7",
-      "title": "Check 870, as a script",
+      "title": "Check 880, as a script",
       "run": null,
       "version": null,
       "tier": "small",
@@ -369,8 +370,10 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "scripts/live-checks/check-870-token-utilisation.sh",
-          "scripts/live-checks/check-870-token-utilisation_test.sh",
+          "scripts/live-checks/check-880-token-utilisation.sh",
+          "scripts/live-checks/check-880-token-utilisation_test.sh",
+          "internal/credsvc/forward.go",
+          "internal/creds/marks.go",
           "docs/gcp-live-checklist.md"
         ]
       }
@@ -406,7 +409,9 @@
           "internal/cli/accounts_pool_personal_test.go",
           "internal/cli/accounts_add.go",
           "internal/cli/secrets_intake.go",
-          "website/content/cli-reference.md"
+          "website/content/cli-reference.md",
+          "internal/credsvc/personalpool_route.go",
+          "internal/credsvc/server.go"
         ]
       }
     },
@@ -423,10 +428,7 @@
           "internal/creds/usage.go",
           "internal/creds/usage_test.go",
           "internal/credsvc/forward.go",
-          "internal/cli/accounts_pool.go",
-          "internal/budget/rules/rules.json.tmpl",
-          "internal/budget/rules/marker.go",
-          "internal/budget/rules/testdata/rules.golden.json"
+          "internal/cli/accounts_pool.go"
         ]
       }
     },
@@ -461,7 +463,8 @@
           "internal/gateway/service.go",
           "internal/gateway/chainwire.go",
           "internal/gateway/chainwire_test.go",
-          "internal/gateway/gateway.go"
+          "internal/gateway/gateway.go",
+          "internal/gateway/forward.go"
         ]
       }
     },
@@ -624,7 +627,9 @@
           "internal/infra/readiness.go",
           "deploy/terraform/gcp/modules/installation/credentials.tf",
           "deploy/terraform/gcp/modules/workflow/sa.tf",
-          "deploy/terraform/gcp/modules/project/sa.tf"
+          "deploy/terraform/gcp/modules/project/sa.tf",
+          "deploy/terraform/terraform_test.go",
+          "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl"
         ]
       }
     },
@@ -683,6 +688,24 @@
       }
     },
     {
+      "id": "CS15",
+      "title": "`fugaro review --token` goes",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/review.go",
+          "internal/cli/review_token_test.go",
+          "plugin/skills/routing/SKILL.md",
+          "plugin/skills/working/reference/review.md",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
       "id": "MG1",
       "title": "the migration, as a function",
       "run": null,
@@ -729,7 +752,8 @@
           "internal/cli/update_repoauth.go",
           "internal/cli/update_repoauth_table_test.go",
           "internal/credsvc/legacy_auth.go",
-          "internal/credsvc/legacy_auth_test.go"
+          "internal/credsvc/legacy_auth_test.go",
+          "internal/cli/update_in_flight.go"
         ]
       }
     },
@@ -747,7 +771,8 @@
           "internal/cli/accounts_alias.go",
           "internal/cli/accounts_craft.go",
           "internal/cli/accounts_cascade.go",
-          "internal/cli/accounts_routing_test.go"
+          "internal/cli/accounts_routing_test.go",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -800,6 +825,8 @@
           "internal/routing/resolve_stub.go",
           "internal/credsvc/chain_stub.go",
           "internal/credsvc/launcherpool_stub.go",
+          "internal/pricing/spelling_stub.go",
+          "internal/creds/poolrule_stub.go",
           "internal/cli/chain_end_to_end_test.go",
           "internal/config/retired_readers_guard_test.go"
         ]
@@ -868,8 +895,8 @@
           "internal/routing/checks.go",
           "internal/routing/checks_gemini_test.go",
           "internal/cli/gemini_vertex_end_to_end_test.go",
-          "scripts/live-checks/check-876-gemini-on-vertex.sh",
-          "scripts/live-checks/check-876-gemini-on-vertex_test.sh"
+          "scripts/live-checks/check-886-gemini-on-vertex.sh",
+          "scripts/live-checks/check-886-gemini-on-vertex_test.sh"
         ]
       }
     },
@@ -906,7 +933,9 @@
           "internal/runner/suspend_test.go",
           "internal/runner/creds_wait.go",
           "internal/runner/halt.go",
-          "internal/runner/runner.go"
+          "internal/runner/runner.go",
+          "internal/runner/gateway.go",
+          "internal/gateway/service.go"
         ]
       }
     },
@@ -925,9 +954,8 @@
           "internal/credsvc/slip.go",
           "internal/creds/slips.go",
           "internal/credsvc/cascade.go",
-          "internal/budget/rules/rules.json.tmpl",
-          "internal/budget/rules/marker.go",
-          "internal/budget/rules/testdata/rules.golden.json"
+          "internal/credsvc/wire.go",
+          "internal/credsvc/server.go"
         ]
       }
     },
@@ -1050,7 +1078,8 @@
           "internal/cli/cancel.go",
           "internal/cli/cancel_paused_test.go",
           "internal/credsvc/pause_cancel.go",
-          "internal/credsvc/pause_cancel_test.go"
+          "internal/credsvc/pause_cancel_test.go",
+          "internal/credsvc/server.go"
         ]
       }
     },
@@ -1070,6 +1099,25 @@
           "internal/budget/rollup.go",
           "internal/watch/finished.go",
           "internal/digest/digest.go"
+        ]
+      }
+    },
+    {
+      "id": "PR12",
+      "title": "a paused chain counts as live",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/runs_prstate.go",
+          "internal/cli/run_duplicate.go",
+          "internal/cli/followup.go",
+          "internal/cli/runs_live.go",
+          "internal/cli/orchestrator_run.go",
+          "internal/cli/paused_in_flight_test.go"
         ]
       }
     },
@@ -1206,7 +1254,7 @@
         "paths": [
           "docs/project-claude-accounts.md",
           "README.md",
-          "docs/releases/v-next.md",
+          "docs/releases/",
           "website/data/release-summaries.yaml"
         ]
       }
@@ -1224,13 +1272,14 @@
           "plugin/skills/setup/SKILL.md",
           "plugin/skills/setup/reference/decisions.md",
           "plugin/skills/setup/reference/transitions.md",
-          "plugin/skills/working/SKILL.md"
+          "plugin/skills/working/SKILL.md",
+          "plugin/skills/setup/reference/managed.md"
         ]
       }
     },
     {
       "id": "CK1",
-      "title": "Checks 871 and 872, as scripts",
+      "title": "Checks 881 and 882, as scripts",
       "run": null,
       "version": null,
       "tier": "small",
@@ -1238,16 +1287,16 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "scripts/live-checks/check-871-chain-falls-through.sh",
-          "scripts/live-checks/check-871-chain-falls-through_test.sh",
-          "scripts/live-checks/check-872-vertex-capped.sh",
-          "scripts/live-checks/check-872-vertex-capped_test.sh"
+          "scripts/live-checks/check-881-chain-falls-through.sh",
+          "scripts/live-checks/check-881-chain-falls-through_test.sh",
+          "scripts/live-checks/check-882-vertex-capped.sh",
+          "scripts/live-checks/check-882-vertex-capped_test.sh"
         ]
       }
     },
     {
       "id": "CK2",
-      "title": "Checks 873 to 875, as scripts",
+      "title": "Checks 883 to 885, as scripts",
       "run": null,
       "version": null,
       "tier": "small",
@@ -1255,12 +1304,12 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "scripts/live-checks/check-873-pause-resume.sh",
-          "scripts/live-checks/check-873-pause-resume_test.sh",
-          "scripts/live-checks/check-874-update-migrates.sh",
-          "scripts/live-checks/check-874-update-migrates_test.sh",
-          "scripts/live-checks/check-875-retired-keys.sh",
-          "scripts/live-checks/check-875-retired-keys_test.sh"
+          "scripts/live-checks/check-883-pause-resume.sh",
+          "scripts/live-checks/check-883-pause-resume_test.sh",
+          "scripts/live-checks/check-884-update-migrates.sh",
+          "scripts/live-checks/check-884-update-migrates_test.sh",
+          "scripts/live-checks/check-885-retired-keys.sh",
+          "scripts/live-checks/check-885-retired-keys_test.sh"
         ]
       }
     },
@@ -1368,13 +1417,15 @@
           "internal/cli/doctor.go",
           "internal/cli/doctor_brokering.go",
           "internal/cli/launch_budget.go",
-          "internal/cli/project_job.go"
+          "internal/cli/project_job.go",
+          "internal/cli/image_refresh_steps.go",
+          "internal/cli/init.go"
         ]
       }
     },
     {
       "id": "X7",
-      "title": "release 2: the per-account jobs are retired",
+      "title": "release 2: the infra plans no job per account",
       "run": null,
       "version": null,
       "tier": "large",
@@ -1382,11 +1433,11 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/backend/gcp/names.go",
           "internal/infra/repo.go",
           "internal/infra/tfvars.go",
           "internal/infra/retire.go",
-          "internal/budget/sweep.go",
+          "internal/infra/readiness.go",
+          "internal/infra/spec.go",
           "internal/infra/retire_variants_test.go"
         ]
       }
@@ -1406,6 +1457,40 @@
           "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
           "internal/infra/chain_spec.go",
           "internal/infra/chain_spec_test.go"
+        ]
+      }
+    },
+    {
+      "id": "X9",
+      "title": "release 2: `WorkflowVariant` goes",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backend/gcp/names.go",
+          "internal/backend/batch/names.go",
+          "internal/config/claude_accounts.go",
+          "internal/budget/sweep.go",
+          "internal/runner/projectjob.go",
+          "internal/backend/gcp/names_variant_test.go"
+        ]
+      }
+    },
+    {
+      "id": "X10",
+      "title": "release 2: the notes",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/releases/",
+          "website/data/release-summaries.yaml"
         ]
       }
     },
@@ -1543,6 +1628,11 @@
       "reason": "kept: it calls the helpers RT6 adds to `validate.go`"
     },
     {
+      "task": "RT7",
+      "needs": "C2",
+      "reason": "the contract's designation record"
+    },
+    {
       "task": "PL1",
       "needs": "C2",
       "reason": "the contract's types"
@@ -1574,8 +1664,8 @@
     },
     {
       "task": "PL4",
-      "needs": "CS9",
-      "reason": "kept: one file, `rules.json.tmpl`"
+      "needs": "CS1",
+      "reason": "kept: one file, `server.go`"
     },
     {
       "task": "PL5",
@@ -1589,13 +1679,23 @@
     },
     {
       "task": "PL5",
-      "needs": "CS12",
+      "needs": "CS15",
       "reason": "kept: one file, the generated `cli-reference.md`"
     },
     {
       "task": "PL6",
       "needs": "PL4",
       "reason": "kept: one file, `launcherpool.go`, and it extends that lookup"
+    },
+    {
+      "task": "PL6",
+      "needs": "CS14",
+      "reason": "kept, behaviour: it resolves a service account from the grant CS14 teaches to admit that class"
+    },
+    {
+      "task": "PL7",
+      "needs": "CS4",
+      "reason": "kept: one file, `forward.go`"
     },
     {
       "task": "PL8",
@@ -1605,7 +1705,7 @@
     {
       "task": "PL8",
       "needs": "PL10",
-      "reason": "kept: one file, `forward.go`"
+      "reason": "kept: two files, `forward.go` and `marks.go` through PL7"
     },
     {
       "task": "PL9",
@@ -1623,6 +1723,11 @@
       "reason": "kept: one file, `accounts_add.go`"
     },
     {
+      "task": "PL9",
+      "needs": "PL4",
+      "reason": "kept: one file, `server.go`"
+    },
+    {
       "task": "PL10",
       "needs": "PL3",
       "reason": "kept, behaviour: it counts on the path the picker serves"
@@ -1634,13 +1739,8 @@
     },
     {
       "task": "PL10",
-      "needs": "CS4",
+      "needs": "PL7",
       "reason": "kept: one file, `forward.go`"
-    },
-    {
-      "task": "PL10",
-      "needs": "PR1",
-      "reason": "kept: one file, `rules.json.tmpl`"
     },
     {
       "task": "CS1",
@@ -1718,6 +1818,11 @@
       "reason": "kept, behaviour: it decides whether a job is told about the service from what CS11 plans"
     },
     {
+      "task": "CS10",
+      "needs": "C2",
+      "reason": "the contract's grant members"
+    },
+    {
       "task": "CS11",
       "needs": "C1",
       "reason": "the contract's names"
@@ -1743,6 +1848,11 @@
       "reason": "kept: one file, the generated `cli-reference.md`"
     },
     {
+      "task": "CS12",
+      "needs": "CS14",
+      "reason": "kept, behaviour: the flag is carried in the grant member CS14 adds"
+    },
+    {
       "task": "CS13",
       "needs": "C1",
       "reason": "the contract's names"
@@ -1756,6 +1866,16 @@
       "task": "CS14",
       "needs": "C2",
       "reason": "the contract's grant members"
+    },
+    {
+      "task": "CS15",
+      "needs": "CS13",
+      "reason": "kept, behaviour: the flag may go only once the review job needs no account"
+    },
+    {
+      "task": "CS15",
+      "needs": "CS12",
+      "reason": "kept: one file, the generated `cli-reference.md`"
     },
     {
       "task": "MG1",
@@ -1793,18 +1913,18 @@
       "reason": "kept, behaviour: its refusals name a command that must exist, and the plugin's tests check the name"
     },
     {
-      "task": "MG5",
-      "needs": "RT4",
-      "reason": "kept: one file, `registry.go`"
+      "task": "MG4",
+      "needs": "PL9",
+      "reason": "kept: one file, the generated `cli-reference.md`"
     },
     {
       "task": "MG5",
       "needs": "PL1",
-      "reason": "kept: the registry's coverage test reads the struct PL1 changes"
+      "reason": "kept: two files, `registry.go` and `settings.schema.json`"
     },
     {
       "task": "MG6",
-      "needs": "PL9",
+      "needs": "MG4",
       "reason": "kept: one file, the generated `cli-reference.md`, and `run.go` through CS12"
     },
     {
@@ -2008,6 +2128,16 @@
       "reason": "the side it wires"
     },
     {
+      "task": "I1",
+      "needs": "CS15",
+      "reason": "the side it wires"
+    },
+    {
+      "task": "I1",
+      "needs": "PL10",
+      "reason": "the side it wires"
+    },
+    {
       "task": "GV1",
       "needs": "CS4",
       "reason": "kept, behaviour: it extends the caller and the identity CS4 builds"
@@ -2050,17 +2180,7 @@
     {
       "task": "PR1",
       "needs": "CS9",
-      "reason": "kept: two files, `registry.go` and `rules.json.tmpl`"
-    },
-    {
-      "task": "PR1",
-      "needs": "PL4",
-      "reason": "kept: one file, `rules.json.tmpl`"
-    },
-    {
-      "task": "PR1",
-      "needs": "PR3",
-      "reason": "kept: one file, `rules.json.tmpl`"
+      "reason": "kept: `registry.go` and the rules files"
     },
     {
       "task": "PR2",
@@ -2071,6 +2191,11 @@
       "task": "PR2",
       "needs": "CS6",
       "reason": "kept: one file, `runner.go`"
+    },
+    {
+      "task": "PR2",
+      "needs": "CS2",
+      "reason": "kept: one file, `gateway/service.go`"
     },
     {
       "task": "PR3",
@@ -2094,8 +2219,8 @@
     },
     {
       "task": "PR3",
-      "needs": "PL4",
-      "reason": "kept: the rules files"
+      "needs": "PL9",
+      "reason": "kept: one file, `server.go`"
     },
     {
       "task": "PR3",
@@ -2153,9 +2278,19 @@
       "reason": "the contract's node and rule"
     },
     {
+      "task": "PR10",
+      "needs": "PR3",
+      "reason": "kept: one file, `server.go`"
+    },
+    {
       "task": "PR11",
       "needs": "PR1",
       "reason": "kept, behaviour: the readers switch over the set PR1 extends, and their exhaustiveness tests read it"
+    },
+    {
+      "task": "PR12",
+      "needs": "C3",
+      "reason": "the contract's node"
     },
     {
       "task": "I2",
@@ -2230,6 +2365,11 @@
     {
       "task": "I2",
       "needs": "PR11",
+      "reason": "the side it wires"
+    },
+    {
+      "task": "I2",
+      "needs": "PR12",
       "reason": "the side it wires"
     },
     {
@@ -2314,8 +2454,8 @@
     },
     {
       "task": "X1",
-      "needs": "DOC1",
-      "reason": "kept: one file, `SECURITY.md`'s test"
+      "needs": "I2",
+      "reason": "kept, behaviour: release 2 follows the whole of release 1, the pause included, and its tasks edit files the pause's tasks write"
     },
     {
       "task": "X2",
@@ -2330,7 +2470,7 @@
     {
       "task": "X3",
       "needs": "X2",
-      "reason": "kept: the schema test both change"
+      "reason": "kept, behaviour: the installation's members may be emptied only once a file that names the old keys is rejected"
     },
     {
       "task": "X4",
@@ -2363,9 +2503,49 @@
       "reason": "kept, behaviour: no image that calls Vertex on the job's identity may still launch"
     },
     {
-      "task": "X8",
+      "task": "X9",
       "needs": "X7",
-      "reason": "kept: nothing shared; ordered so `update` retires jobs before it changes the survivors' grants"
+      "reason": "kept, behaviour: the function may go only once nothing plans with it"
+    },
+    {
+      "task": "X9",
+      "needs": "X6",
+      "reason": "kept, behaviour: and once nothing in the CLI calls it"
+    },
+    {
+      "task": "X10",
+      "needs": "X2",
+      "reason": "kept: it describes what X2 rejects"
+    },
+    {
+      "task": "X10",
+      "needs": "X3",
+      "reason": "kept: and what X3 empties"
+    },
+    {
+      "task": "X10",
+      "needs": "X4",
+      "reason": "kept: and X4"
+    },
+    {
+      "task": "X10",
+      "needs": "X5",
+      "reason": "kept: and X5"
+    },
+    {
+      "task": "X10",
+      "needs": "X8",
+      "reason": "kept: and X8"
+    },
+    {
+      "task": "X10",
+      "needs": "X9",
+      "reason": "kept: and X9"
+    },
+    {
+      "task": "X10",
+      "needs": "DOC3",
+      "reason": "kept: one file, `release-summaries.yaml`"
     }
   ],
   "decoupling": [
@@ -2516,15 +2696,6 @@
     {
       "contract": "C2",
       "was": {
-        "task": "PL1",
-        "needs": "A2"
-      },
-      "integration": "I1",
-      "reason": "the pool's config waited on the workspace plan's amendment directly; the contract now carries that wait and the pool's types"
-    },
-    {
-      "contract": "C2",
-      "was": {
         "task": "PL3",
         "needs": "PL1"
       },
@@ -2539,15 +2710,6 @@
       },
       "integration": "I1",
       "reason": "the lookup needs the owner's principal type, not the config's checks"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "CS1",
-        "needs": "PL4"
-      },
-      "integration": "I1",
-      "reason": "the walk needs the pool lookup's interface, not the personal pool"
     },
     {
       "contract": "C2",
@@ -2602,15 +2764,6 @@
       },
       "integration": "I1",
       "reason": "the launch needs the named-pool member, not the lookup"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "PL9",
-        "needs": "PL4"
-      },
-      "integration": "I1",
-      "reason": "the personal pool needs the pool's record shape, not the lookup that reads it"
     },
     {
       "contract": "C3",
@@ -2721,13 +2874,58 @@
       "reason": "the grant needs the named-pool member, not the lookup"
     },
     {
+      "contract": "C2",
+      "was": {
+        "task": "PL9",
+        "needs": "PL1"
+      },
+      "integration": "I1",
+      "reason": "the personal pool needs the pool's types, not the config's checks"
+    },
+    {
       "contract": "C3",
       "was": {
         "task": "PR10",
+        "needs": "PR4"
+      },
+      "integration": "I2",
+      "reason": "the cancel route needs the cancelled mark's shape, not the resumer that honours it"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "PL1",
+        "needs": "A2"
+      },
+      "integration": "I1",
+      "reason": "the pool's config waited on the per-user token documents directly; the contract now carries that wait and the pool's types"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "RT7",
+        "needs": "PL4"
+      },
+      "integration": "I1",
+      "reason": "doctor needs the designation record's shape, not the store"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "CS10",
+        "needs": "CS14"
+      },
+      "integration": "I1",
+      "reason": "the launch needs the grant's member names, not the grant"
+    },
+    {
+      "contract": "C3",
+      "was": {
+        "task": "PR12",
         "needs": "PR3"
       },
       "integration": "I2",
-      "reason": "the cancel route needs the node's shape, not its writer"
+      "reason": "the guards need the node's shape, not its writer"
     }
   ],
   "contract_changes": [

@@ -1,7 +1,8 @@
 # Model credentials routing: reconciliation
 
 The spec ([spec.md](spec.md)) as amended against the code. **Where this document disagrees with
-the spec, this document wins.** Checked against `origin/main` at `dfe066618` on 2026-11-21. The
+the spec, this document wins.** Checked against `origin/main` at `dfe066618` on 2026-11-21, and rebased onto `aa75a696c` the
+same day; the symbols cited were not read again one by one at the new commit (O17). The
 owner (Dimi Paun) answered D3170–D3193 on 2026-11-21. Four answers were amended the same day: D3176 by the owner,
 and D3174, D3179 and D3190 after review, each confirmed by him.
 
@@ -311,10 +312,40 @@ names one.
 - **F59 (Rule, pause-resume).** A resume is launched by the orchestrator's service account and
   must draw on a person's pool, against D2976 as written. → D3191.
 
+### Found by review round 3
+
+- **F60 (Wrong, pools).** Not every run has a slip, and no slip names a service account: the
+  grant admits the person class only (`VerifyLauncher` in `internal/credsvc/slip.go`;
+  `VerifyServiceAccountLauncher` is called only from `internal/credsvc/identity_callers.go`), and
+  `fugaro run` starts the run without a slip when the grant fails. → CS14 admits the other
+  classes; CS1 and PL4 say what a run with no slip is served.
+- **F61 (Rule, pools).** The database rules cannot hold a person to their own designation:
+  people reach the database by IAM, which bypasses rules, and every launcher holds the viewer
+  role. Only a route of the service keyed on the verified subject can; what those nodes hold is
+  readable by every launcher and is display data. → PL4, PL9, PL10, PR3.
+- **F62 (Rule, pools).** The intake refuses a member's write under a shared container
+  (`internal/intake/handlers.go`; dynamic-delivery D1935). Contributing one's own token to a
+  shared pool (R9) reverses that by one case. → O13, PL5.
+- **F63 (Rule, migration).** A policy whose version a reader does not know is refused whole
+  (`internal/projectpolicy/policy.go`), so a version bump in release 2 would stop release-1
+  images and a paused run resuming on one. → R25.
+- **F64 (Gap, pause-resume).** No guard counts a paused chain as in flight: the pull request
+  would read stalled and a duplicate or follow-up launch would be admitted between a pause and
+  its resume. → PR12, O14.
+- **F65 (Gap, migration).** Some of today's configurations migrate to a table the checks refuse:
+  `routing.claude.via: openrouter` or `auto` (allowed today with a doctor warning) becomes a
+  chain R3 refuses until Check 50, and a Vertex model has no checked-in spelling until Check 882.
+  → MG1 and MG2 leave such an entry on the release-1 bridge; O15.
+- **F66 (Rule, pause-resume).** The service has no admin surface (D143), so it cannot tell a
+  project admin from anyone else. → PR10 serves the launcher only; O16.
+- **F67 (Gap, pause-resume).** The gateway decodes the service's refusal strictly as error,
+  message, reset time and tried list, so the new action and resume time need the gateway's and
+  the wire's files. → PR2, PR3.
+
 ### Completeness of the spec
 
 - **F44 (Open).** No success criteria are stated as tests. The plan's acceptance lines stand in
-  for them, and the owner-run checks (870–875) prove the live behaviour.
+  for them, and the owner-run checks (880–886) prove the live behaviour.
 - **F45 (Exists).** Commands, folders, style and boundaries are the repository's own
   (`CLAUDE.md`, `.claude/rules/credentials-service.md`, `.claude/rules/terraform.md`,
   `.claude/rules/console.md`, `.claude/rules/mobile.md`).
@@ -336,7 +367,7 @@ All answered by the owner on 2026-11-21.
 | D3178 | pools | The usage-threshold rule | Behind an owner-run check; round robin and fixed order ship now | **As recommended** |
 | D3179 | pools | Where personal pools live | On workspace-credentials; its D3141, D3142, D3144 and D2974 amended by a documents task | **As recommended** when first asked: at the workspace. **Amended after review round 2, by the owner's answer to the question it raised: in the project.** A chain cannot span two services (F55), so a personal pool uses the project's per-user containers and one service walks the whole chain. Cost, as told to him: a person stores tokens once per project, and a project database admin can forge a grant, as for any project secret today. Workspace-credentials is left unchanged |
 | D3180 | pools | The launcher has designated no pool | Skip to the next source, flagged as a fallback; a chain of only the launcher's pool is refused with the fix | **As recommended.** (First recorded as amending D2974; with D3179 amended it touches no decision of the workspace plan) |
-| D3181 | pools | A service account's pool | A project pool owned by that principal, filled by an admin; a resumed or reissued run keeps its original launcher's pool | **As recommended.** D2976 stands |
+| D3181 | pools | A service account's pool | A project pool owned by that principal, filled by an admin; a resumed or reissued run keeps its original launcher's pool | **As recommended.** D2976 stands, but for the one case D3191 adds |
 | D3182 | routing-table | Per-repository admission | Keep it, written in the project, for every source kind | **As recommended.** Nothing moves on upgrade |
 | D3183 | migration | Whose pools existing accounts become | The shared pool, same members and order; each person moves their own token later | **As recommended.** Not per-user on day one |
 | D3184 | pause-resume | Keep a short in-job wait? | Always suspend | **Not the recommendation: wait in the job under a floor**; anything longer suspends (R11) |
@@ -435,8 +466,14 @@ One defensible answer each; stated, not asked.
   (D1943, F51).
 - **R24 (chain-serving).** The service sends a new answer member or header only to a caller that
   sent the stage header, so a release-behind gateway meets exactly today's answer (F57).
-- **R25 (migration).** Release 2 removes published policy members, so it bumps the policy's
-  format version, behind the image-age gate, and `update` migrates the node in place.
+- **R25 (migration).** Release 2 empties the retired policy members and keeps them decodable,
+  so a release-1 image still reads the policy (F63). Taking them out of the format, which bumps
+  its version, is a later release's, with a gate of its own.
+- **R26 (pools, pause-resume).** A designation, a personal pool's membership and a pause are
+  written only through routes of the service keyed on a verified principal; the nodes are
+  readable by every launcher and are never an authorization input to anything but the service
+  and the orchestrator (F61). `pause.json` is written inside the job, like the run record a
+  follow-up already trusts; that trust is unchanged.
 
 ## What this changes in other plans
 
@@ -475,7 +512,8 @@ None. No two answers pull against each other.
 - **O3.** Check 50 has not run; until it does, no chain reaches Claude through OpenRouter (R3).
 - **O4.** D3184 was answered against the recommendation; the floor's default (5 minutes, R11)
   was named in the question and not asked on its own.
-- **O5.** `pause.wait_in_job` and `pause.max_pause` are names this document proposes.
+- **O5.** `pause.wait_in_job`, `pause.min_pause` and `pause.max_pause` are names this document
+  proposes.
 - **O6.** A project without the resident orchestrator never pauses (D3186). Whether the
   orchestrator should become part of every installation is a separate question, not asked here.
 
@@ -488,18 +526,32 @@ None. No two answers pull against each other.
 - **O10.** Withdrawn: personal pools no longer rest on the workspace plan's store (D3179).
 - **O11.** D3193 was answered against the recommendation. Whether the agent's harness works
   acceptably on a Gemini model through a translated wire is not known (U8); GV4's end-to-end test
-  and Check 876 are what will say.
-- **O12.** Review round 2's fixes are the last commit before round 3.
+  and Check 886 are what will say.
+- **O12.** Closed: review round 3 ran.
+- **O13.** Owner's: may a member write their own token under a shared container through the
+  intake (R9), which reverses D1935 by one case (F62)? Recommended: yes, only into a pool marked
+  as taking contributions, and only a member in the contributor's own name. PL5's `contribute`
+  half waits on this.
+- **O14.** Owner's: the word for a pull request whose chain is paused (F64). Recommended: live.
+  PR12 waits on this.
+- **O15.** Owner's: what `update` does with a configuration that migrates to a table the checks
+  refuse (F65). Recommended, and what MG1 and MG2 are written to do: leave that entry on the
+  release-1 bridge, name it, and converge.
+- **O16.** Owner's: may a project admin cancel another person's paused run (F66)? The service
+  has no admin surface (D143). Recommended: not in this plan; PR10 serves the launcher only.
+- **O17.** Review round 3's fixes are the last commit and were not reviewed again. The branch
+  was rebased from `dfe066618` onto `aa75a696c`, where the credentials service's Terraform and
+  `SECURITY.md` had changed; the symbols cited were not read again at the new commit.
 
 ## UNVERIFIED
 
 - **U1.** Whether the provider's responses on a subscription token carry a utilisation figure a
-  threshold rule could read. Settled by Check 870, owner-run.
+  threshold rule could read. Settled by Check 880, owner-run.
 - **U3.** What `localcfg`'s `Me` returns under a service account. R7 does not depend on it.
 - **U4.** How the issuer of launcher-does-not-mint recognises a node the credentials service
   wrote (D3189). That plan's I1 is not merged; PR4 is gated on it and settles it there.
 - **U5.** The Vertex spelling of each Claude model in the canonical map. Settled by the owner's
-  run of Check 872 against the project's Vertex.
+  run of Check 882 against the project's Vertex.
 - **U6.** The census of `agent.auth` readers (67 files in 14 packages, F1 of
   credentials-belong-to-models) was not re-read symbol by symbol at `dfe066618`.
 - **U7.** Whether a limit found inside a streamed answer can be retried at all. Today it is not
@@ -507,4 +559,4 @@ None. No two answers pull against each other.
 - **U8.** Vertex's Google-publisher request and answer for a Gemini model, and how faithfully
   tool calls and streaming map to what the agent's harness expects. Not in this repository.
   Settled by the provider's current documentation, which GV1 and GV2 cite field by field, and by
-  the owner's run of Check 876.
+  the owner's run of Check 886.

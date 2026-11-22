@@ -2,7 +2,7 @@
 
 **Status: plan only; nothing is implemented; no task approved.** See
 [docs/status.md](../status.md) for the current table. Spec owner: Dimi Paun (the owner). Date:
-2026-11-21. Checked against `origin/main` at `dfe066618`.
+2026-11-21. Checked against `origin/main` at `dfe066618`, then rebased onto `aa75a696c`.
 
 How a model is reached is a property of the model, set once in the project: a routing table
 matches a model name or pattern and lists an ordered chain of credential sources (the launcher's
@@ -17,14 +17,17 @@ supersedes the last one's craft access (D3170).
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec, as received from the owner on 2026-11-21. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: the capability map (six modules), assumptions A1–A9, findings F1–F59, decisions D3170–D3193 with the owner's answers, resolutions R1–R25, open items O1–O12, UNVERIFIED U1–U8 (U2 withdrawn). **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contracts C1 to C3, documents tasks A1 to A3, 70 tasks in six modules, integrations I1 and I2 (78 runs over two releases, and three contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 870 to 876 |
+| [reconciliation.md](reconciliation.md) | The amended spec: the capability map (six modules), assumptions A1–A9, findings F1–F67, decisions D3170–D3193 with the owner's answers, resolutions R1–R26, open items O1–O17, UNVERIFIED U1–U8 (U2 withdrawn). **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Contracts C1 to C3, documents tasks A1 to A3, 74 tasks in six modules, integrations I1 and I2 (82 runs over two releases, and three contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 880 to 886 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
-**Numbers reserved:** decisions **D3170–D3199** (D3170–D3193 used), checks **870–879** (870 to
-876 used). Read on 2026-11-21: the highest decision on `main` was D3160, in the block
-D3160–D3169 of managed-flag-ergonomics, which also holds checks 860–869; no diff of the open
-pull requests wrote a decision at or above D3170 or a check at or above 870.
+**Numbers reserved:** decisions **D3170–D3199** (D3170–D3193 used), checks **880–889** (880 to
+886 used). Read twice on 2026-11-21. The first reading found the highest decision on `main` to
+be D3160, in managed-flag-ergonomics' block D3160–D3169, and checks 860–869 taken, so this plan
+took checks 870–879. Before the branch was pushed, console-fixes (#3540) landed on `main` with
+checks 870–879 and decisions D3200–D3229, so every check here was moved up by one block; the
+decisions did not collide. No diff of the open pull requests wrote a decision in D3170–D3199 or
+a check at or above 880.
 
 **Why a new folder.** `docs/credentials-belong-to-models` holds its own spec, received on
 2026-11-20, and stays as the record of what was decided then. This is a later spec of the
@@ -62,6 +65,15 @@ release-behind gateway would choke on a new answer member (F57, R24), that the s
 example could not run (F58, D3193) and that a resume crossed D2976 (F59, D3191). It added F55
 to F59, nine tasks (CS14, PR10, PR11, GV1 to GV4, X7, X8) and D3191 to D3193.
 
+**Review round 3** (a third fresh reviewer; the last) confirmed the graph, the counts and that
+every decision, resolution and finding has a row, and found that not every run has a slip and no
+slip names a service account (F60), that database rules cannot hold a designation (F61, R26),
+that a policy version bump would stop release-1 images (F63, R25 rewritten), that a paused chain
+was in flight to no guard (F64), that the refusal's new members had no carrier (F67) and that
+the check numbers had been taken on `main`. It added F60 to F67, four tasks (CS15, PR12, X9,
+X10) and four questions for the owner (O13 to O16). **Its fixes are the last commit and were not
+reviewed again** (O17).
+
 **What it changes in the plans before it** (reconciliation, "What this changes in other plans"):
 every not-merged task of credentials belong to models is withdrawn and carried by a task here,
 and its contract C1 (draft #3460) is withdrawn; workspace credentials is unchanged but for one
@@ -72,5 +84,6 @@ it.
 
 **What a reader should not take from here:** no task is approved; each needs the owner's go by
 name. The withdrawn tasks of credentials belong to models are stopped by the owner, by hand,
-before any launches (O1). Release 2 (X1 to X8) is not launched before release 1 is cut. Checks
-870 to 876 are owner-run.
+before any launches (O1). Four questions are open for the owner (O13 to O16), and two tasks wait
+on them (the `contribute` half of PL5, and PR12). Release 2 (X1 to X10) is not launched before release 1 is cut. Checks
+880 to 886 are owner-run.
