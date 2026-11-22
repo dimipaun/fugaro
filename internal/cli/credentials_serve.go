@@ -473,14 +473,14 @@ var credentialsTest *credentialsWiring
 
 // credentialsWorkspaceTest is nil in production: C1's constructor for the
 // workspace's resolver, which is NewWorkspaceScopeResolver -- a VARIABLE in
-// another package, assigned by that package's own files (scope_stub.go now,
-// scope_workspace.go when WS2 lands) and by nothing outside it.
+// another package, assigned by that package's own file (scope_workspace.go) and
+// by nothing outside it.
 //
 // A test of this package sets it to record the configuration the process built
 // -- the whole of what WS5 is accepted for, and unobservable through the
-// resolver's own answers until WS2 lands -- and delegates to the real
-// constructor, so that the resolver the process serves under is C1's and not
-// the test's. It is never set outside a test and carries no value.
+// resolver's own answers -- and delegates to the real constructor, so that the
+// resolver the process serves under is C1's and not the test's. It is never set
+// outside a test and carries no value.
 var credentialsWorkspaceTest func(cfg credsvc.WorkspaceScopeConfig) (credsvc.ScopeResolver, error)
 
 // credentialsDatabase builds the client the process reads and writes the

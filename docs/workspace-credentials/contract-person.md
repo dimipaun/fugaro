@@ -38,14 +38,18 @@ headers a workspace slip travels in, and the one class a refused grant comes bac
 | `ErrPersonGrantRefused` | (a sentinel) | the one class a refused grant is answered with |
 
 **Why the names live in `internal/creds` and not in the service.** `internal/credsvc` is the service
-and `internal/gateway` is the run's proxy, and neither may import the other's wire constants: the
-service imports the gateway (its provider route forwards with the gateway's helpers and its `Route`),
-so the dependency cannot run the other way — F26 of
+and `internal/gateway` is the run's proxy, and the gateway may not import the service's wire
+constants: the service imports the gateway (its provider route forwards with the gateway's helpers and
+its `Route`), so the dependency cannot run the other way — F26 of
 [keys-through-service](../keys-through-service/contract-provider.md), the same reason the provider
-route's names are where they are. `internal/creds` is the one package both already import, so the
-names a job's environment and a call's headers are spelled with live here, once, and no side respells
-them. C1's `TestPersonGrantDecodesStrictly` pins every value above, as `TestRouteNamesArePinned` pins
-this package's route names.
+route's names are where they are. Nor does the gateway import this package — `internal/creds` imports
+`internal/budget`, which imports the gateway, so that is a cycle as well — and it spells none of these
+names in any case, because a call it builds to the workspace's service carries no slip and no
+declaration (R18). The package the sides of this wire do share is `internal/creds`: `internal/credsvc`,
+`internal/cli` and `internal/runner` all import it, so the names a job's environment and a call's
+headers are spelled with live here, once, and no side respells them. C1's
+`TestPersonGrantDecodesStrictly` pins every value above, as `TestRouteNamesArePinned` pins this
+package's route names.
 
 ## The switch (R9, U8)
 

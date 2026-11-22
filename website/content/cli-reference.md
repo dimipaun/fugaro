@@ -3946,9 +3946,10 @@ orchestrator this installation has. coordinator is that view alone;
 orchestrator:<id> is one orchestrator's node under /orchestrator, its work
 items as nodes and their depends_on as edges; local:<id> is the same node
 read as one this machine's daemon drives, falling back to the daemon's
-cached brief when the node cannot be read. An id is one lower-case letter or
-digit, then up to 39 more of those or a hyphen, and nothing else: anything
-that does not match is refused before anything is read, and so is an id the
+cached brief when the node cannot be read. An id is an orchestrator id and
+nothing else: a project's own name, or a project name, ~ and a name for a
+named one, which is how the tree under /orchestrator is keyed. Anything that
+does not match is refused before anything is read, and so is an id the
 project's database does not hold, with a sentence naming it and pointing at
 fugaro orchestrator ls. Which ids exist is what that listing asks — a key
 under /orchestrator — and not whether a state node was written, so an id it
@@ -5408,37 +5409,40 @@ This command has no subcommands.
 
 Flag an existing GCP project as managed (the project's owner)
 
-Flag an existing GCP project PROJECT_ID as managed, recording the managed
-marker in that project's own runs bucket.
+Flag an existing GCP project as managed, recording the managed marker in
+that project's own runs bucket.
 
 This is how a project Fugaro did not create becomes managed: the marker is
 what tells a later run that this project's applies may skip the typed
 confirmation, and it is normally written by the run that created the project
-(fugaro setup --create-project --managed). Flagging is the after-the-fact way,
-answered by the owner on 2026-10-16 (design D58).
+(fugaro setup --create-project). Flagging is the after-the-fact way, answered
+by the owner on 2026-10-16 (design D58).
 
 Run it as an operator, with your own credentials. A coding agent's session is
-refused, and so is a Fugaro run's process. The permission you give is the
-PROJECT_ID argument itself: naming the exact GCP project ID on the command line
-is the declaration that this project is managed (design D1541), and nothing is
-typed at a prompt — this command takes no flag at all,
-so no flag stands in for naming the project either.
-
-PROJECT_ID must be the exact GCP project ID of the installation selected by
---project, --config or the checkout: one invocation names one project, and
-there is no bulk form, no wildcard and no prefix.
+refused, and so is a Fugaro run's process. The project is the installation
+selected by --project, --config or the checkout. PROJECT_ID may be given, and
+must then be that installation's own exact GCP project ID; the statement
+printed before the write names the project either way, so the invocation is
+about a named project and not about whatever the checkout happens to hold
+(design D1541, amended on 2026-11-21 by D2213, when the argument became
+optional: what stands where the typed ID stood is the naming, and still nothing
+is typed at a prompt). One invocation names one project: there is no bulk form,
+no wildcard and no prefix.
 
 It records two things in gs://<runs bucket>/fugaro/managed.json: that this
-project is managed, and the monthly budget amount and currency the owner states
-with --budget and --budget-currency. The amount is required, with no default
-(D64), because the marker's amount is what the apply-time budget read opens the
-gate on: a marked project that records no amount is refused by every managed
-apply rather than applied without a budget control. The amount is the budget
-ALERT amount the installation's Terraform creates and nothing else — this
-command does not create or change a budget, and it makes no billing call.
-Nothing else is a question: the bound on billable image builds this object used
-to record (D1013) is gone (D1543), so there is no count to ask the owner for
-and none to write, exactly as fugaro setup asks for none.
+project is managed, and the monthly budget amount and currency the owner means
+with --budget and --budget-currency. Both have defaults — 100 USD — so the
+command with no flags records a figure rather than asking for one (design
+D2212 and D2211). The amount is the budget ALERT amount the installation's
+Terraform creates and nothing else — this command does not create or change a
+budget, and it makes no billing call. The alert itself is the installation's
+own Terraform and belongs to the fugaro update that applies it, not to this
+object — fugaro update --budget N --budget-currency CCC --billing-account ID
+applies the amount this command records. Nothing else is a question: the bound
+on
+billable image builds this object used to record (D1013) is gone (D1543), so
+there is no count to ask the owner for and none to write, exactly as fugaro
+setup asks for none.
 
 It writes BOTH marks a managed project carries, in one step: that object and
 the label fugaro_managed=true on the GCP project itself (Task 3.0). The read
@@ -5466,22 +5470,24 @@ marker and run this command; SECURITY.md records the wider Owner/Editor
 bypass. The refusal below is a speed bump against an agent that uses the
 program, not a wall against one that goes around it.
 
-A project that already records an amount is refused: the amount is the owner's
-decision at the time it was taken, and this command adds a budget rather than
-editing one. The one object it does replace is a version-1 creation fact —
-what fugaro setup --create-project without --managed leaves, and the state the
-managed apply refuses for having no amount recorded. What it replaced is said
-in the output, and the write is conditioned on the object it read, so nothing
-is overwritten blind.
+An amount a project already records is its owner's figure, and a default never
+replaces it: run with no --budget over such a marker, the command refuses and
+names the flag that changes it. An explicit --budget rewrites the recorded
+amount (design D2215), keeping the recorded currency unless --budget-currency
+is given too, and prints the old figure and the new one. The one object it
+replaces unasked is a version-1 creation fact — what fugaro setup
+--create-project leaves, and the state the managed apply warns for, having no
+amount recorded. What it replaced is said in the output, and every write is
+conditioned on the object it read, so nothing is overwritten blind.
 
-Usage: `fugaro managed flag PROJECT_ID`
+Usage: `fugaro managed flag [PROJECT_ID]`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--budget` | int64 | `0` | no | the monthly budget alert amount to record, in whole units of --budget-currency (required) |
-| `--budget-currency` | string | "" | no | the currency --budget is in, three uppercase letters such as USD (required) |
+| `--budget` | int64 | `100` | no | the monthly budget alert amount to record, in whole units of --budget-currency (default 100; pass it to record another figure, or to replace an amount the marker already records) |
+| `--budget-currency` | string | `USD` | no | the currency --budget is in, three uppercase letters such as USD (default USD, or the currency the marker already records when an amount is being replaced) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for flag |
@@ -6038,6 +6044,11 @@ work items of the plan's own node, or the one-time session dump,
 validated as a patch and refused the person's own ops: no dump approves
 work, and no import approves anything.
 
+A command acts on the project's own orchestrator unless --name names one
+of its named ones: `--name night` is the orchestrator `<project>~night`,
+with its own node and its own daemon, and the project half is always the
+project this session is in.
+
 run is the daemon itself, in the foreground. install, uninstall and
 status are the login unit that keeps it running: the three read no
 project and reach no network, and they write no system path and need no
@@ -6166,6 +6177,13 @@ machine that has none too, at your own terminal and asking nothing, so no
 release needs this command as an operator step. It writes no state and
 migrates none: the daemon's own start-up does that.
 
+One unit is one orchestrator: this writes the project's own unless --name
+names one of its named ones, whose unit runs `orchestrator run --name
+<name>` and whose file is a file of its own. Installing one leaves the
+others running, so a machine may keep the project's own orchestrator and
+any number of named ones side by side (D3206, D3207); `fugaro update`
+writes the project's own and never touches a named one.
+
 A unit is code that runs at every login, so this command asks you to type
 the word install at a real terminal, has no flag that stands in for it,
 and refuses in a coding agent's session. Running it yourself, without the
@@ -6179,6 +6197,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for install |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 
 Subcommands:
 
@@ -6189,13 +6208,18 @@ This command has no subcommands.
 List the installation's orchestrators
 
 List the orchestrators this installation has: every id whose node exists in
-the project's database, with the holder of its lease and when that holder last
-beat, and every cached brief this machine holds, with the time the daemon wrote
-it. An orchestrator this machine runs — one with a cached brief — is `local`;
-one only the database holds is `central`. A cached brief of an id nothing is
-beating any more is marked stale: the daemon that wrote it has stopped driving
-the id, so no cycle is rewriting it. --json prints a versioned document
-(schemas/orchestrator-output.schema.json).
+the project's database — the project's own, and a named one as
+`<project>~<name>` — with the principal driving it, the holder of its lease
+and when that holder last beat, and every cached brief this machine holds,
+with the time the daemon wrote it. An orchestrator this machine runs — one
+with a cached brief — is `local`; one only the database holds is `central`.
+A cached brief of an id nothing is beating any more is marked stale: the
+daemon that wrote it has stopped driving the id, so no cycle is rewriting
+it. --json prints a versioned document
+(schemas/orchestrator-output.schema.json), whose entries carry the id's name
+half (`name`, empty for the project's own orchestrator) and its driver
+beside the fields the table prints — an empty driver is an id with no
+driver node to read, which is unknown and not "nobody drives this".
 
 There is no registry of processes and no port: the node and the cache file are
 the two things the daemon writes, and a run or a token may not read either.
@@ -6322,6 +6346,9 @@ release does not read is reported as an update being due rather than
 touched. Run it in the foreground to watch it; the login unit is what keeps
 it running (fugaro setup installs it).
 
+One process drives one orchestrator: the project's own unless --name
+names one of its named ones, whose id is `<project>~<name>`.
+
 Usage: `fugaro orchestrator run`
 
 Flags:
@@ -6334,6 +6361,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
 | `--interval` | duration | `30s` | no | how long to wait between cycles when the node says nothing moved |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--once` | bool | `false` | no | run one cycle and exit, releasing the lease, instead of driving the id until it is stopped |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -6383,6 +6411,10 @@ would write. It changes nothing and reads no project: the file is the
 whole of what it looks at, and `fugaro doctor` reports the same drift as
 an update being due.
 
+--name reports the unit of one of the project's named orchestrators rather
+than the project's own; `fugaro doctor` and `fugaro update` know the
+project's own alone.
+
 Usage: `fugaro orchestrator status`
 
 Flags:
@@ -6390,6 +6422,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for status |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 
 Subcommands:
 
@@ -6405,6 +6438,10 @@ unit takes away code that runs at every login rather than adding it, and
 `fugaro orchestrator install` writes it back after its own typed
 confirmation.
 
+One unit per orchestrator, so --name removes the unit of one of the
+project's named orchestrators and no --name removes the project's own;
+the others are left running either way.
+
 Nothing else is touched: the project's orchestrator state, its lease and
 its audit log are in the database and not in the unit, `fugaro orchestrator
 run` still runs in the foreground without a unit, and a machine with no
@@ -6417,6 +6454,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for uninstall |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 
 Subcommands:
 
@@ -7448,10 +7486,14 @@ The repos.* scalars and lists are the generic writer's (D1173):
     fugaro settings set repos.acme/app.base_branch main
     fugaro settings set repos.acme/app.workflows --add docs
 
-This write is a person's own: fugaro update publishes it, and a coding agent's
-session is refused it, in a managed project by that project's gate.
+The write and the publish are one act, as they are for the same keys through
+fugaro settings set: the keys land in this machine's project config and the
+policy node they are served from is published by this same command, so no second
+command is needed. --no-apply saves the write and leaves the publish to fugaro
+apply.
 
-Every write ends with one line: next: fugaro update.
+This write is a person's own: a coding agent's session is refused it, in a
+managed project by that project's gate.
 
 Usage: `fugaro project repos set (REPO --workflows NAME[,NAME...]) | (--job-profile NAME [members])`
 
@@ -7467,6 +7509,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--job-profile` | string | "" | no | the job profile to write, by name; with it, the members below write the block's keys |
 | `--memory` | string | "" | no | profiles.NAME.memory: the Cloud Run memory the job is deployed with, e.g. 4Gi |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--provider` | string | "" | no | profiles.NAME.provider: the git provider the profile's job holds a credential for (required for a new profile) |
 | `--secrets` | stringSlice | `[]` | no | profiles.NAME.secrets: the Secret Manager names the profile's job mounts, comma-separated; the list is written whole |
@@ -10198,14 +10241,19 @@ agree), the project's name (--name; from the repository's
 owner, else this directory's), the project's rigor mode (--rigor; how much
 review every run of it gets — poc, startup, pro, the built-in default that is
 listed first, or critical — and the one question with no suggestion, so Enter
-is not an answer there) and whether a repository the build can read is
+is not an answer there), the project's monthly budget alert (--budget; the
+amount Cloud Billing warns the owner at when the month's spend reaches it — an
+alert, not a cap on spending: what stops a run is the gateway's cost cap — in
+whole units of USD, which Enter takes as 100) and whether a
+repository the build can read is
 baked into the image its job runs (--bake-repos; yes, which makes jobs start
 faster; asked only where it can be answered, so a run with a project config
 keeps that project's answer). Every question has its flag, so only the
 confirmations below need a terminal at all: without one, or with
 --json, the run names every missing flag in one
-error — the bake switch needs no flag there, because an absent key means the
-same as a written yes. An ID that already exists is refused before anything is
+error — the bake switch and the budget need no flag there, because an absent
+key means the same as a written yes and a budget nobody answered takes its own
+default. An ID that already exists is refused before anything is
 asked or changed ("Fugaro only starts fresh: <id> already exists; pick
 another id"), and so is one that already holds a Fugaro installation, with the
 command that uses that installation from this machine instead: fugaro update
@@ -10474,7 +10522,7 @@ Flags:
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing) |
-| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, bake_repos — the five questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
+| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, budget, budget_currency, bake_repos — the five questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
 | `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
@@ -10772,7 +10820,7 @@ Flags:
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing) |
-| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, bake_repos — the five questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
+| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, budget, budget_currency, bake_repos — the five questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
 | `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed |
 | `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |

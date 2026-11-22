@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/bbtokens"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -85,15 +87,16 @@ import (
 //     callerRefusal whose answer closure would write a refusal nobody audited:
 //     a refusal with no line is the one thing this package's rules forbid
 //     outright.
-//   - **The Bitbucket store is nil, and nil refuses** (C1's rule 10). The
-//     selector a proxied call is served with is built over the workspace's
-//     bundle — a secret this resolver never reads, and one no field of
-//     WorkspaceScopeConfig carries — so a workspace-mode proxy call is refused
-//     until the task that rewires the forge handlers (WS16/WS17, C1's
-//     R-scope-forge) hands the scope a store built where the bundle is loaded.
-//     Answering a selector here would mean reading the bundle in a second
-//     place, which is the one thing C1's OfferingReader argument is shaped to
-//     prevent.
+//   - **The Bitbucket store is the NODE's, and it reads no secret** (C1's rule
+//     10, and the reading C1's own comment left open). The selector a proxied
+//     call is served with is built over the workspace's own declaration —
+//     which token the owner's node names for the run's repository, by the name
+//     the workspace's bundle holds it under — and the VALUE is read by the
+//     route, out of the one snapshot it decided the call on. So the scope
+//     answers a store without reading the workspace's secret at all, and
+//     R-scope-forge, whose change C1 anticipated as a reader that would need
+//     the bundle, turned out to need no new method: what the store needed was
+//     to stop answering nil. See workspaceTokens below.
 func init() {
 	NewWorkspaceScopeResolver = newWorkspaceScopeResolver
 }
@@ -300,7 +303,7 @@ func (res *workspaceResolver) scopeFor(call MemberCall, node *projectpolicy.Work
 			repoAuth: &creds.RTDBStore{DB: memberReadOnly{Getter: db}},
 			outcomes: RTDBOutcomes{DB: db},
 			offering: workspaceOffering{w: res.w, call: call, node: node},
-			forge:    workspaceForge{repos: repos},
+			forge:    workspaceForge{repos: repos, tokens: workspaceTokensOf(node, call.Member.Project)},
 			repos:    repos,
 		},
 	}, nil
@@ -610,15 +613,17 @@ func (o workspaceOffering) Offering(ctx context.Context, b *Bundle) ([]creds.Cre
 // repository the owner declared and the member's administrator did not admit is
 // refused, and so is one the member admitted and the owner did not declare.
 //
-// The token store is nil, and nil refuses (C1's rule 10): the store a proxied
-// call is served with is built over the workspace's bundle, which is a secret
-// this resolver does not read — the file's own comment names the task that hands
-// it here.
+// The token store is the workspace's own DECLARATION and never its bundle: the
+// names the owner's node shares WITH THIS CALL'S MEMBER — the allow-list is
+// asked here as it is on the model route (R5, workspaceTokensOf) — chosen for
+// the repository the call is on, and read for a value by the route out of the
+// snapshot it already holds (C1's rule 10, workspaceTokens below).
 type workspaceForge struct {
-	repos map[string]string
+	repos  map[string]string
+	tokens workspaceTokens
 }
 
-func (f workspaceForge) Bitbucket() bbtokens.Selector { return nil }
+func (f workspaceForge) Bitbucket() bbtokens.Selector { return f.tokens }
 
 func (f workspaceForge) Covers(_ context.Context, canonical string) (bool, error) {
 	for _, held := range f.repos {
@@ -627,6 +632,98 @@ func (f workspaceForge) Covers(_ context.Context, canonical string) (bool, error
 		}
 	}
 	return false, nil
+}
+
+// workspaceTokens is the Bitbucket store a workspace serves a proxied call out
+// of: the tokens the owner's node declares, in the node's own order, each with
+// the repositories the owner's credential is stored for (C3's `covers`).
+//
+// **It holds names and no values, and that is C1's rule 10 read rather than
+// worked around.** The store is built where the bundle is DECIDED — the node the
+// resolver has already admitted the caller against — and the value of the name
+// it chooses is read by the route out of the same snapshot that admitted the
+// call, so the workspace's one secret is read once per call and never here. The
+// interface was shaped for this: Select is handed the Snapshot (C1, D2355), and
+// snapshotValue is the one path a value is read on.
+//
+// **A name the bundle does not hold is skipped, and so is one that does not
+// cover this repository**: the pool's own rule (WorkspaceShared's two skips),
+// read on the proxy's side of the same declaration. The selection ranks nothing
+// and asks no project of its OWN: the project is the store's, settled where the
+// store is built (workspaceTokensOf), so what a call may reach is the fence
+// Covers, the entry's allow-list and the member's own policy have already
+// answered (R5), and the owner's coverage says which of the workspace's
+// credentials pays for it. A read the projection cannot make — a token whose
+// value the bundle holds for no name the node declares — is the contract's
+// no_bitbucket_token class, which is a refusal and never a call forwarded
+// without a credential (D143).
+type workspaceTokens []workspaceToken
+
+// workspaceToken is one entry of the node's shared list: the name the bundle
+// holds the credential under and the concrete repositories it is stored for.
+type workspaceToken struct {
+	name   string
+	covers []string
+}
+
+// workspaceTokensOf is the node's Bitbucket declaration, and the only reading of
+// it here: a model entry (and a version-1 entry, which is one) names no
+// repository this store could choose a token for, and a GitHub entry is the App
+// key's, which the mint reads out of the bundle itself.
+//
+// **An entry the allow-list does not name the CALLING MEMBER's project for is
+// not one to store** (R5, D1298): the workspace's leg of the intersection is
+// asked on the forge route as it is on the model one (creds.Shared.SharedWith,
+// behind AdmitShared), and a store built without it serves the workspace's
+// Bitbucket token to a member the owner offered it to nobody — Select is handed
+// a repository and never the calling member, so no later reader can ask the
+// question this one has to. The member's own policy is no substitute for the
+// leg: a policy that admits a proxied token for a covered repository admits it
+// whatever the allow-list says, which is why AdmitShared asks both. A dropped
+// entry falls through Select's scans to the coverage refusal, and no route, no
+// member and no repository keeps a second list of the pool's entries.
+//
+// Validate makes the two arms one question: an entry carries the member projects
+// it is offered to or `all_members`, never both and never neither
+// (validateSharedEntryV2), so this filter only ever narrows what the owner's
+// declaration already said.
+func workspaceTokensOf(node *projectpolicy.WorkspaceCredentials, project string) workspaceTokens {
+	if node == nil {
+		return nil
+	}
+	var out workspaceTokens
+	for _, s := range node.Shared {
+		if s.Kind != gitprov.KindBitbucket {
+			continue
+		}
+		if !s.AllMembers && !slices.Contains(s.Projects, project) {
+			continue
+		}
+		out = append(out, workspaceToken{name: s.Name, covers: slices.Clone(s.Covers)})
+	}
+	return out
+}
+
+func (t workspaceTokens) Select(_ context.Context, snap bbtokens.Snapshot, canonical string, _ bool) (bbtokens.Choice, error) {
+	for _, tok := range t {
+		if !slices.Contains(tok.covers, canonical) {
+			continue
+		}
+		if _, ok := snapshotValue(snap, bbtokens.Name(tok.name)); !ok {
+			continue
+		}
+		return bbtokens.Choice{Name: bbtokens.Name(tok.name)}, nil
+	}
+	for _, tok := range t {
+		if slices.Contains(tok.covers, canonical) {
+			// The owner declared this repository and the workspace's bundle
+			// holds no value under the name: a half-written declaration, which
+			// is the store's refusal and not the coverage's (the class names the
+			// store and never a token).
+			return bbtokens.Choice{}, &bbtokens.Refusal{Class: bbtokens.ClassNoToken}
+		}
+	}
+	return bbtokens.Choice{}, &bbtokens.Refusal{Class: bbtokens.ClassNotCovered, Repo: canonical}
 }
 
 // refusingWorkspace answers every reader of a scope that must not serve: the

@@ -232,12 +232,12 @@ describe('the hostile-title corpus', () => {
     expect(text('a title with a \u0000 nul', 'sentence')).toBe('a title with a nul')
     expect(text('an escape: \u001b[31mred\u001b[0m', 'sentence')).toBe('an escape: red')
     expect(text('pay\u00adpal', 'sentence')).toBe('paypal')
-    // The bidi override is gone, and so is what it was hiding behind: `evil` and
-    // `gpj.exe` are two four-character segments around a slash, which is a
-    // repository path to the recorder and to this layer alike. Both changes are
-    // the point -- the override cannot reorder what is drawn, and the pair
-    // cannot make `gpj.exe` read as though it were the second half of a path.
-    expect(text('evil/\u202egpj.exe', 'sentence')).toBe('[redacted]')
+    // The bidi override is gone, and the text it was hiding behind is drawn as
+    // it came: `evil` and `gpj.exe` are two four-character segments around a
+    // slash, which the recorder calls a repository path and this layer no longer
+    // does (D3213). The override cannot reorder what is drawn, which is the
+    // point of removing it; the pair is a pair of words.
+    expect(text('evil/\u202egpj.exe', 'sentence')).toBe('evil/gpj.exe')
     expect(flags('pay\u00adpal', 'sentence')).toContain('stripped-invisible')
   })
 
@@ -315,13 +315,14 @@ describe('the refusal door', () => {
     expect(drawn.ok && drawn.flags).toEqual([])
   })
 
-  it('is the `sentence` class that would have eaten it, not this door', () => {
-    // Design section 6.3 requires the message verbatim; the free-text rules
-    // would draw the role name and the project as their placeholders.
+  it('draws the remedy the `sentence` class draws, because the rules that ate it are gone', () => {
+    // Design section 6.3 requires the message verbatim, and until D3213 the
+    // free-text rules would not have: the project became `<project>` and each
+    // role name `[redacted]`, which is why this door had a rule set of its own.
+    // The non-secret rules are gone, so the two agree on this sentence -- what
+    // keeps the door separate now is the class's own business, not the rules.
     const through = sanitizeText(REMEDY, 'sentence', 'the CLI sentence')
-    expect(through.ok && through.text).not.toBe(REMEDY)
-    expect(through.ok && through.text).toContain('[redacted]')
-    expect(through.ok && through.text).toContain('<project>')
+    expect(through.ok && through.text).toBe(REMEDY)
   })
 
   it('still redacts a credential a child echoed into a refusal', () => {
@@ -331,23 +332,37 @@ describe('the refusal door', () => {
     }
   })
 
-  it('redacts an address a child echoed into a refusal, as the sentence class does', () => {
-    // An address is not a remedy. The refusal door drew one verbatim until the
-    // review of Task 4.2: `REFUSAL_RULES` filtered the rule out by flag, and
-    // the docstring's list of deliberate omissions -- repository, GCP name,
-    // path, host -- never named it, so the filter had quietly become a rule
-    // nobody had decided. A person and a service account are identifiers the
-    // design redacts on every other channel, and `sentence` redacts them here.
+  it('draws an address a child echoed into a refusal, as the sentence class does', () => {
+    // A person is not a secret (D3213, 2026-11-21). The door redacted an address
+    // until then, on the argument that a person and a service account are
+    // identifiers the design redacts on every other channel -- and the operator
+    // reading `permission denied for zora@acme.example` needs the address to
+    // know whose permission was denied.
     for (const address of ['zora@acme.example', 'runner@proj.iam.gserviceaccount.com']) {
       const sentence = `permission denied for ${address}`
-      const text = sanitizeText(sentence, 'sentence')
-      expect(text.ok && text.text, address).not.toContain(address)
+      const drawn = sanitizeText(sentence, 'sentence')
+      expect(drawn.ok && drawn.text, address).toBe(sentence)
       const refusal = sanitizeRefusal(sentence)
-      expect(refusal.ok && refusal.text, address).toBe(
-        `permission denied for ${ADDRESS_PLACEHOLDER}`,
-      )
-      expect(refusal.ok && refusal.flags, address).toContain('address-marker')
+      expect(refusal.ok && refusal.text, address).toBe(sentence)
+      expect(refusal.ok && refusal.flags, address).not.toContain('address-marker')
     }
+  })
+
+  it('draws an ordinary path in a refusal as it is, and a credential inside one masked', () => {
+    // The path rule that replaced every path is gone (D3213), and the entropy
+    // net still declines a path run -- the guard the owner's report of
+    // 2026-10-21 left behind, above `FREE_TEXT_RULES` -- so the operator's own
+    // binary path is drawn. A token is a credential wherever it stands, path
+    // segment or not, so the net still takes it: the guard is about the shape of
+    // a path, never about what a path happens to contain.
+    const binary = '/opt/homebrew/Cellar/fugaro/0.27.0/bin/fugaro'
+    const drawn = sanitizeRefusal(`cannot run ${binary}: no such file`)
+    expect(drawn.ok && drawn.text).toBe(`cannot run ${binary}: no such file`)
+    const token = fake.highEntropyRun()
+    const masked = sanitizeRefusal(`cannot read /home/x/${token}/key`)
+    // The whole path run is what the net reads and replaces, not the one segment
+    // inside it: a run of the net's alphabet is one candidate, slashes and all.
+    expect(masked.ok && masked.text).toBe(`cannot read ${TOKEN_PLACEHOLDER}`)
   })
 
   it('strips the invisible characters and flattens the sentence, as every class does', () => {
@@ -514,12 +529,17 @@ describe('the credential rules', () => {
     }
   })
 
-  it('replaces a URL in free text whole, so its userinfo cannot survive', () => {
+  it('replaces a URL in free text whole when it carries a credential, so its userinfo cannot survive', () => {
     const line = text('see https://user:pass@example.invalid/x?y=1 for the diff', 'sentence')
     expect(line).toBe(`see ${URL_MARKER} for the diff`)
     expect(line).not.toContain('user:pass')
     expect(text('see http://user:pass@example.invalid/x', 'sentence')).not.toContain('user:pass')
-    expect(flags('see https://example.invalid/x', 'sentence')).toContain('replaced-url')
+    // The rule is narrowed to the credential parts (D3213): a URL that carries
+    // none is drawn, and its host, its query and its path come with it.
+    expect(text('see https://example.invalid/x for the diff', 'sentence')).toBe(
+      'see https://example.invalid/x for the diff',
+    )
+    expect(flags('see https://example.invalid/x', 'sentence')).not.toContain('replaced-url')
   })
 
   it('replaces a PEM block, and a bearer header, without losing the sentence', () => {
@@ -566,45 +586,115 @@ describe('the free-text classes are the recorder\u2019s, class for class', () =>
     }
   })
 
-  it('replaces an address, a path, a hostname and a repository path in a sentence', () => {
-    const cases: readonly (readonly [string, string, string])[] = [
-      ['an address', 'mail ana@acme.invalid now', 'mail redacted@example.invalid now'],
-      ['a path', 'wrote /Users/ana/secret/plan.md today', 'wrote <path> today'],
-      ['a windows path', 'wrote C:\\Users\\ana\\plan.md today', 'wrote <path> today'],
-      ['a hostname', 'dial acme-devel-zora-default-rtdb.firebaseio.com now', 'dial <host> now'],
-      ['a private hostname', 'on zoras-laptop-pro.local now', 'on <host> now'],
-      ['an address literal', 'dial 10.42.7.13:443 now', 'dial <host> now'],
-      ['a repository path', 'in dimipaun/fugaro#412 the fix landed', 'in [redacted]#412 the fix landed'],
-      ['a gcp project', 'on project acme-devel-zora today', 'on project <project> today'],
-      ['a runs bucket', 'wrote to fugaro-runs-acme-x9 today', 'wrote to <bucket> today'],
-      ['a branch', 'merge fix/console-text-path now', 'merge <branch> now'],
-      ['a bare branch', 'merge feat/x for r-4c25cf20/r-f1aa9214', 'merge <branch> for r-4c25cf20/r-f1aa9214'],
-      ['a ref', 'pushed refs/heads/secret-codename now', 'pushed <branch> now'],
+  it('draws an address, a path, a hostname and a repository path as they came', () => {
+    // The finding this case list used to be about is the other way round now
+    // (D3213, 2026-11-21): none of these is a secret, and the operator's own
+    // tool draws what it was given -- whose address wrote the line, which path
+    // the run touched, which host answered, which branch it was. The recorder
+    // replaces every one of them; this layer may redact *less* than the recorder
+    // and never more, which is the direction the agreement test holds.
+    const cases: readonly (readonly [string, string])[] = [
+      ['an address', 'mail ana@acme.invalid now'],
+      ['a path', 'wrote /Users/ana/secret/plan.md today'],
+      ['a windows path', 'wrote C:\\Users\\ana\\plan.md today'],
+      ['a hostname', 'dial acme-devel-zora-default-rtdb.firebaseio.com now'],
+      ['a private hostname', 'on zoras-laptop-pro.local now'],
+      ['an address literal', 'dial 10.42.7.13:443 now'],
+      ['a repository path', 'in dimipaun/fugaro#412 the fix landed'],
+      ['a gcp project', 'on project acme-devel-zora today'],
+      ['a runs bucket', 'wrote to fugaro-runs-acme-x9 today'],
+      ['a branch', 'merge fix/console-text-path now'],
+      ['a bare branch', 'merge feat/x for r-4c25cf20/r-f1aa9214'],
+      ['a ref', 'pushed refs/heads/secret-codename now'],
     ]
-    for (const [what, line, expected] of cases) {
-      expect(text(line, 'sentence'), what).toBe(expected)
+    for (const [what, line] of cases) {
+      expect(text(line, 'sentence'), what).toBe(line)
     }
   })
 
-  it('replaces a URL whole, whatever follows it on the line', () => {
-    // The three shapes a URL rule misses when it is not the recorder\u2019s: a
-    // scheme after a word character, a URL whose path holds a `|`, and a scheme
-    // with no dot in it.
-    // The word character stays and the URL goes: the scheme starts at the start
-    // of its own run, so `_` is not part of it -- the recorder leaves it too.
-    expect(text('see _https://evil.invalid/x now', 'sentence')).toBe(`see _${URL_PLACEHOLDER} now`)
-    expect(text('see https://evil.invalid/a|b end', 'sentence')).toBe(`see ${URL_PLACEHOLDER} end`)
-    expect(text('see git+ssh://evil.invalid/x now', 'sentence')).toBe(`see ${URL_PLACEHOLDER} now`)
+  it('still masks a credential spelled as one of the shapes it no longer replaces', () => {
+    // One case per rule the change removes, and the answer for each is that the
+    // shape is drawn while the credential inside it is not: what the layer gave
+    // up is the *shape*, never the secret. Both values are built at run time by
+    // `test/support/fakeSecrets.ts` -- no line of this file carries one.
+    const token = fake.githubToken()
+    const run = fake.highEntropyRun()
+    const cases: readonly (readonly [string, string])[] = [
+      ['an address', `mail ${token}@acme.invalid now`],
+      ['a path', `wrote /home/ana/${token}/plan.md today`],
+      ['a windows path', `wrote C:\\Users\\ana\\${run}\\plan.md today`],
+      ['a hostname', `dial ${token}.example.invalid now`],
+      ['an address literal', `dial 10.42.7.13:${token} now`],
+      ['a repository path', `in dimipaun/${token} the fix landed`],
+      ['a gcp project', `on project ${token} today`],
+      ['a runs bucket', `wrote to ${run} today`],
+      ['a branch', `merge fix/${run} now`],
+      ['a ref', `pushed refs/heads/${token} now`],
+    ]
+    for (const [what, line] of cases) {
+      const drawn = text(line, 'sentence')
+      expect(drawn, what).toContain(TOKEN_PLACEHOLDER)
+      expect(drawn, what).not.toContain(token)
+      expect(drawn, what).not.toContain(run)
+    }
+  })
+
+  it('replaces a URL that carries a credential, and draws one that does not', () => {
+    // The three shapes a URL rule misses when it is not the recorder's: a scheme
+    // after a word character, a URL whose path holds a `|`, and a scheme with no
+    // dot in it. None of them carries a credential, so all three are drawn now
+    // (D3213) -- and the fourth, whose userinfo is a password, is still replaced
+    // whole, which is what the rule is kept for.
+    expect(text('see _https://evil.invalid/x now', 'sentence')).toBe('see _https://evil.invalid/x now')
+    expect(text('see https://evil.invalid/a|b end', 'sentence')).toBe('see https://evil.invalid/a|b end')
+    expect(text('see git+ssh://evil.invalid/x now', 'sentence')).toBe('see git+ssh://evil.invalid/x now')
     expect(text('see http://user:pass@evil.invalid/x now', 'sentence')).toBe(`see ${URL_PLACEHOLDER} now`)
   })
 
-  it('says which class it changed, not only that it changed something', () => {
-    expect(flags('mail ana@acme.invalid now', 'sentence')).toContain('address-marker')
-    expect(flags('wrote /Users/ana/plan.md today', 'sentence')).toContain('path-placeholder')
-    expect(flags('on zoras-laptop-pro.local now', 'sentence')).toContain('host-placeholder')
-    expect(flags('merge fix/console-text-path now', 'sentence')).toContain('branch-placeholder')
-    expect(flags('in dimipaun/fugaro#412 it landed', 'sentence')).toContain('name-placeholder')
-    expect(flags('on project acme-devel-zora today', 'sentence')).toContain('name-placeholder')
+  it('replaces a URL in free text when any of its parts carries a credential', () => {
+    // The narrowed rule asks `applyUrl`'s own questions of the match (D3213):
+    // userinfo, a host that reads as a key, a query or a fragment that carries
+    // one, a well-known webhook's path, and a path segment that is a key. Each
+    // secret is built at run time (`test/support/fakeSecrets.ts`).
+    const token = fake.githubToken()
+    const run = fake.highEntropyRun()
+    const cases: readonly (readonly [string, string])[] = [
+      ['userinfo holding a password', `https://user:${token}@example.invalid/x`],
+      ['a token-named query key', `https://example.invalid/x?token=${token}`],
+      ['a credential-named query key with a shapeless value', 'https://example.invalid/x?api_key=hunter2'],
+      ['an access token in the fragment', `https://example.invalid/x#access_token=${token}`],
+      ['a signed-url query key', `https://storage.googleapis.com/b/x?X-Goog-Signature=${run}`],
+      ['a high-entropy path segment', `https://hooks.example/services/${token}`],
+      ['a webhook path', `https://hooks.slack.com/services/${token}`],
+      ['a token as a subdomain', `https://${token}.example.invalid/x`],
+    ]
+    for (const [what, url] of cases) {
+      const drawn = text(`see ${url} now`, 'sentence')
+      expect(drawn, what).toBe(`see ${URL_PLACEHOLDER} now`)
+      expect(drawn, what).not.toContain(token)
+    }
+    // The same URL carrying nothing is drawn whole, host, query and path with
+    // it: that is the difference this rule's narrowing makes, and the reason a
+    // `?tab=files` link on a run screen reads as the link it is.
+    expect(text('see https://example.invalid/x?page=2 now', 'sentence')).toBe(
+      'see https://example.invalid/x?page=2 now',
+    )
+  })
+
+  it('names the credential rule it applied, and nothing else', () => {
+    // Every flag left in the free-text rule set is a credential flag (D3213):
+    // the class flags a reader used to be able to look for -- `address-marker`,
+    // `path-placeholder`, `host-placeholder`, `name-placeholder` -- went with
+    // the rules that produced them, and a screen that drew one as "something was
+    // hidden here" would be saying a credential was found where none was.
+    expect(flags('mail ana@acme.invalid now', 'sentence')).toEqual([])
+    expect(flags('wrote /Users/ana/plan.md today', 'sentence')).toEqual([])
+    expect(flags('on zoras-laptop-pro.local now', 'sentence')).toEqual([])
+    expect(flags('on project acme-devel-zora today', 'sentence')).toEqual([])
+    expect(flags(`the job printed ${fake.githubToken()} here`, 'sentence')).toContain(
+      'neutralised-credential',
+    )
+    expect(flags('see https://user:pass@evil.invalid/x now', 'sentence')).toContain('replaced-url')
   })
 
   it('keeps the recorder\u2019s identifiers, and the prose that only looks like one', () => {
@@ -624,21 +714,35 @@ describe('the free-text classes are the recorder\u2019s, class for class', () =>
     }
   })
 
-  it('never keeps what the recorder removed, over a corpus of prose', () => {
-    // The property, rather than a list of cases: if this layer drew a value
-    // verbatim, the recorder must have left that value alone too. It is
-    // one-directional on purpose -- this layer is allowed to change *more* than
-    // the recorder (it always removes the invisible characters, and it keeps the
-    // word `Bearer` where the recorder replaces it) and is not allowed to change
-    // less.
+  it('never keeps a credential the recorder took, over a corpus of prose', () => {
+    // The property, rather than a list of cases: if this layer drew a sample
+    // verbatim, the recorder must not have found a credential in it. It is
+    // one-directional on purpose (D3213, 2026-11-21): the recorder redacts
+    // identity as well -- an address, a path, a host, a repository path, a
+    // project, a bucket -- and this layer draws all of those, so what the two
+    // still answer the same way is the credential. The marker counted here is
+    // the credential one: the recorder's `[redacted-url]` is *not* a credential
+    // signal, because it replaces every URL where this layer replaces only one
+    // that carries a credential (the URL cases above are that rule's own test).
     const recorder = createRedactor()
     for (const sample of PROSE) {
       const shown = text(sample, 'sentence')
+      if (shown !== sample) continue
       const redacted = recorder.redactText(sample)
       expect(
-        shown === sample && redacted !== sample,
-        `${sample}: this layer drew it as written and the recorder redacted it`,
+        redacted.includes(TOKEN_MARKER),
+        `${sample}: this layer drew it as written and the recorder took a credential out of it`,
       ).toBe(false)
+    }
+    // And the other half of the same property, on the shapes that carry one: a
+    // secret of each family this repository can build at run time, in a sentence
+    // and in the recorder's hands, comes out of neither.
+    for (const [what, secret] of fake.realisticSecrets()) {
+      const sample = `the job wrote ${secret} to its log`
+      const shown = text(sample, 'sentence')
+      expect(shown, what).not.toContain(secret)
+      expect(shown, what).toContain(TOKEN_PLACEHOLDER)
+      expect(recorder.redactText(sample), what).not.toContain(secret)
     }
   })
 
@@ -658,10 +762,11 @@ describe('the free-text classes are the recorder\u2019s, class for class', () =>
   })
 })
 
-/** PROSE is the corpus the "not weaker than the recorder" property walks: the
- * sentences a job writes, plus one of each shape the pattern classes exist for.
- * It is not a list of expectations (those are above); it is the input set whose
- * *kept-or-changed* answer has to match the recorder\u2019s. */
+/** PROSE is the corpus the credential property walks: the sentences a job
+ * writes, plus one of each shape the pattern classes used to exist for. It is
+ * not a list of expectations (those are above); it is the input set on which the
+ * two layers' *credential* answers have to agree -- the identity shapes in it
+ * are the ones this layer now draws and the recorder still replaces. */
 const PROSE: readonly string[] = Object.freeze([
   'the run finished with no warnings',
   'a title with <script>alert(1)</script> in it',
@@ -930,17 +1035,26 @@ describe('the class rules', () => {
     }
   })
 
-  it('keeps a login and a pseudonym, and rewrites an address to the marker', () => {
-    // The Spend screen's person view is off by default (design D15), and this is
-    // the layer that makes the *value* safe whether or not a screen shows it.
+  it('draws a person, an address included, and refuses only a credential', () => {
+    // A person is who started the run (D3213, 2026-11-21): the operator's own
+    // tool names them, so the login, the pseudonym the recorder minted and the
+    // address all reach the screen as they came. What this class still refuses
+    // is a value that is a secret and not a person, and it refuses it rather
+    // than cutting it down -- half of a login is not a person (the case below).
     expect(text('fixture-operator', 'person')).toBe('fixture-operator')
     expect(text('person-2f9a4c1e', 'person')).toBe('person-2f9a4c1e')
-    expect(text('fixture-operator@example.invalid', 'person')).toBe(ADDRESS_MARKER)
-    expect(flags('someone@example.invalid', 'person')).toContain('address-marker')
+    expect(text('fixture-operator@example.invalid', 'person')).toBe('fixture-operator@example.invalid')
+    expect(flags('someone@example.invalid', 'person')).not.toContain('address-marker')
     expect(text(ADDRESS_MARKER, 'person')).toBe(ADDRESS_MARKER)
-    for (const bad of ['', 'a person', 'a b@example.invalid']) {
-      expect(refused(bad, 'person'), bad).toContain('not a valid person')
-    }
+    // A marker the recorder wrote is kept: it is a value a reader recognises,
+    // and refusing it would draw `n/a` over a document that is not broken.
+    expect(text('Ana Kell', 'person')).toBe('Ana Kell')
+    expect(text('a b@example.invalid', 'person')).toBe('a b@example.invalid')
+    // The empty value is the schema's business, not this class's: whether a
+    // field is *there* is `schema.ts`'s question, and a class that refused an
+    // empty one would refuse the whole screen for a run whose `kill.by` the job
+    // had not written yet.
+    expect(text('', 'person')).toBe('')
   })
 
   it('refuses a credential that fits the login grammar, rather than drawing it', () => {
@@ -997,30 +1111,30 @@ describe('the class rules', () => {
     expect(refused('x'.repeat(MAX_LABEL_LENGTH + 1), 'label')).toContain('longer than a label')
   })
 
-  it('rewrites a host to the placeholder, and never draws an address literal', () => {
-    expect(text('<host>', 'host')).toBe(HOST_PLACEHOLDER)
-    // A valid DNS name is a machine name too: the recorder's host class
-    // redacts it unconditionally, and this layer may not keep what the
-    // recorder removed (review round 2 of PR 478: it used to be drawn).
-    expect(text('fixture.invalid', 'host')).toBe(HOST_PLACEHOLDER)
-    expect(text('build-07.corp.fixture.invalid', 'host')).toBe(HOST_PLACEHOLDER)
-    expect(flags('fixture.invalid', 'host')).toContain('host-placeholder')
-    expect(text('192.0.2.10', 'host')).toBe(HOST_PLACEHOLDER)
-    expect(text('10.0.0.1', 'host')).toBe(HOST_PLACEHOLDER)
-    // Even the one name with no dot that is obviously not anybody's machine is
-    // still redacted: the class is deny-by-default, so `localhost` gets the
-    // placeholder like every other value rather than an exception that would
-    // have to be told apart from `zoras-laptop` (review round 5 of PR 478: the
-    // comment here used to claim a name with no dot is not a hostname and so is
-    // not shown as one, which its own assertion two lines down disproved).
-    expect(text('localhost', 'host')).toBe(HOST_PLACEHOLDER)
-    expect(flags('192.0.2.10', 'host')).toContain('host-placeholder')
+  it('draws a host, dotted name, address literal and bare name alike', () => {
+    // The recorder's host class returns its marker for every value it is given,
+    // valid or not, and this layer used to follow it (review round 2 of PR 478).
+    // A machine name is not a secret (D3213, 2026-11-21): which host answered is
+    // what an operator reads a refusal for, so the value is drawn as it came.
+    expect(text('<host>', 'host')).toBe('<host>')
+    expect(text('fixture.invalid', 'host')).toBe('fixture.invalid')
+    expect(text('build-07.corp.fixture.invalid', 'host')).toBe('build-07.corp.fixture.invalid')
+    expect(flags('fixture.invalid', 'host')).not.toContain('host-placeholder')
+    expect(text('192.0.2.10', 'host')).toBe('192.0.2.10')
+    expect(text('10.0.0.1', 'host')).toBe('10.0.0.1')
+    expect(text('localhost', 'host')).toBe('localhost')
+    expect(text('zoras-laptop-pro.local', 'host')).toBe('zoras-laptop-pro.local')
+    // A hostname that *is* a credential is still masked, by the rule that reads
+    // the whole value rather than by this class: a key in a label is a key.
+    expect(text(`${fake.githubToken()}.example.invalid`, 'host')).toBe(
+      `${TOKEN_PLACEHOLDER}.example.invalid`,
+    )
   })
 
-  it('rewrites a path to the placeholder, and never lets one be shown', () => {
-    // Deny by default in its strongest form: the console has no reason to draw a
-    // path, so every path becomes the placeholder whether or not it looks
-    // dangerous. A path is where the operator's user name lives.
+  it('draws a path as it came, and still masks a credential inside one', () => {
+    // A path is where the operator's user name lives, which is why it was drawn
+    // as the placeholder until D3213 -- and a user name is not a secret. The
+    // path of the file a finding names is most of what a finding says.
     for (const value of [
       '/Users/ana/src/fugaro',
       '/home/fugaro/.config/fugaro/fugaro.yaml',
@@ -1028,10 +1142,17 @@ describe('the class rules', () => {
       'C:\\Users\\ana\\fugaro',
       '\\\\server\\share',
     ]) {
-      expect(text(value, 'path'), value).toBe(PATH_PLACEHOLDER)
+      expect(text(value, 'path'), value).toBe(value)
     }
-    expect(flags('/etc/passwd', 'path')).toContain('path-placeholder')
-    expect(refused('', 'path')).toContain('no path')
+    expect(flags('/etc/passwd', 'path')).not.toContain('path-placeholder')
+    expect(text('', 'path')).toBe('')
+    // The entropy net still declines a path run -- the guard the owner's report
+    // of 2026-10-21 left behind -- so a long ordinary path is drawn, and a
+    // credential inside one is not: this layer gave up the shape, never the
+    // secret.
+    const long = '/opt/homebrew/Cellar/fugaro/0.27.0/bin/fugaro'
+    expect(text(long, 'path')).toBe(long)
+    expect(text(`/home/ana/${fake.highEntropyRun()}/plan`, 'path')).toBe(TOKEN_PLACEHOLDER)
   })
 
   it('keeps an https URL, drops its userinfo, and refuses every other scheme', () => {
