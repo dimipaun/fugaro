@@ -20,7 +20,7 @@ streams:
   - name: cli
     theme: animals
     # Badger is 0.10, Camel 0.11, and one name per minor after that.
-    names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose, Narwhal, Ocelot, Panda, Quokka, Rhino, Sloth, Tapir, Uakari, Vole, Wombat, Xerus, Yak]
+    names: [Badger, Camel, Dolphin, Gecko, Hippo, Koala, Moose, Narwhal, Ocelot, Panda, Quokka, Rhino, Sloth, Tapir, Uakari, Vole, Wombat, Xerus, Yak, Zander, Zebra, Zebu, Zokor, Zorilla]
     # The last CLI release, v0.21.2 "Rhino two"; 0.22.0 "Sloth" is next (the
     # field below stays at the version main carries: a hotfix is cut from its
     # own branch and is never merged back).
@@ -34,7 +34,7 @@ streams:
     # which is the CLI's Camel, and it never goes below 0.110.0: the console's
     # updater refuses a downgrade (docs/release.md, "Console releases"). Apple
     # and Lemon are avoided, and internal/streams refuses them.
-    names: [Cherry, Mango, Melon, Nectarine, Orange, Papaya, Peach, Pear, Plum, Pomelo, Quince, Raspberry, Strawberry, Tangerine, Ugli, Watermelon, Yuzu]
+    names: [Cherry, Mango, Melon, Nectarine, Orange, Papaya, Peach, Pear, Plum, Pomelo, Quince, Raspberry, Strawberry, Tangerine, Ugli, Watermelon, Yuzu, Zante, Zapote, Ziziphus, Zucchini, Zwetschge]
     # The last console release, console-v0.125.0 "Watermelon"; 0.126.0 "Yuzu" is next.
     current: "0.125.0"
     next: Yuzu
