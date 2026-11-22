@@ -5436,9 +5436,9 @@ command with no flags records a figure rather than asking for one (design
 D2212 and D2211). The amount is the budget ALERT amount the installation's
 Terraform creates and nothing else — this command does not create or change a
 budget, and it makes no billing call. The alert itself is the installation's
-own Terraform and belongs to the fugaro update that applies it, not to this
+own Terraform and belongs to the update step of that installation, not to this
 object — fugaro update --budget N --budget-currency CCC --billing-account ID
-applies the amount this command records. Nothing else is a question: the bound
+sets the amount this command records. Nothing else is a question: the bound
 on
 billable image builds this object used to record (D1013) is gone (D1543), so
 there is no count to ask the owner for and none to write, exactly as fugaro
@@ -7486,11 +7486,13 @@ The repos.* scalars and lists are the generic writer's (D1173):
     fugaro settings set repos.acme/app.base_branch main
     fugaro settings set repos.acme/app.workflows --add docs
 
-The write and the publish are one act, as they are for the same keys through
-fugaro settings set: the keys land in this machine's project config and the
-policy node they are served from is published by this same command, so no second
-command is needed. --no-apply saves the write and leaves the publish to fugaro
-apply.
+The write and the publish are one act, through the same chain fugaro settings
+set runs for a key it writes: the keys land in this machine's project config and
+the policy node they are served from is published by this same command, so no
+second command is needed. A repository's workflows selection is a key the
+generic writer spells too; a profile's seven keys are not, and the generic path
+refuses them and names this command's family instead (D853). --no-apply saves
+the write and leaves the publish to fugaro apply.
 
 This write is a person's own: a coding agent's session is refused it, in a
 managed project by that project's gate.

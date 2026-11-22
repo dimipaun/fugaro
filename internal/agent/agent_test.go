@@ -341,11 +341,13 @@ func TestClaudeRunOtherFailureIsNotNoSession(t *testing.T) {
 
 func TestBuildEnvScrubs(t *testing.T) {
 	parent := []string{"PATH=/bin", "HOME=/h", "ANTHROPIC_API_KEY=key-123", "NPM_TOKEN=npm-456", "AWS_SECRET_ACCESS_KEY=nope", "GOOGLE_APPLICATION_CREDENTIALS=/sa.json"}
-	env, secrets, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Secrets: []string{"NPM_TOKEN"}, Set: map[string]string{"FUGARO_STATE_DIR": "/state"}, PathPrepend: "/fugaro/bin"})
+	env, secrets, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: testGateway, Secrets: []string{"NPM_TOKEN"}, Set: map[string]string{"FUGARO_STATE_DIR": "/state"}, PathPrepend: "/fugaro/bin"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"PATH=/fugaro/bin:/bin", "HOME=/h", "ANTHROPIC_API_KEY=key-123", "NPM_TOKEN=npm-456", "FUGARO_STATE_DIR=/state"} {
+	// The key the job's environment holds is not what the agent presents (the
+	// gateway's token is, AB1b): it is registered for redaction and no more.
+	for _, want := range []string{"PATH=/fugaro/bin:/bin", "HOME=/h", "ANTHROPIC_API_KEY=" + testGateway.Token, "NPM_TOKEN=npm-456", "FUGARO_STATE_DIR=/state"} {
 		if !slices.Contains(env, want) {
 			t.Errorf("env lacks %s: %v", want, env)
 		}
@@ -371,7 +373,7 @@ func TestBuildEnvAuthModes(t *testing.T) {
 	if _, _, err := BuildEnv(nil, EnvSpec{Auth: "oauth"}); err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
 		t.Fatalf("oauth without token err = %v", err)
 	}
-	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", Secrets: []string{"MISSING"}}); err == nil || !strings.Contains(err.Error(), "MISSING") {
+	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", Gateway: testGateway, Secrets: []string{"MISSING"}}); err == nil || !strings.Contains(err.Error(), "MISSING") {
 		t.Fatalf("missing secret err = %v", err)
 	}
 }
@@ -475,16 +477,16 @@ func TestOAuthStageEnvDropsTheGatewayAndSetsTheToken(t *testing.T) {
 }
 
 func TestBuildEnvShortSecret(t *testing.T) {
-	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=abc"}, EnvSpec{Auth: "api-key"}); err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=abc"}, EnvSpec{Auth: "api-key", Gateway: testGateway}); err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
 		t.Fatalf("short auth secret err = %v", err)
 	}
-	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=key-123", "SHORT=abc"}, EnvSpec{Auth: "api-key", Secrets: []string{"SHORT"}}); err == nil || !strings.Contains(err.Error(), "SHORT") {
+	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=key-123", "SHORT=abc"}, EnvSpec{Auth: "api-key", Gateway: testGateway, Secrets: []string{"SHORT"}}); err == nil || !strings.Contains(err.Error(), "SHORT") {
 		t.Fatalf("short declared secret err = %v", err)
 	}
 }
 
 func TestBuildEnvNoPathTrailingSeparator(t *testing.T) {
-	env, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", PathPrepend: "/fugaro/bin"})
+	env, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", Gateway: testGateway, PathPrepend: "/fugaro/bin"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -634,7 +636,7 @@ func TestRedactWrappedBase64(t *testing.T) {
 
 func TestBuildEnvPassesNetworkAndImageVariables(t *testing.T) {
 	pass := []string{
-		"HTTPS_PROXY=http://proxy.invalid:3128", "https_proxy=http://proxy.invalid:3128", "NO_PROXY=localhost",
+		"HTTPS_PROXY=http://proxy.invalid:3128", "https_proxy=http://proxy.invalid:3128",
 		"NODE_EXTRA_CA_CERTS=/etc/ssl/extra.pem", "SSL_CERT_FILE=/etc/ssl/extra.pem", "GIT_SSL_CAINFO=/etc/ssl/extra.pem",
 		"DISABLE_AUTOUPDATER=1", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0", "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright",
 		// The VM backend's one addition to the allowlist since M9 (design
@@ -642,12 +644,12 @@ func TestBuildEnvPassesNetworkAndImageVariables(t *testing.T) {
 		// below rather than here: a run whose workflow asked for Docker
 		// reaches the VM's daemon through this, and only such a run gets it.
 	}
-	parent := append([]string{"ANTHROPIC_API_KEY=key-123", "VERTEX_REGION_CLAUDE_4_5_SONNET=europe-west1",
+	parent := append([]string{"ANTHROPIC_API_KEY=key-123", "VERTEX_REGION_CLAUDE_4_5_SONNET=europe-west1", "NO_PROXY=localhost",
 		// The operator's own shell, or the job env of a Docker run: the
 		// variable is in the runner's environment either way, and which run
 		// this is is what decides whether it reaches the agent.
 		"DOCKER_HOST=unix:///var/run/docker.sock"}, pass...)
-	env, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key"})
+	env, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: testGateway})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -655,6 +657,12 @@ func TestBuildEnvPassesNetworkAndImageVariables(t *testing.T) {
 		if !slices.Contains(env, want) {
 			t.Errorf("env lacks %s: %v", want, env)
 		}
+	}
+	// NO_PROXY is passed through with the gateway's own loopback appended
+	// (TestNoProxyCoversLoopback): the run's value stands, and the agent's
+	// calls to the gateway never reach a configured proxy.
+	if got := envValue(env, "NO_PROXY"); got != "localhost,127.0.0.1" {
+		t.Errorf("NO_PROXY = %q, want the runner's own value with the gateway's loopback appended", got)
 	}
 	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "VERTEX_REGION_") }) {
 		t.Errorf("a Vertex region override passed without auth: vertex: %v", env)
@@ -668,7 +676,7 @@ func TestBuildEnvPassesNetworkAndImageVariables(t *testing.T) {
 	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "DOCKER_HOST=") }) {
 		t.Errorf("DOCKER_HOST passed to a run that did not ask for Docker: %v", env)
 	}
-	dockerEnv, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Docker: true})
+	dockerEnv, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: testGateway, Docker: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -685,7 +693,7 @@ func TestBuildEnvPassesNetworkAndImageVariables(t *testing.T) {
 // (runner.imageEnv); BuildEnv writes what it is given.
 func TestBuildEnvPassesAnImagesVariables(t *testing.T) {
 	parent := []string{"PATH=/bin", "ANTHROPIC_API_KEY=key-123"}
-	env, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key", ImageEnv: map[string]string{
+	env, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: testGateway, ImageEnv: map[string]string{
 		"NEXUS_BASEURL": "https://example.invalid/repository/maven-public/",
 		"MAVEN_OPTS":    "-Dmaven.repo.local=/opt/m2",
 	}})
@@ -715,7 +723,7 @@ func TestBuildEnvDropsAReservedImageVariable(t *testing.T) {
 	} {
 		image[name] = "from-the-image"
 	}
-	env, _, err := BuildEnv([]string{"PATH=/bin", "HOME=/h", "ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", ImageEnv: image})
+	env, _, err := BuildEnv([]string{"PATH=/bin", "HOME=/h", "ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", Gateway: testGateway, ImageEnv: image})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -725,7 +733,13 @@ func TestBuildEnvDropsAReservedImageVariable(t *testing.T) {
 	if got := envValue(env, "HOME"); got != "/h" {
 		t.Errorf("HOME = %q, want the runner's own value", got)
 	}
-	for _, name := range []string{"ANTHROPIC_BASE_URL", "FUGARO_BUCKET", "LD_PRELOAD", "GOOGLE_APPLICATION_CREDENTIALS", "LC_ALL", "NODE_OPTIONS", "JAVA_TOOL_OPTIONS"} {
+	// ANTHROPIC_BASE_URL's own value is the gateway's address, which the image
+	// must not be able to move (AB1b: the run has a gateway, so the name has a
+	// value of Fugaro's for the filter to protect).
+	if got := envValue(env, "ANTHROPIC_BASE_URL"); got != testGateway.BaseURL {
+		t.Errorf("ANTHROPIC_BASE_URL = %q, want the gateway's address", got)
+	}
+	for _, name := range []string{"FUGARO_BUCKET", "LD_PRELOAD", "GOOGLE_APPLICATION_CREDENTIALS", "LC_ALL", "NODE_OPTIONS", "JAVA_TOOL_OPTIONS"} {
 		if got := envValue(env, name); got != "" {
 			t.Errorf("%s = %q reached the agent from the image", name, got)
 		}
@@ -1032,21 +1046,6 @@ func TestBuildEnvRoutesThroughCompressionNotGateway(t *testing.T) {
 	}
 }
 
-func TestBuildEnvNoGatewayUnchanged(t *testing.T) {
-	env, secrets, err := BuildEnv([]string{"PATH=/bin", "ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !slices.Contains(env, "ANTHROPIC_API_KEY=key-123") || !slices.Equal(secrets, []string{"key-123"}) {
-		t.Fatalf("env = %v, secrets = %v", env, secrets)
-	}
-	for _, kv := range env {
-		if strings.HasPrefix(kv, "ANTHROPIC_BASE_URL") || strings.HasPrefix(kv, "NO_PROXY") || strings.HasPrefix(kv, "no_proxy") {
-			t.Errorf("unexpected variable without a gateway: %s", kv)
-		}
-	}
-}
-
 func TestNoProxyCoversLoopback(t *testing.T) {
 	gw := &Gateway{BaseURL: "http://127.0.0.1:4000", Token: "tok-abc"}
 	env, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=key-123", "NO_PROXY=example.invalid"}, EnvSpec{Auth: "api-key", Gateway: gw})
@@ -1066,8 +1065,8 @@ func TestNoProxyCoversLoopback(t *testing.T) {
 }
 
 // TestAgentEnvHasNoProviderKey: a provider's key is in the runner's
-// environment for the gateway, and in no agent environment: not with the
-// gateway, not without it, not on any auth, and not by declaring it.
+// environment for the gateway, and in no agent environment: not on any auth,
+// not behind the gateway that carries the run, and not by declaring it.
 func TestAgentEnvHasNoProviderKey(t *testing.T) {
 	const (
 		orKey = "sk-or-v1-not-a-real-key"
@@ -1080,7 +1079,6 @@ func TestAgentEnvHasNoProviderKey(t *testing.T) {
 	}
 	gw := &Gateway{BaseURL: "http://127.0.0.1:4000", Token: "tok-abc"}
 	for name, spec := range map[string]EnvSpec{
-		"api-key":         {Auth: "api-key"},
 		"api-key gateway": {Auth: "api-key", Gateway: gw},
 		"vertex":          {Auth: "vertex"},
 		"vertex gateway":  {Auth: "vertex", Gateway: gw},
@@ -1100,7 +1098,7 @@ func TestAgentEnvHasNoProviderKey(t *testing.T) {
 		}
 	}
 	// A workflow that declares the variable gets an error, not the key.
-	_, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Secrets: []string{config.ProviderKeyEnv("openrouter-api-key")}})
+	_, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: gw, Secrets: []string{config.ProviderKeyEnv("openrouter-api-key")}})
 	if err == nil || strings.Contains(err.Error(), orKey) {
 		t.Errorf("declaring a provider key: err = %v", err)
 	}
@@ -1144,7 +1142,12 @@ func TestClaudeEnvHasNoPluginOrTrustVariables(t *testing.T) {
 		"CLAUDE_CONFIG_DIR=/elsewhere", "CLAUDE_PLUGIN_ROOT=/elsewhere", "CLAUDE_CODE_TRUST_ALL=1",
 	}
 	for _, auth := range []string{"api-key", "vertex", "oauth"} {
-		env, _, err := BuildEnv(parent, EnvSpec{Auth: auth})
+		spec := EnvSpec{Auth: auth}
+		if auth != "oauth" {
+			// Every run the gateway carries has one (AB1b); oauth never does.
+			spec.Gateway = testGateway
+		}
+		env, _, err := BuildEnv(parent, spec)
 		if err != nil {
 			t.Fatalf("%s: %v", auth, err)
 		}
@@ -1157,27 +1160,10 @@ func TestClaudeEnvHasNoPluginOrTrustVariables(t *testing.T) {
 	}
 }
 
-// TestBuildEnvNoGatekeeperNeedsTheKeyActionably (design project-centric §6.1,
-// review Medium 1): with no gateway every call goes direct to Anthropic, so
-// the key is not optional whatever the pins are -- and the refusal names the
-// fix, the same text the gateway refuses such a call with, instead of the
-// bare "is not set in the runner environment".
-func TestBuildEnvNoGatekeeperNeedsTheKeyActionably(t *testing.T) {
-	_, _, err := BuildEnv([]string{"PATH=/bin"}, EnvSpec{Auth: "api-key"})
-	if err == nil {
-		t.Fatal("api-key with no gateway and no key started")
-	}
-	for _, want := range []string{"ANTHROPIC_API_KEY", "fugaro secrets set anthropic-api-key", "fugaro update", "route the model through a provider"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not say %q: %v", want, err)
-		}
-	}
-	// A declared secret that is missing keeps the plain message: only the
-	// Anthropic key has an action worth naming.
-	if _, _, err := BuildEnv([]string{"PATH=/bin", "ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", Secrets: []string{"MISSING"}}); err == nil || strings.Contains(err.Error(), "fugaro secrets set anthropic-api-key") {
-		t.Errorf("a missing declared secret err = %v, want the plain message", err)
-	}
-}
+// The api-key run with no gateway, and what its refusal and a missing declared
+// secret say, is TestNoAPIKeyRunPutsTheKeyInTheAgentsEnvironment's now (AB1b,
+// F15): the arm that made a gateway-less api-key run reach the key at all is
+// gone, and the run is refused instead.
 
 // TestCascadeAgentEnvHoldsNoCredential (C1.19): a cascade run's agent holds no
 // model credential at all. Nothing of the job's own reaches it — not the

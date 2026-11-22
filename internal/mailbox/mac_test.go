@@ -47,7 +47,7 @@ func TestTheVectorsReplayThroughTheMACFunction(t *testing.T) {
 	vectors := loadVectors(t)
 	key := []byte(vectorKey(t))
 	cases := list(t, vectors["cases"], "cases")
-	if len(cases) != 25 {
+	if len(cases) != 26 {
 		t.Errorf("the vector file carries %d cases: a case is a tag to verify, not to skip", len(cases))
 	}
 	verified, refused := 0, 0

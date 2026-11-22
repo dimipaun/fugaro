@@ -66,16 +66,30 @@ func TestPoolShapesAreStable(t *testing.T) {
 	})
 
 	t.Run("an absent rule falls back to the strategy and then to failover", func(t *testing.T) {
-		// PL1 keeps `strategy` read with the same meaning, so a pool published
-		// with `strategy: round-robin` and no `rule` must still turn through its
-		// members: reading it as failover would move a pool whose owner wrote
-		// nothing new (D3177).
-		for strategy, want := range map[string]routing.Rule{
-			"round-robin": routing.RuleRoundRobin,
-			"failover":    routing.RuleFailover,
+		// Every strategy a pool may be written with, which is config's own
+		// PoolStrategies plus the empty one a pool that names none carries: PL1
+		// keeps `strategy` read with the same meaning, so a pool published with
+		// `strategy: round-robin` and no `rule` must still turn through its
+		// members (reading it as failover would move a pool whose owner wrote
+		// nothing new), and a pool that names neither is served by failover.
+		for _, c := range []struct {
+			strategy string
+			want     routing.Rule
+		}{
+			{"", routing.RuleFailover},
+			{"failover", routing.RuleFailover},
+			{"round-robin", routing.RuleRoundRobin},
 		} {
-			if got := routing.Rule("").RuleOrDefault(strategy); got != want {
-				t.Errorf("a pool with no rule and strategy %q is served by %q, and the contract reads it as %q", strategy, got, want)
+			if got := routing.Rule("").RuleOrDefault(c.strategy); got != c.want {
+				t.Errorf("a pool with no rule and strategy %q is served by %q, and the contract reads it as %q", c.strategy, got, c.want)
+			}
+		}
+		// A strategy that is not one of the two is read one step further, as
+		// failover, rather than as a rule the pool's owner never wrote: `ordered`
+		// arrived with `rule` and is not a strategy at all.
+		for _, strategy := range []string{"ordered", "sticky", "round_robin", "Round-Robin", "Failover"} {
+			if got := routing.Rule("").RuleOrDefault(strategy); got != routing.RuleFailover {
+				t.Errorf("a pool with no rule and the strategy %q is served by %q, and a strategy that is not one of the two is read as %q", strategy, got, routing.RuleFailover)
 			}
 		}
 		// Whatever a pool was written with, the resolved rule is a rule: a
@@ -250,6 +264,20 @@ func TestPoolShapesAreStable(t *testing.T) {
 			if got := string(mustObject(t, bareMember, key)); got != "null" {
 				t.Errorf("a member with no %s writes %s, and a figure nobody has is null", key, got)
 			}
+		}
+
+		// A project with no pool says so with an empty list and never with a
+		// null: "there are none" is a fact a reader draws, and a null is a
+		// document that never said which it meant. The document is built by three
+		// sides (PL2, PL10, VS2), so the member is held to it here rather than at
+		// each of their construction sites.
+		empty, err := json.Marshal(routing.PoolListDoc{Project: "fugaro"})
+		if err != nil {
+			t.Fatalf("a pool listing with no pool does not marshal: %v", err)
+		}
+		assertMembers(t, "the pool listing of a project with no pool", empty, "project", "pools")
+		if got := string(mustObject(t, empty, "pools")); got != "[]" {
+			t.Errorf("a project with no pool writes %s, and an empty list is a fact rather than a null", got)
 		}
 	})
 }
