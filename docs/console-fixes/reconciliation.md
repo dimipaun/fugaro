@@ -1,6 +1,6 @@
 # Console fixes: reconciliation
 
-Checked against `main` at `dfe066618` on 2026-11-21. Where this document and `spec.md` disagree, this document wins. Decisions D3200–D3229 and Checks 870–879 are this spec's block (README).
+Checked against `main` at `dfe066618` on 2026-11-21. Where this document and `spec.md` disagree, this document wins. Decisions D3200–D3229 and Checks 870–879 are this spec's block (README). Amended after the round-1 review on 2026-11-21: F8, F9, F17 and F28 are corrected, F32–F34 and D3223–D3224 are added, and D3220 is narrowed.
 
 ## Capability map (D3200, approved 2026-11-21)
 
@@ -54,8 +54,12 @@ Build order: `run-index`, `coordinator-graph` and `identity-display` start toget
 - **F5 (Exists).** The console already shares the CLI's data layer: every console read is a CLI spawn through the allow-lists (`console/src/main/spawn.ts`, `CONSOLE_OPERATIONS` in `ipc.ts`). The spec's "share the data layer" is met by making the CLI's reads indexed. The console never reads Firestore itself (D3216).
 - **F6 (Rule).** The spec asks for a backfill *command*. The hard rule in `CLAUDE.md` says `fugaro update` is the whole upgrade: an installation must reach the indexed state with no other step. So the backfill runs inside `update` (as D2965 did for the PR index), and `fugaro runs reindex` exists only for a rebuild (D3215).
 - **F7 (Rule).** "Safe while runs are in flight" (`docs/design/update-in-flight.md`). The backfill and every index write must leave a running run's records alone. The index is derived data written beside them and never rewrites a run object.
-- **F8 (Gap).** Trust boundary. Launchers and job service accounts hold `roles/datastore.viewer` only. `roles/datastore.user` is database-wide (`deploy/terraform/gcp/modules/firebase/iam.tf`): a job given it could rewrite `spendDaily` and the key-service collections. The history job (`deploy/terraform/gcp/modules/installation/history.tf`, a sweep every 15 minutes) already holds `datastore.user` and read on the runs bucket. Settled by D3201: the history job is the index's only writer.
+- **F8 (Gap).** Trust boundary. People (launchers, operators, admins, viewers) hold `roles/datastore.viewer` (`google_project_iam_member "datastore_viewer"`, `deploy/terraform/gcp/modules/firebase/iam.tf`). No job or other service account holds any Firestore role apart from the history account. `roles/datastore.user` is database-wide: a job given it could rewrite `spendDaily` and the key-service collections. So the CLI reads the index as the person who runs it, and no service-account reader (the coordinator sweep included) reads it. The history job (`deploy/terraform/gcp/modules/installation/history.tf`, a sweep every 15 minutes) already holds `datastore.user` and read on the runs bucket. Settled by D3201: the history job is the index's only writer.
 - **F9 (Gap).** Freshness. A 15-minute writer leaves a run that finished minutes ago out of the index. The RTDB already holds the live set (`agents/`) and `outcomes/<day>` (`internal/budget/model.go`). Settled by D3202: each read adds what changed since the index's own "folded through" stamp, so the overlay is bounded by about 15 minutes of activity, not by history.
+
+  Two limits follow from the code (round-1 review):
+  - `agents/$slug/$run` is written by the run's own token (`.write: "RUN"` in `internal/budget/rules/rules.json.tmpl`), and its `prUrl`, `title` and `requestedBy` are free strings. The overlay therefore supplies status and liveness only, keyed by the slug and run id of the RTDB path. It never supplies the pull request, the title or the identity, which come from the run's records through the fold. This keeps runs-ls-speed D2963's rule that an index "buys a read and never a row".
+  - The history job's rollover deletes `outcomes/<day>` once the day is older than `PruneAfter` (8 days, `internal/budget/rollover.go`). So the fold runs before the rollover in the same execution, the rollover never prunes a day after `folded_through`, and a stamp older than the retention starts a reindex.
 - **F10 (Gap).** The Firestore client cannot run the queries a page needs. `internal/firestore/client.go` `Query` takes one field and one range: no `orderBy` on a second field, no equality filter beside it, no `limit` or `startAfter` cursor. Composite indexes need `google_firestore_index` resources in Terraform, and `datastore.user` cannot change indexes (comment in `iam.tf`). So the indexes are applied by `fugaro update`'s Terraform as the operator, never by the job.
 - **F11 (Gap).** Merge state of pull requests is not something the history job can know: it has no forge credential. `plan status` asks `gh` (at most 32 lookups). That cost is bounded, but it sits on the Graph tab's first paint. Settled by D3217: merge state becomes its own console section, read after the canvas.
 - **F12 (Exists, superseded).** runs-ls-speed's gated RL4 (a per-run summary object in GCS) answers the same need with a layout GCS cannot page in time order. D3204: RL4 is superseded; the GCS PR index stays until `--pr` reads the Firestore index, and then its writers stop.
@@ -66,7 +70,7 @@ Build order: `run-index`, `coordinator-graph` and `identity-display` start toget
 ### coordinator-graph
 
 - **F16 (Rule → D3206).** One orchestrator per project is the current design. `orchestratorID` is the project's name (orchestrator-graph-estimates F2), one lease per id (`internal/orchestrator/lease.go`), and the 0.26.0 notes say "one machine per project drives runs". The spec draws several orchestrators as nodes. The owner chose to allow many per project (D3206, not the recommendation), which reshapes the orchestrator and amends orchestrator-graph-estimates F2 and the plugin's orchestrator skill (`plugin/skills/orchestrator/SKILL.md`, "the id is the project name").
-- **F17 (Rule → D3208).** A dependency never crosses nodes today (`internal/orchestrator/shard.go`). The validator refuses a `depends_on` naming another node's item, and `ee/graph/source_orchestrator.go` drops cross-node edges (graph contract §6.22). The spec's solid edge needs this reversed (D3208).
+- **F17 (Rule → D3208).** Inside one orchestrator, a dependency never crosses its shards: the state, backlog and plan shards (`internal/orchestrator/shard.go`, F44 of orchestrator-graph-estimates, D2735). Between orchestrators no dependency exists at all: `ee/graph/source_orchestrator.go` keeps an edge inside one orchestrator (graph contract §6.22 in `console/docs/json-contract.md`). D3208 adds references *between* orchestrators (`<orchestrator>/<item>`, resolved by searching that orchestrator's shards) and leaves F44's rule between the shards of one orchestrator as it is. §6.22 and the graph source are amended to carry the new edges (CG6, I-ORCH).
 - **F18 (Gap).** No driver is stored. `Lease.holder` is a run id (`task.NewRunID`). `Owner`/`Agent` (`internal/orchestrator/hooks.go`) are used only by `ee/orchestrator/handoff.go` and never persisted. The node needs a `driver` (the principal whose credential holds the lease: a person's account or a service account) written with the lease (D3218).
 - **F19 (Gap).** Two orchestrators in one project could take the same plan task or backlog item; nothing claims one today. Settled by D3209: a project-wide claim per plan task.
 - **F20 (Gap).** A cycle across orchestrators cannot be seen by any one node's validator. Settled by D3220: the tick detects it and blocks the items with an escalation.
@@ -89,7 +93,7 @@ Build order: `run-index`, `coordinator-graph` and `identity-display` start toget
 - **F28 (Wrong, partly).** The spec's "unavailable" is the console's `n/a` (`console/src/shared/availability.ts` `UNAVAILABLE_MARK`), and it is mostly not a data-loading bug. The main cause is the `person` class refusing a non-login value ("not a valid person"). The other causes:
   - records written before `launch.json` existed carry no launcher (`run.ts` `putMaybe`);
   - `owner/name` values in `label` text become `[redacted]`;
-  - gated screens: D15 off (`spend.ts` `PERSON_OFF_NOTE`); the CLI's `you: ""` when the caller is unidentified (`internal/cli/runs_stats.go`, `PEOPLE_YOU_UNIDENTIFIED`); version floors and refused reads.
+  - gated screens: D15 off (`spend.ts` `PERSON_OFF_NOTE`); the CLI's `you: ""` when the caller is unidentified (`internal/cli/runs_stats.go`), which the console draws as `PEOPLE_YOU_UNIDENTIFIED` (`console/src/renderer/screens/spend.ts`); version floors and refused reads.
 
   `author` is decoded (`schema.ts` `coordinatorPullRequestAt`) but no renderer draws it.
 - **F29 (Rule).** The masks are documented and pinned, not just coded:
@@ -101,6 +105,17 @@ Build order: `run-index`, `coordinator-graph` and `identity-display` start toget
 
   No owner D-number orders identity masking on live screens; D15 is a default, not a mask (D3214).
 - **F30 (Rule).** `.claude/rules/console.md` requires every untrusted string to go through a `TEXT_CLASSES` class. That stays: markup and control-character cleaning and the secret rules (`CREDENTIAL_RULES`, `credentialPass`, `TOKEN_SHAPES`, the entropy net, `maskCredentialBlocks`) remain. Only non-secret masks go (D3213). The rule's text changes to say so, and that rules-file edit takes the independent review the security paths take.
+- **F32 (Gap → D3223).** Spec §1 names more views than the Graph tab and `runs ls`.
+  - The Live tab's `runs ls --stream --json` (`internal/cli/runs_watch.go`) goes through the same `loadRows` and is covered by IR1.
+  - `runs stats`, read by the Spend screen, reads run objects (`readRunObjects` in `internal/cli/runs_stats.go`), up to 5,000 runs. It gets its own task (IR6).
+  - `coordinator status --from-store` leaves the console with the old tab (D3210).
+  - The spec also lists "tasks, graph nodes and edges" among the index's contents. The sources of those are already bounded by plan size, not by history: the plan graph files in the repository and the orchestrator state in the RTDB. The part that grows with history is the runs joined to each task, and that is the index. So no separate node or edge collection is planned (D3223, an open item for the owner to confirm).
+- **F33 (Gap).** Named orchestrators give no isolation between drivers. People write `orchestrator/` over IAM, which the RTDB rules cannot fence (`orchestrator: { ".write": false }` in `rules.json.tmpl`, and the note at `rules.go` `PathOrchestrator`), and `driver` is asserted by its writer. Any member's credential can write any orchestrator's state, phases or claims. The claim node lives under `orchestrator/` on the same terms, with IAM as its fence (CG4). Each orchestrator writes only its own state: a cross cycle blocks each side's own items, never the other's (D3220). This is the same trust as today's single orchestrator, stated so the plan does not imply more.
+- **F34 (Gap).** Two readers assume the orchestrator id is the project's name:
+  - the reports job's claim (`reportsJobClaim`, `internal/budget/rules/rules.go`), which is inert until its mint exists;
+  - the resident orchestrator (`var.orchestrator`, `deploy/terraform/gcp/modules/installation/orchestrator.tf`), which runs one process per installation.
+
+  Both keep serving the default orchestrator only. A named orchestrator runs as a local daemon (D3224).
 - **F31 (Exists, kept).** The fixture recorder (`console/src/source/redact.ts`, `createRedactor`, used only by `tools/record-fixture` and `tools/scrub-fixture`) redacts identity in **committed** fixtures. It is not on the live path and stays (D3219): a committed file is not an operator's screen.
 
 ## Decisions
@@ -134,9 +149,11 @@ Each answer was given by the owner on 2026-11-21 through `AskUserQuestion`.
 | D3217 | indexed-reads | Pull-request merge state leaves the Graph tab's first paint. `plan status` reads the index only by default, and `plan status --merges` (a new allow-listed argv) is its own console section, painted after the canvas | F11; the console rule that sections paint as their data arrives |
 | D3218 | coordinator-graph | Orchestrator ids stay flat RTDB keys. The default orchestrator keeps the key `<project>`, so no state moves and runs in flight are untouched. A named one is `<project>~<name>`. The state gains `project` and `name`; the lease gains `driver`. All three fields are additive, written by `fugaro update`'s migration for the existing node | F16, F18; the hard rule on `update` |
 | D3219 | identity-display | The fixture recorder keeps redacting identity in committed fixtures | F31 |
-| D3220 | coordinator-graph | A cross-orchestrator cycle is detected at tick time; the items in it go `blocked` with an escalation that names the cycle | F20 |
+| D3220 | coordinator-graph | A cross-orchestrator cycle is detected at tick time; each orchestrator in it sets **its own** items in the cycle to `blocked`, with an escalation that names the cycle, and never writes another orchestrator's state | F20, F33 |
 | D3221 | coordinator-graph | The tab reads one document from a new command, `fugaro orchestrator map --json`: active nodes (name, driver, active tasks, running jobs, lease age), edges (dependency, overlap) and the coordinator heartbeat. It is one new spawn row | F24 |
 | D3222 | coordinator-graph | Overlap edges join collisions to orchestrators through each orchestrator's `WorkItem.run_id`; nothing new is written on a run | F21 |
+| D3223 | run-index | The index holds runs and the summary only; plan nodes and edges come from the plan files and the orchestrator state as today. Added after the round-1 review; **the owner to confirm** (O3) | F32 |
+| D3224 | coordinator-graph | The resident orchestrator and the reports job serve the default orchestrator only; a named orchestrator runs as a local daemon. Added after the round-1 review | F34 |
 
 ## Open tensions
 
@@ -146,6 +163,7 @@ None. D3207's "no cap" and the spec's sub-second rule meet without conflict: `or
 
 - O1. Check 760 (runs-ls-speed, owner-run, the script is on main) is still unrun. D3204 keeps it as the "before" reading, so it should run before `indexed-reads` merges.
 - O2. orchestrator-graph-estimates and the 0.26.0 release notes say one machine per project drives runs. After D3206 the next release's notes say what changed (CG-DOCS for the skill and the earlier plan; the release notes come with the release).
+- O3. D3223: confirm that the index holds runs and the summary only, and that plan nodes and edges are not copied into Firestore (F32).
 
 ## UNVERIFIED
 

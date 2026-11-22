@@ -87,7 +87,8 @@
           "internal/runindex/lease.go",
           "internal/runindex/fold_test.go",
           "internal/cli/history.go",
-          "internal/cli/history_fold_test.go"
+          "internal/cli/history_fold_test.go",
+          "internal/budget/rollover.go"
         ]
       }
     },
@@ -121,6 +122,7 @@
         "paths": [
           "internal/cli/runs.go",
           "internal/cli/runs_pr.go",
+          "internal/cli/runs_watch.go",
           "internal/cli/runs_index_test.go"
         ]
       }
@@ -176,8 +178,8 @@
       }
     },
     {
-      "id": "IR5",
-      "title": "retire the GCS pull-request index writers",
+      "id": "IR5a",
+      "title": "the runner stops writing the GCS pull-request index",
       "run": null,
       "version": null,
       "tier": "small",
@@ -186,10 +188,44 @@
         "prediction": true,
         "paths": [
           "internal/runner/prindex.go",
+          "internal/runner/followup.go",
+          "internal/runner/prflow.go",
+          "internal/runner/reviewartifact.go",
+          "internal/runner/prindex_retired_test.go"
+        ]
+      }
+    },
+    {
+      "id": "IR5b",
+      "title": "the CLI stops writing and backfilling the GCS pull-request index",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/run.go",
           "internal/cli/followup.go",
+          "internal/cli/init_stages.go",
           "internal/cli/update_prindex.go",
           "internal/cli/update_prindex_test.go",
           "docs/runs-ls-speed/implementation-plan.md"
+        ]
+      }
+    },
+    {
+      "id": "IR6",
+      "title": "runs stats reads the index",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/runs_stats.go",
+          "internal/cli/runs_stats_index_test.go"
         ]
       }
     },
@@ -287,6 +323,25 @@
       }
     },
     {
+      "id": "CG1c",
+      "title": "every orchestrator command honours --name",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/escalation.go",
+          "internal/cli/orchestrator_import.go",
+          "internal/cli/orchestrator_patch.go",
+          "internal/cli/orchestrator_run.go",
+          "internal/cli/orchestrator_state.go",
+          "internal/cli/orchestrator_named_callers_test.go"
+        ]
+      }
+    },
+    {
       "id": "CG2",
       "title": "update migrates the default orchestrator in place",
       "run": null,
@@ -331,9 +386,7 @@
           "internal/orchestrator/claim.go",
           "internal/orchestrator/claim_test.go",
           "internal/orchestrator/launch.go",
-          "internal/budget/rules/rules.json.tmpl",
-          "internal/budget/rules/testdata/rules.golden.json",
-          "internal/budget/rules/emulator_orchestrator_test.go"
+          "internal/orchestrator/list.go"
         ]
       }
     },
@@ -349,8 +402,7 @@
         "paths": [
           "ee/coordinator/sweep.go",
           "ee/coordinator/state.go",
-          "ee/coordinator/heartbeat_test.go",
-          "internal/budget/rules/rules.json.tmpl"
+          "ee/coordinator/heartbeat_test.go"
         ]
       }
     },
@@ -367,7 +419,8 @@
           "ee/orchestrator/mapbuild.go",
           "ee/orchestrator/mapbuild_test.go",
           "ee/orchestrator/cli/map.go",
-          "ee/orchestrator/cli/map_test.go"
+          "ee/orchestrator/cli/map_test.go",
+          "ee/graph/source_orchestrator.go"
         ]
       }
     },
@@ -452,10 +505,21 @@
         "prediction": true,
         "paths": [
           "console/src/shared/sanitize.ts",
-          "console/test/unit/sanitize.test.ts",
-          "console/test/unit/sanitize-agreement.test.ts",
-          "console/test/unit/sanitize-path-runs.test.ts",
-          "console/test/unit/sanitize-ambiguity.test.ts"
+          "console/test/unit/sanitize*.test.ts",
+          "console/test/unit/live.test.ts",
+          "console/test/unit/projects.test.ts",
+          "console/test/unit/spend.test.ts",
+          "console/test/unit/spend-controls.test.ts",
+          "console/test/unit/seats.test.ts",
+          "console/test/unit/accountkeys.test.ts",
+          "console/test/unit/degraded.test.ts",
+          "console/test/unit/schema.test.ts",
+          "console/test/unit/graph.test.ts",
+          "console/test/unit/normal-fixture.test.ts",
+          "console/test/unit/screen-literals.test.ts",
+          "console/test/unit/manage-code.test.ts",
+          "console/test/unit/credentialsservice.test.ts",
+          "console/test/e2e/spend.spec.ts"
         ]
       }
     },
@@ -487,8 +551,7 @@
         "prediction": true,
         "paths": [
           "console/src/renderer/screens/spend.ts",
-          "console/test/unit/spend.test.ts",
-          "docs/desktop-console/spec.md"
+          "console/test/unit/spend.test.ts"
         ]
       }
     },
@@ -642,9 +705,24 @@
       "reason": "the integration covers every edge C-INDEX broke"
     },
     {
-      "task": "IR5",
+      "task": "IR5a",
       "needs": "I-INDEX",
       "reason": "--pr must read the live index before the old writers stop"
+    },
+    {
+      "task": "IR5b",
+      "needs": "I-INDEX",
+      "reason": "--pr must read the live index before the old writers stop"
+    },
+    {
+      "task": "IR6",
+      "needs": "C-INDEX",
+      "reason": "the Reader"
+    },
+    {
+      "task": "I-INDEX",
+      "needs": "IR6",
+      "reason": "the integration covers every edge C-INDEX broke"
     },
     {
       "task": "T-CHK",
@@ -672,9 +750,14 @@
       "reason": "ClaimPath"
     },
     {
-      "task": "CG5",
-      "needs": "CG4",
-      "reason": "one file: rules.json.tmpl"
+      "task": "CG1c",
+      "needs": "CG1b",
+      "reason": "kept: it uses the flag and resolver CG1b adds; a contract for one function would be nearly the task"
+    },
+    {
+      "task": "I-ORCH",
+      "needs": "CG1c",
+      "reason": "named callers"
     },
     {
       "task": "CG6",
@@ -747,6 +830,11 @@
       "reason": "one file: the allow-lists"
     },
     {
+      "task": "ID3",
+      "needs": "ID1",
+      "reason": "one file: console/test/unit/spend.test.ts"
+    },
+    {
       "task": "ID2",
       "needs": "ID1",
       "reason": "the person class must accept the value"
@@ -765,6 +853,11 @@
       "task": "ID4",
       "needs": "ID1",
       "reason": "it describes ID1's behaviour"
+    },
+    {
+      "task": "ID4",
+      "needs": "ID3",
+      "reason": "it records ID3's default in D15's amendment"
     },
     {
       "task": "ID4",
@@ -818,6 +911,15 @@
       },
       "integration": "I-INDEX",
       "reason": "the Terraform indexes need the field list, not the writer"
+    },
+    {
+      "contract": "C-INDEX",
+      "was": {
+        "task": "IR6",
+        "needs": "RI3"
+      },
+      "integration": "I-INDEX",
+      "reason": "runs stats needs the Reader's shape, not a live index"
     },
     {
       "contract": "C-ORCH",
