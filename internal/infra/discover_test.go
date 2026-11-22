@@ -675,6 +675,47 @@ func TestTwoLiveLogBucketsWithOurIDAreRefused(t *testing.T) {
 	}
 }
 
+// Every bucket carrying the installation's ID can be on its way out at once —
+// a mapping moved twice, or a rollback that deleted the replacement — and then
+// there is nothing to choose between because there is nothing to adopt: none
+// is ACTIVE. The read refuses for that reason and the refusal says so, rather
+// than telling a person to delete a bucket that is already deleting (R5, F10).
+func TestEveryLogBucketWithOurIDPendingDeletionIsRefused(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	inst := installationSpec(t)
+	elsewhere := "europe-west1"
+	if inst.LogBucketLocation == elsewhere {
+		t.Fatalf("the fixture's mapping already points at %s", elsewhere)
+	}
+	f.logs.AddBucket(inst.Project, "global", LogBucket, "DELETE_REQUESTED", LogBucketDescription)
+	f.logs.AddBucket(inst.Project, elsewhere, LogBucket, "DELETE_REQUESTED", LogBucketDescription)
+	im, err := DiscoverInstallation(ctx, f.c, inst)
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("every log bucket under our ID pending deletion: err = %v, want a refusal", err)
+	}
+	if len(im.List) != 0 {
+		t.Errorf("every log bucket under our ID pending deletion imported %v: a bucket on its way out is not the installation's to adopt", im.List)
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"projects/" + inst.Project + "/locations/global/buckets/" + LogBucket,
+		"projects/" + inst.Project + "/locations/" + elsewhere + "/buckets/" + LogBucket,
+		"DELETE_REQUESTED",
+		"fugaro update",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal of a project whose every bucket is pending deletion lacks %q:\n%s", want, msg)
+		}
+	}
+	// The many-live-buckets advice would have a person delete a bucket that is
+	// already deleting: the zero-ACTIVE refusal is a different one.
+	if strings.Contains(msg, "remove all but one") {
+		t.Errorf("the refusal of a project whose every bucket is pending deletion still says to remove all but one:\n%s", msg)
+	}
+}
+
 // A soft-deleted custom role is left to the plan's create, which the
 // provider turns into an undelete; an import of a deleted role would fail.
 func TestDiscoverLeavesDeletedRole(t *testing.T) {
