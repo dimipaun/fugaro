@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend"
@@ -1183,12 +1184,35 @@ func (r *run) checkProjectReviewJobAccount(job jobTriple) error {
 //
 // It is read from the execution's environment and from nothing else, the way
 // the service's address is (credentialsServiceURLEnv): both are the deployer's
-// own statements about the container this run is in, and a job definition is
-// written by the deployer alone. What it is NOT is a claim a run makes about
-// itself — the value is a constant, and the reader asks the environment it was
-// started with.
+// own statements about the container this run is in. What it is NOT is a claim
+// a run makes about itself — the value is a constant, and the reader asks the
+// environment it was started with.
+//
+// The second clause is the container's own answer and not a restatement of the
+// first: the fact is an environment entry, which a launch override can write as
+// readily as the deployer's job definition can, while the mount it is about is
+// the deployer's — internal/infra's sharedJobServedEnv moves the two together,
+// and this is where they are held to each other. So a container that still
+// carries one of the class's mounts is not a served job whatever its
+// environment says, and the run in it meets the coding arm — the account and
+// its allow_repos list — rather than being let past the door holding a token
+// nobody bounded (D3).
 func (r *run) projectJobServed() bool {
-	return envLookup(r.d.Env, config.CredentialsServedEnv) == config.ServedValue
+	return envLookup(r.d.Env, config.CredentialsServedEnv) == config.ServedValue && !mountedModelEnv(r.d.Env)
+}
+
+// mountedModelEnv reports whether env carries one of the model credentials a
+// served class drops (config.ModelSecretEnvs) — the mount side of the fact
+// config.CredentialsServedEnv states, asked of the container rather than taken
+// on the environment's word. A bare name counts as carried, since exec reads it
+// as the parent's value.
+func mountedModelEnv(env []string) bool {
+	for _, entry := range env {
+		if name, _, _ := strings.Cut(entry, "="); slices.Contains(config.ModelSecretEnvs, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // checkProjectJobServed is checkProjectJobAccount's arm for a job whose model

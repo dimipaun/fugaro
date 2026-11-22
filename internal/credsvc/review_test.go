@@ -1846,25 +1846,22 @@ func TestReviewCallerUnchanged(t *testing.T) {
 	}
 }
 
-// TestTheReviewJobGoesByTheTable is CS13 for the review job (reconciliation
-// F47: "the review job (internal/credsvc/review.go) also reaches a model by
-// account"). A review job reaches a model as a run does — the service's model
-// path serves its calls — and the account its job was deployed for is read for
-// one thing only: the admission the pairing resolves (pairReview). The two
-// halves below are that whole use.
+// TestTheReviewJobGoesByTheTable is CS13 for the review job. It pins the class
+// as it stands, and the account it carries is the CREDENTIAL a call of it is
+// offered: a caller whose account the repository admits, and which the bundle
+// holds no credential under, is refused with the class's own no-candidate
+// answer rather than served by the model path (reviewCandidates, cascade.go's
+// arm), and an account the repository does not admit is refused by the pairing
+// before anything reads a credential — the upstream saw no request and the
+// bundle was read no time at all.
 //
-// The fixture's review job is deployed for an account the bundle holds NO
-// credential under, and the repository's own node admits exactly that name. So
-// the pairing cannot be choosing the credential: it resolves the run identity's
-// repository and the admission, and what the call then meets is the model
-// path's answer. A service that resolved the credential here would answer this
-// caller as an unverified run identity (or serve it by a name the bundle does
-// not hold), and both are what the first case refuses.
-//
-// The second case is the admission itself, and the whole of what the account is
-// for: a name the repository does not admit is refused by the pairing before
-// anything reads a credential — the upstream saw no request and the bundle was
-// read no time at all.
+// Reconciliation F47 — a review job reaching a model as a run does, by the
+// model path's answer for the run identity's repository — is what the first
+// case is written to flip: the plan gives that walk to CS1 (its files are
+// internal/credsvc/chain.go and this package's cascade.go), and once it is the
+// class's serving path this caller is served instead of refused. Until then the
+// answer pinned here is the account-chosen one, and the case says so instead of
+// reading the walk into an answer that has it not.
 func TestTheReviewJobGoesByTheTable(t *testing.T) {
 	// No bundle entry is ever written under this name: it is the account the
 	// review job is deployed for and the name the admissions speak, and it is
@@ -1881,14 +1878,17 @@ func TestTheReviewJobGoesByTheTable(t *testing.T) {
 		})
 	}
 
-	t.Run("the pairing resolves the repository and the admission, and no credential", func(t *testing.T) {
+	t.Run("the account chooses the credential the call is offered", func(t *testing.T) {
 		s := reviewSvc(t)
 		resp, body := s.callTokens(t, callBody("review-by-the-table"), s.reviewRunToken(), s.reviewJobToken(), s.job)
 		if resp.StatusCode == http.StatusOK {
-			t.Fatalf("the call was served: %s — the fixture's bundle holds no credential under %q, so what answered it is not the class's own path", body, unheld)
+			t.Fatalf("the call was served: %s — the fixture's bundle holds no credential under %q, so an account-chosen path has nothing to serve it with", body, unheld)
 		}
-		if got := refusal(t, resp.StatusCode, body); got.Error == ErrorUnverifiedRunIdentity {
-			t.Fatalf("the caller was refused by the pairing (%s): %s — the account is the admission and the repository's own node admits it, so the answer this call is owed is the model path's", got.Error, got.Message)
+		if got := refusal(t, resp.StatusCode, body); got.Error != ErrorNoCandidateCredentials {
+			t.Fatalf("the refusal is %q, want %q: %s — the class is served by the row's account today, and CS1's walk is what replaces that", got.Error, ErrorNoCandidateCredentials, got.Message)
+		}
+		if n := s.up.Count(); n != 0 {
+			t.Errorf("the upstream saw %d requests, want none: the class had no credential to send one with", n)
 		}
 	})
 
@@ -1909,7 +1909,7 @@ func TestTheReviewJobGoesByTheTable(t *testing.T) {
 			t.Errorf("the upstream saw %d requests, want none: the caller was refused before a credential was chosen", n)
 		}
 		if n := s.src.readCount(); n != 0 {
-			t.Errorf("the bundle was read %d times, want none: the account is the pairing's admission and the model path is not the pairing's", n)
+			t.Errorf("the bundle was read %d times, want none: the pairing refused the caller before any credential was chosen", n)
 		}
 	})
 
@@ -1917,7 +1917,7 @@ func TestTheReviewJobGoesByTheTable(t *testing.T) {
 		// The derivation is the deployer's own axis (ReviewJobAccountFor over
 		// config.ProjectJobAccounts), and the axis's empty account is the
 		// default account's name: a value the published admissions are keyed
-		// by, and never a credential of the service's.
+		// by, and the name the class offers a call under.
 		if row := ReviewJobAccountFor(testReviewProfile, "anthropic", "", testFirebase); row.Account != config.DefaultClaudeAccount {
 			t.Errorf("ReviewJobAccountFor(…, \"\", …).Account = %q, want %q: the axis spells the default account as the empty string and the admissions spell it config.DefaultClaudeAccount", row.Account, config.DefaultClaudeAccount)
 		}

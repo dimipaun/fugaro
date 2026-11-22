@@ -68,17 +68,17 @@ const (
 	ClassShared JobClass = "shared"
 	// ClassReview is the review-only variant of a project job, per
 	// (profile, account): admitted to the mint, the sign and the model path
-	// for the repositories the published admissions offer its account, and
-	// refused everywhere else (spec §2.1).
+	// for its own account only, and refused everywhere else (spec §2.1).
 	//
-	// The account is the ADMISSION and not the credential (reconciliation F47):
-	// what the pairing resolves it for is whether the run identity's repository
-	// is one the admissions offer it, and what serves a call of this class is
-	// the model path's answer for that repository — the walk a run goes by,
-	// whose chain the project's routing table holds (C1's Resolve, and the walk
-	// CS1 lands). A review job reaches a model as a run does, so the account
-	// the job was deployed for is one the repository's own chain may name and
-	// is never the reason a call is served.
+	// Its account names the ONE credential a call of the class is offered
+	// (reviewCandidates), and that is what serves the call today: the class
+	// reads the account to CHOOSE a credential, and the class's offering is
+	// decided in cascade.go's arm and nowhere else. Reconciliation F47 is that
+	// this class reach a model the way a run does — the model path's answer for
+	// the run identity's repository, walked from the project's routing table —
+	// and that walk is CS1's, whose own arm in cascade.go replaces the one
+	// below; until it lands, a review job reaches a model no differently from
+	// today.
 	ClassReview JobClass = "review"
 )
 
@@ -115,24 +115,24 @@ func ReviewServiceAccountID(profile, provider, account string) string {
 }
 
 // ReviewJobAccount is one review job: the service account it runs as, and the
-// account whose admission pairs a call of it.
+// credential a call it makes is served by.
 //
 // The two are different names of the same thing. Email is what the caller is
 // verified as — the account Cloud Run minted its ID token for, derived from
 // the (profile, provider, account) triple. Account is what the *published
 // admissions* speak: the name the shared node's accounts block is keyed by,
-// which is the name the pairing looks the caller up under and the whole of what
-// the class reads it for. It is a tier-A account's name, or one of the account
-// axis's two values that name no account at all: the sentinel
+// which is the name the pairing looks the caller up under and the name of the
+// ONE credential a review call is offered — a tier-A account's name, or one of
+// the account axis's two values that name no account at all: the sentinel
 // config.AnthropicKeyAccount, which names the project's own Anthropic API key
 // and the bundle's tier-B entry, and config.ProviderKeyAccount, which names the
 // project's provider key (docs/api-key-review, D1417 and AK6a). A caller cannot
 // write either.
 //
-// What serves a call of the class is not this row's (F47): the credential is
-// the model path's answer for the run identity's repository, the walk a run
-// goes by (ClassReview), so a row names the account its job was deployed for
-// and nothing beside it.
+// The row's second half is the credential and not an admission only, which is
+// where F47's shape is not yet reached: what would serve a call of the class is
+// the model path's answer for the run identity's repository, and that walk is
+// CS1's (ClassReview).
 type ReviewJobAccount struct {
 	// Email is the review job's service account, in the spelling the
 	// deployment configured (AuthConfig.ReviewJobAccounts folds it for
@@ -177,10 +177,9 @@ type ReviewJobAccount struct {
 // The axis's two non-account values (config.AnthropicKeyAccount,
 // config.ProviderKeyAccount) ride this loop like every other axis value: a
 // profile that names one has a review-only variant the installation deploys for
-// it, so the value is a review job whose ADMISSION is that value rather than an
-// account's name — which is exactly what this class is (D1417, and AK6a for the
-// second value), the bundle entry the name stands for being the model path's
-// business and not this row's (ClassReview).
+// it, so the value is a review job whose ONE offered credential is the bundle
+// entry the pairing looks up under that value rather than an account's token —
+// which is exactly what this class is (D1417, and AK6a for the second value).
 //
 // It is the POLICY side of the deployed set and not the set the service starts
 // with: AuthConfig.ReviewJobAccounts is the deployment's OWN table, the rows the
@@ -400,12 +399,12 @@ func (s *Server) sharedAccount(email string) (SharedJobAccount, bool) {
 // installation's table, and the caller's account must be admitted to that
 // repository by the model path's own admission check.
 //
-// It resolves the repository and the admission and chooses no credential: what
-// serves the call is the model path's answer for that repository (ClassReview),
-// and this is the whole of what the class reads the account for. So the pairing
-// pairs a caller whose account no credential of the bundle is named by — the
-// admission is the published one — where a pairing that resolved the credential
-// would be the second place the class's offering is decided.
+// The admission it resolves is the account's and so is the credential the call
+// is then offered (cascade.go's arm, reviewCandidates): this pairing is what
+// decides which account a review call may be served by, and the account is the
+// name of that credential. F47's shape — the account read for the admission
+// alone, and the credential the model path's answer for the run identity's
+// repository — arrives with CS1's walk (ClassReview).
 //
 // The admission is admittedAccounts and not a read of the repository's child
 // node: the child names the accounts an administrator admitted, and the

@@ -64,6 +64,10 @@ func chainRun(t *testing.T, job, slug string, spec *task.Spec, p *projectpolicy.
 //     installation's own identity and no mount, so the class never took it;
 //   - an entry that carries anything but the fact's true value is not the fact,
 //     which is the fail-closed reading config.CredentialsServedEnv states;
+//   - and the fact over a mount the class did not drop is not the fact either:
+//     a container that still carries one of the two Claude variables is
+//     answered by the coding arm, while a provider's key — which the served
+//     class leaves mounted — is no evidence against it;
 //   - the review arm asked first, twice over: a coding run of a review job is
 //     still refused while its environment carries the fact, and a review run of
 //     one is admitted although it carries the fact and no address. The review
@@ -142,6 +146,38 @@ func TestAProjectJobGoesByTheTable(t *testing.T) {
 		r := chainRun(t, job, slug, spec(), serving, "vertex", servedEnv)
 		if err := r.checkProjectJobAccount(ctx, "vertex"); err != nil {
 			t.Fatalf("a vertex run of a served job was refused: %v — Vertex is the job's own GCP identity and no mount, so the served class never took it", err)
+		}
+	})
+
+	t.Run("the fact over a mount the class did not drop is not the fact", func(t *testing.T) {
+		// The launch override: the fact is an environment entry, so an execution
+		// started with it set is a container the deployer never planned — and
+		// the mount is the thing the fact is about. The run is the same one the
+		// coding arm refuses, and it is refused here even though the environment
+		// says the job is served: a door reading the fact alone would admit a
+		// run holding the account's token with nobody to bound it.
+		for _, name := range config.ModelSecretEnvs {
+			env := append(append([]string{}, reached...), name+"=mounted")
+			r := chainRun(t, job, slug, spec(), serving, config.AuthOAuth, env)
+			err := r.checkProjectJobAccount(ctx, config.AuthOAuth)
+			if err == nil {
+				t.Fatalf("a job whose environment carries the fact while it still mounts %s was read as served: the run holds a credential no policy bounds, and the coding arm is the door that bounds it", name)
+			}
+			for _, want := range []string{job, config.ClaudeAccountSecret(personal), work} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal over the mounted %s (%q) lacks %q: it is the coding arm's refusal, not the served arm's", name, err, want)
+				}
+			}
+		}
+
+		// A provider's key is not one of them: the served class never took it
+		// away (config.IsSharedJobServedModelEnv names the two Claude variables
+		// alone, R6), so a served job keeps it and its presence is no evidence
+		// against the fact.
+		env := append(append([]string{}, reached...), config.ProviderKeyEnv("acme")+"=mounted")
+		r := chainRun(t, job, slug, spec(), serving, config.AuthOAuth, env)
+		if err := r.checkProjectJobAccount(ctx, config.AuthOAuth); err != nil {
+			t.Fatalf("a served job carrying a provider's key was answered by the coding arm: %v — the served class leaves a provider's key mounted, so its presence says nothing about the fact", err)
 		}
 	})
 
