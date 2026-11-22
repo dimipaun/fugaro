@@ -24,7 +24,22 @@ const pairEventVersion = 1
 // pairEventVersion: the phone pins the payload it scanned (P6.8), so a bump of
 // the console's stream must not silently re-version every code already in a
 // phone's hands.
-const pairQRVersion = 1
+//
+// It is 2 since the invitation (P2): the invitation's code carries the
+// endpoint, the address, the nonce and the consumer key's fingerprint (F4,
+// O16), where version 1's carried the bootstrap configuration and a one-shot
+// pairing token. The pairing itself keeps writing version 1
+// (pairBootstrapQRVersion), so a phone that already reads that payload keeps
+// reading it and the two codes never share a version.
+const pairQRVersion = 2
+
+// pairBootstrapQRVersion is the version of the payload `fugaro pair` writes
+// when it pairs a device under the operator's own address: the bootstrap
+// configuration and the one-shot pairing token, which the phone exchanges for
+// its device token. It is frozen at 1 — the version every code a pairing has
+// ever drawn carries — so bumping pairQRVersion for the invitation re-versions
+// no code the pairing prints.
+const pairBootstrapQRVersion = 1
 
 // The stream's events. qr, waiting and refused are written by this command;
 // code and done are the wait's and the delivery's (T2b, T3); listed and
@@ -40,6 +55,7 @@ const (
 	pairEventRefused = "refused" // a stable code and a fixable reason
 	pairEventListed  = "listed"  // the pairings this installation holds (§4.2)
 	pairEventRevoked = "revoked" // what a revocation deleted, in its order (§4.3)
+	pairEventInvited = "invited" // an invitation written for a named person (P2)
 )
 
 // The stable refusal codes, one per refusal §4.6 classes as exit 1, plus the
@@ -63,6 +79,8 @@ const (
 	pairRefusedIdentity            = "caller_identity_unknown"
 	pairRefusedEmail               = "email_unverified"
 	pairRefusedMinter              = "minter_role_missing"
+	pairRefusedIssuer              = "identity_issuer_refused"
+	pairRefusedIssuerAnswer        = "identity_issuer_answer"
 	pairRefusedDatabaseAdmin       = "database_admin_missing"
 	pairRefusedUnreachable         = "database_unreachable"
 	pairRefusedNoKey               = "no_key_before_timeout"
@@ -80,6 +98,18 @@ const (
 	pairRefusedTwoPairings         = "pairing_name_not_unique"
 	pairRefusedKeychainDelete      = "keychain_delete_failed"
 	pairRefusedCloudKeyDelete      = "cloud_key_delete_failed"
+	// The invitation's own refusals (P2). They are separate codes from the
+	// pairing's because a console switches on them and the fix differs: an
+	// invitation names a role for somebody else, so "the roster grants them
+	// nothing" is a different thing to do than "you hold no role".
+	pairRefusedInviteRole     = "invite_needs_a_role"
+	pairRefusedInviteAdmin    = "invite_needs_an_admin"
+	pairRefusedInviteMember   = "invite_needs_a_roster_grant"
+	pairRefusedInviteAbove    = "invite_role_above_the_roster"
+	pairRefusedInviteName     = "invite_takes_no_device_name"
+	pairRefusedInviteEndpoint = "invite_endpoint_unknown"
+	pairRefusedInviteKey      = "invite_consumer_key_missing"
+	pairRefusedInviteWrite    = "invite_write_failed"
 )
 
 // pairEvent is one line of the stream. Every event carries the version, its
@@ -110,6 +140,11 @@ type pairEvent struct {
 	// decoder a console has to guess at.
 	List   *pairListDocument   `json:"list,omitempty"`
 	Revoke *pairRevokeDocument `json:"revoke,omitempty"`
+	// invited: the invitation an admin wrote for a named person (P2), under its
+	// own field for the same reason the listing and the revocation have theirs.
+	// It carries no uid, because an invitation mints no pairing: the invite node
+	// is keyed by the address, not by a pairing session.
+	Invite *pairInviteDocument `json:"invite,omitempty"`
 	// refused: the code an operator or a console acts on, and the reason.
 	Code   string `json:"code,omitempty"`
 	Reason string `json:"reason,omitempty"`
@@ -134,6 +169,27 @@ type pairDocument struct {
 	Wrote        []string `json:"wrote"`
 	Refused      []string `json:"refused"`
 	Warnings     []string `json:"warnings"`
+}
+
+// pairInviteDocument is the invitation's document, the invited event's payload
+// and nothing else: what an invitation wrote and what it carries. It names the
+// endpoint and the address, which the QR carries too — both are printed on the
+// operator's own screen — and the consumer key's fingerprint, which is a hash
+// and not a key. It carries no nonce: the nonce is the code's own content, so
+// it travels in payload exactly as the pairing token does, and a field here
+// would be a second spelling of one value.
+type pairInviteDocument struct {
+	Project                string   `json:"project"`
+	At                     string   `json:"at"`
+	Email                  string   `json:"email"`
+	Role                   string   `json:"role"`
+	Endpoint               string   `json:"endpoint"`
+	ExpiresAt              string   `json:"expires_at"`
+	AcceptedProviders      []string `json:"accepted_providers"`
+	ConsumerKeyFingerprint string   `json:"consumer_key_fingerprint"`
+	Wrote                  []string `json:"wrote"`
+	Refused                []string `json:"refused"`
+	Warnings               []string `json:"warnings"`
 }
 
 // pairListDocument is §4.5's document for `pair ls` (§4.2): the pairings this

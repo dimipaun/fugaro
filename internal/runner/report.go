@@ -51,6 +51,13 @@ type FollowUpSection struct {
 	MovedToDraft bool
 	// Answer is the agent's followup.md as followup.QuoteAnswer returns it.
 	Answer string
+	// HandBack is the level's hand-back block (LV4.3), read from the same
+	// followup.md: the sections the level reached carries, under their own
+	// head. A follow-up never rewrites the pull request's description, so the
+	// comment is the only account it publishes, and the block is what says
+	// which of the sections this level owed — the quoted Answer below it is
+	// the whole file, whatever sections the agent chose to write.
+	HandBack string
 }
 
 // Report renders the run report posted to the PR and stored as report.md.
@@ -952,6 +959,10 @@ func followUpSection(fu *FollowUpSection, reason string) string {
 		fmt.Fprintf(&b, "- **Draft:** was ready; moved back to draft because %s\n", reason)
 	}
 	b.WriteString("\n")
+	if hb := strings.TrimSpace(fu.HandBack); hb != "" {
+		b.WriteString(hb)
+		b.WriteString("\n\n")
+	}
 	if answer := strings.TrimSpace(fu.Answer); answer != "" {
 		b.WriteString("**What the agent says it did** (`followup.md`):\n\n")
 		for _, l := range strings.Split(answer, "\n") {

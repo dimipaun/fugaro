@@ -1856,6 +1856,42 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// `takesProject: false` for exactly that (console/src/main/spawn.ts).
 		"setup --plan-only --answers-file - --events --json",
 		"setup --answers-file - --events --json",
+		// The models write's two halves (the same plan's MW1, D2903, the
+		// `models.add.plan` and `models.add` operations): the CLI's own dry run
+		// of the write and the write itself, which is the first less
+		// `--dry-run --json`. **The console's fifth write**, after rules 11, 12
+		// and 14 and the first-run wizard's apply, and the second of them with
+		// the lapse gate; the change is a widening, so the window carries the
+		// tick. The three values a renderer sends are `=`-form words and the
+		// model ID is the positional behind `--`, so no value can be read as a
+		// flag -- and every one of the four is held to a grammar in main before
+		// either argv exists. `--no-apply` is a word of both rows: the console
+		// saves the change and its follow-up steps rather than running them
+		// (D1565). It is the reason §5.1 gained two rows and consoleLaunchPaths
+		// an entry, and the reason the never table's `models add` rows carry an
+		// `except` naming exactly these two operations.
+		"models add --no-apply --dry-run --json --route=<route> --price-in=<usd> --price-out=<usd> --project <name> [--config <path>] -- <ID>",
+		"models add --no-apply --route=<route> --price-in=<usd> --price-out=<usd> --project <name> [--config <path>] -- <ID>",
+		// The image write's two halves (the same plan's MW2, D2903, the
+		// `image.add.plan` and `image.add` operations): the CLI's own dry run of
+		// the entry's add to the installation's image catalog and the write
+		// itself, which is the first less `--dry-run --json`. **The console's
+		// sixth write**, after rules 11, 12 and 14, the first-run wizard's apply
+		// and the models write, and the third of them with the lapse gate; the
+		// change is **not** a widening -- it raises no limit and MD2's document
+		// carries no `widening` member -- so the window is one deliberate click
+		// with no tick. `--dockerfile` is the one required value, spelled
+		// `owner/name:path` and cut at the first colon; the tag list and the
+		// description are optional, and an absent flag is how the row says
+		// *none*. Every value is one `=`-form word and the entry's name is the
+		// positional behind `--`, and main holds each to a stated grammar before
+		// either argv exists. `--no-apply` is a word of both rows: the console
+		// saves the entry and its follow-up steps rather than running them
+		// (D1565). It is the reason §5.1 gained two rows and consoleLaunchPaths
+		// an entry, and the reason the never table's `image add` rows carry an
+		// `except` naming exactly these two operations.
+		"image add --no-apply --dry-run --json --dockerfile=<owner/name:path> [--tags=<list>] [--description=<text>] --project <name> [--config <path>] -- <name>",
+		"image add --no-apply --dockerfile=<owner/name:path> [--tags=<list>] [--description=<text>] --project <name> [--config <path>] -- <name>",
 	}
 	rows := docTableAfter(t, path, doc, "| Allowed argv (exact, in this order) |")
 	got := map[string]bool{}
@@ -2160,9 +2196,19 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// so `fugaro setup` is named in consoleLaunchPaths rather than here. Its
 	// three streams are second argvs of commands this census already carries
 	// (`budget show`, `report` and `runs ls`), so they move the argv count and
-	// not the command count.
-	if len(allowed) != 34 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 34 (logs and apply have two argvs each, `settings` and `settings set` are one command's two rows, and each of the console improvements' three streams is a second row on a command the table already carries)", path, argvs, len(allowed))
+	// not the command count. The console improvements plan's MW1 adds the
+	// thirty-fifth: `fugaro models add`, the models write, whose two rows on the
+	// table are its dry run (`models add --no-apply --dry-run --json …`) and the
+	// write itself (`models add --no-apply …`) -- a write, so `fugaro models add`
+	// is named in consoleLaunchPaths rather than here, and the group's other
+	// words stay on the never table below. The same plan's MW2 adds the
+	// thirty-sixth: `fugaro image add`, the image write, whose two rows are its
+	// dry run (`image add --no-apply --dry-run --json …`) and the write itself
+	// (`image add --no-apply …`) -- a write too, so `fugaro image add` is named
+	// in consoleLaunchPaths rather than here, and the group's other writers stay
+	// on the never table below.
+	if len(allowed) != 36 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 36 (logs and apply have two argvs each, `settings` and `settings set` are one command's two rows, `models add` and `image add` are the same for the two writes, and each of the console improvements' three streams is a second row on a command the table already carries)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -2343,7 +2389,14 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     thirty-nine, and the roles-and-scopes plan's RS7 -- the Members view's
 //     read of the installation's grants, `members.list`, the second row whose
 //     command is a word of a group the console otherwise may not touch
-//     (`models.list` was the first) -- to the forty rule 5 carries today.
+//     (`models.list` was the first) -- to the forty, and the console
+//     improvements plan's AL -- its nine, the three live feeds among them, which
+//     are second argvs of commands the census already carries -- to the
+//     fifty-two, and the same plan's MW1 -- the models write's two halves,
+//     `models.add.plan` and `models.add`, the second of which is the console's
+//     fifth write -- to the fifty-four, and the same plan's MW2 -- the image
+//     write's two halves, `image.add.plan` and `image.add`, the second of which
+//     is the console's sixth write -- to the fifty-six rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
@@ -2754,7 +2807,12 @@ func TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters(t *testing.T) {
 // consoleLaunchPaths is §5.1's allow-list written as an exemption rather
 // than as a hole: the writers the console spawns are deliberately absent from
 // consoleReadPaths -- a write is not a read and must not be -- and this map is
-// where each one is named instead. There are six: `fugaro run` is the launch
+// where each one is named instead. There are eight: `fugaro models add` is the
+// models write (the console improvements plan's MW1, D2903, rule 5), whose two
+// rows on §5.1's table are the dry run and the write, `fugaro image add` is the
+// image write (the same plan's MW2, the same decision), whose two rows are the
+// same arrangement one group over -- its dry run and its write -- and `fugaro
+// run` is the launch
 // (rule 11, D22), `fugaro settings set`/`fugaro settings unset` are the
 // settings write (the settings-edit plan's C3, D1103, rule 12), whose row on
 // §5.1's table is the `set` form and whose two words share this one entry's
@@ -2791,6 +2849,8 @@ var consoleLaunchPaths = map[string]bool{
 	"fugaro coordinator roadmap move": true,
 	"fugaro apply":                    true,
 	"fugaro setup":                    true,
+	"fugaro models add":               true,
+	"fugaro image add":                true,
 }
 
 // planPhaseRow returns the "What ships" cell of the project-centric plan's
@@ -3443,8 +3503,9 @@ func TestConsoleTestsWorkflowIsStagedAndPinned(t *testing.T) {
 	}
 
 	// The Node version is read from console/package.json's `engines.node`, never
-	// written here a second time: test/unit/pinning.test.ts keeps that field an
-	// exact pin, and a copy of it in this file is a pin that can disagree.
+	// written here a second time: test/unit/pinning.test.ts keeps that field a
+	// pin (a floor and the next major as its ceiling since 2026-11-22), and a
+	// copy of it in this file is a pin that can disagree.
 	nodeSteps := 0
 	for _, step := range job.Steps {
 		if !strings.Contains(step.Uses, "actions/setup-node@") {

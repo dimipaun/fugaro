@@ -417,6 +417,18 @@ func (s *wizardStage) ask(ctx context.Context) error {
 	if err := s.askRigor(); err != nil {
 		return s.answer(err)
 	}
+	// The budget question (T2b of docs/managed-flag-ergonomics; D2210) is asked
+	// after the rigor one: it is about the project the answers above settled,
+	// and it is asked only on a run that creates the installation, where a
+	// project that is already there keeps the budget its own (askBudget). A run
+	// that cannot ask takes the default here rather than stopping: the question
+	// is a value with a default (D2212), which is what its own empty missing
+	// says (setupQuestions).
+	if err := s.askBudget(); err != nil {
+		// The question's own no-answer stops the phase here like the two above
+		// it, and the rerun resumes at this one (s.answer).
+		return s.answer(err)
+	}
 	// The bake question (IS7, D1901) is asked after the name and before the
 	// billing one: it is about the project the answers above settled rather
 	// than about an input, and it is asked only on a run that creates the
@@ -443,7 +455,65 @@ func (s *wizardStage) ask(ctx context.Context) error {
 	// Its own "no answer came" is the phase's Left like any other question's:
 	// the run resumes at it, and the refusal is the one line it has always
 	// been.
-	return s.answer(r.askBilling(ctx))
+	if err := r.askBilling(ctx); err != nil {
+		return s.answer(err)
+	}
+	// The questions are all answered, and the one thing a question's answer
+	// still needs is settled here: the account a budget's alert is on
+	// (settleBudget). It is after the billing question because that is where
+	// the account the run links appears, and it is not reached where the run
+	// stopped at that question.
+	return s.settleBudget()
+}
+
+// budgetNoAccount is the line a run prints when it has a budget and no billing
+// account for the alert to sit on: what happens to the amount, and what adds
+// the alert later. It is one line and asks nothing (settleBudget).
+const budgetNoAccount = "no billing account is linked, so this run creates no budget alert: the amount it has (%d) is not written into the installation's variables. A budget is an alert on a billing account — add it later with --budget, --budget-currency and --billing-account together, on a run whose project has an account"
+
+// settleBudget is what the phase does with the budget its question answered,
+// once the billing question has answered too: a budget is an alert on a
+// billing account, so the account the run links is the one the alert is on
+// (D2216) — and a run that links none carries no budget at all, because the
+// alternative is an installation the Terraform validation refuses (its budget
+// object needs a billing account ID,
+// deploy/terraform/gcp/modules/installation/variables.tf) or an alert on an
+// account nobody chose.
+//
+// T2a of docs/managed-flag-ergonomics owns this rule at the run's own door
+// (D2216's other half: the amount recorded in the creation fact, and the one
+// command that adds the alert printed). This is the smaller thing the phase
+// owes the answer it collected: the door's own check has already run by the
+// time these questions are asked (init.go's trio check runs before the
+// wizard), so an answer collected here never meets it, and the invariant it
+// states — a budget takes an amount, a currency and an account together — is
+// kept here for the answer instead of refused later by a cloud step.
+//
+// It says nothing where nobody can answer this run (canAsk: --json,
+// --print-vars, --yes, --non-interactive, a pipe): a run nobody answers writes
+// nothing, and the line is a transcript's.
+func (s *wizardStage) settleBudget() error {
+	r, o := s.r, s.r.o
+	if o.budget <= 0 && o.budgetCurrency == "" {
+		return nil
+	}
+	if o.billingAccount == "" {
+		o.billingAccount = o.linkBilling
+	}
+	if o.billingAccount != "" {
+		return nil
+	}
+	// A run nobody answers asks nothing and writes nothing (T7,
+	// docs/no-prompt-policy), and a run whose stdout is a document (--json,
+	// --print-vars) is one of those here: the line below is a transcript's, and
+	// the fact is in the run's own result either way. The amount a person
+	// answered on a run that paused at billing is the one case this leaves
+	// silent, and it is the door's to say (D2216, T2a).
+	if r.canAsk() {
+		fmt.Fprintf(r.w, budgetNoAccount+"\n", o.budget)
+	}
+	o.budget, o.budgetCurrency = 0, ""
+	return nil
 }
 
 // whereEachThingGoesIntro is the line above the mapping: what the block is,

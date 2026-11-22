@@ -5,7 +5,11 @@
 // A unit is one file under the person's own home, and it runs one program:
 // `fugaro orchestrator run`, with the stable binary path named twice — once as
 // the program to run and once as the `--binary` argument (see
-// dev.fugaro.orchestrator's template). It is a login unit and not a system
+// dev.fugaro.orchestrator's template). One file per orchestrator name is what
+// keeps a named orchestrator running beside the project's own (D3206, D3207):
+// the project's own keeps the name this release has always written, and a named
+// one carries its name in the file name, in the label and in the daemon's
+// `--name`. It is a login unit and not a system
 // service: nothing here touches a system path, needs root, or asks for sudo,
 // and the manager it reloads is the person's own, at their own login level.
 //
@@ -43,10 +47,12 @@ func runManager(ctx context.Context, name string, args ...string) error {
 	return fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
 }
 
-// Label is the unit's name on both platforms: the launchd label, and the
-// basename of the systemd user unit (fugaro-orchestrator.service). It is a
-// reverse-DNS name like every launchd label, under the same domain the rest of
-// this project's identifiers use.
+// Label is the project's own orchestrator's unit name on both platforms: the
+// launchd label, and the basename of the systemd user unit
+// (fugaro-orchestrator.service). It is a reverse-DNS name like every launchd
+// label, under the same domain the rest of this project's identifiers use. A
+// named orchestrator's unit takes it and the name — dev.fugaro.orchestrator.night
+// — so no machine's unit for one name can displace its unit for another.
 const Label = "dev.fugaro.orchestrator"
 
 // systemdName is the systemd user unit's file name. systemd's own name and not
@@ -77,11 +83,12 @@ type Unit struct {
 type Manager interface {
 	// Platform is the manager's own name.
 	Platform() string
-	// Render is this platform's unit for the binary at binaryPath, and the
-	// path its file belongs at under this person's home (found through getenv,
-	// so the Windows-port rule for a home directory is one function,
-	// localcfg's).
-	Render(getenv func(string) string, binaryPath string) (Unit, error)
+	// Render is this platform's unit for one orchestrator: the binary at
+	// binaryPath, the name half of the id it drives ("" for the project's own,
+	// D3207), and the path its file belongs at under this person's home (found
+	// through getenv, so the Windows-port rule for a home directory is one
+	// function, localcfg's).
+	Render(getenv func(string) string, binaryPath, name string) (Unit, error)
 	// Reload makes the manager read the unit's file: it loads a unit that is
 	// not loaded and restarts the one that is. It is what `fugaro orchestrator
 	// install` and the converge's re-render both call, so a re-rendered file is
@@ -127,9 +134,29 @@ func For(goos string) (Manager, error) {
 // there is no second template anywhere to drift from this one — the update
 // step's comparison is between this text and the file on disk and nothing else.
 func Render(getenv func(string) string, goos, binaryPath string) (Unit, error) {
+	return RenderNamed(getenv, goos, binaryPath, "")
+}
+
+// RenderNamed is Render for one named orchestrator of the project:
+// `<project>~<name>` (D3206, D3207). The unit is a unit of its own — its file
+// name and its label carry the name, and the daemon it runs is given `--name
+// <name>` — which is what lets a machine keep the project's own orchestrator
+// and any number of named ones running side by side, each holding its own
+// lease.
+//
+// Empty name is the project's own orchestrator, and it renders exactly what
+// Render does: `fugaro update`'s converge step goes on comparing the text on
+// disk against that one.
+//
+// name is the name half of an id and nothing else: the project half is the
+// daemon's to read, because a login unit carries nothing from a project and
+// `fugaro orchestrator install` reads no project at all. A caller checks it
+// against the rule that admits one (orchestrator.ValidOrchestratorName) before
+// it gets here, since it becomes a file name as well as an argument.
+func RenderNamed(getenv func(string) string, goos, binaryPath, name string) (Unit, error) {
 	m, err := For(goos)
 	if err != nil {
 		return Unit{}, err
 	}
-	return m.Render(getenv, binaryPath)
+	return m.Render(getenv, binaryPath, name)
 }
