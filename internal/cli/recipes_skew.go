@@ -163,6 +163,79 @@ const proxySince = "0.22.0"
 // names the wrong release.
 const serviceAuthSince = "0.25.0"
 
+// identitySince is the first fugaro release whose runner claims its run's
+// identity from the installation's credentials service (LM7; D3122): such a
+// run's execution carries a one-time ticket in the contract's own variable
+// (identitywire.TicketEnv, FUGARO_IDENTITY_TICKET), and the runner presents it
+// to the service with the job's own Google ID token and a nonce it keeps for
+// its retries, and exchanges the answer for the identity it runs under. From
+// this release on the launcher signs nothing itself and writes no sealed
+// object (R7, LM6): the ticket is the whole of what a run's identity travels
+// on, so a runner older than this release reads neither the ticket nor the
+// claim. It looks for the sealed token under tokens/ that its launcher no
+// longer writes, finds nothing, and stops at bootstrap with no identity at
+// all — with the launch already paid for.
+//
+// The launch gate (identityGate below) refuses such a launch, judged the way
+// every other *Since gate is (checkImageSince, or checkCloneImageSince for a
+// checkout: clone workflow): a release older than identitySince is refused, a
+// base with no release tag (a dev build, a hand-pushed image) is only warned
+// about — the run's own bootstrap refuses there, since a runner that cannot
+// claim has nothing to fall back on. It carries no shipped flag, on
+// proxySince's reasoning: refusing every image that predates it is exactly the
+// direction the gate wants, since a run holding a ticket on an older runner
+// cannot work at all.
+//
+// It is asked for a launch that holds a ticket and NOT for one on the bridge
+// (R7, LM6's call site): a launch the service does not serve signs locally as
+// before and its execution carries the old seal marker, which a runner of an
+// older release still opens, so nothing about it is judged here.
+//
+// It names 0.29.0, the earliest release that can carry the claim, and not
+// either of the two numbers a reader of this tree might expect instead: 0.27.0
+// "Xerus" is the release docs/release-streams.yaml makes next and
+// keys-through-service's release A is not in it (docs/status.md's gate list
+// names no keys-through-service task, and the release's own notes say a
+// provider's key is not taken until that plan's flip), while release A's own
+// slot is the minor after that. D3128 puts this plan's tasks after release A
+// and D3124 ships the work in one release, so the claim arrives in the release
+// after release A's. Neither is tagged yet, so docs/release.md's Before-you-tag
+// list is what holds this number to the tag actually cut, as it does for every
+// other *Since constant here, and TestIdentitySinceHasAReleaseBullet holds that
+// bullet to this value. A value below the release that really claims is the
+// direction to fear: such a launch is admitted, paid for, and stops at
+// bootstrap with no identity at all.
+const identitySince = "0.29.0"
+
+// identitySubject and identityKnows are this gate's two names in the family's
+// sentence (checkImageSince): what is refused (a launch whose run claims its
+// identity from the service) and what its job image's runner has to know (the
+// claim the ticket stands for). The refusal carries no alt: the ticket is the
+// whole of what a run's identity travels on, so there is no other way for an
+// older image to be given one.
+const (
+	identitySubject = "a launch that holds a ticket for its run's identity (the launcher asks the installation's credentials service, and the run itself claims the identity the ticket stands for)"
+	identityKnows   = "the identity claim (the ticket its execution carries, presented to the service with the job's own ID token and exchanged for the run's identity)"
+)
+
+// identityGate refuses a launch that holds a ticket for its run's identity on
+// a job image whose runner cannot claim it (identitySince): such a run's
+// execution carries the ticket and no sealed object, so a runner that does not
+// know the claim stops at bootstrap with no identity at all.
+//
+// It is judged beside the seal's, the proxy's, the model credential's and the
+// workflow secrets' gates, from the same build record and the same local
+// config — but by its caller and not by a condition of its own: LM6 asks it
+// where the launch really holds a ticket, and never where the service answered
+// "not served" and the launch fell back to signing locally (R7). A launch on
+// the bridge is judged by every gate it always was and nothing here.
+func (e *cloudEnv) identityGate(ctx context.Context, slug string, spec *task.Spec, kind string, clone bool, warn io.Writer) error {
+	if clone {
+		return checkCloneImageSince(e.lc, spec, identitySince, identitySubject, identityKnows, "", warn)
+	}
+	return checkImageSince(ctx, e, slug, spec, kind, identitySince, identitySubject, identityKnows, "", warn)
+}
+
 // vaultSince is the first fugaro release whose runner fetches a workflow's own
 // secrets from the installation's credentials service when its job does not
 // mount them (B3.4, S3; D491, D1267, D2073-D2075): B3.8's flip
@@ -2458,7 +2531,7 @@ func launchReviewLevels(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg
 // providers rather than reaching for the config it does not have.
 func launchResolve(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, warn io.Writer) launchResolution {
 	rigorCfg := cfg.RigorConfig()
-	req := rigor.Request{Level: rigor.Rigor(spec.Rigor), Paths: spec.Paths}
+	req := spec.RigorRequest(spec.Paths)
 	mode := rigor.Resolve(rigorCfg, req).Level
 	var floor []policy.Level
 	// The node is read once for both halves of the model's own gates: its

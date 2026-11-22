@@ -70,7 +70,7 @@ type RigorRecord struct {
 	Level rigor.Rigor `json:"level"`
 	// From is the layer that decided it (rigor.Layer): "area" for a rule the
 	// run's paths matched, then "repo", "project", Fugaro's built-in
-	// "default", and the run's own "request" (D6's raise-only request: fugaro
+	// "default", and the run's own "request" (LD3's narrowest rank: fugaro
 	// run --mode, or the level a --pr follow-up keeps from its pull request,
 	// flag or no flag, T5.2). It is
 	// never "reached": that is the resolver's answer to a later moment asking

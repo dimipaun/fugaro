@@ -466,15 +466,21 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 
 // TestCredentialsServiceEnvKnowsTheIdentityNames is the cover's side of LM22
 // (D3121, D3123, F29/R16): the three entries of the identity half are named
-// once, on this allow-list, and are on CredentialsServiceEnvAwaitingTheModule
-// because the installation module does not render them yet.
+// once, on this allow-list, and the installation module renders all three
+// since LM12 — the change that moved them off
+// CredentialsServiceEnvAwaitingTheModule, which is the state this test pins
+// now.
 //
-// The order is F28's and it is the whole reason this test exists before LM12:
-// credentials.tf's case below refuses a container that sets a name this list
-// does not carry, and internal/cli's TestCredentialsServiceEnvIsTheDeploymentsOwn
-// refuses a module name the command does not read, so the module that renders
-// these three next (LM12) turns nothing red only if both ends already know
-// them — the names first, the module second.
+// The order is F28's, and this test is the pair of arms that holds it: the
+// names went on the allow-list and the awaiting list FIRST (LM22), and the
+// module that renders them came second (LM12), because credentials.tf's case
+// below refuses a container that sets a name this list does not carry and
+// internal/cli's TestCredentialsServiceEnvIsTheDeploymentsOwn refuses a module
+// name the command does not read. Each arm therefore turns around on the
+// change before it: before LM12 the third arm below failed once the module
+// rendered a name, and now it fails if a name goes back on the awaiting list
+// while the module sets it — which is the leftover that list's tripwire
+// exists to refuse.
 //
 // The three are named in one place here and read in one place at the command's
 // end (internal/cli's credentialsServiceSigner,
@@ -498,15 +504,15 @@ func TestCredentialsServiceEnvKnowsTheIdentityNames(t *testing.T) {
 		if !slices.Contains(credentialsServiceEnv, n) {
 			t.Errorf("%s is not on credentialsServiceEnv: the credentials service reads it (internal/cli's credentialsServiceConfig), and a container that sets it would be a plan the cover refuses", n)
 		}
-		if !slices.Contains(pending, n) {
-			t.Errorf("%s is not on CredentialsServiceEnvAwaitingTheModule: the installation module does not render it yet, and a name the allow-list admits ahead of its module has to say so (F28)", n)
+		if slices.Contains(pending, n) {
+			t.Errorf("%s is on CredentialsServiceEnvAwaitingTheModule and the installation module renders it: LM12 set it in credentials.tf, so the name has left the awaiting list in that same change (F28)", n)
 		}
-		// The other half of that statement: the module does not render it yet,
-		// so the awaiting list is not a leftover. LM12 turns this around — it
-		// renders all three and drops them from the list in one change — and
-		// this arm is what fails if only one of the two happened.
-		if regexp.MustCompile(`name\s*=\s*"` + n + `"`).MatchString(module) {
-			t.Errorf("modules/installation/credentials.tf renders %s: it is the module LM12 is, so the name has left the awaiting list in that same change", n)
+		// The other half of that statement: the module renders it, and a name
+		// on this list the module does not set would be an allow-list entry
+		// nothing writes — which is what this arm refused, the other way
+		// round, before LM12.
+		if !regexp.MustCompile(`name\s*=\s*"` + n + `"`).MatchString(module) {
+			t.Errorf("modules/installation/credentials.tf does not render %s: the allow-list admits it and the service reads it, so the module that configures the service is where it has to be set (LM12)", n)
 		}
 	}
 	// ... and the allow-list holds no fourth name of this half: a name added

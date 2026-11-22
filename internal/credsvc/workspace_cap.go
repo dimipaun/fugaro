@@ -25,19 +25,24 @@ import (
 // call's worst case before the request goes out — the probe the cascade owes a
 // backed-off key included, since a probe is a call the workspace pays for too
 // (C1.16) — settles it on the usage the answer reported, refuses the CALL when
-// that settle cannot be written, and writes the headroom on every answer of a
-// metered scope. Its tests are meter_test.go, one per promise, and its own
-// task is WS8 of docs/workspace-service/implementation-plan.md.
+// that settle cannot be written, and writes the headroom on the answers it
+// writes itself: a served call (cascade.go's answer) and a refusal the meter
+// made (forward.go's refuseMeter). A refusal that never reached the meter —
+// refuseSelection's wait and no-candidates answers, the call a credential has
+// already been sent to — carries no headroom, and nothing depends on one there.
+// Its tests are meter_test.go, one per promise, and its own task is WS8 of
+// docs/workspace-service/implementation-plan.md.
 //
-// BOTH DEPLOYMENTS THIS TREE BUILDS REACH IT. The workspace's own scope is
-// WS2's (scope_workspace.go, whose init assigns the real constructor over C1's
-// stub), the workspace's own service is deployed by `fugaro update` from
-// deploy/terraform/gcp/roots/workspace (WS5, WS6, WS7), and Scope.Meter is
+// ONE CODE PATH, TWO DEPLOYMENTS, AND BOTH ARE BUILT HERE. The workspace's own
+// scope is WS2's (scope_workspace.go, whose init assigns the real constructor
+// over C1's stub), the workspace's own service is deployed by `fugaro update`
+// from deploy/terraform/gcp/roots/workspace (WS5, WS6, WS7), and Scope.Meter is
 // non-nil for it — so a service in workspace mode reserves every paid call and
-// settles it. Scope.Meter is nil for an installation, and that is exactly what
-// R1 keeps: one code path serves both deployments, and the meter in the scope
-// is the whole of what differs. meter_test.go drives the forwarding path
-// through a scope with a meter over it.
+// settles it. An installation's scope is the other deployment, and its Meter is
+// nil, which is exactly what R1 keeps: the same forwarding path serves both and
+// the meter in the scope is the whole of what differs — an installation
+// reserves nothing, settles nothing and writes no header. meter_test.go drives
+// that path through a scope with a meter over it.
 //
 // Three things about the shape are the design and not an accident:
 //

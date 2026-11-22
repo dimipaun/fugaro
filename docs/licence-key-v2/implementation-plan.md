@@ -340,6 +340,7 @@ runtime is what the Terraform runs.
 | `ee/register/licence_login.go`, `ee/licence/login/login.go` | K3.3 (4) |
 | `deploy/terraform/.../installation/licence.tf`, `variables.tf`, `deployer.tf`, `internal/cli/update_licence.go` | K4.2 (5) |
 | `docs/licensing/implementation-plan.md`, `docs/subscriptions/implementation-plan.md`, `docs/key-signing-service/spec.md` | K7.2 (0) |
+| `scripts/live-checks/check560.sh` … `check564.sh` and their `_test.sh`, `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md` (the 560–564 rows and their `## Check 56N` sections) | K7.4 (6) |
 
 No level holds two writers of one file. A change to any task's Files re-checks this table.
 
