@@ -67,21 +67,26 @@ printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"${FAKE885_LOG:?}"
 dir=${FAKE885_DIR:?}
 case "${1:-}" in
 validate)
-  # The checkout this validation is about is the last argument that is a
-  # directory: `fugaro validate [path]`, so a case answers per checkout by its
-  # basename (`clean`, `bent-agent-auth`, `layer`, ...) and everything else —
-  # the owner's own checkout — reads the default answer.
+  # `fugaro validate [path]` takes the fugaro.yaml to READ — config.ReadRegular
+  # refuses a directory ("is not a regular file: not read") — so the fake takes
+  # the last argument that is a regular file named fugaro.yaml, and answers per
+  # checkout by the name of the directory it is in (`clean`, `agent-auth`,
+  # `sub`, ...). An invocation with no such argument is answered as the refusal
+  # it would really be, loudly: a check that passed the directory would read
+  # this instead of the case's own answer.
   last=""
   for a in "$@"; do
     case "$a" in
-    -*) ;;
-    *) if [ -d "$a" ]; then last=$a; fi ;;
+    */fugaro.yaml | fugaro.yaml)
+      if [ -f "$a" ]; then last=$a; fi
+      ;;
     esac
   done
-  key=default
-  if [ -n "$last" ] && [ -f "$dir/validate-status-$(basename "$last")" ]; then
-    key=$(basename "$last")
+  if [ -z "$last" ]; then
+    printf 'fake fugaro: validate reads a fugaro.yaml, and no argument was one\n' >&2
+    exit 64
   fi
+  key=$(basename "$(dirname "$last")")
   status=$(cat "$dir/validate-status-$key" 2>/dev/null || printf 0)
   cat "$dir/validate-$key.out" 2>/dev/null || true
   exit "$status"
@@ -166,8 +171,10 @@ claude_accounts:
       - acme/sub-app
 YAML
   config=$confighome/fugaro/projects/test.yaml
-  # The owner's own checkout validates cleanly: it is the release-2 state.
-  printf 0 >"$answers/validate-status-default"
+  # The owner's own checkout validates cleanly: it is the release-2 state. Its
+  # answers are keyed by the checkout's own directory name (`sub`), which is how
+  # the fake resolves the fugaro.yaml it was pointed at.
+  printf 0 >"$answers/validate-status-sub"
   # The check's own copies, one per shape it measures.
   printf 0 >"$answers/validate-status-clean"
   : >"$answers/validate-clean.out"
@@ -227,6 +234,13 @@ test_the_happy_path() {
   expect_contains "$(cat "$CALLS")" "--offline" "the happy path: every validation is offline"
   expect_contains "$(cat "$CALLS")" "fugaro validate --offline --project-layer" "the layer row resolved its own layer file"
   expect_contains "$(cat "$CALLS")" "$sub" "the premise validated the owner's own checkout"
+  # The positional argument is the FILE: `fugaro validate [path]` reads the
+  # fugaro.yaml and refuses a directory, so a check that passed the checkout
+  # itself would be measuring that refusal and not this release's key gate.
+  expect_contains "$(cat "$CALLS")" "fugaro validate --offline $sub/fugaro.yaml" "the premise validated the checkout's fugaro.yaml"
+  case "$(cat "$CALLS")" in
+  *"validate --offline $sub "*) fail "the premise validated a directory: $(cat "$CALLS")" ;;
+  esac
 }
 
 test_help() {
@@ -299,9 +313,9 @@ test_a_checkout_that_writes_a_retired_key_stops_the_check() {
 
 test_a_checkout_that_does_not_validate_stops_the_check() {
   case_dir checkout_not_clean
-  printf 1 >"$answers/validate-status-default"
+  printf 1 >"$answers/validate-status-sub"
   printf 'fugaro.yaml: the file names a project this machine has no config for\n' \
-    >"$answers/validate-default.out"
+    >"$answers/validate-sub.out"
   run885
   expect_status "$status" 2 "a checkout that does not validate"
   expect_row "$out" premise FAIL "a checkout that does not validate"

@@ -223,7 +223,7 @@ Check 885 plan (nothing is called: no fugaro, no validate, no file is read)
 
 What it would do, in order:
 
-  premise      fugaro validate --offline ${REPO:-<checkout>}
+  premise      fugaro validate --offline ${REPO:-<checkout>}/fugaro.yaml
                -> the checkout must be a git checkout whose committed fugaro.yaml writes NO retired key,
                names the installation as its project, and which validate accepts: it is the release-2
                state, and every copy below is made from its file. A premise that does not hold STOPS
@@ -528,12 +528,16 @@ scratch_checkout() { # scratch_checkout <name> [file]
 
 # validate_run OUT DIR [extra args...] runs `fugaro validate --offline` in a
 # scratch checkout and prints its exit status. --offline is what makes every row
-# of this check offline: it reads the files and no node.
+# of this check offline: it reads the files and no node. The positional argument
+# is the FILE and not the directory: `fugaro validate [path]` takes the
+# fugaro.yaml to read (config.ReadRegular refuses a directory — "is not a
+# regular file"), so a directory here would be refused for being a directory and
+# every row below would read that refusal instead of the retired-key one.
 validate_run() { # validate_run <out> <dir> [args...]
   local out=$1 dir=$2
   shift 2
   local rc=0
-  (cd "$dir" && fugaro validate --offline "$@" "$dir") >"$out" 2>&1 || rc=$?
+  (cd "$dir" && fugaro validate --offline "$@" "$dir/fugaro.yaml") >"$out" 2>&1 || rc=$?
   printf '%s' "$rc"
 }
 
@@ -546,7 +550,7 @@ validate_run_xdg() { # validate_run_xdg <out> <dir> <xdg> [args...]
   local out=$1 dir=$2 xdg=$3
   shift 3
   local rc=0
-  (cd "$dir" && XDG_CONFIG_HOME="$xdg" fugaro validate --offline "$@" "$dir") >"$out" 2>&1 || rc=$?
+  (cd "$dir" && XDG_CONFIG_HOME="$xdg" fugaro validate --offline "$@" "$dir/fugaro.yaml") >"$out" 2>&1 || rc=$?
   printf '%s' "$rc"
 }
 
