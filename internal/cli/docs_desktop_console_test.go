@@ -3472,8 +3472,9 @@ func TestConsoleTestsWorkflowIsStagedAndPinned(t *testing.T) {
 	}
 
 	// The Node version is read from console/package.json's `engines.node`, never
-	// written here a second time: test/unit/pinning.test.ts keeps that field an
-	// exact pin, and a copy of it in this file is a pin that can disagree.
+	// written here a second time: test/unit/pinning.test.ts keeps that field a
+	// pin (a floor and the next major as its ceiling since 2026-11-22), and a
+	// copy of it in this file is a pin that can disagree.
 	nodeSteps := 0
 	for _, step := range job.Steps {
 		if !strings.Contains(step.Uses, "actions/setup-node@") {
