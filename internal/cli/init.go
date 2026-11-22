@@ -750,6 +750,17 @@ type initRun struct {
 	// job is deployed, and the two differ on exactly the installations
 	// licenceJob drops it for.
 	licence *infra.LicenceSpec
+	// budgetAccount is the billing account this run's budget block is on, once
+	// the run's variables are written: --billing-account where it was given, and
+	// the account the carry took out of the installation's own state where it was
+	// not (carriedBudget, R7 of
+	// docs/managed-flag-ergonomics/reconciliation.md). It is recorded on the run
+	// for the reason licence is: the review screen shows this account and the
+	// cover admits the plan's budget resource on it (init_review.go), and the
+	// account a carried block names comes from no flag — a cover reading only
+	// --billing-account would refuse, as a plan the run never announced, the
+	// create or update of the alert this run carried the account for.
+	budgetAccount string
 	// notedOpenProviders is the once-per-run guard on the note about the
 	// providers every repository may use: the converge's repository stage
 	// runs the repo engine too, and the note belongs once.
@@ -3036,8 +3047,13 @@ func (r *initRun) managedScope(ctx context.Context, c *infra.Clients) (bool, err
 //
 // A run given the whole trio reads nothing: the explicit flags replace what is
 // carried, and there is nothing left to take.
+//
+// The account the block is on is recorded on the run (budgetAccount) as well as
+// in the spec it returns: the review screen and the plan cover are built off
+// the run's own facts, and the spec this returns is installRoot's copy.
 func (r *initRun) carriedBudget(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) (infra.InstallationSpec, error) {
 	if spec.Budget != nil && spec.Budget.BillingAccount != "" {
+		r.budgetAccount = spec.Budget.BillingAccount
 		return spec, nil
 	}
 	carried, err := r.budgetCarry(ctx, c, spec)
@@ -3049,6 +3065,9 @@ func (r *initRun) carriedBudget(ctx context.Context, c *infra.Clients, spec infr
 		return spec, userErr("%v", err)
 	}
 	spec.Budget = block
+	if block != nil {
+		r.budgetAccount = block.BillingAccount
+	}
 	return spec, nil
 }
 

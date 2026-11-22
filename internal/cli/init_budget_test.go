@@ -760,3 +760,57 @@ func TestPrintVarsSaysItCarriesNoBudget(t *testing.T) {
 		t.Errorf("the printed budget = %s, %v, want the flags' own block", b, err)
 	}
 }
+
+// budgetUpdateChange is the change a run that moved its alert's amount plans: an
+// in-place update of the installation module's budget resource, on the billing
+// account given. It is what R10's drift plans on the next run and what an
+// explicit --budget plans once the carry has completed the block with the
+// installation's own account.
+func budgetUpdateChange(account, amount string) planChange {
+	return planChange{"address": "module.installation.google_billing_budget.this[0]", "type": "google_billing_budget",
+		"change": map[string]any{"actions": []string{"update"}, "before": map[string]any{"amount": "200"},
+			"after": map[string]any{"billing_account": account, "amount": amount, "currency_code": "USD"}}}
+}
+
+// TestCarriedBudgetCoversThePlansBudgetChange: the account the carry took out
+// of the installation's state is the account the review announced, so the plan
+// of the run's own carried block is covered by the run's one confirmation. The
+// cover admits a create or update of google_billing_budget only on an account
+// it was shown (tf.Cover.Billing, cover.go's own rule), so a cover built from
+// --billing-account alone makes this plan one the review never announced — the
+// refusal that stops every run that cannot ask (--json, the console, a chained
+// run) and, at the owner's terminal, the banner over an update the run itself
+// wrote the account for.
+func TestCarriedBudgetCoversThePlansBudgetChange(t *testing.T) {
+	r := carriedBudgetRig(t, 250, "USD")
+	// The installation root's plan holds the alert's own update, and the root's
+	// plan REPORTS it: a plan with nothing in it is never shown to the cover at
+	// all (init.go's cycle reads the change off TF.Plan's exit code, and a run
+	// whose plan is empty says "No changes" and applies nothing), so a rig left
+	// at updateRig's empty plan would pass this test with the cover built from
+	// the flags alone — which is the bug.
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.setPlanAt(t, "installation", budgetUpdateChange(billingAcc, "250"))
+	// The installation's project carries both halves of the managed fact (the
+	// carry's rig reads its marker and label), so the step this plan reaches is
+	// admitted by the gate and the admission is written down — and the record
+	// names the account the run acts as, which is the credentials isolated here
+	// and no network call.
+	isolateGateCredentials(t)
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
+	said := out + errOut
+	if err != nil {
+		said += ErrorText(err)
+	}
+	// The refusal's own words are looked for beside the banner's: which of the
+	// two a run prints is the door it came through, and what this test is about
+	// is the fact behind either — the account the carry took out of the state
+	// is the one the review announced.
+	if strings.Contains(said, "refused by cover") || strings.Contains(said, "outside what the review announced") {
+		t.Errorf("the plan of the run's own carried budget is not covered by the run's confirmation:\n%s", said)
+	}
+	if err != nil {
+		t.Fatalf("fugaro update with the alert's own update in its plan: %v\n%s", err, said)
+	}
+}
