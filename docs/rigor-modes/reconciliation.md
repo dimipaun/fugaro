@@ -1015,7 +1015,8 @@ entries above do. Nothing in this folder changed; the row is named here for the 
 above are: a reader who finds the figure stale should find who moved it.)
 
 (Amended 2026-11-21: the workspace-service plan's WS13 — the keep-warm beat and its switch, the
-`agent.workspace_beat` key of `fugaro.yaml` and of the project layer's `defaults` (R10, D2985) —
+`agent.workspace_beat` key of `fugaro.yaml` and of the project layer's `defaults` (R10 of that
+plan, whose own register carries the ruling) —
 added `workspaceBeatSince` to `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since`
 constants* row from 62 to 63. Both files are decoded with `KnownFields`, so a runner built from an
 older image refuses either key at bootstrap, after the launch was paid for, and it refuses the key
