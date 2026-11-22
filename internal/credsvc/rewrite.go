@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/routing"
@@ -149,7 +150,11 @@ func rewriteModel(body []byte, model string) ([]byte, error) {
 // definition, a metadata block or a message is part of the agent's own request
 // and is left exactly as it is. Two top-level `model` members are refused
 // rather than one of them chosen, because a body naming two models is a call
-// the chain cannot be resolved for and the price cannot be settled at.
+// the chain cannot be resolved for and the price cannot be settled at — and so
+// is a body that is not one JSON object: a second object, or any text after the
+// closing brace, is read as a read error rather than rewritten, because the
+// source would be sent all of it while the call is priced by the model of the
+// first object.
 func modelMember(body []byte) (start, end int, err error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	tok, err := dec.Token()
@@ -201,6 +206,20 @@ func modelMember(body []byte) (start, end int, err error) {
 	}
 	if !found {
 		return 0, 0, errModelMember
+	}
+	// The object the members above are in, closed.
+	if _, err := dec.Token(); err != nil {
+		return 0, 0, fmt.Errorf("reading the body: %w", err)
+	}
+	// And nothing after it: the body is one JSON object, and the next token is
+	// the end of the input. A second object or trailing text is a read error
+	// and not a rewrite, since the whole body is what the source would be sent.
+	trailing, err := dec.Token()
+	if err == nil {
+		return 0, 0, fmt.Errorf("reading the body: %v follows the object", trailing)
+	}
+	if !errors.Is(err, io.EOF) {
+		return 0, 0, fmt.Errorf("reading the body: %w", err)
 	}
 	return start, end, nil
 }

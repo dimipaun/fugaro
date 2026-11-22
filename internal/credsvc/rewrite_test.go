@@ -118,14 +118,18 @@ func TestRewriteTouchesOnlyTheModel(t *testing.T) {
 
 	// A body that is not one JSON object is a read error and not
 	// errModelMember: the call named a model, and what could not be read is the
-	// body. An answer stream is the case that matters — it carries its model
-	// inside message_start's message member, event by event — and a caller
-	// holding one leaves it alone rather than reading events it did not ask to
-	// rewrite.
+	// body. Two objects, or anything after the object, is the case that matters
+	// — the source would be sent all of it while the call is priced by the
+	// first object's model — and an answer stream is the other one: it carries
+	// its model inside message_start's message member, event by event, so a
+	// caller holding one leaves it alone rather than reading events it did not
+	// ask to rewrite.
 	for _, body := range []string{
 		``,
 		`not json`,
 		`{"model":"claude-opus-5-5"`,
+		`{"model":"claude-opus-5-5"}{"model":"claude-sonnet-5-5"}`,
+		`{"model":"claude-opus-5-5"} junk`,
 		"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-sonnet-5-5\"}}\n\n",
 	} {
 		got, err := rewriteModel([]byte(body), "claude-opus-5-5")
