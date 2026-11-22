@@ -155,6 +155,7 @@ import {
   SKELETON_SHAPES,
 } from '../../src/renderer/skeleton'
 import {
+  COORDINATOR_ATTRIBUTE,
   COORDINATOR_BUSY,
   COORDINATOR_FLOOR_AND_WORD,
   COORDINATOR_FLOOR_WORD,
@@ -162,6 +163,9 @@ import {
   COORDINATOR_NODE_CLASS,
   COORDINATOR_SOURCE_CLASS,
   COORDINATOR_SOURCE_LINE,
+  COORDINATOR_TASKS_BUSY,
+  COORDINATOR_TASKS_CLASS,
+  COORDINATOR_TASKS_EMPTY_CLASS,
   COORDINATOR_TITLE,
   COORDINATOR_TITLE_CLASS,
 } from '../../src/renderer/screens/coordinator'
@@ -7844,17 +7848,43 @@ describe('the Coordinator’s map read, above its version floor', () => {
   /** openCoordinator boots a console whose CLI is above the map's floor and
    * clicks the Coordinator tab, with the map read the case supplies. Nothing is
    * awaited after the click, so what the tab drew in the click's own frame is
-   * what the caller sees first. */
-  async function openCoordinator(replies: Readonly<Record<string, AReply>>): Promise<FakeDocument> {
+   * what the caller sees first. `calls` comes back with the document, because
+   * the drill-down's own read is what a press is asserted to have made. */
+  async function openCoordinator(
+    replies: Readonly<Record<string, AReply>>,
+  ): Promise<{ readonly document: FakeDocument; readonly calls: FakeBridge['calls'] }> {
     floor.value = MAP_FLOOR
-    const { bridge } = graphBridge(
+    const { bridge, calls } = graphBridge(
       { subscribeLive: () => snapshotReply(liveFrame()), ...replies },
       FakeWorker,
       { ...anOkCompatibility(), cliVersion: MAP_VERSION },
     )
     const document = await boot(bridge, new FakeDocument())
     buttonFor(document, 'coordinator').click()
-    return document
+    return { document, calls }
+  }
+
+  /** boxFor is one orchestrator's drawn box, by the id it carries: the door the
+   * drill-down's own press goes through. */
+  function boxFor(document: FakeDocument, id: string): FakeNode {
+    const box = classed(panelOf(document), COORDINATOR_NODE_CLASS).find(
+      (node) => node.getAttribute(COORDINATOR_ATTRIBUTE) === id,
+    )
+    if (box === undefined) throw new Error(`the map drew no box for ${id}`)
+    return box
+  }
+
+  /** tasksDocument is one orchestrator's own document, as the drill-down's
+   * `graph.read --source orchestrator:<id>` answers it: the graph document's own
+   * shape with the one task the panel draws. `title` is what tells one
+   * orchestrator's answer from another's, which is what a case about an answer
+   * that was dropped reads. */
+  function tasksDocument(title: string): Record<string, unknown> {
+    const [first] = graphDocument()['nodes'] as readonly Record<string, unknown>[]
+    return {
+      ...graphDocument(),
+      nodes: [{ ...first, key: `plan-1/${title}`, id: `plan-1/${title}`, title }],
+    }
   }
 
   it('marks the section in the click’s own frame and draws the map when it lands', async () => {
@@ -7863,7 +7893,7 @@ describe('the Coordinator’s map read, above its version floor', () => {
     // header the tab already knows above them -- and the figure replaces the
     // shape the moment the answer lands.
     const map = holding()
-    const document = await openCoordinator({ orchestratorMap: () => map.reply() })
+    const { document } = await openCoordinator({ orchestratorMap: () => map.reply() })
 
     expect(textIn(panelOf(document), COORDINATOR_TITLE_CLASS)).toBe(COORDINATOR_TITLE)
     expect(busyLabels(document)).toContain(COORDINATOR_BUSY)
@@ -7890,7 +7920,7 @@ describe('the Coordinator’s map read, above its version floor', () => {
     const first = holding()
     const second = holding()
     let reads = 0
-    const document = await openCoordinator({
+    const { document } = await openCoordinator({
       orchestratorMap: () => {
         reads += 1
         return (reads === 1 ? first : second).reply()
@@ -7914,5 +7944,60 @@ describe('the Coordinator’s map read, above its version floor', () => {
     await flush()
     expect(holdsText(panelOf(document), sentence), 'the refusal outlived the answer that replaced it').toBe(false)
     expect(classed(panelOf(document), COORDINATOR_NODE_CLASS)).toHaveLength(2)
+  })
+
+  it('opens the pressed box’s live tasks, and drops an answer for a box the operator has left', async () => {
+    // The press is the entry's own listener on the drawn box, and the read it
+    // makes is the scope that box names -- `graph.read --source
+    // orchestrator:<id>`, spelled the way the CLI's own grammar spells it. The
+    // selection is checked again after the await, because an operator can open a
+    // second box while the first read is out: that answer belongs to a panel
+    // which is no longer open, and it is dropped rather than drawn over the one
+    // that is.
+    const map = holding()
+    const first = holding()
+    const second = holding()
+    const asked: string[] = []
+    const { document, calls } = await openCoordinator({
+      orchestratorMap: () => map.reply(),
+      graphRead: (args: unknown) => {
+        const source = (args as { readonly source: string }).source
+        asked.push(source)
+        return (source === 'orchestrator:repo-a' ? first : second).reply()
+      },
+    })
+    map.release({ ok: true, data: { document: COORDINATOR_MAP } })
+    await flush()
+
+    boxFor(document, 'repo-a').click()
+    await flush()
+    expect(classed(panelOf(document), COORDINATOR_TASKS_CLASS), 'the press opened no panel').toHaveLength(1)
+    expect(textIn(panelOf(document), COORDINATOR_TASKS_EMPTY_CLASS), 'the panel did not say its read is out').toBe(
+      COORDINATOR_TASKS_BUSY,
+    )
+    expect(calls.filter((call) => call.name === 'graphRead')).toEqual([
+      { name: 'graphRead', args: { source: 'orchestrator:repo-a' } },
+    ])
+
+    boxFor(document, 'repo-a~auth').click()
+    await flush()
+    expect(asked, 'the second press read no second scope').toEqual([
+      'orchestrator:repo-a',
+      'orchestrator:repo-a~auth',
+    ])
+
+    first.release({ ok: true, data: { document: tasksDocument('the answer for repo-a') } })
+    await flush()
+    expect(holdsText(panelOf(document), 'the answer for repo-a'), 'an answer landed on the box that was left').toBe(false)
+    expect(textIn(panelOf(document), COORDINATOR_TASKS_EMPTY_CLASS), 'the dropped answer closed the open panel').toBe(
+      COORDINATOR_TASKS_BUSY,
+    )
+    expect(classed(panelOf(document), COORDINATOR_TASKS_CLASS)[0]?.getAttribute(COORDINATOR_ATTRIBUTE)).toBe(
+      'repo-a~auth',
+    )
+
+    second.release({ ok: true, data: { document: tasksDocument('the answer for repo-a~auth') } })
+    await flush()
+    expect(holdsText(panelOf(document), 'the answer for repo-a~auth'), 'the open panel drew no tasks').toBe(true)
   })
 })

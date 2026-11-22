@@ -1431,8 +1431,8 @@ export function buildLiveModel(
  * (`manage/kinds/budget.ts`'s `BUDGET_CAPS_HIDDEN_WORD`). It is a second copy
  * rather than an import because the screens and the kinds are siblings and none
  * owns the others (the same reason `LIVE_PR_NO_LINK_REASON` is a copy of
- * `run.ts`'s), and `live.test.ts` holds the two constants equal so they cannot
- * drift.
+ * `run.ts`'s), and the budget kind's own copy is held equal to this one so they
+ * cannot drift (`manage-budget.test.ts`).
  */
 export const LIVE_CAPS_HIDDEN_WORD = 'the caps are withheld for the installation this console is driving'
 
