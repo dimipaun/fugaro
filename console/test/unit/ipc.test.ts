@@ -666,16 +666,20 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // drives it; its one row of argv is the command and `--json`, with no
   // argument of any kind (cobra's `NoArgs`).
   { command: 'models ls', kind: 'allowed', where: 'internal/cli/models_ls.go:47' },
-  // The image catalog (the console improvements plan's MO-C, AL): what this
-  // project's image catalog names, each entry's tags, default, build source and
-  // last recorded digest -- `fugaro image ls --json`. `allowed` because the
-  // surface drives it, and it is the `image` group's **only** reachable word:
-  // the group's three catalog writers (`image add`, `image rm` and `image
-  // promote` below) and `image build`, `image gate`, `image record`, `image
-  // refresh` and the credential helper are all on `NEVER_REACHABLE`, each as a
-  // command and, for the seven writers, as a word of `image` too -- so no
-  // writer of this group is reachable from the console. It takes no argument
-  // (cobra's `NoArgs`) and its `--shared` is not a word this surface fixes.
+  // The image catalog (the console improvements plan's MO-C, AL; the write
+  // below is MW2, D2903): what this project's image catalog names, each entry's
+  // tags, default, build source and last recorded digest -- `fugaro image ls
+  // --json`. `allowed` because the surface drives it, and it is the `image`
+  // group's only *read*: the group's other catalog writers (`image rm` and
+  // `image promote` below) and `image build`, `image gate`, `image record`,
+  // `image refresh` and the credential helper are all on `NEVER_REACHABLE`,
+  // each as a command and, for the writers, as a word of `image` too. **`image
+  // add` is the one of them the surface reaches**, and only the way `models
+  // add` is: its command row stays and excepts `image.add.plan` and `image.add`
+  // by name, so the console's two argvs are driven and every other argv of it
+  // is refused -- which is why the row below keeps its `mutating` class. It
+  // takes no argument (cobra's `NoArgs`) and its `--shared` is not a word this
+  // surface fixes.
   { command: 'image ls', kind: 'allowed', where: 'internal/cli/image_catalog.go:65' },
   // The recipes (the console improvements plan's RB4/RS2, AL): the recipes this
   // project may run, with what each is for and what it needs -- `fugaro recipes
@@ -1004,6 +1008,13 @@ const DESIGN_ARGV: readonly string[] = [
   // rather than `run`), which is what the window shows.
   'models add --no-apply --dry-run --json',
   'models add --no-apply',
+  // The image write, in its two phases (MW2, D2903), for the models write's
+  // reason one group over. The plan is the same command with `--dry-run --json`
+  // on it and the write is the plan's argv without them; `--no-apply` is on both,
+  // so the write saves the entry and leaves the steps that publish it -- the
+  // catalog's build among them -- for `fugaro apply`.
+  'image add --no-apply --dry-run --json',
+  'image add --no-apply',
   // The seat estimate (subscriptions plan S4.2). The row is the whole argv: the
   // command is `cobra.NoArgs` and the operation declares no argument, so this
   // file's convention has nothing to take out -- the 90 days the estimate is
@@ -1165,7 +1176,7 @@ describe("the allow-list's read-only invariant", () => {
     ])
   })
 
-  it('drives every CLI command with at most one operation, except the eight the console drives twice', () => {
+  it('drives every CLI command with at most one operation, except the nine the console drives twice', () => {
     // Two operations share `logs` and differ by their flags, which is the point
     // of writing the allow-list by exact argv: `logs RUN --json` and
     // `logs RUN --url` cannot be combined (`internal/cli/logs.go:63`), so the
@@ -1202,10 +1213,21 @@ describe("the allow-list's read-only invariant", () => {
       // …` is a read and `setup …` is the console's fourth write, and the two
       // differ by the one mode word in their command path.
       'setup',
+      // **The image write's two phases** (MW2, D2903): the same two rows one
+      // group over -- `image add --no-apply --dry-run --json` is the plan and
+      // `image add --no-apply` is the write. The group's one *read* is
+      // `image ls --json`, which drives `image ls` and is not this command's.
+      // It is last in this list because it is last in `CLI_COMMANDS`, whose
+      // order the whole list is in.
+      'image add',
     ])
     expect(operationsDriving('models add').map((operation) => operation.name).sort()).toEqual([
       'models.add',
       'models.add.plan',
+    ])
+    expect(operationsDriving('image add').map((operation) => operation.name).sort()).toEqual([
+      'image.add',
+      'image.add.plan',
     ])
     expect(operationsDriving('logs').map((operation) => operation.flags.join(' ')).sort()).toEqual([
       '--json',
@@ -1605,6 +1627,14 @@ describe("the allow-list's read-only invariant", () => {
     // longer command path or into a row's flags, would otherwise leave the half
     // of the fence a command row cannot see unguarded while every test above
     // stayed green.
+    //
+    // **The `image add` rows are not lifted either, and MW2's two operations
+    // are** (D2903): `image.add.plan` and `image.add` drive `image add`, so the
+    // `command` row and the `argv` row that name that word each carry `except`
+    // naming exactly those two operations and no others -- the models write's
+    // own shape one group over. A third operation driving the same word is
+    // refused by the control at the bottom of this test, and the probes below --
+    // which pass no operation name at all -- are refused exactly as they were.
     const refusedBy = (command: string, flags: readonly string[]): string | null =>
       isNeverReachable({ command, flags })?.value ?? null
 
@@ -1662,20 +1692,23 @@ describe("the allow-list's read-only invariant", () => {
 
     // The whole-table controls: an operation driving either group's writer, or
     // the free-`FILE` read, cannot be added to the surface at all, and the
-    // refusal names it.
+    // refusal names it. The image operation is named something other than the
+    // two the console really drives (MW2's `image.add.plan` and `image.add`),
+    // because those two are the rows' named exceptions -- the row below is what
+    // a *third* image write meets.
     expect(() =>
       assertReachableSurface([
         ...CONSOLE_OPERATIONS,
         {
-          name: 'image.add',
-          method: 'addImage',
+          name: 'image.write',
+          method: 'writeImage',
           command: 'image add',
           flags: ['--json'],
           summary: 'a write this console must not have',
           args: [],
         },
       ]),
-    ).toThrow(/image\.add drives image add/)
+    ).toThrow(/image\.write drives image add/)
     expect(() =>
       assertReachableSurface([
         ...CONSOLE_OPERATIONS,
@@ -2262,6 +2295,26 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
     route: 'openrouter',
     priceIn: '0.14',
     priceOut: '0.28',
+  },
+  // The two halves of the image write (MW2, D2903), read the same way: the plan
+  // carries the four values a renderer may send, the two optional ones filled
+  // here so that the table has one payload with every key, and the apply carries
+  // **the same four** -- the argv is the one main built at plan time, and the
+  // dry run's own document is what the window showed. `dockerfile` is the
+  // `owner/name:path` the CLI's own `--dockerfile` takes, and the name is the
+  // positional behind `--`, so neither is a word a renderer's string could put
+  // anywhere else.
+  'image.add.plan': {
+    name: 'app',
+    dockerfile: 'acme/app:.fugaro/app.Dockerfile',
+    tags: 'node,redis',
+    description: 'the app image',
+  },
+  'image.add': {
+    name: 'app',
+    dockerfile: 'acme/app:.fugaro/app.Dockerfile',
+    tags: 'node,redis',
+    description: 'the app image',
   },
 }
 
@@ -3755,7 +3808,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these fifty-four, and no others".
+ * channel. The claim is "these fifty-six, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -4135,6 +4188,14 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // exceptions, and a third operation driving that word is refused.
   ['models.add.plan', 'planModelsAdd'],
   ['models.add', 'addModel'],
+  // The image write's two halves (MW2, D2903), appended for the reason every
+  // row above was: what the task added must be visible as a diff. They are the
+  // same two rows one group over, and they are the surface's **seventh and
+  // eighth writes** -- `models.add.plan`'s own comment above is where the
+  // `except` on their never rows is read, and it is the same exception: a third
+  // operation driving `image add` is refused.
+  ['image.add.plan', 'planImageAdd'],
+  ['image.add', 'addImage'],
 ]
 
 /**
@@ -4165,7 +4226,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these fifty-four, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these fifty-six, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -4182,11 +4243,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A fifty-fifth channel: what each task added must stay one row, and the
+    // A fifty-seventh channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
     const fiftyThird = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
     expect(fiftyThird).toContain('fleet.report: a channel this console does not ship')
-    expect(fiftyThird).toContain('55 rows, and this console ships 54')
+    expect(fiftyThird).toContain('57 rows, and this console ships 56')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -4200,7 +4261,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('53 rows, and this console ships 54')
+    expect(withoutTheNewRow).toContain('55 rows, and this console ships 56')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -4215,8 +4276,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the fifty-four methods and nothing else', () => {
-    // The bridge the window is handed: the fifty-four methods and the names,
+  it('is frozen, and hands the window a bridge with the fifty-six methods and nothing else', () => {
+    // The bridge the window is handed: the fifty-six methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -5396,7 +5457,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: forty-five of the surface's fifty-four operations,
+    // The non-vacuity half: forty-seven of the surface's fifty-six operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -5503,7 +5564,10 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // fixes no command of its own, and the children behind its window are the
     // settings write's (`drivesOperation`) -- and its answer is the outcome
     // object the settings write answers with.
-    expect(THE_OPEN_OPERATIONS.length).toBe(45)
+    //
+    // The two writes' four halves are the forty-fourth to forty-seventh (MW1
+    // and MW2, D2903), each pair open for `settings.edit`'s reason.
+    expect(THE_OPEN_OPERATIONS.length).toBe(47)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

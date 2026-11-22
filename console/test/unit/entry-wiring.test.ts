@@ -110,7 +110,6 @@ import { NEW_OPS_NOT_AVAILABLE, NEW_OPS_UNREADABLE } from '../../src/shared/new-
 import type { SettingsEditorOpenRequest, SettingsEditorOutcome } from '../../src/shared/new-ops'
 import { GRAPH_DOCUMENT_VERSION, decodeSnapshot } from '../../src/shared/schema'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
-import { ADDRESS_PLACEHOLDER } from '../../src/shared/sanitize'
 import { NO_PLAN_CHECKOUT } from '../../src/source/source'
 import { READING_STILL, READING_STILL_MS, READING_WORDS } from '../../src/renderer/screens/reading'
 import {
@@ -5915,8 +5914,9 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     expect(classed(panelOf(document), 'projects-kill-row').length).toBeGreaterThan(0)
     expect(holdsText(panelOf(document), 'spend rate')).toBe(true)
     // The operator is a person, and the console draws one through the
-    // sanitizer's own class: the address loses its local part (`sanitize.ts`).
-    expect(classed(panelOf(document), 'projects-kill-by')[0]?.textContent).toBe(ADDRESS_PLACEHOLDER)
+    // sanitizer's own class: the address is not a credential, so it is drawn as
+    // the budget document wrote it (D3213).
+    expect(classed(panelOf(document), 'projects-kill-by')[0]?.textContent).toBe('operator@example.test')
   })
 
   it('starts the models and settings reads with the tab’s others and lets none of them wait', async () => {

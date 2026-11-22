@@ -129,7 +129,7 @@ const OPERATIONS: readonly ConsoleOperation[] = CONSOLE_OPERATIONS
  * console's third write -- the move of a task between the record's releases
  * (design section 5.1 rule 14) -- AL adds the wizard's apply, the write that
  * converges the installation from the answers a lapsed key no longer licenses
- * (design section 5.1, D2904), and MW1 adds the models write (D2903) -- and
+ * (design section 5.1, D2904), MW1 adds the models write (D2903) and MW2 the image write -- and
  * nothing else does. **SU2b adds the settings write's window**
  * (`settings.editor.open`): it spawns nothing as itself and every child behind it
  * is one phase of `settings.edit`'s plan, so it is the configuration change
@@ -145,6 +145,7 @@ const THE_REFUSED: readonly OperationName[] = [
   'setup.apply',
   'models.add',
   'settings.editor.open',
+  'image.add',
 ]
 
 /** THE_KEPT is every other operation: the non-vacuity guard for a wrapper that
@@ -186,6 +187,14 @@ const WELL_FORMED: Readonly<Record<string, Record<string, unknown>>> = Object.fr
   // layer and the phase are main's -- and the gate refuses before the flow reads
   // a document, so this is all it is ever handed.
   'settings.editor.open': { key: 'budget.cap_usd' },
+  // The image write (MW2, D2903): an entry the schema takes, over a dockerfile
+  // reference, two tags and a description. The gate never reads them either.
+  'image.add': {
+    name: 'app',
+    dockerfile: 'acme/app:.fugaro/app.Dockerfile',
+    tags: 'node,redis',
+    description: 'the app image',
+  },
 })
 
 /** recordingIpcMain is Electron's `ipcMain`, as far as the registrar uses it: a
@@ -326,6 +335,7 @@ describe('the refused class is the table\'s column', () => {
       ['setup.apply', undefined],
       ['models.add', undefined],
       ['settings.editor.open', undefined],
+      ['image.add', undefined],
     ])
   })
 
@@ -367,7 +377,7 @@ describe('the refused class is the table\'s column', () => {
 })
 
 describe('the lapse, at the handler', () => {
-  it('refuses the whole class -- the launch, the settings write and its window, the roadmap move, the wizard’s apply and the models write -- and reaches no source', async () => {
+  it('refuses the whole class -- the launch, the settings write and its window, the roadmap move, the wizard’s apply and the two writes -- and reaches no source', async () => {
     const { bridge, reached } = lapsedConsole(() => AT['lapsed'] as LicenceReply)
     for (const name of THE_REFUSED) {
       const reply = await bridgeMethod(bridge, name)(WELL_FORMED[name])

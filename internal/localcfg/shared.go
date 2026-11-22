@@ -443,11 +443,12 @@ func MergeSharedOptIn(published, local *Config, optIn string) *Config {
 	if !SameInstallation(published, local) {
 		// Nothing of the installation's is published to merge from — an empty
 		// bucket, or a copy ParseShared refused, which the publisher replaces
-		// (O18) — and the block published is this machine's own whole. What it
-		// still carries is the opt-in fact this publish was given: a publish's
-		// value for the fact is the caller's and never the machine's own block's
-		// (R15), and the empty bucket is where a writer's value would otherwise
-		// be the one thing lost, since there is no published copy to keep it in.
+		// (O18) — and the block published is this machine's own whole. The fact
+		// in it is the one this call would otherwise have taken from a published
+		// copy there is none of: the value a writer passed, and this machine's
+		// own block's for an ordinary publish — which is why a writer's value is
+		// an argument and not a rule read off the block, the absence of a copy to
+		// keep it in being exactly where it would otherwise be lost (R15).
 		out.Batch = mergeBatchBlock(out.Batch, nil, optIn)
 		return out
 	}

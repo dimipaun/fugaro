@@ -193,6 +193,56 @@ export const MODEL_PRICE_MAX_LENGTH = 11
  * refused by the same check: a model billed at nothing is not a price. */
 export const MAX_MODEL_PRICE = 1000
 
+/**
+ * IMAGE_NAME_RE, IMAGE_TAG_RE, IMAGE_TAGS_MAX and MAX_IMAGE_DESCRIPTION_LENGTH
+ * are the image write's four grammars (the console improvements plan's MW2,
+ * D2903), and every one of them is checked in main **before any child exists**.
+ *
+ * **The entry name is the CLI's own catalog-name rule** -- `ValidCatalogName`,
+ * `internal/config/catalog.go:221`, which is `ProjectNameRE`: 1 to 40 of a-z,
+ * 0-9 and `-`, starting and ending with a letter or a digit. It is deliberately
+ * **narrower than the model ID's shape** (`MODEL_ID_RE` above, whose grammar the
+ * plan gives the image name as well): a name reaches a tag of an image in the
+ * shared registry and a key of the project's bucket, so the CLI refuses a `.`, a
+ * `/` and a 41st character in one -- and a grammar here that admitted them would
+ * be a console that spells words its own child then refuses.
+ *
+ * **A tag is the CLI's own tag rule and not a list of tags.** `catalogTagRE`
+ * (`internal/config/catalog.go:236`) is the shape 1 to 64 of a-z, 0-9, `.`, `_`
+ * and `-` beginning with a letter or a digit, and the plan's "tags from the CLI's
+ * closed list" is a claim about a list that does not exist: a tag is free-form
+ * (`docs/project-image-catalog/spec.md`, "a **free-form** list of what the image
+ * provides"), and the words the flag's help names -- node, postgres, redis,
+ * firebase-emulator, docker -- are examples rather than a set. So main checks the
+ * shape, exactly as it checks a route's (`modelRoute`), and whether the tags are
+ * the ones a repository needs is the selection's own rule, one process later.
+ *
+ * **The description is printable and bounded**, which is the CLI's rule for it
+ * (`maxCatalogDescriptionLen`, 200) and the reason `hiddenCharacterReason` above
+ * is the rest of it: a listing prints a description on one line, so a tab and a
+ * newline are refused with every other control character, and a bidi override
+ * with every other invisible one.
+ */
+export const IMAGE_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/
+export const IMAGE_TAG_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/
+/** IMAGE_TAGS_MAX is how many tags one list may carry: the CLI's own
+ * `maxCatalogTags` (`internal/config/catalog.go:141`). */
+export const IMAGE_TAGS_MAX = 32
+/** MAX_IMAGE_TAGS_LENGTH and MAX_IMAGE_DOCKERFILE_LENGTH are the console's own
+ * bounds on those two arguments, and they are the same bound for the same
+ * reason: each is handed to a child as **one argv element**, so what has to be
+ * bounded is how large a word this process will make -- `MAX_ARGUMENT_LENGTH` in
+ * `src/main/spawn.ts`. They are narrower than the CLI's own limits (a list may
+ * be 32 tags of 64 characters there, a definition names a repository of up to
+ * `MAX_REPOSITORY_LENGTH` and a path of up to 200), and narrow is the direction
+ * this surface is built in: the console may refuse a word the CLI would take and
+ * must never spell one it would not. */
+export const MAX_IMAGE_TAGS_LENGTH = 200
+export const MAX_IMAGE_DOCKERFILE_LENGTH = 200
+/** MAX_IMAGE_DESCRIPTION_LENGTH bounds an entry's description, and it is the
+ * CLI's own `maxCatalogDescriptionLen` (`internal/config/catalog.go:145`). */
+export const MAX_IMAGE_DESCRIPTION_LENGTH = 200
+
 /** MAX_REPOSITORY_LENGTH bounds an `owner/name` argument in characters. It is
  * checked before the grammar runs, so a hostile payload cannot make a regular
  * expression work: every repository that matches the grammar is ASCII anyway,
@@ -543,6 +593,13 @@ export type ArgumentKind =
   | 'modelId'
   | 'modelRoute'
   | 'modelPrice'
+  // The image write's four (the same plan's MW2, D2903): the entry's name, the
+  // positional the command reads, the `owner/name:path` definition it is built
+  // from, the tags it provides and the description a listing prints.
+  | 'imageName'
+  | 'imageDockerfile'
+  | 'imageTags'
+  | 'imageDescription'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
 export interface ArgumentSpec {
@@ -2444,6 +2501,147 @@ export const CONSOLE_OPERATIONS = [
     ],
   },
   {
+    // The image write's plan (the console improvements plan's MW2, D2903):
+    // `image add --no-apply --dry-run --json --dockerfile=<owner/name:path>
+    // --tags=<a,b> --description=<text> --project <name> [--config <path>] --
+    // <name>`.
+    //
+    // **It is the CLI's own dry run and nothing else**, the models plan's
+    // property one command over. `--dry-run` is what makes this row a read: the
+    // child validates the definition exactly as the real add would -- the
+    // entry's name, its tags, its source, the installation's own skew gate and
+    // D1573's coding-agent refusal -- and prints the versioned document
+    // (`schemas/image-add-plan.schema.json`) with the entry it would add and the
+    // steps it would run or save. Nothing is written: no catalog entry, no
+    // build, no saved apply step, and no repository redeployed. The window the
+    // operator confirms is drawn from that document, so there is no second
+    // description of the change for the console to get wrong.
+    //
+    // **The payload is four values and every one is held to a grammar before any
+    // child exists**: the entry's name (`imageName`, the positional), its
+    // definition (`imageDockerfile`) and its tags and description (`imageTags`,
+    // `imageDescription`) -- each checked in main against the CLI's own rule for
+    // it, and each emitted as **one word** of the argv, the definition, the tags
+    // and the description as `--flag=value` and the name as the positional behind
+    // the row's `--` (`src/main/spawn.ts`), so no value a renderer sends can
+    // parse as a flag.
+    //
+    // **`--no-apply` is main's**, a word of the command path rather than an
+    // argument, and here it is the word that keeps the expensive step off this
+    // machine: the add's own follow-up steps -- the catalog's **build**, the
+    // repository's redeploy and the publish of the node every run is admitted by
+    // (D1561) -- are saved for `fugaro apply` (D1565). The build is the one of
+    // the console's writes that bills by itself, which is exactly why the console
+    // saves it and owes it rather than running it.
+    //
+    // **`--inline`, `--image` and `--default` are arguments of no operation on
+    // this surface**, and `--branch` with them. The CLI refuses three of them --
+    // with `--branch` -- only when an agent marker is in the environment
+    // (`imageAddAgentRefusal`, D1573), and a console's child carries no such
+    // marker, so that refusal would not fire for this surface: what keeps those
+    // definitions off the wire is the spawn table, whose every row declares the
+    // three `=`-form arguments above and none of them, plus `assertArgvFlags`,
+    // which refuses each of the four for every operation that does not declare
+    // it. A console that could write `--inline` would be one that writes
+    // executable content from a renderer's text.
+    name: 'image.add.plan',
+    method: 'planImageAdd',
+    command: 'image add --no-apply --dry-run',
+    flags: ['--json'],
+    summary: 'what adding an image catalog entry would change, as the CLI’s own plan document and with nothing written',
+    args: [
+      {
+        key: 'name',
+        kind: 'imageName',
+        required: true,
+        why: 'the entry name `image add` reads as its positional word — the name the catalog is keyed by, and the shape the CLI’s own catalog-name rule gives it',
+      },
+      {
+        key: 'dockerfile',
+        kind: 'imageDockerfile',
+        required: true,
+        why: 'the definition the entry is built from, as `owner/name:path`: a Dockerfile in one of the project’s repositories. It is the one definition this surface admits — `--inline` writes executable content from a renderer’s text and `--image` names an image that already exists, and neither is a word any row of this table may spawn',
+      },
+      {
+        key: 'tags',
+        kind: 'imageTags',
+        required: false,
+        why: 'the tags the image provides, comma-separated — optional, and free-form by shape rather than by membership: the tags a repository needs are the project’s own, so main checks the CLI’s tag grammar and the selection checks the cover',
+      },
+      {
+        key: 'description',
+        kind: 'imageDescription',
+        required: false,
+        why: 'what the entry is for, printed beside it in a listing — optional, one line, printable and bounded',
+      },
+    ],
+  },
+  {
+    // The image write (the same plan's MW2, D2903): the row above less
+    // `--dry-run --json`, and the console's **sixth write** — after the launch,
+    // the settings write, the record's move, the wizard's apply and the models
+    // write.
+    //
+    // **It changes a project setting every run is admitted by.** The entry it
+    // appends to the installation's image catalog is what the tag-cover rule
+    // selects a job's image from, and through the steps `--no-apply` saves it is
+    // the build the project's images come from: a project setting, which is the
+    // class of change rule 12's modal exists for. It is **not a widening** in
+    // the tick's sense — it raises no limit, and MD2's document has no
+    // `widening` member for a window to classify it by — so its yes is one
+    // deliberate click, as the wizard's is.
+    //
+    // **It is a project admin's and nothing else.** `image add` refuses anyone
+    // but a project admin (`accessGateProject`, `internal/cli/image_catalog.go`),
+    // and that is the authority check that survives this console: the window's
+    // action is enabled only for a project admin (RB4's gating), and a role that
+    // changed between the two is refused by the CLI's own sentence, which the
+    // screen shows like any other refusal. The console decides no role of its own
+    // (D2907).
+    //
+    // **It declares the plan's own four arguments and no others.** The window
+    // showed one argv; the apply runs *that* argv, held by main with the plan
+    // document's digest, and never one a renderer sends again
+    // (`src/main/imageadd.ts`): an IPC apply with no plan, or one whose payload
+    // does not match the held one, spawns nothing.
+    //
+    // **It is one of the lapse's rows.** A write is taken away with the launch
+    // and the settings write when the licence has lapsed (`refusedAfterLapse`);
+    // the plan above is the same command as a read and keeps answering.
+    name: 'image.add',
+    method: 'addImage',
+    command: 'image add --no-apply',
+    flags: [],
+    summary: 'the write: add the catalog entry the plan showed and save the build that publishes it for `fugaro apply`',
+    refusedAfterLapse: true,
+    args: [
+      {
+        key: 'name',
+        kind: 'imageName',
+        required: true,
+        why: 'the entry name the confirmed plan was about — the same four values the plan carried, so the argv main re-runs is the argv the window drew',
+      },
+      {
+        key: 'dockerfile',
+        kind: 'imageDockerfile',
+        required: true,
+        why: 'the definition the confirmed plan showed, word for word',
+      },
+      {
+        key: 'tags',
+        kind: 'imageTags',
+        required: false,
+        why: 'the tags the confirmed plan showed, or absent when the plan set none',
+      },
+      {
+        key: 'description',
+        kind: 'imageDescription',
+        required: false,
+        why: 'the description the confirmed plan showed, or absent',
+      },
+    ],
+  },
+  {
     // The settings editor (SU1, D2902): the one operation of the nine whose
     // command is **null**, because it fixes no argv of its own. It opens the
     // main process's own window for one key of the document the settings read
@@ -3081,6 +3279,15 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'image add',
     why: 'a write: it appends an entry to the installation’s image catalog, a project setting a reviewer signed off on',
     where: 'internal/cli/image_catalog.go:337 (Use: "add <name>")',
+    // **The console's sixth write, and the only way into it** (the console
+    // improvements plan's MW2, D2903), granted for the models write's reason one
+    // group over: the two rows that make the write are the CLI's own dry run and
+    // the write itself, the operator's yes is rule 12's own window's top frame's,
+    // and main re-runs the argv it showed rather than one a renderer sends. Every
+    // other operation under `image`, and every other word of this group -- `rm`
+    // and `promote` above, `build`, `gate`, `record`, `refresh` and
+    // `git-credential` beside them -- is refused as before.
+    except: ['image.add.plan', 'image.add'],
   },
   {
     shape: 'command',
@@ -3100,6 +3307,12 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     value: 'add',
     why: 'the catalog write above, refused as a word of this command as well: an `image` argv that spells `add` is refused before `spawn` is called, whether it spells it in the command path or in the flags it fixes',
     where: 'internal/cli/image_catalog.go:337 (Use: "add <name>")',
+    // The write's two operations, by name, for the models argv row's reason: an
+    // exception grants an operation and never a word, so `image ls --json` and
+    // `image add --no-apply` are told apart by the operation that built them and
+    // not by the `add` in the line. `image rm` and `image promote` keep their own
+    // rows below, and no other `image` operation may spell this word.
+    except: ['image.add.plan', 'image.add'],
   },
   {
     shape: 'argv',
@@ -4149,6 +4362,81 @@ function validateValue(
       }
       return { ok: true, value }
     }
+    case 'imageName': {
+      // The CLI's own catalog-name rule (`IMAGE_NAME_RE` above), and the shape
+      // is the whole check: whether the catalog already holds this name is the
+      // child's question, and its sentence -- which names the entry -- is the one
+      // the screen shows.
+      if (!IMAGE_NAME_RE.test(value)) {
+        return refuse(`${spec.key} must be a catalog entry name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or a digit`)
+      }
+      return { ok: true, value }
+    }
+    case 'imageDockerfile': {
+      // `owner/name:path`, cut at the **first** colon exactly as the CLI cuts it
+      // (`catalogEntryFromFlags`, `internal/cli/image_catalog.go:672`): a second
+      // colon belongs to the path, and a value with no colon, an empty half or a
+      // repository that is not `owner/name` is one the CLI would refuse a process
+      // later. Both halves are checked here so the console never spells it.
+      const colon = value.indexOf(':')
+      if (colon < 0) {
+        return refuse(`${spec.key} must be a Dockerfile in one of the project's repositories, as owner/name:path`)
+      }
+      const repo = value.slice(0, colon)
+      const path = value.slice(colon + 1)
+      if (!REPOSITORY_RE.test(repo) || path === '') {
+        return refuse(`${spec.key} must be a Dockerfile in one of the project's repositories, as owner/name:path`)
+      }
+      // The path's own rules, which are the CLI's for a dockerfile source
+      // (`catalogPathMessage`, `internal/config/catalog.go:448`): it is fetched
+      // from a repository and read by a build, so it is one clean relative path
+      // inside that repository: never absolute, never carrying a `..`, a `.` or
+      // an empty segment, and never empty. A control character is already refused
+      // for every string argument (`hiddenCharacterReason` above).
+      const segments = path.split('/')
+      if (
+        path.startsWith('/') ||
+        segments.includes('..') ||
+        segments.includes('.') ||
+        segments.includes('') ||
+        path === '.'
+      ) {
+        return refuse(`${spec.key} must name a path inside the repository: relative, with no '..' or '.' segment`)
+      }
+      return { ok: true, value }
+    }
+    case 'imageTags': {
+      // A **shape per member and not a membership**, which is `modelRoute`'s
+      // reading one list over: the CLI's own tag grammar is `IMAGE_TAG_RE` and
+      // the set of tags a project uses is the project's own, so a tag this
+      // installation holds nothing for is refused by the selection's sentence
+      // rather than here. What main refuses is a list that is empty, longer than
+      // the CLI's own count, made of a member outside the grammar, or wide
+      // enough to be one argv element this process will not hand a child.
+      const members = value.split(',')
+      if (
+        value === '' ||
+        members.length > IMAGE_TAGS_MAX ||
+        members.some((member) => !IMAGE_TAG_RE.test(member))
+      ) {
+        return refuse(`${spec.key} must be a comma-separated list of tags: at most ${IMAGE_TAGS_MAX} of a-z, 0-9, '.', '_' and '-', each starting with a letter or a digit`)
+      }
+      return { ok: true, value }
+    }
+    case 'imageDescription': {
+      // **An empty description is refused rather than sent.** The CLI takes an
+      // entry with no description -- `description:` is optional in the catalog --
+      // and the way a renderer says so is by omitting the argument, which is what
+      // leaves the flag off the argv: an empty `--description=` would be a
+      // different argv for the same entry. A tab, a newline and every other
+      // invisible character are already refused for every string argument
+      // (`hiddenCharacterReason` above), which is the CLI's own rule for a
+      // description (a listing prints it on one line).
+      if (value === '') {
+        return refuse(`${spec.key} must be a description: leave it out for an entry with none`)
+      }
+      return { ok: true, value }
+    }
     default:
       return refuse(`${operation} does not take ${spec.key}`)
   }
@@ -4247,6 +4535,18 @@ function kindLimit(kind: ArgumentKind): number {
       return 64
     case 'modelPrice':
       return MODEL_PRICE_MAX_LENGTH
+    // The image write's four (MW2), each the length bound of the rule above it:
+    // the name's is the grammar's own 40 and the description's is the CLI's 200,
+    // while the definition's and the list's are the console's own bound on one
+    // argv element -- narrower than the CLI's, and so the one that bites.
+    case 'imageName':
+      return 40
+    case 'imageDockerfile':
+      return MAX_IMAGE_DOCKERFILE_LENGTH
+    case 'imageTags':
+      return MAX_IMAGE_TAGS_LENGTH
+    case 'imageDescription':
+      return MAX_IMAGE_DESCRIPTION_LENGTH
     case 'installationName':
       return MAX_INSTALLATION_NAME_LENGTH
     case 'installationCheckout':

@@ -150,6 +150,14 @@ func TestFakeRunQueryMatchesOrder(t *testing.T) {
 		t.Fatalf("ascending = %v", ids)
 	}
 
+	// Two clauses with the LAST one descending: the implicit tie-break follows
+	// that clause's direction, not the first clause's and not the ascending
+	// default. plan ascending (all equal here), updated_at descending, and the
+	// tie on updated_at broken by the run id descending with it.
+	if ids := fakeQueryIDs(t, f, query(`[{"field":{"fieldPath":"plan"}},{"field":{"fieldPath":"updated_at"},"direction":"DESCENDING"}]`, 10, "")); !reflect.DeepEqual(ids, []string{"run-c", "run-b", "run-a"}) {
+		t.Fatalf("two clauses, the last descending = %v", ids)
+	}
+
 	for name, q := range map[string]string{
 		"short cursor":  query(desc, 2, `,"startAt":{"values":[{"timestampValue":"2026-11-22T10:00:00.000000Z"}],"before":false}`),
 		"bad direction": query(`[{"field":{"fieldPath":"updated_at"},"direction":"SIDEWAYS"}]`, 2, ""),
