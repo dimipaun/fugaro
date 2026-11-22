@@ -213,11 +213,11 @@ case "$sub" in
   cat "$answers/iam.json"
   ;;
 "iam roles describe"*)
-  # The real command takes a bare role ID — `aiplatform.user`, not the
-  # `roles/aiplatform.user` a policy spells — and `--project` only for a project's
-  # own role, naming that role's project. The fake holds the same contract, so a
-  # check that hands over the policy's spelling is refused here exactly as gcloud
-  # refuses it, and the case that expects the role's permissions fails.
+  # The real command takes a predefined role with its `roles/` prefix and no
+  # --project, and a custom one as a bare ID plus the --project it belongs to
+  # (`iam_util.GetRoleName`). The fake holds the same contract, so a check that
+  # hands over a spelling gcloud refuses is refused here too, and the case that
+  # expects the role's permissions fails.
   role="" role_project=""
   shift 3
   while [ $# -gt 0 ]; do
@@ -241,25 +241,27 @@ try:
     doc = json.load(open(path))
 except Exception:
     sys.exit(1)
-if not role or "/" in role:
-    print("ERROR: (gcloud.iam.roles.describe) '%s' is not a role ID: an IAM policy spells a predefined role 'roles/ID' and a project's own 'projects/P/roles/ID', and this command takes neither" % role, file=sys.stderr)
+if role.startswith("projects/") or role.startswith("organizations/"):
+    print("ERROR: (gcloud.iam.roles.describe) Invalid value for [ROLE_ID]: The role id should not include any 'projects/' or 'organizations/' prefix.", file=sys.stderr)
     sys.exit(1)
+if role.startswith("roles/"):
+    if project:
+        print("ERROR: (gcloud.iam.roles.describe) Invalid value for [ROLE_ID]: The role id that starts with 'roles/' only stands for predefined role. Should not specify the project or organization for predefined roles", file=sys.stderr)
+        sys.exit(1)
+    want = role
+else:
+    if "/" in role:
+        print("ERROR: (gcloud.iam.roles.describe) Invalid value for [ROLE_ID]: The role id should not include any '/' character.", file=sys.stderr)
+        sys.exit(1)
+    if not project:
+        print("ERROR: (gcloud.iam.roles.describe) Missing required argument [--organization or --project]: Should specify the project or organization name for custom roles.", file=sys.stderr)
+        sys.exit(1)
+    want = "projects/%s/roles/%s" % (project, role)
 for r in doc.get("roles") or []:
-    name = r.get("name") or ""
-    if name.startswith("roles/") and name[len("roles/"):] == role:
-        if project:
-            print("ERROR: (gcloud.iam.roles.describe) '%s' is a predefined role and takes no --project" % name, file=sys.stderr)
-            sys.exit(1)
+    if (r.get("name") or "") == want:
         print(json.dumps(r))
         sys.exit(0)
-    if name.startswith("projects/") and name.endswith("/roles/" + role):
-        want = name[len("projects/"):-len("/roles/" + role)]
-        if project != want:
-            print("ERROR: (gcloud.iam.roles.describe) '%s' is a project role and needs --project=%s" % (role, want), file=sys.stderr)
-            sys.exit(1)
-        print(json.dumps(r))
-        sys.exit(0)
-print("ERROR: (gcloud.iam.roles.describe) no role '%s' in this project" % role, file=sys.stderr)
+print("ERROR: (gcloud.iam.roles.describe) NOT_FOUND: Role %s not found" % want, file=sys.stderr)
 sys.exit(1)
 PY
   ;;
@@ -921,13 +923,14 @@ PY
   expect_status "$status" 1 "a granted predefined role"
   expect_contains "$out" "FACT grants: FAIL" "a granted predefined role: the row"
   expect_contains "$out" "roles/aiplatform.user" "a granted predefined role: the role it found"
-  # The policy's own spelling is what the row names, and the bare ID with no
-  # --project is what gcloud is asked: the fake refuses the former, so a check
-  # that handed it over would read the row as UNVERIFIED, not FAIL.
+  # A predefined role is asked for under the `roles/` prefix the policy spells it
+  # with and with no --project: the fake refuses the prefixed id beside a --project
+  # and reads a bare id as a custom role, so either mistake would show here as
+  # UNVERIFIED rather than FAIL.
   local calls
   calls=$(cat "$dir/logs/gcloud.calls")
-  expect_contains "$calls" "iam roles describe aiplatform.user --format=json" "a granted predefined role: the ID gcloud is asked for, with no --project"
-  expect_absent "$calls" "describe roles/aiplatform.user" "a granted predefined role: the policy's own spelling is not handed to gcloud"
+  expect_contains "$calls" "iam roles describe roles/aiplatform.user --format=json" "a granted predefined role: the prefixed ID gcloud is asked for"
+  expect_absent "$calls" "describe aiplatform.user " "a granted predefined role: the bare ID is not handed to gcloud"
 }
 
 test_a_custom_role_with_the_permission_is_a_finding() {

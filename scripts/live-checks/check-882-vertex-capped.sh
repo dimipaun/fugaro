@@ -459,16 +459,19 @@ PY
 }
 
 # describe_role ROLE: `gcloud iam roles describe` for a role spelled the way the
-# IAM policy spells it, which is not the way gcloud takes it. A binding carries
-# `roles/ID` for a predefined role and `projects/P/roles/ID` for a project's own,
-# and gcloud refuses both: it wants the bare ID, with --project only for a project
-# role — and then the role's own project, the one the binding names. A spelling
-# that is neither (an organization's, say) is passed through, so the call fails and
-# the row reads UNVERIFIED rather than a role being read as something it is not.
+# IAM policy spells it, which is not always the way gcloud takes it. A binding
+# carries `roles/ID` for a predefined role and `projects/P/roles/ID` for a
+# project's own. gcloud takes the first as it stands and refuses --project beside
+# it (`iam_util.GetRoleName`: an id starting with `roles/` stands for a predefined
+# role, and a bare id is the custom-role form, which needs a parent), and refuses
+# the second outright, wanting the bare ID plus --project naming that role's own
+# project, the one the binding names. A spelling that is neither (an
+# organization's, say) is passed through, so the call fails and the row reads
+# UNVERIFIED rather than a role being read as something it is not.
 describe_role() { # describe_role <role>
   case "$1" in
   roles/*)
-    gcloud iam roles describe "${1#roles/}" --format=json
+    gcloud iam roles describe "$1" --format=json
     ;;
   projects/*/roles/*)
     local rest=${1#projects/}
