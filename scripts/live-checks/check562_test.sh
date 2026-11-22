@@ -7,7 +7,8 @@
 # print fixtures, and `licence login` runs a small python listener that prints an
 # authorize address on 127.0.0.1 and plays the given mode.
 #
-# Shardable: CHECK_TEST_SHARD=i/3 runs one third; CHECK_TEST_ONLY=<name> runs one
+# Shardable: CHECK_TEST_SHARD=0/3 runs one third, the shard numbers 0-based as the
+# Go test passes them (scripts/live_checks_test.go); CHECK_TEST_ONLY=<name> runs one
 # case. Ends with `check562_test.sh: ok` (exit 0) or `check562_test.sh: N
 # failure(s)` (exit 1). Every fake process is killed from the exit trap.
 set -uo pipefail
@@ -19,7 +20,7 @@ REAL_CURL=$(command -v curl || true)
 work=$(mktemp -d "${TMPDIR:-/tmp}/check562test.XXXXXX")
 failures=0
 ran=0
-tindex=0
+test_index=0
 last_out=""; last_err=""; last_status=0
 bin=""; case_dir=""; case_site="https://keys.fugaro.dev"
 BASHX=""
@@ -32,13 +33,17 @@ trap cleanup_all EXIT
 
 fail() { failures=$((failures + 1)); printf '\n    FAIL: %s\n' "$*" >&2; }
 
-shard_n=1; shard_i=1
-if [ -n "${CHECK_TEST_SHARD:-}" ]; then shard_i=${CHECK_TEST_SHARD%%/*}; shard_n=${CHECK_TEST_SHARD##*/}; fi
+# Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n" runs
+# every n-th case starting at i (0-based, as scripts/live_checks_test.go passes it),
+# CHECK_TEST_ONLY=name runs that one alone.
 t() { # t NAME — filter by shard/only, run case_NAME, print ok when it added no failure
-  local name=$1 before
-  tindex=$((tindex + 1))
-  if [ -n "${CHECK_TEST_ONLY:-}" ] && [ "$CHECK_TEST_ONLY" != "$name" ]; then return 0; fi
-  if [ "$((tindex % shard_n))" -ne "$((shard_i - 1))" ]; then return 0; fi
+  local name=$1 before i=$test_index
+  test_index=$((test_index + 1))
+  if [ -n "${CHECK_TEST_ONLY:-}" ]; then
+    [ "$CHECK_TEST_ONLY" = "$name" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
   ran=$((ran + 1))
   printf '  %-30s ' "$name"
   before=$failures
