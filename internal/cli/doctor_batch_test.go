@@ -904,16 +904,17 @@ func TestDoctorBatchSkipsAreNeverPasses(t *testing.T) {
 // that made it reachable.
 //
 // The check asks budgetMintOn, the function a launch decides with, so these
-// three configs are the three states of its own answer: a mode that is not off
-// with a database and a signer (mints, and no policy is read), a mode that is
-// off with nothing published (does not mint), and a mode that is off with a
-// published policy (mints -- the arm a config alone cannot answer, and the
-// reason the check reads the node at all).
+// configs are the states of its own answer: a budget database, with the signer
+// account a run's identity is minted through -- which mints whatever the mode
+// says and whether or not a policy is published (AB4, F7) -- and no database at
+// all, where nothing mints because no launch of the installation happens (the
+// launcher refuses it with the fix), so the pair this check reads is not what
+// stops it and the check has nothing to report.
 //
-// Mutation (drop the check from doctorBatchChecks): the two minting cases read
-// as absent, and every "doctor reports no batch-budget-seal check" assertion
-// fails. Mutation (ask the config arm alone -- budgetBackendOn without the
-// policy read): the published-policy case stops being refused.
+// Mutation (drop the check from doctorBatchChecks): the minting cases read as
+// absent, and every "doctor reports no batch-budget-seal check" assertion
+// fails. Mutation (read the mode again): the two off cases stop being refused,
+// which is the direction AB4 closed.
 func TestDoctorBatchRefusesAMintingInstallation(t *testing.T) {
 	// budgetYAML is one installation's budget block, with a database of its own
 	// per case: a policy published for one case must not be found by another.
@@ -927,19 +928,25 @@ func TestDoctorBatchRefusesAMintingInstallation(t *testing.T) {
 		return "budget: { mode: " + mode + ", per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + db.URL + ", token_signer: " + testSigner + " }\n"
 	}
 	for _, tc := range []struct {
-		name    string
-		mode    string
-		publish bool
-		mints   bool
+		name       string
+		mode       string
+		publish    bool
+		noDatabase bool
+		mints      bool
 	}{
 		{name: "a budget mode that mints", mode: "enforce", mints: true},
-		{name: "a budget mode that is off with nothing published", mode: "off"},
-		{name: "a budget mode that is off with a published policy", mode: "off", publish: true, mints: true},
+		{name: "a mode that says off with nothing published", mode: "off", mints: true},
+		{name: "a mode that says off with a published policy", mode: "off", publish: true, mints: true},
+		{name: "an installation with no budget database", noDatabase: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, f := newDoctorRig(t), newBatchFakes(t)
 			batchProvisioned(t, r, f)
-			r.withBatchSelected(t, f, batchBlock, batchLists+budgetYAML(t, tc.mode, tc.publish))
+			block := batchLists + budgetYAML(t, tc.mode, tc.publish)
+			if tc.noDatabase {
+				block = batchLists + "budget: { per_run_usd: 5 }\n"
+			}
+			r.withBatchSelected(t, f, batchBlock, block)
 			o := r.runDoctorJSON(t)
 			c, ok := doctorCheckByID(o.Checks, "batch-budget-seal")
 			if !ok {

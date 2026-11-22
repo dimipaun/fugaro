@@ -91,6 +91,7 @@ func newCloudFixture(t *testing.T, extraEndpoints ...string) *cloudFixture {
 	// installation of a release that never had one asks for none (noBudget).
 	f.budget = testutil.NewBudget(t)
 	adoptBudgetFake(f.budget.DB)
+	seedLaunchCaps(f.budget.DB)
 	// The signer account this installation's runs are minted with, and the fake
 	// IAM Credentials API that signs as it (a real installation reaches
 	// Google's): a launch mints through this, so a fixture without one refuses
@@ -129,6 +130,20 @@ func newCloudFixture(t *testing.T, extraEndpoints ...string) *cloudFixture {
 	// record (writeBuildRecordAt, removeBuildRecord).
 	writeBuildRecord(t, f, appSlug, "web", releasePolicy)
 	return f
+}
+
+// seedLaunchCaps is the cap state a launch of this installation is pre-checked
+// against, in the shape `fugaro update` writes it: the project's daily and
+// per-run caps, the repository defaults under them, and the reserve a lease
+// takes. Every launch of an installation with a database is pre-checked now
+// (AB4, F7: the pre-check is gated by budgetBackendOn, which no longer reads
+// the mode), so a fixture that means a launch to start has to have them. A test
+// that means the state the pre-check refuses for — no cap at all, a spent day,
+// a kill switch — says so on its own fixture, with its own numbers.
+func seedLaunchCaps(db *gcpfake.RTDB) {
+	db.Set(budget.PathCapsGlobal, map[string]any{"dailyMicros": 100 * usd1, "perRunMicros": 10 * usd1})
+	db.Set(budget.PathCapsDefaults, map[string]any{"repoDailyMicros": 50 * usd1, "repoPerRunMicros": 5 * usd1})
+	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5 * usd1})
 }
 
 // markerPath is where the fixture's runs bucket keeps the project marker.

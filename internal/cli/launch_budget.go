@@ -695,13 +695,16 @@ func (e *cloudEnv) batchBudgetPrecheck(ctx context.Context, slug, repo string, n
 // runs a fugaro older than sealSince: such a runner formats a marker value it
 // cannot parse into its bootstrap error — the launch's seal key, into the
 // run's record — and reads the token from runs/, where the launcher no longer
-// writes it (D19, §7.4). A launch that mints nothing is not judged. The judge
-// is the one every *Since gate uses (checkImageSince, or checkCloneImageSince
-// for a checkout: clone workflow): a release older than sealSince and a
-// missing build record refuse. An image built from a base that is not a
-// release (a development build) passes when its build record says the base's
-// own fugaro reads the sealed token, is refused when the record shows it was
-// built before the seal's runner half existed, and is otherwise only warned
+// writes it (D19, §7.4). Every launch of an installation with a database mints
+// (AB4, F7), so this gate judges every launch of one — a launch that mints
+// nothing is a launch budgetMintOn has already refused, and this gate hands
+// that refusal back rather than judging an image for a launch that will not
+// happen. The judge is the one every *Since gate uses (checkImageSince, or
+// checkCloneImageSince for a checkout: clone workflow): a release older than
+// sealSince and a missing build record refuse. An image built from a base that
+// is not a release (a development build) passes when its build record says the
+// base's own fugaro reads the sealed token, is refused when the record shows it
+// was built before the seal's runner half existed, and is otherwise only warned
 // about, because whether it supports the seal cannot be shown
 // (sealDevRefusal; the owner's answer of 2026-10-17). A checkout: clone job
 // has no build record, so a development base there is only warned about.
@@ -1261,9 +1264,10 @@ type jobBackendEnvReader interface {
 // again. The identity this launch is about to mint would be one the run cannot
 // use — it reaches the database through its job's environment, not through the
 // token — so the launch would end at the runner's own refusal of exactly this
-// state, after the claim, the task and the sealed object were written
-// (internal/runner's strayTokenNoBackend, which words the same fix). Refusing
-// here instead costs no write at all and names the job.
+// state, after the claim and the sealed object were written and the execution
+// created (internal/runner's strayTokenNoBackend, which words the same fix).
+// Refusing here costs none of that and names the job: the claim goes back and
+// no object, no execution and no signed identity are made.
 //
 // The job read is the one the execution will land on: the shared project job the
 // launch resolved by name, else the repository's own job derived from the
@@ -1380,12 +1384,11 @@ const pairHeadroomCaps = 5
 // the champion's single pre-check is skipped below (skipBudget), so this is
 // the launch's one budget reading.
 func (e *cloudEnv) pairBudgetPrecheck(ctx context.Context, slug string, spec *task.Spec, warn io.Writer) string {
-	on, err := budgetBackendOn(e.lc)
-	if err != nil {
+	// A launch on an installation with no database never reaches a pair
+	// (AB4, F7): budgetMintOn refuses it earlier, so the only answer here
+	// that is not a headroom figure is a refused launch's own reason.
+	if _, err := budgetBackendOn(e.lc); err != nil {
 		return oneLine(err.Error())
-	}
-	if !on {
-		return "the project has no budget backend, so a pair has no headroom to be judged against"
 	}
 	if e.noBudgetCheck {
 		return "the launch skips the budget pre-check (--no-budget-check), and a pair is never sampled beside a skipped pre-check"

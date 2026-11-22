@@ -2616,7 +2616,7 @@ func TestLaunchRefusesASecretEnv(t *testing.T) {
 		"the job's definition",
 		"docs/budget-token-channel/spec.md",
 		"cannot launch any run on Batch",
-		"a budget database with budget mode on, or a published policy",
+		"one that names a budget database, with the signer account it mints through",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: the answer is a documented limit, and a refusal that stops naming its reason, its consequence or the condition sends an operator to provision a backend their project cannot use\n\nmessage: %v", want, err)

@@ -699,15 +699,17 @@ launch" is where the reasoning and the cost live, and Task 14 is the
 task that wrote both down. **What this costs, and where an operator meets
 it**: minting is the installation's, not a run's — `budgetMintOn`
 (`internal/cli/launch_budget.go`) mints for every launch of a configuration
-that names a budget database with budget mode on, or a published policy, a
-signer being required in both cases — and an installation
+that names a budget database, with the signer account it mints through (the
+budget mode is not read: a database whose mode said `off` mints exactly as one
+that enforces) — and an installation
 has one backend, so such a project gets **every** launch refused, after the
 token was minted and dropped, and has to stay on `backend: cloud-run`. There is
 no per-run fallback: the refusal is at `jobs.create`'s doorstep, and the pair —
 a minting installation selecting `cloud-batch` — is refused early as well, by
 `fugaro validate`'s offline arm (the budget backend's own switch,
 `internal/cli/validate_batch.go`) and by `fugaro doctor`'s `batch-budget-seal`
-check, which asks `budgetMintOn` itself so a published policy counts too
+check, which asks `budgetMintOn` itself, so the check and the launch cannot
+disagree about which installations mint
 (`internal/cli/doctor_batch.go`). Both were a **Task 10 condition**, and Task
 10 — the task that enabled the name — built them.
 

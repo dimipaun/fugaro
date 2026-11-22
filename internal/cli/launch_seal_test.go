@@ -259,15 +259,22 @@ func TestAKeyThatCannotBeDrawnRefusesTheLaunch(t *testing.T) {
 // TestTheSealGateRefusesAnImageThatPredatesTheSeal is D19's ordering, as a
 // gate: a launch that seals hands the execution a key in the marker, and a
 // runner from before the seal echoes the marker's value into its bootstrap
-// error (§7.4) and reads the token from the old place. So a launch that mints
-// is refused against a job image whose runner predates sealSince, before the
-// claim, the mint or the object, with the fix named; a launch that mints
-// nothing is not judged at all.
+// error (§7.4) and reads the token from the old place. So a launch is refused
+// against a job image whose runner predates sealSince, before the claim, the
+// mint or the object, with the fix named.
+//
+// Since AB4 the gate judges every launch of an installation with a budget
+// database (F7): a launch that mints nothing is one budgetMintOn has already
+// refused, and the last subtest pins that a launch whose mode says off is
+// judged here like any other.
 //
 // Mutation (run, restored): drop the seal gate from finishLaunch — the "0.8.1"
 // and "no record" subtests launch and fail.
 // Mutation (run, restored): return nil from sealDevRefusal — the
 // "development image older than the seal" subtest launches and fails.
+// Mutation (run, restored): read the mode (or the mint decision) in sealGate
+// again — "a launch whose mode mints nothing is judged too" launches and
+// fails.
 func TestTheSealGateRefusesAnImageThatPredatesTheSeal(t *testing.T) {
 	for _, tc := range []struct {
 		name, base string
@@ -338,11 +345,18 @@ func TestTheSealGateRefusesAnImageThatPredatesTheSeal(t *testing.T) {
 			}
 		})
 	}
-	t.Run("a launch that mints nothing is not judged", func(t *testing.T) {
-		f := newCloudFixture(t)
-		writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.8.1")
-		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", budgetRun, "Add a feature"); err != nil {
+	t.Run("a launch whose mode mints nothing is judged too", func(t *testing.T) {
+		f := newLaunchBudget(t, "off")
+		if err := removeBuildRecord(f.cloudFixture); err != nil {
 			t.Fatal(err)
+		}
+		writeBuildRecordAt(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.8.1", time.Time{}, false)
+		_, _, err := runBudget(t)
+		if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "release 0.8.1") {
+			t.Fatalf("err = %v, want the seal gate's refusal: every launch of an installation with a budget database is judged, whatever the mode says (AB4, F7)", err)
+		}
+		if launchedAny(f) || readToken(t, f.cloudFixture, budgetRun) != "" || len(f.iam.SignCalls()) != 0 {
+			t.Fatal("a refused launch minted, sealed or launched")
 		}
 	})
 }
