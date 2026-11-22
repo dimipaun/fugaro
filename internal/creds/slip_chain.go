@@ -108,14 +108,20 @@ type SlipChain struct {
 // `round-robin` turns through them, `failover` takes the one exhausted longest
 // ago. It is the signature CS1 calls inside one pool and PL3 implements.
 //
-// It answers the member to serve from and how long the call may hold it, and
-// where there is none to serve from it answers what the selection path answers
-// for the same states (Selector.Select), so that a pool is one more place a
-// credential comes from and not a second vocabulary:
+// It answers what the selection path answers for the same states
+// (Selector.Select), shape for shape and value for value, so that a pool is one
+// more place a credential comes from and not a second vocabulary. The Duration
+// it returns is the WAIT until a member is usable in every one of those shapes
+// and is NEVER a hold time: a lease's TTL has no place in this signature, and a
+// picker that answered one would be handing CS1 a duration to read as a wait.
 //
+//   - a member, 0, nil — serve the call there. There is nothing to wait for on
+//     this path, so the wait is zero, exactly as Select answers it beside a
+//     credential;
 //   - *ExhaustedUntil — no member is usable NOW and one becomes usable at a
-//     known time. The walk applies Select's own wait-or-switch rule to it, the
-//     same rule a selection gets;
+//     known time, which the error carries and the wait beside it repeats. The
+//     walk applies Select's own wait-or-switch rule to it, the same rule a
+//     selection gets;
 //   - ErrNoCredential — no member is usable and none becomes usable by waiting:
 //     every member is broken, or holds a mark with no time to wait for. It is a
 //     REFUSAL and never a fallback (D143), exactly as it is on the selection
@@ -134,8 +140,10 @@ type PoolPicker interface {
 	// to turn through need; members are the pool's candidates in the order its
 	// owner listed them.
 	//
-	// Its answers are the ones the interface's own comment names: a member and
-	// its hold time, *ExhaustedUntil or ErrNoCredential for a pool with nothing
-	// to serve from, and ErrNoCandidates only for an empty member list.
+	// Its answers are the ones the interface's own comment names: a member and a
+	// zero wait, *ExhaustedUntil with that wait beside it or ErrNoCredential for
+	// a pool with nothing to serve from, and ErrNoCandidates only for an empty
+	// member list. The Duration is the wait in every shape and never a hold
+	// time.
 	PickInPool(ctx context.Context, ref routing.PoolRef, run Run, members []Credential) (Credential, time.Duration, error)
 }

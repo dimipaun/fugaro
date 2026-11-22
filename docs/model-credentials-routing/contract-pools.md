@@ -206,14 +206,20 @@ function because the stub the sides are written against until PL3 lands is a fil
 declaration there would have to be moved by the deletion rather than deleted. Its stub answers the
 pool's first member, and `ErrNoCandidates` when it is handed no members at all.
 
-What the picker answers when there is nothing to serve from is the selection path's own language
-(`Selector.Select`), not a second one:
+What the picker answers is the selection path's own language (`Selector.Select`), not a second one.
+**The `time.Duration` it returns is the wait until a member is usable in every shape and never a hold
+time** — a lease's TTL has no place in this signature, and a rule that answered one would be handing
+CS1 a duration to read as a wait. Shape for shape:
 
-- **`*ExhaustedUntil`** — no member is usable now and one becomes usable at a known time. The walk
-  applies `Select`'s own wait-or-switch rule to it, exactly as it does to a selection.
-- **`ErrNoCredential`** — no member is usable and none becomes usable by waiting: every member is
-  broken, or holds a mark with no time to wait for. It is a **refusal and never a fallback** (D143),
-  as it is on the selection path, where a dead token is the case the difference matters most.
+- **a member and a zero wait** — serve the call there. There is nothing to wait for on that path, just
+  as `Select` answers it beside a credential.
+- **`*ExhaustedUntil`** — no member is usable now and one becomes usable at a known time, which the
+  error carries and the wait beside it repeats. The walk applies `Select`'s own wait-or-switch rule to
+  it, exactly as it does to a selection.
+- **`ErrNoCredential` and a zero wait** — no member is usable and none becomes usable by waiting:
+  every member is broken, or holds a mark with no time to wait for. It is a **refusal and never a
+  fallback** (D143), as it is on the selection path, where a dead token is the case the difference
+  matters most.
 - **`ErrNoCandidates`** is none of those. It is the refusal of being handed **no members at all** — a
   caller's mistake, a pool read that came back empty — and the walk must not move past it. Answering
   it for an exhausted pool would hide the mistake behind a wait or a fallback to the chain's next
