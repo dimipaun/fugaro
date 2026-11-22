@@ -235,20 +235,40 @@ type charge struct {
 	// It decides whether the call is notional or money (C1.16, D140).
 	tier string
 	// chain is the answer the credentials service wrote for this call (C1,
-	// contract-table.md), read off it where the tier is read (CS2): the
-	// source that served, whether it was a fallback, and the model that
-	// served. Its zero -- a call the service did not answer -- leaves the
-	// call settling exactly as it did before the member existed.
+	// contract-table.md): the source that served, whether it was a fallback,
+	// and the model that served. Its zero -- a call the service did not answer
+	// -- leaves the call settling exactly as it did before the member existed.
 	//
-	// Two things the ledger does with it are its own (CS8, D140). The money,
-	// the model rows and the last-settled model follow the model the answer
-	// names, and not the name the response body claims in place of it: a
-	// source entry may name a model (a written downgrade) and a route's
-	// spelling differs from the canonical one (CS3), so the body carries the
-	// model the agent asked for and only the answer says which model served.
-	// And a fallback that a metered source paid for is real money: it is
-	// charged, held to the caps and counted into fallbackUSD like any other
-	// key call, which is what Cost.FallbackUSD reports.
+	// **Nothing fills it yet.** The members are response headers the service
+	// writes only to a caller that sent the stage header, and both the read and
+	// the option that turns it on are CS2's (chainwire.go, Options.ChainServed):
+	// CS2 fills this field where it reads the answer, in forward.go beside the
+	// serviceAnswer call that already reads the tier. Every call this tree
+	// serves today therefore carries a zero here and settles exactly as it did
+	// before, and the chain tests are the only callers that fill one.
+	//
+	// **What the ledger does with a filled one (CS8, D140), and what it does
+	// not.** The rows and the fallback money are the ledger's own: a settled
+	// call's model rows, its per-stage report split and band and the run's
+	// last-settled model follow the SERVED model and not the name the response
+	// body claims in place of it (a source entry may name a model -- a written
+	// downgrade -- and a route's spelling differs from the canonical one, CS3,
+	// so the body carries the model the agent asked for and only the answer says
+	// which model served), and a fallback a metered source paid for is real
+	// money, charged, held to the caps and counted into fallbackUSD like any
+	// other key call, which is what Cost.FallbackUSD reports. The AMOUNT is not
+	// the ledger's: it is the figure forward.go's fromUsage priced, and pricing
+	// the call at the served model's rates, band and pinSpelling is the other
+	// half of this same member -- CS2's, in CS2's forward.go, because the answer
+	// is only in hand after serviceAnswer and fromUsage runs with it.
+	//
+	// The two halves must land together, which is why this comment names the
+	// coupling: an amount priced at the model the body named, filed under the
+	// row of the model that served, would put one model's price under another
+	// model's name and take its band from a row the call was never charged at.
+	// The answer is zero until CS2 prices by it, so no call can be filed that
+	// way today, and fromUsage taking `serving` from this member -- one line,
+	// where it reads t.model now -- is what keeps it so.
 	chain ChainAnswer
 	// usage is the call's reported token counts as the gateway priced them,
 	// which is what the run's cache totals are summed from and what its
@@ -290,6 +310,13 @@ type charge struct {
 // and the answer is where the model the call was really sent to is written
 // down. Pricing the call by the name the body carries would charge the model
 // the agent asked for while another model answered.
+//
+// It names the model the call is FILED under: the model rows, the per-stage
+// report split and band, and the run's last-settled model. The rates the amount
+// was taken at are decided in forward.go's fromUsage, which must take its
+// serving model from this same member (CS2) -- the ledger is handed an amount
+// and cannot reprice it -- and charge.chain's comment carries why the two land
+// together.
 func (c charge) servedModel() string {
 	if c.chain.Model != "" {
 		return c.chain.Model
@@ -335,9 +362,10 @@ func (c *charge) recordReport(rep pricing.Micros, lo, hi pricing.Rates, u pricin
 func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// The model this call's dollars, its rows and the run's last-settled model
-	// follow: the credentials service's answer when it named one, the
-	// response's own claim otherwise (CS8, C1's X-Fugaro-Model).
+	// The model this call's rows, its report split and band and the run's
+	// last-settled model follow: the credentials service's answer when it named
+	// one, the response's own claim otherwise (CS8, C1's X-Fugaro-Model). The
+	// amount charged is the figure forward.go priced, not one taken here.
 	served := c.servedModel()
 	s.reserved -= w
 	if s.reserved < 0 { // never: every settle matches one reserve

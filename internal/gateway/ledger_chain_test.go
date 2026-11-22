@@ -9,15 +9,21 @@ import (
 )
 
 // The chain's answers reach the ledger for two figures of its own (C1, CS8,
-// D140): the model a call is accounted by, which is the model that served and
-// not the one the question named, and the money a metered source spent serving
-// a fallback.
+// D140): the model a settled call is accounted by, which is the model that
+// served and not the one the question named, and the money a metered source
+// spent serving a fallback.
 //
-// These are settled directly rather than posted through the harness because the
-// answer's members are read off the service's response headers, which is CS2's
-// wiring of the model path: what is pinned here is the ledger's half of it, the
-// charge the answer is carried on being the seam CS2 fills (forward.go sets
-// chain where it sets tier).
+// These are settled directly rather than posted through the harness because
+// nothing reads the answer's members off the service's response headers yet --
+// that read, and the option that makes the service write them at all, are CS2's
+// (chainwire.go, Options.ChainServed) -- so no call this tree forwards carries
+// an answer, and no forward-path test can post one. What is pinned here is the
+// ledger's half of the member: a filled answer moves the rows, the per-stage
+// split and band, the run's last-settled model and fallback_usd. It is NOT the
+// price: the amount below is a figure this test hands the ledger exactly as
+// forward.go hands it one, and pricing a call at the served model's rates, band
+// and pinSpelling is CS2's half of the same clause, in CS2's forward.go --
+// charge.chain's own comment carries the coupling between the two.
 
 // servedRun is the gateway's money after one settled call with answer's
 // members, with amount charged at the tier and the usage read: what the ledger
@@ -41,6 +47,12 @@ func settleChain(t *testing.T, h *harness, c charge) {
 // own spelling differs from the canonical one (CS3), so the body carries the
 // question and only the answer says what served. Pricing the call by the body
 // would charge the model the agent asked for while another model answered.
+//
+// What this test does not do is price: the amount is handed in, exactly as
+// forward.go hands the ledger one, so the rates the call was charged at are
+// fromUsage's and CS2's (the package comment above says why they must land
+// together, and charge.chain's comment in ledger.go says it to a reader of the
+// field).
 //
 // The tokens a repricing of the run reads back (Ledger.ModelTokens, F8) are the
 // one figure the answer does NOT move, and deliberately: they are keyed by the
