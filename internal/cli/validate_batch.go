@@ -189,15 +189,17 @@ func batchOptInRefusal(lc *localcfg.Config) string {
 	return "the published batch block's opt-in fact " + state + " (batch.opt_in), and a Batch launch proceeds only where it is `in`: the fact is the installation's own answer to whether Batch runs are wanted, and it is neither a machine's local choice nor a fact the project holds (docs/batch-run-identity/implementation-plan.md, R3, D3110 and D3111). Every launch of this installation is refused before anything is created, and no launch reads the cloud to decide it"
 }
 
-// batchOptInFix is what the fact's reader has to do about it, and it is not
-// `fugaro update`: the update applies the compute root only where the fact is
-// there (BR6, R2), so the update is what FOLLOWS the opt-in and never what
-// performs it. Only an operator can opt an installation in, and the write that
-// publishes the fact is the selection of the backend (BR18, R2) -- which makes
-// this check the one Batch check whose fix a config can still be missing after
-// every cloud fact is in place.
+// batchOptInFix is what the fact's reader has to do about it, and it names one
+// command: the selection, which is the write that publishes the fact (BR18,
+// R2). It does not hand over `fugaro update`, for the reason the update is not
+// what performs this: it applies the compute root only where the fact is
+// already there (BR6, R2), and the command that writes it is what chains the
+// update (the next-step lint, AP7's audit: a message may not send the reader to
+// a followed-up command by hand). Only an operator can opt an installation in,
+// which makes this check the one Batch check whose fix a config can still be
+// missing after every cloud fact is in place.
 func batchOptInFix(lc *localcfg.Config) string {
-	return "opt this installation in: the fact lives in the published batch block and an operator's selection of the backend writes and publishes it (fugaro backends use cloud-batch, once the rest of the Batch checks pass -- R2, R15). Then run fugaro update in " + lc.GCPProject + ", which applies the compute root where the fact is present"
+	return "opt this installation in: the fact lives in the published batch block, and an operator's selection of the backend writes and publishes it (fugaro backends use cloud-batch, once the rest of the Batch checks pass -- R2, R15). Until the fact is there, nothing converges the installation's own " + lc.GCPProject + " for Batch (the compute root is applied where the fact is present, BR6 and R2), and no run of it can claim an identity"
 }
 
 // artifactOnBatchRefusal is the artifact boundary as both of its callers ask

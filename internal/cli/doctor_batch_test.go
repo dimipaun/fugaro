@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	crm "google.golang.org/api/cloudresourcemanager/v1"
 )
 
 // The Batch half of `fugaro doctor` (plan 2026-10-19-compute-backend.md Task 8
@@ -979,7 +981,9 @@ func TestDoctorNamesTheUpdateWhereTheLinkGrantIsMissing(t *testing.T) {
 	r.crm.SetPolicy("proj-1234", batchProvisionedPolicyWithoutLink()...)
 	r.withBatchSelected(t, f, batchBlock, batchLists)
 
-	c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-link-grant")
+	// The mark is read in process: it is what the gate reads and --json does
+	// not carry it.
+	c, ok := doctorCheckByID(batchChecksInProcess(t, r), "batch-link-grant")
 	if !ok {
 		t.Fatal("doctor reports no batch-link-grant check")
 	}
@@ -1112,9 +1116,9 @@ func TestNoCheckMentionsAKey(t *testing.T) {
 
 	r, f := newDoctorRig(t), newBatchFakes(t)
 	batchProvisioned(t, r, f)
-	// The world that reports the most: every cloud fact present, the opt-in
-	// fact absent, so the two claim checks and Task 10's whole list print.
-	r.withBatchSelected(t, f, batchBlockWithoutOptIn, batchLists+batchLists)
+	// The world that reports the most: every cloud fact present and the opt-in
+	// fact absent, so the claim's fact check prints beside Task 10's whole list.
+	r.withBatchSelected(t, f, batchBlockWithoutOptIn, batchLists)
 	for _, c := range r.runDoctorJSON(t).Checks {
 		if !strings.HasPrefix(c.ID, "batch-") {
 			continue
@@ -1178,9 +1182,9 @@ func TestTheChecksOnlyTheUpdateFixesAreMarked(t *testing.T) {
 			batchProvisionedWithout(t, r, f, w.without...)
 			r.withBatchSelected(t, f, batchBlock, batchLists)
 
-			o := r.runDoctorJSON(t)
+			checks := batchChecksInProcess(t, r)
 			var marked []string
-			for _, c := range o.Checks {
+			for _, c := range checks {
 				if !strings.HasPrefix(c.ID, "batch-") || c.OK {
 					continue
 				}
@@ -1198,7 +1202,7 @@ func TestTheChecksOnlyTheUpdateFixesAreMarked(t *testing.T) {
 			slices.Sort(marked)
 			union = append(union, marked...)
 			if len(marked) == 0 {
-				t.Errorf("no check of this world is marked, and the world is missing exactly the root's work: %+v", failingChecks(o))
+				t.Errorf("no check of this world is marked, and the world is missing exactly the root's work: %+v", checks)
 			}
 		})
 	}
@@ -1207,6 +1211,25 @@ func TestTheChecksOnlyTheUpdateFixesAreMarked(t *testing.T) {
 	if !slices.Equal(union, want) {
 		t.Errorf("the checks the update alone fixes are %v, want %v (R14)", union, want)
 	}
+}
+
+// batchChecksInProcess runs doctor's Batch checks the way the gate runs them:
+// in process, against the rig's own config and fakes. doctorCheck.updateFix is
+// not in --json -- it is not a class, it is the one question `fugaro backends
+// use` asks before refusing a selection -- so a test about the mark has to read
+// the checks the gate reads rather than the report.
+func batchChecksInProcess(t *testing.T, r *doctorRig) []doctorCheck {
+	t.Helper()
+	lc, err := localcfg.Load(r.cfgPath)
+	if err != nil {
+		t.Fatalf("the rig's own config does not read back: %v", err)
+	}
+	ctx := context.Background()
+	c, err := crm.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.ResourceManager)...)
+	if err != nil {
+		t.Fatalf("the rig's own resource_manager endpoint does not open: %v", err)
+	}
+	return doctorBatchChecks(ctx, lc, c)
 }
 
 type batchGateCondition struct {

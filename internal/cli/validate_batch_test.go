@@ -59,7 +59,12 @@ func batchValidateRigWith(t *testing.T, machineType, backendName string, timeout
 		"  boot_image: projects/proj-1234/global/images/family/fugaro-base\n" +
 		"  network: projects/proj-1234/global/networks/fugaro\n" +
 		"  subnetwork: projects/proj-1234/regions/us-east5/subnetworks/fugaro\n" +
-		"  service_account: fugaro-runs@proj-1234.iam.gserviceaccount.com\n"
+		"  service_account: fugaro-runs@proj-1234.iam.gserviceaccount.com\n" +
+		// The block's opt-in fact (BR7, R3): the rig is an installation that
+		// has answered it, so a case below that is about another field is not
+		// also refused for this one. The fact's own case is
+		// TestValidateRefusesAnInstallationThatNeverOptedIn, which clears it.
+		"  opt_in: in\n"
 	if machineType != "" {
 		yaml += "  machine_type: " + machineType + "\n"
 	}
@@ -134,7 +139,7 @@ func TestValidateRefusesAnInstallationThatNeverOptedIn(t *testing.T) {
 			if tc.state != "" {
 				state = tc.state
 			}
-			for _, want := range []string{state, "batch.opt_in", "R3", "fugaro backends use cloud-batch"} {
+			for _, want := range []string{state, "batch.opt_in", "R3", "D3110"} {
 				if !strings.Contains(ps[0].Message, want) {
 					t.Errorf("the refusal does not name %q: %s", want, ps[0].Message)
 				}
