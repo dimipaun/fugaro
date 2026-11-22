@@ -763,6 +763,30 @@ func TestGraphStubRefusesWhateverTheFlags(t *testing.T) {
 	assertStubSaysWhy(t, "graph", "graph", "--help")
 }
 
+// TestPaidSubcommandsAreUnderAFamilyTheReleasedTreeKeeps pins the written-down
+// list cliRefPaidSection reads (docs_website_cliref_test.go): every entry has to
+// be a name below a family the released tree builds, and a name that family does
+// not answer to itself. An entry missing either half would exempt a reference
+// section this build can judge -- a command the core holds under a name it has,
+// or a name under a parent there is no command for -- and the core's own check
+// would stop holding that page.
+func TestPaidSubcommandsAreUnderAFamilyTheReleasedTreeKeeps(t *testing.T) {
+	extendState(t)
+	core := coreSurface()
+	if len(paidSubcommands) == 0 {
+		t.Fatal("no paid subcommand is written down: this test would prove nothing")
+	}
+	for _, sub := range paidSubcommands {
+		if !core.rootCommands[sub.parent] {
+			t.Errorf("paid subcommand %s %s: the released tree has no command of that name at the root", sub.parent, sub.name)
+			continue
+		}
+		if core.subCommands[sub.parent][sub.name] {
+			t.Errorf("paid subcommand %s %s: the released tree answers to that name below %s, so that section is the core's to judge", sub.parent, sub.name, sub.parent)
+		}
+	}
+}
+
 // ---- the launch planner (A3.0) -------------------------------------------
 
 // abPair is the pair a test planner answers with: the champion's block for

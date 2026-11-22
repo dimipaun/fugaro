@@ -458,6 +458,35 @@ func paidCommandNames() []string {
 	return names
 }
 
+// paidSubcommand is one paid command that lives under a command the released
+// tree builds rather than at the root, named by the parent's own name and the
+// name below it: `fugaro orchestrator map` is `ee/orchestrator/cli`'s,
+// registered from ee/ under the `orchestrator` family the core keeps
+// (RegisterSubcommand; CG6 of docs/console-fixes/implementation-plan.md).
+type paidSubcommand struct {
+	// parent is the name the released tree holds at the root.
+	parent string
+	// name is the command's own name below that parent, which the released
+	// tree does not answer to.
+	name string
+}
+
+// paidSubcommands are the paid commands that sit under a core family, written
+// down rather than read off the tree: a registration happens at run time, in a
+// process that carries ee/register (applyExtensions), so a build without that
+// code — and the CLI reference's core-side check, which runs in one — cannot
+// see from the tree that the tagged tree answers to the name. Nothing here
+// decides what a tree holds: RegisterSubcommand judges a registration against
+// the released tree, and a core build carries no stub for such a name either —
+// the stub stands in for a paid name at the root (D522), and ee/orchestrator/cli
+// pins that the released tree answers no `orchestrator map` at all. Its one
+// reader is cliRefPaidSection, which admits a reference section that is the
+// tagged tree's to carry, and only while the released tree does not hold the
+// name.
+var paidSubcommands = []paidSubcommand{
+	{parent: "orchestrator", name: "map"},
+}
+
 // stubCommandNames are the paid names a core build answers with newPaidStub:
 // every name above that a core build may speak of. A core build shows a stub
 // for a name it does not hold rather than leaving the name unknown to cobra,
