@@ -6954,8 +6954,8 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     // this case can see.
     const secondRun = '20261030-221500-9f02'
     const lines: readonly unknown[] = [
-      { type: 'row', ...QUEUE_RUN },
-      { type: 'row', ...QUEUE_RUN, run: secondRun },
+      { type: 'row', row: QUEUE_RUN },
+      { type: 'row', row: { ...QUEUE_RUN, run: secondRun } },
       { type: 'end', version: 1, count: 2 },
     ]
     const stream = holding()

@@ -1,6 +1,6 @@
 # Dynamic secret delivery: implementation plan
 
-**Status: plan only; nothing is implemented; no task is approved.** It builds [spec.md](spec.md) as amended by
+**Status: every task has merged except DS3.4 (token ownership on the run record).** It builds [spec.md](spec.md) as amended by
 [reconciliation.md](reconciliation.md) (D1930–D1946, R1–R12, answered 2026-11-09, all as recommended). Each
 task needs the owner's own explicit go; answering a decision is not approving a task. Base: `main` at
 `934bb23f8`. Numbers held: **D1930–D1959**, **Checks 510–519** (510 and 511 used here; 512–519 reserved).

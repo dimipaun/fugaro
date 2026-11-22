@@ -26,7 +26,8 @@ package cli
 //     sentence is one a rewrite drifts into: that the workspace is a boundary
 //     between members, that a member's database cannot be read, that the
 //     workspace holds no credential, that the cap cannot be passed, that
-//     revocation is immediate, and that the meter is wired on this tree.
+//     revocation is immediate, and that the cap binds on every
+//     shared-credential call.
 //
 // The red step is this file's first run: the sentences it pins are not written
 // yet, so it fails on the section's own absence.
@@ -118,19 +119,52 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"reserves the room for a call before it makes it and settles on the response's usage",
 		"**the reservation in flight**",
 		"**a failed settle refuses**",
-		// And the limit this release does not hide: the meter is not wired, so
-		// the cap binds nothing on this tree.
+		// The wiring, and what it reaches: the reservation is taken before
+		// every paid call the workspace's own service answers — the probe
+		// included, since a probe is a call the workspace pays for — the
+		// settle's failure refuses the call, a subscription token's call
+		// spends nothing of the workspace's money, and an INSTALLATION's scope
+		// is the one with no meter, unchanged in every behavior. The sentence
+		// has to name which of the two deployments that scope is, because this
+		// tree builds both.
+		"the probe a cascade owes a backed-off credential included",
+		"refusing the call when that settle cannot be written",
+		"serving a call on a subscription token unmetered because it spends none of the workspace's money",
+		"it reserves nothing, settles nothing and writes no header",
+		// The headroom's delivery, narrowed to the answers that really carry it:
+		// answer() and refuseMeter write it, and a refusal that never reached the
+		// meter — refuseSelection's wait, the call a credential was already sent
+		// to — writes none, which nothing reads as a ceiling of zero.
+		"the headroom rides the answers the service writes itself",
+		"a refusal that never reached the meter",
+		// And the one path where the fail-closed rule above does not hold. A
+		// streamed answer has already reached the run when its usage is known,
+		// so a settle that cannot be written there is a log line and the
+		// reservation ages out unrecorded. Without this the pin above --
+		// "refusing the call when that settle cannot be written" -- reads as a
+		// rule about every path, while the path most calls take is the one it
+		// does not cover.
+		"**A streamed answer is the one path where a failed settle does not refuse the call, and it is stated rather than hidden**",
+		"released with its amount never reaching the month's settled spend",
+		// And the limits this release does not hide. Both deployments are built
+		// here and the meter binds over the workspace's own, so the sentence
+		// has to say what the cap DOES reach -- the deployment, the route that
+		// leads a member's run to it -- and leave the limits that are real (the
+		// stream, the alarm, the missing per-member share) as the limits.
 		"**And the limit this release does not hide.**",
-		"no code path takes them on this tree",
-		"**a workspace's cap binds nothing today**",
-		// The alarm is the cap's second half and it is unwired too: the section
-		// states the design's alarm above and has to say that nothing hosts it,
-		// or a reader takes it as live while residual risk 1 counts it as a
-		// mitigation. `budget.ReconcileWorkspace` is called from its own test
-		// file and from nothing else on this tree.
-		"**The reconciliation alarm is in the same state**",
+		"**What the wiring reaches, and what it does not, is worth stating exactly.**",
+		"the workspace owner's `fugaro update` applies it with no other step",
+		"reaches that service where the route its own `fugaro update` published says a kind is served from the workspace",
+		// The alarm, which is the cap's second half and is still hosted
+		// nowhere: the section states the design's alarm above and has to say
+		// that nothing runs it, or a reader takes it as live while residual
+		// risk 1 counts it as a mitigation. `budget.ReconcileWorkspace` is
+		// called from its own test file and from nothing else on this tree
+		// (D2991).
+		"**The reconciliation alarm still runs nowhere**",
 		"`budget.ReconcileWorkspace` is reached from its own tests and from nothing that runs",
-		"the meter, the headroom and the alarm arrive together with the wiring",
+		"**And one member can use the cap up for the others**",
+		"no per-member share of the workspace's cap",
 		// The alarm, and the unbound member that fails closed rather than
 		// counting as zero.
 		"**The reconciliation alarm.**",
@@ -290,9 +324,23 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		// the workspace's project, and a section that kept the older wording
 		// would tell a reader no member's account reaches the workspace at all.
 		"because no member holds a grant on the workspace's project",
-		// The meter, which is machinery on this tree and not yet a fence.
+		// The meter, which is machinery on this tree and wired to the paid-call
+		// path of the workspace's own deployment -- which is built here and
+		// which `fugaro update` applies -- so the cap IS a fence over a
+		// member's metered call. What is wider than the tree is the word
+		// "every": a kind served from the project's own copy is not metered,
+		// and a subscription token's call reserves nothing.
 		"the workspace's cap is enforced on every shared-credential call",
 		"every shared-credential call is metered",
+		// The stale spellings this section carried while the meter was unwired
+		// or the deployment unbuilt. All three are now false in the other
+		// direction, and a section that kept one would tell a reader the cap
+		// is not a fence at all when it is.
+		"**a workspace's cap binds nothing today**",
+		"still not a fence over any call a member makes today",
+		"does not exist on this tree yet",
+		"answers every call as an **installation**",
+		"no code path takes them on this tree",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: that is wider than the design and wider than the tree", banned)
