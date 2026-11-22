@@ -4,10 +4,12 @@
 //
 // An orchestrator id is the project's name for the project's default
 // orchestrator, and the project's name, a `~` and a slug for a named one
-// (D3207, D3218). The rule is its own and is not agentRE widened (F36): a work
+// (D3207, D3218). The rule is its own and is not idRE widened (F36): a work
 // item's id is letters, digits, `-` and `_` capped at 64, and admitting `~` to
 // it would let an item's id and an orchestrator's be the same string in one
-// keyspace. The project half is config.ProjectNameRE itself, so the default id
+// keyspace — which is why the store's id check is this rule and not a widened
+// idRE (store.go's checkAgentID). The project half is config.ProjectNameRE
+// itself, so the default id
 // is exactly the project's name and no id can name a project a project cannot
 // be.
 //

@@ -132,7 +132,16 @@ func runOrchestratorRun(cmd *cobra.Command, o *orchestratorRunOptions) error {
 	if err != nil {
 		return userErr("naming this daemon: %v", err)
 	}
-	lease, err := orchestrator.NewLease(db, id, holder, db.ServerNow)
+	// Who drives the id is the person whose credential takes this lease (D3218,
+	// F18): the driver node names a principal, and the console's Coordinator tab
+	// draws it. A machine that cannot say who it is — no user in the local
+	// config and no git identity — writes no driver node rather than a wrong
+	// one, which the map reads as unknown, exactly as it is.
+	driver, meErr := lc.Me(ctx)
+	if meErr != nil {
+		driver = ""
+	}
+	lease, err := orchestrator.NewLease(db, id, holder, driver, db.ServerNow)
 	if err != nil {
 		return userErr("%v", err)
 	}

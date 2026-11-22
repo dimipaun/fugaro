@@ -17,8 +17,8 @@
     },
     "id": {
       "type": "string",
-      "description": "The orchestrator id, which is the selected project's name: the commands take no id of their own (D1358 puts one orchestrator per project). The pattern is internal/orchestrator's agentRE, the rule every path under orchestrator/<id> is built and checked by.",
-      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+      "description": "The orchestrator id. It is the selected project's name for the project's default orchestrator, and `<project>~<name>` for a named one (D3207). The pattern is internal/orchestrator's orchestrator id rule (naming.go, ValidOrchestratorID), the rule every path under orchestrator/<id> is built and checked by; it is deliberately not a work item's id, which admits no `~` (F36).",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:~[a-z0-9][a-z0-9-]{0,39})?$"
     },
     "stamp": {
       "type": "string",
@@ -46,8 +46,8 @@
                 "enum": ["local", "central"]
               },
               "project": {
-                "description": "The orchestrator id, which is the selected project's name (D1358 puts one orchestrator per project). The pattern is internal/orchestrator's agentRE, the rule every path under orchestrator/<id> is built and checked by.",
-                "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
+                "description": "The orchestrator id: the selected project's name for its default orchestrator, `<project>~<name>` for a named one (D3207). The pattern is internal/orchestrator's orchestrator id rule (naming.go, ValidOrchestratorID), the rule every path under orchestrator/<id> is built and checked by; it is deliberately not a work item's id, which admits no `~` (F36).",
+                "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:~[a-z0-9][a-z0-9-]{0,39})?$"
               },
               "lease_holder": {
                 "description": "The holder the id's lease node names, which is the daemon driving it. Absent when the node carries no claim, and always absent for an orchestrator this machine caches and the database does not hold.",

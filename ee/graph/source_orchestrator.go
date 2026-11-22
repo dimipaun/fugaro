@@ -187,10 +187,11 @@ func (s OrchestratorSource) Scope() Scope {
 // keeps this source from reading one and from nothing else: a name H1's pattern
 // cannot carry names no local scope, so no registry file is looked for it and the
 // node and then the cache answer exactly as they do on a machine with no daemon.
-// That is the one place the scope's rule is narrower than the daemon's own
-// (agentRE admits `_` and 64 characters), and the limit is named rather than
-// widened: a project whose name carries `_`, or is longer than 40 characters, has
-// no local scope (H1, CG13c).
+// That is where the scope's rule parts from the daemon's own (naming.go, D3207):
+// an id carrying `~`, which is how a named orchestrator is keyed, or one longer
+// than 40 characters, is one H1's pattern refuses, and the limit is named rather
+// than widened — such an id has no local scope (H1, CG13c; F40 is what widens
+// the scope grammar).
 //
 // The *refusal* such a name gets on the command line is the caller's, made when
 // it parses the argument, and it has to be: the command line is the only place a
@@ -235,20 +236,21 @@ func (s OrchestratorSource) Nodes() ([]Node, []Edge, SourceState, error) {
 }
 
 // localID reports whether a local scope's own name is one the kind may carry: it
-// is the two rules that govern the id, and it is the narrower of them that
-// decides — H1's pattern, which is what a value that reaches argv from a renderer
-// may look like (ParseScope), over the daemon's own rule for the id of
-// `orchestrator/<id>` (agentRE). H1's admits no `_` and stops at 40 characters
-// where the daemon's carries 64, so a name this answers false for is one an
-// endpoint may well be serving and one no `local:` scope names, and the limit is
-// named rather than widened: the source reads no endpoint for it (H1, CG13c).
+// is H1's pattern, which is what a value that reaches argv from a renderer may
+// look like (ParseScope), and an id this pattern refuses is one the daemon's own
+// rule for the id of `orchestrator/<id>` (naming.go, D3207) may well admit — a
+// named orchestrator's `~`, an id past 40 characters. So a name this answers
+// false for is one an endpoint may well be serving and one no `local:` scope
+// names, and the limit is named rather than widened: the source reads no endpoint
+// for it (H1, CG13c).
 //
 // It answers, and does not refuse, because of what `all` enumerates: an id there
 // is one the database lists or one this machine holds a cached brief for, and the
 // brief is what makes it local whatever the database holds (graphSources). A
 // refusal would take an orchestrator the database has a state node for — its work
 // items, its dependencies, its place in the console's default graph — out of the
-// document over a project named `my_project`. The command line's own refusal is
+// document over a named orchestrator, `fugaro~night`. The command line's own
+// refusal is
 // made before this source exists, when the argument is parsed, which is the one
 // place a scope is named rather than enumerated.
 func localID(source string) bool {

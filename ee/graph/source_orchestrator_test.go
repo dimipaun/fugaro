@@ -745,11 +745,12 @@ func TestLocalScopeFallsBackToTheNodeAndThenTheCache(t *testing.T) {
 
 // TestAnIdNoLocalScopeNamesIsReadFromItsNode: H1's pattern governs the local
 // scope's argument while the daemon's own rule governs the id of
-// `orchestrator/<id>`, and where the two differ the narrower one decides — a
-// project whose name carries `_`, or is longer than 40 characters, is one no
-// `local:` scope names (CG13c). The endpoint is therefore not read for it, which
-// the counting transport holds, and the node and then the cache answer exactly as
-// they do on a machine with no daemon at all.
+// `orchestrator/<id>`, and where the two differ the narrower one decides — an id
+// carrying `~`, which is how a named orchestrator is keyed (D3207), or one
+// longer than 40 characters, is one no `local:` scope names (CG13c). The
+// endpoint is therefore not read for it, which the counting transport holds, and
+// the node and then the cache answer exactly as they do on a machine with no
+// daemon at all.
 //
 // It is not a refusal, and the cached brief below is why: `all` enumerates the
 // database's ids and this machine's briefs, and a brief is what makes an id local
@@ -764,12 +765,13 @@ func TestLocalScopeFallsBackToTheNodeAndThenTheCache(t *testing.T) {
 // place a local scope is named rather than enumerated.
 func TestAnIdNoLocalScopeNamesIsReadFromItsNode(t *testing.T) {
 	tickedAt := time.Date(2026, 11, 11, 17, 0, 0, 0, time.UTC)
-	const project = "my_project"
-	long := strings.Repeat("o", 41)
+	const project = "my-project~night"
+	long := strings.Repeat("o", 40) + "~night"
 
-	// The id is one the daemon's own rule admits: `agentRE` takes `_` and 64
-	// characters, so a daemon for this project really is serving an endpoint
-	// beside the read that must not reach it.
+	// The id is one the daemon's own rule admits: a project's name, a `~` and a
+	// slug (D3207), so a daemon for this orchestrator really is serving an
+	// endpoint beside the read that must not reach it, while H1's pattern is what
+	// no `local:` scope may carry.
 	if _, err := orchestrator.PathNode(project); err != nil {
 		t.Fatalf("the fixture id is not one the daemon's own rule admits: %v", err)
 	}
