@@ -323,7 +323,10 @@ func readGraph(ctx context.Context, env *fcli.Cloud, store *coordinator.Store, d
 // what a cached brief under this machine's cache directory says, and `central`
 // — here, a plain `orchestrator:` scope — is one only the project's database
 // holds. That is why `ls` and this reader agree about the kind of an id without
-// asking each other: they read the same two things.
+// asking each other: they read the same two things. That rule is also what a
+// cross-orchestrator dependency's far end is keyed by (F17): the scope map built
+// from the same enumeration is handed to every source of the document
+// (documentScopes).
 //
 // Whether the database holds an id *at all* is the third read, and it is `ls`'s
 // own: the keys under `orchestrator/` with no values (orchestrator.NodeIDs). An
@@ -370,6 +373,11 @@ func graphSources(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, scope g
 		// machine's daemon, a cached brief is what says this machine runs one,
 		// and the cache stands in for that scope alone — so an id with no brief
 		// here is refused whatever the database holds (§6.22, D1358).
+		//
+		// Peers is left nil: this document holds the one node the caller named,
+		// so a cross-orchestrator dependency has no peer node to point at and
+		// draws nothing. The enumeration that knows the project's other ids is
+		// `all`'s, and this scope did not ask for it (F17, §6.22).
 		if src.Absent() && scope.Kind == graph.ScopeOrchestrator {
 			held, err := databaseHolds(ctx, env, db, scope.ID)
 			if err != nil {
@@ -407,12 +415,19 @@ func graphSources(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, scope g
 		kind[id] = true
 	}
 	sorted := slices.Sorted(maps.Keys(kind))
+	// The scope each of those ids is drawn under, which every source carries as
+	// its Peers: a cross-orchestrator dependency's far end is keyed by the scope
+	// the peer is drawn in, and the two kinds of this project's orchestrators —
+	// one this machine runs, one only the database holds — are two different
+	// scope names for one id (D1358, F17).
+	scopes := documentScopes(sorted, kind)
 	out := make([]graph.OrchestratorSource, 0, len(sorted))
 	for _, id := range sorted {
 		src, err := orchestratorSource(ctx, env, db, id, kind[id], caches)
 		if err != nil {
 			return false, nil, err
 		}
+		src.Peers = scopes
 		// The enumeration has just answered this for every id: a key under
 		// `orchestrator/<id>` is there, whatever its state node says. It is
 		// what makes an id whose state is not written yet a scope that is down
@@ -421,6 +436,29 @@ func graphSources(ctx context.Context, env *fcli.Cloud, db *rtdb.Client, scope g
 		out = append(out, src)
 	}
 	return true, out, nil
+}
+
+// documentScopes is the scope each orchestrator id is drawn under in one
+// document: `local:<id>` for an id this machine has a cached brief for and
+// `orchestrator:<id>` for the rest, which is CG4's rule for the kind of an
+// orchestrator and the same rule the sources themselves are built by (D1358).
+//
+// It is what a cross-orchestrator dependency's far end is keyed by (F17), and
+// it is built from the enumeration rather than by each source, because one
+// source knows its own kind and cannot know its peers': a document drawn from
+// this machine holds a local orchestrator and a central one under two scope
+// names, and an edge whose far end disagreed with the peer's own key would name
+// no node at all (§6.22).
+func documentScopes(ids []string, local map[string]bool) map[string]string {
+	scopes := make(map[string]string, len(ids))
+	for _, id := range ids {
+		kind := graph.ScopeOrchestrator
+		if local[id] {
+			kind = graph.ScopeLocal
+		}
+		scopes[id] = graph.Scope{Kind: kind, ID: id}.String()
+	}
+	return scopes
 }
 
 // databaseHolds reports whether the project's database holds an id at all: one
