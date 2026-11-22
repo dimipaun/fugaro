@@ -20,14 +20,17 @@ import (
 // Vertex is sent, so the pair is a translation and not an identity — writing
 // the two out separately is what holds vertex_gemini.go to that. The prices are
 // Vertex's list prices for the global endpoint, in US dollars per million
-// tokens, as read on vertexGeminiCheckedAt.
+// tokens, as read on vertexGeminiCheckedAt, and Long is the second price the
+// page states for a model it charges two of: a flat row would cap what Vertex
+// bills past the threshold below the real figure.
 var expectedGemini = map[string]struct {
 	Vertex string
 	Input  float64
 	Output float64
+	Long   *Tier
 }{
-	"google/gemini-3-flash": {"gemini-3-flash", 0.3, 2.5},
-	"google/gemini-3-pro":   {"gemini-3-pro", 2, 12},
+	"google/gemini-3-flash": {"gemini-3-flash", 0.5, 3, nil},
+	"google/gemini-3-pro":   {"gemini-3-pro", 2, 12, &Tier{AboveInputTokens: 200_000, InputPerM: 4, OutputPerM: 18}},
 }
 
 // geminiNotCarried are the Gemini models this build does not carry: Vertex
@@ -105,8 +108,9 @@ func TestSpellingForGeminiOnVertex(t *testing.T) {
 }
 
 // TestAnUnpricedGeminiModelIsRefused is GV3's other half: the price table
-// carries Vertex's price for every model the catalog lists, with the date those
-// prices were read, and a Gemini model it does not carry has no price at all —
+// carries Vertex's price for every model the catalog lists — the page's second
+// price too, where it states one — with the date those prices were read, and a
+// Gemini model it does not carry has no price at all —
 // refused in every budget mode, as any unpriced model is (always-a-budget
 // D3020).
 //
@@ -127,6 +131,18 @@ func TestAnUnpricedGeminiModelIsRefused(t *testing.T) {
 		}
 		if m.Rates.InputPerM != want.Input || m.Rates.OutputPerM != want.Output {
 			t.Errorf("%s: charged $%v / $%v a million, want $%v / $%v", canonical, m.Rates.InputPerM, m.Rates.OutputPerM, want.Input, want.Output)
+		}
+		// The long-context price, where the page states one: a row with the flat
+		// price alone charges a call past the threshold about half of what Vertex
+		// bills (WorstCase, and the ledger on what the call reports).
+		got := m.Rates.LongContext
+		switch {
+		case want.Long == nil && got != nil:
+			t.Errorf("%s: priced $%v / $%v above %d input tokens, and the page states one price for it", canonical, got.InputPerM, got.OutputPerM, got.AboveInputTokens)
+		case want.Long != nil && got == nil:
+			t.Errorf("%s: flat $%v / $%v, want the page's second price above %d input tokens ($%v / $%v)", canonical, m.Rates.InputPerM, m.Rates.OutputPerM, want.Long.AboveInputTokens, want.Long.InputPerM, want.Long.OutputPerM)
+		case want.Long != nil && *got != *want.Long:
+			t.Errorf("%s: above %d input tokens charged $%v / $%v, want $%v / $%v", canonical, got.AboveInputTokens, got.InputPerM, got.OutputPerM, want.Long.InputPerM, want.Long.OutputPerM)
 		}
 		// The provenance is Vertex's, and the date is the one the prices were
 		// read: the table's own Source and CheckedAt are the Claude page's, so a

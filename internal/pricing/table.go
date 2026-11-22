@@ -37,9 +37,11 @@ func rates(inputPerM, outputPerM, cacheRead float64) Rates {
 }
 
 // Embedded is the price table built into Fugaro, a fresh copy on every
-// call. None of these models has a long-context tier: the pricing page
+// call. None of the Claude rows has a long-context tier: the pricing page
 // says Claude 4.6 and later models bill the full 1M context window at
-// standard rates. Vertex serves the dateless models under the same ID;
+// standard rates. (Vertex's Gemini 3 Pro row carries one, because its
+// publisher charges two prices for it: vertex_gemini.go.) Vertex serves the
+// dateless models under the same ID;
 // where Vertex's own price differs (regional endpoints carry a premium),
 // owners set model_prices. Models still served but missing here (Fable 5,
 // Opus 4.6 to 4.8, Sonnet 4.6, ...) must be added through model_prices
