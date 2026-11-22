@@ -444,17 +444,18 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// than overwritten.
 	if err := managed.WriteManagedLabelForFlag(ctx, c.CRM, lc.GCPProject); err != nil {
 		// The object is on disk from here on and the project is NOT managed
-		// (readFact requires both marks), so this is not a success. A second
-		// run of this command does not finish it either: the object it may
-		// write is already there — the figures this invocation states are the
-		// ones it records, so the rewrite writes nothing — and the write that
-		// fails is the label, which fails again for the same credential. The
-		// refusal says what is missing, that only the project's owner writes
-		// it at their own terminal, and where that one line is — the condition
-		// and not the command, the rule Task 3.0's refusal text keeps, because
-		// this command's output is the operator's (a coding agent's session is
-		// refused above and never reaches it).
-		return fail(remote(fmt.Errorf("wrote gs://%s/%s, but not the %s=%s label on GCP project %s (%v): the read requires both marks, so %s is not managed yet and nothing is skipped for it. The label is written on the account that owns the project, in the owner's own terminal, and docs/managed-projects/spec.md has that one line; running this command again does not put it there, because the write that fails is the label and not the object",
+		// (readFact requires both marks), so this is not a success. What the
+		// failing write is decides what a second run can do about it: the
+		// object half is settled — the figures this invocation states are the
+		// ones the object records, so the rewrite writes nothing — and the
+		// label is the half left, which a second run retries and which fails
+		// again only where the credential still may not update the project's
+		// labels. The refusal says what is missing, which write it is and the
+		// permission that write needs, and where the owner's own one line is —
+		// the condition and not the command, the rule Task 3.0's refusal text
+		// keeps, because this command's output is the operator's (a coding
+		// agent's session is refused above and never reaches it).
+		return fail(remote(fmt.Errorf("wrote gs://%s/%s, but not the %s=%s label on GCP project %s (%v): the read requires both marks, so %s is not managed yet and nothing is skipped for it. The label is the half that needs resourcemanager.projects.update on the project, so it is written by the account that owns it — the owner's own terminal, whose one line docs/managed-projects/spec.md has. Running this command again with the same --budget retries exactly that write: the object already records the figures this invocation states, so the rewrite writes nothing and the label is the half left to write",
 			safetext.Field(bucket), managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, safetext.Field(lc.GCPProject), safetext.FieldErr(err), safetext.Field(lc.Name))))
 	}
 	// Read back through the managed read itself, with its project-number
@@ -549,7 +550,7 @@ func managedFlagRunMarker(getenv func(string) string) string {
 func managedFlagErr(lc *localcfg.Config, bucket string, err error) error {
 	switch {
 	case errors.Is(err, managed.ErrAlreadyMarked):
-		return userErr("nothing was written for %s: gs://%s/%s is already there and is not the creation fact this command adds a budget to, so %s already records whether it is managed — a run that created it wrote the fact, or an owner flagged it before. This command replaces only a version-1 creation fact, which records no amount; a marker that records one is the owner's decision, not a value to edit. To read what is there, use `gcloud storage cat gs://%s/%s` as the operator",
+		return userErr("nothing was written for %s: gs://%s/%s is already there and is not the creation fact this command adds a budget to, so %s already records whether it is managed — a run that created it wrote the fact, or an owner flagged it before. This command replaces only a version-1 creation fact, which records no amount, and an amount a marker already records is replaced by running this command with --budget naming the new figure, which rewrites the fact rather than writing over it (D2215) — what is here is neither, so nothing was written over it. To read what is there, use `gcloud storage cat gs://%s/%s` as the operator",
 			safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject)
 	case errors.Is(err, managed.ErrRefused):
 		return userErr("nothing was written for %s: the marker goes into the project's own runs bucket, at gs://%s/%s, and that bucket is not %s's: check gcp_project and runs_bucket in the project config, or run fugaro project check: %s",
