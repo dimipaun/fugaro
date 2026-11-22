@@ -990,8 +990,14 @@ func TestMaxOutputLimitReachesTheGateway(t *testing.T) {
 }
 
 func TestPinsInvalidForBudgetIsInfraError(t *testing.T) {
+	// The empty models block is what says "no models" to the harness: every
+	// run has a gateway now (AB1b), and a config that names no models at all
+	// is the one shape a real installation cannot reach any more — the
+	// project layer's defaults pin one — so the run that pins nothing has to
+	// ask for it here (withFixturePins).
+	noModels := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n", "agent:\n  models: {}\n", 1)
 	for name, cfg := range map[string]string{
-		"no models": "",
+		"no models": noModels,
 		"an alias":  strings.Replace(gwConfig(t, ""), "coder: "+sonnet, "coder: sonnet", 1),
 		"no price":  strings.Replace(gwConfig(t, ""), "background: "+haiku, "background: claude-unpriced-1", 1),
 	} {

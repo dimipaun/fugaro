@@ -154,7 +154,7 @@ func TestRunEscalationRunsTheAdversarialStepWhenTheFixRaisesTheMode(t *testing.T
 	// configuration (applyLevels) and the raise out of POC takes the step with
 	// it.
 	raised := strings.Replace(cfg, "  review_rounds: 2\n",
-		"  review_rounds: 2\n  first_line_rounds: 1\n  levels: { l2: { model: senior-model } }\n", 1)
+		"  review_rounds: 2\n  first_line_rounds: 1\n  levels: { l2: { model: "+opus+" } }\n", 1)
 	if raised == cfg {
 		t.Fatal("the fixture has no review_rounds line to put the levels beside")
 	}
@@ -295,12 +295,7 @@ func TestRunRecordsTheRefusalOnlyFinalizeCanSee(t *testing.T) {
 // check).
 func securityRefusedCfg(t *testing.T) string {
 	t.Helper()
-	cfg := strings.Replace(securityLoopCfg(t),
-		"  models: { coder: coder-model, reviewer: senior-model }\n",
-		"  models: { coder: "+sonnet+", reviewer: "+opus+", background: "+haiku+" }\n", 1)
-	if cfg == securityLoopCfg(t) {
-		t.Fatal("the fixture has no models line to name the run's own models under the budget")
-	}
+	cfg := securityLoopCfg(t)
 	out := strings.Replace(cfg, "  first_line_review: on\n",
 		"  first_line_review: on\n  levels: { l3: { model: "+deepseek+", effort: high } }\n", 1)
 	if out == cfg {
