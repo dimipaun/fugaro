@@ -68,6 +68,14 @@ type PromptData struct {
 	// model has an image rate sends the image itself and gets the brief every
 	// run had before this rule existed.
 	NoImageReads bool
+	// Promote is the promote brief (runner/promote.go, fugaro run --promote):
+	// the area the run raises, the level it raises it to, the area's own
+	// backlog items quoted as data, and the one rule that says what may be
+	// closed. The runner builds it at the first brief from the checkout's own
+	// items, so it is a brief no launcher writes and no task text carries. ""
+	// for every run that is not a promote run, and the brief is then absent
+	// rather than empty-headed.
+	Promote string
 }
 
 // imageReadKinds is the kinds agent.ImageBlockExtensions names, spelled as the
@@ -201,6 +209,12 @@ func SystemPrompt(d PromptData, instructions, persona string) string {
 	}
 	lines = append(lines, fmt.Sprintf("- Tell Fugaro what you found out about the order of the work by writing %s/%s, which is outside your checkout: a JSON object with `blocks` (the items that must wait for this run) and `needed` (the items this run found it needed first), each a list of entries naming a plan task as `plan_task`, or a path your change touches as `path`, with a one-line `reason`. Fugaro reads it when the run ends, and a file that is missing or unreadable changes nothing.", d.StateDir, discoveredFile))
 	s := strings.Join(lines, "\n") + "\n"
+	if strings.TrimSpace(d.Promote) != "" {
+		// The promote brief comes after the rules and before the repository's
+		// own instructions: it is the run's task in the runner's words, and
+		// the area's items it quotes are data (LV7.1).
+		s += "\n" + d.Promote
+	}
 	if strings.TrimSpace(instructions) != "" {
 		s += "\nRepository instructions:\n\n" + instructions
 	}
