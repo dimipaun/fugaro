@@ -46,7 +46,7 @@ The claim's wire is the merged C1 of the launcher plan (`internal/identitywire/w
 | --- | --- | --- | --- |
 | `TicketRequest` | `job` (`JobName`) | the launcher, in its ask | a Cloud Run launch: the ask is the release behind's, byte for byte |
 | `ClaimRequest` | `attestation` (`Attestation`) | the run, in its claim | a Cloud Run launch: the claim is the release behind's, byte for byte |
-| `Record` | `job` (`JobName`) | the ticket route, with the ticket (R19) | a Cloud Run run's record |
+| `Record` | `job` (`JobName`) | the ticket route, with the ticket (R19), and again by a re-ask before the claim (R6) | a Cloud Run run's record, or one whose launcher last asked without a job |
 | `Record` | `job_id` (`string`) | the registration, once (R19) | a record that names no job, or one whose job is not registered yet |
 
 - **Both body fields are `omitempty`**, and that is a fact about a bridge and not a tidiness: a
@@ -65,11 +65,20 @@ The claim's wire is the merged C1 of the launcher plan (`internal/identitywire/w
   and zone, which is the fact the link is made of. It is a credential of the VM and is treated as a
   secret everywhere (R7): it reaches no log line, no error, no audit line and no record — `Record`
   keeps no copy of it, exactly as it keeps no copy of the ticket or the nonce.
-- **The record's `job` is written with the ticket** and never changes while the record lives: it is
-  the launcher's own word about the launch it is making, and a second job under the same name is a
-  different launch with a different run id. **The record's `job_id` is written by the registration**
-  and only once; a record that names a job and carries no id yet is a launcher that died between
-  its two calls, and the run stops at its claim, which is the safe side (R1).
+- **The record's `job` is written with the ticket, and it is not immutable while the ticket is
+  unclaimed**: the record's own caller may ask again before the claim, and that ask replaces the
+  ticket **and the job together**, in the sweep's one write — R6's
+  `TestTicketReplacedBeforeClaim` pins the ticket and the same write carries the job, so the field
+  always holds the **last** ask's word. It is the launcher's own word about the launch it is
+  making, and a second job under the same name is a different launch with a different run id; a
+  launcher that asked for a job and then re-asked without one has made its **own** run a Cloud Run
+  claim, and only that caller could have — the ticket is re-issued to no other identity (R5), and
+  the field is the ticket route's write alone and never the claim's. **What fixes it is the claim**:
+  a claimed ticket is never re-issued (R4), so no ask is served after the claim and the field the
+  claim route reads is the one the last unclaimed ask wrote. **The record's `job_id` is written by
+  the registration** and only once, and only before the claim (BR17), so the id cannot move it
+  either; a record that names a job and carries no id yet is a launcher that died between its two
+  calls, and the run stops at its claim, which is the safe side (R1).
 - **What does NOT change.** No field of the claim names a uid, a claim set or the signer; no field
   the service signs is read from a caller. The record's `job` and `job_id` are read back by this
   service and by the record's own rules, and no other reader outside the binary consumes them —
@@ -79,8 +88,10 @@ The claim's wire is the merged C1 of the launcher plan (`internal/identitywire/w
 
 A record that names a job is a **Batch launch**, and a Batch launch is served only to a VM of that
 job — which the account check alone cannot decide, because every job one launcher creates runs as
-the same job service account (F4). The service's rule follows, and it is asked **before anything of
-the installation is read** (`credsvc.CheckClaimAttestation`):
+the same job service account (F4). The field turns on what the record holds **at the claim**, and
+what it holds then is the last ask of the caller on the record (R6, above): the claim itself can
+neither set it nor clear it. The service's rule follows, and it is asked **before anything of the
+installation is read** (`credsvc.CheckClaimAttestation`):
 
 - a record that names a job, claimed with **no** attestation, is refused (`ErrClaimAttestation`);
 - a record that names a job, claimed with something that is **not shaped like** an identity token
@@ -184,13 +195,16 @@ setting the input at deploy.
 - **The launcher** (BR1, BR17): its ticket ask may name the job it is about to create, in the
   platform's spelling; the identity the service issues is then for a run on that job and for no
   other, and its claim will need the attestation. It registers the id after the create, before the
-  run claims, and it may rely on the route refusing an id it did not ask for the ticket for.
+  run claims, and it may rely on the route refusing an id it did not ask for the ticket for. A
+  re-ask before the claim is its own last word — the job goes with the ticket it replaces — so a
+  launcher that means its run to be attested names the job in the ask the record is left holding.
 - **The run** (BR4): on Batch it claims with its VM's identity token in the full format; on Cloud
   Run it claims with the ticket and the nonce alone, exactly as before. It never names a job at the
   claim, and it never learns anything about the link's answer beyond served or refused.
 - **The service** (LM1's ticket route): it records the ask's job with the ticket and refuses a job
-  of another shape. It reads the record's job to decide whether a claim needs an attestation, and it
-  asks the link before signing. It stores no attestation and no ticket.
+  of another shape. It reads the record's job — as the record holds it when the claim arrives, which
+  is the last unclaimed ask's — to decide whether a claim needs an attestation, and it asks the link
+  before signing. It stores no attestation and no ticket.
 - **The link** (BR3): it is asked one question about one VM and one job, it answers false for every
   VM that is not that job's, and it answers an error only when the read failed. It is told the
   bound and the tolerance; it is told nothing about which Google-made fact it must read, because
