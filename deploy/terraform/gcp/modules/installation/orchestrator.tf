@@ -57,10 +57,16 @@
 # update` applies the installation root BEFORE it applies Firebase. On an
 # installation that already exists the signer is there and the binding is
 # created; on an installation opting in on its very first apply the account
-# does not exist yet and this binding fails that apply. Nothing can opt in
-# today (the variable has no CLI writer, below), and the release that adds one
-# either orders the two steps or moves this binding into modules/firebase,
-# which is where the role it names is declared.
+# does not exist yet and this binding fails that apply. The writer orders the
+# two steps rather than this file: `fugaro update --firebase-project <id>
+# --orchestrator` writes var.orchestrator at the stage that runs AFTER the
+# Firebase root (internal/cli's ensureOrchestratorBlock, called from the
+# installation stage's --firebase-project branch), so the block reaches this
+# root only once the signer and its role exist — and an installation whose
+# Firebase root has never been applied has no budget block and no Firebase
+# outputs either, which is what the writer refuses by name. The other way out
+# stays open: moving this binding into modules/firebase, where the role it
+# names is declared.
 #
 # What the account may never do is the design's section 6 and it is not
 # expressible as a comment here: no IAM (nothing this file creates carries
@@ -293,8 +299,22 @@ resource "google_storage_bucket_iam_member" "orchestrator_runs_reader" {
 # var.orchestrator's own fields rather than being derived here, because a name
 # this module invented would be a second spelling of one `fugaro update`
 # already computes.
+#
+# It is ALSO the one row in this file on a second switch, var.people_minter
+# (launcher-does-not-mint plan task LM12, D3121, R8). That switch is the
+# FIREBASE root's own name for the people's row — the launchers' and the
+# operators' grant on this same signer (LM11) — and it is one name in both roots
+# because the plan that moves minting to the credentials service turns both off
+# at once: `fugaro update` applies both roots with the switch off once the
+# service has proved it signs as this signer (LM14), and the people's row and
+# this one are gone together. ON by default, so an installation that has not
+# been asked to move its grant plans exactly what it planned before this switch
+# existed; and it never gates the ISSUER's row, which is the plan's other half
+# (modules/firebase/iam.tf's issuer_minter) — a switch that took that row away
+# too would leave nobody able to mint a run's identity, which is the failure R8
+# exists to avoid.
 resource "google_service_account_iam_member" "orchestrator_token_minter" {
-  count = local.orchestrator_on ? 1 : 0
+  count = local.orchestrator_on && var.people_minter ? 1 : 0
 
   service_account_id = "projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com"
   role               = "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter"

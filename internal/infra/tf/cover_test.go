@@ -464,6 +464,67 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 	}
 }
 
+// TestCredentialsServiceEnvKnowsTheIdentityNames is the cover's side of LM22
+// (D3121, D3123, F29/R16): the three entries of the identity half are named
+// once, on this allow-list, and the installation module renders all three
+// since LM12 — the change that moved them off
+// CredentialsServiceEnvAwaitingTheModule, which is the state this test pins
+// now.
+//
+// The order is F28's, and this test is the pair of arms that holds it: the
+// names went on the allow-list and the awaiting list FIRST (LM22), and the
+// module that renders them came second (LM12), because credentials.tf's case
+// below refuses a container that sets a name this list does not carry and
+// internal/cli's TestCredentialsServiceEnvIsTheDeploymentsOwn refuses a module
+// name the command does not read. Each arm therefore turns around on the
+// change before it: before LM12 the third arm below failed once the module
+// rendered a name, and now it fails if a name goes back on the awaiting list
+// while the module sets it — which is the leftover that list's tripwire
+// exists to refuse.
+//
+// The three are named in one place here and read in one place at the command's
+// end (internal/cli's credentialsServiceSigner,
+// credentialsServiceRosterServiceAccounts and credentialsServiceImplicitAdmins),
+// and neither end may rename one without the other: this test would pass on a
+// misspelling that moved both, which is why the pair is also held to the
+// module by TestCredentialsServiceEnvIsTheDeploymentsOwn and to the plans by
+// credentials_golden_test.go's exact environment map.
+func TestCredentialsServiceEnvKnowsTheIdentityNames(t *testing.T) {
+	// The identity half's three (LM22): the signer a run's identity is signed
+	// as, the roster's serviceAccount: entries, and the implicit admins the
+	// CLI's own gate reads out of its configuration.
+	want := []string{
+		"FUGARO_SIGNER_ACCOUNT",
+		"FUGARO_ROSTER_SERVICE_ACCOUNTS",
+		"FUGARO_IMPLICIT_ADMINS",
+	}
+	pending := CredentialsServiceEnvAwaitingTheModule()
+	module := moduleSource(t, "credentials.tf")
+	for _, n := range want {
+		if !slices.Contains(credentialsServiceEnv, n) {
+			t.Errorf("%s is not on credentialsServiceEnv: the credentials service reads it (internal/cli's credentialsServiceConfig), and a container that sets it would be a plan the cover refuses", n)
+		}
+		if slices.Contains(pending, n) {
+			t.Errorf("%s is on CredentialsServiceEnvAwaitingTheModule and the installation module renders it: LM12 set it in credentials.tf, so the name has left the awaiting list in that same change (F28)", n)
+		}
+		// The other half of that statement: the module renders it, and a name
+		// on this list the module does not set would be an allow-list entry
+		// nothing writes — which is what this arm refused, the other way
+		// round, before LM12.
+		if !regexp.MustCompile(`name\s*=\s*"` + n + `"`).MatchString(module) {
+			t.Errorf("modules/installation/credentials.tf does not render %s: the allow-list admits it and the service reads it, so the module that configures the service is where it has to be set (LM12)", n)
+		}
+	}
+	// ... and the allow-list holds no fourth name of this half: a name added
+	// here without the command reading it is a value the cover admits and
+	// nothing sets, which is the direction this list exists to refuse.
+	for _, n := range pending {
+		if !slices.Contains(credentialsServiceEnv, n) {
+			t.Errorf("%s is awaiting the module and is not on credentialsServiceEnv: the awaiting list names what the allow-list already admits, and a name on it alone would be refused at plan time once the module renders it", n)
+		}
+	}
+}
+
 // A job's FUGARO_CHECK_SPEC tells the check job where to build and what to
 // build from: its registry and every base image must be this run's.
 func jobWithSpec(spec string, unknownValue bool) ResourceChange {
@@ -2580,14 +2641,14 @@ func TestDeployerPermissionCountsAreTheDocumentedNumbers(t *testing.T) {
 		t.Fatalf("the unconditioned role holds %d permissions here and %d in the golden plan; the seven conditioned roles hold %d here and D75's scoped list holds %d: R3 is stated against one list and this test reads the other",
 			unconditioned, len(deployerRoleGolden[DeployerRole]), conditioned, len(d75ScopedPermissions))
 	}
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "managed-deployer-fence", "spec.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	doc := strings.Join(strings.Fields(string(b)), " ")
 	want := fmt.Sprintf("The %d + %d permissions are D75's", unconditioned, conditioned)
 	if !strings.Contains(doc, want) {
-		t.Errorf("docs/design/managed-deployer-fence.md's R3 does not state %q: the tree holds %d permissions in %s and %d across the seven conditioned roles, and R3's claim is that no permission was added, removed or moved between the halves", want, unconditioned, DeployerRole, conditioned)
+		t.Errorf("docs/managed-deployer-fence/spec.md's R3 does not state %q: the tree holds %d permissions in %s and %d across the seven conditioned roles, and R3's claim is that no permission was added, removed or moved between the halves", want, unconditioned, DeployerRole, conditioned)
 	}
 }
 
@@ -2629,7 +2690,7 @@ func TestDeployerOperatorCountMatchesTheRecordedDefect(t *testing.T) {
 // Storage, whose two clauses carry two && and the || between them.
 //
 // This is the number Check 68's C1 step expects and the number
-// docs/design/managed-projects.md states, and they are the same number or the
+// docs/managed-projects/spec.md states, and they are the same number or the
 // live check measures a different expression from the one the tree writes. A
 // reader who counts the operator only when it joins two clauses reads these
 // conditions as 0 and 1, which is not the count IAM refuses on and not the count
@@ -2690,7 +2751,7 @@ var deployerExtractAnchors = map[string]string{
 // resource.name.extract a template that carries ONE placeholder, written
 // {name}, with literal text around it, and returning the text that placeholder
 // matched — and it records that reading as UNVERIFIED, because no source in this
-// tree quotes the reference's text for it (docs/design/managed-deployer-fence.md,
+// tree quotes the reference's text for it (docs/managed-deployer-fence/spec.md,
 // "What this document does not claim"). The first cut of this fence used a
 // multi-placeholder template — extract("projects/{project}/secrets/{secret}") —
 // which is not that form, and the failure it invites is the 0.8.6 outage again:
@@ -2765,8 +2826,8 @@ func TestDeployerExtractTemplatesAreTheRecordedForm(t *testing.T) {
 // this test reads the three files that carry the claim and refuses the settled
 // wording in all of them.
 func TestDeployerExtractRuleIsRecordedAsUnverified(t *testing.T) {
-	const designPath = "docs/design/managed-deployer-fence.md"
-	docBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	const designPath = "docs/managed-deployer-fence/spec.md"
+	docBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "managed-deployer-fence", "spec.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2802,14 +2863,14 @@ func TestDeployerExtractRuleIsRecordedAsUnverified(t *testing.T) {
 	}
 	// Every file that states the rule: each may state the reading, and none may
 	// promote it to a citation. The phrases are the ones the settled label was
-	// written in. docs/design/managed-projects.md is here because the round-5
+	// written in. docs/managed-projects/spec.md is here because the round-5
 	// revert left its 0.10.0 note saying C7 was "settled by the documented
 	// semantics" — a security-relevant reading the design of record holds
 	// UNVERIFIED — and a scan that stopped at the module and this package could
 	// not see it.
 	for _, path := range []string{
 		filepath.Join("..", "..", "..", "deploy", "terraform", "gcp", "modules", "installation", "deployer.tf"),
-		filepath.Join("..", "..", "..", "docs", "design", "managed-projects.md"),
+		filepath.Join("..", "..", "..", "docs", "managed-projects", "spec.md"),
 		filepath.Join("..", "..", "..", "SECURITY.md"),
 		filepath.Join("..", "..", "..", "website", "content", "security.md"),
 		"cover.go",
@@ -2865,7 +2926,7 @@ func TestDeployerExtractRuleIsRecordedAsUnverified(t *testing.T) {
 // Mutation (verified, run and restored): put "title" back into the sentence —
 // this fails naming both lists.
 func TestDeployerDesignNamesTheModelFields(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "managed-deployer-fence", "spec.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2907,7 +2968,7 @@ func TestDeployerDesignNamesTheModelFields(t *testing.T) {
 // Mutation (verified, run and restored): put the old clause back into the
 // design — this fails naming it.
 func TestDeployerDesignSaysWhatTheCoverEnforces(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "managed-deployer-fence", "spec.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3668,7 +3729,7 @@ func TestDeployerRoleCreationRefusesComputedProjectRolesForEitherRole(t *testing
 // Mutation (verified, run and restored): "F5's table below" back to "above", and
 // "§9 below" in §0 to "§9 above" — each fails here naming the reference.
 func TestDeployerDesignDirectionalReferencesPointTheRightWay(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "design", "managed-deployer-fence.md"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "managed-deployer-fence", "spec.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

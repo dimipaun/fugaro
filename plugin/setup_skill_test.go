@@ -969,7 +969,7 @@ func TestSetupSkillSaysWhereTheManagedGateStands(t *testing.T) {
 // condition GCP accepts yet", with the redesign still ahead ("once the fence is
 // redesigned") — while the branch lands exactly that redesign and corrects the
 // reason everywhere else it touches (docs/release.md's bullet,
-// docs/design/managed-projects.md's 0.10.0 note, deployer.tf's header). A skill
+// docs/managed-projects/spec.md's 0.10.0 note, deployer.tf's header). A skill
 // is what the user's agent repeats, so a reason the branch removed is a reason
 // the agent will state to its user.
 //

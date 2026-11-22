@@ -563,7 +563,7 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // (`installation.current`'s rule). Neither answer carries the key text: what
   // comes back is the claims and the state, or the sentence that refuses a bad
   // key -- so a renderer draws a tier and an expiry and never a key. The screen
-  // is the one that is never gated (`docs/design/lapse-read-only.md`): a lapse
+  // is the one that is never gated (`docs/lapse-read-only/spec.md`): a lapse
   // is exactly when the operator has to reach the box that takes a renewal.
   ['licence.read', 'readLicence'],
   ['licence.save', 'saveLicence'],
@@ -600,6 +600,55 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // operation's schema is empty. Nothing a screen controls reaches this child,
   // and the document is the project's own text drawn as data.
   ['apply.pending', 'readPendingSteps'],
+  // **The console improvements' nine** (the console improvements plan, AL):
+  // three live reads (the run list, the spend report and the caps read, each the
+  // stream form of a whole-document read above), three one-shot reads (the
+  // caller's own role, the image catalog and the recipes), the first-run
+  // wizard's plan and apply, and the settings editor's window. Each is appended
+  // here rather than beside the read it belongs with, because the rows a plan
+  // adds are one diff and a reader of this list should be able to see them as
+  // one.
+  //
+  // Every one of them is **inert until used**: each is behind a floor
+  // (`src/shared/version.ts`) that is `null` until the CLI release that carries
+  // its flags, so a screen that asked anyway is refused before a child exists,
+  // and the handler in `src/main/index.ts` answers 'not available in this
+  // build' until I-OPS registers the real one. None of them has a flag a
+  // caller can choose: the mode words (`--stream`, `--me`, `--plan-only`) are
+  // fixed words of the row's command path in `src/main/spawn.ts`.
+  ['runs.stream', 'streamRuns'],
+  ['spend.stream', 'streamSpend'],
+  ['budget.stream', 'streamBudget'],
+  ['whoami', 'whoAmI'],
+  ['image.catalog.ls', 'listImageCatalog'],
+  ['recipes.ls', 'listRecipes'],
+  ['setup.plan', 'planSetup'],
+  ['setup.apply', 'applySetup'],
+  ['settings.editor.open', 'openSettingsEditor'],
+  // **The models write** (the console improvements plan's MW1, D2903), the two
+  // rows of the Manage view's models write: the CLI's own dry run, which prints
+  // the plan document the window draws, and the write itself. They are appended
+  // here for AL's reason -- the rows a plan adds are one diff. Both are inert
+  // until used: `MODELS_ADD_CLI_FLOOR` is `null` until the CLI release that
+  // carries `--no-apply` on `models add` and the plan document (MD1), and the
+  // handlers in `src/main/index.ts` answer 'not available in this build' until
+  // the task that wires the window registers the real ones. No flag either row
+  // carries is a caller's: `--no-apply`, `--dry-run` and `--json` are fixed
+  // words of the rows' command paths (`src/main/spawn.ts`).
+  ['models.add.plan', 'planModelsAdd'],
+  ['models.add', 'addModel'],
+  // **The image write** (the console improvements plan's MW2, D2903), the two
+  // rows of the Manage view's images write: the CLI's own dry run, which prints
+  // the plan document the window draws, and the write itself. They are appended
+  // here for the models write's reason -- the rows a plan adds are one diff --
+  // and both are inert until used: `IMAGE_ADD_CLI_FLOOR` is `null` until the CLI
+  // release that carries `--no-apply` on `image add` and the plan document (MD2),
+  // and the handlers in `src/main/index.ts` answer 'not available in this build'
+  // until the task that wires the window registers the real ones. No flag either
+  // row carries is a caller's: `--no-apply`, `--dry-run` and `--json` are fixed
+  // words of the rows' command paths (`src/main/spawn.ts`).
+  ['image.add.plan', 'planImageAdd'],
+  ['image.add', 'addImage'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**

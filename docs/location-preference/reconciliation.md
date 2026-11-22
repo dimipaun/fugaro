@@ -6,7 +6,7 @@ Checked against `origin/main` at `252329076` on 2026-11-20. **Where this file di
 amended after review round 1 and D3088 after round 3** (below); the owner confirmed both
 amended texts the same day, and answered **D3092–D3097** on the items the reviews left open (D3097 is not the recommendation). It carries out
 **D3029** of [always a budget](../always-a-budget/reconciliation.md) (in that plan's open follow-up,
-pull request #3305, merged on 2026-11-20), it replaces **D4** of `docs/design/m9-budget-and-dashboard.md` for a new
+pull request #3305, merged on 2026-11-20), it replaces **D4** of `docs/m9-budget-and-dashboard/spec.md` for a new
 installation, and it reverses the ruling **D12 of 2026-10-20** for the Firestore location (D3090).
 
 The places each Google product offers were read from Google's own pages on 2026-11-20 and are
@@ -139,7 +139,7 @@ Firestore location" among the three steps that are "the person's alone (D12, 202
 spec's item 4 removes that step. D3027 of always-a-budget moved the budget database's write ahead
 of the note; with the note gone that order no longer matters. Decided by D3090.
 
-**F6 — Rule: `docs/design/m9-budget-and-dashboard.md` D4 fixes both locations.** It says the
+**F6 — Rule: `docs/m9-budget-and-dashboard/spec.md` D4 fixes both locations.** It says the
 Realtime Database goes in `us-central1` and Firestore in `us-east5`, with no fallback. The design
 is replaced for a new installation by the mapping below; an existing one still matches it. The
 design document gets a note (LP11), not a rewrite.

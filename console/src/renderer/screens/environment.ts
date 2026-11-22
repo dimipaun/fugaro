@@ -75,7 +75,7 @@ export interface EnvironmentFactory {
 
 /** ENVIRONMENT_CREDENTIALS_SIDE_CLASS is the class of the line that says which
  * side of the boundary the CLI's credentials are on. It is an `installation-`
- * hook like its neighbours (`docs/design/console-styling.md` section 2.1, the
+ * hook like its neighbours (`docs/console-styling/spec.md` section 2.1, the
  * installation line's row), and no rule selects it yet: the line reads as one
  * more sentence of the installation block, and a rule that wants to tone it
  * joins that table first. */

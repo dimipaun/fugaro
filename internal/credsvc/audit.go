@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -1106,23 +1107,14 @@ func (a *Auditor) redact(ev AuditEvent) AuditEvent {
 }
 
 // validSlipOwner reports whether s is the owner a slip records: the launcher's
-// own `sub`, digits only and at most maxLauncherSubDigits of them. It is the
-// rule auth.go's launcherSub holds a token's claim to (DS1.2), spelled here
-// because the value a line carries is the one this service wrote into the
-// record — never a caller's text — and a field of a line is held to its rule
-// whatever its provenance. TestSlipOwnerIsTheLauncherRule keeps the two
-// spellings of the same rule from drifting.
-func validSlipOwner(s string) bool {
-	if s == "" || len(s) > maxLauncherSubDigits {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
-}
+// own `sub`, digits only and at most maxLauncherSubDigits of them. It is
+// gateway.ValidCredentialOwner — the one definition of the rule, in the package
+// both ends of the wire can see — kept as a name here because the value a line
+// carries is the one this service wrote into the record, never a caller's text,
+// and a field of a line is held to its rule whatever its provenance.
+// TestSlipOwnerIsTheLauncherRule keeps this name and auth.go's launcherSub from
+// drifting.
+func validSlipOwner(s string) bool { return gateway.ValidCredentialOwner(s) }
 
 // validAccount reports whether s is an account this line may name: the
 // printable-ASCII address rule auth.go holds the installation's configured job

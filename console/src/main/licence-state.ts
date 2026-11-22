@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The console's read-only state after the grace period (subscriptions plan
-// S6.2; the design is `docs/design/lapse-read-only.md`, D436 and T12).
+// S6.2; the design is `docs/lapse-read-only/spec.md`, D436 and T12).
 //
 // **What this file is.** Two halves of one subject: the licence state of an
 // installation. The first is one mapping from the verifier's answer about the key
 // an installation holds to the five states of the design's table, and the gate
-// that takes exactly three operations away in the state the design calls the
-// lapse: the launch, the configuration change and the record's move (GV3.2's
+// that takes away exactly the operations the design's refused set names in the
+// state the design calls the lapse: the launch, the configuration change -- the
+// write itself and the window that drives it -- and the record's move (GV3.2's
 // `roadmap.move`). The second, at the end of this file, is the reader of the
 // **project's** key as `fugaro licence status --json` answers it (licence-key-v2
 // plan K3.6; D2137, D2143 and K3.5's warning field) -- the key that belongs to
@@ -156,16 +157,18 @@ function lapsed(): never {
  * the rail moved -- and the first of those is the one that does the damage: the
  * launch goes out, with the lapsed installation's key in its child. A row with no
  * such column acts on the active installation (`settings.edit` writes the
- * settings document the console is driving), which is what `undefined` means to
- * `current`.
+ * settings document the console is driving, and `settings.editor.open` drives
+ * that write), which is what `undefined` means to `current`.
  *
  * **Only the rows carrying `refusedAfterLapse` are wrapped.** Every other
  * operation is the very handler it was handed -- the same function object, not a
  * wrapper that happens to call it -- so there is exactly one place a refusal can
  * be added and no second place it could be added in silence. That is also why
  * `assertReachableSurface` refuses the column on a row that spawns no command
- * (`ipc.ts`): the console's own answers are the design's kept set, and the way
- * out of the lapse is one of them.
+ * (`ipc.ts`), unless that row drives one the lapse takes away
+ * (`drivesOperation`): the console's own answers are the design's kept set, and
+ * the way out of the lapse is one of them -- but the window that drives the
+ * settings write is that write, not one of the console's own answers.
  */
 export function lapseHandlers(
   handlers: ConsoleHandlers,

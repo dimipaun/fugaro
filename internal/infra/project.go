@@ -18,7 +18,7 @@ import (
 // beside the bucket's fugaro_project label and the project_name output;
 // launchers can't read a label, so every cloud command reads this object
 // to check its project config (design §2.5). No job account can write it,
-// and since 0.7.0 no launcher (docs/design/bucket-iam.md); an operator or a
+// and since 0.7.0 no launcher (docs/bucket-iam/spec.md); an operator or a
 // project-level storage writer can.
 const ProjectMarkerObject = "fugaro/project.json"
 

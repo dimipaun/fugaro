@@ -147,12 +147,13 @@ var ErrMemberPolicy = errors.New("creds: the member's own policy excludes this c
 type MemberPolicy func(name string) bool
 
 // policyKey is the key the MEMBER'S POLICY holds a pool credential under, which
-// is the credential's own name for everything but the pool's ONE tier-B
-// credential.
+// is the credential's own name for everything but the two the accounts block
+// files under a value of its own: the project's paid key and the project's
+// provider key.
 //
-// That credential is the project's own Anthropic API key: the bundle holds it
-// under config.AnthropicSecret (the name the service's own audit lines, the
-// wire contract and the pool speak), while the member's policy keys it by
+// The first is the project's own Anthropic API key: the bundle holds it under
+// config.AnthropicSecret (the name the service's own audit lines, the wire
+// contract and the pool speak), while the member's policy keys it by
 // config.AnthropicKeyAccount, the sentinel the accounts block's tier-B entry is
 // derived under (projectpolicy's DeriveAccounts). The installation's own cascade
 // pairs the two spellings the same way and for the same reason (credsvc's
@@ -161,11 +162,30 @@ type MemberPolicy func(name string) bool
 // refusal: the paid key would be offered by the workspace and admitted by
 // nobody.
 //
-// The sentinel's arm matches the TIER as well as the name, exactly as
-// offeredToReview's arm does, so what it translates is the paid key and never a
-// credential that merely goes by that name: only this rule knows that the pool's
-// tier-B credential is the one the member's policy files under the sentinel.
+// The second is the project's provider key, and it splits the same way for the
+// same reason (D2978, F7): the pool speaks config.ProviderKeySecret, which is
+// the credential's own logical name and its document key, while the accounts
+// block files that credential's axis value as config.ProviderKeyAccount
+// (projectpolicy's DeriveAccounts, AK6a's second non-account value). Asking the
+// member's policy for "provider-key" would be a question no conforming policy
+// answers: the workspace's offering of the provider key would be dropped as
+// ErrMemberPolicy for every member. It is a hazard as well as a miss, which is
+// why the arm is the only reading that may stand: "provider-key" IS an account
+// name an operator may use (ClaudeAccountNameRE admits it, and the account's
+// document key is claude-oauth-token-provider-key), so a policy holding such an
+// account would answer the pool's question with THAT account's allow_repos —
+// one name admitting two credentials, the third-party key authorized by an
+// account that is nothing to do with it.
+//
+// Each arm matches the TIER as well as the name, exactly as offeredToReview's
+// does, so what is translated is the credential the accounts block files under
+// that value and never a credential that merely goes by its name: a tier-A
+// account named "provider-key" is asked about under its own name, which is the
+// entry its own policy holds for it.
 func policyKey(c Credential) string {
+	if c.Tier == TierC && c.Name == config.ProviderKeySecret {
+		return config.ProviderKeyAccount
+	}
 	if c.Tier == TierB && c.Name == config.AnthropicSecret {
 		return config.AnthropicKeyAccount
 	}

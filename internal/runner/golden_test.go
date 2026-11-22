@@ -15,9 +15,15 @@ import (
 
 var (
 	goldenTime = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z`)
-	goldenSHA  = regexp.MustCompile(`\b[0-9a-f]{40}\b|\b[0-9a-f]{7}\b`)
-	goldenDur  = regexp.MustCompile(`\| (\d+(\.\d+)?(ms|µs|s|m\d+s|m|h\d+m\d+s)) \|`)
-	goldenPct  = regexp.MustCompile(`, \d+% of the run's`)
+	// The status section reads its own clock, to the minute: "finished
+	// 2026-11-21 22:22Z". That stamp differs between two runs of the same task
+	// the way goldenTime's does, and goldenTime's shape (RFC3339, with the T)
+	// never matches it.
+	goldenStamp = regexp.MustCompile(`\d{4}-\d\d-\d\d \d\d:\d\dZ`)
+	goldenSHA   = regexp.MustCompile(`\b[0-9a-f]{40}\b|\b[0-9a-f]{7}\b`)
+	goldenDur   = regexp.MustCompile(`\| (\d+(\.\d+)?(ms|µs|s|m\d+s|m|h\d+m\d+s)) \|`)
+	goldenPct   = regexp.MustCompile(`, \d+% of the run's`)
+	goldenWall  = regexp.MustCompile(`of the run.s \d+s wall clock`)
 )
 
 // normalize blanks what differs between two runs of the same task: clock
@@ -30,8 +36,10 @@ var (
 func normalize(s string) string {
 	s = strings.ReplaceAll(s, repoSlug, "acme-app")
 	s = goldenTime.ReplaceAllString(s, "<time>")
+	s = goldenStamp.ReplaceAllString(s, "<time>")
 	s = goldenSHA.ReplaceAllString(s, "<sha>")
 	s = goldenPct.ReplaceAllString(s, ", <pct>% of the run's")
+	s = goldenWall.ReplaceAllString(s, "of the run's 0s wall clock")
 	return goldenDur.ReplaceAllString(s, "| <dur> |")
 }
 

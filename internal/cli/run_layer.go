@@ -17,7 +17,7 @@ import (
 // layerAnnounceKeys are config.ExecutableKeys' run-time keys: what the
 // launched job itself executes, in its own container. image.apt and
 // image.setup are the catalog's other executable keys, but they are
-// image-time, not run-time: per docs/design/layered-config.md §11 (decision
+// image-time, not run-time: per docs/layered-config/spec.md §11 (decision
 // L7, option A, the row this release ships), the line fugaro run prints is
 // `commands: from profile <p> (project layer gen <n>)` — commands only.
 // image.apt/image.setup run later, in Cloud Build, the next time the

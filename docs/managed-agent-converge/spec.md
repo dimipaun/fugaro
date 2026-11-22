@@ -141,7 +141,7 @@ The four are one field (`internal/initflow/stage.go`'s `GateRefusal`, set where 
 
 ## 5. The cost bound on billable builds (D1013)
 
-`fugaro image refresh` starts **Cloud Build** jobs, which are GCP spend and not model spend. They are a different system from the model caps and always will be (`docs/design/managed-projects.md` finding 26): the gateway's cap governs the model, `config/caps/*` and `config/kill/*` govern a run's model spend, and nothing today bounds the number of images a session may build — the refresh's own confirmations are per step and put **no cap** on how many run (`internal/cli/image_refresh.go`).
+`fugaro image refresh` starts **Cloud Build** jobs, which are GCP spend and not model spend. They are a different system from the model caps and always will be (`docs/managed-projects/spec.md` finding 26): the gateway's cap governs the model, `config/caps/*` and `config/kill/*` govern a run's model spend, and nothing today bounds the number of images a session may build — the refresh's own confirmations are per step and put **no cap** on how many run (`internal/cli/image_refresh.go`).
 
 A **plan's** cost is already controlled, and not here: §4.1 rule 9's `tf.ManagedCosts` flags and blocks the cost-bearing attributes the owner named, and D62's answer is a list of properties a reviewer can check rather than an estimate (reconciliation F8). What that leaves is the cost that is **not** in a plan, and in this design's set there is exactly one: the Cloud Build jobs a refresh starts. That is what this section bounds.
 
@@ -151,7 +151,7 @@ The bound, and where it lives so the agent cannot move it:
 - **The default is one build per session.** A marker that records no `max_image_builds` admits one billable build per agent-session invocation, and the second is refused with the owner's command named.
 - **Every other control is read before each build, not once per command**: the Realtime Database kill switch (`internal/budget/kill.go` — an unreadable switch counts as ON), and the recorded budget amount. A kill switch that is on, and an amount that cannot be read, each stop the refresh before the build; the amount is not a cost estimate and is never compared with a figure this design computes.
 - **Every admitted build is audited** (§6): the build's image reference, its base digest, its recipe and the bound in force are part of the record, so a runaway leaves a trail even where it is not prevented.
-- The **outer** bound is unchanged and is not this design's: the installation's own billing budget alerts at the thresholds `fugaro setup` already creates. **This design does not claim a hard stop on GCP spend** — the designs of record say what a real one would cost in privilege (`docs/design/managed-projects.md` finding 25 and D63), and nothing here adds it.
+- The **outer** bound is unchanged and is not this design's: the installation's own billing budget alerts at the thresholds `fugaro setup` already creates. **This design does not claim a hard stop on GCP spend** — the designs of record say what a real one would cost in privilege (`docs/managed-projects/spec.md` finding 25 and D63), and nothing here adds it.
 
 The alternative — leaving the refresh unbounded — costs one Cloud Build job per repository per invocation, started by a session whose only other cost control is a switch the owner may not have set; a retry loop, a stale checkout and a busy agent are each enough to run it repeatedly.
 
@@ -276,7 +276,7 @@ Each design's `set` command inherits this gate rather than growing one:
 
 ### 9.4 The console and `fugaro setup` (D1019)
 
-- **The console** is read-only by allow-list and holds no credential (`docs/design/desktop-console.md`), and a managed project does not change that. This design grants the console **nothing**: no write, no new node, no new backend. The audit records of §6 are read by `doctor` and `report` on a machine that already holds an operator credential, and a console that wanted to show them would read the same objects through the credential it already has for runs.
+- **The console** is read-only by allow-list and holds no credential (`docs/desktop-console/spec.md`), and a managed project does not change that. This design grants the console **nothing**: no write, no new node, no new backend. The audit records of §6 are read by `doctor` and `report` on a machine that already holds an operator credential, and a console that wanted to show them would read the same objects through the credential it already has for runs.
 - **`fugaro setup`** stays the owner's wizard. It is where a project becomes managed (`--create-project --managed`), its questions keep the terminal they need, and none of its Typed steps — a new project, billing, a secret, a Firestore location, a billable first build — gains an agent answer. The agent's door after this design is `update`, exactly as the HARD RULE intends.
 
 ## 10. Revocation (D1020)
@@ -290,7 +290,7 @@ Each design's `set` command inherits this gate rather than growing one:
 - Owner-run, refused in a coding agent's session and from a run's own process, with the same two checks `flag` carries, the project's exact ID typed at the terminal, and no flag that answers it, no `--prefix`, no wildcard and no bulk form.
 - It removes **both** marks in one command — the object and the label — and says which half was already gone rather than failing on it, so a half-removed project (the state a manual removal leaves) converges instead of needing a second command.
 - It records the revocation in the audit family of §6.
-- It does **not** remove the deployer fence: the seven scoped roles and their seven conditioned bindings stay in the project and in the installation, `fugaro update --forget` stays refused for a fenced installation, and the command says so before it writes (`docs/design/managed-projects.md` §10.2).
+- It does **not** remove the deployer fence: the seven scoped roles and their seven conditioned bindings stay in the project and in the installation, `fugaro update --forget` stays refused for a fenced installation, and the command says so before it writes (`docs/managed-projects/spec.md` §10.2).
 
 The alternative is to keep the two manual lines. It costs an owner two commands instead of one, in two different tools, one of them UNVERIFIED, and it leaves the state the parent design already had to write a paragraph about: a project whose object is gone and whose label is not, or the reverse, is unmanaged either way but *reads* as broken to every later command.
 

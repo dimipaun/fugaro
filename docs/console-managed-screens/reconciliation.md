@@ -55,15 +55,15 @@ and a new IPC operation, and a write is not on the table** (F5, F6).
   `operation` is null and it draws the sentence saying it cannot read (F4).
 - **The surface and the fence.** `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:529`) is the whole
   IPC surface; the spawn allow-list is **exact argv** through `argvFor`
-  (`console/src/main/spawn.ts:1334`), pinned in rule 6's table of `docs/design/desktop-console.md`
+  (`console/src/main/spawn.ts:1334`), pinned in rule 6's table of `docs/desktop-console/spec.md`
   §5.1. **A new read is a new row on both and a Go change as well**: the table and `consoleReadPaths`
   (`internal/cli/project.go`) are two halves of one fence held equal by a Go test (F26), so a console
-  read moves `docs/design/desktop-console.md`, `internal/cli/project.go`, the test that pins them and
+  read moves `docs/desktop-console/spec.md`, `internal/cli/project.go`, the test that pins them and
   `spawn.ts` — and it is a **SECURITY-SENSITIVE** change, because a new row on that table always is.
 - **Two writes, and this work adds none.** `run.launch` (rule 11) and `settings.edit` (rule 12);
   `console/docs/json-contract.md` §9 states the rule and both exceptions.
 - **Untrusted text is drawn as text.** Every string from a document goes through `putText` with the
-  class its wire key declares; `TEXT_CLASSES` (`console/src/shared/sanitize.ts:100`) is the closed
+  class its wire key declares; `TEXT_CLASSES` (`console/src/shared/sanitize.ts:121`) is the closed
   list, and rule 7 forbids `innerHTML`, a `dangerouslySetInnerHTML` equivalent and an `href` built
   from it.
 - **Sections, not a redraw.** The owner's rule of 2026-10-31 (`.claude/rules/console.md`): every tab
@@ -75,7 +75,7 @@ and a new IPC operation, and a write is not on the table** (F5, F6).
   (`console/src/shared/version.ts:689`), whose closed list is `REDUCED_VIEWS` (`version.ts:392`).
 - **The contract document.** `console/docs/json-contract.md` §6 is "the other documents" — §6.19 is
   `fugaro settings --json` and §6.20 its dry run — and a new document is a new numbered section
-  there. Both it and `docs/design/desktop-console.md` are pinned by Go docs tests
+  there. Both it and `docs/desktop-console/spec.md` are pinned by Go docs tests
   (`internal/cli/docs_desktop_console_test.go`, `docs_console_boundary_test.go`), so a change to
   either runs `go test ./internal/cli/ -run Docs` in the same commit.
 - **The Go boundary.** No Go file outside `consoleBoundaryAllowList`
@@ -169,9 +169,9 @@ one as the other (D1483).
 | **F2** | The Project tab is the project's own screen: nine panels from three reads | **Exists** | `PROJECT_PANEL_KEYS` (`console/src/renderer/screens/projects.ts:166`) is the seven-panel model, the first read's; the models panel and the settings panel are a second and a third read's (`showBudget`, `listModels`, `readSettings`, `entry.ts:5058`, `:5095`, `:5123`) |
 | **F3** | Its sources are five command lines, and every panel must trace to one | **Exists** | `PROJECTS_SOURCE_LINES` (`projects.ts:108`); the design's review criterion for the screen is that every field traces to a rule 6 row |
 | **F4** | The policy panel has no operation, so the console cannot read the policy node at all | **Gap** | `POLICY_SOURCE_LINE` (`projects.ts:122`) names the command and no `CONSOLE_OPERATIONS` row carries it; the panel's `operation` is null and it says what it cannot read. The fallback it would otherwise take is `PROJECTS_SOURCE_LINES[operation] ?? \`fugaro ${operation}\`` (`projects.ts:567`, `:587`), which for an operation named `policy.show` spells `fugaro policy.show` — an argv no CLI answers, which is why CM10 settles the row rather than letting the fallback draw one |
-| **F5** | The console's surface is a closed list and its spawn allow-list is exact argv | **Rule** | `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:529`), `argvFor` (`console/src/main/spawn.ts:1334`), rule 6's table (`docs/design/desktop-console.md` §5.1) |
+| **F5** | The console's surface is a closed list and its spawn allow-list is exact argv | **Rule** | `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:529`), `argvFor` (`console/src/main/spawn.ts:1334`), rule 6's table (`docs/desktop-console/spec.md` §5.1) |
 | **F6** | Exactly two operations write, and neither is this work's | **Rule** | `run.launch` (rule 11) and `settings.edit` (rule 12); `console/docs/json-contract.md` §9 states the rule and both exceptions |
-| **F7** | Every string from a document is drawn as text, through a class the wire key declares | **Rule** | `TEXT_CLASSES` (`console/src/shared/sanitize.ts:100`), `putText`; rule 7 forbids `innerHTML` |
+| **F7** | Every string from a document is drawn as text, through a class the wire key declares | **Rule** | `TEXT_CLASSES` (`console/src/shared/sanitize.ts:121`), `putText`; rule 7 forbids `innerHTML` |
 | **F8** | A section has its own read, its own busy state and its own refusal, and independent reads run in parallel | **Rule** | The owner's rule of 2026-10-31 (`.claude/rules/console.md`); `sectionRead`, `renderBusy`, `renderStamp` (`console/src/renderer/section.ts`) |
 | **F9** | A view showing spend, caps or the kill controls must withhold in a reduced console | **Rule** | `hidesView` (`console/src/shared/version.ts:689`), `REDUCED_VIEWS` (`version.ts:392`) |
 | **F10** | `doctor --json` prints a closed document of checks, and a check carries prose rather than fields | **Exists** | `doctorOutput` and `doctorCheck` (`internal/cli/doctor.go`) |
@@ -226,7 +226,7 @@ Stated as a list because each one is a fence a later task could move without not
    node's own `budget` block** (`mode`, `per_run_usd`, `allowed_models`, `max_run_tokens`), which
    `policy.show` carries and the policy notes **drop rather than draw**: a ceiling drawn there would
    be the third home D1481 chose `project policy show --json` to avoid, the `caps` panel is where a
-   configured ceiling is drawn, and `docs/design/desktop-console.md` §5.1's `policy.show` row now says
+   configured ceiling is drawn, and `docs/desktop-console/spec.md` §5.1's `policy.show` row now says
    so too — its paragraph and that row both said the tab draws the block as the policy it is, which
    CM7's review corrected on 2026-11-07, because no screen of this work draws a figure of it. The
    read is withheld in a reduced console all the same — `REDUCED_VIEW_OPERATIONS`'s `caps`

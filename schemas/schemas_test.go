@@ -889,7 +889,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
 		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", BaseBranch: "main", HeadSHA: "abcdef1234567",
 		// The closed cause beside the free text, which is the pair the record
-		// carries from the failure classes on (docs/design/failure-classes.md
+		// carries from the failure classes on (docs/failure-classes/design.md
 		// §3): the reason stays the sentence a person reads and the class is
 		// what the report counts.
 		FailureClass: failure.TestsFailed,
@@ -898,6 +898,12 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		// that names the account the run used last.
 		OAuthAccount:  "team-a",
 		StageAccounts: map[string]string{"implement": "team-b", "review": "team-a"},
+		// And the owner of the token the run was served with (F16,
+		// docs/secrets-brokering/dynamic-delivery): a launcher's account id
+		// beside the credential's name and the per-stage accounts, which keep
+		// their meanings. It rides the fully-populated record so a schema that
+		// did not name it would reject a record the runner writes.
+		CredentialOwner: "104329501182774832335",
 		// The commit the run was cut from, which its guards compare against
 		// (design v1.md §4.6).
 		StartSHA: strings.Repeat("c", 40),
@@ -1063,6 +1069,23 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(atBound); err != nil {
 		t.Errorf("schema rejects a stage account name of 64 runes: %v", err)
+	}
+	// credential_owner is the launcher's account id and nothing else: digits
+	// only and at most 21 of them (F16, maxLauncherSubDigits). A name, a
+	// credential value or a 22-digit number is a record no reader should have
+	// to render, and each is refused rather than stored.
+	for _, tc := range []struct{ name, new string }{
+		{"a value that is not an account id", `"credential_owner":"launcher@example.invalid"`},
+		{"an id longer than the bound", `"credential_owner":"` + strings.Repeat("1", 22) + `"`},
+		{"an id that is not text", `"credential_owner":104329501182774832335`},
+	} {
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"credential_owner":"104329501182774832335"`), []byte(tc.new), 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.new)
+		}
 	}
 	// The cost object is closed, so a compute_source that is not a string
 	// (what a hand-edited result.json could carry) is rejected rather than
@@ -1869,7 +1892,7 @@ func TestResultSchemaAcceptsARecordWithoutArtifacts(t *testing.T) {
 }
 
 // TestResultSchemaOAuthAccount: a record naming a Claude OAuth account
-// (docs/design/named-oauth-tokens.md) validates; a non-string value (what a
+// (docs/named-oauth-tokens/spec.md) validates; a non-string value (what a
 // hand-edited or corrupt result.json could carry) does not. config.
 // ClaudeAccount's name regex (plan Task 1) has not landed on this branch, so
 // the schema only bounds the length, not the charset; this test (and the
@@ -1969,7 +1992,7 @@ func TestResultSchemaStageCallsAndAgents(t *testing.T) {
 }
 
 // TestResultSchemaStageCredential pins the schema half of the record's one
-// per-stage credential (docs/design/mixed-credentials.md §5, P12): the value
+// per-stage credential (docs/mixed-credentials/spec.md §5, P12): the value
 // is the closed set the design's contract names — "oauth" for a stage a
 // stage-scoped Claude OAuth account served — and the field is optional, so a
 // record whose stages all ran on the run's own credential carries none.
@@ -3503,7 +3526,7 @@ func TestProjectLayerSchemaRigorMembers(t *testing.T) {
 // Validate (validateProfile's own comment: "what [a profile] leaves out the
 // repository may set, and Validate checks the merged workflow") — a profile
 // may ship commands.fix alone and let a repository supply commands.lint by
-// its own key, which the key-by-key merge (docs/design/layered-config.md
+// its own key, which the key-by-key merge (docs/layered-config/spec.md
 // §4) allows. The schema is intentionally stricter here, to catch the
 // likely mistake at authoring time; that's a false positive in an editor at
 // worst, never a false negative, so it doesn't need Go to agree.

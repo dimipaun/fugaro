@@ -39,28 +39,26 @@
 //      console's column and the CLI's agree on every value but a marker, and
 //      the divergence is deliberate rather than a claim of parity
 //      (`test/unit/launcher.test.ts` pins both the shared table and this).
-//   2. **the shortened string is drawn as a `label`, not as a `person`.** The
-//      `person` class draws a bare address (as the console's marker) or a login
-//      `[A-Za-z0-9-]{1,39}`, and refuses everything else -- so a dotted local
-//      part (`dana.lopez@example.com`, the commonest corporate shape) and a
-//      display name would be a refused cell on every row, and the column the
-//      owner asked for would read `n/a` for most of the people who use it. The
-//      short form is **not an address**: the cut is at the first `@`, so no `@`
-//      survives it -- except in a marker, which the class keeps as it is
-//      (`isAddressMarker`) and which is the console's own placeholder rather
-//      than an address. What the class is here for is what a cell needs and the
-//      owner's test list names -- the invisible characters (a bidi override, a
-//      zero-width space) are stripped, a value that is not one line or is longer
-//      than `MAX_LABEL_LENGTH` is refused rather than drawn, and a credential
-//      shape is masked by the free-text rules like every other label. **The
-//      whole value, in the Run header, is a `person`**: that is the class the
-//      wire key carries (`WIRE_TEXT_CLASSES`), so an address is the console's
-//      marker there as it is in every other person cell, and no address is ever
-//      drawn.
+//   2. **the shortened string is drawn as a `label`, not as a `person`.** A
+//      column is one line per row with a bound, and `label` is the class that
+//      refuses a value which is neither rather than clipping it; `person` draws
+//      the value it was given, clipped at this layer's longer bound (D3213,
+//      2026-11-21), so a display name longer than a cell would be drawn rather
+//      than refused. The short form is **not an address**: the cut is at the
+//      first `@`, so no `@` survives it -- except in a marker, which the class
+//      keeps as it is (`isAddressMarker`) and which is the console's own
+//      placeholder rather than an address. What the class is here for is what a
+//      cell needs and the owner's test list names -- the invisible characters (a
+//      bidi override, a zero-width space) are stripped, a value that is not one
+//      line or is longer than `MAX_LABEL_LENGTH` is refused rather than drawn,
+//      and a credential shape is masked by the credential rules like every other
+//      label. **The whole value, in the Run header, is a `person`**: that is the
+//      class the wire key carries (`WIRE_TEXT_CLASSES`), so the header draws the
+//      identity the record holds, an address included.
 //
 //      This is the console's **one** key drawn in a class other than the one
 //      `WIRE_TEXT_CLASSES` declares, so it is a decision and not an oversight:
-//      `console/README.md`'s class table and `docs/design/desktop-console.md`
+//      `console/README.md`'s class table and `docs/desktop-console/spec.md`
 //      §6.2 record it, and the CLI's own `BY` column draws the same short form
 //      as plain text (`internal/cli/runs.go`'s `launcherCell`,
 //      `internal/watch/plain.go`'s `launcherText`).
@@ -125,9 +123,10 @@ export function launcherCell(raw: string | null | undefined): string | null {
 
 /** launcherFull is the text the Run screen's header draws: the **whole**
  * recorded identity, which is what the owner's "the full identity only in the
- * expanded or run view" asks for, drawn through the `person` class -- so an
- * address is the console's marker and a login is itself. `null` is the same
- * "nothing to draw" as `launcherCell`'s. */
+ * expanded or run view" asks for, drawn through the `person` class -- so the
+ * identity is drawn as the record wrote it, an address included, and a
+ * credential-shaped value is refused. `null` is the same "nothing to draw" as
+ * `launcherCell`'s. */
 export function launcherFull(raw: string | null | undefined): string | null {
   return typeof raw === 'string' && raw !== '' ? raw : null
 }

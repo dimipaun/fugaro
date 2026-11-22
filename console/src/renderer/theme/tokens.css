@@ -2,7 +2,7 @@
 /* See console/LICENSE.md for the terms. */
 /* console/src/renderer/theme/tokens.css — the console's VOCABULARY.
  *
- * docs/design/console-styling.md §3.1 (the table) and §3.7-§3.9 (the roles) are the
+ * docs/console-styling/spec.md §3.1 (the table) and §3.7-§3.9 (the roles) are the
  * authority for every value below, and the plan's Task 6.1 is the task that writes this
  * file. It holds the steps a rule is allowed to reach for — spacing, radii, type sizes,
  * leading, weights, the two row heights, the focus ring's width and offset and the two

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,7 +12,7 @@ import (
 )
 
 // The budget amount of a managed creation (Task 4.2 of
-// docs/plans/2026-10-16-managed-projects.md, D64): required at creation, with
+// docs/managed-projects/implementation-plan.md, D64): required at creation, with
 // a suggestion printed and a clear refusal otherwise, and recorded in the
 // project's own creation fact so a later run and a restore can read what was
 // chosen. The other half is what these tests exist as much for: a creation
@@ -521,5 +523,134 @@ func TestAResumedCreationIsNeverMarkedWithoutAPersonAtTheTerminal(t *testing.T) 
 				t.Errorf("the run announced a mark no person at the terminal confirmed:\n%s", all)
 			}
 		})
+	}
+}
+
+// --- The carry a plain update makes (T0 of docs/managed-flag-ergonomics) ---
+
+// budgetAlertAccount is the billing account the rig's alert sits on, as the
+// installation root's state records it: the one figure of the alert that no
+// local document holds.
+const budgetAlertAccount = "0123AB-4567CD-89EF01"
+
+// budgetAlertState is the installation root's state object for an installation
+// that holds the alert: format version 4, with the module's resource and the
+// account it was applied to.
+func budgetAlertState() []byte {
+	return []byte(`{"version":4,"terraform_version":"1.9.8","serial":1,"lineage":"x","outputs":{},"resources":[` +
+		`{"mode":"managed","type":"google_billing_budget","name":"this","instances":[{"attributes":{"billing_account":"` +
+		budgetAlertAccount + `","amount":{"units":"250","nanos":0}}}]}]}`)
+}
+
+// budgetAlertRig is an installation that holds an alert, as the two records a
+// machine without a work directory can reach describe it: the state bucket with
+// the root's state object, and the runs bucket with the creation fact the amount
+// was recorded in — the fact marked as this installation's own, with the number,
+// the bucket label and the project label the managed read proves before it
+// believes one (managed.ReadBudget).
+func budgetAlertRig(t *testing.T) *initRig {
+	t.Helper()
+	r := updateRig(t)
+	fakeTerminal(t)
+	labelled(r.crm, initProject)
+	r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedBucketLabels)
+	r.gcs.Put(initRunsBucket, managed.MarkerObject,
+		[]byte(`{"version":4,"gcp_project":"`+initProject+`","budget":{"amount":250,"currency":"EUR"}}`))
+	r.gcs.Put(initStateBucket, infra.StatePrefixInstallation+"/default.tfstate", budgetAlertState())
+	return r
+}
+
+// carriedBudgetIs says what is wrong with the budget the run wrote, or "" when
+// it is the alert the rig's cloud records: 250 EUR on the account the state
+// names, and no fourth key — a block that carried anything else would be a
+// figure of this program's own rather than the installation's.
+func carriedBudgetIs(b map[string]any) string {
+	if len(b) != 3 {
+		return "it does not hold exactly the three figures of an alert"
+	}
+	if b["billing_account"] != budgetAlertAccount {
+		return "the account is not the one the installation's state records"
+	}
+	if b["amount"] != float64(250) {
+		return "the amount is not the one the project's creation fact records"
+	}
+	if b["currency_code"] != "EUR" {
+		return "the currency is not the one the project's creation fact records"
+	}
+	return ""
+}
+
+// budgetOf is the budget the run wrote into the installation's tfvars, and
+// whether it is there at all. The document is the assertion rather than the
+// plan, because the plan is a function of it: a document without the key is the
+// plan that deletes module.installation.google_billing_budget.this[0], which the
+// guard refuses by name (TestInitRefusesDeletePlan) — so a run that stops there
+// is the same failure seen one step later.
+func budgetOf(t *testing.T, r *initRig) (map[string]any, bool) {
+	t.Helper()
+	v := r.tfvars(t)
+	b, ok := v["budget"].(map[string]any)
+	return b, ok
+}
+
+// TestUpdateCarriesTheBudget: an installation that holds a budget alert keeps it
+// through a plain `fugaro update`. The run answers nothing about the budget —
+// no flag, no member of the local config — and the alert survives it, which is
+// CLAUDE.md's HARD RULE that `fugaro update` is the whole upgrade and R5's
+// requirement that the alert survives any machine.
+//
+// The figures come from the cloud and not from the work directory, and the
+// assertion says so: the work directory here holds a previous document that
+// names a DIFFERENT account and amount, as an installation whose alert moved
+// would, and what lands is what the state and the creation fact record (R7).
+func TestUpdateCarriesTheBudget(t *testing.T) {
+	r := budgetAlertRig(t)
+	// The installation as the last apply left it: a document of its own, naming
+	// an account that is not the one the state holds.
+	root := r.root()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previous := `{"project": "` + initProject + `", "region": "us-east5", ` +
+		`"budget": {"billing_account": "ZZZZZZ-ZZZZZZ-ZZZZZZ", "amount": 1, "currency_code": "USD"}}`
+	if err := os.WriteFile(filepath.Join(root, infra.VarsFile), []byte(previous), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("a plain update of an installation that holds an alert: %v\n%s%s", err, out, errOut)
+	}
+	b, ok := budgetOf(t, r)
+	if !ok {
+		t.Fatalf("the update wrote no budget into the installation's tfvars, so its plan deletes the alert:\n%s%s", out, errOut)
+	}
+	if why := carriedBudgetIs(b); why != "" {
+		t.Errorf("the carried budget = %v: %s. The amount and the currency are the project's creation fact's, and the account is the alert's own resource in the installation's state — the work directory's own figures are not a source (R7)", b, why)
+	}
+}
+
+// TestUpdateCarriesTheBudgetWithAnEmptyWorkdir: the same installation, and a
+// machine that has never run its apply — no work directory, no tfvars, nothing
+// under XDG_STATE_HOME at all. The carry is what makes the alert survive a
+// fresh machine, a cleaned one, or a console on another host (R5, R7), so the
+// two records it reads are the only ones it may need, and this is the test that
+// says nothing local is one of them.
+func TestUpdateCarriesTheBudgetWithAnEmptyWorkdir(t *testing.T) {
+	r := budgetAlertRig(t)
+	if _, err := os.Stat(r.workdir()); !os.IsNotExist(err) {
+		t.Fatalf("the rig has a work directory before the run (%v), so this test would not be about an empty one", err)
+	}
+
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("a plain update from a machine with no work directory: %v\n%s%s", err, out, errOut)
+	}
+	b, ok := budgetOf(t, r)
+	if !ok {
+		t.Fatalf("the update wrote no budget into the installation's tfvars, so its plan deletes the alert:\n%s%s", out, errOut)
+	}
+	if why := carriedBudgetIs(b); why != "" {
+		t.Errorf("the carried budget = %v: %s. A machine with no work directory reads the amount from the creation fact and the account from the state, and needs nothing else", b, why)
 	}
 }

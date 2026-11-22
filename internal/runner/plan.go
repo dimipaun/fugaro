@@ -315,7 +315,7 @@ func planRecipe(rcp *recipe.Recipe, levels config.Levels) []recipe.Step {
 }
 
 // planOf turns the recipe and the run's resolved levels into the run's plan
-// (docs/design/recipes.md §6). Rounds come from the task's override, else the
+// (docs/recipes/spec.md §6). Rounds come from the task's override, else the
 // step's max_rounds, else agent.*, else the mode's own row (rigor.DefaultRounds,
 // and rigor.AdversarialDefault for level 3) — a default the four layers above
 // it set another number against, up or down, within the recipe's bounds (the

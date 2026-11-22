@@ -615,7 +615,7 @@ func markRevoked(a Applied, revokedIDs []string) Applied {
 // paid through the same day the later write. The object holds the keys in the
 // order they were written, oldest first, and a reissue can carry exactly the
 // term of the key it replaces -- a seat change reissues with the term's own end
-// (design/key-signing-service.md section 5.3, which also keeps the key_id
+// (docs/key-signing-service/spec.md section 5.3, which also keeps the key_id
 // rotating) -- so the write that came last is the one a person means. A tie
 // decided the other way leaves the key just set installed and never used: what
 // applies is the older key, whose id the renewal then sends beside the newer

@@ -1,0 +1,17 @@
+{
+  "schema_version": 5,
+  "rev": 3,
+  "agent_id": "aurora",
+  "role": "orchestrator",
+  "goal": "keep the project's pull requests moving without a person watching",
+  "work_items": [],
+  "decisions": [],
+  "facts": {},
+  "archived": [],
+  "intents": [],
+  "counters": {
+    "decisions_hour": 0,
+    "decisions_day": 0
+  },
+  "project": "aurora"
+}

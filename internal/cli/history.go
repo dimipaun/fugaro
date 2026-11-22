@@ -64,6 +64,13 @@ type historyWiring struct {
 	bucket func(ctx context.Context, name string) (*blobx.Bucket, error)
 	// skew checks the clock against the database's, as in production.
 	skew bool
+	// pushURL is the FCM endpoint the sender posts to; pushSend replaces the
+	// provider whole. Both are tests only: in production the endpoint is
+	// fcmRoot, a constant, because a sender that reads where it sends from its
+	// environment is a sender anyone who can set the job's environment steers
+	// (§3.6).
+	pushURL  string
+	pushSend pushProvider
 }
 
 var historyTest *historyWiring
@@ -185,7 +192,7 @@ func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string
 	// §2.3) -- so the sweep falls back to exactly the rule that already
 	// carries every live run, the heartbeat the runner writes on either
 	// backend. What that leaves is the window that staleness window bounds,
-	// stated in docs/design/compute-backend.md §9 rather than closed here: the
+	// stated in docs/compute-backend/spec.md §9 rather than closed here: the
 	// job's environment carries no backend name to key a refusal on
 	// (deploy/terraform/gcp/modules/installation/history.tf), and its account
 	// holds no Batch read to ask the platform with, so a refusal would have to
@@ -204,6 +211,37 @@ func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string
 		fmt.Fprintf(cmd.OutOrStdout(), "removed %s\n", oneLine(r))
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "sweep: %d removed, %d kept, %d users deleted, %d pairing nodes deleted\n", len(rep.Removed), rep.Kept, rep.UsersDeleted, rep.PairingNodesDeleted)
+
+	// The sender (mobile plan Task P5.2.6, design §3.6 (B)): the sweep derives
+	// the push events itself and sends them, under this job's own identity —
+	// the only account that can send, which is why nothing on a run's path
+	// writes a pending-push row.
+	//
+	// It runs AFTER the registry sweep, so the caps it reads are the live
+	// runs': an entry the sweep just removed was a run that ended, and a run
+	// that ended is not an event. Every failure it has is a warning rather than
+	// the job's exit code, because the mailbox is authoritative and the push is
+	// the doorbell (§6): alerts failing must never stop the sweep, and the FCM
+	// permission itself arrives with P5.2.7.
+	push := &pushSender{
+		db: db, project: env[envFirebaseFP], now: now,
+		send: fcmSender{project: env[envFirebaseFP], url: fcmRoot, http: authHTTP}.send,
+		warn: func(s string) { fmt.Fprintln(cmd.ErrOrStderr(), "push: "+oneLine(s)) },
+	}
+	if test != nil {
+		if test.pushURL != "" {
+			push.send = fcmSender{project: env[envFirebaseFP], url: test.pushURL, http: authHTTP}.send
+		}
+		if test.pushSend != nil {
+			push.send = test.pushSend
+		}
+	}
+	prep, perr := push.Sweep(ctx)
+	fmt.Fprintf(cmd.OutOrStdout(), "push: %d sent, %d suppressed, %d queued, %d retried, %d tokens reaped, %d nodes reaped, %d ledger rows pruned\n",
+		prep.Sent, prep.Suppressed, prep.Queued, prep.Retried, prep.Unregistered, prep.Orphans, prep.Pruned)
+	if perr != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "push: "+oneLine(perr.Error()))
+	}
 	return remote(err)
 }
 

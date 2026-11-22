@@ -40,7 +40,7 @@ func init() {
 // gates. No surface is stranded by leaving it out, because no surface drives it
 // today either — `budget kill` sits on the console's NEVER_REACHABLE table, and
 // the app refuses the verb (shared/confirm's REFUSED_VERBS) — while the switch a
-// person uses is the CLI's own (docs/design/lapse-read-only.md §3.2).
+// person uses is the CLI's own (docs/lapse-read-only/spec.md §3.2).
 //
 // The switch is spelled out and its default refuses, so an action added to the
 // core's table later is refused under a lapse until a licensing decision keeps

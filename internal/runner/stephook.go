@@ -68,7 +68,7 @@ type StepView struct {
 
 // steps are the step kinds this build carries, by kind. The registry is
 // process-wide and filled from an init, the way internal/cli's own seams are
-// (§5.5 of docs/design/ee-boundary-moves.md); the tagged binary registers one
+// (§5.5 of docs/ee-reorg/boundary-moves.md); the tagged binary registers one
 // function for the one kind its recipes hold.
 var steps = map[recipe.StepKind]StepFunc{}
 

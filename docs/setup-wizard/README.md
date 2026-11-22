@@ -30,7 +30,12 @@ section, is where that and the section's "NOT RUN" line are made to agree.
 ## Related
 
 - [docs/gcp-setup.md](../gcp-setup.md) — the guide that printed the old flags (113 mentions before the rename); W2.3 renamed it, and it names `fugaro setup` throughout today.
-- [docs/design/m11-setup-and-skills.md](../design/m11-setup-and-skills.md) and [docs/plans/2026-10-04-m11-setup-and-skills.md](../plans/2026-10-04-m11-setup-and-skills.md) — the converge loop this work builds on; its stage engines are reused unchanged.
+- [docs/m11-setup-and-skills/spec.md](../m11-setup-and-skills/spec.md) and [docs/m11-setup-and-skills/implementation-plan.md](../m11-setup-and-skills/implementation-plan.md) — the converge loop this work builds on; its stage engines are reused unchanged.
 - [docs/gcp-live-checklist.md](../gcp-live-checklist.md) — the register: Check 27, rewritten in place, and Check 111, new; both written, and both unrun.
 - [docs/credentials-service/](../credentials-service/) — the shape this folder follows, and the work that shares Checks 90–99.
 - [SECURITY.md](../../SECURITY.md) — the claims the billing picker must not change: nothing is printed, stored or enabled silently.
+
+**Also in this folder** (moved here on 2026-11-21 from the top of `docs/`, the task reports):
+
+- [w2.4-already-landed.md](w2.4-already-landed.md)
+- [w3.2-already-landed.md](w3.2-already-landed.md)

@@ -234,7 +234,7 @@ func readGitHubReadRequest(body []byte) (GitHubReadRequest, error) {
 //   - the answer, built, audited and handed over in that order (answerGitHubRead).
 func (s *Server) githubRead(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	purpose, credential := routeAct(r.URL.Path)
-	tok, err := bearerFromHTTP(r)
+	tok, err := personBearerFromHTTP(r)
 	if err != nil {
 		// No line: the call is refused before its caller was verified, which is
 		// the one refusal on this route with nothing to name.

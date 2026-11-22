@@ -34,13 +34,13 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
 
 - **Go:** `gofmt -l .` clean, `GOFLAGS=-p=2 go vet ./...`, targeted tests with `-count=1
   -timeout 300s`, never the whole suite as the verification.
-- **Console:** Node 22 (`console/package.json` `engines.node` is `22.23.3`); targeted
+- **Console:** Node 22 (`console/package.json` `engines.node` is `>=22.23.3 <23`); targeted
   `npx vitest run <file>` and `npm run typecheck` in `console/`; e2e through `npm run test:e2e --
   <spec>` (Playwright on the built app). Exact versions only (`console/test/unit/pinning.test.ts`).
-- **The console's hard rules** (`docs/design/desktop-console.md` §5.1): the CLI is the only data
+- **The console's hard rules** (`docs/desktop-console/spec.md` §5.1): the CLI is the only data
   plane; job- and repository-written text is rendered as text, never `innerHTML`, never an href;
   the spawn allow-list is exact argv; `connect-src 'none'` stays.
-- **Styling:** `docs/design/console-styling.md` tokens, §3.5 (never colour alone), §4.3 keyboard,
+- **Styling:** `docs/console-styling/spec.md` tokens, §3.5 (never colour alone), §4.3 keyboard,
   §4.4 forced colours.
 - **Version skew:** every new JSON field is additive and optional; an older console ignores it, an
   older CLI lacks the command and the console shows the screen as not available (the existing
@@ -82,10 +82,10 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
 ### Slice 0 — the record
 
 #### GV0.1 — Dated amendment notes in the console designs
-- **Files:** `docs/design/desktop-console-v2.md` (dated notes beside D22, D29, D30 and F23),
-  `docs/design/desktop-console.md` (dated note beside D9), `docs/design/console-styling.md` (§3.9:
+- **Files:** `docs/desktop-console-v2/spec.md` (dated notes beside D22, D29, D30 and F23),
+  `docs/desktop-console/spec.md` (dated note beside D9), `docs/console-styling/spec.md` (§3.9:
   the graph screen's exception, its states and its reduced-motion styles),
-  `docs/plans/2026-10-15-desktop-console-v2.md` (dated notes on V2.2.3, V2.3.1, V2.5.3, V2.6.1,
+  `docs/desktop-console-v2/implementation-plan.md` (dated notes on V2.2.3, V2.3.1, V2.5.3, V2.6.1,
   V2.6.2, V2.8.1 pointing here).
 - **Interfaces:** none. **Schema/rules/config:** none.
 - **Tests:** the existing docs tests that read these files (`TestDocsConsoleStyling*`,
@@ -498,7 +498,7 @@ document, release assignment later — so Slices 1–2 wait on no ruling; (e)
 - **Files:** `console/src/renderer/screens/graph.ts`, new `console/src/renderer/graph/move.ts`,
   `console/src/main/ipc.ts`, `console/src/main/spawn.ts`, `console/src/preload/index.ts`,
   `console/src/source/cli.ts`, `console/test/unit/graph-move.test.ts`, `console/test/unit/ipc.test.ts`,
-  `console/test/unit/spawn.test.ts`, `docs/design/desktop-console-v2.md` (a new dated row recording
+  `console/test/unit/spawn.test.ts`, `docs/desktop-console-v2/spec.md` (a new dated row recording
   the fence's move, as V2.5.1 does for the launch).
 - **Interfaces:** the renderer sends `{node, toRelease}` ids only; the main process checks both
   against the last document read and builds the argv; the confirmation shows the exact argv and the
@@ -594,7 +594,7 @@ sits at L3 because `console/src/shared/schema.ts` is GV2.1's at L2.
 | `console/src/renderer/screens/graph.ts` | GV2.3 (L3), GV2.4 (L4), GV3.2 (blocked), GV4.1 (blocked) |
 | `console/src/renderer/theme/screens.css`, `console/test/e2e/graph.spec.ts` | GV2.3 (L3), GV2.4 (L4) |
 | `console/src/renderer/graph/model.ts` | GV2.3 (L3), GV4.1 (blocked) |
-| `docs/design/desktop-console-v2.md` | GV0.1 (L0), GV3.2 (blocked) |
+| `docs/desktop-console-v2/spec.md` | GV0.1 (L0), GV3.2 (blocked) |
 
 No level holds two writers of one file. The `internal/plan` package has three L0/L1 writers on
 **different files** (GV1.1 `levels*.go`, GV1.3 `document.go`/`read*.go`, GV1.6 `state*.go`); GV1.1

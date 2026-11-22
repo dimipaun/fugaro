@@ -9,6 +9,8 @@ credentials-belong-to-models (#3315, merged as `7abc5eb2f`). Owner: Dimi Paun. E
 below was asked with its options and costs on 2026-11-20, and the owner's answer is in its cell;
 D3129 was asked three times and D3130 twice, and each says why; D3131 was added by review round 2.
 
+**Amended 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)** (decisions D3189 and D3191, resolutions R8, R19): **D3136** is widened by one case — the issuer also serves the orchestrator a *resume* of a pause the credentials service recorded, which is no attempt on its own record. The service, not the job, is the only writer of that paused node, the resumed run keeps the launcher and the pool the pause recorded (R8, D3191), and how the issuer recognises such a node is that plan's PR4. Of [credentials-belong-to-models](../credentials-belong-to-models/README.md), its **D3066** is noted here as amended by **D3174** of [model credentials routing](../model-credentials-routing/README.md): a Vertex call a chain reaches through the credentials service is made by the service on its own identity, as it serves a key, and not by the run's gateway with the job's own account. The entries they touch are marked in place; nothing here is approved by that line.
+
 Paths and symbols are cited without line numbers. "The runs' signer" is
 `google_service_account.signer` in `deploy/terraform/gcp/modules/firebase/iam.tf`; "the minter
 role" is `google_project_iam_custom_role.token_minter` (`fugaroTokenMinter`, one permission:
@@ -42,7 +44,7 @@ role" is `google_project_iam_custom_role.token_minter` (`fugaroTokenMinter`, one
 | "the launcher roster" | Two lists from one source: the IAM members `var.launchers` and `var.operators` (Firebase root), and the bare addresses `var.launcher_accounts` (installation root, `internal/infra/launchers.go`), which holds the `user:` entries only |
 | "the coordinator [has a] signer grant of its own" | Nothing. See F2 |
 | "pairing tokens, device tokens, the mobile account's" | `token.MintPairing` and `token.MintDevice`, both called from `internal/cli/pair.go` with the runs' signer; and a second, device-only signer for the public mobile service (`google_service_account.device_signer`, `mobile_token_minter`) |
-| "the job's platform" as an issuer | Rejected already as alternative C4 of `docs/design/budget-token-channel.md` |
+| "the job's platform" as an issuer | Rejected already as alternative C4 of `docs/budget-token-channel/spec.md` |
 
 ## The census
 
@@ -164,7 +166,7 @@ sealed token is an object in the runs bucket every launcher reads (`runs_reader`
 value of `runner.BudgetTokenEnv` in the execution's override, and the launcher role
 (`google_project_iam_custom_role.launcher`, `modules/installation/iam.tf`) carries
 `run.executions.get`. `token.Lifetime` is one hour, and a custom token can be exchanged more than
-once inside it (U3). `docs/design/budget-token-channel.md` says the seal is "a capability, not a
+once inside it (U3). `docs/budget-token-channel/spec.md` says the seal is "a capability, not a
 boundary" and keeps a launcher out of scope because "a launcher can already mint". Once a
 launcher cannot mint, that exemption is gone and the copy is the remaining way to ask 3's
 "obtain". Consequence: D3122.
@@ -241,6 +243,13 @@ states "the runner's own answer is never a boundary: the service serves a call o
 record names". This spec does not change that. The issuance record (R3) is a place a later plan
 could move that answer to; nothing here does (O6).
 
+*(Amended 2026-11-22: that plan's **D3066** — Vertex reached through the run's gateway with the
+job's own identity, the service holding nothing and never called — is amended by **D3174** of
+[model credentials routing](../model-credentials-routing/README.md). For a chain the credentials
+service serves, the service calls Vertex on its own identity, as it serves a key, so a job's own
+Vertex grant is not what carries the call, and what a launcher resolves into an execution's
+environment is not the whole of what a Vertex chain runs on.)*
+
 **F20 (Exists). The precedents for every Terraform move exist.** A minter row for one named
 service account, written with literals so the plan is readable: `mobile_token_minter`. A row in
 one root naming another root's account: `orchestrator_token_minter`. Plan-cover rows that tie a
@@ -252,11 +261,11 @@ version 10 (`internal/projectpolicy/version.go`, `docs/design/update-in-flight.m
 **F21 (Rule). The security documents state today's reach as an accepted limit.** SECURITY.md:
 "**Any launcher can mint a budget identity for any repository.**" It is mirrored byte for byte in
 `website/content/security.md` (`internal/cli/docs_website_security_test.go`), and repeated in
-`docs/design/roles.md`, `docs/design/budget-token-channel.md` and
+`docs/roles/spec.md`, `docs/budget-token-channel/spec.md` and
 `docs/mobile/design/always-on-orchestrator.md` (section 4.5, E4). Consequence: the plan's
 documents task rewrites each; "may mint" becomes "may launch".
 
-**F22 (Exists). This is a ruling already on record.** `docs/design/roles.md` gives D628 as the
+**F22 (Exists). This is a ruling already on record.** `docs/roles/spec.md` gives D628 as the
 reason a minter is needed that the people being ranked cannot call, and its D686 asks where that
 minter lives, noting that narrowing the role takes it away from `fugaro pair` and the run's
 budget token. This spec carries both out.
@@ -398,7 +407,7 @@ Numbers D3120–D3137 are used; the block is D3120–D3139 (see the README for t
 | **D3133** | The cap is three review rounds and round 3's fixes were unreviewed (O18). A fourth round? Recommended: yes. Alternative: land as it stands, with C1's own review to catch the rest. | **Yes, one more round.** As recommended. It goes past the skill's cap on the owner's word. |
 | **D3134** | D3126 was chosen from an option that said it "closes" H1; it narrows it (O13). Does D3126 stand? Recommended: it stands, and the documents say narrowed. Alternatives: stands, and a backlog entry for the device-held key; reconsider D3126. | **It stands; H1 is narrowed.** As recommended. No backlog entry was asked for. |
 | **D3135** | An installation with no published policy has no lever for an older CLI (O4), and whether one can exist after always-a-budget is unverified (U5). Recommended: LM14's first step settles the fact, and the question returns only if such an installation can exist. Alternatives: accept the gap; `update` publishes a minimal policy. | **Settle the fact first.** As recommended. |
-| **D3136** | The trace of D3132 (F34). **Asked twice.** First, on a threat that review round 4 showed was wrong (a person with a modified CLI committing an attempt): recommended, judge the launch scope of the person who committed. Second, with the facts of F34 as corrected (only database admins write the node; an attempt names no committer): recommended, the issuer serves the orchestrator only a run id that is a recorded, unstarted attempt of that repository, and refuses an ask naming context repositories. Alternatives the second time: add a committer field and judge it as well (about 2 more tasks, a schema bump, the field being the admin's word); unscoped, as D3125 first stood. | First answer: "Judge the person who committed". **Amended after review, and answered again by the owner (2026-11-20): bind the ask to a recorded attempt.** As recommended. No committer field and no scope judgement for this class. Cost accepted: 1 task (LM24), no schema change. A compromised orchestrator account can launch only what an admin's patch already committed. **Amends D3125.** |
+| **D3136** | The trace of D3132 (F34). **Asked twice.** First, on a threat that review round 4 showed was wrong (a person with a modified CLI committing an attempt): recommended, judge the launch scope of the person who committed. Second, with the facts of F34 as corrected (only database admins write the node; an attempt names no committer): recommended, the issuer serves the orchestrator only a run id that is a recorded, unstarted attempt of that repository, and refuses an ask naming context repositories. Alternatives the second time: add a committer field and judge it as well (about 2 more tasks, a schema bump, the field being the admin's word); unscoped, as D3125 first stood. | First answer: "Judge the person who committed". **Amended after review, and answered again by the owner (2026-11-20): bind the ask to a recorded attempt.** As recommended. No committer field and no scope judgement for this class. Cost accepted: 1 task (LM24), no schema change. A compromised orchestrator account can launch only what an admin's patch already committed. **Amends D3125.** **Widened 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)** (D3189, R19): the issuer also serves the orchestrator a resume of a pause the credentials service itself recorded — no attempt on its own record, but a node the service alone writes, its resume time included — and the resumed run keeps the launcher and the pool the pause recorded (D3191). Nothing else moves: an ask it cannot tie to a record still meets the same refusal. |
 | **D3137** | Raised by review round 4 as a decision this document had made unasked (R16, arm 2). After D3130 a roster service account would be the one class with a ticket for any repository and no scope judgement, because the CLI gate admits a service-account credential without judging it today. Recommended: parity, admitted unscoped, and SECURITY.md says so. Alternative: judge it like a person (a pipeline stops until its account is granted a scope; about 1 more task). | **Parity: admitted unscoped.** As recommended. Why: a pipeline that launches keeps working (ask 4). Cost accepted: a leaked roster service-account key launches on every repository. |
 
 No answer departs from its recommendation. No answer was "your call". Two answers were amended

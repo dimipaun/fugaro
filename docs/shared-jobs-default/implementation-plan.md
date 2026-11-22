@@ -170,7 +170,7 @@ flagged opus with an independent review, and the contracts over credentials get 
 
 ### S7: documents and the untested wording
 - Acceptance: `docs/git-providers.md` no longer says Bitbucket stays per-repository; `docs/checkout.md` states that baked is a cache; the pinned reach wording and the docs tests agree.
-- Files: `docs/git-providers.md`, `docs/checkout.md`, `docs/design/project-centric.md`, `internal/cli/docs_project_wide_git_test.go`.
+- Files: `docs/git-providers.md`, `docs/checkout.md`, `docs/project-centric/spec.md`, `internal/cli/docs_project_wide_git_test.go`.
 - Interfaces: none.
 - Tests: `TestDocsStateTheBitbucketProjectTokenReach`, the Docs filter; 
 - Command: `go test ./internal/cli/ -run Docs -count=1`

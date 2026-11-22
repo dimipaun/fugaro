@@ -1,7 +1,7 @@
 package plugin_test
 
 // The shared skill check: a command a skill names, resolved against a CLI tree
-// (design docs/design/ee-boundary-moves.md §9, D536). One binary ships, so the
+// (design docs/ee-reorg/boundary-moves.md §9, D536). One binary ships, so the
 // paid commands the owner moves out of the core are still names the released
 // CLI answers to — as the core command today, as a registration after the move,
 // as the stub a build without that code shows — and a skill naming one is

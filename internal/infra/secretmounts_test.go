@@ -512,7 +512,7 @@ providers:
 `
 
 // TestMixedStageAccountMountsTheTokenOnTheApiKeyJob: B2's whole point
-// (docs/design/mixed-credentials.md §11, the ruled table). An api-key run
+// (docs/mixed-credentials/spec.md §11, the ruled table). An api-key run
 // keeps its coder on the provider key the gateway holds AND runs its review
 // and adversarial stages on one Claude OAuth account, so the run's own job —
 // the one built for that account, gcp.WorkflowVariant — mounts the account's
@@ -623,7 +623,7 @@ workflows:
 }
 
 // The ruling's refusals, at the variant and at the mount
-// (docs/design/mixed-credentials.md §11, "An allow-list, not a denylist"): an
+// (docs/mixed-credentials/spec.md §11, "An allow-list, not a denylist"): an
 // api-key run's account serves review and adversarial and no other stage, its
 // name is held to claude_accounts' own allow-list for the repository, and no
 // other auth has a provider key to mix it with.
@@ -701,7 +701,7 @@ workflows:
 // mixedRungFourCfg is an api-key repository whose reviews run on the model the
 // case names: the shape the owner's ruling of 2026-11-05 is about, where the
 // project's default_claude_account and not a stage key is what asks for the
-// mix (docs/design/mixed-credentials.md §11).
+// mix (docs/mixed-credentials/spec.md §11).
 func mixedRungFourCfg(t *testing.T, reviewer string) *config.Config {
 	t.Helper()
 	return parseCfg(t, []byte(`version: 1

@@ -43,7 +43,7 @@ Seven things an installation needs sooner or later, one page each:
 - [Offboarding a repository](how-to/offboarding.md) — lower the jobs' deletion protection, keep the secrets, destroy the rest.
 - [Retiring a workflow or an account](how-to/retiring-a-workflow.md) — plain `fugaro update` on a managed project, else `--repo --retire`.
 - [Teammates: no setup](how-to/teammates.md) — a launcher or an operator runs the CLI with no local config.
-- [Cutting over to the orchestrator daemon](how-to/orchestrator-cutover.md) — one import, the daemon takes over, and the rollback is three hand-run steps.
+- [Cutting over to the orchestrator daemon](how-to/orchestrator-cutover.md) — `fugaro update` installs the login unit, and the switch hands orchestration back.
 - [Model A/B testing](how-to/model-ab-testing.md) — turn sampling on in the project layer, and read the pairs `fugaro ab` reports.
 
 <a id="not-an-owner"></a>

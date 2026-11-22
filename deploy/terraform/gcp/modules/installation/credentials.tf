@@ -769,6 +769,63 @@ resource "google_cloud_run_v2_service" "credentials" {
           value = env.value
         }
       }
+      # The identity half's names (LM12; the readers are LM22's, under the same
+      # names: internal/cli's credentialsServiceSigner,
+      # credentialsServiceRosterServiceAccounts and credentialsServiceImplicitAdmins).
+      # The first is the account a run's identity is signed as (D3121): the
+      # runs' signer the FIREBASE root creates, which the update hands over
+      # once that root has created it — one bare address, the spelling the
+      # launcher's signJwt call already names it by, so the entry is the
+      # address the issuer's own minter row is bound on rather than a second
+      # spelling that could drift from it. Whether it is there at all is the
+      # ONE value that says whether this installation has an issuer: absent is
+      # an installation whose identity routes answer the contract's "not
+      # served" (R7, I1), and the process reads the name as an OPTIONAL value
+      # so a service deployed before this release keeps starting.
+      #
+      # It is not a credential: the service holds the minter ROLE on this
+      # account (LM11's row, in the Firebase root, where the signer exists),
+      # and the account's own keys are nobody's. An installation with no
+      # signer named renders no entry, which is the fail-closed direction.
+      dynamic "env" {
+        for_each = var.credentials_service.signer_account == "" ? [] : [var.credentials_service.signer_account]
+        content {
+          name  = "FUGARO_SIGNER_ACCOUNT"
+          value = env.value
+        }
+      }
+      # ... and the roster's service accounts (D3123), as the JSON array the
+      # process decodes: the `serviceAccount:` entries of the installation's
+      # roster, which is the class a person's list cannot hold — the address
+      # presents a service account's token rather than a person's, and D3137
+      # admits it without a scope judgement. It is the SAME list iam.tf makes
+      # the invoker grant from (local.roster_service_account_members): the
+      # identity that may knock and the identity that may be served are one
+      # value read twice, which is the property every class list here has.
+      #
+      # Rendered only when the roster names one, the four lists above's rule: a
+      # service started with no entry has an EMPTY service-account class (a
+      # class that admits nobody) rather than refusing to bind a port.
+      dynamic "env" {
+        for_each = length(var.credentials_service.roster_service_accounts) == 0 ? [] : [jsonencode(var.credentials_service.roster_service_accounts)]
+        content {
+          name  = "FUGARO_ROSTER_SERVICE_ACCOUNTS"
+          value = env.value
+        }
+      }
+      # ... and the implicit admins (F29, R16), the same way: the addresses the
+      # CLI's own launch gate reads out of the updating machine's
+      # terraform.budget_admins, which the update renders here so that the
+      # issuer's scope check gives the gate's answer and an owner is not
+      # refused a launch that works today. Read as an optional value like the
+      # class lists above, and used by nothing until LM23 judges with it.
+      dynamic "env" {
+        for_each = length(var.credentials_service.implicit_admins) == 0 ? [] : [jsonencode(var.credentials_service.implicit_admins)]
+        content {
+          name  = "FUGARO_IMPLICIT_ADMINS"
+          value = env.value
+        }
+      }
     }
   }
 

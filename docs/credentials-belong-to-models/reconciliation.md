@@ -16,6 +16,17 @@ stays per run and picks the path"), reverses **D1624** (an unset access no longe
 **O2** of the credentials service (the operator's consent switch) and replaces the keys plan's
 tasks **KS6, KS9 and KS10**; each is marked where it bites.
 
+**Amended on 2026-11-22 by [model credentials routing](../model-credentials-routing/reconciliation.md)
+(D3170).** That plan's routing table supersedes this plan's craft access, so **every task of this
+plan that is not merged is withdrawn**, carried by a task there except CM2 (per-repository crafts),
+which is not replaced: one table per project, and that plan's RT2 carries admission. **Contract C1
+is withdrawn with its draft pull request #3460 still open, to be closed unmerged**, re-cut as that
+plan's C1. What is merged
+(CM1, CM3, CM22, CM32, CM35), the two-release removal of `agent.auth` and R3's rule for an
+unmigrated repository are kept. The withdrawn set, what carries each, and the decisions the
+amendment reverses are in §4's amendment below; the withdrawn tasks are stopped by the owner by
+hand before any launches (that plan's O1).
+
 ## 1. What the spec asks for, and what the repository already has
 
 | The spec's concept | What the repository has |
@@ -363,7 +374,7 @@ repository's own `fugaro.yaml` writes `auth: api-key`. Commands write the retire
 because it would turn the cascade off. Messages phrased by auth sit in
 `internal/infra/retire.go`, `internal/runner/halt.go`, `internal/budget/lease.go` and
 `session.go`. Documents: `console/docs/json-contract.md` defines `auth` and `notional` by the
-auth mode; `docs/design/project-secrets.md`, `docs/design/v1.md` and `docs/release.md` use the
+auth mode; `docs/project-secrets/spec.md`, `docs/design/v1.md` and `docs/release.md` use the
 phrasing. The counts of F1 and F18 are about: a second count gave 65 files and 76 occurrences in
 27. Consequence: each is given to a task (CM3, CM8, CM12, CM13, CM14, CM20, CM21, CM26, CM34).
 
@@ -432,7 +443,10 @@ fix, never sent to Vertex (CM8).
 **F50 — Rule (review round 3): CM35 puts keys release B behind this plan's release 1.** With
 KS13 re-pointed at this plan's I1, the keys plan cannot drop its mounts before this plan's first
 release is integrated. And KS6 and KS9 become launchable as soon as their own waits end, so CM35
-must not wait on anything. Consequence: CM35 launches first and alone; O8.
+must not wait on anything. Consequence: CM35 launches first and alone; O8. *Amended 2026-11-22
+(D3170):* this plan's I1 is withdrawn with every task of it that is not merged, so KS13 is
+re-pointed at model credentials routing's I1 and keys release B is behind that plan's release 1;
+CM35 is merged, and its rule that it waited on nothing holds (O8).
 
 ## 4. Decisions
 
@@ -441,16 +455,16 @@ amendment beside the first answer.
 
 | # | Question | Answer | Mark |
 | --- | --- | --- | --- |
-| **D3060** | What names the credential a stage's calls use, once a repository has no auth mode (F2)? | The craft's access, as built: it names a declared credential or pool, and the run's path follows that credential's type | as recommended. **It reverses model crafts' F24** |
+| **D3060** | What names the credential a stage's calls use, once a repository has no auth mode (F2)? | The craft's access, as built: it names a declared credential or pool, and the run's path follows that credential's type | as recommended. **It reverses model crafts' F24**. **Superseded on 2026-11-22 by D3170 of model credentials routing:** the project's routing table supersedes craft access, and its D3171 keeps one chain per model |
 | **D3061** | What does an access no one wrote mean (F2)? | *First answer, kept:* the declared credentials that reach the craft's model, in the order the project lists them, Vertex last where the project has it on. **Amended by the owner, 2026-11-20:** "I don't like the idea of falling through to vertex, it will result in unexpected charges. User should explicitly specify it like 'vertex' or 'native', wdyt?" So: **the first declared credential that reaches the craft's model, and nothing after it. Vertex is never implied**: a craft goes out on it only where its access, or a pool, names `vertex`. An unset access that no declared credential reaches is refused with the fix. Moving on from one credential to another needs a pool someone wrote. `fugaro update` writes today's answer explicitly, so nothing moves on upgrade | as recommended, then **amended by the owner**; the amendment's two parts were asked as questions and answered as recommended (the name stays `vertex`, not `native`; no move to a paid key without a pool). **It reverses D1624**, where unset meant Vertex |
 | **D3062** | Does a repository's file keep `agent.crafts.<craft>.access` (F8)? | No. Access is written only in the project's config; `fugaro update` moves a file's existing choice there | as recommended |
 | **D3063** | What does the release do with a committed `fugaro.yaml` that still says `agent.auth` (F7)? | It is read, sets nothing and is named: `update`, `validate` and `doctor` say so and offer its removal as a diff. A later release rejects it, behind a gate on the job image's age | as recommended. *Made precise after review round 1 (F26, F27):* "sets nothing" holds from the moment `update` has migrated that repository; until then the key is read once more, by the migration's own rule, so that an unmigrated repository runs as it did (R3). **Confirmed by the owner, 2026-11-20** |
-| **D3064** | What becomes of `cascade` (F11)? | *First answer, kept:* a pool that `fugaro update` writes, with the same members in the same order, and the crafts pointed at it; the service's ordering, stickiness and wait rule unchanged. **Amended after review round 1 (F24), by the owner's answer of 2026-11-20:** the pool `update` writes is **marked as the cascade's**. It carries the cascade's existing consent, so its subscriptions are served exactly as the cascade serves them today although `subscription_spread` is off, and it is published as `legacy_open`, so it needs no owner. A pool anyone writes afterwards still obeys the switch | as recommended, then **amended after review**: a plain pool would have stopped serving every subscription (F24). The amendment was asked as a question and answered as recommended |
+| **D3064** | What becomes of `cascade` (F11)? | *First answer, kept:* a pool that `fugaro update` writes, with the same members in the same order, and the crafts pointed at it; the service's ordering, stickiness and wait rule unchanged. **Amended after review round 1 (F24), by the owner's answer of 2026-11-20:** the pool `update` writes is **marked as the cascade's**. It carries the cascade's existing consent, so its subscriptions are served exactly as the cascade serves them today although `subscription_spread` is off, and it is published as `legacy_open`, so it needs no owner. A pool anyone writes afterwards still obeys the switch | as recommended, then **amended after review**: a plain pool would have stopped serving every subscription (F24). The amendment was asked as a question and answered as recommended. **Reversed on 2026-11-22 by D3183 of model credentials routing:** the existing accounts become that plan's shared pool, with the same members and order, and each person moves their own token later |
 | **D3065** | Is the operator's consent switch, `routing.claude.via: cascade`, still required (F11)? | No. The service's admission of each credential for each repository is the consent. The switch stays readable for older images | as recommended. **It retires O2** (the owner's ruling of 2026-10-17) |
-| **D3066** | What does "through its gateway and the credentials service" mean for Vertex (F12)? | Vertex is reached through the run's gateway with the job's own identity. The service holds nothing for it and is not called | as recommended |
+| **D3066** | What does "through its gateway and the credentials service" mean for Vertex (F12)? | Vertex is reached through the run's gateway with the job's own identity. The service holds nothing for it and is not called | as recommended. **Amended on 2026-11-22 by D3174 of model credentials routing:** a gateway cap cannot bind Vertex on the job's identity, so the credentials service calls Vertex on its own identity, capped as far as a key is and no further |
 | **D3067** | How does the subscription token leave the agent's environment where the service does not yet serve the repository (F4)? | In two releases: the first serves it wherever the bundle is ready and names every repository still on the old path; the second removes that path and refuses such a launch with the fix | as recommended |
-| **D3068** | What happens to per-stage accounts and the mixed stage account (F13)? | They become the access of the craft the stage belongs to. The mix stops being a special case | as recommended. **It replaces the keys plan's KS9 and KS10** |
-| **D3069** | Does `fugaro run --token <account>` stay (F14)? | Yes: it names a subscription credential for that run's coder, only among those the project admits for the repository | as recommended |
+| **D3068** | What happens to per-stage accounts and the mixed stage account (F13)? | They become the access of the craft the stage belongs to. The mix stops being a special case | as recommended. **It replaces the keys plan's KS9 and KS10**. **Reversed on 2026-11-22 by D3171 of model credentials routing:** per-stage accounts and the mix are retired, and `update` folds them into one pool |
+| **D3069** | Does `fugaro run --token <account>` stay (F14)? | Yes: it names a subscription credential for that run's coder, only among those the project admits for the repository | as recommended. **Reversed on 2026-11-22 by D3176 of model credentials routing:** `--token` is rejected with a fix naming `--pool`, which makes the launcher's pool resolve to a named pool for that run |
 | **D3070** | What do new runs write in the registry entry's `auth` (F3)? | Nothing: the views print `-`, its existing value for none, and a new member names what the run goes out on. No version changes | as recommended |
 | **D3071** | When does this ship? | After always a budget's integration and the keys plan's serving tasks. Its removal step ships with keys release B | as recommended |
 | **D3072** | Does the release that rejects `agent.auth` bump `fugaro.yaml`'s version (F3, F7)? | No. The key is rejected with the fix, and a launch on a job image older than the first release is refused | as recommended. **It sets the rule "a removed field bumps its format's version" aside for this file**, as D3022 did for a value |
@@ -483,7 +497,64 @@ amendment beside the first answer.
 - An older console shows `-` where it showed the auth mode, until a console release reads the
   new member (D3070).
 
+### Amended on 2026-11-22: what model credentials routing replaces (D3170)
+
+The owner's answer of 2026-11-21 (D3170) is that
+[model credentials routing](../model-credentials-routing/reconciliation.md) supersedes this plan's
+craft access now: how a model is reached is a property of the model, set once in the project's
+routing table, and a chain of sources serves each call. **Every task of this plan that is not
+merged is withdrawn**, and **contract C1 is withdrawn with its draft pull request #3460, still
+open and to be closed unmerged**, re-cut as that plan's C1. What is merged is kept, with the
+two-release removal of
+`agent.auth` (R3, D3063, D3072) and the rule that an unmigrated repository runs as its file says.
+The owner stops the withdrawn tasks by hand before any launches (that plan's O1).
+
+| Earlier task | State | Carried by, in model credentials routing |
+| --- | --- | --- |
+| CM35, CM1, CM3, CM22, CM32 | merged | kept, as merged |
+| C1 (the access contract) | draft #3460 | withdrawn; its C1 |
+| CM2 (per-repository crafts) | not started | withdrawn, not replaced: one table per project, and its RT2 carries admission |
+| CM4, CM19 | not started | MG1, MG2 |
+| CM5, CM31 | not started | RT4 and MG3; X4 |
+| CM6, CM36 | not started | CS1, PL3 |
+| CM7 | not started | CS2 |
+| CM8 | not started | CS6, CS13 |
+| CM9, CM11 | not started | CS7 |
+| CM10 | not started | CS8 |
+| CM12 | not started | CS9 |
+| CM13 | not started | CS11 |
+| CM14, CM15 | not started | CS10, CS12, CS14, CS15, RT7 |
+| CM16 | not started | RT3 |
+| CM17, CM18 | not started | RT6, RT7 |
+| CM20 | not started | MG5 |
+| CM21 | not started | VS1 |
+| CM23 | not started | MG6 |
+| CM34 | not started | MG4 |
+| I1 | not started | I1 |
+| CM24 to CM27 | not started | DOC1 to DOC4 |
+| CM28, CM29, CM30, CM33 | not started | X1, X2, X3, X5; its X6 to X8 are new |
+| Checks 810 and 811 | scripts merged, not run | replaced by its Checks 884 and 885; its DOC2 marks them so in the live checklist |
+
+**Which decisions the amendment touches.** D3060 is superseded by D3170 (the table supersedes
+craft access, and its D3171 keeps one chain per model); D3064 is reversed by D3183 (the existing
+accounts become the shared pool); D3066 is amended by D3174 (the credentials service calls Vertex
+on its own identity); D3068 is reversed by D3171 (per-stage accounts and the mix are retired);
+D3069 is reversed by D3176 (`--token` becomes a narrow `--pool`). D3061's intent is kept — Vertex
+is reached only where a chain names it, and nothing is implied — and D3065's retired consent
+switch stays retired, with the table replacing `routing.claude.via` (its D3173). D3063 and D3072
+stand: the retired keys are read and named for one release and then rejected, with no version
+bump. D3067's two-release removal of the token from the agent's environment is that plan's CS7.
+
+**The keys plan moves with this one.** Its KS13, which this plan's CM35 had pointed at this plan's
+I1, now waits on model credentials routing's I1 instead (its A1), so keys release B still cannot
+drop its mounts before a release integrates the work.
+
 ## 5. Resolutions
+
+*From 2026-11-22 (D3170) these hold only for what is merged: the resolution of how a credential
+is chosen is model credentials routing's, and R1's seam, R2's reach, R4's record, R5's header,
+R6's views, R7's migration and R9 to R15 are re-cut there. R3's two-release removal of
+`agent.auth` and its rule for an unmigrated repository stand.*
 
 - **R1. One seam.** Every reader of the auth mode is moved to one question: for this stage of
   this repository, which credential or pool, of which type, served by which path. The types are
@@ -633,7 +704,10 @@ No two answers pull against each other.
   waits on Check 50 (D3013) and release A. And by CM35 the keys plan's KS13 waits on this plan's
   I1, so keys release B cannot drop its mounts before this plan's release 1 is integrated (F50).
   D3071's "its removal step ships with keys release B" holds; the order inside that release is
-  this plan's I1, then KS13, then CM28.
+  this plan's I1, then KS13, then CM28. *Amended 2026-11-22 (D3170):* every task of this plan that
+  is not merged is withdrawn, its I1 among them, so the keys plan's KS13 waits on model credentials
+  routing's I1 instead (its A1) — that plan's release 1, in this plan's place — and the order
+  inside keys release B is that plan's I1, then KS13, then CM28.
 
 - **O9.** The graph cannot say that I1 and the contract change wait for C1: it records a wait on
   a contract only for an edge the pass moved there. I1 waits on every side, so it loses nothing;
@@ -657,6 +731,10 @@ No two answers pull against each other.
 - **O13.** Not verified: that every launch path (run, follow-up, review, the shared project job,
   the orchestrator) goes through the one function CM14 changes and so hands a run its access
   (U8).
+- **O15.** Added 2026-11-22. The tasks D3170 withdraws are stopped by the owner by hand, as the
+  keys plan's KS6, KS9 and KS10 were: nothing in this repository stops a run, and this plan's
+  levels, critical path and checks are the record of what was planned rather than a launch order
+  (model credentials routing's O1).
 
 ## 7. UNVERIFIED
 

@@ -6,7 +6,7 @@ This is **Task P5.2** of [the mobile plan](../implementation-plan.md), **Phase 5
 ("later, unscheduled")**, whose four tasks are recorded so that a later reader finds the
 reasoning rather than rediscovering the question. It writes nothing but this file and the
 one documentation test beside it (`internal/cli/docs_mobile_push_test.go`, by the same rule
-[budget-token-channel.md](../../design/budget-token-channel.md) states for its own test: the
+[budget-token-channel.md](../../budget-token-channel/spec.md) states for its own test: the
 test is red until this document exists). **No decision number is allocated here**: the
 questions at the end are **Q1, Q2 …** for the owner, and a later pass assigns the numbers.
 
@@ -18,7 +18,8 @@ into **tasks P5.2.1–P5.2.10**, each with its files, its dependencies and its v
 **Nothing is built by the approval** — this document is still the design and no sender, push
 node, registration field or app code exists — it allocates no decision number, and **Q1–Q10
 remain the owner's to answer**: the plan lists each as a question beside the tasks that wait on
-it. Six sentences below were true when they were written and are not true of the tree the plan
+it. *(2026-11-21: the owner answered Q1, Q3 to Q8 and Q10; §12 and the plan carry each answer,
+and §4 rule 11 carries the iOS exception Q6's answer needs.)* Six sentences below were true when they were written and are not true of the tree the plan
 now reads, so each carries its own dated note: **§2's and §11's "`fugaro pair` is P6.6 …
 not built"** (P6.6 is **built** — `internal/cli/pair.go`, `internal/budget/token/device.go`
 and the sweep's `m~`/`p~` prefixes are on `main`, so `fugaro pair` writes the device node and
@@ -53,12 +54,12 @@ relocation is recorded where it was made rather than left to age silently.
 **Related.** [reconciliation.md](../reconciliation.md) (D112, D113, D117, D118, D121,
 D126), [functional-spec-reconciliation.md](../functional-spec-reconciliation.md) (D165,
 D166, D169 — the pairing, the device node and the MAC), [implementation-plan.md](../implementation-plan.md)
-(P4.1 the consumer, P5.1 the orchestrator, phase 6), [voice.md](../../design/voice.md) (D49,
-D50 and the F38 residual), [desktop-console-v2.md](../../design/desktop-console-v2.md) (D33 —
-the same question asked of the desktop console, which rejected "a push service (FCM)"), [m9-budget-and-dashboard.md](../../design/m9-budget-and-dashboard.md)
-§6.2 and §6.4 (the mailbox tree and its rules), [budget-token-channel.md](../../design/budget-token-channel.md)
-(a token the phone also holds, and the audience rule it states), [project-centric.md](../../design/project-centric.md),
-[managed-projects.md](../../design/managed-projects.md) (D55–D78, the gate an always-on
+(P4.1 the consumer, P5.1 the orchestrator, phase 6), [voice/spec.md](../../voice/spec.md) (D49,
+D50 and the F38 residual), [desktop-console-v2.md](../../desktop-console-v2/spec.md) (D33 —
+the same question asked of the desktop console, which rejected "a push service (FCM)"), [m9-budget-and-dashboard.md](../../m9-budget-and-dashboard/spec.md)
+§6.2 and §6.4 (the mailbox tree and its rules), [budget-token-channel.md](../../budget-token-channel/spec.md)
+(a token the phone also holds, and the audience rule it states), [project-centric/spec.md](../../project-centric/spec.md),
+[managed-projects.md](../../managed-projects/spec.md) (D55–D78, the gate an always-on
 server would sit behind), [SECURITY.md](../../../SECURITY.md), [docs/gcp-live-checklist.md](../../gcp-live-checklist.md).
 
 ## 1. The problem
@@ -165,7 +166,7 @@ answered.
   finds nothing: this repository deploys **Cloud Run jobs**, never Cloud Run services. The one
   per-run network process, `internal/gateway`'s `Server` (started by `internal/runner/gateway.go`'s
   `gateway.Start`), is a **loopback** proxy inside the run's own container and dies with the
-  run. `voice.md` D49's words — "push notifications need a server component this project does
+  run. `voice/spec.md` D49's words — "push notifications need a server component this project does
   not have" — are still literally true.
 - **No FCM in Terraform.** `deploy/terraform/gcp/modules/firebase/` configures **Realtime
   Database** (`firebase.tf`'s `google_firebase_database_instance.this`), **Firebase
@@ -319,7 +320,7 @@ Two consequences fall out of this and both are deliberate:
 Android, and FCM's APNs relay for iOS. The reasons are the project's own:
 
 - **The app is already on Firebase.** An installation *is* a Firebase project
-  (`project-centric.md`; `mobile/src/accounts/account.js` carries `firebaseProjectId`,
+  (`project-centric/spec.md`; `mobile/src/accounts/account.js` carries `firebaseProjectId`,
   `authUid` and `fugaroProject` per account), the app signs in with Firebase Auth custom
   tokens (D165), and it reads the Realtime Database directly (D112). FCM needs **no new third
   party**: Google is already the party holding the project's data.
@@ -1088,6 +1089,15 @@ This is the document's spine. Each line is a requirement, not a preference.
     is posted **only when the mailbox shows a new, MAC-verified change of that category since
     the last one the app saw** — that, and not "unknown id ignored", is what makes the
     doorbell mean anything.
+    **The iOS exception (the owner's answer to Q6, 2026-11-21).** On iOS the push is a
+    **visible alert with one fixed sentence per category**, shown by the system before the app
+    runs, so **on iOS an alert is shown before any MAC is verified** and this rule holds there
+    for **state only**: what the app's own screen shows is still built from nothing but the
+    MAC-verified mailbox. The exception costs what §3.1 already concedes of any push (a forged
+    one can show whatever text its author chose): the sentence names nothing, is drawn from
+    rule 10's closed enumeration, and is no route and no input (rules 3 and 8). The
+    alternative was a Notification Service Extension reading both secrets through a keychain
+    access group, which the owner declined: **D111 is not amended.** Android is unchanged.
 12. **Never a write on receipt.** No background push handler writes anything — no `acked`, no
     seen-marker, no token refresh, no mailbox write of any kind (§3.9). A handler that writes
     hands a forged push a write primitive on the device's own mailbox.
@@ -1379,21 +1389,35 @@ page's software part is where such a sentence goes when there is one. The two ho
 still stand, and the first is the one that would carry the trust-model half — the page states
 what the app sends, and `SECURITY.md` is where this installation's reach is set out.
 
+**Amended 2026-11-21 (the owner's Q7, Q8 and Q3 answers, and Task P5.2.8): the trust-model half
+is written, and the sentences below that say where it belongs are now the record of the choice
+rather than a gap to close.** `SECURITY.md` carries a new section — **"Push notifications, and
+the relay the publisher holds"** — written by Task P5.2.8 in the pull request that implements
+the app's side: it states the relay the publisher operates, that **the publisher is in the
+message path**, what the app writes and what it never writes, that applying a registration is
+an admin act (Q3), and what it does not claim. **The grep this section quotes below is
+therefore history rather than the file's present state**: the file carries the subject now, in
+the section's own words, so a later task reads that section and not the bullet's "nothing at
+all about the mobile app, the mailbox or notifications". The website half is **"The software"**,
+the privacy page's second part, and it is P5.2.10's, in the task that states what P5.2.6 and
+P5.2.9 built as well.
+
 **Where a push privacy statement belongs, if the owner wants one:**
 
-- **`SECURITY.md`**, whose trust model currently says **nothing at all about the mobile app,
-  the mailbox or notifications.** Stated exactly, because this document's value is that its
-  stated checks hold: a grep of the file finds **no occurrence of "mailbox", "mobile", "phone"
-  or "notification"**, and the occurrences of "push" are all the **git** verb ("anyone who can
-  push to it", "pushes only to", "can push") and never the notification sense — so the
-  absence this design relies on is of the *subject*, not of the word. That is a gap this
-  design surfaces but does not close: the natural home for "what the phone sends, what the
-  provider sees" is the trust model, **and what it would sit beside there is the budget-adjacent
-  material — the launcher's budget identity, the budget token left in the runs bucket, the
-  shared job's bucket reach. It is a new section, not an extension of an existing one: the
-  file carries no mailbox disclosure to extend**, and neither this document nor a later task
-  may point at one, because the sentence above is this document's own evidence that there is
-  none.
+- **`SECURITY.md` — the home the owner chose, and the one the statement now occupies.** Q8's
+  answer of 2026-11-21 is (i), and the paragraph above records what was written there. **What
+  stood in this bullet was the argument for the gap, not a plan for the section**, and its
+  evidence — a grep finding **no occurrence of "mailbox", "mobile", "phone" or
+  "notification"**, with the occurrences of "push" all the **git** verb ("anyone who can push
+  to it", "pushes only to", "can push") — was true of the file when this section was written
+  and is not true of it now. It is kept here as the reason the section is **new** rather than
+  an extension of an existing one: the trust model held the budget-adjacent material — the
+  launcher's budget identity, the budget token left in the runs bucket, the shared job's
+  bucket reach — and **no mailbox disclosure to extend**, which is what the plan's task for the
+  statement repeats and what makes the new section a section of its own. Neither this document
+  nor a later task may point a writer at a push disclosure in the trust model's older text: the
+  section named above is where it is, and it is the one this document's §3.3, §3.5 and §4 are
+  written against.
 - **An app-facing statement** in the app or on the install page, if one exists when the app
   ships (D120's store listings are owner-run and are the other natural home).
 - **"The software", the privacy page's second part** — the site-side line, and the one a store
@@ -1567,7 +1591,9 @@ D160–D179 are not this document's to take.
   **generation 5**, so the registration change is **generation 6**, built on generation 5)*.
 
 **Q3. How does the push token rotate and the user's switches get written, given the app cannot
-write `config/admin`?**
+write `config/admin`? — ANSWERED by the owner on 2026-11-21: as designed. Registration is an
+admin act, like pairing, where the operator lacks the role; the path is (b), the mailbox
+registration plus the admin-held write, with (a)'s reaping kept as the net.**
 - *(a) register at pairing; reap `UNREGISTERED`*: **its registration half cannot be built** —
   D165's pairing-request node admits only the phone's public key and its timestamp, and refuses
   every other field (`rules.json.tmpl`, generation 3; `internal/budget/rules/emulator_pairing_test.go`
@@ -1669,9 +1695,24 @@ really compose the lock-screen text?**
 - ***Recommendation: (i).*** *Why:* the identifier is the only field that could ever correlate
   a push to a run, and the app does not need it — provided the owner accepts the iOS
   consequence above (an NSE and a D111 amendment) or accepts no visible iOS push.
+- **Answered by the owner, 2026-11-21: (i), with a third route for iOS that the two above did
+  not offer.** The payload carries the **category only**. On iOS the push is a **visible alert
+  whose text is one fixed generic sentence per category** — no Notification Service Extension,
+  no keychain access group, **no amendment of D111** — and the price is §4 rule 11's iOS
+  exception: the alert is shown before any MAC is verified. *Why the extension was declined:*
+  it would still need the generic text in the payload as its fallback (the system shows the
+  original alert when an extension fails or runs out of time), it cannot suppress an alert
+  without an entitlement Apple grants on request, and rule 10 allows it no better sentence
+  than the generic one. Android stays data-only with an app-composed alert.
 
 **Q7. FCM direct, or Expo's push relay — given that each installation is its own Firebase
-project?**
+project? — ANSWERED by the owner on 2026-11-21: a relay held by the publisher, not direct FCM.
+The app registers with the publisher's relay and the publisher holds the delivery credentials,
+so the credentials stay with the party that holds them once rather than being copied into every
+installation's project; and the disclosure written for it says that the publisher is in the
+message path. The same answer is the plan's question 10 — the project the device token is
+minted for is the publisher's, which is the project D259 already builds into the app. Task
+P5.2.8 is the app's half of it.**
 - *FCM direct*: **recommended only where the owner owns every installation's Firebase project.**
   No third party beyond Google/Apple; the project is already a Firebase project. **But FCM
   HTTP v1 sends only to registration tokens issued for the sending project**, and an `.p8` key
@@ -1690,14 +1731,29 @@ project?**
   leave the owner's own projects. **(The provider-behaviour claims here — HTTP v1's
   cross-project token rule, the team-wide `.p8` — are marked UNVERIFIED in §3.3: no cloud was
   queried.)**
+- **Answered by the owner, 2026-11-21: a relay held by the publisher**, for every installation
+  and not only the ones the owner does not own. The registration token is then the one the
+  app's default Firebase app mints (the plan's item 10), and the publisher is a party in the
+  message path, which §9's statement has to say. **Not settled by the answer:** whether that
+  relay is Expo's push service used with the publisher's credentials or a service the
+  publisher runs; the second is a new always-on component that no task of the plan builds.
 
-**Q8. Where does the push privacy statement live?**
+**The other questions, answered by the owner on 2026-11-21:** Q1 is **(B)**, the history
+sweep; Q3, Q4, Q5, Q8 and Q10 are each **as this document recommends**. The plan lists every
+answer beside the tasks that waited on it.
+
+**Q8. Where does the push privacy statement live? — ANSWERED by the owner on 2026-11-21: (i),
+(ii) and (iii), as recommended. The statement is a new `SECURITY.md` section — the trust-model
+half, written by Task P5.2.8 — and "The software", the privacy page's second part, is the
+site-side half the plan's own task for it (P5.2.10) owns. The bullets below are kept as the
+record of the question and of why the answer is where it is; what each said about the file's
+state at the time is stated as of the date it was written.**
 - *(i) `SECURITY.md`* — **recommended**, because the trust model is where this installation's
   credential-and-reach disclosures already live (the budget identity a launcher can mint, the
-  budget token left in the runs bucket, the shared job's bucket reach) and it currently says
+  budget token left in the runs bucket, the shared job's bucket reach) and it then said
   **nothing at all** about the phone, the mailbox or notifications (§9). **Stated as what it
-  is: the phone's disclosure would be a new section, not an addition to an existing mailbox
-  one — SECURITY.md carries no mailbox disclosure today**, and §9's grep is the evidence.
+  was: the phone's disclosure is a new section, not an addition to an existing mailbox one —
+  the file held no mailbox disclosure to extend**, and §9's grep was the evidence.
 - *(ii) "The software", the second part of the website's privacy page*: **accepted, and it is
   the shipped state's line rather than a rejected one.** The rejection this bullet carried
   ("that page is about **the site**, and it says so itself; push is not a site behaviour") was

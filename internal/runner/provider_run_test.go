@@ -1117,7 +1117,7 @@ func TestStageNamesTheCredentialThatServedIt(t *testing.T) {
 
 // TestAPIKeyReviewRecordsItsCredential is plan AK3's red step: the api-key
 // review -- an api-key run whose coder is the provider's model and whose
-// reviewer is a Claude ID, the configuration docs/design/mixed-credentials.md
+// reviewer is a Claude ID, the configuration docs/mixed-credentials/spec.md
 // §3 Path A describes -- has to say on the review stage's own record which
 // credential served it. Before this task the stage carried nothing: no
 // `credential`, whose case is the account's, and no other field either (F18).

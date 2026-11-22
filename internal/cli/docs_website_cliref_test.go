@@ -4,7 +4,7 @@ package cli
 //
 // website/content/cli-reference.md is generated from the command tree by
 // `go run ./ee/clidoc` -- the tagged tree, because one binary ships and the
-// page describes that binary (design docs/design/ee-boundary-moves.md §9) --
+// page describes that binary (design docs/ee-reorg/boundary-moves.md §9) --
 // and it is what the site's docs hub renders (W1.7), so a command or a flag
 // that lands in the tree without the reference being regenerated is a page that
 // lies to a reader. The two tests here are the two directions the console
@@ -232,9 +232,27 @@ func TestCliReferenceNamesEveryCommandAndFlag(t *testing.T) {
 // does not hold yet (graph, until CG3 registers it) has no section in the file,
 // and the core's own stub for it is not a name to require one for. The tagged
 // generator's own test holds the whole file either way.
+//
+// A paid command that sits under a family the released tree builds -- `fugaro
+// orchestrator map`, registered from ee/ (CG6) -- is the same case one level
+// down, and only the core's own written-down list can speak to it: this tree
+// carries neither that registration nor a stub for the name, so nothing in the
+// tree says the tagged one answers to it. The list is consulted, never trusted
+// over the tree: the moment the released tree holds that name below that
+// parent, the section is judged like any other.
 func cliRefPaidSection(path string) bool {
 	fields := strings.Fields(path)
-	if len(fields) < 2 || !slices.Contains(paidCommandNames(), fields[1]) {
+	if len(fields) < 2 {
+		return false
+	}
+	if len(fields) >= 3 {
+		for _, sub := range paidSubcommands {
+			if fields[1] == sub.parent && fields[2] == sub.name {
+				return !coreSurface().subCommands[sub.parent][sub.name]
+			}
+		}
+	}
+	if !slices.Contains(paidCommandNames(), fields[1]) {
 		return false
 	}
 	return !coreSurface().rootCommands[fields[1]]

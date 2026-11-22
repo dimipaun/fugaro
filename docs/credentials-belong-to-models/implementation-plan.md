@@ -6,6 +6,51 @@ explicit go, by name. This plan builds [spec.md](spec.md) as amended by
 cited as `D#`, findings as `F#`, resolutions as `R#`. Checked against `origin/main` at `d57d71ddb`
 on 2026-11-20.
 
+**Amended 2026-11-22: [model credentials routing](../model-credentials-routing/implementation-plan.md)
+supersedes this plan's craft access (D3170), and every task here that is not merged is
+withdrawn.** That plan's routing table makes how a model is reached a property of the model, set
+once in the project, so a craft no longer names a credential. What is merged is kept — CM35, CM1,
+CM3, CM22 and CM32 — with the two-release removal of `agent.auth` (R3) and the rule that an
+unmigrated repository runs as its file says. **Contract C1 is withdrawn, its draft pull
+request #3460 still open and to be closed unmerged by the owner** (that plan's O1), and re-cut as
+that plan's C1; its section is kept below as the
+record. The withdrawn tasks' sections are kept and marked, each naming the task that carries it, or
+that it is not replaced (CM2); the graph marks the withdrawn nodes in their titles. The owner stops
+the withdrawn tasks by hand before any launches (that plan's O1). Nothing below is a launch order
+any more: §5's levels, §6's
+estimate, §7's contract change and §8's Checks 810 and 811 are the record of what was planned.
+
+| Earlier task | State | Carried by, in model credentials routing |
+| --- | --- | --- |
+| CM35, CM1, CM3, CM22, CM32 | merged | kept, as merged |
+| C1 (the access contract) | draft #3460 | withdrawn; its C1 |
+| CM2 (per-repository crafts) | not started | withdrawn, not replaced: one table per project, and its RT2 carries admission |
+| CM4, CM19 | not started | MG1, MG2 |
+| CM5, CM31 | not started | RT4 and MG3; X4 |
+| CM6, CM36 | not started | CS1, PL3 |
+| CM7 | not started | CS2 |
+| CM8 | not started | CS6, CS13 |
+| CM9, CM11 | not started | CS7 |
+| CM10 | not started | CS8 |
+| CM12 | not started | CS9 |
+| CM13 | not started | CS11 |
+| CM14, CM15 | not started | CS10, CS12, CS14, CS15, RT7 |
+| CM16 | not started | RT3 |
+| CM17, CM18 | not started | RT6, RT7 |
+| CM20 | not started | MG5 |
+| CM21 | not started | VS1 |
+| CM23 | not started | MG6 |
+| CM34 | not started | MG4 |
+| I1 | not started | I1 |
+| CM24 to CM27 | not started | DOC1 to DOC4 |
+| CM28, CM29, CM30, CM33 | not started | X1, X2, X3, X5; its X6 to X8 are new |
+| Checks 810 and 811 | scripts merged, not run | replaced by its Checks 884 and 885; its DOC2 marks them so in the live checklist |
+
+**The decisions the amendment reverses or amends:** D3060 (a craft's access names the credential)
+by D3170 and D3171, D3064 (the cascade's marked pool) by D3183, D3066 (Vertex on the job's
+identity) by D3174, D3068 (per-stage accounts) by D3171, and D3069 (`--token`) by D3176. D3061's
+intent is kept: Vertex is reached only where a chain names it. D3063 and D3072 stand.
+
 **The answers that shaped it** (all the owner's, 2026-11-20, all as recommended): a craft's
 access names the credential (D3060); an unset access is the first declared credential that reaches the model, and never Vertex
 unless named (D3061, amended by the owner the same day); access is the project's alone (D3062); the old key is read, ignored
@@ -77,6 +122,11 @@ kept readable.
 ## 3. The contract, and the task before it
 
 ### CM35: the keys plan says what this plan replaces
+
+*Merged, and kept (D3170). **Amended 2026-11-22:** the keys plan's KS13, which this task pointed
+at this plan's I1, now waits on model credentials routing's I1, and the keys plan's README says
+so (that plan's A1).*
+
 - Acceptance: `docs/keys-through-service/` says, in its README, reconciliation, plan and graph,
   that KS6, KS9 and KS10 are withdrawn and replaced by this plan's CM16 and CM15, CM6, and CM9;
   that KS13 waits on this plan's I1 in their place; that C1's second fact is not needed (F20);
@@ -94,7 +144,14 @@ kept readable.
 - Commit: `docs(keys-through-service): KS6, KS9 and KS10 are replaced by credentials-belong-to-models (CM35)`.
 - Reviewer tier: standard.
 
-### C1: the access contract
+### C1: the access contract (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn, its draft pull request #3460 still open and to be closed unmerged by the owner (that
+plan's O1), and re-cut as
+[model credentials routing](../model-credentials-routing/implementation-plan.md)'s C1 (D3170). The
+section is kept as the record of what was withdrawn; every task below that depended on it is
+withdrawn with it.*
+
 - Acceptance: one place declares what every side of this plan shares. (a) The question: for a
   stage, and for the task's grade where it names one (F38), the access (a credential or a pool),
   each member's name, type and serving path, whether the credential was chosen or is the
@@ -145,6 +202,9 @@ documents:** CM24 to CM27.
 **Release 2. Slice 8, what release 1 kept readable goes:** CM28 to CM31, CM33.
 
 ### CM1: the resolver, by reach
+
+*Merged, and kept (D3170).*
+
 - Acceptance: a pure function over the config's own types answers, for one craft's model and a
   project's declared credentials, providers and admissions: a written access as written; an unset
   one as the first declared credential, in the order the project lists them, that reaches the
@@ -167,7 +227,10 @@ documents:** CM24 to CM27.
 - Commit: `craft: an unset access is the first credential that reaches, never Vertex (CM1, D3061)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM2: the project's per-repository crafts
+### CM2: the project's per-repository crafts (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; withdrawn and not replaced: one table per project, and that plan's RT2 carries admission.*
+
 - Acceptance: the installation's config accepts a crafts block on a repository's entry; it is
   published in a node of its own beside the per-repository node, at C1's path, which no older
   CLI or service reads, so nothing is gated and the per-repository node is left exactly as it
@@ -189,6 +252,9 @@ documents:** CM24 to CM27.
 - Reviewer tier: opus, mandatory independent review.
 
 ### CM3: the retired keys are named
+
+*Merged, and kept (D3170).*
+
 - Acceptance: one function lists, for a repository's file and for a project layer, each retired
   key it still writes (R3), with the path and the sentence a person reads; the keys still decode
   and still validate; `config.Scopes` marks them retired. It changes no reader.
@@ -205,7 +271,10 @@ documents:** CM24 to CM27.
 - Commit: `config: the retired keys, named where they are written (CM3, D3063, R3)`.
 - Reviewer tier: standard.
 
-### CM4: `fugaro update` migrates auth to access
+### CM4: `fugaro update` migrates auth to access (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's MG1, MG2.*
+
 - Acceptance: on every write of the local config and for each repository `update` is run for,
   R7 is carried out in place, by C1's rule: stage accounts become their craft's access (D3068); a
   project whose cascade serves anything gets a pool marked as the cascade's, with its members in
@@ -235,7 +304,10 @@ documents:** CM24 to CM27.
 - Commit: `update: a repository's auth becomes its crafts' access (CM4, R7)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM5: the access record is written beside the old one
+### CM5: the access record is written beside the old one (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's RT4 and MG3.*
+
 - Acceptance: where `fugaro update` writes `creds/repoauth/<slug>` it also writes
   `creds/repoaccess/<slug>` with what C1 (d) says: per craft and grade the access the project
   wrote or, where it wrote none, one credential per model family, the first that reaches it
@@ -255,7 +327,10 @@ documents:** CM24 to CM27.
 - Commit: `update: the access record, beside the auth record (CM5, R4)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM6: the service narrows by access
+### CM6: the service narrows by access (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS1, PL3.*
+
 - Acceptance: a call that carries the new headers is served what the access record names for
   the declared craft, or grade, and the call's model, and nothing the record does not name; a
   declared credential is served only where the record lists it for `--token` or the walk (F44);
@@ -280,7 +355,10 @@ documents:** CM24 to CM27.
 - Commit: `credsvc: a call is narrowed by its repository's access (CM6, R4, R5)`.
 - Reviewer tier: opus, mandatory independent review, with a mutation check on the narrowing.
 
-### CM7: the gateway carries the access
+### CM7: the gateway carries the access (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS2.*
+
 - Acceptance: the gateway's upstream carries, per stage, the craft a call is declared for and
   sends it in C1's header; a provider route through the service is admitted by what the stage's
   access is and no longer by the word `api-key` (`validateRoutes`); a call with no stage is
@@ -296,7 +374,10 @@ documents:** CM24 to CM27.
 - Commit: `gateway: a call declares its craft (CM7, R5)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM8: the run's model path follows its access
+### CM8: the run's model path follows its access (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS6, CS13.*
+
 - Acceptance: the run takes each stage's access from the entry its launcher put in the
   execution's environment, and where there is none applies C1's legacy rule, refused with the
   fix where the file writes no retired key either (R15, F49); it builds its
@@ -323,7 +404,10 @@ documents:** CM24 to CM27.
 - Commit: `runner: the model path follows the craft's access (CM8, D3060, D3065)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM9: the agent's environment, by credential type
+### CM9: the agent's environment, by credential type (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS7.*
+
 - Acceptance: `BuildEnv` and `GatewayVars` take the type of the credential a stage resolves to
   (a new member beside `EnvSpec.Auth`, which I1 removes); with a gateway, a subscription presents
   the gateway's token and no `CLAUDE_CODE_OAUTH_TOKEN` is in the environment; without one, for
@@ -343,7 +427,10 @@ documents:** CM24 to CM27.
 - Commit: `agent: a subscription goes through the gateway (CM9, D3067, D3073)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM10: the record and the cost, by what served
+### CM10: the record and the cost, by what served (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS8.*
+
 - Acceptance: each field keeps the rule it has, said without the auth word (F25): a stage's
   `served_by` and `credential` name a credential the job itself holds and are absent where the
   service serves the stage; `model_basis` is `subscription` where the coder's access is one
@@ -362,7 +449,10 @@ documents:** CM24 to CM27.
 - Commit: `runstore: the basis and served-by follow the credential (CM10, F15)`.
 - Reviewer tier: standard.
 
-### CM11: the run's account rules, by credential
+### CM11: the run's account rules, by credential (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS7.*
+
 - Acceptance: the account walk applies where a stage's access is one subscription credential
   that is the project's default account and was not chosen, the two conditions it has today
   (F35);
@@ -382,7 +472,10 @@ documents:** CM24 to CM27.
 - Commit: `runner: account rules follow the credential (CM11, D3068)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM12: the registry entry and the views
+### CM12: the registry entry and the views (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS9.*
+
 - Acceptance: a new run's entry carries no `auth` and C1's new member, and `credential` keeps
   its meaning (F29); `watch --json` prints `auth` as `-` and the member; `budget show --json`
   leaves `auth` out and adds the member; `Notional` is true where the coder's access is one
@@ -404,7 +497,10 @@ documents:** CM24 to CM27.
 - Commit: `watch: a run shows what it goes out on (CM12, D3070, R6)`.
 - Reviewer tier: standard.
 
-### CM13: the cloud side is planned from the crafts
+### CM13: the cloud side is planned from the crafts (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS11.*
+
 - Acceptance: a new `infra.ServiceServes` answers from the types of the credentials a
   repository's crafts resolve to (true where any is a secret the service holds, the bundle is
   ready and the service installed); the job's mounts, its account variants, `vertex`,
@@ -423,7 +519,10 @@ documents:** CM24 to CM27.
 - Commit: `infra: mounts and the switch follow the crafts (CM13, F6, R12)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM14: the launch, by access
+### CM14: the launch, by access (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS10, CS12, CS14, CS15, RT7.*
+
 - Acceptance: `fugaro run` decides the account, the job variant and whether the job is told about
   the service from the crafts' access; it resolves each craft's and grade's access and puts the
   answer in the execution's environment under C1's entry, for a migrated repository, and puts
@@ -451,7 +550,10 @@ documents:** CM24 to CM27.
 - Commit: `run: the launch follows the crafts' access (CM14, D3069)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM15: the gates and the bundle's readiness
+### CM15: the gates and the bundle's readiness (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS10, CS12, CS14, CS15, RT7.*
+
 - Acceptance: `credentialsBundleServes` asks whether the bundle holds every credential the
   repository's crafts resolve to, and records the one fact of C1 on the repository's entry, and plans the job's
   entry from it; `recordCredentialsServiceReady` keeps its signature until I1, so its call site
@@ -475,7 +577,10 @@ documents:** CM24 to CM27.
 - Commit: `update: readiness and the gates follow the crafts (CM15, F6, F19)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM16: the config's checks, by reach
+### CM16: the config's checks, by reach (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's RT3.*
+
 - Acceptance: a model is admitted where a declared credential reaches it and is admitted for the
   repository, and refused otherwise naming the model and what would reach it (this replaces
   `CheckProviderAuth` and the keys plan's KS6); an Anthropic key is "needed" where a craft
@@ -494,7 +599,10 @@ documents:** CM24 to CM27.
 - Commit: `config: a model is judged by what reaches it (CM16, R2, F19)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM17: validate, craft ls, models use and the enterprise code
+### CM17: validate, craft ls, models use and the enterprise code (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's RT6, RT7.*
+
 - Acceptance: `fugaro validate` judges budget, providers, routing and crafts by CM16's checks and
   prints CM3's notes for each retired key; `fugaro craft ls` prints what each craft resolves to,
   with "by reach" where no one wrote it; `fugaro models use` and `ee/ab` admit a model by reach. It changes no help string; CM23 does.
@@ -510,7 +618,10 @@ documents:** CM24 to CM27.
 - Commit: `validate: models and crafts are judged by reach (CM17)`.
 - Reviewer tier: standard.
 
-### CM18: doctor
+### CM18: doctor (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's RT6, RT7.*
+
 - Acceptance: every doctor check that named a repository's auth reads the crafts: the brokering
   checks (`flipServes`, `flipNotServed`, `doctorModelKeyInAgent`), the account checks and the
   routing checks; doctor names each retired key, each repository whose subscription is not yet
@@ -527,7 +638,10 @@ documents:** CM24 to CM27.
 - Commit: `doctor: checks follow the crafts (CM18, R8)`.
 - Reviewer tier: standard.
 
-### CM19: the update says what will change, first
+### CM19: the update says what will change, first (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's MG2.*
+
 - Acceptance: before it changes anything, `fugaro update` prints R8's lines for the repository
   it is run for; each retired key in the checkout is offered its removal as a diff, by the
   anchor's precedent, exactly as the anchor's diff is handled today, with nothing typed, and only
@@ -552,7 +666,10 @@ documents:** CM24 to CM27.
 - Commit: `update: what changes is said before it changes (CM19, R8, R10)`.
 - Reviewer tier: standard.
 
-### CM20: the settings registry and the schemas
+### CM20: the settings registry and the schemas (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's MG5.*
+
 - Acceptance: the rows `agent.auth` and `layer.defaults.agent.auth` are marked retired and point
   at this folder (F23); the per-repository craft keys have rows; the three schemas keep the
   retired keys with a description that says so, and describe the new block.
@@ -569,7 +686,10 @@ documents:** CM24 to CM27.
 - Commit: `settings: the retired auth rows and the per-repository crafts (CM20)`.
 - Reviewer tier: standard.
 
-### CM21: the console reads the new member
+### CM21: the console reads the new member (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's VS1.*
+
 - Acceptance: the console's parser reads C1's member from `watch --json` where present and shows
   it on the Live screen in place of the auth column; a document without it, and one whose `auth`
   is `-`, both parse; the scrubber's vocabulary knows the member.
@@ -587,6 +707,9 @@ documents:** CM24 to CM27.
   the pull request.
 
 ### CM22: the live checks, as scripts
+
+*Merged, and kept (D3170).*
+
 - Acceptance: Checks 810 and 811 exist as one script each, registered where every check script
   is, each printing what it measures and exiting non-zero on a failed row (§8).
 - Files: `scripts/live-checks/check810.sh` (new), `scripts/live-checks/check810_test.sh` (new),
@@ -605,6 +728,9 @@ documents:** CM24 to CM27.
 - Owner-run: the scripts themselves, after each release (§8). No agent runs one.
 
 ### CM32: the cascade's pool is served as the cascade
+
+*Merged, and kept (D3170).*
+
 - Acceptance: a pool in the installation's config may carry a marker that says it is the
   cascade's (D3064 as amended); the marker never reaches the shared node, where the pool is
   published as an ordinary `legacy_open` pool, the publisher's rule that clears `legacy_open` and
@@ -621,7 +747,10 @@ documents:** CM24 to CM27.
 - Depends on: none.
 - Commit: `config: the cascade's pool, marked and published (CM32, D3064)`.
 - Reviewer tier: opus, mandatory independent review.
-### CM34: the account and craft commands write the project's access
+### CM34: the account and craft commands write the project's access (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's MG4.*
+
 - Acceptance: the commands that wrote a retired account key write the access instead:
   `fugaro accounts switch` (the default account), `accounts alias`, `accounts rm`,
   `fugaro settings set` of `default_claude_account` or a stage's account, and the policy
@@ -644,7 +773,10 @@ documents:** CM24 to CM27.
 - Commit: `accounts: the commands write the project's access and its records (CM34, R4)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM36: the service serves the cascade's pool as the cascade
+### CM36: the service serves the cascade's pool as the cascade (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS1, PL3.*
+
 - Acceptance: where the access record marks a pool as the cascade's, the service offers its
   subscription members whatever the spread switch says, admitted per repository exactly as the
   cascade admits them today, and what it offers one repository is what the cascade offered it
@@ -662,7 +794,10 @@ documents:** CM24 to CM27.
 - Reviewer tier: opus, mandatory independent review, with a mutation check that an unmarked pool
   cannot be served a subscription with the switch off.
 
-### CM23: the help texts and the CLI reference
+### CM23: the help texts and the CLI reference (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's MG6.*
+
 - Acceptance: no command's help names `agent.auth` or a run by its auth (`budget preview`, `runs stats`, `secrets ls`, `setup`, `run --token`, `models use`, the
   `accounts` commands, the doctor's rendering and the managed-settings messages); it is the one task that
   rewords a help string, and it regenerates the reference page once, in the same pull request,
@@ -682,7 +817,10 @@ documents:** CM24 to CM27.
 - Commit: `cli: no help text is phrased by a repository's auth (CM23)`.
 - Reviewer tier: standard.
 
-### I1: integration
+### I1: integration (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's I1.*
+
 - Acceptance: the two stub files are deleted and the real resolver and accessor are wired in;
   what release 1's tasks left for it is removed: `EnvSpec.Auth`, the old default of
   `craft.Resolve` and `config.DefaultCredential` with it (nothing defaults to Vertex), C1's rule
@@ -711,7 +849,10 @@ documents:** CM24 to CM27.
 - Commit: `access: the stubs go and no reader of the auth mode is left (I1)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM24: `SECURITY.md`, its page and the rules file
+### CM24: `SECURITY.md`, its page and the rules file (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's DOC1.*
+
 - Acceptance: `SECURITY.md` states the boundary as it now is (a repository is served the
   credentials its record names; a subscription is served by the service wherever the bundle is
   ready, and where it is not the token is in the agent's environment for this release) and no
@@ -732,7 +873,10 @@ documents:** CM24 to CM27.
 - Commit: `docs: SECURITY.md and the rules say what a repository is served (CM24)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM25: the credentials documents and the checklist
+### CM25: the credentials documents and the checklist (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's DOC2.*
+
 - Acceptance: `docs/multi-model.md`, `docs/credentials-service/default-on.md` and `runbook.md`
   and `docs/gcp-live-checklist.md` describe credentials, crafts and pools, and name no repository
   by its auth; their pinned sentences move with their tests.
@@ -750,14 +894,17 @@ documents:** CM24 to CM27.
 - Commit: `docs: credentials, crafts and pools, not auth modes (CM25)`.
 - Reviewer tier: standard.
 
-### CM26: the accounts documents, the README and the release notes
-- Acceptance: `docs/project-claude-accounts.md`, `docs/design/mixed-credentials.md`,
-  `docs/design/agent-env.md`, `docs/project-layer.md` and `README.md` say the same; the release's
+### CM26: the accounts documents, the README and the release notes (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's DOC3.*
+
+- Acceptance: `docs/project-claude-accounts.md`, `docs/mixed-credentials/spec.md`,
+  `docs/agent-env/spec.md`, `docs/project-layer.md` and `README.md` say the same; the release's
   notes have `### For operators`: run `fugaro update`, and what it will say (the access each
   craft resolves to, the retired keys offered as a diff, the repositories whose subscription is
   not yet served); the website's summary line is added.
-- Files: `docs/project-claude-accounts.md`, `docs/design/mixed-credentials.md`,
-  `docs/design/agent-env.md`, `docs/design/project-secrets.md`, `docs/design/v1.md`,
+- Files: `docs/project-claude-accounts.md`, `docs/mixed-credentials/spec.md`,
+  `docs/agent-env/spec.md`, `docs/project-secrets/spec.md`, `docs/design/v1.md`,
   `docs/release.md`, `docs/project-layer.md`, `README.md`, the release's notes under
   `docs/releases/`, `website/data/release-summaries.yaml`, and the tests
   `docs_mixed_credentials_test.go`, `docs_usage_limit_switch_test.go`,
@@ -774,7 +921,10 @@ documents:** CM24 to CM27.
 - Commit: `docs: accounts and stages are crafts' access (CM26)`.
 - Reviewer tier: standard.
 
-### CM27: the plugin's skills
+### CM27: the plugin's skills (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's DOC4.*
+
 - Acceptance: the setup skill no longer asks for `agent.auth`: its second decision is which
   credentials the project declares and what each craft goes out on, with Vertex offered as a
   choice a person makes and never as what happens when they make none, and it writes nothing about
@@ -796,7 +946,10 @@ documents:** CM24 to CM27.
 - Commit: `plugin: setup declares credentials, not an auth mode (CM27)`.
 - Reviewer tier: opus, mandatory independent review (a plugin skill).
 
-### CM28: release 2: the token's old path goes
+### CM28: release 2: the token's old path goes (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's X1.*
+
 - Acceptance: `BuildEnv` has no arm that puts a subscription token in the agent's environment
   and `OAuthStageEnv` is deleted; a launch whose craft resolves to a subscription the service
   does not serve is refused with the fix (a project owner runs `fugaro update`); a launch on a
@@ -818,7 +971,10 @@ documents:** CM24 to CM27.
 - Commit: `agent: no token in the agent's environment (CM28, D3067)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM29: release 2: the retired keys of a file and a layer are rejected
+### CM29: release 2: the retired keys of a file and a layer are rejected (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's X2.*
+
 - Acceptance: `fugaro validate`, `fugaro update` and a launch from the default branch reject a
   repository's file that writes `agent.auth`, `agent.oauth_token`, a craft's `access` or a
   grade's `access`, with the fix, the removal `fugaro update` offers as a diff; a run of a ref
@@ -846,7 +1002,10 @@ documents:** CM24 to CM27.
 - Commit: `config: agent.auth is rejected, with the fix (CM29, D3063, D3072)`.
 - Reviewer tier: standard.
 
-### CM30: release 2: the installation's account keys and the node's members
+### CM30: release 2: the installation's account keys and the node's members (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's X3.*
+
 - Acceptance: on its next write the installation's config drops `stages.<stage>.claude_account`
   and `default_claude_account`, both already converted by CM4, and names any it could not
   convert instead of dropping it; the node's `claude_account_stages` and
@@ -864,7 +1023,10 @@ documents:** CM24 to CM27.
 - Commit: `localcfg: the converted account keys go (CM30, D3068)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM31: release 2: the old record stops being written
+### CM31: release 2: the old record stops being written (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's X4.*
+
 - Acceptance: `fugaro update` no longer writes `creds/repoauth/<slug>`; it deletes a
   repository's old record only where that repository has no run in flight, and otherwise leaves
   it and says so in one line; the service still narrows a call that lacks the new header by an old record that exists, and
@@ -885,7 +1047,10 @@ documents:** CM24 to CM27.
 - Commit: `update: the auth record is no longer written (CM31, R4)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### CM33: release 2: `fugaro update` rewrites the published layer
+### CM33: release 2: `fugaro update` rewrites the published layer (withdrawn 2026-11-22 by D3170)
+
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's X5.*
+
 - Acceptance: where every job image of the project is at or after release 1, `fugaro update`
   rewrites the published project layer in place without `defaults.agent.auth`, by the path
   `fugaro config publish` writes it, and says so in one line; elsewhere it leaves the layer and
@@ -909,7 +1074,9 @@ repository's mode is `startup`, with no area rules, so the pass decouples wherev
 is all the dependent needs.
 
 **Levels.** Tasks in one level run at once. **A launcher follows this table**, and the waits in
-its last column (R9, D3071).
+its last column (R9, D3071). **From 2026-11-22 (D3170) it is the record of what was planned and
+not a launch order:** every task but CM1, CM3, CM22, CM32 and CM35 is withdrawn, the owner stops
+the withdrawn tasks by hand, and model credentials routing carries the work.
 
 | Level | Tasks | Waits outside this plan |
 | --- | --- | --- |
@@ -1022,11 +1189,14 @@ only if raised.
 
 - **R-pool-members** (C1, raised by CM4): if the migration shows the access record must name the
   cascade's pool's members one by one for the service to narrow by it, the record gains them. Reaches CM5 and CM6; a launched one is reached by a follow-up run on its pull
-  request that names `internal/creds/repoaccess.go` by path.
+  request that names `internal/creds/repoaccess.go` by path. **Withdrawn 2026-11-22 (D3170):**
+  its contract C1 is withdrawn and CM4, CM5 and CM6 with it, so it is never raised.
 
 ## 8. Checks the plan takes
 
 From the reserved block 810–819; both owner-run, by one script each (CM22). No agent runs a step.
+**Both are replaced, 2026-11-22 (D3170):** model credentials routing takes Checks 884 and 885, and
+its DOC2 marks 810 and 811 so in the live checklist. CM22's scripts stay merged and unrun.
 
 - **Check 810, after release 1.** On an installation at the previous release with a repository
   on a subscription, one on an Anthropic key, one on the cascade and one on Vertex, and a run in

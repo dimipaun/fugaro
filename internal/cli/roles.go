@@ -14,7 +14,7 @@ import (
 // config (localcfg.Terraform), the IAM members `fugaro setup --operator` and
 // `--admin` write, hold and copy back from the installation's own outputs
 // (init_new_machine.go). The 0.7.0 bucket hardening grants them their roles on the
-// runs bucket (docs/design/bucket-iam.md H9), and `fugaro doctor`'s
+// runs bucket (docs/bucket-iam/spec.md H9), and `fugaro doctor`'s
 // runs-bucket-iam check is where the CLI already reads them to place the
 // caller (doctor_bucket.go's selfCheck).
 //

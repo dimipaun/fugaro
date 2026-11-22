@@ -96,7 +96,7 @@ is and takes none of the task flags (`internal/cli/run.go:327-334`); `--attempts
 cannot be a chain (spec §6, D1053).
 
 **F12: Exists. The console's launch is one exact argv with a closed never-table.**
-`docs/design/desktop-console.md:211` is the launch row; `:220` is the never-table that names `--retry`,
+`docs/desktop-console/spec.md:211` is the launch row; `:220` is the never-table that names `--retry`,
 `--pr`, `--attempts`, `--batch`, `--no-budget-check`, `--token`, `--mode`, `--total-timeout` and every
 other `run` argv. *Consequence:* the console passes none of the new flags and no console task is in this
 plan (spec §7, D1055).

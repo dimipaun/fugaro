@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
 // The theme's tokens and the palette they are painted in (desktop-console plan
-// Task 6.1; docs/design/console-styling.md sections 3.1-3.4 and 6.3).
+// Task 6.1; docs/console-styling/spec.md sections 3.1-3.4 and 6.3).
 //
 // The task's whole subject is that a colour is a number with a requirement attached,
 // and that the number beside it in a design document is worth nothing until something

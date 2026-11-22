@@ -29,7 +29,7 @@ func TestPlanReadsTheFixtureGraph(t *testing.T) {
 	if doc.SchemaVersion != FirstSchemaVersion {
 		t.Errorf("schema_version = %d, want the fixture's %d", doc.SchemaVersion, FirstSchemaVersion)
 	}
-	if doc.Plan != "docs/plans/2026-10-15-desktop-console-v2.md" {
+	if doc.Plan != "docs/desktop-console-v2/implementation-plan.md" {
 		t.Errorf("plan = %q, want the plan the artifact names", doc.Plan)
 	}
 	if len(doc.Nodes) != 3 || len(doc.Edges) != 1 {
@@ -375,7 +375,7 @@ func TestPlanNormalizesWhatItEmits(t *testing.T) {
 // name, so moving a plan moves its graph and nothing has to be told twice.
 func TestPlanArtifactPath(t *testing.T) {
 	for _, tc := range []struct{ plan, want string }{
-		{"docs/plans/2026-10-15-desktop-console-v2.md", "docs/plans/2026-10-15-desktop-console-v2.graph.json"},
+		{"docs/desktop-console-v2/implementation-plan.md", "docs/desktop-console-v2/implementation-plan.graph.json"},
 		{"plans/foo.yaml", "plans/foo.graph.json"},
 		{"plan", "plan.graph.json"},
 		{"docs/plans/a.b.md", "docs/plans/a.b.graph.json"},
@@ -428,7 +428,7 @@ func TestPlanFootprintMatchesTheRepositorysGlobSemantics(t *testing.T) {
 		{"internal/plan/read.go", true},
 		{"internal/plan/testdata/graph.json", true},
 		{"internal/cli/plan.go", false},
-		{"docs/plans/2026-10-15-desktop-console-v2.md", true},
+		{"docs/plans/2026-09-26-m1-runner-core.md", true},
 		{"docs/plans/sub/x.md", false},
 		{"fugaro.yaml", true},
 		{"/work/repo/internal/plan/read.go", false}, // a repository path, not a filesystem one

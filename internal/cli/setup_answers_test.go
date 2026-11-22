@@ -47,13 +47,18 @@ func answersFile(t *testing.T, doc string) string {
 	return path
 }
 
-// fullAnswers is the document that answers every question the wizard asks.
+// fullAnswers is the document that answers every question the wizard asks,
+// the budget question included (T2b of docs/managed-flag-ergonomics; T1's
+// constants are the default, and a document that answers the amount and the
+// currency is the console's own spelling of an owner's choice).
 func fullAnswers() string {
 	return answersDoc(
 		`"gcp_project":"`+answersGCPProject+`"`,
 		`"region":"europe-west4"`,
 		`"name":"aurora"`,
 		`"rigor":"pro"`,
+		`"budget":2500`,
+		`"budget_currency":"EUR"`,
 		`"bake_repos":true`,
 	)
 }
@@ -165,6 +170,82 @@ func TestSetupAnswersFile(t *testing.T) {
 	})
 }
 
+// TestSetupAnswersBudgetMembers is T2b's red step (docs/managed-flag-ergonomics;
+// R4, D2210, D2211, D2212): the answers file carries the wizard's budget
+// question too — the amount the project's alert is created with, and the
+// currency it is in — and adding members leaves the version at 1, because no
+// member's meaning changed (CLAUDE.md's rule, applied in R4).
+//
+// Each member is optional, which is the schema's own word, and the pair is
+// checked as the pair the run would have: a member that is absent is answered
+// with T1's default for the check alone, so a document may answer the question
+// with one member or with two, and what a half-answered pair meets afterwards
+// is the run's own rule and not the file's (an alert needs a billing account,
+// which no member of this file answers — F6 of the plan's reconciliation).
+func TestSetupAnswersBudgetMembers(t *testing.T) {
+	// What each member does on its own, read on the flags' own fields: the
+	// amount is --budget's, the currency --budget-currency's, and a member the
+	// document leaves out is one this file does not answer at all.
+	for _, tc := range []struct {
+		name     string
+		doc      string
+		amount   int64
+		currency string
+	}{
+		{"the amount and the currency", answersDoc(`"rigor":"pro"`, `"budget":2500`, `"budget_currency":"EUR"`), 2500, "EUR"},
+		{"the amount alone", answersDoc(`"rigor":"pro"`, `"budget":2500`), 2500, ""},
+		{"the currency alone", answersDoc(`"rigor":"pro"`, `"budget_currency":"EUR"`), 0, "EUR"},
+		{"the defaults, written out", answersDoc(`"rigor":"pro"`, `"budget":100`, `"budget_currency":"USD"`), 100, "USD"},
+		{"neither member", answersDoc(`"rigor":"pro"`), 0, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, out := answersRun(t, answersFile(t, tc.doc), "", nil)
+			if r.o.budget != tc.amount || r.o.budgetCurrency != tc.currency {
+				t.Errorf("%s: the run has %d %s, want %d %s:\n%s", tc.doc, r.o.budget, r.o.budgetCurrency, tc.amount, tc.currency, out)
+			}
+		})
+	}
+
+	if setupAnswersVersion != 1 {
+		t.Errorf("the answers file's version is %d, want 1: the budget members are added and no member's meaning changes (R4)", setupAnswersVersion)
+	}
+
+	// The pair is the marker's own rule (managed.Budget.Check, T1), so a
+	// document cannot answer an amount or a currency the alert would refuse to
+	// be created with — and every one of them is refused here, with the file and
+	// the fix named and nothing written onto the flags.
+	for _, tc := range []struct {
+		name  string
+		doc   string
+		names []string
+	}{
+		{"an amount of zero", answersDoc(`"rigor":"pro"`, `"budget":0`), []string{"budget", "outside 1 to 10000000"}},
+		{"an amount above the ceiling", answersDoc(`"rigor":"pro"`, `"budget":10000001`), []string{"budget", "outside 1 to 10000000"}},
+		{"a currency that is no code", answersDoc(`"rigor":"pro"`, `"budget":100`, `"budget_currency":"usd"`), []string{"budget", "three ASCII uppercase letters"}},
+		{"a currency of the wrong length", answersDoc(`"rigor":"pro"`, `"budget":100`, `"budget_currency":"US"`), []string{"budget"}},
+		{"an amount that is no whole number", answersDoc(`"rigor":"pro"`, `"budget":2.5`), []string{"budget"}},
+		{"an amount that is a string", answersDoc(`"rigor":"pro"`, `"budget":"100"`), []string{"budget"}},
+		{"an amount that is null", answersDoc(`"rigor":"pro"`, `"budget":null`), []string{"budget"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, out := wizardRun(t, "", nil)
+			r.o.answersFile = answersFile(t, tc.doc)
+			err := r.applySetupAnswers()
+			if err == nil {
+				t.Fatalf("the run read %s:\n%s", tc.doc, out)
+			}
+			for _, want := range append([]string{"--answers-file", "version, gcp_project"}, tc.names...) {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+			if r.o.budget != 0 || r.o.budgetCurrency != "" {
+				t.Errorf("a refused document filled the budget: %d %s", r.o.budget, r.o.budgetCurrency)
+			}
+		})
+	}
+}
+
 // TestSetupAnswersFileRefusesUnknownKey is the plan's red step, and the
 // document's own contract: the reader is strict, and every refusal names the
 // file, what is wrong and the fix.
@@ -174,7 +255,7 @@ func TestSetupAnswersFile(t *testing.T) {
 // a document it did not understand — exactly the plan's "an unknown key ... is
 // refused with the fix".
 func TestSetupAnswersFileRefusesUnknownKey(t *testing.T) {
-	const members = "the file holds exactly version, gcp_project, region, name, rigor, bake_repos"
+	const members = "the file holds exactly version, gcp_project, location, region, name, rigor, budget, budget_currency, bake_repos"
 	for _, tc := range []struct {
 		name  string
 		doc   string
@@ -275,9 +356,14 @@ func TestSetupAnswersFileRefusesUnknownKey(t *testing.T) {
 		// Enumerated rather than assumed: the document's members are the
 		// wizard's five questions and its own version, so a key for any of the
 		// steps that are a person's is refused by name.
+		// `location` is not in this list: it is the wizard's place question
+		// (LP4 of docs/location-preference; R2), and the members a person's
+		// steps are spelled with are the others. `firestore_location` stays:
+		// that permanent location is confirmed by a person at the terminal and
+		// is not an answer any document carries.
 		for _, key := range []string{
 			"create_project", "link_billing", "billing_account", "firestore_location",
-			"project", "location", "yes", "confirm", "ask", "secrets", "secret",
+			"project", "yes", "confirm", "ask", "secrets", "secret",
 		} {
 			if slices.Contains(setupAnswerKeys(), key) {
 				t.Errorf("%q is a member of the answers file, and it is not an answer of the wizard's", key)
@@ -348,18 +434,27 @@ func TestSetupAnswersSchema(t *testing.T) {
 		if extra, _ := body["additionalProperties"].(bool); extra {
 			t.Error("the schema allows a member its own properties do not name")
 		}
-		if len(setupAnswerQuestions) != len(setupQuestions) {
-			t.Fatalf("%d rows for %d questions: every question of the wizard has exactly one key",
-				len(setupAnswerQuestions), len(setupQuestions))
+		// Every question of the wizard has a key, each key is its flag's own
+		// spelling, and the place question has a second one: the region is the
+		// precise form of the same answer (R2, D3080), so `region` answers the
+		// question `--location` asks and is a member in its own right.
+		keys, answered := map[string]bool{}, map[string]bool{}
+		for _, row := range setupAnswerQuestions {
+			if want := strings.ReplaceAll(strings.TrimPrefix(row.flag, "--"), "-", "_"); row.key != want {
+				t.Errorf("%s is answered by the key %q, want %q", row.flag, row.key, want)
+			}
+			if keys[row.key] {
+				t.Errorf("two rows of the answers file carry the key %q", row.key)
+			}
+			keys[row.key], answered[row.flag] = true, true
 		}
-		for i, q := range setupQuestions {
-			row := setupAnswerQuestions[i]
-			if row.flag != q.flag {
-				t.Errorf("row %d answers %s, and the wizard asks %s there", i, row.flag, q.flag)
+		for _, q := range setupQuestions {
+			if !answered[q.flag] {
+				t.Errorf("the wizard asks %s and no member of the file answers it", q.flag)
 			}
-			if want := strings.ReplaceAll(strings.TrimPrefix(q.flag, "--"), "-", "_"); row.key != want {
-				t.Errorf("%s is answered by the key %q, want %q", q.flag, row.key, want)
-			}
+		}
+		if !answered["--region"] {
+			t.Error("the answers file has no `region` member: it is the place question's precise form (D3080), and the console writes it")
 		}
 		// The mode has no default (D900) and hotfix is out of it (D834), so
 		// the schema requires the one and refuses the other.
@@ -389,6 +484,26 @@ func TestSetupAnswersSchema(t *testing.T) {
 			doc  string
 		}{
 			{"every answer", fullAnswers()},
+			// The place question's two members (LP4 of docs/location-preference;
+			// R2, D3080): the schema's enum and the reader's own refusal are one
+			// answer, and a document that answers both spellings of the one
+			// question is a whole document — whether they agree is the run's to
+			// settle, not the file's.
+			{"the place alone", answersDoc(`"rigor":"pro"`, `"location":"eu"`)},
+			{"the place and its region together", answersDoc(`"rigor":"pro"`, `"location":"eu"`, `"region":"europe-west4"`)},
+			{"a location that is no place", answersDoc(`"rigor":"pro"`, `"location":"asia"`)},
+			// The budget question's two members (T2b; R4, D2211, D2212): each is
+			// optional and the pair is the marker's own rule, so the schema's
+			// bounds and the reader's refusal are one answer.
+			{"a budget and its currency", answersDoc(`"rigor":"pro"`, `"budget":2500`, `"budget_currency":"EUR"`)},
+			{"a budget with no currency", answersDoc(`"rigor":"pro"`, `"budget":2500`)},
+			{"a currency with no budget", answersDoc(`"rigor":"pro"`, `"budget_currency":"EUR"`)},
+			{"a budget of zero", answersDoc(`"rigor":"pro"`, `"budget":0`)},
+			{"a budget above the ceiling", answersDoc(`"rigor":"pro"`, `"budget":10000001`)},
+			{"a budget that is no whole number", answersDoc(`"rigor":"pro"`, `"budget":2.5`)},
+			{"a budget that is a string", answersDoc(`"rigor":"pro"`, `"budget":"100"`)},
+			{"a budget that is null", answersDoc(`"rigor":"pro"`, `"budget":null`)},
+			{"a currency that is no code", answersDoc(`"rigor":"pro"`, `"budget":100`, `"budget_currency":"usd"`)},
 			{"a question left out", answersDoc(`"rigor":"pro"`)},
 			{"no rigor", answersDoc(`"name":"aurora"`)},
 			{"hotfix", answersDoc(`"rigor":"hotfix"`)},
@@ -453,7 +568,20 @@ func TestSetupAnswersFromStdin(t *testing.T) {
 			t.Errorf("the refusal does not name the file it read on stdin and the fix: %v", err)
 		}
 
-		out, errOut, err = executeStdin(t, doc, "setup", "--answers-file", "-", "--print-vars")
+		// The wizard's answers without the budget's: a document that carries one
+		// meets the door's own rule about a budget first (an alert needs a
+		// billing account, and the file answers no account — init.go's trio
+		// check, which is the run's rule and not the file's), and what this arm
+		// is about is the rigor answer reaching --print-vars. The budget members
+		// are TestSetupAnswersBudgetMembers'.
+		bare := answersDoc(
+			`"gcp_project":"`+answersGCPProject+`"`,
+			`"region":"europe-west4"`,
+			`"name":"aurora"`,
+			`"rigor":"pro"`,
+			`"bake_repos":true`,
+		)
+		out, errOut, err = executeStdin(t, bare, "setup", "--answers-file", "-", "--print-vars")
 		if err == nil {
 			t.Fatalf("--print-vars took a rigor from the answers file:\n%s%s", out, errOut)
 		}
@@ -474,7 +602,7 @@ func TestSetupAnswersFileGrantsNoConsent(t *testing.T) {
 		// project, the billing link, the permanent Firestore location and
 		// every secret value have no key here, and a run that read one would
 		// be a run a document confirmed something for.
-		want := []string{"version", "gcp_project", "region", "name", "rigor", "bake_repos"}
+		want := []string{"version", "gcp_project", "location", "region", "name", "rigor", "budget", "budget_currency", "bake_repos"}
 		if got := setupAnswerKeys(); !slices.Equal(got, want) {
 			t.Errorf("the answers file's members are %v, want %v", got, want)
 		}
@@ -495,6 +623,7 @@ func TestSetupAnswersFileGrantsNoConsent(t *testing.T) {
 		}
 		after := *r.o
 		after.cloud.gcpProject, after.cloud.region, after.name, after.rigor = "", "", "", ""
+		after.budget, after.budgetCurrency = 0, ""
 		after.bakeRepos, after.bakeReposChanged = false, false
 		if !reflect.DeepEqual(after, before) {
 			t.Errorf("the document changed something of the run besides the questions it answers:\n%+v\nwant\n%+v", after, before)
@@ -524,7 +653,13 @@ func TestSetupAnswersFileGrantsNoConsent(t *testing.T) {
 			}
 			r, out := answersRun(t, answersFile(t, fullAnswers()), "", tc.o)
 			for _, q := range setupQuestions {
-				if !r.o.answerGiven(q.flag) {
+				// The place question takes either of its two keys (R2, D3080):
+				// the document above answers it with the region.
+				answered := r.o.answerGiven(q.flag)
+				if q.flag == "--location" {
+					answered = answered || r.o.answerGiven("--region")
+				}
+				if !answered {
 					t.Errorf("the file answers %s and the run has no answer for it:\n%s", q.flag, out)
 				}
 			}
