@@ -25,9 +25,35 @@ import (
 // nobody rather than everybody a group might mean. Resolving a group to its
 // members is the roster's, not this file's, and it does not exist yet.
 func launcherAccounts(members []string) []string {
+	return bareMembers(members, "user:")
+}
+
+// launcherServiceAccounts is the roster's service accounts as bare addresses
+// (launcher-does-not-mint plan task LM13; D3123): the class a person's list
+// cannot hold, because the account presents a service account's own Google ID
+// token rather than a person's, and the addresses the credentials service is
+// configured with (var.credentials_service.roster_service_accounts), which is
+// also the list the module grants roles/run.invoker on the service for.
+//
+// Why only `serviceAccount:` entries, which is launcherAccounts' rule read one
+// class over: the class is compared against a token's email claim
+// (internal/credsvc's foldLauncherAccounts), and the credential half of an
+// `email` claim is the account's own address, so the member spelling would
+// match nobody. A `group:` or `domain:` entry holds no address at all and is
+// deliberately not resolved here: admitting a whole group is a decision the
+// roster makes by naming its members, and the fail-closed reading is the one
+// launcherAccounts takes.
+func launcherServiceAccounts(members []string) []string {
+	return bareMembers(members, "serviceAccount:")
+}
+
+// bareMembers is the roster's entries of one member class as the bare
+// addresses a Google ID token's email claim holds: class stripped, sorted,
+// each once.
+func bareMembers(members []string, class string) []string {
 	out := []string{}
 	for _, m := range members {
-		if email, ok := strings.CutPrefix(m, "user:"); ok {
+		if email, ok := strings.CutPrefix(m, class); ok {
 			out = append(out, email)
 		}
 	}

@@ -88,15 +88,39 @@ func deployerCondFor(typ, role string) []any {
 	return []any{map[string]any{"title": DeployerConditionTitle, "expression": expr, "description": nil}}
 }
 
-// deployerGrantAccountFor is the account a grant of role through typ needs so
-// that deployerGrant never flips a cell this matrix tests only at the table
-// level: the token creator role is granted on the deployer account and on
-// nothing else, and every other grant needs no account named.
-func deployerGrantAccountFor(typ, role string) string {
-	if typ != "google_service_account_iam_member" || role != DeployerTokenCreatorRole {
+// grantAccountFor is the account a grant of role through typ needs so that the
+// rules which narrow a role to ONE target account never flip a cell a matrix
+// tests only at the table level: the token creator role is granted on the
+// deployer account and on nothing else, the minter role on a signer account and
+// on nothing else (orchestratorMinterGrant, mobileMinterGrant, issuerMinterGrant
+// — three per-account rules of one role), and every other grant needs no
+// account named.
+//
+// Why one helper for both. The matrices that call it iterate every (type, role,
+// kind) triple and read their expectation off the grantRules cell alone; a role
+// whose cell is open to a kind but whose grant is then refused for naming no
+// account would read as a table that refuses what it carries. The account here
+// is the one the MODULES name — the deployer for the token creator, the runs'
+// signer for the minter — so a cell the table opens is reached in the shape a
+// module writes it. What narrows the role to that account is the per-account
+// rule's own test, not this shim.
+func grantAccountFor(typ, role string) string {
+	if typ != "google_service_account_iam_member" {
 		return ""
 	}
-	return deployerAccountName("proj-1")
+	switch role {
+	case DeployerTokenCreatorRole:
+		return deployerAccountName("proj-1")
+	case "projects/proj-1/roles/fugaroTokenMinter":
+		// The runs' signer in the Firebase project, which is fp-2 in the
+		// matrices' cover: the minter role's key is written with the
+		// installation's project (grantRoleString builds it that way) while the
+		// signer account belongs to the Firebase one, so the two halves of the
+		// grant name two projects — which is exactly what issuerMinterGrant and
+		// orchestratorMinterGrant read, since both are this run's projects.
+		return "projects/fp-2/serviceAccounts/fugaro-token-signer@fp-2.iam.gserviceaccount.com"
+	}
+	return ""
 }
 
 // Every (type, role, kind of principal) triple is covered exactly when the
@@ -136,7 +160,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials, toCoordinator: coordinator, toVerifier: verifier, toBuildIdentity: buildIdentity} {
 				want := row[key]&kind != 0
 				after := map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}
-				if acct := deployerGrantAccountFor(typ, role); acct != "" {
+				if acct := grantAccountFor(typ, role); acct != "" {
 					after["service_account_id"] = acct
 				}
 				withCondFor(after, typ, role, kind == toPeople)
@@ -153,7 +177,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 			// module is an account.
 			sa := rc("google_service_account", map[string]any{}, map[string]any{}, "create")
 			after := map[string]any{"role": role, "bucket": "fugaro-runs-proj-1"}
-			if acct := deployerGrantAccountFor(typ, role); acct != "" {
+			if acct := grantAccountFor(typ, role); acct != "" {
 				after["service_account_id"] = acct
 			}
 			withCondFor(after, typ, role, false)
@@ -718,11 +742,17 @@ func TestCredentialsAccountIsItsOwnPrincipalKind(t *testing.T) {
 	if slices.Contains(FugaroAccounts, CredentialsAccountID) {
 		t.Errorf("the credentials service's account is one of FugaroAccounts, so every toAccounts row accepts it: one confirmation then covers a grant of the history account's datastore.user, a job runner's or a launcher's role to the identity that holds every model credential (ledger #903)")
 	}
-	// The two rows it may hold, and nothing else. A row that gains
+	// The three rows it may hold, and nothing else. A row that gains
 	// toCredentials is a role this account may be granted, so it is a decision
 	// this test makes deliberate.
 	allowed := map[string]map[string]bool{
 		"google_secret_manager_secret_iam_member": {"roles/secretmanager.secretAccessor": true},
+		// The issuer's row (LM13, D3121): iam.serviceAccounts.signJwt on the
+		// runs' signer of this run's Firebase project — the design's one new
+		// grant, and the whole of what the service's new identity is for
+		// (F7). It is the role of the cell; the ACCOUNT it is on is
+		// issuerMinterGrant's, and TestIssuerMinterGrantIsCovered reads it.
+		"google_service_account_iam_member": {customKey + "fugaroTokenMinter": true},
 		"google_project_iam_member": {
 			customKey + CredentialsDatabaseRole: true,
 			// The dynamic-delivery pair (D1931, DS2.2): the prefix accessor,
@@ -737,7 +767,7 @@ func TestCredentialsAccountIsItsOwnPrincipalKind(t *testing.T) {
 	for typ, row := range grantRules {
 		for key, w := range row {
 			if (w&toCredentials != 0) != allowed[typ][key] {
-				t.Errorf("%s %s: toCredentials is %v, want %v — the service's account holds the bundle's accessor, its database role and the dynamic class's reader half, and no other role of the installation", typ, key, w&toCredentials != 0, allowed[typ][key])
+				t.Errorf("%s %s: toCredentials is %v, want %v — the service's account holds the bundle's accessor, its database role, the dynamic class's reader half and the issuer's own minter row, and no other role of the installation", typ, key, w&toCredentials != 0, allowed[typ][key])
 			}
 		}
 	}
@@ -764,6 +794,9 @@ func TestCredentialsAccountIsItsOwnPrincipalKind(t *testing.T) {
 	for typ, list := range roles {
 		for _, role := range slices.Sorted(slices.Values(list)) {
 			after := map[string]any{"member": credentials, "role": role, "bucket": "fugaro-runs-proj-1"}
+			if acct := grantAccountFor(typ, role); acct != "" {
+				after["service_account_id"] = acct
+			}
 			withCondFor(after, typ, role, false)
 			ch := rc(typ, after, map[string]any{}, "create")
 			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
@@ -818,6 +851,92 @@ func TestCredentialsAccountIsItsOwnPrincipalKind(t *testing.T) {
 		ch := rc("google_project_iam_member", after, map[string]any{}, "create")
 		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); (len(got) == 0) != tc.covered {
 			t.Errorf("listed on the review screen: %s to the credentials account: NotCovered = %q, covered want %v", tc.role, got, tc.covered)
+		}
+	}
+}
+
+// TestIssuerMinterGrantIsCovered is LM13's row read at the size the plan writes
+// it (launcher-does-not-mint plan task LM13; D3121, F7): the credentials
+// service's account, the root's custom minter role, and iam.serviceAccounts.
+// signJwt on the RUNS' signer account of this run's Firebase project — the one
+// row that moves a run's identity off every launcher and onto the service.
+//
+// Why the row needs a test of its own at all. The cell carries the role by
+// KIND, and a kind cannot see which account a grant is on: signJwt on any
+// account IS that account (a self-signed JWT is an access token for its
+// issuer), so the cell alone would admit the credentials service as the
+// devices' signer, as a job account holding the model credentials, or as an
+// account of another project. issuerMinterGrant is the rule that closes it
+// again, and this is where that rule is read: the covered case is the module's
+// own two literals — the member the installation root's output carries and the
+// signer the Firebase root creates — and every other account is refused with a
+// sentence naming this run's signer.
+//
+// Mutation (run, restore): drop the toCredentials bit and the first case reads
+// as a member of no kind the tables carry; drop the isCredentialsMember case
+// from grant() and every refused case below is covered, the devices' signer and
+// the job account among them.
+func TestIssuerMinterGrantIsCovered(t *testing.T) {
+	const member = "serviceAccount:" + CredentialsAccountID + "@proj-1.iam.gserviceaccount.com"
+	const runsSigner = "fugaro-token-signer@fp-2.iam.gserviceaccount.com"
+	const minterRole = "projects/fp-2/roles/fugaroTokenMinter"
+
+	for _, tc := range []struct {
+		what    string
+		role    string
+		member  string
+		acct    string
+		unknown map[string]any
+		covered bool
+		named   string // for a refusal: the sentence the stop must carry
+	}{
+		// The row the design adds, exactly as modules/firebase/iam.tf writes it:
+		// the role of this run's Firebase project and the signer account of that
+		// same project, with the member the installation root published.
+		{"the minter role on the runs' signer, as iam.tf writes it", minterRole, member,
+			"projects/fp-2/serviceAccounts/" + runsSigner, map[string]any{}, true, ""},
+		// The account is the whole of the row's content, so a plan that moved it
+		// is refused: each of these is a grant the role's cell would have
+		// admitted and that nobody priced.
+		{"the minter role on the devices' signer", minterRole, member,
+			"projects/fp-2/serviceAccounts/" + DeviceSignerAccountID + "@fp-2.iam.gserviceaccount.com", map[string]any{}, false, "makes the credentials service that account"},
+		{"the minter role on a job account", minterRole, member,
+			"projects/proj-1/serviceAccounts/fugaro-history@proj-1.iam.gserviceaccount.com", map[string]any{}, false, "the job accounts holding the model credentials"},
+		{"the minter role on another project's signer", minterRole, member,
+			"projects/fp-9/serviceAccounts/fugaro-token-signer@fp-9.iam.gserviceaccount.com", map[string]any{}, false, "the budget signer account of this run"},
+		{"the minter role on an account the plan leaves unknown", minterRole, member,
+			"", map[string]any{"service_account_id": true}, false, "whose account is not known"},
+		// ... and the other half: the role. Another role on the right account is
+		// not this row, and the table refuses it before the account is read (the
+		// launcher's role is the case, since it is the one the member could hold
+		// on the project).
+		{"a launcher's role on the signer account", "projects/proj-1/roles/fugaroLauncher", member,
+			"projects/fp-2/serviceAccounts/" + runsSigner, map[string]any{}, false, ""},
+		// The role is the Firebase project's, and a lookalike in another project
+		// is not it: roleKey resolves only this run's projects.
+		{"the minter role spelled in a project that is not this run's", "projects/fp-9/roles/fugaroTokenMinter", member,
+			"projects/fp-2/serviceAccounts/" + runsSigner, map[string]any{}, false, ""},
+		// The member is not a lookalike either: the row is the credentials
+		// service's ACCOUNT, and another account holding this role — the history
+		// account, say — reads as an account nobody listed and not as this kind.
+		{"the minter role on the signer, held by a job account", minterRole,
+			"serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com",
+			"projects/fp-2/serviceAccounts/" + runsSigner, map[string]any{}, false, ""},
+		{"the minter role on the signer, held by an account in another project", minterRole,
+			"serviceAccount:" + CredentialsAccountID + "@fp-2.iam.gserviceaccount.com",
+			"projects/fp-2/serviceAccounts/" + runsSigner, map[string]any{}, false, ""},
+	} {
+		after := map[string]any{"member": tc.member, "role": tc.role}
+		if tc.acct != "" {
+			after["service_account_id"] = tc.acct
+		}
+		ch := rc("google_service_account_iam_member", after, tc.unknown, "create")
+		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+		if (len(got) == 0) != tc.covered {
+			t.Errorf("%s: NotCovered = %q, covered want %v", tc.what, got, tc.covered)
+		}
+		if !tc.covered && tc.named != "" && !strings.Contains(strings.Join(got, "\n"), tc.named) {
+			t.Errorf("%s: stopped for another reason: %q, want the sentence %q", tc.what, got, tc.named)
 		}
 	}
 }

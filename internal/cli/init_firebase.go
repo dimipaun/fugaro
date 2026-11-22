@@ -394,6 +394,21 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if spec.Coordinator != nil && outs.CoordinatorServiceAccount == "" {
 		return remote(errors.New("the installation has no coordinator account in its outputs; the first apply did not create it"))
 	}
+	// The credentials service's own account, handed to the Firebase root so
+	// that it plans the issuer's row on the runs' signer (LM13, D3121). It
+	// comes from that same apply's outputs and never from a name composed
+	// here, which is the whole of U9: the row's member has to be an account
+	// that EXISTS, and the installation root creates it only where its tfvars
+	// carry the service's block — a fresh setup's first apply carries none
+	// (the credentials stage writes it later in the run), so the root
+	// publishes no account and this root is handed none, and the plan names
+	// nobody. An installation that does carry the service has the account by
+	// this point: the installation root is applied above, and the block's
+	// services and accounts are that apply's own resources.
+	issuer := ""
+	if cs := outs.CredentialsService; cs != nil {
+		issuer = cs.Account
+	}
 
 	// 2. The Firebase root.
 	fdir, err := infra.FirebaseWorkdir(os.Getenv, lc.GCPProject)
@@ -404,7 +419,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return err
 	}
-	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount})
+	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount, IssuerAccount: issuer})
 	if err != nil {
 		return initErr(err)
 	}
