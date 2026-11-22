@@ -33,11 +33,19 @@ import (
 // the reason F26 of docs/keys-through-service states for the provider route: the service imports the
 // gateway (its provider route forwards with the gateway's helpers and its `Route`), so the dependency
 // cannot run the other way. It imports no constant of this package either — internal/creds imports
-// internal/budget, which imports the gateway, so that too is a cycle — and it names none of these
-// entries in any case: a call it builds to the workspace's service carries no slip and no declaration
-// (R18). What the sides of this wire do share is this package — internal/credsvc, internal/cli and
-// internal/runner all import it — so the names a job's environment and a call's headers are spelled
-// with live here, once, and no side respells them.
+// internal/budget, which imports the gateway, so that too is a cycle. What the sides of this wire do
+// share is this package — internal/credsvc, internal/cli and internal/runner all import it — so the
+// names a job's environment and a call's headers are spelled with live here, once, and those three
+// sides respell none of them. **The gateway is the one side that respells them, and it is a mirror.**
+// A call it builds to the workspace's service carries the slip that service granted, and the claim
+// secret after the claim (R4, WC8), so the names above are declared a second time under
+// internal/gateway — the shape internal/gateway/providerwire.go already has for the provider route
+// (F26) and internal/gateway/service.go for the model wire — with an external test (package
+// gateway_test, which may import both) holding the two spellings to each other name by name. R18 is
+// not a way out of that: the slip that rule leaves off a call is a *member's*, whose claim secret
+// would be handed to a service outside the member (F13 of docs/workspace-credentials/reconciliation.md),
+// and the slip the workspace's service grants is the workspace's own secret — the model wire's fields
+// in internal/gateway/gateway.go say the same of their own.
 //
 // **What it never carries.** No credential value, no claim secret and no person's identity: the
 // grant's answer is a slip's id or the fact that no token is held, the claim secret is the claim
