@@ -375,7 +375,7 @@ type BridgeEntry struct {
 // Migrate answers the table, the pools, the admissions and the moves one
 // installation's configuration becomes.
 func Migrate(in Installation) Migration {
-	m := &migrator{in: in, poolOf: map[string]bool{}, own: map[string]SourceName{}}
+	m := &migrator{in: in, poolOf: map[string]bool{}, own: map[string]SourceName{}, bridged: map[string]bool{}}
 	m.collectAccounts()
 	m.buildPools()
 	m.buildTable()
@@ -395,6 +395,10 @@ type migrator struct {
 	// source that call puts in its chain, by "repo\x00model". It is what
 	// buildMoves compares the table's answer against.
 	own map[string]SourceName
+	// bridged records the calls the migration could not write as a table entry,
+	// by the same key: their answer is the bridge entry of their own (D3196),
+	// and no move is reported for them.
+	bridged map[string]bool
 	// poolOf records the pools written by name, so that an account and a pool
 	// the installation carries are written once.
 	poolOf map[string]bool
@@ -541,7 +545,7 @@ func (m *migrator) addCall(c *chain, repo Repo, model Model, name string) {
 		// and a table entry for it is refused until Check 50 lands. The entry
 		// is not written at all, so the run that calls this model keeps the
 		// route its configuration gives it today.
-		m.bridge = append(m.bridge, BridgeEntry{Repo: name, Model: model.ID, Reason: BridgeClaudeThroughProvider})
+		m.bridgeCall(name, model.ID, BridgeClaudeThroughProvider)
 	case model.Claude:
 		// A Claude model the switch does not opt in keeps its own credential
 		// even where a provider entry claims it: the switch's list is the
@@ -562,7 +566,7 @@ func (m *migrator) addAuthSource(c *chain, repo Repo, model, name string) {
 	// below included — a chain carrying that pool would send a Vertex model out
 	// on a Claude subscription.
 	if repo.Auth == authVertex && !slices.Contains(m.in.VertexSpelled, model) {
-		m.bridge = append(m.bridge, BridgeEntry{Repo: name, Model: model, Reason: BridgeVertexUnspelled})
+		m.bridgeCall(name, model, BridgeVertexUnspelled)
 		return
 	}
 	// The accounts this repository's file names — a stage's `claude_account`,
@@ -660,6 +664,15 @@ func (m *migrator) account(name string) Account {
 	return Account{}
 }
 
+// bridgeCall records a call the migration leaves on the release-1 bridge: the
+// entry MG2 reports it by (D3196), and the fact that it is no move — the table's
+// answer for the model is another repository's call of it, which is not what
+// serves this one.
+func (m *migrator) bridgeCall(repo, model, reason string) {
+	m.bridge = append(m.bridge, BridgeEntry{Repo: repo, Model: model, Reason: reason})
+	m.bridged[repo+"\x00"+model] = true
+}
+
 // ownSource records the source one call's own configuration goes out on today:
 // the first source that call puts in the chain is the one its auth gives it,
 // and a later one is the fallback behind it, so the first recording is the one
@@ -694,12 +707,20 @@ func (m *migrator) buildMoves() {
 			if model.ID == "" {
 				continue
 			}
+			key := repo.Name + "\x00" + model.ID
+			// A call the migration left on the release-1 bridge is not a move,
+			// whatever the entry another repository's call of the same model
+			// carries: what serves it is the bridge, and MG2 reports it by that
+			// entry's own name (D3196).
+			if m.bridged[key] {
+				continue
+			}
 			entry, ok := entryFor(m.table, model.ID)
 			if !ok {
 				continue
 			}
 			now := m.firstReaching(entry, repo)
-			was := m.own[repo.Name+"\x00"+model.ID]
+			was := m.own[key]
 			if now == was {
 				continue
 			}

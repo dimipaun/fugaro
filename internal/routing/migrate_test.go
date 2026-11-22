@@ -451,6 +451,36 @@ func TestMigrate(t *testing.T) {
 			From:  SourceName{Kind: KindAnthropic},
 			To:    SourceName{Kind: KindPool, Name: SharedPool},
 		}},
+	}, {
+		// A call the migration leaves on the release-1 bridge is not a move,
+		// whatever the entry another repository's call of the same model
+		// carries: the bridge is what serves it, and MG2 reports it by the
+		// bridge entry's own name (D3196). Without that, the pool this
+		// repository's account consents to would look like its new source.
+		name: "a bridged call is not a move, even where the pool consents to its repository",
+		in: Installation{
+			Project: "acme/widgets",
+			Accounts: []Account{{
+				Name:        "ada",
+				AllowDataTo: []string{"acme/vertex", "acme/web"},
+			}},
+			DefaultAccount: "ada",
+			Repos: []Repo{{
+				Name:   "acme/vertex",
+				Auth:   testAuthVertex,
+				Models: []Model{{ID: "gemini-9-ultra"}},
+			}, {
+				Name:     "acme/web",
+				Auth:     testAuthOAuth,
+				Accounts: []string{"ada"},
+				Models:   []Model{{ID: "gemini-9-ultra"}},
+			}},
+		},
+		want: Table{{
+			Match: "gemini-9-ultra",
+			Chain: []Source{{Kind: KindPool, Pool: SharedPool}},
+		}},
+		bridge: []string{"acme/vertex\x00gemini-9-ultra"},
 	}}
 
 	for _, tc := range cases {
