@@ -783,6 +783,28 @@ var jsonCases = map[string]jsonCase{
 			return []string{"workspace", "show", "workspace-alpha"}
 		},
 	},
+	// The three reads below are the family's own (docs/workspace-projects-users),
+	// and each one opens the workspace's own Google Cloud project: its roster
+	// node over the Realtime Database, its mechanism's IAM, and -- for every
+	// member the workspace holds -- that member's own project, where the grants
+	// `user ls` reports are stored (R11, R14: the workspace reads a member's own
+	// roster only once that member is linked). A hermetic run of one through the
+	// tree would have to fake all of that where the tree's own wiring opens it
+	// (workspace_wiring.go), and this package has no rig that reaches that far:
+	// the family's own tests build the command beside the tree with sides of
+	// their own (wu7New, wu11New), which is how they reach a member's project at
+	// all. `workspace project ls` and `status` are also the two reads D2821
+	// puts on the workspace owner's machine, with the workspace's own project
+	// selected, which is a home no other fixture here builds.
+	"workspace project ls": {
+		why: "the read opens the workspace's own Google Cloud project for its roster node and its mechanism, and each member's own project for that member's rows, which no rig here fakes where the tree's wiring opens them",
+	},
+	"workspace project status": {
+		why: "the read measures every member of the workspace across the member's own Google Cloud project -- its database, its service accounts, its stored grants -- and the mechanism the workspace holds it by, none of which a run through the tree can reach hermetically",
+	},
+	"workspace user ls": {
+		why: "the read opens the workspace's own roster node and then each linked member's own project for the grants stored there, so a hermetic run would need both the workspace's and every member's Google Cloud project faked where the tree's wiring opens them",
+	},
 }
 
 // consoleReadCases are the console reads whose command carries no `--json`

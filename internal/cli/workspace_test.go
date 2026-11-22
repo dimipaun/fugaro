@@ -97,6 +97,13 @@ func workspaceProjectAddArgs(extra ...string) []string {
 // two things the add cannot be run without are here: a workspace whose roster
 // names this machine's caller as one of its admins, and the fakes for the roster,
 // the trail and the member's own database that keep the whole run hermetic.
+//
+// WU5's fixture passes --no-apply, because WU5's own tests are about the local
+// declaration and stop there. The tests here go on to the chain's own ending --
+// D1563's sentence and the non-zero exit that says the workspace's own project
+// is still owed (workspaceAssertSavedNotLive) -- so the fixture's flag is turned
+// off first. A caller that wants the save-and-return ending passes --no-apply
+// itself and wins, because pflag keeps the last occurrence of a flag.
 func workspaceProjectAddRun(t *testing.T, extra ...string) (*wu5Cloud, string, error) {
 	t.Helper()
 	cloud := wu5NewCloud()
@@ -104,7 +111,25 @@ func workspaceProjectAddRun(t *testing.T, extra ...string) (*wu5Cloud, string, e
 		People: []workspace.Person{{Address: "owner@example.com", Kind: workspace.KindHuman}},
 		Admins: []string{"owner@example.com"},
 	}))
-	out, err := wu5Run(t, cloud.seams(t), wu5AddArgs(extra...)...)
+	out, err := wu5Run(t, cloud.seams(t), wu5AddArgs(append([]string{"--no-apply=false"}, extra...)...)...)
+	return cloud, out, err
+}
+
+// workspaceProjectAddWholeRun is workspaceProjectAddRun for a test that names the
+// whole declaration itself. WU5's fixture already declares a job service account,
+// and a declaration is one statement per account: passing the fixture's flags
+// beside the test's own would name that account twice and list its repository
+// twice, which the table refuses. So this one passes none of them, and only the
+// member, the workspace and the caller's own flags.
+func workspaceProjectAddWholeRun(t *testing.T, flags ...string) (*wu5Cloud, string, error) {
+	t.Helper()
+	cloud := wu5NewCloud()
+	cloud.store.node = wu5NodeDoc(t, wu5RosterDoc(t, workspace.Roster{
+		People: []workspace.Person{{Address: "owner@example.com", Kind: workspace.KindHuman}},
+		Admins: []string{"owner@example.com"},
+	}))
+	args := append([]string{"aurora", "--workspace", "workspace-alpha"}, flags...)
+	out, err := wu5Run(t, cloud.seams(t), append(args, "--no-apply=false")...)
 	return cloud, out, err
 }
 
@@ -536,10 +561,13 @@ func TestProjectAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 		"--fp", "aurora",
 		"--exchange-url", "https://exchange.example.com/v2",
 		"--repo", "owner/repo-new"}
+	// The declaration is this test's own whole, so the fixture's flags stay out
+	// of it: the entry it writes is exactly what the assertions below read back.
+	//
 	// The replaced entry is the write, and it lands either way; what this
 	// returns is the chain's answer about the two steps that make it live
 	// (workspaceAssertSavedNotLive at the end of this test).
-	_, out, chainErr := workspaceProjectAddRun(t, ours...)
+	_, out, chainErr := workspaceProjectAddWholeRun(t, ours...)
 	after := readFileString(t, owner)
 	// Nothing the replaced entry carried survives it: not the retired account,
 	// not the account that was still live, not the repository, not the exchange
@@ -585,7 +613,7 @@ func TestProjectAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 	// The same declaration again is the same file: a replace writes the entry
 	// it is given and nothing else, so a re-run has nothing to do.
 	before := readFileString(t, owner)
-	if _, out, err := workspaceProjectAddRun(t, ours...); err != nil {
+	if _, out, err := workspaceProjectAddWholeRun(t, ours...); err != nil {
 		t.Fatalf("workspace project add (again): %v\n%s", err, out)
 	} else if !strings.Contains(out, "no change") {
 		t.Errorf("a repeated declaration is not a no-op:\n%s", out)

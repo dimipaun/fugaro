@@ -128,17 +128,16 @@ func TestAPinAddressMustBeHTTPS(t *testing.T) {
 // its own repositories rather than a list beside the accounts.
 func TestProjectAddTakesRegionAndRepositories(t *testing.T) {
 	_, _, owner := workspaceOwnerHome(t)
-	args := []string{
+	decl := []string{
 		"--job-service-account", "marker-job@aurora-gcp.iam.gserviceaccount.com",
 		"--job-repos", "marker-job@aurora-gcp.iam.gserviceaccount.com=marker-org/aurora",
 		"--job-service-account", "marker-shared@aurora-gcp.iam.gserviceaccount.com",
 		"--job-repos", "marker-shared@aurora-gcp.iam.gserviceaccount.com=marker-org/aurora",
 		"--job-repos", "marker-shared@aurora-gcp.iam.gserviceaccount.com=marker-org/borealis",
-		"--database-region", "europe-west1",
 		"--firebase-project", "aurora-fb",
 		"--fp", "aurora",
 		"--exchange-url", "https://exchange.example.com/v1"}
-	_, out, chainErr := workspaceProjectAddRun(t, args...)
+	_, out, chainErr := workspaceProjectAddWholeRun(t, append(slices.Clone(decl), "--database-region", "europe-west1")...)
 	after := readFileString(t, owner)
 	lc, err := localcfg.Parse([]byte(after))
 	if err != nil {
@@ -185,7 +184,7 @@ func TestProjectAddTakesRegionAndRepositories(t *testing.T) {
 	// workspace's service reads that member's database (LP9, D3084). What this
 	// reads is the file: the chain behind a replacement is this fixture's own
 	// answer, which workspaceAssertSavedNotLive holds beside it.
-	if _, _, err := workspaceProjectAddRun(t); err != nil {
+	if _, _, err := workspaceProjectAddWholeRun(t, decl...); err != nil {
 		t.Fatalf("workspace project add: %v", err)
 	}
 	lc, err = localcfg.Parse([]byte(readFileString(t, owner)))
@@ -209,17 +208,34 @@ func TestProjectAddRefusesAnAccountWithNoRepositories(t *testing.T) {
 		name string
 		args []string
 		want string
+		// fakes: the declaration reaches the workspace's roster before this
+		// refusal is made. The account-and-repository checks are the command's
+		// own, so they are made before anything is read; the pattern is refused
+		// by the config's strict loader, which reads the entry back once it is
+		// declared, and the roster read comes first on the way there.
+		fakes bool
 	}{
-		{"an account with no repositories", []string{
-			"--job-service-account", "marker-bare@aurora-gcp.iam.gserviceaccount.com",
-		}, "no --job-repos is given for marker-bare@aurora-gcp.iam.gserviceaccount.com"},
-		{"a pattern", []string{"--job-repos", "marker-job@aurora-gcp.iam.gserviceaccount.com=marker-org/*"}, "must look like owner/name"},
-		{"another account's repository", []string{"--job-repos", "marker-other@aurora-gcp.iam.gserviceaccount.com=marker-org/aurora"}, "not one of this declaration's job service accounts"},
-		{"a bare repository", []string{"--job-repos", "marker-org/aurora"}, "must be <account>=<owner/name>"},
+		{name: "an account with no repositories",
+			args: []string{"--job-service-account", "marker-bare@aurora-gcp.iam.gserviceaccount.com"},
+			want: "no --job-repos is given for marker-bare@aurora-gcp.iam.gserviceaccount.com"},
+		{name: "a pattern",
+			args: []string{"--job-repos", "marker-job@aurora-gcp.iam.gserviceaccount.com=marker-org/*"},
+			want: "must look like owner/name", fakes: true},
+		{name: "another account's repository",
+			args: []string{"--job-repos", "marker-other@aurora-gcp.iam.gserviceaccount.com=marker-org/aurora"},
+			want: "not one of this declaration's job service accounts"},
+		{name: "a bare repository",
+			args: []string{"--job-repos", "marker-org/aurora"},
+			want: "must be <account>=<owner/name>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := append(workspaceProjectAddArgs(), tc.args...)
-			out, _, err := execute(t, args...)
+			var out string
+			var err error
+			if tc.fakes {
+				_, out, err = workspaceProjectAddRun(t, tc.args...)
+			} else {
+				out, _, err = execute(t, append(workspaceProjectAddArgs(), tc.args...)...)
+			}
 			if err == nil {
 				t.Fatalf("%s was accepted:\n%s", tc.name, out)
 			}
