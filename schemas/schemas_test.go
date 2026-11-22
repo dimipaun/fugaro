@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -882,6 +883,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	// false: a field the runner writes and the schema does not name is a
 	// record the schema rejects.
 	cost.ReportedBy = map[string]float64{"deepseek/deepseek-v4.1-flash": 4.04, "deepseek/deepseek-v4-pro": 0.02}
+	cost.FallbackUSD = 0.9
 	cost.TableLoUSD, cost.TableHiUSD, cost.UnreportedCalls = 3.6, 5.1, 2
 	rec := runstore.Record{
 		Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Workflow: "web",
@@ -920,7 +922,11 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			Warning: "w", StartedAt: at, DurationS: 1.5,
 		}},
 		CostUSD: 4.12, Cost: &cost,
-		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, ModelNotionalUSD: 0.12, Model: "claude-sonnet-5-5", Calls: &calls, Agents: &agents}},
+		// The chain members ride along for the same reason the artifact ones
+		// do: a member the runner writes and the schema does not name is a
+		// record the schema rejects (C1, CS8).
+		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, ModelNotionalUSD: 0.12, Model: "claude-sonnet-5-5", Calls: &calls, Agents: &agents,
+			Source: &routing.SourceName{Kind: routing.KindProvider, Name: "openrouter"}, Fallback: true}},
 		// The switch log (C1.16, D140): the service's record of a credential
 		// change beside the cache-miss estimate only the gateway can compute,
 		// including the one a tier's unmeasured cache behaviour leaves
