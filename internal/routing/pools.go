@@ -141,11 +141,15 @@ var PrincipalKinds = []PrincipalKind{PrincipalPerson, PrincipalServiceAccount, P
 // Principal is who a pool belongs to.
 //
 // It is an IDENTITY and never display text: a person's is the Google subject the
-// service verified, not `requested_by` or `launched_by`, which a caller writes
-// and which no reader may trust as an identity (R7). The pool a run is served
-// from follows the verified principal on the run's slip, so a forged requester
-// gets nothing (F51's accepted risk is the project's own database admin, who can
-// forge the record itself — not a job's word about itself).
+// service verified, not the text a launch wrote about itself, which a caller
+// writes and which no reader may trust as an identity (R7). The pool a run is
+// served from follows the verified principal on the run's slip, so a forged
+// requester gets nothing (F51's accepted risk is the project's own database
+// admin, who can forge the record itself — not a job's word about itself).
+// The field R7 warns about is named in
+// [contract-pools.md](../../docs/model-credentials-routing/contract-pools.md)
+// and deliberately not here: a guard test fails a Go file of this module that
+// names it, which is what keeps it out of every decision.
 type Principal struct {
 	// Kind is one of PrincipalKinds.
 	Kind PrincipalKind `json:"kind"`
@@ -260,9 +264,9 @@ type PoolRef struct {
 // named a pool with `--pool`, that pool (D3176).
 //
 // principal is the VERIFIED principal on the run's slip (R7): a person's Google
-// subject, or a verified service account (PL6). It is never `requested_by` or
-// `launched_by`, and a caller that passed one would be trusting a job's word
-// about itself.
+// subject, or a verified service account (PL6). It is never the text a launch
+// wrote about itself, and a caller that passed one would be trusting a job's
+// word about itself.
 //
 // named is the pool a run asked for with `--pool`, or "" when the launch named
 // none (D3176). The implementation checks the launcher's entitlement to a named
