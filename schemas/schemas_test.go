@@ -898,6 +898,12 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		// that names the account the run used last.
 		OAuthAccount:  "team-a",
 		StageAccounts: map[string]string{"implement": "team-b", "review": "team-a"},
+		// And the owner of the token the run was served with (F16,
+		// docs/secrets-brokering/dynamic-delivery): a launcher's account id
+		// beside the credential's name and the per-stage accounts, which keep
+		// their meanings. It rides the fully-populated record so a schema that
+		// did not name it would reject a record the runner writes.
+		CredentialOwner: "104329501182774832335",
 		// The commit the run was cut from, which its guards compare against
 		// (design v1.md §4.6).
 		StartSHA: strings.Repeat("c", 40),
@@ -1063,6 +1069,23 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(atBound); err != nil {
 		t.Errorf("schema rejects a stage account name of 64 runes: %v", err)
+	}
+	// credential_owner is the launcher's account id and nothing else: digits
+	// only and at most 21 of them (F16, maxLauncherSubDigits). A name, a
+	// credential value or a 22-digit number is a record no reader should have
+	// to render, and each is refused rather than stored.
+	for _, tc := range []struct{ name, new string }{
+		{"a value that is not an account id", `"credential_owner":"launcher@example.invalid"`},
+		{"an id longer than the bound", `"credential_owner":"` + strings.Repeat("1", 22) + `"`},
+		{"an id that is not text", `"credential_owner":104329501182774832335`},
+	} {
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"credential_owner":"104329501182774832335"`), []byte(tc.new), 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.new)
+		}
 	}
 	// The cost object is closed, so a compute_source that is not a string
 	// (what a hand-edited result.json could carry) is rejected rather than

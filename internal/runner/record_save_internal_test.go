@@ -25,11 +25,15 @@ import (
 //
 // The test drives exactly that pair: one goroutine names credentials as fast as
 // the service could, the other saves as often as the run does. Under -race it
-// is the write of OAuthAccount (and the switch appended beside it) against the
-// encode that would read it; the last save after the writer stops is what says
-// the record still carries the name.
+// is the write of OAuthAccount and of CredentialOwner (one answer's pair, one
+// call and one lock, F16) and the switch appended beside them against the
+// encode that would read them; the last save after the writer stops is what
+// says the record still carries the name and the owner.
 func TestRecordCredentialSaveIsRaceFree(t *testing.T) {
-	const runID = "20261022-120000-abcd"
+	const (
+		runID = "20261022-120000-abcd"
+		owner = "104329501182774832335"
+	)
 	bucket := memblob.OpenBucket(nil)
 	defer bucket.Close()
 	r := &run{
@@ -39,7 +43,7 @@ func TestRecordCredentialSaveIsRaceFree(t *testing.T) {
 	}
 	// One name before anything is concurrent, so the record this test reads
 	// back carries one whatever the scheduler did with the writer below.
-	r.recordCredential("repo-shared-b")
+	r.recordCredential("repo-shared-b", owner)
 
 	done := make(chan struct{})
 	var wg sync.WaitGroup
@@ -52,7 +56,7 @@ func TestRecordCredentialSaveIsRaceFree(t *testing.T) {
 				return
 			default:
 			}
-			r.recordCredential(fmt.Sprintf("repo-shared-%d", i))
+			r.recordCredential(fmt.Sprintf("repo-shared-%d", i), owner)
 			// The switch C1.16 logs with the answer is the record's second
 			// cross-goroutine append, and it races the same way. It is taken
 			// only for the first few hundred turns: this loop is bounded by the
@@ -77,5 +81,8 @@ func TestRecordCredentialSaveIsRaceFree(t *testing.T) {
 	}
 	if !strings.HasPrefix(rec.OAuthAccount, "repo-shared-") {
 		t.Fatalf("the written record names the credential %q, want the last one the service answered with", rec.OAuthAccount)
+	}
+	if rec.CredentialOwner != owner {
+		t.Fatalf("the written record names the owner %q, want the one the same answers carried", rec.CredentialOwner)
 	}
 }
