@@ -247,13 +247,20 @@ func (r *firestoreReader) page(ctx context.Context, f Filter, sum Summary, overl
 		}
 		page.Entries = append(page.Entries, e)
 	}
-	if f.Limit > 0 && (len(page.Entries) > f.Limit || (more && len(page.Entries) == f.Limit)) {
-		if len(page.Entries) > f.Limit {
+	if f.Limit > 0 {
+		overflow := len(page.Entries) > f.Limit
+		if overflow {
 			page.Entries = page.Entries[:f.Limit]
 		}
-		last := page.Entries[len(page.Entries)-1]
-		at := last.UpdatedAt
-		page.Next = &Cursor{UpdatedAt: &at, RunID: last.RunID}
+		// A page that holds more rows than it prints has another one behind it.
+		// So has a page a query stopped short of: the walk reached the top of
+		// what it reads, and a page shorter than the caller asked for must not
+		// read as the whole of what matched. The cursor resumes either one.
+		if overflow || (more && len(page.Entries) > 0) {
+			last := page.Entries[len(page.Entries)-1]
+			at := last.UpdatedAt
+			page.Next = &Cursor{UpdatedAt: &at, RunID: last.RunID}
+		}
 	}
 	return page, nil
 }
