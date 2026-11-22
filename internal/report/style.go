@@ -47,7 +47,60 @@ const (
 	colourSkipped = termenv.ANSIColor(8)
 	colourFailed  = termenv.ANSIColor(1)
 	colourLeft    = termenv.ANSIColor(3)
+	// colourHeader is one section's arrow, the blue a heading is drawn in.
+	colourHeader = termenv.ANSIColor(4)
+	// colourWarning is a line the run has to say but that is not a failure, and
+	// it is the same yellow a step left for the user is drawn in: the two are
+	// "something for you to read" rather than "something went wrong".
+	colourWarning = termenv.ANSIColor(3)
 )
+
+// Header renders one section's heading the way Homebrew draws it: a bold blue
+// arrow, and the text in bold after it. It is what a run opens with and what a
+// block of its output is announced by, so a person scrolling a long run sees
+// where one part ends and the next begins.
+func (r *Reporter) Header(text string) string {
+	return r.styled("==>", styleOpts{colour: colourHeader, paint: true, bold: true}) + " " + r.Bold(text)
+}
+
+// Error renders a failure's own label: `Error:` in bold red. The message goes
+// after it, and is not coloured — the label is what a person scans for.
+func (r *Reporter) Error(text string) string {
+	return r.styled("Error:", styleOpts{colour: colourFailed, paint: true, bold: true}) + " " + text
+}
+
+// Warning renders a warning's own label: `Warning:` in bold yellow. What it
+// warns about is not a failure and the run goes on, which is why it is not the
+// failure's red.
+func (r *Reporter) Warning(text string) string {
+	return r.styled("Warning:", styleOpts{colour: colourWarning, paint: true, bold: true}) + " " + text
+}
+
+// Bold is text drawn in bold, for a line that has to stand out from the ones
+// around it. A nil reporter, a pipe and --no-color all leave it as it is.
+func (r *Reporter) Bold(text string) string { return r.styled(text, styleOpts{bold: true}) }
+
+// Dim is text drawn faint, for what is said beside the thing it belongs to: a
+// suggested answer, a count of steps a stopped run never reached. A suggested
+// answer is dim rather than coloured because it is a value the run offers and
+// not a result it reports.
+func (r *Reporter) Dim(text string) string { return r.styled(text, styleOpts{faint: true}) }
+
+// Ask renders one question's own line: the label in bold, the hint after it
+// when the question has one, and the suggested answer dimmed inside brackets —
+// which is the whole of what "press Enter to take it" would otherwise have to
+// say in a sentence. It ends at the suggestion: the caller writes the colon the
+// answer is typed after, because a question is a prompt and not a line.
+func (r *Reporter) Ask(label, hint, suggestion string) string {
+	line := r.Bold(label)
+	if hint != "" {
+		line += ": " + hint
+	}
+	if suggestion != "" {
+		line += " " + r.Dim("["+suggestion+"]")
+	}
+	return line
+}
 
 // Kind is the status a line of the account carries: the mark it starts with
 // and the colour that mark and its word are drawn in.
@@ -142,11 +195,39 @@ func (g glyph) text(ascii bool) string {
 	return g.sym
 }
 
+// styled is the decoration one piece of text is drawn with: the colour it
+// carries when it carries one, and whether it is bold or faint. It is the one
+// renderer behind every styled helper above, so the colour decision those
+// helpers rest on is made in exactly one place.
+type styleOpts struct {
+	colour termenv.ANSIColor
+	paint  bool
+	bold   bool
+	faint  bool
+}
+
 // painted renders one mark in the profile the reporter decided on. termenv
 // is used only to render: its own colour decision (ColorProfile, and the
 // CLICOLOR_FORCE inside it) is never consulted, so an environment that forces
 // colour cannot put ANSI on a pipe (T4(a), D1355). The Ascii profile is what
 // keeps colour-off to one call rather than a branch at every print.
 func (r *Reporter) painted(text string, c termenv.ANSIColor) string {
-	return r.profile.String(text).Foreground(c).String()
+	return r.styled(text, styleOpts{colour: c, paint: true})
+}
+
+func (r *Reporter) styled(text string, o styleOpts) string {
+	if r == nil || r.profile == termenv.Ascii {
+		return text
+	}
+	s := r.profile.String(text)
+	if o.bold {
+		s = s.Bold()
+	}
+	if o.faint {
+		s = s.Faint()
+	}
+	if o.paint {
+		s = s.Foreground(o.colour)
+	}
+	return s.String()
 }
