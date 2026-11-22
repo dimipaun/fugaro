@@ -98,6 +98,46 @@ func ReadLeaseNode(ctx context.Context, db CAS, agentID string) (LeaseClaim, err
 	return LeaseClaim{Holder: doc.Holder, At: stamp(doc.At)}, nil
 }
 
+// ReadDriverNode reads one id's driver node: the principal of the credential
+// driving the id, written by whoever holds its lease (D3218, F18).
+//
+// It is a sibling of the state, the lease and the audit, and it is read without
+// a claim and without a clock, because "who is driving this id" is not "does
+// this daemon hold it". An id with no node at all is the zero Driver and not an
+// error: every id driven before this node existed has none, and a listing that
+// failed on one would fail on the whole installation.
+//
+// A node this release cannot read is the zero Driver too, and this is the one
+// place the driver is read more leniently than the lease beside it. A lease
+// decides whether an id is held — reading a broken one as unheld is what lets
+// two daemons take one id (lease.go's interpret), so it is refused — while a
+// driver is what a screen shows beside the id. The contract's own reading of an
+// empty driver is "the node was absent or unreadable, never nobody drives this"
+// (contract-orchestrators.md, "what each side may rely on" 2), so the refusal
+// DecodeDriver makes is turned into that empty answer here rather than into a
+// listing that fails whole over one node it cannot read: DecodeDriver is strict
+// because a *direct* reader of the node must not guess, and a caller that has
+// only one string to answer with says it does not know.
+func ReadDriverNode(ctx context.Context, db CAS, agentID string) (Driver, error) {
+	path, err := PathDriver(agentID)
+	if err != nil {
+		return Driver{}, err
+	}
+	var raw json.RawMessage
+	_, found, err := db.GetETag(ctx, path, &raw)
+	if err != nil {
+		return Driver{}, err
+	}
+	if !found {
+		return Driver{}, nil
+	}
+	driver, err := DecodeDriver(raw)
+	if err != nil {
+		return Driver{}, nil
+	}
+	return driver, nil
+}
+
 // Fresh reports whether the claim is being beaten: somebody holds the id and
 // its last beat is inside the lease's TTL, and not stamped so far ahead of now
 // that this release would not honour it (Lease.Read's own rule, LeaseSkew).

@@ -316,6 +316,16 @@ func initStages(e *initEngine) []initflow.Stage {
 	// (initflow.CredentialsService has the order and the window the order
 	// leaves; the owner's ruling of 2026-11-10).
 	stages = append(stages, newCredentialsStage(e))
+	// The copy of this installation's model keys into that service's bundle,
+	// immediately after the stage that deploys it and with nothing between
+	// them: what it writes a value into is the document that service reads, the
+	// guard it goes through reads the release of that service (so a service too
+	// old for the entry refuses the write rather than landing it), and the
+	// position is what leaves that refusal a state this same run has already
+	// fixed (initflow.CredentialsCopy has the window). It is registered for
+	// both doors, like the service's own stage: an installation that has not
+	// turned the service on skips it with one line.
+	stages = append(stages, newCredentialsCopyStage(e))
 	// The workspace's own project's root BEFORE the record, and both after the
 	// policy one: this stage creates the identity the workspace's own service
 	// runs as — its own service account and the one grant that reaches the
@@ -498,6 +508,17 @@ func (e *initEngine) converge(ctx context.Context) error {
 	if err := e.syncAccess(ctx); err != nil {
 		return err
 	}
+	// What this release stops, before anything of it is applied (R8): the
+	// repository's three lines and the installation's two, printed here so that
+	// they are on screen before the run's own confirmation and before any stage
+	// writes. It refuses nothing, asks nothing and cannot fail the update.
+	e.announceBudgetStops(ctx)
+	// And the word that is not a budget mode any more leaves this machine's own
+	// config here, in place and said out loud (D3022, F22): the loader lets the
+	// file that says it load, so this write is where the word goes, and it is
+	// before the first stage for the reason the catalog guard above is — every
+	// stage of this run reads the config this run writes.
+	e.rewriteLocalBudgetMode()
 	// The door's note about the runs that are running while it converges, and
 	// the last thing the run prints before its own confirmation and before any
 	// stage writes: a person deciding whether it is safe to update now reads it
@@ -598,6 +619,16 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// printResult for the reason the two above are: what it printed and
 	// recorded belongs to this run's result.
 	e.raiseBudgetMode(ctx)
+	// And the checkout's own file, which is the one door of the two that is a
+	// committed file somebody reviews: the removal of the budget.mode line is
+	// offered as a diff, written with --yes or by a person at the terminal and
+	// printed otherwise, exactly as the anchor's line is (AB8b, F12, D3022). It
+	// is here rather than before the loop because the repository stage reads
+	// that file and acts only while the working tree holds the default branch's
+	// bytes (resolveRepoTarget), so an edit before it would turn this run's own
+	// repository step into "not the default branch's file". It returns no error
+	// for the reason the raise above returns none.
+	e.offerBudgetModeRemoval(ctx)
 	// And D1543's: the creation fact a release behind left at version 3 carries
 	// the image build count this one no longer bounds a build by, and a fact is
 	// migrated where it was written (update_marker_version.go). It is after the

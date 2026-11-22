@@ -193,11 +193,12 @@ func isPlanPath(p string) bool {
 // landing put the hidden command's stored-prompt rule in `internal/cli/mailbox.go`
 // and its tests in `internal/cli/mailbox_sweep_test.go`, so the test file is
 // checked like any other cited path while T7's own half (the local delete set
-// and the presence verdict `internal/mailbox/expiry.go` holds) is still to come.
-// The remaining entries are the tasks still unbuilt — T7's remaining half and
-// T8's corpus — and each of them must stay absent until its own task lands.
+// and the presence verdict `internal/mailbox/expiry.go` holds) was still to
+// come. T7's own half has landed since — the file and its tests are in the tree
+// — so it left the map the way every landed task's entry does, and P6.13 is no
+// longer half-built. The remaining entries are the tasks still unbuilt — T8's
+// corpus — and each of them must stay absent until its own task lands.
 var planWillCreate = map[string]string{
-	"internal/mailbox/expiry.go":              "T7 (the hidden sweeper; the plan names it there, not under T3 or T4)",
 	"internal/mailbox/parity_test.go":         "T8 (replays shared/mailbox/parity.test.js's corpus)",
 	"internal/mailbox/testdata/parity.json":   "T8 generates it; the Go side only reads it",
 	"docs/mobile/mailbox-review-checklist.md": "T8",
@@ -913,6 +914,11 @@ var planPhaseSixMerged = map[string]string{
 	"P6.5": "shared/prompts/index.js",
 	"P6.6": "internal/budget/sweep.go",
 	"P6.7": "internal/mailbox/action.go",
+	// P6.13 came whole: the pairing CLI plan's T7 landed the hidden command and
+	// its stored-prompt deletion in internal/cli/mailbox.go, and this plan's own
+	// T7 landed the half beside it (internal/mailbox/expiry.go) — so the proof
+	// path is the file both halves are wired through.
+	"P6.13": "internal/cli/mailbox.go",
 }
 
 // planPhaseSixUnbuilt is the other direction: the tasks the bullet calls
@@ -934,18 +940,18 @@ var planPhaseSixUnbuilt = map[string][]string{
 // more here for the same reason — `internal/cli/mailbox.go` runs the consumer's
 // inbound gate, its ledger and its refusal at the action seam, while neither
 // task's own file was in the tree — and T6 then landed P6.7's, so P6.7 moved up
-// to the merged list and only P6.13 is left half-built, in the narrowest sense:
-// the pairing plan's T7 landed its store-side deletion in
-// `internal/cli/mailbox.go`, so what the `unbuilt` half has left to excuse is
-// this plan's own T7 — the local delete set and the reported presence verdict.
+// to the merged list. P6.13 was the last one here, for the narrowest reason: the
+// pairing plan's T7 landed its store-side deletion in `internal/cli/mailbox.go`
+// while this plan's own T7 — the local delete set and the reported presence
+// verdict — was not. That half has landed now, so the list is empty and the
+// state it was written for is gone rather than merely excused.
+//
 // Both halves of an entry
 // are held to the tree here: the sentence a reader plans against is a fact
 // about this branch rather than a memory of one.
 var planPhaseSixPartial = map[string]struct {
 	built, unbuilt []string
-}{
-	"P6.13": {built: []string{"internal/cli/mailbox.go"}, unbuilt: []string{"internal/mailbox/expiry.go"}},
-}
+}{}
 
 // TestMailboxPlanPhaseSixStatusIsTrue holds the premise bullet — the one that
 // says which of Phase 6 is merged, which is half-built and which is not — to

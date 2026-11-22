@@ -232,9 +232,11 @@ it (§[The floor](#the-floor)). Unlike every other key, a narrower layer may set
 differences worth knowing:
 
 - Both `areas` lists are in effect: a repository's rules and the project's are
-  unioned rather than the narrower list replacing the wider one, and the
-  **strictest matched rule** decides. Every rule that matched is recorded,
-  strictest first.
+  both read rather than the narrower list replacing the wider one, each at its
+  own rank in the order above, and within one list the **strictest matched
+  rule** decides. So the project's rule for an area holds everywhere the
+  repository writes nothing, and the repository's own rule decides for its
+  paths. Every rule that matched is recorded, strictest first.
 - A mode a run has reached never falls within that run. A run that rose to
   `critical` for one path stays there for the rest of its rounds; a later
   resolution that comes back weaker leaves the reached mode standing.

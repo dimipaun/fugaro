@@ -70,6 +70,8 @@ import {
 import type { ConfirmWindowSeams } from '../../src/main/confirm'
 import { modelsAddConfirmID, modelsAddView } from '../../src/main/modelsview'
 import type { ModelsAddView } from '../../src/main/modelsview'
+import { imageAddConfirmID, imageAddView } from '../../src/main/imagesview'
+import type { ImageAddView } from '../../src/main/imagesview'
 import { SENDER_REFUSAL } from '../../src/main/ipc'
 import type { ConsoleEventLike, IpcMainLike, ValidatedArguments } from '../../src/main/ipc'
 import { SETTINGS_EDIT_OPERATION, argvFor } from '../../src/main/spawn'
@@ -1746,6 +1748,32 @@ describe('the settings edit behind the same window', () => {
     expect(decider.calls).toStrictEqual([[true, undefined]])
   })
 
+  it('decides the image write on a plain yes, and files its window under the installation', async () => {
+    // The image write is the one subject of this window that **carries no
+    // tick** (MW2, D2903): it raises no limit and MD2's document has no
+    // `widening` member, so it is a narrowing's window -- one deliberate click,
+    // as the wizard's apply is. `widenAnswerable` reads the subject, so the
+    // gate is the same one and what it answers here is the opposite of the
+    // models write's: a yes **without** the tick decides the write. The identity
+    // is the installation the entry lands in, exactly as the models write's is.
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const decider = recordingDecider()
+    const subject = imageAddFixture()
+    expect(confirmSubjectID(subject)).toBe(imageAddConfirmID(subject.project))
+    expect(subject.confirmNeedsTick).toBe(false)
+    confirmer.open(subject, decider.decide)
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    // A yes with the tick false -- which is what the window's Confirm button
+    // sends when the view carries no tick -- is the whole of the answer here.
+    expect(
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes', ticked: false }),
+    ).toStrictEqual({ ok: true, data: { answered: true } })
+    expect(decider.calls).toStrictEqual([[true, undefined]])
+  })
+
   it('cancels the edit, and closes no other project’s window, when the installation moves', async () => {
     const { confirmer, windows } = confirmOver()
     const source = settingsEditSource()
@@ -2636,6 +2664,35 @@ function modelsAddFixture(): ModelsAddView {
     project: PROJECT,
     digest: 'a'.repeat(64),
     argv: ['fugaro', 'models', 'add', '--no-apply', '--dry-run', '--json'],
+  })
+  if (!read.ok) throw new Error(read.because)
+  return read.view
+}
+
+/** imageAddFixture is one image write's window content (MW2, D2903): MD2's plan
+ * document as the flow parsed it, beside the two facts main holds -- the
+ * document's digest and the exact argv the confirmed write spawns. It carries
+ * **no tick**, which is the whole of what this fixture is for here: the write
+ * raises no limit, so `confirmNeedsTick` is false and `defaultButton` is
+ * `confirm`. */
+function imageAddFixture(): ImageAddView {
+  const read = imageAddView({
+    dryRun: {
+      version: 1,
+      command: 'image add',
+      project: PROJECT,
+      entry: {
+        name: 'app',
+        tags: ['node', 'redis'],
+        description: 'the app image',
+        default: false,
+        source: 'dockerfile acme/app:.fugaro/app.Dockerfile@release-1.0',
+      },
+      steps: [{ name: 'catalog-build', saved: true }],
+    },
+    project: PROJECT,
+    digest: 'a'.repeat(64),
+    argv: ['fugaro', 'image', 'add', '--no-apply', '--project', PROJECT, '--', 'app'],
   })
   if (!read.ok) throw new Error(read.because)
   return read.view

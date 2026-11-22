@@ -1804,17 +1804,12 @@ function modelsPrice(value: number | null): Reading {
  * their wire class, so markup, bidi controls and newlines are flattened to inert
  * text rather than read as markup.
  *
- * **The host is drawn as the console's marker and not as the machine's name, and
- * that is the decoder's own row for the key.** `routes[].host` is `host` in
- * `WIRE_TEXT_CLASSES` (`../../shared/schema.ts`), and `sanitizeText`'s host class
- * returns `HOST_PLACEHOLDER` for every machine name it is given, valid or not: a
- * machine name is the one thing this console does not draw, whichever field it
- * arrives in. **Another class cannot be asked instead**: `label` and
- * `sentence` run the free-text rules, whose hostname and address rules replace a
- * machine name before any class branch reads the value, so the value comes out as
- * the marker there too (`sanitize.ts`). The row is recognised without it: the
- * `name` above is the document's own word for the route, and the hostname itself
- * is drawn whole inside the `base_url` beside it, which is a `url`.
+ * **The host is drawn as the machine's own name, and that is the decoder's own
+ * row for the key.** `routes[].host` is `host` in `WIRE_TEXT_CLASSES`
+ * (`../../shared/schema.ts`), and `sanitizeText`'s host class draws the name it
+ * was given, valid or not (D3213, 2026-11-21): which endpoint a route sends data
+ * to is what this panel is for. The name is also inside the `base_url` beside it,
+ * which is a `url`.
  */
 function modelsRouteLine(parent: ScreenElement, factory: ScreenFactory, route: ModelsListRoute): void {
   const element = cell(parent, factory, 'li', 'projects-models-route')
@@ -2011,10 +2006,12 @@ function settingsRowLine(
  * controls. `type="button"` keeps it out of a form's submit path, the way every
  * live control in this theme is drawn.
  *
- * It binds nothing here. The press is the entry's (`paintSettings`), because the
- * entry is the only place holding the bridge, the row set and the focus to hand
- * back -- and what pressing it opens (the dry run, `settingsView`'s window, the
- * argv) is C3's.
+ * It binds nothing here. The press is the entry's (`bindSettingsPencils`),
+ * because the entry is the only place holding the operation, the row set and the
+ * focus to hand back -- and what pressing it opens is **main's one window**
+ * (`settings.editor.open`, the settings-edit plan's SU1): the entry sends the
+ * row's key and main does the entry, the dry run's diff, the confirmation and
+ * the write (D2902).
  *
  * **It is drawn through the raw `create`/`setAttribute` pair rather than through
  * `make`, and the hook is the reason.** `theme-selectors.test.ts` checks each

@@ -215,7 +215,10 @@ receives the token of whoever launches there and can replay it to the real servi
 lifetime: ask for grants as that person for jobs of that member, and replace or delete that
 person's token at the intake. *(Reach corrected after review round 3.)* The services accept
 gcloud's own audience (`GcloudAudience`, `internal/credsvc/launchers.go`), so the replay is not
-limited to the workspace: it works at every Fugaro service that admits that person, the intakes of
+limited to the workspace: it works at every Fugaro service that admits that person *(corrected again
+by WC0's review, 2026-11-22: Cloud Run accepts the token at any Cloud Run service the person can
+invoke, and the member's own service receives it on every switched-on launch with no false address;
+the owner narrowed the grant, D3145 below)*, the intakes of
 their other projects included, where the admin can replace or delete the person's own secrets and,
 where the person is a project admin, that project's shared ones. It cannot read a token and cannot
 run a job in another member.
@@ -239,7 +242,7 @@ answered on 2026-11-21.
 | **D3142** | With the member's switch on and the person holding a token, when is it used (F6)? | **Automatically**: every run that person launches there draws on it; `fugaro run` says so in one line, and `--no-personal-token` skips it for one run. Not chosen: only on `--personal-token` | 2026-11-21, as recommended. Why: the person stored it to use it. Cost: a person spends their own subscription unless they pass the flag |
 | **D3143** | Where do roster people's tokens go (F9)? | **The workspace project's existing intake**, admitting the roster's people as well; one container per person and name. Not chosen: a second intake with its own prefix | 2026-11-21, as recommended. Why: one code path. Cost, **corrected after review**: the question said the token would also serve the workspace project's own runs; it does not (A4, F4: no installation is served a personal token). What stands: one container per person in the workspace's project, and whoever holds the intake's account can replace any of them |
 | **D3144** | D2974 covers a missing token. What when the person's token is there but exhausted mid-run? | **The run moves on to the shared entries** it is admitted to, through their allow-list and the meter. Not chosen: wait and never switch | 2026-11-21, as recommended. Why: it is what the cascade does. Cost: a heavy user's runs spend the workspace's paid entries once their own window is used up |
-| **D3145** | Should the service also require the roster's `grants` list to name the person for that member (F18)? | **No.** Being on the roster and having launched the run is enough. Not chosen: require the mark | 2026-11-21, as recommended. Why: the list is a record and not a grant, and a person a member granted directly is not in it |
+| **D3145** | Should the service also require the roster's `grants` list to name the person for that member (F18)? | **No.** Being on the roster and having launched the run is enough. Not chosen: require the mark | 2026-11-21, as recommended. Why: the list is a record and not a grant, and a person a member granted directly is not in it. **Reopened by WC0's review, answered by the owner 2026-11-22:** "having launched the run" is checked by nothing, so a grant is bound to the members the person is a launcher of, checked against that member's own list (threat-model §11, finding 2); the `grants` mark, the one record the workspace can read, is reopened for WC4 and WC5's briefs, which list the open design question |
 | **D3146** | A person is removed from the roster while a run of theirs draws on their token. The spec's §6 says offboarding does not stop a run in flight (F25) | **The run halts within a minute**: the slip's owner is checked against the roster on every call (R3). Not chosen: let it finish on a grant that lasts up to 24 hours | 2026-11-21, added by review round 2, as recommended. Why: a removed person's token stops being spent at once. Cost: it reverses that sentence of the spec's §6, and it stops runs of someone removed from the workspace who still holds a role in that member |
 | **D3147** | The person holds a token and the grant fails at launch | **The run starts on the shared entries**, with one line saying it is not on the person's own token and why. Not chosen: refuse the launch | 2026-11-21, added by review round 2, as recommended. Why: it is what a failed grant does inside one project today. Cost: a run the person expected on their own subscription spends the workspace's paid entries |
 | **D3148** | `--workspace <name>` cannot tell the workspace's own project from a member's (R13). How does a person address the workspace's intake? | **By naming the workspace's project** with the existing `--project`; no `--workspace` flag. Not chosen: a new field in the workspace's shared config that marks it as the owner | 2026-11-21, added by review round 3, as recommended. Why: nothing resolves a name, so nothing can be spoofed. Cost: people must know the workspace's project name |
@@ -349,11 +352,15 @@ Each has one defensible answer given the decisions and the owner's constraints.
 
 No two answers pull against each other.
 
-- **O1.** The owner answers every finding of WC0's independent review before any other personal
-  task is launched, as WU0 was handled. This is a gate the plan cannot pass on its own.
+- **O1. Answered by the owner 2026-11-22.** The owner answers every finding of WC0's independent
+  review before any other personal task is launched, as WU0 was handled. The eight findings and the
+  owner's answers are in [threat-model.md](threat-model.md) §11; the personal tasks, WC2 onward, are
+  launchable by their plan edges.
 - **O2.** F14's residual risk is the owner's to accept in WC0's review, in words: a member's admins
   can spend a person's subscription in that member for up to 24 hours after that person launched a
-  run there. F24's replay is the second: a member admin who publishes a false address can act
+  run there (its bound is a claim deadline counted from the grant, chosen and pinned by WC4, plus 24
+  hours from the claim, per the owner's answer to finding 1). F24's replay is the second, and the
+  owner narrowed its cross-member reach to the members the person is a launcher of (finding 2): a member admin can act
   as a person who launched there while that person's identity token lives, about an hour, at
   every Fugaro service that admits the person; a grant taken in that hour lasts up to 24 more.
 - **O3.** D3141's cost falls on a workspace whose projects still hold model credentials of their

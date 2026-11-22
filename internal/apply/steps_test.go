@@ -104,6 +104,13 @@ func TestStepsMatchesRealSettingKeys(t *testing.T) {
 		// resource type owes: the build, the redeploy and the publish.
 		{"image_catalog.entries.*.name", []string{CatalogBuild, initflow.Repository, initflow.Policy}},
 		{"image_catalog.entries.*.source.inline", []string{CatalogBuild, initflow.Repository, initflow.Policy}},
+		// The budget mode's key, which the registry itself answers for: the
+		// mode a run reads is the published node's, so a change to it is
+		// published rather than applied and the table above needs no row of
+		// its own (AB8b, R8: the word's removal from a checkout's fugaro.yaml
+		// is the repository's runs being refused, and the update's listing says
+		// so before it offers the edit).
+		{"budget.mode", []string{initflow.Policy}},
 		// The project layer's keys are published by the layer stage.
 		{"layer.defaults.agent.auth", []string{initflow.Layer}},
 		{"layer.ab.judge_model", []string{initflow.Layer}},
@@ -134,6 +141,15 @@ func TestStepsMatchesRealSettingKeys(t *testing.T) {
 		{"workspace", []string{initflow.CredentialsRoute}},
 		{"workspace_pin.issuer", nil},
 		{"workspace_pin.service_address", []string{initflow.CredentialsRoute}},
+		// The providers block: the entry the copy of the installation's model
+		// keys writes carries the provider's own address and auth shape, and
+		// reads its container from `providers.<name>.secret`, so the block's
+		// keys owe the copy beside the publish their own row already declares
+		// (update_keys.go, KS12/D3001/KS12a).
+		{"providers.*.base_url", []string{initflow.Policy, initflow.CredentialsCopy}},
+		{"providers.*.auth", []string{initflow.Policy, initflow.CredentialsCopy}},
+		{"providers.*.secret", []string{initflow.Policy, initflow.CredentialsCopy}},
+		{"providers.*.route_fee_pct", []string{initflow.Policy, initflow.CredentialsCopy}},
 	} {
 		got, ok := Steps(Change{Kind: Setting, Key: tc.key})
 		if !ok {

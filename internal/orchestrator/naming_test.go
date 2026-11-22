@@ -156,6 +156,23 @@ func TestNamingRules(t *testing.T) {
 		}
 	})
 
+	t.Run("whether a named id is addressable is the path rule's own answer", func(t *testing.T) {
+		// NamedIDsAreAddressable is the one fact a caller reads without a project:
+		// `fugaro orchestrator install` is one unit per name and carries nothing
+		// from a project, so the installer cannot ask PathState about the id its
+		// unit's daemon would drive. What it must not be is a second opinion about
+		// the rule — it is that rule's own answer about a well-formed named id, and
+		// it flips to true the day the rule the paths are built with admits one
+		// (CG1a), which is when the installer's guard becomes dead weight.
+		id, err := orchestrator.NamedOrchestratorID("probe", "probe")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, pathErr := orchestrator.PathState(id); orchestrator.NamedIDsAreAddressable() != (pathErr == nil) {
+			t.Errorf("NamedIDsAreAddressable() = %v, and this release's paths answer %v for %q", orchestrator.NamedIDsAreAddressable(), pathErr, id)
+		}
+	})
+
 	t.Run("the driver node", func(t *testing.T) {
 		// The path is the state node's sibling. The switch of the id checks
 		// this package's paths are built through (checkAgentID, NodeIDs, the
@@ -518,6 +535,40 @@ func TestMapDocRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("a document built in Go cannot spell an absent field", func(t *testing.T) {
+		// EncodeMapDoc fills the two lists in and DecodeMapDoc reads the raw
+		// wire, so neither reaches ValidateMapDoc's own envelope: a document
+		// built in Go has no way to spell an absent field, which is what a
+		// nil list and a zero time are here.
+		valid := orchestrator.MapDoc{
+			Version: orchestrator.MapDocVersion, Project: "fugaro", GeneratedAt: now,
+			Nodes: []orchestrator.MapNode{}, Edges: []orchestrator.MapEdge{},
+		}
+		if err := orchestrator.ValidateMapDoc(valid); err != nil {
+			t.Fatalf("the document these cases are cut from is refused: %v", err)
+		}
+		noNodes, noEdges, noTime := valid, valid, valid
+		noNodes.Nodes = nil
+		noEdges.Edges = nil
+		noTime.GeneratedAt = time.Time{}
+		for _, c := range []struct {
+			name string
+			doc  orchestrator.MapDoc
+			want string
+		}{
+			{"the nodes are null", noNodes, "the nodes are null"},
+			{"the edges are null", noEdges, "the edges are null"},
+			{"no time it was assembled", noTime, "carries no time it was assembled"},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				err := orchestrator.ValidateMapDoc(c.doc)
+				if !errors.Is(err, orchestrator.ErrInvalid) || !strings.Contains(err.Error(), c.want) {
+					t.Errorf("a document with %s read as %v, want ErrInvalid saying so", c.name, err)
+				}
+			})
+		}
+	})
+
 	t.Run("a document this release does not model", func(t *testing.T) {
 		raw, err := orchestrator.EncodeMapDoc(full)
 		if err != nil {
@@ -534,6 +585,59 @@ func TestMapDocRoundTrip(t *testing.T) {
 		}
 		if _, err := orchestrator.DecodeMapDoc(patched); err == nil {
 			t.Error("a document with a field this release does not model was read, and the decode is strict")
+		}
+	})
+
+	t.Run("a field the contract always writes", func(t *testing.T) {
+		// Every field the map document always carries, absent and null. The
+		// struct decode reads either as a zero value — a nil list, a zero
+		// health, a zero time — so a reader that only checked the decoded
+		// document would accept a map with no nodes at all as a quiet project.
+		raw, err := orchestrator.EncodeMapDoc(full)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := orchestrator.DecodeMapDoc(raw); err != nil {
+			t.Fatalf("the document these cases are cut from does not read back: %v", err)
+		}
+		var complete map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &complete); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range []struct {
+			name string
+			key  string
+			null bool
+		}{
+			{"nodes absent", "nodes", false},
+			{"nodes null", "nodes", true},
+			{"edges absent", "edges", false},
+			{"edges null", "edges", true},
+			{"health absent", "health", false},
+			{"health null", "health", true},
+			{"generated_at absent", "generated_at", false},
+			{"generated_at null", "generated_at", true},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				doc := make(map[string]json.RawMessage, len(complete))
+				for k, v := range complete {
+					doc[k] = v
+				}
+				spelled := "absent"
+				if c.null {
+					spelled = "null"
+					doc[c.key] = json.RawMessage("null")
+				} else {
+					delete(doc, c.key)
+				}
+				patched, err := json.Marshal(doc)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := orchestrator.DecodeMapDoc(patched); !errors.Is(err, orchestrator.ErrInvalid) {
+					t.Errorf("a document whose %q is %s read as %v, want ErrInvalid", c.key, spelled, err)
+				}
+			})
 		}
 	})
 
