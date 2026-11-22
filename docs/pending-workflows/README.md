@@ -3165,14 +3165,14 @@ Two honest limits of this diff, both deliberate:
 - **`changes` goes and `select` takes its place.** The old job computed `docs_only` (only ever for a `pull_request` event, so always `false` here — F1) and the `live_scripts` boolean (R9 removes it). The new job is the selector itself: `actions/checkout` with `fetch-depth: 0` (the changed files are a two-dot tree diff against the base, R2), then `go run ./scripts/ci-select -full=...`, whose one line of JSON becomes this run's matrix and jobs. It writes its own summary to `$GITHUB_STEP_SUMMARY`.
 - **`run-name` is what the release gate reads** (R1, D3040): `ci (full)` or `ci (selected)`. A scheduled run takes no input, so the event name is what tells it from a dispatch (R11); `scripts/release-gate.sh` counts only the checks of a `ci (full)` run and ignores a `ci (selected)` one.
 - **`on:` gains one `full` input and one `schedule:`.** `workflow_dispatch` keeps its meaning and drops `live_scripts`; `-f full=true` is a full run, which is what `scripts/release.sh` dispatches for a release (CS7b) and what a tag's gate requires. The nightly (`17 4 * * *`) is the one scheduled run of D3041 — the narrow exception to the dispatch-only ruling of 2026-11-07 — because a selected run needs a full run to measure from (R2) and to weigh its shards with (R5). It is full and takes no input.
-- **`shard`'s matrix is the selector's output**: `matrix: ${{ fromJSON(needs.select.outputs.legs) }}`, so the leg keys are CS3's `Leg` fields — `name`, `pkg`, `index`, `of` and `only` — and nothing else. A leg with `of: 1` and no `only` runs every test of the packages it names, and `pkg` may name several of them (a leg the packer filled). `internal/cli`'s `update` and `other` families and the live checks keep the splitting they have today, because the packer keeps them. Two new outputs decide the run: `has_legs` skips the job on an empty leg set (GitHub fails a matrix with no entries; the `test` job already counts a skipped `shard` as success), and `trace` turns on the read trace below.
+- **`shard`'s matrix is the selector's output**: `matrix: ${{ fromJSON(needs.select.outputs.legs) }}`, so the leg keys are CS3's `Leg` fields — `name`, `pkg`, `index`, `of` and `only` — and nothing else. A leg with `of: 1` and no `only` runs every test of the packages it names, and `pkg` may name several of them (a leg the packer filled). `internal/cli`'s `update` and `other` families and the live checks keep the splitting they have today, because the packer keeps them. Two new outputs decide the run: `has_legs` skips the job on an empty leg set (GitHub fails a matrix with no entries; the `test` job already counts a skipped `shard` as success), and `trace` turns on the read trace below — the nightly's alone.
 - **`terraform` and `rules` are chosen too**, from the same output (`if: needs.select.outputs.terraform == 'true'`, `.rules`), and `check` runs on every run — a build break anywhere has to fail (R6). A full run sets both true, so nothing about a tag's gate changes.
-- **A full run traces what its tests read and uploads it** (CS2b, R10): each shard wraps its `go test` in `strace -f -y -e trace=openat,open,execve`, reduces the log with `go run ./scripts/ci-readmap --trace ... --trace-out reads-<leg>.json`, and uploads it as `reads-<leg>` beside the `test-times-<leg>` it already uploads. Nothing is committed from here: a person (or a Fugaro run) downloads the nightly's artifacts and merges them into `docs/ci-affected-tests/read-map.json` with `--from-artifact`, in an ordinary pull request. `strace` missing from the runner image is a warning and not a failure, and CS9's measurement decides whether the trace stays on a full run at all — its one-line flag is the `trace` line in the `select` step.
+- **The nightly traces what its tests read and uploads it** (CS2b, R10): each shard wraps its `go test` in `strace -f -y --seccomp-bpf -e trace=openat,open,execve`, reduces the log with `go run ./scripts/ci-readmap --trace ... --trace-out reads-<leg>.json`, and uploads it as `reads-<leg>` beside the `test-times-<leg>` it already uploads. Nothing is committed from here: a person (or a Fugaro run) downloads the nightly's artifacts and merges them into `docs/ci-affected-tests/read-map.json` with `--from-artifact`, in an ordinary pull request. **The trace is the nightly's and not a full dispatch's**, which is what CS2b's own header says — the step waits for CS9's measurement (`scripts/ci-readmap/trace.go:44`) — because `strace -f` without `--seccomp-bpf` stops every thread at every system call: under `-race` that is a cost nobody has measured, on every shard of the very run a release's gate reads, and the timings it would write are the ones the packer weighs later runs with (R5). So the `trace` output is the event name and nothing else: `true` on `schedule`, `false` on a dispatch, `-f full=true` included. The flag that turns it on for a dispatch is the one line in the `select` step, and CS9 decides whether it moves. `strace` missing from the runner image is a warning and not a failure.
 - **`actions: read` on the `select` job alone, at job level.** It lists this repository's workflow runs and downloads the last full run's timings, which is the actions API; the workflow-level `permissions:` stays exactly `contents: read`, because **the guard that keeps every workflow's default token read-only fails when a grant moves to the workflow level** (`images/cloudbuild_test.go`'s `TestCIWorkflowPermissionsScoped`, and the red step that pins it).
 
-**The `test` name, the checkouts and the timeouts do not move.** `test` is still the one check name the gate and the branch rules know, still `needs: [check, shard]`, and still counts a skipped `shard` as success; every `uses:` keeps the pin it has today; `check`'s vet steps, the `terraform` job's root loop and its `tfmt`/tflint/scan steps, and the `rules` job's emulator setup are byte for byte what runs today.
+**The `test` name, the checkouts and the timeouts do not move.** `test` is still the one check name the gate and the branch rules know, and still counts a skipped `shard` as success; every `uses:` keeps the pin it has today; `check`'s vet steps, the `terraform` job's root loop and its `tfmt`/tflint/scan steps, and the `rules` job's emulator setup are byte for byte what runs today.
 
-**One thing the block does not close, and CS4's acceptance does not ask it to.** If the `select` job itself fails — a crash, not a doubt: every doubt inside the selector is a full run instead (R8) — its outputs are empty, so `shard`, `rules` and `terraform` all skip, `check` still runs, and `test` counts the skipped shard as success: a dispatched full run would then show `test` green having run no tests. A release is still caught, because `scripts/release-gate.sh` reads a skipped check as failed, so the gate refuses a full run whose `terraform` and `rules` are skipped; a reader of `test` alone on a branch is not. Closing it is one line in the `test` job (`$SELECT` in its loop, beside `$CHECK` and `$SHARD`) and CS4's acceptance fixes that job as it is, so it is recorded here for CS6b or the owner rather than folded in.
+**`test` gains the `select` job, so a crash there cannot read as green.** `shard`, `rules` and `terraform` all skip on the empty outputs a failed `select` leaves, and `check` still runs and passes on a clean tree, so `needs: [check, shard]` alone would report `test` green having run no tests — the fail-open the plan's Never list forbids (`implementation-plan.md`). `test` therefore needs the `select` job too, takes its `needs.select.result` as `SELECT`, and accepts only `success` for it (`check` and `shard` keep counting `skipped`), so a `select` that crashed — a crash and not a doubt, since every doubt inside the selector is a full run instead (R8) — fails the one check name the gate and the branch rules know.
 
 **Four one-line edits go with the block, in the same commit.** Each publishes a release and runs `scripts/release-gate.sh` first, and the gate now lists the tag's workflow runs (`actions/runs?head_sha=`) as well as its checks (R1), so each gate job's `permissions:` gains one line beside its `checks: read`:
 
@@ -3196,7 +3196,7 @@ Two honest limits of this diff, both deliberate:
 
 Verified in a scratch worktree on 2026-11-22, with all five edits applied: `go test ./internal/cli/ -run 'Docs|ReleaseGate|Release' -count=1` fails on exactly those four tests and on nothing else in the file.
 
-**Verified offline before it was written down**, on 2026-11-22, in a scratch worktree with the block applied and nothing committed: the block parses as YAML and holds the shape above; `go test ./images/ ./deploy/terraform/ -count=1` passes; the guard above fails when `actions: read` is moved to the workflow level, which is the red step (`TestCIWorkflowPermissionsScoped`); with the block applied and the other four files untouched, the same `-run 'Docs|ReleaseGate|Release'` command fails on `TestRunnerTimeoutDocsMatchCI` alone; all six `run:` blocks pass `bash -n`; and the `shard` step was exercised against a stub go for each of the five leg shapes the packer emits — a packed leg of several packages, an `other`, an `update`, a `nonlive` and a `live` leg — and picks the branch it should in each. **Not verified:** the workflow has never run. That the selector selects what it should under a real dispatch, that the nightly's trace uploads, and that `strace` is on `ubuntu-latest` are CS9's measurement and the first real dispatch.
+**Verified offline before it was written down**, on 2026-11-22, in a scratch worktree with the block applied and nothing committed: the block parses as YAML and holds the shape above; `go test ./images/ ./deploy/terraform/ -count=1` passes; the guard above fails when `actions: read` is moved to the workflow level, which is the red step (`TestCIWorkflowPermissionsScoped`); with the block applied and the other four files untouched, the same `-run 'Docs|ReleaseGate|Release'` command fails on `TestRunnerTimeoutDocsMatchCI` alone; all six `run:` blocks pass `bash -n`; the `shard` step was exercised against a stub go for each of the five leg shapes the packer emits — a packed leg of several packages, an `other`, an `update`, a `nonlive` and a `live` leg — and picks the branch it should in each; the `select` step's `trace` output was read for both events (`true` on `schedule`, `false` on a dispatch, `-f full=true` included); and the `test` job's loop was exercised for every result it can see — it passes on `success`/`success`/`skipped` and fails on a `select` that ended `failure` or `cancelled`, and on a failed `check` or `shard`. **Not verified:** the workflow has never run. That the selector selects what it should under a real dispatch, that the nightly's trace uploads, and that `strace` is on `ubuntu-latest` are CS9's measurement and the first real dispatch.
 
 **To copy it in**, from the repository root, once the CS6b commit is in or ready to go with it:
 
@@ -3294,13 +3294,19 @@ jobs:
             full=true
           fi
           go run ./scripts/ci-select -full="$full" | tee select.json
+          # The nightly alone traces what its test processes read, and that
+          # artifact is what the committed read-map is refreshed from, by hand,
+          # in a pull request (R10). A full dispatch does not: strace -f under
+          # -race is a cost nobody has measured (CS9), and the run it would
+          # slow is the one a release's gate reads.
+          trace=false
+          if [ "$EVENT" = schedule ]; then
+            trace=true
+          fi
           {
             echo "legs=$(jq -c '{include: .legs}' select.json)"
             echo "has_legs=$(jq -r '(.legs | length) > 0' select.json)"
-            # Every full run traces and uploads what its test processes read,
-            # and that artifact is what the committed read-map is refreshed
-            # from, by hand, in a pull request (R10).
-            echo "trace=$(jq -r '.full' select.json)"
+            echo "trace=$trace"
             echo "terraform=$(jq -r '.terraform' select.json)"
             echo "rules=$(jq -r '.rules' select.json)"
           } >> "$GITHUB_OUTPUT"
@@ -3339,9 +3345,11 @@ jobs:
   # tests by a stable hash of the test name mod `of`, so a new test lands in a
   # leg on its own and none is dropped or run twice.
   #
-  # A full run (the nightly, or `-f full=true`) also traces each shard's reads
-  # and uploads them (CS2b, R10): that artifact is what the committed read-map
-  # is refreshed from, in a pull request, never by a push from here.
+  # The nightly (the one scheduled run) also traces each shard's reads and
+  # uploads them (CS2b, R10): that artifact is what the committed read-map is
+  # refreshed from, in a pull request, never by a push from here. A dispatch
+  # does not trace -- the cost is unmeasured (CS9) and the run it would slow is
+  # the one a release's gate reads (see the select job's `trace` output).
   shard:
     needs: select
     if: needs.select.outputs.has_legs == 'true'
@@ -3367,15 +3375,15 @@ jobs:
           TRACE: ${{ needs.select.outputs.trace }}
         run: |
           set -euo pipefail
-          # strace is not on every runner image, and a missing one is not what a
-          # full run should fail on: the shard says so and runs untraced.
+          # strace is not on every runner image, and a missing one is not what
+          # the nightly should fail on: the shard says so and runs untraced.
           if [ "$TRACE" = true ] && ! command -v strace >/dev/null 2>&1; then
             echo "::warning::strace is not on this runner, so this shard's reads are not traced"
             TRACE=false
           fi
           traced=(go test)
           if [ "$TRACE" = true ]; then
-            traced=(strace -f -y -e trace=openat,open,execve -o strace.log -qq go test)
+            traced=(strace -f -y --seccomp-bpf -e trace=openat,open,execve -o strace.log -qq go test)
           fi
           run_tests() {
             "${traced[@]}" "$@" | tee test.json | jq -rj 'select(.Action=="output").Output'
@@ -3461,18 +3469,23 @@ jobs:
           path: reads-${{ matrix.name }}.json
           if-no-files-found: ignore
   # The one check name the release gate and branch rules know: it passes when
-  # every shard and the vet job passed, and when the shard was skipped because
-  # the selector found nothing to run.
+  # the selector itself succeeded, every shard and the vet job passed, and when
+  # the shard was skipped because the selector found nothing to run. The select
+  # job is required and not merely read: a failed select leaves empty outputs,
+  # which skip every other job, and without this line the run would report
+  # green having run no tests at all.
   test:
-    needs: [check, shard]
+    needs: [select, check, shard]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - env:
+          SELECT: ${{ needs.select.result }}
           CHECK: ${{ needs.check.result }}
           SHARD: ${{ needs.shard.result }}
         run: |
+          case "$SELECT" in success) ;; *) echo "the select job ended $SELECT"; exit 1;; esac
           for r in "$CHECK" "$SHARD"; do
             case "$r" in success|skipped) ;; *) echo "a test job ended $r"; exit 1;; esac
           done
