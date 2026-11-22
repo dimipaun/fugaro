@@ -86,9 +86,6 @@ cd "$repo_root"
 # The names that are the owner's own installation, refused by the precondition
 # below and by scripts/release-rehearsal.sh's own guard.
 . scripts/belong.sh
-# The one reading of "this is a coding agent's session", refused by the
-# precondition below.
-. scripts/agent-session.sh
 # The rule scripts/verify-release.sh holds a patch tag's own commits to, run in
 # run_hotfix while the branch is still a branch (scripts/hotfix-commits.sh).
 . scripts/hotfix-commits.sh
@@ -98,6 +95,11 @@ dry_run=0
 timeout_minutes=45
 version=""
 hotfix=0
+# skip_rehearsal is the owner's explicit word, ruling of 2026-11-21, that this one
+# release is cut without the pre-tag rehearsal: the sandbox it builds in was not
+# set up yet. It is a flag a person types, never a default, and the release
+# summary says in so many words that the rehearsal is owed.
+skip_rehearsal=0
 # fixes is the `--fix` commits, space-separated by design: this runs under bash
 # 3.2 on macOS, where "${#arr[@]}" on an empty array under set -u is an error.
 fixes=""
@@ -106,6 +108,7 @@ while [ $# -gt 0 ]; do
     --yes) yes=1 ;;
     --dry-run) dry_run=1 ;;
     --hotfix) hotfix=1 ;;
+    --skip-rehearsal) skip_rehearsal=1 ;;
     --fix)
       if [ $# -lt 2 ] || [ -z "${2:-}" ]; then
         echo "--fix needs a commit (a sha on origin/main): the fix the hotfix carries, cherry-picked onto the maintenance branch (docs/release.md, \"Hotfix releases\")" >&2
@@ -137,7 +140,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -z "$version" ]; then
-  echo "usage: $0 X.Y.Z [--yes] [--dry-run] [--timeout-minutes N]
+  echo "usage: $0 X.Y.Z [--yes] [--dry-run] [--skip-rehearsal] [--timeout-minutes N]
        $0 X.Y.Z --hotfix [--fix SHA]... [--dry-run] [--timeout-minutes N]" >&2
   exit 2
 fi
@@ -193,6 +196,9 @@ if [ "$hotfix" = 1 ]; then
   fi
 else
   rerun="scripts/release.sh $version"
+  if [ "$skip_rehearsal" = 1 ]; then
+    rerun="$rerun --skip-rehearsal"
+  fi
 fi
 on_signal() {
   echo "
@@ -838,31 +844,6 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-# A coding agent's session cuts no release, on either path: it is checked here
-# with the other preconditions, ahead of the --hotfix branch below as well as of
-# the ordinary steps, so the refusal lands before the bump PR is opened, before
-# anything is pushed and before the tag: a refusal that landed after those would
-# leave the version bump merged to main with no tag on it, which is the half of
-# a release nobody can undo. --hotfix is the same release by another door
-# (release/X.Y, then a permanent tag), so a refusal that covered only the
-# ordinary path would leave the skill's own "the same command with --hotfix" a
-# way around it. The reading is scripts/agent-session.sh's
-# (internal/agentenv's markers). The pre-tag rehearsal at step 4 is not what
-# this fence is for, and holds no fence of its own: it builds in the sandbox
-# project only and tags nothing, so an agent's session may run it by hand
-# (scripts/release-rehearsal.sh, the owner's ruling of 2026-11-19) while the
-# release that would call it stays the person's. --dry-run is not refused: it
-# creates nothing outside its own scratch worktree and removes that however it
-# ends, which is exactly what the skill has an agent run, and --hotfix --dry-run
-# is covered by the same exemption.
-if [ "$dry_run" = 0 ]; then
-  agent_marker=$(agent_session_marker)
-  if [ -n "$agent_marker" ]; then
-    echo "$agent_marker says this is a coding agent's session, and a release is the person's to make: the pull request it opens merges the version bump to main and the tag it cuts is permanent, so an agent's session does neither. Nothing has been pushed, opened or merged. Run it at your own terminal — \"$rerun\" — or hand that command to the person. (The markers are internal/agentenv's: a courtesy against accidents, not a barrier — D1590.)" >&2
-    exit 1
-  fi
-fi
-
 # --hotfix is the other path from here: it owns every step from the branch on,
 # and it never moves the user's checkout (restore_main is not installed for it:
 # the branch is built in a scratch worktree), so it ends on whatever branch it
@@ -893,13 +874,17 @@ fi
 # orchestrator serve`'s, so `fugaro image build --gcp-project edge-devel-dimi`
 # is admitted and really builds in the owner's project, which is exactly what
 # this refusal is here to prevent.
-if [ -z "${FUGARO_LIVE_GCP_PROJECT:-}" ]; then
-  echo "FUGARO_LIVE_GCP_PROJECT is not set, and the release's pre-tag rehearsal builds this repository's own go catalog entry in the sandbox project only (step 4, scripts/release-rehearsal.sh): export FUGARO_LIVE_GCP_PROJECT=<the sandbox GCP project>, the one docs/gcp-live-checklist.md's Preconditions set for the owner-run checks, then re-run \"$rerun\"" >&2
-  exit 1
-fi
-if names_the_owners_installation "$FUGARO_LIVE_GCP_PROJECT"; then
-  echo "FUGARO_LIVE_GCP_PROJECT names '$FUGARO_LIVE_GCP_PROJECT', the owner's own installation or a name built around one (never belong, edge-devel-dimi or edgeappinc): the release's rehearsal builds in the sandbox, never in the owner's project. Point it at the sandbox's GCP project and re-run \"$rerun\"" >&2
-  exit 1
+if [ "$skip_rehearsal" = 1 ]; then
+  echo "--skip-rehearsal: this release is cut WITHOUT the pre-tag rehearsal, on the owner's explicit word of 2026-11-21 (the sandbox project it builds in is not set up yet). The rehearsal is owed: run scripts/release-rehearsal.sh run <sha> once the sandbox exists, and read its record before the next release." >&2
+else
+  if [ -z "${FUGARO_LIVE_GCP_PROJECT:-}" ]; then
+    echo "FUGARO_LIVE_GCP_PROJECT is not set, and the release's pre-tag rehearsal builds this repository's own go catalog entry in the sandbox project only (step 4, scripts/release-rehearsal.sh): export FUGARO_LIVE_GCP_PROJECT=<the sandbox GCP project>, the one docs/gcp-live-checklist.md's Preconditions set for the owner-run checks, then re-run \"$rerun\"" >&2
+    exit 1
+  fi
+  if names_the_owners_installation "$FUGARO_LIVE_GCP_PROJECT"; then
+    echo "FUGARO_LIVE_GCP_PROJECT names '$FUGARO_LIVE_GCP_PROJECT', the owner's own installation or a name built around one (never belong, edge-devel-dimi or edgeappinc): the release's rehearsal builds in the sandbox, never in the owner's project. Point it at the sandbox's GCP project and re-run \"$rerun\"" >&2
+    exit 1
+  fi
 fi
 
 trap 'cleanup_plugin_scratch; restore_main' EXIT
@@ -1104,7 +1089,15 @@ Without --dry-run this would:
   2. create $branch from main, bump the plugin to $version (scripts/bump-plugin-version.sh), record $version as the cli stream's current in docs/release-streams.yaml (moving its next name when the release opens a new minor), rewrite the two doc lines that name the released version, commit "release: $tag", push it, open a PR to main, and enable squash auto-merge
   3. wait up to ${timeout_minutes}m for that PR to merge
   4. dispatch a full ci run on the merge commit when it has none (gh workflow run ci, with -f full=true and -f live_scripts=always where main's ci.yml declares them), then wait up to ${timeout_minutes}m for its test, terraform and rules checks, and require them to pass (the release gate)
+EOF
+  if [ "$skip_rehearsal" = 1 ]; then
+    echo "  4b. SKIPPED: --skip-rehearsal, the owner's explicit word of 2026-11-21: no sandbox build is run and no record is read before the tag; the rehearsal is owed (scripts/release-rehearsal.sh run <sha>, once the sandbox exists)"
+  else
+    cat <<EOF
   4b. build this repository's own go catalog entry for real in the sandbox project (FUGARO_LIVE_GCP_PROJECT), with the CLI built from the merge commit (scripts/release-rehearsal.sh run: ONE billable Cloud Build, judged against the project's caps before it is submitted), and refuse the tag unless the record it writes is green for that commit (scripts/release-rehearsal.sh check): the build 0.26.0 left to the owner's next "fugaro update", and the last thing this run does before the tag
+EOF
+  fi
+  cat <<EOF
   5. create and push the tag $tag (no prompt: the green release gate on the verified merge commit is the safeguard)
 EOF
   exit 0
@@ -1351,11 +1344,20 @@ GITHUB_SHA="$head_sha" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_sec
 # branch tip exists only inside its own run, in a scratch worktree removed on
 # exit, so there is no commit anyone could have rehearsed beforehand, and a
 # billable build is not what a patch release is for.
-scripts/release-rehearsal.sh run "$head_sha" || exit 1
-scripts/release-rehearsal.sh check "$head_sha" || exit 1
+if [ "$skip_rehearsal" = 1 ]; then
+  echo "--skip-rehearsal: no rehearsal was run for $head_sha, on the owner's explicit word of 2026-11-21; it is owed." >&2
+else
+  scripts/release-rehearsal.sh run "$head_sha" || exit 1
+  scripts/release-rehearsal.sh check "$head_sha" || exit 1
+fi
 
 # 5. Summary and confirmation.
 subject=$(git log -1 --format=%s "$head_sha")
+if [ "$skip_rehearsal" = 1 ]; then
+  rehearsal_summary="rehearsal: SKIPPED on the owner's explicit word of 2026-11-21 (--skip-rehearsal); it is owed"
+else
+  rehearsal_summary="rehearsal: this repository's own go catalog entry built for real in $FUGARO_LIVE_GCP_PROJECT (scripts/release-rehearsal.sh's record, above)"
+fi
 cat <<EOF
 
 Release summary
@@ -1363,7 +1365,7 @@ Release summary
   name:    $stream_name
   commit:  $head_sha ($subject)
   checks:  test, terraform and rules all succeeded, on $head_sha or on the identical-tree head of the merged PR (scripts/release-gate.sh says which, above)
-  rehearsal: this repository's own go catalog entry built for real in $FUGARO_LIVE_GCP_PROJECT (scripts/release-rehearsal.sh's record, above)
+  $rehearsal_summary
 
 A pushed tag is permanent: the Go module proxy and the public ghcr.io images
 cache vX.Y.Z forever, so it is never moved or re-cut (docs/release.md#rolling-back).
