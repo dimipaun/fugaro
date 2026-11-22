@@ -8,13 +8,14 @@
 #
 # The readings are the point. Check 885 asks whether release 2 rejects the keys
 # it retired, with the fix, one row per shape: a `fugaro.yaml` writing
-# agent.auth, agent.oauth_token, a craft's access, a grade's access or a stage's
-# account, a project layer writing one, and the installation's own config
-# carrying routing.claude. So the cases that matter are the ones where a reading
-# is bent: a file that is ACCEPTED, a refusal that names no key, a refusal that
-# names no fix, an installation config that still carries a key, and the
-# premises (a directory that is not a git checkout, a checkout whose own file is
-# not the migrated state).
+# agent.auth, agent.oauth_token, a craft's access or a grade's access, a project
+# layer writing defaults.agent.auth, and the installation's OWN config writing
+# default_claude_account or a stage's account key. So the cases that matter are
+# the ones where a reading is bent: a document that is ACCEPTED, a refusal that
+# names no key, a refusal that names no fix, a refusal that is about the copy
+# rather than the key, an installation config that still carries a key, and the
+# premises (a directory that is not a git checkout, a checkout of another
+# project, a checkout whose own file is not the migrated state).
 #
 # Usage: bash scripts/live-checks/check-885-retired-keys_test.sh
 set -euo pipefail
@@ -108,7 +109,7 @@ project: test
 agent:
   model: claude-sonnet-5
   crafts:
-    code:
+    coder:
       model: claude-sonnet-5
 YAML
   printf 'sandbox\n' >"$1/README.md"
@@ -172,10 +173,13 @@ YAML
   : >"$answers/validate-clean.out"
   refusal "$answers" bent-agent-auth agent.auth
   refusal "$answers" bent-oauth-token agent.oauth_token
-  refusal "$answers" bent-craft-access agent.crafts.code.access
-  refusal "$answers" bent-grade-access model_grades.standard.access
-  refusal "$answers" bent-stage-account stages.implement.claude_account
-  refusal "$answers" layer stages.review.claude_account
+  refusal "$answers" bent-craft-access agent.crafts.coder.access
+  refusal "$answers" bent-grade-access model_grades.strong.access
+  # The two installation-config rows are resolved in a scratch checkout named
+  # after the row, and the layer row in one named `layer`.
+  refusal "$answers" stage-account stages.implement.claude_account
+  refusal "$answers" default-account default_claude_account
+  refusal "$answers" layer defaults.agent.auth
 }
 
 # ------------------------------------------------------------------ the runs
@@ -208,17 +212,18 @@ test_the_happy_path() {
   expect_row "$out" craft-access PASS "the happy path"
   expect_row "$out" grade-access PASS "the happy path"
   expect_row "$out" stage-account PASS "the happy path"
+  expect_row "$out" default-account PASS "the happy path"
   expect_row "$out" layer-keys PASS "the happy path"
   expect_row "$out" config PASS "the happy path"
   expect_row "$out" restore PASS "the happy path"
   expect_not_contains "$out" "UNVERIFIED" "the happy path"
   expect_not_contains "$out" "|FAIL|" "the happy path"
   # The rows really read what they say they read: one validation per shape, one
-  # for the clean control, one for the layer, and one in the owner's own
-  # checkout for the premise — all of them offline.
+  # for the clean control, one per installation-config key, one for the layer,
+  # and one in the owner's own checkout for the premise — all of them offline.
   local runs
   runs=$(grep -c '^fugaro validate ' "$CALLS" || true)
-  [ "$runs" = 8 ] || fail "the happy path: expected 8 validations, saw $runs"
+  [ "$runs" = 9 ] || fail "the happy path: expected 9 validations, saw $runs"
   expect_contains "$(cat "$CALLS")" "--offline" "the happy path: every validation is offline"
   expect_contains "$(cat "$CALLS")" "fugaro validate --offline --project-layer" "the layer row resolved its own layer file"
   expect_contains "$(cat "$CALLS")" "$sub" "the premise validated the owner's own checkout"
@@ -316,7 +321,7 @@ test_a_key_that_is_accepted_is_a_finding() {
 
 test_a_refusal_that_names_no_key_leaves_the_row_unverified() {
   case_dir refusal_without_key
-  refusal "$answers" bent-craft-access agent.crafts.code.access no-key
+  refusal "$answers" bent-craft-access agent.crafts.coder.access no-key
   run885
   expect_status "$status" 3 "a refusal that names no key"
   expect_row "$out" craft-access UNVERIFIED "a refusal that names no key"
@@ -325,11 +330,59 @@ test_a_refusal_that_names_no_key_leaves_the_row_unverified() {
 
 test_a_refusal_that_names_no_fix_is_a_finding() {
   case_dir refusal_without_fix
-  refusal "$answers" bent-grade-access model_grades.standard.access no-fix
+  refusal "$answers" bent-grade-access model_grades.strong.access no-fix
   run885
   expect_status "$status" 1 "a refusal that names no fix"
   expect_row "$out" grade-access FAIL "a refusal that names no fix"
   expect_contains "$out" "names no fix" "a refusal that names no fix"
+}
+
+test_a_checkout_of_another_project_stops_the_check() {
+  case_dir checkout_other_project
+  # The two rows that bend the installation's own config are read by a command
+  # that selects that config by the project the checkout names, so a checkout of
+  # another project is one where those rows would measure nothing.
+  printf 'version: 1\nproject: other\n' >"$sub/fugaro.yaml"
+  run885
+  expect_status "$status" 2 "a checkout of another project"
+  expect_row "$out" premise FAIL "a checkout of another project"
+  expect_contains "$out" "names 'other'" "a checkout of another project"
+  [ ! -s "$CALLS" ] || fail "a checkout of another project: it called something: $(head -c 400 "$CALLS")"
+}
+
+test_an_account_key_that_is_accepted_is_a_finding() {
+  case_dir account_key_accepted
+  printf 0 >"$answers/validate-status-stage-account"
+  : >"$answers/validate-stage-account.out"
+  run885
+  expect_status "$status" 1 "an account key that is accepted"
+  expect_row "$out" stage-account FAIL "an account key that is accepted"
+  expect_contains "$out" "ACCEPTED it (exit 0)" "an account key that is accepted"
+  expect_row "$out" default-account PASS "an account key that is accepted"
+}
+
+test_a_config_key_refused_without_naming_a_key_leaves_the_row_unverified() {
+  case_dir config_key_unnamed
+  refusal "$answers" default-account default_claude_account no-key
+  run885
+  expect_status "$status" 3 "a config key refused without naming a key"
+  expect_row "$out" default-account UNVERIFIED "a config key refused without naming a key"
+  expect_contains "$out" "names none of the retired keys" "a config key refused without naming a key"
+}
+
+test_a_config_that_already_carries_a_key_leaves_the_rows_that_copy_it_unverified() {
+  case_dir config_already_bent
+  cat >"$config" <<'YAML'
+project: test
+gcp_project: test-project
+default_claude_account: personal
+YAML
+  run885
+  expect_status "$status" 1 "a config that already carries a key"
+  expect_row "$out" config FAIL "a config that already carries a key"
+  expect_row "$out" stage-account UNVERIFIED "a config that already carries a key"
+  expect_row "$out" default-account UNVERIFIED "a config that already carries a key"
+  expect_contains "$out" "already carries" "a config that already carries a key"
 }
 
 test_a_layer_that_is_refused_for_another_reason_leaves_the_row_unverified() {
@@ -426,6 +479,10 @@ t test_a_checkout_that_does_not_validate_stops_the_check
 t test_a_key_that_is_accepted_is_a_finding
 t test_a_refusal_that_names_no_key_leaves_the_row_unverified
 t test_a_refusal_that_names_no_fix_is_a_finding
+t test_a_checkout_of_another_project_stops_the_check
+t test_an_account_key_that_is_accepted_is_a_finding
+t test_a_config_key_refused_without_naming_a_key_leaves_the_row_unverified
+t test_a_config_that_already_carries_a_key_leaves_the_rows_that_copy_it_unverified
 t test_a_layer_that_is_refused_for_another_reason_leaves_the_row_unverified
 t test_an_installation_config_that_still_carries_routing_claude_is_a_finding
 t test_an_installation_config_that_still_carries_an_account_key_is_a_finding

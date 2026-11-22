@@ -4,20 +4,23 @@
 #
 # `model-credentials-routing` takes a repository's auth mode away: a model's
 # source is a table entry (C1), not a key a repository writes. Release 2 retires
-# the keys that mode was written with — `agent.auth`, `agent.oauth_token`, a
-# craft's `access`, a grade's `access` and the per-stage account keys in a
-# `fugaro.yaml` or a project layer, and `routing.claude` in the installation's
-# config (X2) — and rejects a file that still writes one, at `validate`, at
-# `update` and at a default-branch launch, naming the key and the fix. Nothing
-# offline can settle what an installation does with a file that still writes
-# one, so this check does its own setup and reads, row by row, one row per
-# shape:
+# the keys that mode was written with — `agent.auth` (in a repository's file and
+# in a project layer's `defaults:`), `agent.oauth_token`, a craft's `access` and
+# a grade's `access` in a repository's file, and `default_claude_account`,
+# `stages.<stage>.claude_account` and `routing.claude` in the INSTALLATION's own
+# config (X2, R3) — and rejects a document that still writes one, at `validate`,
+# at `update` and at a default-branch launch, naming the key and the fix. Every
+# key is measured in the document that really carries it, because a key bent
+# into a document that has no such field is refused by the strict decoder for
+# that reason and measures nothing. Nothing offline can settle what an
+# installation does with a file that still writes one, so this check does its own
+# setup and reads, row by row, one row per shape:
 #
 #   premise     the checkout it is pointed at is a git checkout whose committed
-#               file writes NO retired key and which `fugaro validate` accepts:
-#               it is the release-2 state, and every row below bends a copy of
-#               ITS file. A premise that does not hold is a STOP (exit 2), not a
-#               finding.
+#               file writes NO retired key, names the installation as its
+#               project, and which `fugaro validate` accepts: it is the release-2
+#               state, and every row below bends a copy of ITS file. A premise
+#               that does not hold is a STOP (exit 2), not a finding.
 #   clean       a copy of that file, unchanged, in a checkout of its own, must
 #               still validate: the control that a refusal below is about the
 #               key and not about the copy.
@@ -27,9 +30,15 @@
 #   oauth-token the same, with `agent.oauth_token` (CM29).
 #   craft-access the same, with `agent.crafts.<craft>.access`.
 #   grade-access the same, with `model_grades.<grade>.access`.
-#   stage-account the same, with `stages.<stage>.claude_account`.
-#   layer-keys  a project layer writing `stages.<stage>.claude_account`, resolved
-#               with `--project-layer`, must be REFUSED naming the key.
+#   stage-account a copy of the INSTALLATION's OWN CONFIG with
+#               `stages.<stage>.claude_account` inserted, resolved by `fugaro
+#               validate --offline` in a checkout of the repository: the
+#               per-stage account key lives in that document and nowhere else
+#               (X2, R3 — a repository's file has no `stages:` block at all),
+#               so that is the only document its gate can be read in.
+#   default-account the same copy with `default_claude_account` inserted.
+#   layer-keys  a project layer writing `defaults.agent.auth`, resolved with
+#               `--project-layer`, must be REFUSED naming the key.
 #   config      the installation's OWN config, the document `fugaro update`
 #               writes, must carry none of the keys X2 retires: `routing.claude`,
 #               `default_claude_account` or `stages.<stage>.claude_account`. A
@@ -151,11 +160,12 @@ Usage:
 
 It copies your checkout's committed `fugaro.yaml` into a checkout of its own per
 key shape, inserts one retired key into each copy, and runs `fugaro validate
---offline` on it: the key must be rejected with the fix. It also resolves a
-project layer that writes a stage's account key, and reads your installation's
-own config for the keys release 2 retires there. Every row it prints is one
-criterion of the register's Check 885; the last line of the block is the verdict
-and the exit status:
+--offline` on it: the key must be rejected with the fix. It does the same with a
+copy of your INSTALLATION's own config, for the account keys release 2 retires
+there, resolves a project layer that writes agent.auth, and finally reads your
+installation's own config to say whether it still carries any of those keys at
+all. Every row it prints is one criterion of the register's Check 885; the last
+line of the block is the verdict and the exit status:
 
   PASS (exit 0)        every criterion passed
   FAIL (exit 1)        a criterion was measured and failed
@@ -214,19 +224,22 @@ Check 885 plan (nothing is called: no fugaro, no validate, no file is read)
 What it would do, in order:
 
   premise      fugaro validate --offline ${REPO:-<checkout>}
-               -> the checkout must be a git checkout whose committed fugaro.yaml writes NO retired key
-               and which validate accepts: it is the release-2 state, and every copy below is made from its
-               file. A premise that does not hold STOPS the check (exit 2).
+               -> the checkout must be a git checkout whose committed fugaro.yaml writes NO retired key,
+               names the installation as its project, and which validate accepts: it is the release-2
+               state, and every copy below is made from its file. A premise that does not hold STOPS
+               the check (exit 2).
   clean        copy ${REPO:-<checkout>}/fugaro.yaml into a checkout of its own and validate it
                -> it must still validate: the control that a refusal below is about the key.
   agent-auth   the same copy with agent.auth: oauth inserted
                -> it must be REFUSED, naming agent.auth and the fix (fugaro update).
   oauth-token  the same copy with agent.oauth_token inserted        -> REFUSED, naming it.
-  craft-access the same copy with agent.crafts.code.access inserted -> REFUSED, naming it.
-  grade-access the same copy with model_grades.standard.access      -> REFUSED, naming it.
-  stage-account the same copy with stages.implement.claude_account  -> REFUSED, naming it.
-  layer-keys   a project layer writing stages.review.claude_account, resolved with
-               fugaro validate --offline --project-layer <file> (in the clean copy's checkout)
+  craft-access the same copy with agent.crafts.coder.access inserted -> REFUSED, naming it.
+  grade-access the same copy with model_grades.strong.access        -> REFUSED, naming it.
+  stage-account a copy of the config above with stages.implement.claude_account inserted, resolved in a
+               scratch XDG_CONFIG_HOME as the installation's own config  -> REFUSED, naming it.
+  default-account the same with default_claude_account inserted     -> REFUSED, naming it.
+  layer-keys   a project layer writing defaults.agent.auth, resolved with
+               fugaro validate --offline --project-layer <file> (in a copy's own checkout)
                -> it must be REFUSED, naming the key.
   config       read $where_config
                -> it must carry none of routing.claude, default_claude_account or
@@ -417,6 +430,26 @@ print("\n".join(found))
 PY
 }
 
+# project_of FILE prints the `project:` a `fugaro.yaml` names, or "" when it
+# names none. It is what keeps the installation-config rows honest:
+# `fugaro validate` selects the installation's own config by the project this
+# checkout names, so a checkout of ANOTHER project is one whose bent config the
+# command would never read, and a row about it would be a row about nothing.
+project_of() { # project_of <file>
+  python3 - "$1" <<'PY'
+import re, sys
+try:
+    lines = open(sys.argv[1]).read().splitlines()
+except Exception:
+    sys.exit(0)
+for line in lines:
+    m = re.match(r"project:\s*(.*?)\s*(?:#.*)?$", line)
+    if m:
+        print(m.group(1).strip().strip("\"'"))
+        break
+PY
+}
+
 # insert_key BASE OUT PATH VALUE writes BASE with the key at the dotted PATH set
 # to VALUE, as a copy. It walks the sections the path names and adds only the
 # segments that are missing, so a file that already has `agent:` (or `agent:`
@@ -504,6 +537,19 @@ validate_run() { # validate_run <out> <dir> [args...]
   printf '%s' "$rc"
 }
 
+# validate_run_xdg is validate_run with the whole command run under another
+# XDG_CONFIG_HOME, which is how a bent copy of the INSTALLATION's own config is
+# put in front of `fugaro validate` without touching the owner's own: the
+# command selects that config as $XDG_CONFIG_HOME/fugaro/projects/<project>.yaml,
+# and the checkout it validates is what names the project.
+validate_run_xdg() { # validate_run_xdg <out> <dir> <xdg> [args...]
+  local out=$1 dir=$2 xdg=$3
+  shift 3
+  local rc=0
+  (cd "$dir" && XDG_CONFIG_HOME="$xdg" fugaro validate --offline "$@" "$dir") >"$out" 2>&1 || rc=$?
+  printf '%s' "$rc"
+}
+
 # refusal_names FILE DOTTED prints `yes` when a refusal's own output names the
 # key it refused — the whole dotted path or its last segment — and `no`
 # otherwise. It is how a row tells "the key was refused" from "this file was
@@ -540,6 +586,12 @@ step_premise() {
   if [ -n "$keys" ]; then
     fact premise FAIL "the fugaro.yaml of ${REPO} still writes a retired key (${keys//$'\n'/, }): this check's own copies are made from that file, and a file that already writes one is no control for a refusal. Commit the removal 'fugaro update' offers (release 2 rejects a file that still writes one), or point --repo at a checkout it has reached"
     stop "the checkout's fugaro.yaml still writes a retired key"
+  fi
+  local named
+  named=$(project_of "$BASE" || true)
+  if [ "$named" != "$INSTALLATION" ]; then
+    fact premise FAIL "the checkout ${REPO} names no project, or names '${named}' where this check is about the installation '${INSTALLATION}': the two rows that bend YOUR OWN CONFIG are read by 'fugaro validate', which selects that config by the project this checkout names, so a bent copy under another project's name is never read and those rows would measure nothing. Point --repo at a checkout of a repository of ${INSTALLATION}, or give the installation that checkout belongs to"
+    stop "the checkout does not name the installation as its project"
   fi
   rc=$(validate_run "$SCRATCH/premise.out" "$REPO")
   first=$(head -1 "$SCRATCH/premise.out" 2>/dev/null || true)
@@ -598,17 +650,18 @@ step_shape() { # step_shape <row> <scratch-name> <dotted> <value>
   fact "$row" PASS "'fugaro validate --offline' refused a file writing ${dotted} (exit ${rc}), naming the key and the command that fixes it ('fugaro update', whose removal the owner commits himself). Its first line: ${first}"
 }
 
-# step_layer resolves a project layer that writes a stage's account key. The
-# per-stage account keys live in the project layer and the installation's config
-# and nowhere else, so this is where a layer's own gate is read.
+# step_layer resolves a project layer that writes a retired key. A project layer
+# is the one document whose key is `defaults.agent.auth` (config.Scopes: agent.auth
+# is retired in a repository's file AND in a project layer, and a layer writes it
+# under `defaults:`), and it is the layer's own gate this row reads.
 step_layer() {
-  say "resolving a project layer that writes a stage's account key (layer-keys)"
-  local dotted=stages.review.claude_account dir layer rc named first
+  say "resolving a project layer that writes a retired key (layer-keys)"
+  local dotted=defaults.agent.auth dir layer rc named first
   layer="$SCRATCH/layer.yaml"
   cat >"$layer" <<'YAML'
-stages:
-  review:
-    claude_account: personal
+defaults:
+  agent:
+    auth: oauth
 YAML
   dir=$(scratch_checkout layer || true)
   if [ -z "$dir" ]; then
@@ -618,12 +671,12 @@ YAML
   rc=$(validate_run "$SCRATCH/layer.out" "$dir" --project-layer "$layer")
   first=$(head -1 "$SCRATCH/layer.out" 2>/dev/null || true)
   if [ "$rc" -eq 0 ]; then
-    fact layer-keys FAIL "a project layer writing ${dotted} was not refused: 'fugaro validate --offline --project-layer' ACCEPTED it (exit 0). Release 2 rejects the per-stage account keys in a project layer as it does in a fugaro.yaml (X2), and a layer that resolves is one a run reads an account from a document this release retired. If this installation is on release 1, this is the release the check is waiting for and not a defect"
+    fact layer-keys FAIL "a project layer writing ${dotted} was not refused: 'fugaro validate --offline --project-layer' ACCEPTED it (exit 0). Release 2 rejects agent.auth in a project layer as it does in a repository's file (X2, R3: config.Scopes retires it in both), and a layer that resolves is one every repository of the project is resolved over. If this installation is on release 1, this is the release the check is waiting for and not a defect"
     return 0
   fi
   named=$(refusal_names "$SCRATCH/layer.out" "$dotted")
   if [ "$named" = no ]; then
-    fact layer-keys UNVERIFIED "the layer writing ${dotted} was refused (exit ${rc}), but its own output names none of the retired keys ('${dotted}' or '${dotted##*.}'), so whether this refusal is the account key's is NOT measured: ${first}. Read it yourself and record it in the register's section"
+    fact layer-keys UNVERIFIED "the layer writing ${dotted} was refused (exit ${rc}), but its own output names none of the retired keys ('${dotted}' or '${dotted##*.}'), so whether this refusal is the retired key's is NOT measured: ${first}. Read it yourself and record it in the register's section"
     return 0
   fi
   if ! grep -qi -- 'update' "$SCRATCH/layer.out"; then
@@ -631,6 +684,59 @@ YAML
     return 0
   fi
   fact layer-keys PASS "a project layer writing ${dotted} is refused (exit ${rc}), naming the key and the fix. Its first line: ${first}"
+}
+
+# step_config_key measures the retirement of one key of the INSTALLATION's own
+# config: a copy of that document, carrying the key, is put where `fugaro
+# validate` selects it ($XDG_CONFIG_HOME/fugaro/projects/<project>.yaml) and the
+# command is run in a checkout of the repository, which is what names the
+# project. The per-stage account keys and default_claude_account live in that
+# document and nowhere else (X2, R3 — a repository's file has no `stages:` block,
+# and a project layer may not hold an account name at all), so a copy of it is
+# the only way a refusal of one can be measured rather than scanned for. The
+# value it writes is `default`, the account every stage uses when it names none
+# (config.DefaultClaudeAccount): a value the key's own rule admits, so a refusal
+# is about the KEY and not about what the copy says.
+step_config_key() { # step_config_key <row> <dotted> <value>
+  local row=$1 dotted=$2 value=$3 xdg dir rc named first mine already
+  if [ ! -r "$CONFIG" ]; then
+    fact "$row" UNVERIFIED "the installation's own config (${CONFIG}) could not be read, so whether release 2 rejects ${dotted} in it is NOT measured. Give it with --config and run the check again"
+    return 0
+  fi
+  already=$(config_keys "$CONFIG" || true)
+  if [ -n "$already" ]; then
+    fact "$row" UNVERIFIED "the installation's own config (${CONFIG}) already carries ${already//$'\n'/, } (the 'config' row below reads it), so a copy of it is no control for whether release 2 rejects ${dotted}: nothing could tell the key this check writes from the one that was already there. Run 'fugaro update' first, or point --config at a config that carries none of them"
+    return 0
+  fi
+  xdg="$SCRATCH/xdg-$row"
+  mkdir -p "$xdg/fugaro/projects"
+  insert_key "$CONFIG" "$xdg/fugaro/projects/${INSTALLATION}.yaml" "$dotted" "$value"
+  mine=$(config_keys "$xdg/fugaro/projects/${INSTALLATION}.yaml" || true)
+  if [ "$mine" != "$dotted" ]; then
+    fact "$row" UNVERIFIED "this check could not write its own copy of ${CONFIG} carrying ${dotted} alone (the copy reads back as '${mine}'), so whether release 2 rejects that key is NOT measured"
+    return 0
+  fi
+  dir=$(scratch_checkout "$row" || true)
+  if [ -z "$dir" ]; then
+    fact "$row" UNVERIFIED "this check could not write the checkout ${dotted} is resolved in, so whether release 2 rejects it is NOT measured"
+    return 0
+  fi
+  rc=$(validate_run_xdg "$SCRATCH/$row.out" "$dir" "$xdg")
+  first=$(head -1 "$SCRATCH/$row.out" 2>/dev/null || true)
+  if [ "$rc" -eq 0 ]; then
+    fact "$row" FAIL "an installation config writing ${dotted} was not refused: 'fugaro validate --offline' ACCEPTED it (exit 0). Release 2 rejects the account keys it retired in the installation's own config, with the fix (X2, R3), and a config that validates is one whose stage accounts a run still reads out of a document nothing honours. If this installation is on release 1, this is the release the check is waiting for and not a defect"
+    return 0
+  fi
+  named=$(refusal_names "$SCRATCH/$row.out" "$dotted")
+  if [ "$named" = no ]; then
+    fact "$row" UNVERIFIED "the config writing ${dotted} was refused (exit ${rc}), but its own output names none of the retired keys ('${dotted}' or '${dotted##*.}'), so whether this refusal is the retired key's is NOT measured: ${first}. Read it yourself and record it in the register's section"
+    return 0
+  fi
+  if ! grep -qi -- 'update' "$SCRATCH/$row.out"; then
+    fact "$row" FAIL "the config writing ${dotted} is refused (exit ${rc}) but the refusal names no fix: release 2's refusal says what command removes it (X2), and 'fugaro update' is the command that migrates this document. The refusal was: ${first}"
+    return 0
+  fi
+  fact "$row" PASS "'fugaro validate --offline' refused the installation's own config writing ${dotted} (exit ${rc}), naming the key and the fix. Its first line: ${first}"
 }
 
 # step_config reads the installation's OWN config for the keys release 2 retires
@@ -655,9 +761,10 @@ step_premise
 step_clean
 step_shape agent-auth bent-agent-auth agent.auth oauth
 step_shape oauth-token bent-oauth-token agent.oauth_token obsolete
-step_shape craft-access bent-craft-access agent.crafts.code.access oauth
-step_shape grade-access bent-grade-access model_grades.standard.access oauth
-step_shape stage-account bent-stage-account stages.implement.claude_account personal
+step_shape craft-access bent-craft-access agent.crafts.coder.access oauth
+step_shape grade-access bent-grade-access model_grades.strong.access oauth
+step_config_key stage-account stages.implement.claude_account default
+step_config_key default-account default_claude_account default
 step_layer
 step_config
 REACHED_END=yes
