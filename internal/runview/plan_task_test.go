@@ -128,8 +128,13 @@ var planTaskReaders = map[string]string{
 	// the same display-only join the rows already carry, from the same field,
 	// and no path is built from it.
 	"internal/runindex/contract.go": "the index entry's own plan_task field: the id plan status and graph join a run to a node by, display-only",
-	"internal/plan/state.go":        "joins the id the row published to a plan's task, for the states a screen draws",
-	"internal/cli/plan_status.go":   "turns the read's own sanitised rows into the facts the join reads; it never opens launch.json",
+	// The fold that writes such an entry (RI4): it copies the id out of the
+	// run's own task record into the document and decides nothing by it -- no
+	// path is built from it, nothing is matched on it, and it admits no run,
+	// budgets nothing and grants nothing.
+	"internal/runindex/fold.go":   "writes the entry's plan_task from the run's own task record, for the join a screen draws",
+	"internal/plan/state.go":      "joins the id the row published to a plan's task, for the states a screen draws",
+	"internal/cli/plan_status.go": "turns the read's own sanitised rows into the facts the join reads; it never opens launch.json",
 	// The orchestrator's own graph: an item carries the plan task it stands
 	// for, so the import of a plan (D2704) and the plan's adopted runs in
 	// flight (D2702) meet in one node instead of duplicating it (D2746). The
