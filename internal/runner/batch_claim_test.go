@@ -84,62 +84,80 @@ func onBatch(t *testing.T, b *bk) {
 		runner.MetadataHostEnv+"="+strings.TrimPrefix(meta.URL, "http://"))
 }
 
-// TestRunWithNoTicketStops: a Batch job carries the identity ticket its
-// launcher asked the installation's credentials service for, or it is not a job
-// this installation launched (BR1, R18). The fixture is that job with nothing
-// on it -- no ticket, no marker of the release behind, and no token object in
-// the bucket -- and the run stops with the upgrade, `fugaro update` and the
-// relaunch as its fix, having run no stage.
+// TestRunWithNoTicketStops: a Batch task carries the identity ticket its
+// launcher asked the installation's credentials service for, or it is not a
+// task this installation launched (BR1, R18). The fixture is that task with
+// nothing on it -- no ticket, no marker of the release behind, and no token
+// object in the bucket -- and the run stops with the upgrade, `fugaro update`
+// and the relaunch as its fix, having run no stage.
+//
+// The two environments below are one refusal. The first is a task the launcher
+// wrote FUGARO_BACKEND into; the second carries only the pair Batch itself
+// injects, BATCH_TASK_INDEX and BATCH_TASK_COUNT, which is the platform's own
+// signal (backend.DetectPlatform) and what a task nobody launched, or one whose
+// environment somebody emptied, may well be without. The refusal is keyed on
+// that signal, so both stop -- the review finding on this change: a guard
+// reading the launcher's own variable let the second run to completion with no
+// session, no cap and no kill switch.
 //
 // What the refusal keeps the run from is the fail-open direction of the policy
-// read: a job nothing was provisioned for is answered "this installation has
+// read: a task nothing was provisioned for is answered "this installation has
 // published nothing", which is the right answer for a Cloud Run launch whose
-// launcher minted nothing and the wrong one for a Batch job, where a launcher
+// launcher minted nothing and the wrong one for a Batch task, where a launcher
 // that left nothing launched nothing. The run would then open no session at
 // all: the stages below would run on the environment ceiling, with no cap to
 // reach and no kill switch to answer.
+//
+// refusedAdmission is what holds the placement, and its credential count is
+// what makes it observable: the refusal is met at the policy read
+// (budgetClient), before admission and before the provider is opened, so the
+// run hands out no git credential and clones nothing. The same refusal met at
+// startBudgetBackend would come after the clone -- the fail-open direction
+// M2's own rule names, and the second review finding on this change.
 //
 // The other side of the same refusal is what makes it safe to make: a job
 // carrying the marker alone is the launch of the release behind, and
 // TestRunnerStillOpensASealedToken is that run, which goes on with it (R7).
 //
-// Mutation (run, restored): drop the check from startBudgetBackend. The run
-// goes on with no identity at all -- the policy read's answer above stands, the
+// Mutations (run, restored): drop the check from budgetClient. The run goes on
+// with no identity at all -- the policy read's answer above stands, the
 // stray-token check finds no object to refuse -- and this test fails on the
-// error it never got: the run ends with the stages it was scripted.
+// error it never got: the run ends with the stages it was scripted. Key the
+// check on FUGARO_BACKEND again (backend.BackendEnv): the second environment
+// goes on, and fails on the same thing. Move the check back to
+// startBudgetBackend: both environments still stop, and both fail on the
+// credential count refusedAdmission reads.
 func TestRunWithNoTicketStops(t *testing.T) {
-	b := newBK(t, gwConfig(t, ""), "off", "")
-	// The launch left nothing at all: no marker in the job (unmarked) and no
-	// token object for this run in the bucket.
-	b.unmarked()
-	if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
-		t.Fatal(err)
-	}
-	onBatch(t, b)
-
-	rec, err := b.run(t, implement("feature"), review("ship", 0))
-	if err == nil {
-		t.Fatalf("a Batch job nobody launched must stop the run: rec = %+v", rec)
-	}
-	for _, want := range []string{
-		backend.CloudBatch,
-		identitywire.TicketEnv,
-		"fugaro update",
-		"brew upgrade",
-		"launch the run again",
+	for _, tc := range []struct {
+		name string
+		// strip drops FUGARO_BACKEND from the job's environment, leaving the
+		// pair Batch injects as the only thing that says which platform this
+		// process is on.
+		strip bool
+	}{
+		{name: "the launcher's own backend variable"},
+		{name: "only the platform's own signal", strip: true},
 	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not name %q: %v", want, err)
-		}
-	}
-	if rec == nil || !strings.Contains(rec.Reason, identitywire.TicketEnv) {
-		t.Errorf("the record's reason is not the refusal: %+v", rec)
-	}
-	if rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
-		t.Errorf("the run ended %s/%s, want an infra_error with no outcome: nothing here was the run's work", rec.Status, rec.Outcome)
-	}
-	if len(b.agent.calls) != 0 {
-		t.Fatalf("%d stages ran on a run with no identity", len(b.agent.calls))
+		t.Run(tc.name, func(t *testing.T) {
+			b := admissionRun(t, "github", "acme/app", "off", "", "")
+			// The launch left nothing at all: no marker in the job (unmarked) and
+			// no token object for this run in the bucket.
+			b.unmarked()
+			if err := token.DeleteObject(context.Background(), b.bucket, repoSlug, runID); err != nil {
+				t.Fatal(err)
+			}
+			onBatch(t, b)
+			if tc.strip {
+				b.deps.Env = filterEnv(b.deps.Env, backend.BackendEnv)
+			}
+
+			rec, err := b.run(t, implement("feature"), review("ship", 0))
+			refusedAdmission(t, b, rec, err,
+				backend.CloudBatch, identitywire.TicketEnv, "fugaro update", "brew upgrade", "launch the run again")
+			if got := len(claimCalls(t, b.fake)); got != 0 {
+				t.Errorf("the run claimed its identity %d times with no identity to claim, want none: an identity taken here would carry no session, no cap and no kill switch", got)
+			}
+		})
 	}
 }
 

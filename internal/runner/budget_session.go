@@ -508,7 +508,10 @@ func strayTokenNoBackend() error {
 // environment names no live mode — a launch the launcher minted nothing for,
 // which opens no session and runs on the environment ceiling exactly as it did
 // before AB1a (budgetClient's markless arm; AB4 is what makes every launch
-// mint). Everything else it can meet is a refusal.
+// mint). That arm is a Cloud Run launch's alone: a Batch task that reached here
+// with nothing a launcher left would already have been refused at the policy
+// read, because on Batch a launcher that minted nothing launched nothing
+// (budgetClient, BR1, R18). Everything else it can meet is a refusal.
 // It is reached only after admissionCheck has admitted this run — bootstrap
 // calls the check before the lock and before this, and nothing else calls
 // either — so the slug the session is keyed by (r.d.Store.Slug, through the
@@ -517,19 +520,6 @@ func strayTokenNoBackend() error {
 // (plan task 3.3: the ordering is the security property, and this is the lease
 // it protects).
 func (r *run) startBudgetBackend(ctx context.Context) error {
-	// A Batch job is the one backend where the launcher always leaves an
-	// identity behind -- the ticket it asked the issuer for before it created
-	// the job, or the marker of the release behind (BR1, R7) -- so a job
-	// carrying neither is not a launch of this installation at all. The state
-	// is the one budgetClient's markless arm reads as "this installation has
-	// published nothing": that answer is right for a Cloud Run launch whose
-	// launcher minted nothing, and it is never right here, because on Batch a
-	// launcher that minted nothing launched nothing. Read either way the run
-	// would go on with no identity, no session, no cap and no kill switch, so
-	// it is refused here, where the marker's own refusal is met below.
-	if r.onBatch() && !r.d.Backend.Issued() {
-		return batchLaunchWithNoTicket()
-	}
 	// The launcher's marker says it minted this run a budget token, and the
 	// ticket says it asked an issuer for this run's identity: either way it did
 	// so only because the project has a shared budget or a published policy.

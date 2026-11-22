@@ -15,11 +15,15 @@ import (
 	"github.com/dimipaun/fugaro/internal/identitywire"
 )
 
-// batchRunEnv is a job environment of a run on Cloud Batch: the launcher
-// writes FUGARO_BACKEND on every job it creates, and a Batch job says
-// cloud-batch (internal/backend/batch's jobVariables).
+// batchRunEnv is a job environment of a run on Cloud Batch: the pair Batch
+// injects into every task, BATCH_TASK_INDEX and BATCH_TASK_COUNT, which is what
+// says a process is one of Batch's tasks (backend.DetectPlatform, the predicate
+// batchAttestation reads), beside FUGARO_BACKEND, which the launcher writes
+// into every job it creates and a Batch job says cloud-batch in
+// (internal/backend/batch's jobVariables).
 func batchRunEnv(metadataHost string) []string {
 	return []string{
+		"BATCH_TASK_INDEX=0", "BATCH_TASK_COUNT=1",
 		backend.BackendEnv + "=" + backend.CloudBatch,
 		metadataHostEnv + "=" + metadataHost,
 	}
