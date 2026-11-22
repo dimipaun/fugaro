@@ -388,9 +388,11 @@ func TestPairInviteLeavesAMemberRecordAlone(t *testing.T) {
 // for one's own address, which is the default. Naming your own address is the
 // bootstrap pairing, and it writes no invite node and no member record.
 func TestPairInviteLeavesTheOwnAddressAlone(t *testing.T) {
-	f := newPairFixture(t, pairMe, pairInviteEndpoint)
+	svc := newPairService(t, pairServiceAnswers())
+	f := newPairFixture(t, pairMe, svc.edit)
 	f.pairSeedConsumerKey(t)
-	if _, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes), "--email", pairMe, "--json"); err != nil {
+	f.pairSeedRequest(pairServicePairingUID, pairKey)
+	if _, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--email", pairMe, "--json"); err != nil {
 		t.Fatalf("a pairing naming the operator's own address: %v", err)
 	}
 	if v := f.db.Value(pairInviteRoot); v != nil {
