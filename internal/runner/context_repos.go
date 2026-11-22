@@ -69,7 +69,7 @@ func (r *run) cloneContextRepos(ctx context.Context) error {
 		return fmt.Errorf("this run's task names the read-only context repositories %s and this run's repository is on the %s provider: a read-only context repository is a GitHub repository until the credential path serves another provider's, and the launch that records one refuses a repository that is not GitHub's",
 			strings.Join(r.spec.ContextRepos, ", "), r.providerKind)
 	}
-	src, err := r.serviceTokens()
+	src, err := r.serviceTokens(ctx)
 	if err != nil {
 		return err
 	}
