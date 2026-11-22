@@ -86,8 +86,12 @@
 #                         takes the one entry whose chain starts with the
 #                         launcher's pool, and stops if there are several.
 #             --installation, --gcp-project, --region
-#                         what `fugaro doctor --json` has to agree with; the
-#                         region defaults to us-east5.
+#                         what `fugaro doctor --json` has to agree with. The
+#                         project and the region are the checkout's OWN — read
+#                         from doctor, never defaulted — because every document
+#                         below is the installation's; a value given here that
+#                         disagrees with doctor's stops the check. What doctor
+#                         answers is held to the belong guard as well.
 #             --bucket    the runs bucket (default fugaro-runs-<project>).
 # Needs:      bash, mktemp, python3 (every document is read by one python3
 #             reader), git, gcloud (authenticated as the project's owner: the
@@ -95,8 +99,11 @@
 #             and nothing is fetched.
 # Where:      the installation, project and region you name, and NOWHERE else:
 #             every call carries them explicitly, and a project, region or
-#             installation naming belong is refused by name. Run it on an
-#             installation you may upgrade and on a repository you may spend on.
+#             installation naming belong is refused by name — both what you
+#             typed and what the checkout's own `fugaro doctor --json` answers,
+#             since with no --gcp-project the project used is doctor's. Run it
+#             on an installation you may upgrade and on a repository you may
+#             spend on.
 # Costs:      ONE run's model spend, bounded by the repository's own per-run cap
 #             — the money this check exists to see counted. Every other call is
 #             a read.
@@ -260,6 +267,7 @@ finish() {
   cleanup
   local facts=$FACTS_CAPTURED
   if [ -z "$facts" ]; then facts="aborted|FAIL|the run stopped before it recorded anything"; fi
+  facts="${facts}"$'\n'"belong|${BELONG_VERDICT:-FAIL}|${BELONG_DETAIL:-the belong guard did not run}"
   facts="${facts}"$'\n'"restore|${RESTORE_VERDICT:-FAIL}|${RESTORE_NOTE:-the restore did not run}"
   if [ -z "$SCRATCH" ]; then
     facts="${facts}"$'\n'"scratch-removed|PASS|nothing was created: the run stopped before it made a scratch directory"
@@ -506,11 +514,81 @@ guard_xtrace() {
   fact xtrace PASS "this shell is not tracing, so no trace of this run can copy the commands it ran"
 }
 
-guard_belong() {
-  case "${INSTALLATION:-}${GCP_PROJECT:-}${REGION:-}" in
-  *belong*) stop "the installation, project or region this check would use names belong: this check is never run there" ;;
+# is_belong NAME: the installation named `belong` is the owner's own. A substring
+# test on purpose, so a name that merely contains it is refused too.
+is_belong() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+  *belong*) return 0 ;;
   esac
-  fact belong PASS "the installation (${INSTALLATION:-<unset>}), the project (${GCP_PROJECT:-<unset>}) and the region (${REGION:-<unset>}) name no installation this check refuses"
+  return 1
+}
+
+# guard_belong WHERE NAME...: called on what was typed AND on what the checkout's
+# own `fugaro doctor --json` answers, because the check can be pointed at the
+# owner's own installation by either — and with no --gcp-project the project this
+# check goes on to use is doctor's, so judging only what was typed judges the
+# empty string. The verdict is held in a variable rather than recorded here, so
+# the row says the LAST word: a PASS from the typed values followed by a FAIL
+# from doctor's would otherwise leave a PASS in the block.
+guard_belong() { # guard_belong WHERE NAME...
+  local where=$1 v
+  shift
+  for v in "$@"; do
+    [ -n "$v" ] || continue
+    if is_belong "$v"; then
+      BELONG_VERDICT=FAIL
+      BELONG_DETAIL="the installation this check would use names belong — '$v', from ${where} — and this check is never run there: it launches a paid run against the owner's own installation. Run it on an installation you may spend on"
+      stop "the installation this check would use names belong (from ${where}), and this check is never run there: it launches a paid run against the owner's own installation"
+    fi
+  done
+}
+
+step_belong() {
+  guard_belong "what you typed" "${INSTALLATION:-}" "${GCP_PROJECT:-}" "${REGION:-}"
+  BELONG_VERDICT=PASS
+  BELONG_DETAIL="what you typed (--installation ${INSTALLATION:-<unset>}, --gcp-project ${GCP_PROJECT:-<unset>}, --region ${REGION:-<unset>}) names no installation this check refuses, and neither will the checkout's own fugaro doctor --json answer: it is held to the same guard, and the project and region every read below carries are doctor's own"
+}
+
+# doctor_facts FILE prints `name|gcp_project|region` out of `fugaro doctor
+# --json`, which answers under `project` (internal/cli/doctor.go's doctorProject).
+# Exit 2 is a document with no project in it, which is a different thing from a
+# document that cannot be read.
+doctor_facts() { # doctor_facts <file>
+  python3 - "$1" <<'PY'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+p = doc.get("project") if isinstance(doc, dict) else None
+if not isinstance(p, dict):
+    sys.exit(2)
+print("%s|%s|%s" % (p.get("name") or "", p.get("gcp_project") or "", p.get("region") or ""))
+PY
+}
+
+# repo_of URL prints `owner/name` out of an origin remote, in the shapes git
+# prints them: https://github.com/owner/name.git, git@github.com:owner/name.git,
+# ssh://git@github.com/owner/name, the same on bitbucket, and the same with a
+# port. A remote that is a path on this machine names no repository, so it is a
+# refusal (exit 1) rather than a made-up owner/name.
+repo_of() { # repo_of <url>
+  python3 - "$1" <<'PY'
+import re, sys
+u = sys.argv[1].strip()
+u = re.sub(r"\.git$", "", u)
+u = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", u)
+if u.startswith(("/", "./", "../", "~")):
+    sys.exit(1)
+head = u.split("/", 1)[0]
+if "@" in head:
+    u = u.split("@", 1)[1]
+u = re.sub(r"^[^/:]+:", "", u)
+parts = [p for p in re.split(r"[/:]", u) if p]
+if len(parts) < 2:
+    sys.exit(1)
+print("%s/%s" % (parts[-2], parts[-1]))
+PY
 }
 
 # --------------------------------------------------------------------- steps
@@ -522,29 +600,57 @@ step_checkout() {
   [ -n "$top" ] || stop "--checkout names $CHECKOUT, and it is not a git work tree: this check launches a run in it, and a run goes out on a checkout"
   CHECKOUT=$(cd "$top" && pwd)
   [ -f "$CHECKOUT/fugaro.yaml" ] || stop "$CHECKOUT carries no fugaro.yaml, so it is not a repository a run goes out on: point --checkout at the checkout of the repository this check is about"
-  fact checkout PASS "$CHECKOUT is a git work tree carrying the fugaro.yaml the run goes out on"
+  # The repository this checkout belongs to is what the run is charged to and
+  # whose per-run cap the money is settled against, and its origin remote is
+  # where `fugaro run` reads it too. Without it the cap row below could read
+  # another repository's cap and call it this one's.
+  local url rc=0
+  url=$(git -C "$CHECKOUT" remote get-url origin 2>/dev/null) || rc=$?
+  [ "$rc" = 0 ] && [ -n "$url" ] ||
+    stop "$CHECKOUT has no 'origin' remote, so this check cannot name the repository whose caps the run it launches is charged to (fugaro run resolves it from the same remote). Run it in the checkout of the repository this check is about"
+  local rc2=0
+  REPO_NAME=$(repo_of "$url") || rc2=$?
+  [ "$rc2" = 0 ] && [ -n "$REPO_NAME" ] ||
+    stop "the origin remote of $CHECKOUT ($url) does not name a repository this check can read as owner/name"
+  fact checkout PASS "$CHECKOUT is a git work tree carrying the fugaro.yaml the run goes out on, and its origin remote names ${REPO_NAME}: the run below is charged to that repository and the cap row reads ITS per-run cap"
 }
 
 step_installation() {
-  say "reading the checkout's project: fugaro doctor --json (in $CHECKOUT)"
+  say "reading the checkout's installation: fugaro doctor --json (in $CHECKOUT)"
   local rc=0
   (cd "$CHECKOUT" && "$FUGARO_BIN" doctor --json) >"$SCRATCH/doctor.json" 2>"$SCRATCH/doctor.err" || rc=$?
-  if [ "$rc" != 0 ]; then
-    stop "fugaro doctor --json failed in $CHECKOUT (exit $rc): $(head -c 300 "$SCRATCH/doctor.err" | oneline) — every read below is scoped to the project it names, and a checkout whose project cannot be read is not one this check can measure"
+  local facts rc2=0
+  facts=$(doctor_facts "$SCRATCH/doctor.json") || rc2=$?
+  if [ "$rc" != 0 ] || [ "$rc2" = 1 ]; then
+    stop "fugaro doctor --json failed in $CHECKOUT (exit $rc): $(head -c 300 "$SCRATCH/doctor.err" | oneline) — every read below is scoped to the project and region it names, and a checkout whose installation cannot be read is not one this check can measure"
   fi
-  local got
-  got=$(jget "$SCRATCH/doctor.json" gcp_project)
-  [ -n "$got" ] || stop "fugaro doctor --json named no gcp_project for $CHECKOUT: the runs bucket and the run's record are named after the project the checkout's config carries"
-  if [ -n "$GCP_PROJECT" ] && [ "$GCP_PROJECT" != "$got" ]; then
-    stop "--gcp-project names ${GCP_PROJECT} and the checkout's own project is ${got}: this check reads the runs bucket of the project the checkout belongs to, so the two have to be the same"
+  if [ "$rc2" = 2 ]; then
+    stop "fugaro doctor --json answered about no project for $CHECKOUT: the runs bucket and the run's record are the project's own, and a document with no project in it names none. Run it where a project config is in force"
   fi
-  GCP_PROJECT=$got
-  local reg
-  reg=$(jget "$SCRATCH/doctor.json" region)
-  if [ -z "$REGION" ]; then REGION=$reg; fi
+  local rest
+  DOCTOR_NAME=${facts%%|*}
+  rest=${facts#*|}
+  DOCTOR_GCP=${rest%%|*}
+  DOCTOR_REGION=${rest#*|}
+  # What doctor answers is guarded too, and BEFORE anything is run: with no
+  # --gcp-project the project below is doctor's own, so a checkout whose config
+  # names the owner's installation would otherwise launch its paid run there.
+  guard_belong "the checkout's own fugaro doctor --json" "$DOCTOR_NAME" "$DOCTOR_GCP" "$DOCTOR_REGION"
+  [ -n "$DOCTOR_GCP" ] || stop "fugaro doctor --json named no gcp_project for $CHECKOUT (it answered project '${DOCTOR_NAME:-none}'): the runs bucket and the run's record are named after the project the checkout's config carries"
+  if [ -n "$GCP_PROJECT" ] && [ "$GCP_PROJECT" != "$DOCTOR_GCP" ]; then
+    stop "--gcp-project names ${GCP_PROJECT} and the checkout's own project is ${DOCTOR_GCP}: this check reads the runs bucket of the project the checkout belongs to, so the two have to be the same"
+  fi
+  GCP_PROJECT=$DOCTOR_GCP
+  # The region is the installation's own, held to --region the way the project
+  # is: every read below carries it, so a region that is not the installation's
+  # reads another installation's documents.
+  if [ -n "$REGION" ] && [ -n "$DOCTOR_REGION" ] && [ "$REGION" != "$DOCTOR_REGION" ]; then
+    stop "--region names ${REGION} and the checkout's own installation is in ${DOCTOR_REGION} (fugaro doctor --json): every read this check makes is the installation's own, so the two have to be the same"
+  fi
+  if [ -n "$DOCTOR_REGION" ]; then REGION=$DOCTOR_REGION; fi
   [ -n "$REGION" ] || stop "fugaro doctor --json named no region for $CHECKOUT and --region was not given: every read this check makes carries it"
   [ -n "$BUCKET" ] || BUCKET="fugaro-runs-${GCP_PROJECT}"
-  fact installation PASS "the checkout belongs to ${GCP_PROJECT} (${REGION}), and its runs are read out of gs://${BUCKET}/runs/<slug>/<run>/"
+  fact installation PASS "the checkout belongs to ${GCP_PROJECT} (${REGION}), and its runs are read out of gs://${BUCKET}/runs/<slug>/<run>/ — the project and region are the checkout's own fugaro doctor --json answer, not a default"
 }
 
 step_version() {
@@ -603,11 +709,11 @@ step_table() {
 }
 
 step_budget() {
-  say "reading the caps: fugaro budget show --json (in $CHECKOUT)"
+  say "reading the caps: fugaro budget show --json --repo ${REPO_NAME} (in $CHECKOUT)"
   local rc=0
-  (cd "$CHECKOUT" && "$FUGARO_BIN" budget show --json) >"$SCRATCH/budget.json" 2>"$SCRATCH/budget.err" || rc=$?
+  (cd "$CHECKOUT" && "$FUGARO_BIN" budget show --json --repo "$REPO_NAME") >"$SCRATCH/budget.json" 2>"$SCRATCH/budget.err" || rc=$?
   if [ "$rc" != 0 ]; then
-    stop "fugaro budget show --json failed in $CHECKOUT (exit $rc): $(head -c 300 "$SCRATCH/budget.err" | oneline) — R17 requires an enforced project with a per-run cap before a chain that names a paid source after a pool may run at all"
+    stop "fugaro budget show --json --repo ${REPO_NAME} failed in $CHECKOUT (exit $rc): $(head -c 300 "$SCRATCH/budget.err" | oneline) — R17 requires an enforced project with a per-run cap before a chain that names a paid source after a pool may run at all"
   fi
   local mode
   mode=$(jget "$SCRATCH/budget.json" mode)
@@ -615,34 +721,49 @@ step_budget() {
     fact budget FAIL "the project's budget mode is '${mode:-unset}' and R17 requires 'enforce' before a chain that names a paid source after a pool may run: a fallback is money against the caps (D140), and on a project that does not enforce them the paid source would be reached with nothing holding it. Set the mode with 'fugaro budget mode enforce' and run the check again"
     stop "the project's budget mode is not enforce"
   fi
-  local cap source
-  cap=$(python3 - "$SCRATCH/budget.json" "$REPO_SLUG" <<'PY'
+  # --repo narrows the listing to this checkout's own repository, so the row read
+  # here is ITS cap: without it a multi-repository installation's first capped row
+  # would be reported as this repository's and the R17 gate would pass falsely.
+  local cap rc2=0
+  cap=$(python3 - "$SCRATCH/budget.json" <<'PY'
 import json, sys
 try:
     doc = json.load(open(sys.argv[1]))
 except Exception:
-    sys.exit(0)
-for r in doc.get("repos") or []:
-    if not isinstance(r, dict):
-        continue
-    slug = r.get("slug") or ""
-    repo = r.get("repo") or ""
-    if sys.argv[2] and sys.argv[2] not in (slug, repo) and not repo.endswith("/" + sys.argv[2]):
-        continue
-    cap = r.get("per_run_cap_usd")
-    if cap is None:
-        continue
-    print("%s|%s" % (cap, r.get("per_run_cap_source") or ""))
-    break
+    sys.exit(3)
+rows = [r for r in (doc.get("repos") or []) if isinstance(r, dict)]
+if not rows:
+    print("norow")
+    raise SystemExit(0)
+r = rows[0]
+if r.get("per_run_cap_usd") is None:
+    print("nocap")
+    raise SystemExit(0)
+print("%s|%s" % (r.get("per_run_cap_usd"), r.get("per_run_cap_source") or ""))
 PY
-)
-  if [ -z "$cap" ]; then
-    fact budget FAIL "the project enforces its caps and no per-run cap is set for the repository this checkout belongs to: R17 requires one before a chain that names a paid source after a pool may run, because the money a fallback spends is settled against the run's cap (D140). Set one with 'fugaro budget set --repo <owner/name> --run <usd>' and run the check again"
-    stop "no effective per-run cap is set for this repository"
+) || rc2=$?
+  if [ "$rc2" = 3 ]; then
+    fact budget FAIL "fugaro budget show --json --repo ${REPO_NAME} printed something this check cannot read as a caps document: $SCRATCH/budget.json"
+    stop "the caps listing could not be read"
   fi
+  case "$cap" in
+  norow)
+    fact budget FAIL "fugaro budget show --json --repo ${REPO_NAME} listed no row for ${REPO_NAME}, the repository this checkout's origin remote names: the mode and the per-run cap the run is settled against could not be read for the repository it is charged to"
+    stop "the caps listing carries no row for ${REPO_NAME}"
+    ;;
+  nocap)
+    fact budget FAIL "the project enforces its caps and no per-run cap is in force for ${REPO_NAME} (the repository this checkout belongs to): R17 requires one before a chain that names a paid source after a pool may run, because the money a fallback spends is settled against the run's cap (D140). Set one with 'fugaro budget set --repo ${REPO_NAME} --run <usd>' and run the check again"
+    stop "no effective per-run cap is set for ${REPO_NAME}"
+    ;;
+  "")
+    fact budget FAIL "fugaro budget show --json --repo ${REPO_NAME} answered about ${REPO_NAME} with no per-run cap figure this check can read: $SCRATCH/budget.json"
+    stop "the per-run cap of ${REPO_NAME} could not be read"
+    ;;
+  esac
+  local source
   cap=${cap%%|*}
   source=${cap#*|}
-  fact budget PASS "the project enforces its caps and this repository's effective per-run cap is \$${cap}${source:+ (from ${source})}: R17 holds, so the paid source the chain falls through to is money against the run's cap"
+  fact budget PASS "the project enforces its caps and ${REPO_NAME}'s own effective per-run cap is \$${cap}${source:+ (from ${source})}: R17 holds, so the paid source the chain falls through to is money against the run's cap"
 }
 
 step_first_source() {
@@ -861,10 +982,10 @@ except Exception:
 # --------------------------------------------------------------------- the plan
 plan() {
   say "CHECK 881 plan (dry run: nothing below is run, and no row in the block was measured)"
-  say "  [read] git -C <checkout> rev-parse --show-toplevel, and the checkout's fugaro.yaml"
-  say "  [network, read] fugaro doctor --json (in <checkout>) — the project and the region every read below is scoped to"
+  say "  [read] git -C <checkout> rev-parse --show-toplevel, the checkout's fugaro.yaml, and its origin remote — the owner/name the run below is charged to and whose cap is read"
+  say "  [network, read] fugaro doctor --json (in <checkout>) — the project and the region every read below is scoped to (they are the installation's own, and what it answers is held to the belong guard too)"
   say "  [network, read] fugaro routing ls --json — the entry that wins for the model, its first source and the source after it"
-  say "  [network, read] fugaro budget show --json — the mode (enforce, R17) and the repository's effective per-run cap"
+  say "  [network, read] fugaro budget show --json --repo <owner/name> — the mode (enforce, R17) and THAT repository's effective per-run cap"
   say "  [network, read] fugaro accounts pool ls --json — whether the chain's first source can serve"
   say "  [network, ONE PAID RUN] fugaro run --task-file <a task this check writes> --json (in <checkout>) — the run whose record the rows below read. It costs its model spend, bounded by the repository's per-run cap"
   say "  [network, reads] fugaro runs ls --json, polled until the run is terminal — and then gcloud storage cat gs://${BUCKET:-fugaro-runs-<project>}/runs/<slug>/<run>/result.json, the run's own record"
@@ -874,6 +995,10 @@ plan() {
     served-by-the-paid-source flagged counted; do
     fact "$key" INFO "planned: a real run measures this row; --dry-run did not"
   done
+  # The belong row is not planned: the guard really ran on what you typed. What a
+  # real run adds is doctor's own answer, which the dry run never reads.
+  BELONG_VERDICT=INFO
+  BELONG_DETAIL="the guard ran on what you typed (--installation ${INSTALLATION:-<unset>}, --gcp-project ${GCP_PROJECT:-<unset>}, --region ${REGION:-<unset>}) and passed it; --dry-run read no fugaro doctor --json, so the checkout's own answer is the part a real run adds to this row"
   fact dry-run PASS "the plan was printed and nothing was run: no launch, no cloud call and no model call"
 }
 
@@ -960,7 +1085,14 @@ BUCKET=${CHECK881_BUCKET:-}
 DRY_RUN=${CHECK881_DRY_RUN:-}
 WAIT_SECONDS=${CHECK881_WAIT_SECONDS:-3600}
 POLL_SECONDS=${CHECK881_POLL_SECONDS:-20}
-REPO_SLUG=${CHECK881_REPO:-}
+# REPO_NAME and DOCTOR_* are resolved from the checkout itself: the repository
+# its origin remote names, and what its own `fugaro doctor --json` answers.
+REPO_NAME=
+DOCTOR_NAME=
+DOCTOR_GCP=
+DOCTOR_REGION=
+BELONG_VERDICT=
+BELONG_DETAIL=
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -985,7 +1117,9 @@ done
 # step_table, because which entry that is is the table's own answer.
 FUGARO_BIN=$(command -v fugaro || true)
 [ -n "$FUGARO_BIN" ] || die "Check 881 needs 'fugaro' on PATH: it drives the build you have installed, and it is not there"
-[ -n "$REGION" ] || REGION=us-east5
+# No region default here: the region is the installation's own, read from the
+# checkout's `fugaro doctor --json` (--region only has to agree with it). A
+# default would read another installation's documents.
 
 step_table_or_default_model() {
   # Without --model, the model is the one the table routes to the launcher's
@@ -1049,7 +1183,7 @@ main() {
   trap on_error ERR
   guard_agent
   guard_xtrace
-  guard_belong
+  step_belong
   if [ -n "$DRY_RUN" ]; then
     plan
     return 0

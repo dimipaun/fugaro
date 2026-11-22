@@ -88,7 +88,36 @@ accounts)
   cat "$answers/pools.json"
   ;;
 budget)
-  cat "$answers/budget.json"
+  # The real command narrows its listing to the repository `--repo` names
+  # (internal/cli/budget.go: `keys[budget.Key(wantSlug)] = true`), so the fake
+  # does too: a check that forgets --repo reads whatever row the listing happens
+  # to carry first, and a case can catch it.
+  repo_arg=""
+  prev=""
+  for a in "$@"; do
+    case "$a" in
+    --repo=*) repo_arg=${a#--repo=} ;;
+    esac
+    if [ "$prev" = "--repo" ]; then repo_arg=$a; fi
+    prev=$a
+  done
+  if [ -z "$repo_arg" ]; then
+    cat "$answers/budget.json"
+  else
+    python3 - "$answers/budget.json" "$repo_arg" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+want = sys.argv[2]
+rows = []
+for r in doc.get("repos") or []:
+    if not isinstance(r, dict):
+        continue
+    if want in (r.get("slug") or "", r.get("repo") or "") or (r.get("repo") or "").endswith("/" + want):
+        rows.append(r)
+doc["repos"] = rows
+print(json.dumps(doc))
+PY
+  fi
   ;;
 project)
   cat "$answers/policy.json"
@@ -154,7 +183,7 @@ write_answers() { # dir
   mkdir -p "$1/answers"
   local a=$1/answers
   cat >"$a/doctor.json" <<JSON
-{"project":"chk881","gcp_project":"${project}","region":"us-east5"}
+{"ok":true,"project":{"name":"chk881","gcp_project":"${project}","region":"us-east5","registry_host":"us-east5-docker.pkg.dev"}}
 JSON
   cat >"$a/table.json" <<JSON
 {"entries":[
@@ -168,10 +197,17 @@ JSON
    "members":[{"state":"exhausted","usage":1.0,"headroom":0,"exhausted_until":"2026-11-22T12:00:00Z"}]}
 ]}
 JSON
+  # Two repositories, and the OTHER one comes first with a cap of its own: the
+  # check must read the row of the repository the checkout's origin remote names
+  # (`acme/chk881`, cap $10), not the first capped row in the listing — which is
+  # what a multi-repository installation would otherwise be reported as.
   cat >"$a/budget.json" <<JSON
 {"project":"chk881","gcp_project":"${project}","mode":"enforce","day":"2026-11-22",
  "defaults":{"repo_daily_cap_usd":20,"repo_per_run_cap_usd":10},
- "repos":[{"slug":"chk881","repo":"acme/chk881","per_run_cap_usd":10,"per_run_cap_source":"default",
+ "repos":[{"slug":"chk881-other","repo":"acme/chk881-other","per_run_cap_usd":1,"per_run_cap_source":"repo",
+   "daily_cap_usd":1,"daily_cap_source":"repo","counted_usd":0,"spent_usd":0,"notional_usd":0,
+   "leased_usd":0,"headroom_usd":1,"running":[]},
+  {"slug":"chk881","repo":"acme/chk881","per_run_cap_usd":10,"per_run_cap_source":"default",
    "daily_cap_usd":20,"daily_cap_source":"default","counted_usd":0,"spent_usd":0,"notional_usd":0,
    "leased_usd":0,"headroom_usd":20,"running":[]}],
  "global":{"daily_cap_usd":100,"per_run_cap_usd":10,"counted_usd":0,"spent_usd":0,"notional_usd":0,"leased_usd":0,"headroom_usd":100},
@@ -251,6 +287,9 @@ setup_case() { # dir
   cat >"$dir/checkout/fugaro.yaml" <<'YAML'
 version: 1
 YAML
+  # The origin remote is what names the repository the run is charged to and
+  # whose per-run cap the budget row reads; `fugaro run` resolves it the same way.
+  git -C "$dir/checkout" remote add origin git@github.com:acme/chk881.git
 }
 
 default_args() {
@@ -360,6 +399,130 @@ test_belong_is_refused_by_name() {
   assert_no_launch "$dir" "belong"
 }
 
+test_a_belong_installation_in_the_checkout_is_refused() {
+  # The project this check goes on to use is doctor's own when --gcp-project is
+  # not given, so a checkout whose installation names belong must be refused on
+  # WHAT DOCTOR ANSWERS — guarding only what was typed guards the empty string
+  # and would launch the paid run of the owner's own installation.
+  local dir=$work/belongdoctor
+  setup_case "$dir"
+  python3 - "$dir/answers/doctor.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p))
+doc["project"]["name"] = "belong"
+doc["project"]["gcp_project"] = "fugaro-belong"
+json.dump(doc, open(p, "w"))
+PY
+  run_check "$dir" -- --checkout "$dir/checkout" --pool "$pool"
+  expect_status "$status" 2 "a checkout whose doctor names belong"
+  expect_contains "$err" "never run there" "belong in the checkout: the refusal"
+  expect_contains "$out" "FACT belong: FAIL" "belong in the checkout: the row"
+  expect_contains "$out" "fugaro doctor --json" "belong in the checkout: where the name came from"
+  assert_no_launch "$dir" "belong in the checkout"
+}
+
+test_a_region_that_disagrees_with_the_installation_stops() {
+  # Every read this check makes carries the region, so a region that is not the
+  # installation's reads another installation's documents.
+  local dir=$work/regiondisagree
+  setup_case "$dir"
+  python3 - "$dir/answers/doctor.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p))
+doc["project"]["region"] = "us-central1"
+json.dump(doc, open(p, "w"))
+PY
+  run_check "$dir" -- --checkout "$dir/checkout" --pool "$pool" --gcp-project "$project" --region us-east5
+  expect_status "$status" 2 "a region that is not the installation's"
+  expect_contains "$err" "us-central1" "a disagreeing region: the installation's own"
+  expect_contains "$err" "us-east5" "a disagreeing region: what was typed"
+  assert_no_launch "$dir" "a disagreeing region"
+}
+
+test_the_region_is_the_installations_own() {
+  # No --region and no --gcp-project: both are the checkout's own, read out of
+  # its `fugaro doctor --json` (which answers under `project`), never defaulted.
+  local dir=$work/regionown
+  setup_case "$dir"
+  python3 - "$dir/answers/doctor.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p))
+doc["project"]["region"] = "europe-west1"
+json.dump(doc, open(p, "w"))
+PY
+  run_check "$dir" -- --checkout "$dir/checkout" --pool "$pool"
+  expect_status "$status" 0 "the installation's own region"
+  expect_contains "$out" "FACT installation: PASS" "the installation's own region: the row"
+  expect_contains "$out" "europe-west1" "the installation's own region: the region it read"
+  expect_contains "$out" "$project" "the installation's own region: the project it read"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "run --task-file" "the installation's own region: the run still goes out"
+}
+
+test_no_region_anywhere_stops() {
+  local dir=$work/noregion
+  setup_case "$dir"
+  python3 - "$dir/answers/doctor.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p))
+doc["project"].pop("region", None)
+json.dump(doc, open(p, "w"))
+PY
+  run_check "$dir" -- --checkout "$dir/checkout" --pool "$pool"
+  expect_status "$status" 2 "an installation that names no region"
+  expect_contains "$err" "named no region" "an installation that names no region: the refusal"
+  assert_no_launch "$dir" "an installation that names no region"
+}
+
+test_a_checkout_with_no_origin_remote_stops() {
+  # Without the origin remote there is no way to name the repository the run is
+  # charged to, and the cap row could read another repository's cap.
+  local dir=$work/noorigin
+  setup_case "$dir"
+  git -C "$dir/checkout" remote remove origin
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 2 "a checkout with no origin remote"
+  expect_contains "$err" "origin" "a checkout with no origin remote: the refusal"
+  assert_no_launch "$dir" "a checkout with no origin remote"
+}
+
+test_the_cap_read_is_the_checkouts_own() {
+  # The listing carries two capped repositories and the other one is first, so a
+  # reader that takes the first capped row reports the wrong cap; the check names
+  # the repository on the command line and says whose cap it read.
+  local dir=$work/capown
+  setup_case "$dir"
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 0 "the checkout's own cap"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "budget show --json --repo acme/chk881" "the checkout's own cap: the repository is named on the call"
+  expect_contains "$out" "acme/chk881" "the checkout's own cap: the row names it"
+  expect_contains "$out" '$10' "the checkout's own cap: its own figure, not the other repository's"
+}
+
+test_another_repositorys_cap_is_not_this_ones() {
+  # The false PASS the scoping exists to stop: this repository has no cap while
+  # another one in the listing does.
+  local dir=$work/capother
+  setup_case "$dir"
+  python3 - "$dir/answers/budget.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p))
+for r in doc["repos"]:
+    if r.get("repo") == "acme/chk881":
+        r.pop("per_run_cap_usd", None)
+json.dump(doc, open(p, "w"))
+PY
+  run_check "$dir" -- $(default_args "$dir")
+  expect_status "$status" 2 "another repository's cap"
+  expect_contains "$out" "FACT budget: FAIL" "another repository's cap: the row"
+  expect_contains "$out" "acme/chk881" "another repository's cap: the repository it named"
+  assert_no_launch "$dir" "another repository's cap"
+}
+
 test_a_checkout_that_is_not_a_work_tree_stops() {
   local dir=$work/notree
   setup_case "$dir"
@@ -457,13 +620,16 @@ test_a_repository_with_no_per_run_cap_stops() {
   python3 - "$dir/answers/budget.json" <<'PY'
 import json, sys
 doc = json.load(open(sys.argv[1]))
-doc["repos"][0]["per_run_cap_usd"] = None
-doc["repos"][0]["per_run_cap_source"] = "none"
+for r in doc["repos"]:
+    if r.get("repo") == "acme/chk881":
+        r["per_run_cap_usd"] = None
+        r["per_run_cap_source"] = "none"
 json.dump(doc, open(sys.argv[1], "w"))
 PY
   run_check "$dir" -- $(default_args "$dir")
   expect_status "$status" 2 "a repository with no per-run cap"
   expect_contains "$out" "FACT budget: FAIL" "a repository with no per-run cap: the row"
+  expect_contains "$out" "acme/chk881" "a repository with no per-run cap: the repository it named"
   assert_no_launch "$dir" "a repository with no per-run cap"
 }
 
@@ -619,6 +785,11 @@ t test_the_block_never_carries_a_value
 t test_an_agent_session_is_refused
 t test_xtrace_refused
 t test_belong_is_refused_by_name
+t test_a_belong_installation_in_the_checkout_is_refused
+t test_a_region_that_disagrees_with_the_installation_stops
+t test_the_region_is_the_installations_own
+t test_no_region_anywhere_stops
+t test_a_checkout_with_no_origin_remote_stops
 t test_a_checkout_that_is_not_a_work_tree_stops
 t test_a_missing_checkout_is_refused
 t test_a_chain_that_does_not_start_with_the_pool_stops
@@ -627,6 +798,8 @@ t test_a_pool_with_a_member_still_good_stops_before_spending
 t test_no_designated_pool_is_the_skip_it_measures
 t test_a_project_that_is_not_enforced_stops
 t test_a_repository_with_no_per_run_cap_stops
+t test_the_cap_read_is_the_checkouts_own
+t test_another_repositorys_cap_is_not_this_ones
 t test_a_refused_launch_is_not_measured
 t test_a_run_served_by_the_pool_fails_the_fall_through_row
 t test_a_step_nobody_flagged_is_a_finding
