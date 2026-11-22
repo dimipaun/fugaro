@@ -184,12 +184,12 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 		if reason == "" {
 			reason = "the creation fact records no amount"
 		}
-		// The two commands are named in their plain forms, because neither
-		// needs a project ID or a budget pair typed out any more: the flag
-		// takes the selected installation's own project and records 100 USD
-		// unless its owner states another figure (D2213, D2212, D2211), and a
-		// creation takes the installation's default for the same reason. The
-		// warning sends its reader to a command, not to a syntax.
+		// The flag is named in its plain form, because it needs no project ID
+		// typed out any more: it takes the selected installation's own project
+		// and records 100 USD unless its owner states another figure (D2213,
+		// D2212, D2211). The warning sends its reader to a command, not to a
+		// syntax — the creation beside it keeps its placeholders, because a
+		// creation does still take the pair among its flags.
 		warning := fmt.Sprintf("%s has no budget recorded (%s), so the project's own owner can add one by flagging it managed — `fugaro managed flag`, typed at their own terminal, which records the budget this creation fact is missing (100 USD unless another figure is given) — or a managed project is created with one: `fugaro setup --create-project --budget N --budget-currency CCC --billing-account ID`; this apply proceeds on that warning, and the warning is in this apply's audit record",
 			safetext.Field(r.Project), reason)
 		return Enable{read: true, warning: warning}, nil
