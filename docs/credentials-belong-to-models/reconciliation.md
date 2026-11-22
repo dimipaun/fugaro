@@ -545,6 +545,11 @@ drop its mounts before a release integrates the work.
 
 ## 5. Resolutions
 
+*From 2026-11-22 (D3170) these hold only for what is merged: the resolution of how a credential
+is chosen is model credentials routing's, and R1's seam, R2's reach, R4's record, R5's header,
+R6's views, R7's migration and R9 to R15 are re-cut there. R3's two-release removal of
+`agent.auth` and its rule for an unmigrated repository stand.*
+
 - **R1. One seam.** Every reader of the auth mode is moved to one question: for this stage of
   this repository, which credential or pool, of which type, served by which path. The types are
   the four of A2. Contract C1 writes the question down; no reader keeps a switch on four words.

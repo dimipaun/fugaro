@@ -226,7 +226,7 @@ documents:** CM24 to CM27.
 
 ### CM2: the project's per-repository crafts (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Withdrawn and not replaced: one table per project, and that plan's RT2 carries admission.*
+*Withdrawn 2026-11-22 by D3170; withdrawn and not replaced: one table per project, and that plan's RT2 carries admission.*
 
 - Acceptance: the installation's config accepts a crafts block on a repository's entry; it is
   published in a node of its own beside the per-repository node, at C1's path, which no older
@@ -270,7 +270,7 @@ documents:** CM24 to CM27.
 
 ### CM4: `fugaro update` migrates auth to access (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its MG1, MG2 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's MG1, MG2.*
 
 - Acceptance: on every write of the local config and for each repository `update` is run for,
   R7 is carried out in place, by C1's rule: stage accounts become their craft's access (D3068); a
@@ -303,7 +303,7 @@ documents:** CM24 to CM27.
 
 ### CM5: the access record is written beside the old one (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its RT4 and MG3 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's RT4 and MG3.*
 
 - Acceptance: where `fugaro update` writes `creds/repoauth/<slug>` it also writes
   `creds/repoaccess/<slug>` with what C1 (d) says: per craft and grade the access the project
@@ -326,7 +326,7 @@ documents:** CM24 to CM27.
 
 ### CM6: the service narrows by access (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its CS1, PL3 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS1, PL3.*
 
 - Acceptance: a call that carries the new headers is served what the access record names for
   the declared craft, or grade, and the call's model, and nothing the record does not name; a
@@ -354,7 +354,7 @@ documents:** CM24 to CM27.
 
 ### CM7: the gateway carries the access (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its CS2 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS2.*
 
 - Acceptance: the gateway's upstream carries, per stage, the craft a call is declared for and
   sends it in C1's header; a provider route through the service is admitted by what the stage's
@@ -373,7 +373,7 @@ documents:** CM24 to CM27.
 
 ### CM8: the run's model path follows its access (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its CS6, CS13 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS6, CS13.*
 
 - Acceptance: the run takes each stage's access from the entry its launcher put in the
   execution's environment, and where there is none applies C1's legacy rule, refused with the
@@ -403,7 +403,7 @@ documents:** CM24 to CM27.
 
 ### CM9: the agent's environment, by credential type (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its CS7 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS7.*
 
 - Acceptance: `BuildEnv` and `GatewayVars` take the type of the credential a stage resolves to
   (a new member beside `EnvSpec.Auth`, which I1 removes); with a gateway, a subscription presents
@@ -426,7 +426,7 @@ documents:** CM24 to CM27.
 
 ### CM10: the record and the cost, by what served (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its CS8 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS8.*
 
 - Acceptance: each field keeps the rule it has, said without the auth word (F25): a stage's
   `served_by` and `credential` name a credential the job itself holds and are absent where the
@@ -448,7 +448,7 @@ documents:** CM24 to CM27.
 
 ### CM11: the run's account rules, by credential (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its CS7 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS7.*
 
 - Acceptance: the account walk applies where a stage's access is one subscription credential
   that is the project's default account and was not chosen, the two conditions it has today
@@ -471,7 +471,7 @@ documents:** CM24 to CM27.
 
 ### CM12: the registry entry and the views (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its CS9 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS9.*
 
 - Acceptance: a new run's entry carries no `auth` and C1's new member, and `credential` keeps
   its meaning (F29); `watch --json` prints `auth` as `-` and the member; `budget show --json`
@@ -496,7 +496,7 @@ documents:** CM24 to CM27.
 
 ### CM13: the cloud side is planned from the crafts (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its CS11 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS11.*
 
 - Acceptance: a new `infra.ServiceServes` answers from the types of the credentials a
   repository's crafts resolve to (true where any is a secret the service holds, the bundle is
@@ -518,7 +518,7 @@ documents:** CM24 to CM27.
 
 ### CM14: the launch, by access (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its CS10, CS12, CS14, CS15, RT7 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS10, CS12, CS14, CS15, RT7.*
 
 - Acceptance: `fugaro run` decides the account, the job variant and whether the job is told about
   the service from the crafts' access; it resolves each craft's and grade's access and puts the
@@ -549,7 +549,7 @@ documents:** CM24 to CM27.
 
 ### CM15: the gates and the bundle's readiness (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its CS10, CS12, CS14, CS15, RT7 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS10, CS12, CS14, CS15, RT7.*
 
 - Acceptance: `credentialsBundleServes` asks whether the bundle holds every credential the
   repository's crafts resolve to, and records the one fact of C1 on the repository's entry, and plans the job's
@@ -576,7 +576,7 @@ documents:** CM24 to CM27.
 
 ### CM16: the config's checks, by reach (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its RT3 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's RT3.*
 
 - Acceptance: a model is admitted where a declared credential reaches it and is admitted for the
   repository, and refused otherwise naming the model and what would reach it (this replaces
@@ -598,7 +598,7 @@ documents:** CM24 to CM27.
 
 ### CM17: validate, craft ls, models use and the enterprise code (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its RT6, RT7 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's RT6, RT7.*
 
 - Acceptance: `fugaro validate` judges budget, providers, routing and crafts by CM16's checks and
   prints CM3's notes for each retired key; `fugaro craft ls` prints what each craft resolves to,
@@ -617,7 +617,7 @@ documents:** CM24 to CM27.
 
 ### CM18: doctor (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its RT6, RT7 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's RT6, RT7.*
 
 - Acceptance: every doctor check that named a repository's auth reads the crafts: the brokering
   checks (`flipServes`, `flipNotServed`, `doctorModelKeyInAgent`), the account checks and the
@@ -637,7 +637,7 @@ documents:** CM24 to CM27.
 
 ### CM19: the update says what will change, first (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its MG2 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's MG2.*
 
 - Acceptance: before it changes anything, `fugaro update` prints R8's lines for the repository
   it is run for; each retired key in the checkout is offered its removal as a diff, by the
@@ -665,7 +665,7 @@ documents:** CM24 to CM27.
 
 ### CM20: the settings registry and the schemas (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its MG5 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's MG5.*
 
 - Acceptance: the rows `agent.auth` and `layer.defaults.agent.auth` are marked retired and point
   at this folder (F23); the per-repository craft keys have rows; the three schemas keep the
@@ -685,7 +685,7 @@ documents:** CM24 to CM27.
 
 ### CM21: the console reads the new member (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its VS1 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's VS1.*
 
 - Acceptance: the console's parser reads C1's member from `watch --json` where present and shows
   it on the Live screen in place of the auth column; a document without it, and one whose `auth`
@@ -746,7 +746,7 @@ documents:** CM24 to CM27.
 - Reviewer tier: opus, mandatory independent review.
 ### CM34: the account and craft commands write the project's access (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its MG4 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's MG4.*
 
 - Acceptance: the commands that wrote a retired account key write the access instead:
   `fugaro accounts switch` (the default account), `accounts alias`, `accounts rm`,
@@ -772,7 +772,7 @@ documents:** CM24 to CM27.
 
 ### CM36: the service serves the cascade's pool as the cascade (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its CS1, PL3 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's CS1, PL3.*
 
 - Acceptance: where the access record marks a pool as the cascade's, the service offers its
   subscription members whatever the spread switch says, admitted per repository exactly as the
@@ -793,7 +793,7 @@ documents:** CM24 to CM27.
 
 ### CM23: the help texts and the CLI reference (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its MG6 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's MG6.*
 
 - Acceptance: no command's help names `agent.auth` or a run by its auth (`budget preview`, `runs stats`, `secrets ls`, `setup`, `run --token`, `models use`, the
   `accounts` commands, the doctor's rendering and the managed-settings messages); it is the one task that
@@ -816,7 +816,7 @@ documents:** CM24 to CM27.
 
 ### I1: integration (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its I1 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's I1.*
 
 - Acceptance: the two stub files are deleted and the real resolver and accessor are wired in;
   what release 1's tasks left for it is removed: `EnvSpec.Auth`, the old default of
@@ -848,7 +848,7 @@ documents:** CM24 to CM27.
 
 ### CM24: `SECURITY.md`, its page and the rules file (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its DOC1 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's DOC1.*
 
 - Acceptance: `SECURITY.md` states the boundary as it now is (a repository is served the
   credentials its record names; a subscription is served by the service wherever the bundle is
@@ -872,7 +872,7 @@ documents:** CM24 to CM27.
 
 ### CM25: the credentials documents and the checklist (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its DOC2 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's DOC2.*
 
 - Acceptance: `docs/multi-model.md`, `docs/credentials-service/default-on.md` and `runbook.md`
   and `docs/gcp-live-checklist.md` describe credentials, crafts and pools, and name no repository
@@ -893,7 +893,7 @@ documents:** CM24 to CM27.
 
 ### CM26: the accounts documents, the README and the release notes (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its DOC3 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's DOC3.*
 
 - Acceptance: `docs/project-claude-accounts.md`, `docs/mixed-credentials/spec.md`,
   `docs/agent-env/spec.md`, `docs/project-layer.md` and `README.md` say the same; the release's
@@ -920,7 +920,7 @@ documents:** CM24 to CM27.
 
 ### CM27: the plugin's skills (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its DOC4 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's DOC4.*
 
 - Acceptance: the setup skill no longer asks for `agent.auth`: its second decision is which
   credentials the project declares and what each craft goes out on, with Vertex offered as a
@@ -945,7 +945,7 @@ documents:** CM24 to CM27.
 
 ### CM28: release 2: the token's old path goes (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its X1 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's X1.*
 
 - Acceptance: `BuildEnv` has no arm that puts a subscription token in the agent's environment
   and `OAuthStageEnv` is deleted; a launch whose craft resolves to a subscription the service
@@ -970,7 +970,7 @@ documents:** CM24 to CM27.
 
 ### CM29: release 2: the retired keys of a file and a layer are rejected (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its X2 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's X2.*
 
 - Acceptance: `fugaro validate`, `fugaro update` and a launch from the default branch reject a
   repository's file that writes `agent.auth`, `agent.oauth_token`, a craft's `access` or a
@@ -1001,7 +1001,7 @@ documents:** CM24 to CM27.
 
 ### CM30: release 2: the installation's account keys and the node's members (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its X3 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's X3.*
 
 - Acceptance: on its next write the installation's config drops `stages.<stage>.claude_account`
   and `default_claude_account`, both already converted by CM4, and names any it could not
@@ -1022,7 +1022,7 @@ documents:** CM24 to CM27.
 
 ### CM31: release 2: the old record stops being written (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its X4 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's X4.*
 
 - Acceptance: `fugaro update` no longer writes `creds/repoauth/<slug>`; it deletes a
   repository's old record only where that repository has no run in flight, and otherwise leaves
@@ -1046,7 +1046,7 @@ documents:** CM24 to CM27.
 
 ### CM33: release 2: `fugaro update` rewrites the published layer (withdrawn 2026-11-22 by D3170)
 
-*Withdrawn 2026-11-22 by D3170: craft access is superseded by [model credentials routing](../model-credentials-routing/implementation-plan.md)'s routing table. Carried by its X5 there.*
+*Withdrawn 2026-11-22 by D3170; carried by model credentials routing's X5.*
 
 - Acceptance: where every job image of the project is at or after release 1, `fugaro update`
   rewrites the published project layer in place without `defaults.agent.auth`, by the path
