@@ -177,24 +177,28 @@ func (s *Server) identityPerson(ctx context.Context, w http.ResponseWriter, r *h
 	}
 	caller, err := s.cfg.Auth.VerifyLauncher(ctx, tok)
 	if err != nil {
-		s.refuseIdentityCaller(w, err)
+		s.refuseIdentityCaller(w, "this route admits a person on the installation's roster, verified by their own Google ID token: this caller is not one of them, so no token is issued. A service account and a run's job account pair nothing — the ticket route is the one that admits them", err)
 		return LauncherCaller{}, false
 	}
 	return caller, true
 }
 
-// refuseIdentityCaller answers the class's own refusal of a caller. It is
-// refuseLauncher's shape with this contract's code: the caller-side refusals
-// (an account on no roster, a token that is not a person's, an ID token this
-// class will not carry) are the contract's caller_not_admitted, and a key set
-// this service could not read is its own state and not a refusal of the caller
-// — a caller told otherwise would be told its token is bad when the service
-// could not tell.
-func (s *Server) refuseIdentityCaller(w http.ResponseWriter, err error) {
+// refuseIdentityCaller answers the class's own refusal of a caller, in the
+// words of the route that made it. It is refuseLauncher's shape with this
+// contract's code: the caller-side refusals (an account on no roster, a token
+// that is not a person's, an ID token this class will not carry) are the
+// contract's caller_not_admitted, and a key set this service could not read is
+// its own state and not a refusal of the caller — a caller told otherwise would
+// be told its token is bad when the service could not tell.
+//
+// admitted is the route's own sentence and not this helper's, because the
+// routes that refuse a caller this way admit different classes — the pairing's
+// persons, the claim's job accounts, the probe's operators — and one sentence
+// would tell two of them about a class their route does not serve.
+func (s *Server) refuseIdentityCaller(w http.ResponseWriter, admitted string, err error) {
 	switch {
 	case errors.Is(err, ErrUnverifiedJob), errors.Is(err, ErrUnverified):
-		s.refuse(w, StatusUnverified, identitywire.RefusalCallerNotAdmitted,
-			"this route admits a person on the installation's roster, verified by their own Google ID token: this caller is not one of them, so no token is issued. A service account and a run's job account pair nothing — the ticket route is the one that admits them")
+		s.refuse(w, StatusUnverified, identitywire.RefusalCallerNotAdmitted, admitted)
 	default:
 		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, err.Error())
 	}

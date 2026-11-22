@@ -6044,6 +6044,11 @@ work items of the plan's own node, or the one-time session dump,
 validated as a patch and refused the person's own ops: no dump approves
 work, and no import approves anything.
 
+A command acts on the project's own orchestrator unless --name names one
+of its named ones: `--name night` is the orchestrator `<project>~night`,
+with its own node and its own daemon, and the project half is always the
+project this session is in.
+
 run is the daemon itself, in the foreground. install, uninstall and
 status are the login unit that keeps it running: the three read no
 project and reach no network, and they write no system path and need no
@@ -6171,6 +6176,13 @@ machine that has none too, at your own terminal and asking nothing, so no
 release needs this command as an operator step. It writes no state and
 migrates none: the daemon's own start-up does that.
 
+One unit is one orchestrator: this writes the project's own unless --name
+names one of its named ones, whose unit runs `orchestrator run --name
+<name>` and whose file is a file of its own. Installing one leaves the
+others running, so a machine may keep the project's own orchestrator and
+any number of named ones side by side (D3206, D3207); `fugaro update`
+writes the project's own and never touches a named one.
+
 A unit is code that runs at every login, so this command asks you to type
 the word install at a real terminal, has no flag that stands in for it,
 and refuses in a coding agent's session. Running it yourself, without the
@@ -6184,6 +6196,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for install |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 
 Subcommands:
 
@@ -6194,13 +6207,18 @@ This command has no subcommands.
 List the installation's orchestrators
 
 List the orchestrators this installation has: every id whose node exists in
-the project's database, with the holder of its lease and when that holder last
-beat, and every cached brief this machine holds, with the time the daemon wrote
-it. An orchestrator this machine runs — one with a cached brief — is `local`;
-one only the database holds is `central`. A cached brief of an id nothing is
-beating any more is marked stale: the daemon that wrote it has stopped driving
-the id, so no cycle is rewriting it. --json prints a versioned document
-(schemas/orchestrator-output.schema.json).
+the project's database — the project's own, and a named one as
+`<project>~<name>` — with the principal driving it, the holder of its lease
+and when that holder last beat, and every cached brief this machine holds,
+with the time the daemon wrote it. An orchestrator this machine runs — one
+with a cached brief — is `local`; one only the database holds is `central`.
+A cached brief of an id nothing is beating any more is marked stale: the
+daemon that wrote it has stopped driving the id, so no cycle is rewriting
+it. --json prints a versioned document
+(schemas/orchestrator-output.schema.json), whose entries carry the id's name
+half (`name`, empty for the project's own orchestrator) and its driver
+beside the fields the table prints — an empty driver is an id with no
+driver node to read, which is unknown and not "nobody drives this".
 
 There is no registry of processes and no port: the node and the cache file are
 the two things the daemon writes, and a run or a token may not read either.
@@ -6278,6 +6296,9 @@ release does not read is reported as an update being due rather than
 touched. Run it in the foreground to watch it; the login unit is what keeps
 it running (fugaro setup installs it).
 
+One process drives one orchestrator: the project's own unless --name
+names one of its named ones, whose id is `<project>~<name>`.
+
 Usage: `fugaro orchestrator run`
 
 Flags:
@@ -6290,6 +6311,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for run |
 | `--interval` | duration | `30s` | no | how long to wait between cycles when the node says nothing moved |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--once` | bool | `false` | no | run one cycle and exit, releasing the lease, instead of driving the id until it is stopped |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -6339,6 +6361,10 @@ would write. It changes nothing and reads no project: the file is the
 whole of what it looks at, and `fugaro doctor` reports the same drift as
 an update being due.
 
+--name reports the unit of one of the project's named orchestrators rather
+than the project's own; `fugaro doctor` and `fugaro update` know the
+project's own alone.
+
 Usage: `fugaro orchestrator status`
 
 Flags:
@@ -6346,6 +6372,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for status |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 
 Subcommands:
 
@@ -6361,6 +6388,10 @@ unit takes away code that runs at every login rather than adding it, and
 `fugaro orchestrator install` writes it back after its own typed
 confirmation.
 
+One unit per orchestrator, so --name removes the unit of one of the
+project's named orchestrators and no --name removes the project's own;
+the others are left running either way.
+
 Nothing else is touched: the project's orchestrator state, its lease and
 its audit log are in the database and not in the unit, `fugaro orchestrator
 run` still runs in the foreground without a unit, and a machine with no
@@ -6373,6 +6404,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for uninstall |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 
 Subcommands:
 
@@ -7404,10 +7436,14 @@ The repos.* scalars and lists are the generic writer's (D1173):
     fugaro settings set repos.acme/app.base_branch main
     fugaro settings set repos.acme/app.workflows --add docs
 
-This write is a person's own: fugaro update publishes it, and a coding agent's
-session is refused it, in a managed project by that project's gate.
+The write and the publish are one act, as they are for the same keys through
+fugaro settings set: the keys land in this machine's project config and the
+policy node they are served from is published by this same command, so no second
+command is needed. --no-apply saves the write and leaves the publish to fugaro
+apply.
 
-Every write ends with one line: next: fugaro update.
+This write is a person's own: a coding agent's session is refused it, in a
+managed project by that project's gate.
 
 Usage: `fugaro project repos set (REPO --workflows NAME[,NAME...]) | (--job-profile NAME [members])`
 
@@ -7423,6 +7459,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--job-profile` | string | "" | no | the job profile to write, by name; with it, the members below write the block's keys |
 | `--memory` | string | "" | no | profiles.NAME.memory: the Cloud Run memory the job is deployed with, e.g. 4Gi |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--provider` | string | "" | no | profiles.NAME.provider: the git provider the profile's job holds a credential for (required for a new profile) |
 | `--secrets` | stringSlice | `[]` | no | profiles.NAME.secrets: the Secret Manager names the profile's job mounts, comma-separated; the list is written whole |

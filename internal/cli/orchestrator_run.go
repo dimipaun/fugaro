@@ -49,6 +49,12 @@ import (
 // orchestratorRunOptions are `fugaro orchestrator run`'s flags.
 type orchestratorRunOptions struct {
 	cloudOptions
+	// name is --name: which of the project's orchestrators this daemon drives
+	// (D3206, D3207). Empty is the project's own, which is the id the login unit
+	// `fugaro setup` and `fugaro update` write starts, and a name is one the unit
+	// `fugaro orchestrator install --name` wrote starts: the two halves of the id
+	// are the selection here and the flag there.
+	name string
 	// binary is the stable path the unit names, and the path whose version is
 	// checked each tick. Empty is a foreground run with no unit behind it:
 	// nothing restarts it, so nothing is checked.
@@ -89,11 +95,14 @@ func newOrchestratorRunCmd() *cobra.Command {
 			"never converges, publishes or installs anything, and a state node this\n" +
 			"release does not read is reported as an update being due rather than\n" +
 			"touched. Run it in the foreground to watch it; the login unit is what keeps\n" +
-			"it running (fugaro setup installs it).",
+			"it running (fugaro setup installs it).\n\n" +
+			"One process drives one orchestrator: the project's own unless --name\n" +
+			"names one of its named ones, whose id is `<project>~<name>`.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorRun(cmd, &o) },
 	}
 	f := cmd.Flags()
+	addOrchestratorNameFlag(cmd, &o.name)
 	f.StringVar(&o.binary, "binary", "", "the stable path of the fugaro binary the login unit names: the daemon exits cleanly when the version there differs from this process")
 	f.DurationVar(&o.interval, "interval", 30*time.Second, "how long to wait between cycles when the node says nothing moved")
 	f.BoolVar(&o.once, "once", false, "run one cycle and exit, releasing the lease, instead of driving the id until it is stopped")
@@ -120,7 +129,7 @@ func runOrchestratorRun(cmd *cobra.Command, o *orchestratorRunOptions) error {
 	if err != nil {
 		return err
 	}
-	id, err := orchestratorID(lc)
+	id, err := orchestratorIDFor(lc, o.name)
 	if err != nil {
 		return err
 	}

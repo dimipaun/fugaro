@@ -21,9 +21,11 @@ import (
 // project configs.
 
 // systemdUnitTemplate is the unit's whole content. It is a fixed template with
-// the program and its argument substituted, and nothing else: the binary path
+// the program and its arguments substituted, and nothing else: the binary path
 // is named twice, as the program to run and as the `--binary` argument the
-// daemon compares the version at (O8's orchestrator_version.go).
+// daemon compares the version at (O8's orchestrator_version.go), and a named
+// orchestrator's unit carries `--name <name>` between the two, which is the
+// whole of what makes it a unit of its own.
 //
 // Restart=always, and deliberately not on-failure: the daemon exits 0 on
 // purpose when the binary at that path has moved on, and a unit that took a
@@ -49,22 +51,51 @@ type systemd struct{}
 
 func (systemd) Platform() string { return "systemd" }
 
-func (systemd) Render(getenv func(string) string, binaryPath string) (Unit, error) {
+func (systemd) Render(getenv func(string) string, binaryPath, name string) (Unit, error) {
 	if binaryPath == "" {
 		return Unit{}, errors.New("the unit names a binary and none was given")
 	}
 	base, err := localcfg.UserDir(getenv, "linux", localcfg.DirConfig)
 	if err != nil {
-		return Unit{}, fmt.Errorf("finding the directory %s belongs in: %w", systemdName, err)
+		return Unit{}, fmt.Errorf("finding the directory %s belongs in: %w", systemdUnitName(name), err)
 	}
 	arg := quoteSystemdArg(binaryPath)
-	exec := arg + " orchestrator run --binary " + arg
+	exec := arg + " orchestrator run" + systemdNameArg(name) + " --binary " + arg
 	return Unit{
 		Platform: "systemd",
-		Name:     systemdName,
-		Path:     filepath.Join(base, "systemd", "user", systemdName),
+		Name:     systemdUnitName(name),
+		Path:     filepath.Join(base, "systemd", "user", systemdUnitName(name)),
 		Text:     strings.ReplaceAll(systemdUnitTemplate, "{{exec}}", exec),
 	}, nil
+}
+
+// systemdUnitName is one orchestrator's user unit file name: the project's own
+// orchestrator keeps fugaro-orchestrator.service, and a named one takes
+// fugaro-orchestrator-<name>.service (D3207). One file per name is what lets a
+// machine run the project's own orchestrator and any number of named ones side
+// by side, and a name that is one is a systemd unit name already — a-z, 0-9 and
+// `-`, starting with a letter or a digit, which is the rule the flag that fills
+// this in applies (orchestrator.ValidOrchestratorName).
+func systemdUnitName(name string) string {
+	if name == "" {
+		return systemdName
+	}
+	return strings.TrimSuffix(systemdName, ".service") + "-" + name + ".service"
+}
+
+// systemdNameArg is the `--name` pair a named orchestrator's unit runs the
+// daemon with, empty for the project's own — whose unit is exactly the one this
+// release has always written, so an installation converging on the update that
+// brought named orchestrators in finds its file unchanged (O8's
+// orchestrator_version.go compares the two texts).
+//
+// The name is not quoted: it reaches systemd through a parser that splits on
+// whitespace, and the rule above admits none.
+func systemdNameArg(name string) string {
+	if name == "" {
+		return ""
+	}
+	return " --name " + name
 }
 
 // quoteSystemdArg is one argument of ExecStart as systemd's own parser reads
@@ -117,8 +148,8 @@ func quoteSystemdArg(s string) string {
 func (systemd) Reload(ctx context.Context, u Unit) error {
 	for _, args := range [][]string{
 		{"daemon-reload"},
-		{"enable", systemdName},
-		{"restart", systemdName},
+		{"enable", u.Name},
+		{"restart", u.Name},
 	} {
 		if err := runManager(ctx, "systemctl", append([]string{"--user"}, args...)...); err != nil {
 			return fmt.Errorf("reloading the user unit %s: %w", u.Name, err)
@@ -132,7 +163,7 @@ func (systemd) Reload(ctx context.Context, u Unit) error {
 // never enabled has nothing to disable, and what uninstall does about it either
 // way is delete the person's own file.
 func (systemd) Remove(ctx context.Context, u Unit) error {
-	_ = runManager(ctx, "systemctl", "--user", "disable", "--now", systemdName)
+	_ = runManager(ctx, "systemctl", "--user", "disable", "--now", u.Name)
 	_ = runManager(ctx, "systemctl", "--user", "daemon-reload")
 	return nil
 }
