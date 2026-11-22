@@ -270,7 +270,7 @@ func TestManagedFlagSaysWhichHalfIsMissingWhenTheLabelIsRefused(t *testing.T) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
 	}
-	if !strings.Contains(err.Error(), "not a second run of this command") {
+	if !strings.Contains(err.Error(), "running this command again does not put it there") {
 		t.Errorf("the refusal does not say a second flag cannot finish it: %v", err)
 	}
 	// And the truth of it: the project is not managed, whatever the object
@@ -279,14 +279,20 @@ func TestManagedFlagSaysWhichHalfIsMissingWhenTheLabelIsRefused(t *testing.T) {
 	if managedFlagIsManaged(t, r) {
 		t.Error("the managed read believed a project whose label was never written")
 	}
-	// A second run of the command is refused by the marker itself, so the
-	// state is not one this command can finish.
+	// A second run does not finish the state either, and it does not edit the
+	// amount it left: the figures it states are the ones the object records, so
+	// the rewrite writes nothing, and the write that still fails is the label
+	// — the same failure, for the same credential.
+	before, _ := managedFlagAt(t, r.gcs, initRunsBucket)
 	out, _, err = executeStdin(t, initProject+"\n", managedFlagArgs()...)
 	if err == nil {
-		t.Fatalf("the command replaced the v2 marker it had just written:\n%s", out)
+		t.Fatalf("the second run reported success with no label written:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "already there") {
-		t.Errorf("the second run's refusal is not the marker's: %v", err)
+	if !strings.Contains(err.Error(), "not the "+managed.ProjectLabelKey+"="+managed.ProjectLabelValue+" label") {
+		t.Errorf("the second run's refusal is not the label's: %v", err)
+	}
+	if after, _ := managedFlagAt(t, r.gcs, initRunsBucket); after != before {
+		t.Errorf("the second run changed the object: %s → %s", before, after)
 	}
 }
 
@@ -536,12 +542,14 @@ func TestFlagTakesTheProjectIDAsAnArgument(t *testing.T) {
 // the exact project ID — no bulk form, no wildcard, no prefix, no list — and
 // the ID it names must be the selected installation's own. A wildcard, a
 // second project ID and a project ID that is a valid ID of another project
-// are each refused before the cloud is opened.
+// are each refused before the cloud is opened. The invocation with no ID at
+// all is the one case that is not refused: it is the selected installation's
+// own project (D2213, TestManagedFlagNoArgUsesInstallation), which is a named
+// project rather than a missing name.
 func TestManagedFlagNamesOneProjectAndNoOther(t *testing.T) {
 	r := managedFlagRig(t)
 	terminal(t, true)
 	for name, args := range map[string][]string{
-		"no project ID":           {"managed", "flag", "--budget", "50", "--budget-currency", "USD"},
 		"a wildcard":              {"managed", "flag", "*", "--budget", "50", "--budget-currency", "USD"},
 		"a prefix wildcard":       {"managed", "flag", "proj-*", "--budget", "50", "--budget-currency", "USD"},
 		"a list of two":           {"managed", "flag", initProject, "other-proj", "--budget", "50", "--budget-currency", "USD"},
@@ -576,17 +584,16 @@ func TestManagedFlagNamesOneProjectAndNoOther(t *testing.T) {
 	}
 }
 
-// TestManagedFlagRefusesABudgetItCannotRecord: the amount is required with no
-// default (D64), and it is the marker's own rule — the pair the write of a
-// managed creation applies and the read believes. Every row here is refused
-// before the confirmation is even asked for, and nothing is written.
+// TestManagedFlagRefusesABudgetItCannotRecord: the amount and the currency
+// have defaults, and what they default to is a pair the marker's own rule
+// accepts (TestManagedFlagDefaultsBudget). A pair a person states is still
+// judged by that rule — the one the write of a managed creation applies and
+// the read believes — and every row here is refused before the cloud is
+// opened, so the default fills a gap rather than making the rule optional.
 func TestManagedFlagRefusesABudgetItCannotRecord(t *testing.T) {
 	r := managedFlagRig(t)
 	terminal(t, true)
 	for name, args := range map[string][]string{
-		"neither flag":                {"managed", "flag", initProject},
-		"no currency":                 {"managed", "flag", initProject, "--budget", "50"},
-		"no amount":                   {"managed", "flag", initProject, "--budget-currency", "USD"},
 		"a zero amount":               {"managed", "flag", initProject, "--budget", "0", "--budget-currency", "USD"},
 		"a negative amount":           {"managed", "flag", initProject, "--budget", "-1", "--budget-currency", "USD"},
 		"an amount above the ceiling": {"managed", "flag", initProject, "--budget", "10000001", "--budget-currency", "USD"},
@@ -617,7 +624,7 @@ func TestManagedFlagRefusesABudgetItCannotRecord(t *testing.T) {
 	}
 	// And the refusal offers the two flags the command defines, which is what
 	// a person needs to act on: every --token in it is a flag of this command.
-	_, _, err := execute(t, "managed", "flag", initProject)
+	_, _, err := execute(t, "managed", "flag", initProject, "--budget", "0")
 	assertNamesNoFlagItLacks(t, newManagedFlagCmd(), err)
 }
 
@@ -789,11 +796,14 @@ func TestManagedFlagReplacesTheCreationFactThatRecordsNoAmount(t *testing.T) {
 
 // TestManagedFlagRefusesAProjectThatAlreadyRecordsAnAmount: the marker is a
 // fact, and the amount in it is the owner's decision at the time it was taken.
-// A project that already records one — created by a managed run, or flagged
-// before — is refused rather than flagged again: this command adds a budget,
-// it does not edit one. So is every object that is not this project's
-// version-1 fact: a marker about another project, a version this build does
-// not know, and an object that is not a marker at all.
+// A project that already records one is not touched by an invocation that
+// states no amount — the default is for a project recording nothing, and it
+// never replaces a figure its owner chose (D2215) — and the same goes for
+// every object that is not this project's own creation fact: a marker about
+// another project, a version this build does not know, and an object that is
+// not a marker at all. (The first two rows are the default's refusal; the last
+// three are the marker writer's own, which is the refusal an explicit --budget
+// meets on those objects too.)
 func TestManagedFlagRefusesAProjectThatAlreadyRecordsAnAmount(t *testing.T) {
 	for name, existing := range map[string]string{
 		"a version-2 marker":                 `{"version":2,"gcp_project":"proj-1234","budget":{"amount":50,"currency":"USD"}}`,
@@ -806,7 +816,10 @@ func TestManagedFlagRefusesAProjectThatAlreadyRecordsAnAmount(t *testing.T) {
 			r := managedFlagRig(t)
 			r.gcs.Put(initRunsBucket, managed.MarkerObject, []byte(existing))
 			terminal(t, true)
-			out, _, err := executeStdin(t, initProject+"\n", managedFlagArgs()...)
+			// No --budget: the invocation this row refuses is the one whose
+			// amount is the default, which is what may not replace a figure a
+			// project already records (D2215).
+			out, _, err := executeStdin(t, initProject+"\n", "managed", "flag", initProject)
 			if err == nil {
 				t.Fatalf("an object the command may not replace was flagged over:\n%s", out)
 			}
@@ -823,26 +836,32 @@ func TestManagedFlagRefusesAProjectThatAlreadyRecordsAnAmount(t *testing.T) {
 	}
 }
 
-// TestManagedFlagOffersNoWayAroundTheArgument: the PROJECT_ID argument is the
-// whole boundary D1541 gives this command, so nothing stands in for it — no
-// --yes, no --non-interactive, and no flag naming more than one project. This
-// is the assertion a later change that added one would break.
+// TestManagedFlagOffersNoWayAroundTheArgument: naming the project is the whole
+// boundary this command gives its owner (D1541), and since D2213 the naming can
+// be the invocation itself — no argument is the selected installation's own
+// project, which the command states before it writes. What has not changed is
+// that nothing STANDS IN for the project: no --yes, no --non-interactive, and
+// no flag naming more than one project. This is the assertion a later change
+// that added one would break.
 func TestManagedFlagOffersNoWayAroundTheArgument(t *testing.T) {
 	cmd := newManagedFlagCmd()
 	for _, name := range []string{"yes", "non-interactive", "all", "projects", "force", "allow-delete"} {
 		if cmd.Flags().Lookup(name) != nil || cmd.PersistentFlags().Lookup(name) != nil {
-			t.Errorf("fugaro managed flag defines --%s: the exact GCP project ID as the argument is the only consent it takes", name)
+			t.Errorf("fugaro managed flag defines --%s: the project named by the argument, or by the selection when there is none, is the only consent it takes", name)
 		}
 	}
-	// What it does define: the cloud flags, and the required budget pair.
+	// What it does define: the cloud flags, and the budget pair, which defaults
+	// where a person states nothing.
 	for _, name := range []string{"budget", "budget-currency", "project", "config", "gcp-project", "region"} {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Errorf("fugaro managed flag does not define --%s", name)
 		}
 	}
-	// It takes exactly one project ID and nothing else.
-	if err := cmd.Args(cmd, nil); err == nil {
-		t.Error("fugaro managed flag accepts no project ID")
+	// It takes one project ID at most: none is the installation's own (D2213),
+	// one names it, and two name two projects — which no invocation of this
+	// command does.
+	if err := cmd.Args(cmd, nil); err != nil {
+		t.Errorf("fugaro managed flag refuses an invocation with no project ID, and D2213 makes it the installation's own: %v", err)
 	}
 	if err := cmd.Args(cmd, []string{initProject, "another-proj"}); err == nil {
 		t.Error("fugaro managed flag accepts more than one project ID")

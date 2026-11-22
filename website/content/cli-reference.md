@@ -5408,37 +5408,37 @@ This command has no subcommands.
 
 Flag an existing GCP project as managed (the project's owner)
 
-Flag an existing GCP project PROJECT_ID as managed, recording the managed
-marker in that project's own runs bucket.
+Flag an existing GCP project as managed, recording the managed marker in
+that project's own runs bucket.
 
 This is how a project Fugaro did not create becomes managed: the marker is
 what tells a later run that this project's applies may skip the typed
 confirmation, and it is normally written by the run that created the project
-(fugaro setup --create-project --managed). Flagging is the after-the-fact way,
-answered by the owner on 2026-10-16 (design D58).
+(fugaro setup --create-project). Flagging is the after-the-fact way, answered
+by the owner on 2026-10-16 (design D58).
 
 Run it as an operator, with your own credentials. A coding agent's session is
-refused, and so is a Fugaro run's process. The permission you give is the
-PROJECT_ID argument itself: naming the exact GCP project ID on the command line
-is the declaration that this project is managed (design D1541), and nothing is
-typed at a prompt — this command takes no flag at all,
-so no flag stands in for naming the project either.
-
-PROJECT_ID must be the exact GCP project ID of the installation selected by
---project, --config or the checkout: one invocation names one project, and
-there is no bulk form, no wildcard and no prefix.
+refused, and so is a Fugaro run's process. The project is the installation
+selected by --project, --config or the checkout. PROJECT_ID may be given, and
+must then be that installation's own exact GCP project ID; the statement
+printed before the write names the project either way, so the invocation is
+about a named project and not about whatever the checkout happens to hold
+(design D1541, amended on 2026-11-21 by D2213, when the argument became
+optional: what stands where the typed ID stood is the naming, and still nothing
+is typed at a prompt). One invocation names one project: there is no bulk form,
+no wildcard and no prefix.
 
 It records two things in gs://<runs bucket>/fugaro/managed.json: that this
-project is managed, and the monthly budget amount and currency the owner states
-with --budget and --budget-currency. The amount is required, with no default
-(D64), because the marker's amount is what the apply-time budget read opens the
-gate on: a marked project that records no amount is refused by every managed
-apply rather than applied without a budget control. The amount is the budget
-ALERT amount the installation's Terraform creates and nothing else — this
-command does not create or change a budget, and it makes no billing call.
-Nothing else is a question: the bound on billable image builds this object used
-to record (D1013) is gone (D1543), so there is no count to ask the owner for
-and none to write, exactly as fugaro setup asks for none.
+project is managed, and the monthly budget amount and currency the owner means
+with --budget and --budget-currency. Both have defaults — 100 USD — so the
+command with no flags records a figure rather than asking for one (design
+D2212 and D2211). The amount is the budget ALERT amount the installation's
+Terraform creates and nothing else — this command does not create or change a
+budget, and it makes no billing call: the alert follows the recorded figure on
+the installation's next fugaro update. Nothing else is a question: the bound on
+billable image builds this object used to record (D1013) is gone (D1543), so
+there is no count to ask the owner for and none to write, exactly as fugaro
+setup asks for none.
 
 It writes BOTH marks a managed project carries, in one step: that object and
 the label fugaro_managed=true on the GCP project itself (Task 3.0). The read
@@ -5466,22 +5466,24 @@ marker and run this command; SECURITY.md records the wider Owner/Editor
 bypass. The refusal below is a speed bump against an agent that uses the
 program, not a wall against one that goes around it.
 
-A project that already records an amount is refused: the amount is the owner's
-decision at the time it was taken, and this command adds a budget rather than
-editing one. The one object it does replace is a version-1 creation fact —
-what fugaro setup --create-project without --managed leaves, and the state the
-managed apply refuses for having no amount recorded. What it replaced is said
-in the output, and the write is conditioned on the object it read, so nothing
-is overwritten blind.
+An amount a project already records is its owner's figure, and a default never
+replaces it: run with no --budget over such a marker, the command refuses and
+names the flag that changes it. An explicit --budget rewrites the recorded
+amount (design D2215), keeping the recorded currency unless --budget-currency
+is given too, and prints the old figure and the new one. The one object it
+replaces unasked is a version-1 creation fact — what fugaro setup
+--create-project leaves, and the state the managed apply warns for, having no
+amount recorded. What it replaced is said in the output, and every write is
+conditioned on the object it read, so nothing is overwritten blind.
 
-Usage: `fugaro managed flag PROJECT_ID`
+Usage: `fugaro managed flag [PROJECT_ID]`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--budget` | int64 | `0` | no | the monthly budget alert amount to record, in whole units of --budget-currency (required) |
-| `--budget-currency` | string | "" | no | the currency --budget is in, three uppercase letters such as USD (required) |
+| `--budget` | int64 | `100` | no | the monthly budget alert amount to record, in whole units of --budget-currency (default 100; pass it to record another figure, or to replace an amount the marker already records) |
+| `--budget-currency` | string | `USD` | no | the currency --budget is in, three uppercase letters such as USD (default USD, or the currency the marker already records when an amount is being replaced) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for flag |
