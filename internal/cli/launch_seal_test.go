@@ -364,6 +364,38 @@ func TestTheSealGateRefusesAnImageThatPredatesTheSeal(t *testing.T) {
 	})
 }
 
+// TestTheSealGateRefusesABuildRecordItCannotRead: a record that is there and
+// cannot be read is not a record that is not there, and this gate refuses both
+// — it cannot show that the image's runner reads the sealed token, and a launch
+// that seals hands a key to a runner that may not read it (D19). The read is
+// named so the operator can go and look at the object, and nothing of the
+// launch happens.
+//
+// Since AB4 every launch of an installation with a budget database is judged
+// here (F7), which is what makes this the launch's answer to an unreadable
+// build record: the digest comparison reads the same object and only warns
+// about one it cannot read (C4), and no launch reaches that warning
+// (run_image_digest_test.go).
+func TestTheSealGateRefusesABuildRecordItCannotRead(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	// Over MaxReadBytes: a read failure that is not ErrNotExist, so what is
+	// refused is the failure rather than the record's absence — which the
+	// table above covers as its own case.
+	writeBucketFile(t, f.cloudFixture, imagecheck.RecordKey(appSlug, "web"), strings.Repeat("x", blobx.MaxReadBytes+1))
+	_, _, err := runBudget(t)
+	if err == nil {
+		t.Fatal("the launch of an image whose build record cannot be read was accepted")
+	}
+	for _, want := range []string{"reading the build record of acme/app workflow web", "object is too large"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if launchedAny(f) || readToken(t, f.cloudFixture, budgetRun) != "" || len(f.iam.SignCalls()) != 0 {
+		t.Fatal("a refused launch minted, sealed or launched")
+	}
+}
+
 // TestTheSealGateJudgesACloneJobImage is sealGate's `checkout: clone` branch:
 // such a job is never built, so it has no build record to judge — the image a
 // clone launch runs is the installation's own base_images.base ref, and that

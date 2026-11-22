@@ -140,8 +140,15 @@ func TestRunRefusesALooseningMaxTimeAgainstTotalTimeout(t *testing.T) {
 // --max-usd the runner's own merge drops as looser, and reports a limit that
 // never took effect — the silent drop D1043 exists to prevent.
 func TestRunRefusesALimitAboveTheModeScaledCeiling(t *testing.T) {
+	// The installation's own database, whose config names the owner's ceiling:
+	// the $5 a run is scaled from is the DEPLOYED cap (D16), so a fixture whose
+	// block named none would resolve the repository's own file figure unscaled
+	// and accept the 4.5 this test refuses. The block is replaced rather than
+	// appended to: the config carries one budget key.
 	f := newCloudFixture(t)
-	f.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5 }\n")
+	f.rewriteConfig(t, f.budget.ConfigBlock(), "budget: { mode: enforce, per_run_usd: 5, rtdb_url: "+f.budget.DB.URL+
+		", token_signer: "+testSigner+", firebase_api_key: "+f.budget.APIKey+" }\n")
+	f.budget = nil
 	limitsImage(t, f)
 	limitsCheckout(t)
 	_, _, err := execute(t, "run", "--repo", limitsRepo, "--run-id", "20261110-170000-abcd", "--max-usd", "4.5", "A task")

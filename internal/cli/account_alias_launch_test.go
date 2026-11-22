@@ -225,7 +225,11 @@ func TestReviewLaunchLineNamesTheAliasItRead(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, "claude_accounts:\n  acme-overflow: { allow_data_to: [\"acme/app\"] }\n"+aliasBlock("reviewer", "acme-overflow"))
 	baseBranchCheckout(t, "acme/app", aliasChainYAML, "main")
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	// releaseSeal and not release070: the launch mints, so the seal gate judges
+	// the job image (AB4, F7) and every fixture that launches needs an image at
+	// or above the seal. It is also above the alias accounts' own floor, which
+	// is the only other thing this line's subject turns on.
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-overflow")), "2", "4Gi")
 	const reviewRun = "20261007-100000-abcd"
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", reviewRun, "--recipe", "review-only", "--pr", "7", "--token", "reviewer")

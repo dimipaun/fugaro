@@ -415,8 +415,11 @@ func newOffModeBudget(t *testing.T) *launchBudgetFixture {
 // than a hole for a different reason now: an installation with no database
 // mints nothing and is refused at the launch instead (budgetBackendOn).
 func TestTheLauncherMintsWhateverTheModeAndThePolicy(t *testing.T) {
+	// The fixture's own block is the shape under test, so a subtest that wants
+	// another one REPLACES it: the config carries one budget key, and appending
+	// a second is a file this program cannot read (appendConfig's own note).
 	budget := func(f *launchBudgetFixture) string {
-		return "budget: { mode: off, per_run_usd: 5, rtdb_url: " + f.db.URL + ", token_signer: " + testSigner +
+		return "budget: { mode: off, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + f.db.URL + ", token_signer: " + testSigner +
 			", firebase_api_key: " + settingsFakeAPIKey + " }\n"
 	}
 	// The allow-list admits the fixture's repository: a published policy with
@@ -427,7 +430,7 @@ func TestTheLauncherMintsWhateverTheModeAndThePolicy(t *testing.T) {
 
 	t.Run("nothing published, a token", func(t *testing.T) {
 		f := newOffModeBudget(t)
-		f.appendConfig(t, budget(f))
+		setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), budget(f))
 		var env map[string]string
 		f.run.OnRun = func(c gcpfake.RunCall) { env = c.Env }
 		if _, _, err := runBudget(t); err != nil {
@@ -446,7 +449,7 @@ func TestTheLauncherMintsWhateverTheModeAndThePolicy(t *testing.T) {
 	})
 	t.Run("a policy, a token", func(t *testing.T) {
 		f := newOffModeBudget(t)
-		f.appendConfig(t, budget(f))
+		setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), budget(f))
 		f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 		f.db.Set(projectpolicy.PathShared(), json.RawMessage(policy))
 		var env map[string]string
@@ -477,7 +480,7 @@ func TestTheLauncherMintsWhateverTheModeAndThePolicy(t *testing.T) {
 	})
 	t.Run("no signer, a refusal", func(t *testing.T) {
 		f := newOffModeBudget(t)
-		f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", firebase_api_key: "+settingsFakeAPIKey+" }\n")
+		setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 		_, _, err := runBudget(t)
 		if err == nil || !strings.Contains(err.Error(), "budget.token_signer") {
 			t.Fatalf("err = %v, want the missing-signer refusal", err)
@@ -502,7 +505,7 @@ func TestTheLauncherMintsWhateverTheModeAndThePolicy(t *testing.T) {
 // and this test fails.
 func TestLaunchReadsThePolicyOnce(t *testing.T) {
 	f := newOffModeBudget(t)
-	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+	setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	publishPolicy(t, f, `{"version":9,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
 	if _, _, err := runBudget(t); err != nil {
@@ -536,7 +539,7 @@ func TestLaunchReadsThePolicyOnce(t *testing.T) {
 // ("a refused launch leaves nothing behind at all"), and it is asserted below.
 func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	f := newOffModeBudget(t)
-	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+	setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":9,"budget":{"mode":"enforce","per_run_usd":5}}`))
@@ -566,7 +569,7 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 // them, because a misspelt key is a policy the owner believes he set.
 func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 	f := newOffModeBudget(t)
-	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+	setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":9,"allow_repo":["acme/*"]}`))
@@ -608,7 +611,7 @@ func TestLaunchClassifiesAMalformedPolicyAsTheUsersOwnError(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newOffModeBudget(t)
-			f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
+			setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 				", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 			f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 			f.db.Set(projectpolicy.PathShared(), json.RawMessage(node))
@@ -648,7 +651,7 @@ func TestLaunchClassifiesAnUnreachablePolicyReadAsRemote(t *testing.T) {
 		}
 	}()
 	f := newOffModeBudget(t)
-	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: http://"+addr+", token_signer: "+testSigner+
+	setBudgetBlock(t, os.Getenv("FUGARO_CONFIG"), "budget: { mode: off, per_run_usd: 5, rtdb_url: http://"+addr+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	_, _, err = runBudget(t)
 	if err == nil || ExitCode(err) != ExitRemoteError {
