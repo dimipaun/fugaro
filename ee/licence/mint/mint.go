@@ -26,7 +26,8 @@ type Signer interface {
 
 // Verifier is the check a minted v1 key is held to before the tool answers
 // it: K1.1's verifier, over the ring the caller names rather than the compiled
-// one, which is empty until S2.9 publishes the owner's production half.
+// one, which holds the published production half alone (S2.9): the half a mint is
+// checked against is the owner's to name.
 type Verifier func(raw []byte, now time.Time) (licence.Claims, licence.State, error)
 
 // Mint signs one v1 claim set through sign and answers the key text, or

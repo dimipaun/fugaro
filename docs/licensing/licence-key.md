@@ -347,8 +347,8 @@ U5, `images/trivy-secret.yaml`).
   the owner mints them one at a time with the tool of K1.3, against the same claim set this note fixes,
   so the keys of the interim and the keys of the service are the same format. Minting and the production
   signing key are **owner-run** (K0.2, K1.3's "OWNER-RUN to use"): no agent mints, and the production
-  keyring stays empty until the owner publishes the public half. The record of what was issued lives in
-  the service's store and the private business repository (R5), never here.
+  public half is published for a build to trust (`ee/licence/keys/production.pub`, S2.9). The record of
+  what was issued lives in the service's store and the private business repository (R5), never here.
 - **The service later (T13).** The owner-operated service — a dedicated Fugaro GCP project, Cloud Run, a
   non-exportable KMS signing key, intake split from signing (K2) — issues the same keys, with the
   purchase events of the merchant of record feeding it. It is **not deployed by any task of the v1
