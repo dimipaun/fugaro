@@ -944,9 +944,11 @@ func runWorkspaceUserRm(cmd *cobra.Command, open workspaceRosterOpen, o *workspa
 	// A person's removal sweeps TWO installations (F21): every member the
 	// workspace holds, and then the workspace's own project, whose intake holds
 	// the token they stored once (D2960). The workspace's sweep runs whatever the
-	// members answered (offboardWorkspacePerson says why), its answer is reported
-	// after the node is written, and a member's refusal is returned here, before
-	// the node, as this command has always refused on one.
+	// members answered (offboardWorkspacePerson says why), and EVERY return after
+	// it carries its answer out (workspaceUserRmCarry), because the containers are
+	// already gone or already refused by then: a member's refusal is returned
+	// before the node, as this command has always refused on one, and it does not
+	// take the sweep's own answer down with it.
 	var (
 		deleted  []string
 		sweepErr error
@@ -961,40 +963,72 @@ func runWorkspaceUserRm(cmd *cobra.Command, open workspaceRosterOpen, o *workspa
 		var memberErr error
 		deleted, memberErr, sweepErr = offboardWorkspacePerson(ctx, d.Members, d.Sweep, linked, address)
 		if memberErr != nil {
-			return memberErr
+			// The sweep has ALREADY run (offboardWorkspacePerson) and the node is
+			// not written, so this is the one path that reports the two answers and
+			// stops: what the workspace's own intake removed is said here -- a
+			// person whose member refused still has to know their token at the
+			// workspace is gone -- and a sweep that failed is returned beside the
+			// refusal rather than behind it. The halting line is NOT said: the
+			// roster was not written, so R3's minute has not started and they are
+			// still a member whose run keeps going.
+			if err := workspaceUserRmSweptSay(cmd.OutOrStdout(), address, deleted, sweepErr == nil, false); err != nil {
+				return workspaceUserRmCarry(memberErr, address, err)
+			}
+			return workspaceUserRmCarry(memberErr, address, sweepErr)
 		}
 	}
 	if o.admin {
 		if err := d.Authority.RemoveAdmin(ctx, address); err != nil {
-			return fmt.Errorf("removing %s's workspace admin binding: %w", safetext.Field(address), err)
+			return workspaceUserRmCarry(fmt.Errorf("removing %s's workspace admin binding: %w", safetext.Field(address), err), address, sweepErr)
 		}
 	}
 	if err := d.writeRoster(ctx, func(current *workspace.Roster) (*workspace.Roster, error) {
 		return workspaceRmJudged(current, address, o.admin)
 	}, roster, rev); err != nil {
-		return err
+		return workspaceUserRmCarry(err, address, sweepErr)
 	}
 	if err := d.file(ctx, actor, workspace.ActionUserRemove, "", address, ""); err != nil {
-		return err
+		return workspaceUserRmCarry(err, address, sweepErr)
 	}
 	if o.admin {
 		if err := d.file(ctx, actor, workspace.ActionAdminRemove, "", address, workspace.RoleAdmin); err != nil {
-			return err
+			return workspaceUserRmCarry(err, address, sweepErr)
 		}
 	}
 	w := cmd.OutOrStdout()
 	if err := workspaceUserRmSay(w, d, address, o.admin, len(linked)); err != nil {
-		return err
+		return workspaceUserRmCarry(err, address, sweepErr)
 	}
 	if person.Kind == workspace.KindHuman {
-		if err := workspaceUserRmSweptSay(w, address, deleted, sweepErr == nil); err != nil {
-			return err
+		if err := workspaceUserRmSweptSay(w, address, deleted, sweepErr == nil, true); err != nil {
+			return workspaceUserRmCarry(err, address, sweepErr)
 		}
 	}
-	if sweepErr != nil {
-		return fmt.Errorf("the workspace's own intake did not sweep %s's containers: %w", safetext.Field(address), sweepErr)
+	return workspaceUserRmCarry(nil, address, sweepErr)
+}
+
+// workspaceUserRmCarry returns err with the workspace's own sweep's failure beside
+// it, and returns err untouched when that sweep answered -- a nil err is the
+// no-further-error case, so the tail of a removal that landed is the named
+// refusal and nothing else.
+//
+// It exists because the sweep runs BEFORE every step below it and before the
+// node: once offboardWorkspacePerson has returned, the person's containers at the
+// workspace are deleted or the delete failed, and neither fact may be dropped by
+// a later step that fails for a reason of its own. A person reading
+// `removing X's workspace admin binding: ...` has to learn as well that the sweep
+// did not do its half, or they will read the removal as a whole that failed
+// cleanly (offboardWorkspacePerson's own doc says why the two answers are
+// separate).
+func workspaceUserRmCarry(err error, address string, sweepErr error) error {
+	if sweepErr == nil {
+		return err
 	}
-	return nil
+	named := fmt.Errorf("the workspace's own intake did not sweep %s's containers: %w", safetext.Field(address), sweepErr)
+	if err == nil {
+		return named
+	}
+	return errors.Join(err, named)
 }
 
 // workspaceRmJudged is a removal as a pure function of the roster the node
@@ -1080,22 +1114,27 @@ func workspaceUserRmSay(w io.Writer, d workspaceRosterDeps, address string, admi
 	return nil
 }
 
-// workspaceUserRmSweptSay says the two things a person's removal ends at the
-// WORKSPACE itself: what the workspace's own intake swept (F21), and that a run
-// in flight on the person's token halts within a minute (R3, D3146).
+// workspaceUserRmSweptSay says what the workspace's own intake swept for the
+// person (F21), and, when the removal landed, that a run in flight on their token
+// halts within a minute (R3, D3146).
 //
-// The halting line is printed WHATEVER the workspace's sweep answered, and the
-// order is deliberate. The sweep is not what stops the run -- R3 is: the
-// workspace's service re-reads the roster as it re-reads its node (60 seconds)
-// and refuses every call under a slip whose owner has left it, so a sweep that
-// failed does not make the halting false, and a person reads the consequence
-// even when the intake's own refusal is what the command then returns (WC0's
-// threat model §7). swept is that answer: the containers are reported only when
-// the delete landed, and a failed delete is the error the caller returns, never
-// a second line here.
-func workspaceUserRmSweptSay(w io.Writer, address string, deleted []string, swept bool) error {
-	if _, err := fmt.Fprintf(w, "a run in flight on %s's token halts within a minute: the workspace's service re-reads the roster as it re-reads its node and refuses every call under a slip whose owner has left it, so the removal stops the run and the sweep of their containers is not what does (R3, D3146)\n", safetext.Field(address)); err != nil {
-		return err
+// swept is the sweep's own answer: the containers are reported only when the
+// delete landed, and a failed delete is the error the caller returns (carried
+// through every path by workspaceUserRmCarry), never a second line here.
+//
+// halt is whether the removal itself landed, and it is false on the one path that
+// reports this and stops: a member's refusal. The halting line is about the
+// REMOVAL and not about the sweep -- R3 is the workspace's service re-reading the
+// roster as it re-reads its node (60 seconds) and refusing every call under a slip
+// whose owner has left it -- so on that path there is nothing to say: the roster
+// was not written, the person is still a member, and their run keeps going. Where
+// the removal landed, the line is printed WHATEVER the sweep answered, because a
+// sweep that failed does not make the halting false (WC0's threat model §7).
+func workspaceUserRmSweptSay(w io.Writer, address string, deleted []string, swept, halt bool) error {
+	if halt {
+		if _, err := fmt.Fprintf(w, "a run in flight on %s's token halts within a minute: the workspace's service re-reads the roster as it re-reads its node and refuses every call under a slip whose owner has left it, so the removal stops the run and the sweep of their containers is not what does (R3, D3146)\n", safetext.Field(address)); err != nil {
+			return err
+		}
 	}
 	if !swept {
 		return nil

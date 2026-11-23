@@ -817,6 +817,85 @@ func TestUserRmSweepsTheWorkspacesIntake(t *testing.T) {
 	}
 }
 
+// TestTheWorkspaceSweepsAnswerSurvivesARefusal: the sweep of the workspace's own
+// intake runs BEFORE the steps that can end the command (F21, D2960), so no later
+// answer may take it down with it. A member's refusal is the one path that reports
+// the sweep and stops, and both of its facts survive there: what the sweep removed
+// is said, because the person's token at the workspace is gone whether or not the
+// roster was written, and a sweep that failed is returned beside the refusal
+// rather than behind it -- a person who reads only the refusal would re-run the
+// command on containers that are still there, or believe a removal that did not
+// happen had swept them.
+func TestTheWorkspaceSweepsAnswerSurvivesARefusal(t *testing.T) {
+	const refusal = "aurora has not applied ada@example.com's stored grant yet: its own `fugaro update` is what is pending"
+	roster := func() workspace.Roster {
+		return workspace.Roster{
+			People: []workspace.Person{
+				{Address: "ada@example.com", Kind: workspace.KindHuman},
+				{Address: "founder@example.com", Kind: workspace.KindHuman},
+			},
+			Admins:  []string{"founder@example.com"},
+			Domains: []string{"example.com"},
+		}
+	}
+
+	// A sweep that failed: the refusal is returned with the sweep's own failure
+	// beside it, and nothing is claimed about a removal that did not land -- not
+	// the sweep's answer, and not the halting line, because the roster was not
+	// written and the person's run is still going (R3).
+	t.Run("a failed sweep is not swallowed", func(t *testing.T) {
+		w := wu7Admin(t, roster())
+		w.linked = []workspace.MemberTarget{{Project: "aurora"}}
+		w.members.offErr = remote(fmt.Errorf("%s", refusal))
+		w.sweep.err = remote(fmt.Errorf("the workspace's intake answered 500"))
+
+		out, err := w.run("workspace", "user", "rm", "ada@example.com", "--workspace", "workspace-alpha")
+		if err == nil {
+			t.Fatalf("a member's refusal and a failed sweep were reported as a removal:\n%s", out)
+		}
+		for _, want := range []string{refusal, "did not sweep ada@example.com's containers", "500"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the report does not name %q, so the failed sweep is silent:\n%v", want, err)
+			}
+		}
+		if got := ExitCode(err); got != ExitRemoteError {
+			t.Errorf("the failure exits %d, want %d: both halves arrived in the class they carry", got, ExitRemoteError)
+		}
+		if strings.Contains(out, "halts within a minute") || strings.Contains(out, "at the workspace: ") {
+			t.Errorf("a removal that did not land claimed the sweep's answer:\n%s", out)
+		}
+	})
+
+	// A sweep that landed beside a refused member: what it removed is SAID, and the
+	// halting line is not, because the removal is what halts a run and the removal
+	// did not happen.
+	t.Run("what a landed sweep removed is said", func(t *testing.T) {
+		w := wu7Admin(t, roster())
+		w.linked = []workspace.MemberTarget{{Project: "aurora"}}
+		w.members.offErr = remote(fmt.Errorf("%s", refusal))
+		w.sweep.deleted = []string{"fugaro_u_4242_github-token"}
+
+		out, err := w.run("workspace", "user", "rm", "ada@example.com", "--workspace", "workspace-alpha")
+		if err == nil {
+			t.Fatalf("a member's refusal was reported as a removal:\n%s", out)
+		}
+		if !strings.Contains(err.Error(), refusal) || strings.Contains(err.Error(), "did not sweep") {
+			t.Errorf("the refusal is not the whole of the failure, or a sweep that answered is reported as failed:\n%v", err)
+		}
+		for _, want := range []string{"ada@example.com", "fugaro_u_4242_github-token"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the report does not name %q, so what the sweep removed at the workspace is lost:\n%s", want, out)
+			}
+		}
+		if strings.Contains(out, "halts within a minute") {
+			t.Errorf("the report of a removal that did not land says a run halts within a minute:\n%s", out)
+		}
+		if !w.hasPerson("ada@example.com") {
+			t.Error("the refused removal took the person off the roster anyway")
+		}
+	})
+}
+
 // TestRmAdminRemovesBindingsAndQueuesGrants is the task's red step (plan §3,
 // WU7). Removing a workspace admin takes their live binding away AT ONCE — the
 // folder owner or the token-creator binding, and with it their authority over
