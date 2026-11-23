@@ -202,6 +202,13 @@ func TestUpdateLeavesARunInFlightRunningThroughTheProxySwitch(t *testing.T) {
 	// projects directory, and registerInstallation is what puts this one there.
 	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	registerInstallation(t, r.initRig)
+	// The Cloud Run reads of the run: this fake speaks jobs and no service, so
+	// the credentials service's own paths are answered by this file's services
+	// skew and every other path by the jobs fake. Nothing is deployed in it —
+	// Cloud Run's 404 — which is the state the copy stage's guard reads the
+	// installation's own pin over, and that pin is a release newer than the
+	// family's (seedCredentialsService below).
+	providerKeyEndpoint(t, r.run, newRunServiceSkew(t))
 	// The service itself, as the release behind deployed it: the tfvars entry it
 	// holds, this release's image in the fake source so the credentials-service
 	// stage has a move to make, and the installation's own outputs, which is what
