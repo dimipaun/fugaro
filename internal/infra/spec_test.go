@@ -5903,11 +5903,34 @@ func sharedSandboxPolicy(repos ...string) *projectpolicy.Policy {
 	}
 }
 
+func bakedOnSharedJob(t *testing.T) {
+	t.Helper()
+	SharedJobBaked = true
+	t.Cleanup(func() { SharedJobBaked = false })
+}
+
+// TestABakedRepoIsNotMarkedSharedUntilTheSharedJobCarriesItsTools is why
+// switching a baked repository's account works: fugaro run launches its baked
+// workflow on the per-repository job, so update must keep applying the
+// repository root that creates it.
+func TestABakedRepoIsNotMarkedSharedUntilTheSharedJobCarriesItsTools(t *testing.T) {
+	in := sandboxInputs(t, m5Additions)
+	in.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Shared {
+		t.Error("a repository with a baked workflow is marked shared while the shared job cannot carry its tools: update would apply no root and fugaro run would find no per-repository job")
+	}
+}
+
 // TestSpecMarksASharedRepo is M6's mark: a repository a deployed profile
 // admits is shared, which is the fact M7 reads to stop applying its
 // repository-level root and the structural precondition D2303 puts in place of
 // a retire gate.
 func TestSpecMarksASharedRepo(t *testing.T) {
+	bakedOnSharedJob(t)
 	in := sandboxInputs(t, m5Additions)
 	in.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
 	rs, err := Repo(in)
@@ -5926,6 +5949,7 @@ func TestSpecMarksASharedRepo(t *testing.T) {
 // the field existed and no root applies differently on the strength of the
 // mark alone.
 func TestTheSharedMarkChangesNoTerraformInput(t *testing.T) {
+	bakedOnSharedJob(t)
 	marked := sandboxInputs(t, m5Additions)
 	marked.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
 	unmarked := sandboxInputs(t, m5Additions)
