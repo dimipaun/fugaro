@@ -53,8 +53,8 @@ func databaseRegionNote(region string) string {
 // a printed document that dropped the key would disagree with the installation
 // it stands for — the reading of it an owner cannot trust. The pin is in the
 // local config, so it needs no cloud call (what --print-vars by design makes
-// none of), unlike the history and coordinator accounts, which come from an
-// apply's outputs and are therefore absent here.
+// none of), unlike the accounts that come from an apply's outputs — the
+// history, coordinator and issuer accounts — which are therefore absent here.
 func (r *initRun) firebaseVars(inst []byte, spec infra.InstallationSpec, lc *localcfg.Config) ([]byte, error) {
 	fs, err := infra.Firebase(spec, infra.FirebaseInputs{
 		FP:                      r.o.firebaseProject(),
@@ -331,10 +331,15 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	}
 	// Refused here, before the first apply, whatever the installation module
 	// accepts.
-	// Every input the apply below passes is passed here too, the workspace pin's
-	// account included: this call is the gate that runs before the installation
-	// root is applied, so a value the Firebase root would refuse has to be
-	// refused here rather than after an apply has already touched the state.
+	// Every input the apply below passes and this point can know is passed here
+	// too, the workspace pin's account included: this call is the gate that runs
+	// before the installation root is applied, so a value the Firebase root
+	// would refuse has to be refused here rather than after an apply has already
+	// touched the state. The accounts that apply's own outputs carry — the
+	// history, coordinator and issuer accounts — are the ones it cannot pass:
+	// none of them exists until that root has been applied, which is the apply
+	// below, and the issuer's member is read back from it rather than composed
+	// here for the same reason (U9).
 	if _, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount}); err != nil {
 		return initErr(err)
 	}
