@@ -26,12 +26,22 @@ package credsvc
 //   - WHAT TIER. Tier A, the shared subscription token's: a person's own token
 //     is one more subscription candidate, so it reserves nothing of the
 //     workspace's money (D2965) and a paid call that follows it does (D3144).
-//   - WHERE IN THE LIST. First, ahead of the shared entries the call is admitted
-//     to (R7) — cascade.go prepends what this reader answers, after every
-//     narrowing, so the admission and the repository's recorded auth have
-//     nothing to say about it: what authorises the person's own token is the
-//     slip its owner was granted, and D2974 is the rule that it never falls to
-//     a bundle entry in its place (dynamicsecrets.go).
+//   - WHERE IN THE LIST, AND THAT IT IS SERVED FROM THERE. First, ahead of the
+//     shared entries the call is admitted to (R7) — cascade.go prepends what
+//     this reader answers, after every narrowing, so the admission and the
+//     repository's recorded auth have nothing to say about it: what authorises
+//     the person's own token is the slip its owner was granted, and D2974 is
+//     the rule that it never falls to a bundle entry in its place
+//     (dynamicsecrets.go). And "first" is not the half of it that serves: the
+//     offered order breaks an exact tie within a tier and says where a rotation
+//     starts, so a token offered as one more tier-A member beside the bundle's
+//     entries would reach a call about once in N — the counter's turn, or a
+//     pool's rotation. cascade.go therefore hands the name to the selection as
+//     the call's own exclusive candidate, which is served while it can serve,
+//     under whatever rule the list would otherwise be served by
+//     (creds.Selector.Exclusive, D3144). It is stepped over the moment it is
+//     exhausted, backed off or capped, and the shared entries are served then:
+//     D2974's one move, and the whole of when it applies.
 //
 // What is deliberately NOT here: the roster, the launcher class and the slip
 // store (WC4's, and the three things PersonScopeConfig carries — none of them is
@@ -140,10 +150,11 @@ func (personalReader) Personal(ctx context.Context, sl creds.Slip) (creds.Creden
 	if !on {
 		return creds.Credential{}, false, &poolRefusal{message: personalSwitchOff}
 	}
-	// The name is the owner's and the tier is the subscription's: the token is
-	// served ahead of the shared entries as one more tier-A candidate (R7), and
-	// the cascade's own order then decides between it and the bundle's
-	// subscription entries by the list's order (F7).
+	// The name is the owner's and the tier is the subscription's; what makes
+	// "ahead of the shared entries" mean SERVED is stated where the selection is
+	// made (cascade.go hands the name to creds.Selector.Exclusive), because it
+	// is a fact about this call's entitlement and not about the token: it is
+	// one more member of the list in any call whose slip does not name it.
 	return creds.Credential{Name: name, Tier: creds.TierA}, true, nil
 }
 

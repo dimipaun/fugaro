@@ -707,6 +707,104 @@ func TestThePaidCallAfterTheMoveIsReserved(t *testing.T) {
 	}
 }
 
+// turnTheCounter puts the project's tie-breaking counter at n, which is where a
+// workspace's is as soon as its runs have called anything: it advances by one on
+// every selection that had to choose within a tier (creds/roundrobin, F6), so a
+// fixture that leaves it at zero is a workspace whose first call is the call
+// under test — and the two rules that pick a member by position agree with the
+// offered order at zero by luck alone. Seeded through the store's own lock
+// because the service is served over a listener (the handler runs on its own
+// goroutine) and the counter is the store's.
+func (s *svc) turnTheCounter(n int64) {
+	s.state.mu.Lock()
+	defer s.state.mu.Unlock()
+	s.state.rr = n
+}
+
+// TestThePersonalTokenWinsTheTieBreak: R7 and D3144, and the state the
+// candidate's own mark exists for. A person's token is SERVED to a call their
+// slip entitles, and where the offered order puts it is not what says so: within
+// a tier an exact tie is broken by the project's counter (creds'
+// leastRecentlyExhausted), so a token offered as one more tier-A member beside
+// the bundle's entries reaches a call about one time in N. At this counter's
+// first turn the answer before the rule was the bundle's default entry, which is
+// what this test is written against.
+func TestThePersonalTokenWinsTheTieBreak(t *testing.T) {
+	personalSwitch(t, true, nil)
+	s := newPersonalSvc(t, false, nil)
+	own := personalName(t)
+	rotated := fakeCred(t, "own")
+	s.dyn.values[own] = rotated
+	sl := s.claimedSlip(t, 3600, own)
+	s.turnTheCounter(1)
+
+	resp, body := s.slipCall(t, sl, "tie-break")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call is answered %d, want 200: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != own {
+		t.Fatalf("%s = %q, want %q: a token the slip entitles the call to is served while it can serve, and the counter's turn is not the question", HeaderCredential, got, own)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierA {
+		t.Errorf("%s = %q, want %q", HeaderTier, got, TierA)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Errorf("the upstream saw %d requests, want 1: the call went out on the person's own token and did not move", n)
+	}
+	if got := s.servedLast(t); got != rotated {
+		t.Errorf("the upstream was handed %q, want the person's own container", got)
+	}
+}
+
+// TestThePersonalTokenWinsARoundRobinRotation: the same rule under the other
+// within-tier rule (MC7). A project whose crafts go out on a pool asking for the
+// rotation serves that pool's members in turn, and a call under a slip naming the
+// person's own token is still served THAT token: the person's own container is
+// not a member of any pool, so it is neither offered as one nor given a turn, and
+// a rotation that reached it by position would hand the runs a person launched to
+// a shared subscription in (N-1) calls out of N (R7, D3144).
+//
+// The counter is seeded off zero for the reason the test above seeds it: at the
+// rotation's first turn the member the rotation reached would be the pool's
+// second, which is what the assertion would otherwise be reading.
+func TestThePersonalTokenWinsARoundRobinRotation(t *testing.T) {
+	personalSwitch(t, true, nil)
+	s := newPersonalSvc(t, false, func(sv *svc, _ *Config) {
+		sv.policy.shared = decodeTestPolicy(t, poolNode(rrBlock(
+			`"fallback": "auto", "stop_after_exhaustion_per_window": false, "concurrency_per_token": 0`,
+			testAccount, testPoolAccount)))
+		sv.policy.admissions[sv.slug] = decodeTestChild(t, testChildDoc(testAccount, testPoolAccount))
+	})
+	// The bundle holds the pool's two subscriptions beside the default entry
+	// the fixture's own document ends at, so the rotation really has two shared
+	// members to reach. It is the document and not the values that changes: the
+	// pool's members are read from it, which is where a pool's names come from
+	// (poolBundleDoc).
+	s.dyn.doc = poolBundleDoc(t)
+	own := personalName(t)
+	rotated := fakeCred(t, "own")
+	s.dyn.values[own] = rotated
+	sl := s.claimedSlip(t, 3600, own)
+	s.turnTheCounter(1)
+
+	resp, body := s.slipCall(t, sl, "rotation")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call is answered %d, want 200: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != own {
+		t.Fatalf("%s = %q, want %q: a token the slip entitles the call to is served while it can serve, and a pool's rotation is not the question", HeaderCredential, got, own)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierA {
+		t.Errorf("%s = %q, want %q", HeaderTier, got, TierA)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Errorf("the upstream saw %d requests, want 1: the call went out on the person's own token and did not move", n)
+	}
+	if got := s.servedLast(t); got != rotated {
+		t.Errorf("the upstream was handed %q, want the person's own container", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // The path that must not change
 // ---------------------------------------------------------------------------

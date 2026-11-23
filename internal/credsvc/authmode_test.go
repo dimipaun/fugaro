@@ -32,7 +32,7 @@ func (s *svc) candidatesFor(t *testing.T, mode, account string) ([]creds.Credent
 		t.Fatalf("loading the fixture's own bundle: %v", err)
 	}
 	id := Identity{Slug: s.slug, JobClass: ClassRepository, AuthMode: mode, AuthAccount: account}
-	cands, _, skipped, err := s.server.candidates(context.Background(), id, testRepo, s.policy.shared, b)
+	cands, _, _, skipped, err := s.server.candidates(context.Background(), id, testRepo, s.policy.shared, b)
 	return cands, skipped, err
 }
 

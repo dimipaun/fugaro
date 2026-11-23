@@ -378,6 +378,102 @@ func TestSelectRoundRobinTies(t *testing.T) {
 	}
 }
 
+// A candidate the caller marked exclusive is SERVED while it can serve, whatever
+// the tier's own rule would have done with the list. The two rules that pick a
+// member by position are both here, because the offered order says nothing under
+// either of them: the tie-breaking counter's turn (seeded off zero, so the
+// answer is not the first entry by luck) and a pool's rotation. A list that
+// offered this candidate as one more member of its tier would serve it about one
+// call in N — the reviewer's finding on R7 and D3144 — which is why the rule is
+// a mark of the caller's and not the position.
+func TestSelectExclusiveCandidateWins(t *testing.T) {
+	own := Credential{Name: "own-token", Tier: TierA}
+	for _, tc := range []struct {
+		name     string
+		strategy Strategy
+	}{
+		{"the tie-breaking counter is on another turn", StrategyFailover},
+		{"a pool asks for the rotation", StrategyRoundRobin},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			st.setRoundRobin(1)
+			s := selector(st, noWindow())
+			s.Strategy = tc.strategy
+			s.Exclusive = own.Name
+
+			c, _, err := s.Select(ctx, run, []Credential{own, a1, a2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Name != own.Name {
+				t.Fatalf("the selection = %q; want %q: a candidate marked exclusive is served while it can serve, and the position it was offered at is not the question", c.Name, own.Name)
+			}
+			// Served and not merely named: the run is placed on it, and the
+			// turn the rotation would have taken was not taken.
+			if got, ok := st.currentOf(run); !ok || got != own.Name {
+				t.Fatalf("the run is on %q, %v; want %q", got, ok, own.Name)
+			}
+			if got := st.rr; got != 1 {
+				t.Fatalf("the counter reads %d; want 1: serving an exclusive candidate is not a turn of the rotation", got)
+			}
+		})
+	}
+}
+
+// And it is stepped over the moment it cannot serve, with the rest of the list
+// the answer: the four states that stop it are the four states every candidate
+// meets (free), which is the whole of when D2974's fall-through applies.
+func TestSelectExclusiveCandidateStepsAside(t *testing.T) {
+	own := Credential{Name: "own-token", Tier: TierA}
+	for _, tc := range []struct {
+		name string
+		hold func(*fakeStore, *Settings)
+	}{
+		{
+			name: "exhausted until its reset",
+			hold: func(st *fakeStore, _ *Settings) {
+				st.setMark(own.Name, Mark{State: StateExhausted, Since: now.Add(-time.Minute), Until: now.Add(time.Hour)})
+			},
+		},
+		{
+			name: "backed off, waiting for a probe",
+			hold: func(st *fakeStore, _ *Settings) {
+				st.setMark(own.Name, Mark{State: StateBackedOff, Since: now.Add(-time.Minute), Until: now.Add(time.Hour)})
+			},
+		},
+		{
+			name: "broken",
+			hold: func(st *fakeStore, _ *Settings) {
+				st.setMark(own.Name, Mark{State: StateBroken, Since: now.Add(-time.Minute)})
+			},
+		},
+		{
+			name: "capped, another run holding the only slot",
+			hold: func(st *fakeStore, set *Settings) {
+				set.ConcurrencyPerToken = ptr(1)
+				st.setLease(Run{Slug: run.Slug, ID: "another"}, Lease{Credential: own.Name, Until: now.Add(time.Hour)})
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newFakeStore()
+			set := noWindow()
+			tc.hold(st, &set)
+			s := selector(st, set)
+			s.Exclusive = own.Name
+
+			c, _, err := s.Select(ctx, run, []Credential{own, a1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Name != a1.Name {
+				t.Fatalf("the selection = %q; want %q: an exclusive candidate that cannot serve is not held up, and the rest of the list is the answer", c.Name, a1.Name)
+			}
+		})
+	}
+}
+
 // D142's first control: once a shared token has hit its limit, it is out for
 // the rest of its window, whatever reset the response reported. Turned off, the
 // reset is all that holds it.
