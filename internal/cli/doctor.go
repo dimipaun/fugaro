@@ -577,6 +577,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// this backend, and Task 10 is what turns these into the enable's gate.
 	o.Checks = append(o.Checks, doctorBatchChecks(ctx, lc, crmSvc)...)
 	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc, doctorRoutingLayerOf(ctx, rf))...)
+	o.Checks = append(o.Checks, doctorRepoAccountChecks(lc)...)
 	// The pools the published policy serves (DS3.1, MC1): a legacy-open one is
 	// served to whoever asks and D1942 asks doctor to name it. It reads the
 	// published node for itself — the policy checks above read it through
@@ -589,6 +590,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// repositories publishes on the machine that takes from it (R3, R4). It
 	// reads the cloud and writes nothing, and it computes no alarm (D2991).
 	o.Checks = append(o.Checks, doctorWorkspaceChecks(ctx, lc)...)
+	// The run index's own completeness (RI6, F9): the summary document in the
+	// installation's Firebase project, which is what tells a reader of a short
+	// list that the index is why. It answers nothing for a project with no
+	// Firebase backend, like the checks above it.
+	o.Checks = append(o.Checks, doctorRunIndexChecks(ctx, lc)...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
 		iamSvc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)
@@ -716,6 +722,21 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 
 	o.OK = !checksFail(o.Checks, strict)
 	return emitDoctor(cmd, o, asJSON, view)
+}
+
+// doctorRepoAccountChecks warns, before `fugaro update` is run, of every
+// repository entry that names a Claude account whose own allow_data_to does not
+// name the repository: the publish refuses that config (projectpolicy), and
+// every `fugaro update` after it would fail until it is closed.
+func doctorRepoAccountChecks(lc *localcfg.Config) []doctorCheck {
+	var out []doctorCheck
+	for _, g := range repoAccountGaps(lc) {
+		out = append(out, doctorCheck{ID: "repo-account-covered", Severity: "warning",
+			Problem: fmt.Sprintf("repos.%s.claude_accounts names the account %s, and claude_accounts.%s.allow_data_to does not name the repository, so the next `fugaro update` refuses to publish the policy",
+				pluginwire.Printable(g.repo), pluginwire.Printable(g.account), pluginwire.Printable(g.account)),
+			Fix: g.fix()})
+	}
+	return out
 }
 
 // doctorBaseImage warns when the installation has no Fugaro base recorded
@@ -3206,11 +3227,16 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// registration-generation marker already has those fields and only the
 		// four day-counter leaves a stage report writes per model are new to it,
 		// a spend-leaves-generation marker already has those leaves and only the
-		// paired device's read of a run's outcome is new to it, and an
+		// paired device's read of a run's outcome is new to it, an
 		// outcome-generation marker already has that read and only the credential
-		// route a run reads is new to it (workspace-service task WS22).
+		// route a run reads is new to it (workspace-service task WS22), and a
+		// route-generation marker already has that route and only the phone's
+		// stop request and the launch envelope are new to it (mobile plan task
+		// P5.1g).
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesRouteGeneration:
+			adds = "the phone's stop request and the launch envelope"
 		case gen >= rulesOutcomeGeneration:
 			adds = "the credential route a run reads"
 		case gen >= rulesSpendLeavesGeneration:

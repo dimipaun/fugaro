@@ -518,8 +518,8 @@ variable "orchestrator" {
   # The module's type is this same object and its validations are the ones that
   # hold them to their shape, so this root declares the value and decides
   # nothing about it. internal/infra composes the block (Orchestrator) for the
-  # one door that may write it — `fugaro update --firebase-project <id>
-  # --orchestrator` — and every run that was not asked for an orchestrator
+  # one door that writes it — `fugaro update`, for an installation that has the
+  # credentials service and the Firebase backend — and every run after it
   # leaves the key exactly as it found it.
   default = null
 }
