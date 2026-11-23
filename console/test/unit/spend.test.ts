@@ -17,11 +17,11 @@
 //   2. **a partial day is hollow** -- `(partial)` is the CLI's own word
 //      (`ee/report/render.go`'s table appends it to the row key) and the
 //      design draws a day that is not final yet as a hollow bar;
-//   3. **the person breakdown is off by default** (design D15). The rows are in
-//      the document; the screen draws none of them until it is asked to, and it
-//      says why. When it is asked, a person is drawn through `sanitize.ts`'s
-//      `person` class, so an address is the console's marker and never the
-//      address;
+//   3. **the person breakdown is on by default** (D3214, amending design D15).
+//      The screen draws the rows the document holds and says that the switch is
+//      this session's and not remembered. Turned off, it draws none of them and
+//      says why. Either way a person is drawn through `sanitize.ts`'s `person`
+//      class, so an identity is drawn as the run recorded it;
 //   4. **a day the history does not hold is a gap, not a zero.** `report` reads
 //      a window and the days before it are pruned, so the console enumerates
 //      the range itself and a missing day becomes a point that breaks the line.
@@ -1192,12 +1192,27 @@ describe('a day the history does not hold', () => {
 })
 
 // ---------------------------------------------------------------------------
-// The person breakdown, off by default.
+// The person breakdown, on by default (D3214, amending D15).
 // ---------------------------------------------------------------------------
 
 describe('the person breakdown', () => {
-  it('is off by default: the rows are in the document and the screen draws none of them', () => {
+  it('is on by default: the rows are in the document and the screen draws them', () => {
     const model = buildSpendModel(PERSON_REPORT, BUDGET)
+    expect(model.persons).toEqual({ enabled: true, withheld: false })
+    expect(drawnRows(model).map((row) => row.key)).toEqual(['ada@example.com', 'unknown'])
+    // One sentence, and it is the reason the operator did not ask for this: a
+    // view that is on by default without saying so is a view the operator will
+    // try to turn off and not find.
+    expect(model.notes).toHaveLength(1)
+    expect(model.notes[0]).toContain('on by default')
+    // The switch says so too, in the shape the screen draws: on, and current.
+    const entry = model.switches.find((one) => one.dimension === 'person')
+    expect(entry).toMatchObject({ enabled: true, current: true })
+    expect(entry?.note).toContain('on by default')
+  })
+
+  it('is off when the knob is turned off: the rows are in the document and the screen draws none of them', () => {
+    const model = buildSpendModel(PERSON_REPORT, BUDGET, { persons: false })
     expect(model.persons).toEqual({ enabled: false, withheld: true })
     expect(drawnRows(model)).toEqual([])
     // No figure at all, on the one axis the chart would have drawn: a scale of
@@ -1218,7 +1233,7 @@ describe('the person breakdown', () => {
   })
 
   it('draws no person and no address while it is off', () => {
-    const tree = renderSpend(factory, buildSpendModel(PERSON_REPORT, BUDGET), 'light')
+    const tree = renderSpend(factory, buildSpendModel(PERSON_REPORT, BUDGET, { persons: false }), 'light')
     const text = drawn(tree)
     expect(text).toContain('person breakdown is off')
     for (const row of PERSON_ROWS) expect(text).not.toContain(row.key)
