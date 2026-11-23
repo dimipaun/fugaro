@@ -947,7 +947,11 @@ func (r *rend) detail(run RunRow) []string {
 	// it is not a second fact but the source's own qualifier, saying the run is
 	// paying on something other than the first of its chain, and the detail is
 	// where the table's FLAGS column has no room for it.
-	src := run.Source
+	// The row's "-" comes from the builders that have no registry entry to read
+	// (queuedRow, finishedRow), and dashIfEmpty is the backstop for a RunRow
+	// built anywhere else with nothing recorded: an empty source must draw the
+	// same dash its neighbours do, never a blank line.
+	src := dashIfEmpty(run.Source)
 	if run.Fallback {
 		src += " FALLBACK"
 	}

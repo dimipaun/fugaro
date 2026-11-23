@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestWatchPrintsADashForAuth is CS9's view of D3070 (model-credentials-
@@ -83,6 +84,71 @@ func TestWatchPrintsADashForAuth(t *testing.T) {
 		if r.Source == "" {
 			t.Fatalf("run %s carries an empty source: every row writes a value for the key\n%s", r.Run, data)
 		}
+	}
+}
+
+// TestWatchShowsANonEntryRunsSourceAsAbsent: the rows that are not registry
+// entries — a queued run nothing has written yet, a finished one whose entry is
+// gone — have no routing answer to report, and they show the dash the rest of
+// the row shows, never the empty string a row left at the zero value carries.
+//
+// The member is written by the run into its entry, so every other row kind has
+// nothing to put there, and the dash is the same "not recorded" `auth`, `mode`
+// and `verify` already write on those rows. It matters in two places: --json,
+// where a reader may draw the value, and the expanded detail, which prints the
+// row's own string beside the credential's dash — a row kind added later that
+// left it at the zero value would draw a blank line there and write
+// `"source":""` to a reader's document.
+//
+// Mutation (a builder that leaves Source out, or a detail that prints
+// run.Source raw): the queued run's line reads `source` with nothing under it
+// and --json carries an empty string.
+func TestWatchShowsANonEntryRunsSourceAsAbsent(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"acme%2Fapp":{"r1":`+agent("acme/app", "a live run", `,"source":"pool:team"`)+`}}`, t0)
+	v := MergeQueued(Build(s, t0, Config{}), Config{},
+		[]QueuedRun{{Run: "r-queued1", Slug: "acme__app", Workflow: "web", LaunchedAt: t0.Add(-2 * time.Minute)}}, "", t0)
+	rows := map[string]RunRow{}
+	slug := ""
+	for _, b := range v.Repos {
+		for _, r := range b.Runs {
+			rows[r.Run] = r
+			if r.Run == "r-queued1" {
+				slug = b.Slug
+			}
+		}
+	}
+	if rows["r1"].Source != "pool:team" {
+		t.Fatalf("the live row = %+v, want the source its entry recorded", rows["r1"])
+	}
+	queued, ok := rows["r-queued1"]
+	if !ok {
+		t.Fatalf("the queued run is not in the view: %+v", v.Repos)
+	}
+	if queued.Source != "-" {
+		t.Fatalf("queued row = %+v, want the - every other absent value shows", queued)
+	}
+	if got := finishedRow(FinishedRun{Run: "r-done1", Slug: "acme__app", Status: "succeeded", FinishedAt: t0}, t0); got.Source != "-" {
+		t.Fatalf("finished row source = %q, want the - every other absent value shows", got.Source)
+	}
+	// The contract is about the whole document, not this one row: every run in
+	// runs[] carries a value for the key, so no row kind can hand a reader an
+	// empty string.
+	for _, r := range BuildJSON("aurora", v).Runs {
+		if r.Source == "" {
+			t.Fatalf("run %s carries an empty source, want the dash", r.Run)
+		}
+	}
+
+	// The detail of a row with nothing recorded draws the dash, beside the
+	// credential's own: the two lines belong to the same block, and a blank one
+	// reads as a rendering fault rather than as "not recorded".
+	sel := Cursor{Slug: slug, Run: "r-queued1"}
+	got := frame(v, 120, 0, func(o *RenderOptions) {
+		o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true}
+	})
+	if !strings.Contains(got, "source     -") {
+		t.Fatalf("the detail of a row with no source must draw the dash:\n%s", got)
 	}
 }
 
