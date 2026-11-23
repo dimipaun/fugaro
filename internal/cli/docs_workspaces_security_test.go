@@ -389,3 +389,51 @@ func TestDesignV1NamesTheWorkspace(t *testing.T) {
 		t.Error("docs/design/v1.md does not carry the workspace as a bullet of the terminology list: the project section defines its units as bullets, and a paragraph anywhere else is a unit a reader does not meet where the others are")
 	}
 }
+
+// slipsSecurityHeading is the section of SECURITY.md that states what a slip is
+// and what a hostile launcher reaches of one. It is the section a workspace's
+// slip changes: the roster sentence it carried said a slip already issued keeps
+// serving the run it was granted for, which is true of the pool a grant is read
+// from and false of a workspace's roster, which its credentials service re-reads
+// under a live slip (D3146).
+const slipsSecurityHeading = "### The intake, and the slips a run holds"
+
+// TestSecurityMdStatesTheRostersOneException is WC8's pin on the sentence it
+// rewrote. The claim it replaces -- "a slip already issued keeps serving the run
+// it was granted for" -- is what a reader takes from a grant that records its
+// credential set once, and it is the reading D3146 rules out for a workspace: a
+// person the workspace's roster drops stops being served within a minute, and
+// the run under their slip halts naming the removal rather than moving to
+// another credential.
+//
+// The banned sentence is read out of the whole document and not out of the
+// section: the false claim is exactly the shape a rewrite drifts back into, and
+// a bullet pointing at the section that carried it would be as wrong as the
+// section.
+func TestSecurityMdStatesTheRostersOneException(t *testing.T) {
+	doc := readDoc(t, "SECURITY.md")
+	section := flattenDoc(docSection(t, "SECURITY.md", doc, slipsSecurityHeading))
+	for _, want := range []string{
+		// The pool's own rule, kept: the roster a grant's credential set is
+		// read from is the publisher's, and a person taken off it is refused at
+		// the next grant.
+		"the roster that decided a slip's credential set is read at issue time and never remembered",
+		"a member the publisher takes off a pool is refused at the next grant",
+		// And the exception, in one sentence of its own: the workspace's
+		// roster is the one a live slip is re-read against, and the run stops
+		// rather than being served another credential.
+		"while the one roster a live slip is re-read against is a workspace's own",
+		"its credentials service reads on every call that slip is presented on",
+		"a person the workspace's roster drops is refused there within a minute",
+		"the run under their slip halts, naming the removal",
+		"rather than being served another credential (D3146)",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the `%s` section does not state %q: a slip that keeps serving a run whose person the workspace has dropped is the guarantee D3146 refuses", slipsSecurityHeading, want)
+		}
+	}
+	const banned = "a slip already issued keeps serving the run it was granted for"
+	if strings.Contains(flattenDoc(doc), banned) {
+		t.Errorf("SECURITY.md still says %q: a workspace's service re-reads its roster under a live slip, so a slip does not keep serving a run whose person was removed (D3146)", banned)
+	}
+}
