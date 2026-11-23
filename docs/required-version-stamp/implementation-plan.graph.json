@@ -49,10 +49,12 @@
         "prediction": true,
         "paths": [
           "internal/initflow/stage.go",
+          "internal/initflow/loop_test.go",
           "internal/cli/update_version_stamp.go",
           "internal/cli/update_version_stamp_test.go",
           "internal/cli/init_stages.go",
-          "internal/cli/setup_refusals_test.go"
+          "internal/cli/setup_refusals_test.go",
+          "internal/cli/testdata/setup_events.golden.ndjson"
         ]
       }
     },
@@ -119,6 +121,7 @@
         "prediction": true,
         "paths": [
           "internal/cli/doctor.go",
+          "internal/cli/doctor_render.go",
           "internal/cli/doctor_required.go",
           "internal/cli/doctor_required_test.go"
         ]
@@ -276,8 +279,13 @@
     },
     {
       "task": "T7",
-      "needs": "T8",
-      "reason": "the sentences become true only then"
+      "needs": "T2b",
+      "reason": "the release bound and the recovery the docs describe"
+    },
+    {
+      "task": "T7",
+      "needs": "T3",
+      "reason": "the refusal the skill names"
     }
   ]
 }

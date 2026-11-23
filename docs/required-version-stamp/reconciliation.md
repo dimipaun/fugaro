@@ -243,7 +243,8 @@ the recommendation first.
 - **R5. Console read paths.** The exemption is `consoleReadPaths` minus the write arm of `apply`:
   `fugaro apply --status` passes with the stderr line, and a bare `fugaro apply` is fenced (F7). A test
   lists every `consoleReadPaths` entry that has a writing arm. The table entry for `fugaro apply`
-  carries a flag predicate: it is exempt only when `cmd.Flags().Changed("status")` is true.
+  carries a flag predicate: it is exempt only when `cmd.Flags().GetBool("status")` is true, since
+  `--status` is a `BoolVar` in `internal/cli/apply.go`. So `apply --status=false` is fenced.
 - **R6. Exemption by command path.** Every exemption is keyed by command path in one table. That
   table holds every hidden in-cloud entry point: the services, the Cloud Build steps, `image
   selftest` and `exec`. `OnPlatform` stays as a second gate. The tree-walk test (acceptance 2) fails
@@ -297,6 +298,15 @@ No open tension.
   left for the workspace work's own spec. Nothing in this plan checks it.
 - **O6.** U3 (whether the console treats one stderr line on its reads as a failure) is the console
   owner's. This plan changes no console code, so no task here tests it.
+- **O7.** For the owner: should `update`'s door read have a longer timeout than the 2 seconds every
+  command's read has? T4's fresh read uses T1's timeout. When it fails, it falls back to the cache
+  rule, so a cached value above the binary that is younger than 15 minutes still refuses. A longer
+  door timeout would be a new parameter, so it is the owner's call.
+- **O8.** A later tightening: the in-cloud exemptions (`credentials serve`, `image gate` and the
+  rest, R6) are keyed by command path, so they also pass when typed on a laptop. They are hidden
+  commands with no project write of their own. Gating them on a platform signal as well
+  (`K_SERVICE` for a Cloud Run service, the Cloud Build environment for a build step) is left for
+  later.
 
 ## 7. UNVERIFIED
 

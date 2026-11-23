@@ -67,7 +67,8 @@ no-prompt policy, "a field never changes meaning", tested docs), `docs/no-prompt
 | Stopping spend always works | T3 `TestBudgetKillPassesBelowTheStamp` (every form, `--workspace` included) |
 | Read failures fail open; a cached value above the binary or a malformed stamp refuses | T1 `TestUnreachableDatabasePasses`, `TestCachedStampAboveBinaryRefusesWithoutARead`, `TestMalformedStampRefuses` |
 | A stale or future-dated cache is re-read before it refuses (D3268) | T1 `TestStaleCachedStampAboveBinaryNeedsAReRead`, `TestFutureCacheTimestampIsStale` |
-| The stamp never falls | T2a `TestOlderUpdateNeverLowersTheStamp`, `TestConcurrentRaisesKeepTheHigher` |
+| The stamp never falls | T2a `TestOlderUpdateNeverLowersTheStamp`, `TestLostRaceWritesNothingAndSaysSo` |
+| A malformed stamp refuses wherever it is read, and names its fix | T1 `TestMalformedSentenceNamesItsFix`, T2a `TestStampStageRefusesAMalformedStamp`, T4 `TestUpdateRefusesAMalformedStamp` |
 | A stage that stops or fails before it leaves the stamp unchanged | T2a `TestFailedPolicyStageLeavesTheStampUnchanged` |
 | The stamp rises only once the installation has converged (D3267) | T2a `TestStampHoldsWhilePolicyIsHeld`, `TestStampHoldsWhileCredentialsServiceIsBehind` |
 | Only a published release is written (D3269) | T2c `TestPublishedIgnoresTheUpdateCheckSwitches`, `TestOlderLineHotfixIsPublished`; T2b `TestStampStaysWhenTheReleaseLookupFails` |
@@ -111,8 +112,12 @@ from the start.
     Past that, it refuses only if a re-read confirms it (D3268).
   - An unreachable database, a timeout, missing credentials or a denied read is a `Result` with its
     reason and no error.
-  - A malformed stamp is `*MalformedError`.
-  - `Fresh` skips the cache for the read and writes it afterwards.
+  - A malformed stamp is `*MalformedError`, and its sentence names the fix. An unknown `schema` was
+    written by a newer release, so the fix is `brew upgrade`. A `min` that does not parse is a hand
+    edit, so the fix is T7's hand edit in the Firebase console.
+  - `Fresh` skips the cache for the read and writes it afterwards. A fresh read that fails falls back
+    to the cache rule: a cached value above the binary that is younger than 15 minutes still refuses
+    (D3264, D3268). T4 relies on this.
   - A corrupt or oversized cache file counts as no cache (`updatecheck.readBounded`'s rule).
 
   `schemas/required-cli.schema.json` is closed at every level, and a test holds it to `Decode` both
@@ -131,7 +136,8 @@ from the start.
   `TestStaleCachedStampPassesWhenTheReReadFails`, `TestFutureCacheTimestampIsStale`,
   `TestFreshCacheSkipsTheRead`, `TestStaleCacheReads`, `TestMalformedStampRefuses`,
   `TestDeniedReadPassesWithItsReason`, `TestCorruptCacheIsNoCache`, `TestFreshQueryIgnoresTheCache`,
-  `TestCacheIsPerDatabase`, and `TestReadMap…` in `internal/ciselect`.
+  `TestCacheIsPerDatabase`, `TestFreshReadFailureStillRefusesOnAFreshCacheAbove`,
+  `TestMalformedSentenceNamesItsFix`, and `TestReadMap…` in `internal/ciselect`.
 - Command: `go test ./internal/versionstamp/ -count=1 && go test ./internal/ciselect/ -run TestReadMap -count=1`
 - Red step: `TestStampDecodesStrictly` fails while an unknown key decodes.
 - Depends on: none.
@@ -179,8 +185,13 @@ from the start.
       test `credentialsResolveBeforeRaise` uses).
 
     These are the engine's own facts, and the loop does not change.
-  - Its `Apply` writes through `GetETag` and `PutIfMatch`, retries on a lost race, keeps the higher of
-    the stored and the new value, and stamps `set_at`.
+  - Its `Check` refuses a malformed stamp (`*MalformedError`) with that error's sentence. It never
+    overwrites one.
+  - Its `Apply` writes once, through `GetETag` and `PutIfMatch`, never lowering the stored value, and
+    stamps `set_at`. A lost race ends the stage with nothing written and a line that says so. It does
+    not retry; the next `update` raises the stamp. This matches the policy stage's write
+    (`policyMigration.write`, `rtdb.ErrPrecondition`), whose one admission covers exactly the bytes
+    and ETag it writes.
   - Its line is `required CLI: 0.28.0 → 0.29.0 (members below it are refused until they upgrade)`,
     or `current` when unchanged.
   - A `dev` or pre-release binary leaves the node alone and says so.
@@ -189,13 +200,17 @@ from the start.
     unavailable", so the stamp stays unchanged with a line.
   - `--plan-only` plans and writes nothing.
   - `apply` and `stagesNamed` write it only when it is named.
-- Files: `internal/initflow/stage.go`, `internal/cli/update_version_stamp.go` (new),
+- Files: `internal/initflow/stage.go`, `internal/initflow/loop_test.go` (the test that pins the
+  `order` slice), `internal/cli/update_version_stamp.go` (new),
   `internal/cli/update_version_stamp_test.go` (new), `internal/cli/init_stages.go`,
-  `internal/cli/setup_refusals_test.go`.
+  `internal/cli/setup_refusals_test.go`, `internal/cli/testdata/setup_events.golden.ndjson`. That is
+  seven files, as T1 has: two of them change one line each to name the new slot (the pinned order
+  and the refusal matrix row), and one is a golden file the events test regenerates.
 - Interfaces: consumes T1 (`Decode`, `Encode`, the path, `Below`). Produces `initflow.VersionStamp`,
   which L8's spec places its stage after (O1), and the release seam T2b fills.
 - Tests: `TestUpdateRaisesTheStampToItsRelease` (with the seam answering "published"),
-  `TestOlderUpdateNeverLowersTheStamp`, `TestConcurrentRaisesKeepTheHigher`,
+  `TestOlderUpdateNeverLowersTheStamp`, `TestLostRaceWritesNothingAndSaysSo`,
+  `TestStampStageRefusesAMalformedStamp`,
   `TestFailedPolicyStageLeavesTheStampUnchanged`, `TestDevBuildLeavesTheStampAlone`,
   `TestPlanOnlyWritesNoStamp`, `TestStampLineSaysCurrent`, `TestStampHoldsWhilePolicyIsHeld`,
   `TestStampHoldsWhileCredentialsServiceIsBehind`, `TestStampStageSkipsAnUnadoptedDatabase`, and
@@ -214,7 +229,8 @@ from the start.
     and `workspaceStage.gateStep` (F21).
     - Its document is the exact bytes `PutIfMatch` writes, under the ETag that was read.
     - Its admitted rule names the binary's own `Version`.
-    - The stage's `Apply` admits, which writes the audit record, before the write.
+    - The stage's `Apply` admits before its one write. The audit record follows the write (D1014),
+      as the policy stage's does, so a lost race records nothing and retries nothing.
     - A refused admission comes back as a `GatedError`.
   - The stage's release seam is wired to `updatecheck.Published` with the production client and
     endpoint (D3269). A lookup that fails leaves the stamp unchanged, with a line.
@@ -229,6 +245,7 @@ from the start.
   `docs/design/update-in-flight.md`, `internal/cli/update_version_stamp_gate_test.go` (new).
 - Interfaces: consumes T2a's stage and T2c's `Published`.
 - Tests: `TestUpdateLeavesARunInFlightRunning`, `TestUpdateManagedGatesTheVersionStampStage`,
+  `TestGatedLostRaceRecordsNothingAndDoesNotRetry`,
   `TestAgentSessionStampRaiseWritesTheAuditRecord` (the record names the document's digest and the
   binary's `Version`), `TestStampStaysWhenTheReleaseLookupFails`, `TestPolicyDeleteKeepsTheStamp`,
   plus the docs census.
@@ -260,7 +277,8 @@ from the start.
     - the retired tombstone;
     - `orchestrator run` (R7);
     - the console read paths, except bare `apply`. `apply --status` passes through the predicate
-      `cmd.Flags().Changed("status")` (R5). These paths print one stderr line when the stamp is
+      `cmd.Flags().GetBool("status")` being true, since `--status` is a `BoolVar` in `apply.go`. So
+      `apply --status=false` is fenced (R5). These paths print one stderr line when the stamp is
       above the binary;
     - `exec` and every hidden in-cloud entry point: `credentials serve`, `orchestrator serve`,
       `voice serve`, `intake serve`, `coordinator serve`, `history`, `image gate`, `image record`,
@@ -276,7 +294,7 @@ from the start.
   - `TestExemptCommandsPassBelowTheStamp`;
   - `TestBudgetKillPassesBelowTheStamp`;
   - `TestConsoleReadsPrintOneStderrLineAndCleanStdout`;
-  - `TestBareApplyIsFencedButApplyStatusPasses`;
+  - `TestBareApplyIsFencedButApplyStatusPasses` (with `apply --status=false` fenced too);
   - `TestFenceReadsTheCommandsOwnProjectFlag`;
   - `TestFenceCoversTheSharedConfigFallback`;
   - `TestDoctorOnTheSharedConfigPassesBelowTheStamp` and
@@ -302,16 +320,21 @@ from the start.
   - The refusal comes before the image catalog guard, `syncAccess`, `rewriteLocalBudgetMode` and the
     first stage (F11).
   - It does not run for a `dev` or pre-release binary.
-  - An unreadable stamp fails open with one stderr line (D3264).
+  - An unreadable stamp fails open with one stderr line (D3264). A fresh read that fails still
+    refuses on a cached value above the binary that is younger than 15 minutes (T1).
+  - A malformed stamp refuses with `*MalformedError`'s sentence.
+  - Under `--json`, the refusal still prints the one JSON object a refusal before any stage prints
+    (`TestInitJSONOnARefusalBeforeAnyStage`, `internal/cli/json_everywhere_test.go`).
 - Files: `internal/cli/update_stamp_guard.go` (new), `internal/cli/init.go`,
   `internal/cli/update_stamp_guard_test.go` (new).
 - Interfaces: consumes T1.
 - Tests: `TestUpdateBelowTheStampRefusesBeforeAnyWrite` (the fake database, the local config file and
   the catalog are byte-identical afterwards), `TestForgetBelowTheStampRefuses`,
   `TestConfigOnlyBelowTheStampRefuses`, `TestUpdatePlanOnlyBelowTheStampRefuses`,
-  `TestUpdateCheckModeReadsNoStamp`, `TestPrintVarsReadsNoStamp`, `TestSetupBelowTheStampRefuses`
-  and `TestUpdateAtTheStampPasses`.
-- Command: `go test ./internal/cli/ -run 'BelowTheStamp|CheckModeReadsNoStamp|PrintVarsReadsNoStamp|AtTheStampPasses' -count=1`
+  `TestUpdateCheckModeReadsNoStamp`, `TestPrintVarsReadsNoStamp`, `TestSetupBelowTheStampRefuses`,
+  `TestUpdateRefusesAMalformedStamp`, `TestUpdateJSONRefusalIsOneObject` and
+  `TestUpdateAtTheStampPasses`.
+- Command: `go test ./internal/cli/ -run 'BelowTheStamp|CheckModeReadsNoStamp|PrintVarsReadsNoStamp|AtTheStampPasses|RefusesAMalformedStamp|JSONRefusalIsOneObject|InitJSONOnARefusalBeforeAnyStage' -count=1`
 - Red step: `TestForgetBelowTheStampRefuses` fails while the check sits only at the converge.
 - Depends on: T1 (the interface).
 - Commit: `update: refuse before any write when the installation is ahead of this binary (T4, D3266, R8)`
@@ -324,10 +347,13 @@ from the start.
   - It passes at or above the stamp. It skips with its reason when the stamp cannot be read or for a
     `dev` binary.
   - Under `--offline`, it answers from the cache when there is one and skips otherwise (R9).
-  - It is not `ownFix`, because `update` does not fix it.
+  - It is modelled on `cli-version`. It is not `ownFix`, because the update class's own fix entry
+    already names the right commands: its `doctorUpdateFixes` entry is `brew upgrade` and then
+    `fugaro update`, as `cli-version`'s is. It also gets entries in `doctorUpdatePrefixes` and
+    `doctorShorts` in `internal/cli/doctor_render.go`.
   - `doctor --json` adds the row; no existing field changes.
-- Files: `internal/cli/doctor.go`, `internal/cli/doctor_required.go` (new),
-  `internal/cli/doctor_required_test.go` (new).
+- Files: `internal/cli/doctor.go`, `internal/cli/doctor_render.go`, `internal/cli/doctor_required.go`
+  (new), `internal/cli/doctor_required_test.go` (new).
 - Interfaces: consumes T1 (`Source`, `Below`).
 - Tests: `TestDoctorReportsCLIBelowRequired`, `TestDoctorOfflineAnswersFromTheStampCache`,
   `TestDoctorOfflineSkipsWithNoCache`, `TestDoctorCLIBelowRequiredIsNotOwnFix`.
@@ -336,6 +362,7 @@ from the start.
 - Depends on: T1 (the reader it reports from).
 - Commit: `doctor: report a CLI below the project's required release (T5, R9)`
 - Reviewer tier: standard.
+
 ### T6: the daemon holds below the stamp
 - Acceptance:
   - `orchestratorDaemon` reads the stamp at `start` and at every tick through the cache.
@@ -444,7 +471,8 @@ from the start.
 - Tests: the plugin's command-and-flag tests and the docs census.
 - Command: `cd plugin && go test ./... -count=1 && cd .. && go test ./internal/cli/ -run Docs -count=1`
 - Red step: none. These are doc lines, and the plugin tests guard what they name.
-- Depends on: T8. The sentences become true only then.
+- Depends on: T2b (the release bound and the recovery the docs describe) and T3 (the refusal the
+  skill names). The sentences become true only then.
 - Commit: `plugin, docs: the required-CLI refusal and its last-resort recovery (T7, D3268, D3269)`
 - Reviewer tier: opus (a plugin skill).
 
@@ -463,11 +491,10 @@ and every consumer waits on it by an ordinary edge. No contract change is antici
 | 0 | T1, T2c |
 | 1 | T2a, T3, T4, T5, T6, K1 |
 | 2 | T2b, K2 |
-| 3 | T8 |
-| 4 | T7 |
+| 3 | T8, T7 |
 
-**Critical path.** The graph read reports `critical path (5 tasks): T1 -> T2a -> T2b -> T8 -> T7`
-with T1 as the bottleneck. The graph and this table agree: no task is ready before what it waits on.
+**Critical path.** The graph read reports `critical path (4 tasks): T1 -> T2a -> T2b -> T7`
+with T1 as the bottleneck. T8 sits beside T7 at level 3 and is as long. The graph and this table agree: no task is ready before what it waits on.
 
 **Edges, all kept:**
 - T2a, T3, T4, T5, T6 and K1 after T1: each consumes the stamp package.
@@ -475,7 +502,7 @@ with T1 as the bottleneck. The graph and this table agree: no task is ready befo
 - T2b after T2c: it wires `updatecheck.Published` in.
 - K2 after K1: K2 registers the script K1 writes.
 - T8 after T2b, T3, T4, T5 and T6: the end-to-end test walks their behaviour.
-- T7 after T8: the sentences become true only then.
+- T7 after T2b and T3: the sentences become true only then.
 
 **Shared files.** No level holds two writers of one file.
 
@@ -484,17 +511,17 @@ with T1 as the bottleneck. The graph and this table agree: no task is ready befo
 | `internal/versionstamp/*`, `schemas/required-cli.schema.json`, `internal/cli/required_cli_source.go` | T1 (0) |
 | `docs/ci-affected-tests/read-map.json` (regenerated) | T1 (0), K2 (2) |
 | `internal/updatecheck/published*.go` | T2c (0) |
-| `internal/initflow/stage.go`, `internal/cli/init_stages.go`, `internal/cli/setup_refusals_test.go`, `internal/cli/update_version_stamp_test.go` | T2a (1) |
+| `internal/initflow/stage.go`, `internal/initflow/loop_test.go`, `internal/cli/init_stages.go`, `internal/cli/setup_refusals_test.go`, `internal/cli/update_version_stamp_test.go`, `internal/cli/testdata/setup_events.golden.ndjson` | T2a (1) |
 | `internal/cli/update_version_stamp.go` | T2a (1), T2b (2) |
 | `internal/cli/update_managed.go`, `internal/cli/update_in_flight_test.go`, `docs/design/update-in-flight.md`, `internal/cli/update_version_stamp_gate_test.go` | T2b (2) |
 | `internal/cli/root.go`, `internal/cli/project.go`, `internal/cli/required_cli.go`, `required_cli_test.go`, `required_cli_shared_test.go` | T3 (1) |
 | `internal/cli/init.go`, `internal/cli/update_stamp_guard*.go` | T4 (1) |
-| `internal/cli/doctor.go`, `internal/cli/doctor_required*.go` | T5 (1) |
+| `internal/cli/doctor.go`, `internal/cli/doctor_render.go`, `internal/cli/doctor_required*.go` | T5 (1) |
 | `internal/cli/orchestrator_run.go`, `internal/cli/orchestrator_required_test.go` | T6 (1) |
 | `scripts/live-checks/check-900-*` | K1 (1) |
 | `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md`, `docs/coordinator/README.md`, `docs/periodic-reviews/README.md` | K2 (2) |
 | `internal/cli/required_cli_e2e_test.go`, the release notes file | T8 (3) |
-| `plugin/skills/working/SKILL.md`, `docs/release.md` | T7 (4) |
+| `plugin/skills/working/SKILL.md`, `docs/release.md` | T7 (3) |
 
 T3, T4 and T6 all add tests to `internal/cli`, each in its own new file. A helper two of them need
 lives in T1's seam file, or is written once by whichever merges first and reused by the other: no
@@ -504,7 +531,7 @@ duplicate (CLAUDE.md, "search before you write a helper").
 
 As `fugaro plan graph --plan docs/required-version-stamp/implementation-plan.md` printed it:
 
-`ready in 290–1160 min, no history yet for 7 tasks (12 tasks; tiers for 5, seeds for 7; from the cached history of 2026-11-22 07:25 UTC)`
+`ready in 285–1140 min, no history yet for 7 tasks (12 tasks; tiers for 5, seeds for 7; from the cached history of 2026-11-22 07:25 UTC)`
 
 It is informational and reserves no budget. It is what the tasks' tiers and this machine's history
 predict, and it moves as runs finish. The graph counts the twelve tasks of this plan.

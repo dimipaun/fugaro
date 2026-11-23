@@ -13,8 +13,8 @@ with one sentence that names `brew upgrade` and `fugaro update`. L8 waits on it.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | Assumptions A1–A6, findings F1–F25 (F20–F25 from the review rounds), decisions D3260–D3270 (D3260–D3266 are the owner's answers to Q1–Q7; D3267–D3270 were added by this reconciliation and its reviews and answered the same day, and D3267 was amended after review and confirmed), resolutions R1–R10, open items O1–O6 (O2 and O4 closed), UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Twelve tasks in five levels: T1 (the stamp package) and T2c (the published-release lookup); T2a, T3, T4, T5, T6 and K1; T2b and K2; T8 (end to end); then T7. It has the critical path, the shared files, and Check 900. No contract: the pass breaks no edge (R10). Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | Assumptions A1–A6, findings F1–F25 (F20–F25 from the review rounds), decisions D3260–D3270 (D3260–D3266 are the owner's answers to Q1–Q7; D3267–D3270 were added by this reconciliation and its reviews and answered the same day, and D3267 was amended after review and confirmed), resolutions R1–R10, open items O1–O8 (O2 and O4 closed), UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Twelve tasks in four levels: T1 (the stamp package) and T2c (the published-release lookup); T2a, T3, T4, T5, T6 and K1; T2b and K2; T8 (end to end) and T7. It has the critical path, the shared files, and Check 900. No contract: the pass breaks no edge (R10). Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it |
 
 **The owner's answers (2026-11-23):**
@@ -74,4 +74,5 @@ repo-coupling audit's block (D3230–D3259), and the highest check was 892.
 - Check 900, which the owner runs after the release that carries L1;
 - L8's spec, which places its migration after this stage (O1);
 - the workspace work's own spec, for which stamp a workspace write checks (O5);
-- the console's owner, for U3 (O6).
+- the console's owner, for U3 (O6);
+- the owner, on a longer timeout for `update`'s door read (O7).
