@@ -117,7 +117,7 @@ so it was reconciled without a capability map.
   - whether an agent's `fugaro update` raises it;
   - whether every later stage is blocked behind it in that session, because gating is linear (F2).
 
-  *Consequence:* D3267, pending.
+  *Consequence:* D3267 (answered: gated).
 - **F13 (Rule, docs are tested).** `docs/design/update-in-flight.md` holds one row per step. Line 62
   is cited by line in `internal/cli/docs_security_test.go`, `docs_bitbucket_runbook_test.go` and
   `docs_project_wide_git_test.go`. *Consequence:* the stamp's row goes after the policy rows, below
@@ -163,7 +163,7 @@ the recommendation first.
 | D3264 | (Q5) Do read failures fail open? | Yes, except a cached value above the binary and a malformed stamp, which refuse | **2026-11-23, as recommended** |
 | D3265 | (Q6) Are console read paths exempt? | Exempt, with one stderr line | **2026-11-23, as recommended.** R5 keeps `apply`'s write arm out of the exemption |
 | D3266 | (Q7) Does an `update` below the stamp refuse, or run and not lower it? | Refuse before its first write | **2026-11-23, as recommended.** R8 places it |
-| D3267 | In a coding agent's session on a managed project, does `update` raise the stamp (F12)? | **Yes: `version-stamp` joins `gatedStages`.** Its document is the binary's own `Version`, the same kind of document as the `rules` stage's, which the gate already opens: "a document the binary carries, so the plan IS the generation". The policy node moves in that session; if the stamp did not, members would stay unfenced until the owner's own terminal ran `update`. Because gating is linear (F2), a stop at this stage would also block every later stage in the session: `workspace`, `credentials-route`, `layer`, `checkout`, `unit` and `compute` | The `credentials-route` model: the stage refuses in a session (`AgentError`), and the owner's terminal raises it. Its cost: every release's agent-session `update` ends with a step left for the owner, every later stage stays blocked behind it until then, and members stay unfenced in between. Both options write nothing a run holds | **PENDING** |
+| D3267 | In a coding agent's session on a managed project, does `update` raise the stamp (F12)? | **Yes: `version-stamp` joins `gatedStages`.** Its document is the binary's own `Version`, the same kind of document as the `rules` stage's, which the gate already opens: "a document the binary carries, so the plan IS the generation". The policy node moves in that session; if the stamp did not, members would stay unfenced until the owner's own terminal ran `update`. Because gating is linear (F2), a stop at this stage would also block every later stage in the session: `workspace`, `credentials-route`, `layer`, `checkout`, `unit` and `compute` | The `credentials-route` model: the stage refuses in a session (`AgentError`), and the owner's terminal raises it. Its cost: every release's agent-session `update` ends with a step left for the owner, every later stage stays blocked behind it until then, and members stay unfenced in between. Both options write nothing a run holds | **2026-11-23, as recommended: gated like `rules`.** The stamp is a document the binary carries, so an agent's `update` raises it with the policy node it already moves, and no later stage is left blocked behind it |
 
 ## 5. Resolutions (one defensible answer, stated rather than asked)
 
@@ -213,8 +213,7 @@ No open tension.
 - **O1.** L8's spec places its migration stage after `version-stamp` in `initflow`'s `order`, and
   depends on `initflow.VersionStamp` (A6). With D3261, L8 still waits on L1 (D3238): the stamp fences
   every CLI from L1's release on, and the CLIs before it stay with the runner and the cap clamp.
-- **O2.** D3267 is pending. The plan is written on the recommendation, and T2a and T2b are marked
-  "depends on D3267 (pending)".
+- **O2.** Closed 2026-11-23: the owner answered D3267 (gated, as recommended).
 - **O3.** `docs/status.md` gets this spec's row when the plan merges; this pull request does not
   touch it.
 

@@ -1,6 +1,6 @@
 # Required-version stamp
 
-**Status: plan only; nothing is implemented; no task approved.** One decision is pending: D3267.
+**Status: plan only; nothing is implemented; no task approved.** Every decision is answered.
 
 **Spec owner:** Dimi Paun. The spec was approved on 2026-11-23. It was reconciled and planned on
 2026-11-23, against `origin/main` at `0dec0bb36`.
@@ -13,7 +13,7 @@ with one sentence that names `brew upgrade` and `fugaro update`. L8 waits on it.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | Assumptions A1–A6, findings F1–F19, decisions D3260–D3267 (D3260–D3266 are the owner's answers to Q1–Q7; D3267 is pending), resolutions R1–R10, open items O1–O3, UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | Assumptions A1–A6, findings F1–F19, decisions D3260–D3267 (D3260–D3266 are the owner's answers to Q1–Q7; D3267 is the one this reconciliation added, answered the same day), resolutions R1–R10, open items O1–O3, UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Twelve tasks in four levels: contract C1; T1, T2a, T3, T4, T5, T6 and K1; T2b, K2 and I1; then T7. It has the critical path, the shared files, and Check 900. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it |
 
@@ -26,9 +26,8 @@ with one sentence that names `brew upgrade` and `fugaro update`. L8 waits on it.
 - D3264: read failures fail open, except a cached value above the binary and a malformed stamp.
 - D3265: console read paths are exempt and print one stderr line.
 - D3266: an older `update` refuses before its first write.
-
-**Pending:** D3267. In a coding agent's session on a managed project, does `update` raise the stamp
-under the managed gate? The recommendation is yes, like the `rules` stage. T2a and T2b depend on it.
+- D3267: in a coding agent's session on a managed project, `update` raises the stamp under the
+  managed gate, like the `rules` stage (as recommended).
 
 **Findings that changed the design:**
 - The stage cannot sit right after `policy`, because that slot is taken by contract. It goes after
@@ -39,7 +38,7 @@ under the managed gate? The recommendation is yes, like the `rules` stage. T2a a
 - The console-read exemption would have exempted bare `fugaro apply` (F7, R5).
 - A root refusal would crash-loop the login unit's daemon (F9, R7).
 - The managed gate already lets an agent's session write some stages, so whether the stamp is one of
-  them is a decision: D3267 (F12).
+  them was a decision: D3267, answered gated (F12).
 
 **Numbers reserved:**
 - Decisions **D3260–D3289**: D3260–D3267 used, D3268–D3289 reserved and unused.
@@ -49,7 +48,6 @@ Both blocks were checked free on `main` at `0dec0bb36`. The highest decision the
 repo-coupling audit's block (D3230–D3259), and the highest check was 892.
 
 **What waits on something external:**
-- the owner's answer to D3267;
 - the owner's go for each task;
 - Check 900, which the owner runs after the release that carries L1;
 - L8's spec, which places its migration after this stage (O1).

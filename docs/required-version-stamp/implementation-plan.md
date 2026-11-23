@@ -14,10 +14,8 @@ The answers that shaped it, all 2026-11-23:
   refuse (D3264).
 - Console read paths are exempt and print one stderr line (D3265).
 - An `update` from a binary below the stamp refuses before its first write (D3266).
-
-**One decision is pending.** D3267: does a coding agent's `update` raise the stamp under the managed
-gate? The plan is written on the recommendation (yes, `version-stamp` joins `gatedStages`). T2a and
-T2b depend on D3267 (pending).
+- A coding agent's `update` raises the stamp under the managed gate: `version-stamp` joins
+  `gatedStages`, like `rules` (D3267).
 
 ## 1. Conventions every task follows
 
@@ -141,8 +139,8 @@ contract's sentence and schema (C1).
   - A `dev` or pre-release binary leaves the node alone and says so.
   - `--plan-only` plans and writes nothing.
   - `apply` and `stagesNamed` write it only when it is named.
-  - Under D3267 as recommended, the stage writes in a gated session. Under the alternative, its
-    `Apply` returns `AgentError` (the `credentials-route` model).
+  - In a coding agent's session on a managed project, the stage writes when the gate opens it
+    (D3267); T2b adds the gate entry.
 - Files: `internal/initflow/stage.go`, `internal/cli/update_version_stamp.go` (new),
   `internal/cli/update_version_stamp_test.go` (new), `internal/cli/init_stages.go`,
   `internal/cli/setup_refusals_test.go`.
@@ -154,13 +152,13 @@ contract's sentence and schema (C1).
   `TestRefusalMatrixListsEveryStageTheCLIRegisters` with the new row.
 - Command: `go test ./internal/cli/ -run 'Stamp|RefusalMatrix' -count=1 && go test ./internal/initflow/ -count=1`
 - Red step: `TestUpdateRaisesTheStampToItsRelease` fails while no stage writes the node.
-- Depends on: C1 (the node's shape); D3267 (pending) for the session branch of `Apply`.
+- Depends on: C1 (the node's shape).
 - Commit: `update: the version-stamp stage raises the required CLI (T2a, D3260, R1, R2)`
 - Reviewer tier: opus (a write to the project's config node, and a stage of `update`).
 
 ### T2b: the stamp under the gate, in the in-flight note and beside the policy delete
 - Acceptance:
-  - Under D3267 as recommended, `initflow.VersionStamp` joins `gatedStages`, with a comment that
+  - `initflow.VersionStamp` joins `gatedStages` (D3267), with a comment that
     gives the `rules` stage's reason: the document is the binary's own.
   - `TestUpdateLeavesARunInFlightRunning` raises the stamp mid-run, and the run still finishes.
   - `docs/design/update-in-flight.md` gets a `version-stamp` row after the policy rows, below line 62
@@ -175,8 +173,7 @@ contract's sentence and schema (C1).
 - Command: `go test ./internal/cli/ -run 'LeavesARunInFlight|GatesTheVersionStamp|PolicyDeleteKeepsTheStamp|InFlightLine' -count=1 && go test ./internal/cli/ -run Docs -count=1`
 - Red step: `TestUpdateManagedGatesTheVersionStampStage` fails while an agent session stops at the
   stage.
-- Depends on: T2a (the stage it gates and documents; behaviour). D3267 (pending): under the
-  alternative, the gate entry and its test are dropped and the rest stays.
+- Depends on: T2a (the stage it gates and documents; behaviour).
 - Commit: `update: the version stamp under the managed gate and in the in-flight note (T2b, D3267)`
 - Reviewer tier: opus, mandatory independent review (a managed-gate entry).
 
