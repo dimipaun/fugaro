@@ -432,6 +432,42 @@ import (
 // docs/batch-run-identity/, and two cases bend those files to prove the check
 // reads them out of the tree rather than remembering them.
 
+// Check 831 is the proof R11 asks for, the one check that runs the whole thing
+// end to end: one real sandbox run launched on Batch, its job held to the run by
+// the run's own FUGARO_RUN variable rather than by a name, the ledger that says
+// it opened its session and was metered, the ticket the launcher put on the job
+// and where Batch printed it (the job's own document, the logs and the CreateJob
+// audit record -- D3115's rule measured rather than assumed) -- and then four
+// attacks made as a SECOND launcher, every one of them running as the run's own
+// job account so that a refusal is about the VM and not the account: the ticket
+// the second launcher's own read of the run's job found, replayed into a job of
+// its own, the same job with no ticket at all (the control), a SECOND launch's
+// job deleted while it is still queued and re-created under the same name with
+// that run's unspent ticket (D3108's id, F30 -- the queued window is the attack,
+// and the row FAILs when the job was not queued when it was deleted), and the
+// issuance record read straight out of the database with the second launcher's
+// own token. Its fakes are a `gcloud`, a `curl` and a `fugaro` over a small
+// model of Batch, the Realtime Database and Cloud Logging driven by files the
+// case writes -- the
+// jobs that exist, each job's uid, state and object, one task-log answer per
+// uid, the project-wide log answer, the CreateJob audit record, the database's
+// answers per path with a different answer from the second read on (so a row
+// that waits for a value rather than reading once is measured), every job
+// configuration the check submits, and a delete whose acceptance is listed for a
+// while afterwards and whose name stays un-submittable (ALREADY_EXISTS) until
+// the platform has finished with it -- so a case can read the body it sent,
+// including the ticket, which the test asserts never reaches the block, the
+// progress log or any file but the one of its own. The refusal a claim comes
+// back with is what the two claim rows -- the replay and the re-creation -- are
+// judged on, and its own sentence is
+// what tells the VM's refusal from the ones the route answers WITHOUT asking the
+// link -- the once-only fence's, the ticket's own life, and `not_served` -- so
+// cases bend that sentence each of those ways and the rows are required to FAIL
+// on every one of them: a row that read any refusal as its own would pass on a
+// tree with no VM-to-job link at all. The tree is a fixture too, and four cases
+// bend it: no ticket's variable, another path family, no run variable and a run
+// variable of another shape.
+
 // Checks 50, 780 and 781 are the keys-through-service work's owner-run checks,
 // and the three are the ones whose fakes have to hold STATE rather than answer
 // reads, because what each check measures is what its own commands changed.
@@ -725,6 +761,7 @@ var liveCheckScripts = []struct {
 	{"check810.sh", "check810_test.sh"},
 	{"check811.sh", "check811_test.sh"},
 	{"check-830.sh", "check-830_test.sh"},
+	{"check-831.sh", "check-831_test.sh"},
 	{"check-840.sh", "check-840_test.sh"},
 	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
 	{"check-750-review-against-task.sh", "check-750-review-against-task_test.sh"},
