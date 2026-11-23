@@ -92,7 +92,7 @@ and 3, where the setting lives.
 | RC31 | `workflows.*.job_profile`, `needs`, `ab.reviewer_arm` | picks among admin-made profiles | Benign B14 | repo-write | none | keep if approved | none | S | M |
 | RC32 | `workflows.*.dockerfile`, `image.*`, `rebuild.*`; `.fugaro/<wf>.Dockerfile` | the repo's derived image | Dead, but live in `update` for a no-catalog project (F4) | repo-write, TF-admin | blocks | kept by D1900; L9 | none | M | M |
 | RC33 | `workflows.*.commands.*`, `cache`, `inputs.*`, `checkout` | how the repo builds and tests | Benign B15 | repo-write | none | keep if approved | none | S | S |
-| RC34 | `workflows.*.resources`, `timeouts.*` | the per-repo job's CPU, memory and `TaskTimeoutS` (`infra/spec.go`) | Infra | repo-write, TF-admin | blocks | job profile (U1) | Owned: M2 | M | M |
+| RC34 | `workflows.*.resources`, `timeouts.*` | the per-repo job's CPU, memory and `TaskTimeoutS` (`infra/spec.go`). On a shared job (F18): resources do not reach the container, but the runner prices compute and gates outputs memory by them; `timeouts.*` reach the runner, clamped down to the profile's `timeout_class` (`clampTotalToJob`) | Infra | repo-write, TF-admin | blocks | job profile | Owned: M2 | M | M |
 | RC35 | `workflows.*.secrets` | Secret Manager mounts; accepted and ignored (`RepoSecretsOff`, D2313) | Dead | repo-write | none | project secrets | Owned: shared-jobs M1 | S | S |
 | RC36 | `.fugaro/recipes/<name>.yaml` (`readRepoRecipe`) | wins over the project recipe | Benign B16 | repo-write | none | keep if approved | none | S | M |
 | RC37 | `agent.instructions`, `agent.review` files | prompts per repo | Benign B17 | repo-write | none | keep if approved | none | S | S |
@@ -146,7 +146,7 @@ No `google_cloudbuild_trigger` exists. The only per-repo Scheduler is the check 
 | RC68 | `gcp.SecretID(slug, logical)`; `modules/repo` `google_secret_manager_secret.this` | per-repo secret containers (ignored since D2313) | Dead | TF-admin | none | project secrets | Owned: shared-jobs M1, M2 | S | S |
 | RC69 | `config.PerRepositorySecret` (Bitbucket only) | Bitbucket token per repo | Infra | TF-admin | blocks | project `bitbucket_tokens` | Owned: bitbucket-token-types | M | M |
 | RC70 | `internal/cli/update_workflowsecrets.go` `writeWorkflowSecrets` | per-repo records written by `update` from the checkout | Infra | TF-admin | blocks | project workflow secrets (L6) | write from the published layer | M | M |
-| RC71 | `localcfg repos.<r>.github_app_id`, `github-app-key` container | GitHub App per repo (U2) | Infra | TF-admin | blocks | the project's App | settled by U2 | M | M |
+| RC71 | `localcfg repos.<r>.github_app_id`, `github-app-key` container | stored per repo; the per-repo job and build read it per repo, while the shared job, coordinator and Firebase stage take one ID and refuse two (`recordedGitHubAppID`, F19) | Infra | TF-admin | blocks | the project's App | one project-level App ID and key (L6) | M | M |
 
 ### Surfaces 7–8: images, Cloud Build and jobs
 
@@ -238,7 +238,7 @@ undone, or do differently depending on the directory it runs in?
    the `gcp_project` anchor edit (RC13), the plugin pin removal (RC38), `update --check` (RC12).
    Lift L5.
 5. **Workflow-secret records from the checkout** (RC70) and the GitHub App per repo (RC71,
-   pending U2). Lift L6. The per-repo Bitbucket token (RC69) is lift L4b, owned by
+   F19). Lift L6. The per-repo Bitbucket token (RC69) is lift L4b, owned by
    bitbucket-token-types.
 6. **Derived images of a no-catalog project** (RC73, RC74, RC32). These are kept by D1900; L9
    offers the alternative.
@@ -303,7 +303,7 @@ own spec when the owner picks it (D3236); "owned" items need none.
 | L4 | Credential type out of the repo | RC17, RC47, RC48 | model-credentials-routing MG1–MG6, X4 | its plan edges |
 | L4b | Bitbucket tokens at project or workspace level, not per repository | RC69 | bitbucket-token-types | its plan |
 | L5 | `update` reads no working directory: kinds and default entry from every enrolled repo's default branch; the anchor edit in `repos add`; the pin removal as a doctor notice | RC12, RC13, RC38, RC39, RC75 | new spec | L2 |
-| L6 | Workflow-secret records and the GitHub App from project data | RC70, RC71 | new spec | U2 |
+| L6 | Workflow-secret records and the GitHub App from project data | RC70, RC71 | new spec | — (U2 settled, F19) |
 | L7 | Admin-only infra stages: `update` and the after-write hook refuse a non-admin by name before any infra stage | RC87, RC88 | new spec | — |
 | L8 | Apply the benign rulings: migrate once, then reject the keys not kept, in every §5 reader | RC9, B1–B19 | new spec | D3235 rulings, L1 |
 | L9 | A no-catalog project gets a default catalog entry, so no derived image is built in `update` (T1) | RC32, RC73, RC74 | new spec (T1, answered 2026-11-22; D1900 stands) | L3, unless the default entry names no source repository |
