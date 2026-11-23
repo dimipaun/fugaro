@@ -6,6 +6,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/routing"
 )
 
@@ -34,6 +35,20 @@ import (
 // record: the record is wider than the table by precisely the entries D3196
 // leaves there, which is the whole reason the walk's switch is the run's image
 // and never the record's width or a header a call sends (contract-table.md).
+//
+// The record is not the only bound the old path had, and the bridge applies the
+// second one too. What a call could go out on was the record narrowed by the
+// project's own paid-fallback policy: creds' selection admits the project's
+// Anthropic key (tier B) only where the published policy writes
+// `credentials.fallback: auto`, so an `api-key` or a `cascade` repository under
+// `oauth-only` — absent, and the protective default (D152) — spent nothing on
+// that key, whatever its own record named. R4 retires that policy into the chain
+// itself (`auto` is the key in the chain, `oauth-only` no key), so a run of this
+// release carries the decision in its table and an older run has to be answered
+// it here: the bridge reads the same node the service's own scope reads and
+// answers the key only where it is in force. Reading the record alone would make
+// the record wider than the repository's pre-migration access in the one
+// direction the record cannot see.
 
 // legacyReadTimeout bounds the read this bridge makes.
 //
@@ -55,9 +70,23 @@ const authVertex = "vertex"
 // legacyAuth is the bridge over one installation's database: the record read
 // through creds' own reader, which is the reader the service's old path reads it
 // with (creds.Store.RepoAuth over the same node), so the two cannot disagree
-// about a record.
+// about a record — and the published policy read through the reader the service's
+// own scope reads it with, so the two cannot disagree about the paid fallback
+// either.
 type legacyAuth struct {
-	db creds.DB
+	db     creds.DB
+	policy legacyPolicy
+}
+
+// legacyPolicy is the one question this bridge asks the published policy:
+// whether the project pays a Claude call off the shared credentials and onto its
+// own Anthropic key (R4, D152). It is a narrow interface rather than the whole
+// PolicyReader because the bridge asks nothing else, and because a reader that
+// answers this alone is what a test can drive; RTDBPolicy is the implementation
+// every deployment hands in, and it is the same value the
+// service's Config carries as its Policy.
+type legacyPolicy interface {
+	Shared(ctx context.Context) (*projectpolicy.Policy, bool, error)
 }
 
 // The bridge is the interface the seam declares, checked here rather than at the
@@ -69,13 +98,16 @@ var _ LegacyBridge = legacyAuth{}
 // NewLegacyAuth is the bridge a deployment assigns to LegacyChain: the database
 // client the service's other nodes are read with, so the record is read over the
 // same service identity as the state beside it and no second client is built for
-// it.
+// it, and the policy reader over that same database, which is what bounds the
+// record by the project's paid fallback.
 //
 // It takes creds.DB rather than *rtdb.Client for the reason NewIssuanceStore
 // does (identity_record.go): the bridge makes one read and nothing else, which
 // is what lets a test drive it against a fake that speaks the interface.
 // *rtdb.Client is the implementation every deployment hands in.
-func NewLegacyAuth(db creds.DB) LegacyBridge { return legacyAuth{db: db} }
+func NewLegacyAuth(db creds.DB, policy legacyPolicy) LegacyBridge {
+	return legacyAuth{db: db, policy: policy}
+}
 
 // OldSources answers the sources one repository's old record stands for, and
 // whether the repository has a record this release can stand for at all.
@@ -90,7 +122,8 @@ func NewLegacyAuth(db creds.DB) LegacyBridge { return legacyAuth{db: db} }
 // from a read that failed is the direction that serves a call nobody bounded.
 //
 // A record that IS read and names nothing servable — an `oauth` record naming no
-// account, or an auth mode this release cannot stand for — answers true with no
+// account, an `api-key` or a `cascade` record on a project whose policy serves no
+// paid key, or an auth mode this release cannot stand for — answers true with no
 // sources: the record is there and it admits nobody, which is a different
 // situation from a repository no update has recorded and is the reason the
 // contract carries the flag beside the list.
@@ -104,37 +137,61 @@ func (l legacyAuth) OldSources(repository string) ([]routing.Source, bool) {
 	if err != nil || !found {
 		return nil, false
 	}
-	return legacySources(rec), true
+	return legacySources(rec, l.paidKey(ctx)), true
 }
 
-// legacySources is the record as the chain it stands for, per auth mode:
+// paidKey is whether the project's own policy may serve a call from its paid
+// Anthropic key: a written `credentials.fallback: auto` (R4's chain, D152's
+// protective default read backwards).
+//
+// Every answer but that one is "no": a policy that names none, a node this
+// release cannot read, a database that refused, and an absent reader all read
+// as `oauth-only`, which is the value a Settings built without a fallback has
+// too (creds.Fallback's zero value) — the fail-closed direction, and the one
+// the service's own selection takes for a policy it cannot read.
+func (l legacyAuth) paidKey(ctx context.Context) bool {
+	if l.policy == nil {
+		return false
+	}
+	p, found, err := l.policy.Shared(ctx)
+	if err != nil || !found {
+		return false
+	}
+	var c *projectpolicy.Credentials
+	if p != nil {
+		c = p.Credentials
+	}
+	return c.FallbackValue() == projectpolicy.FallbackAuto
+}
+
+// legacySources is the record as the chain it stands for, per auth mode, with
+// paid saying whether the project's key may be served at all (paidKey):
 //
 //	api-key  the project's Anthropic key, which is the one credential that mode
-//	         names (config.CredentialAnthropicKey)
+//	         names (config.CredentialAnthropicKey) — and nothing at all where
+//	         the project does not pay, which is what the old path served a
+//	         repository whose record names it on an `oauth-only` project
 //	oauth    one pool per account the record names, in the record's own order:
 //	         an account IS a pool of one (D3176), and the list is the set of
 //	         accounts this repository's runs may go out on, which is the whole of
 //	         what the record bounds (R7)
 //	cascade  the launcher's own credentials first and the project's key after
-//	         them, which is the cascade's two tiers as the ordinary
-//	         configuration writes them (R4: `fallback: auto` is the key in the
-//	         chain)
-//	vertex   Vertex, which that mode names and nothing else
+//	         them where the project pays (R4: `fallback: auto` is the key in the
+//	         chain, `oauth-only` no key)
+//	vertex   Vertex, which that mode names and nothing else — never gated on the
+//	         fallback, which R3/D3000 make the rule for a Claude call alone: a
+//	         project whose Claude calls run on donated tokens still has its
+//	         provider and Vertex calls served
 //
 // A mode this release does not know answers nothing at all: the record was
 // written by a release whose vocabulary is not this one's, and a source invented
 // for it would be a credential nobody recorded.
-//
-// The cascade's answer is the one place the record is lossy, and it is stated
-// rather than hidden: the record names no `credentials.fallback`, so a project
-// that had written `oauth-only` is answered the key as well — the direction that
-// keeps a run in flight going instead of halting it, and the one MG1 writes for
-// a repository whose fallback is `auto`, which is the default and the case the
-// cascade exists for. The table's own entry carries the exact chain for a run of
-// this release, which is why nothing of this release reads the bridge.
-func legacySources(rec creds.RepoAuth) []routing.Source {
+func legacySources(rec creds.RepoAuth, paid bool) []routing.Source {
 	switch rec.Auth {
 	case config.AuthAPIKey:
+		if !paid {
+			return nil
+		}
 		return []routing.Source{{Kind: routing.KindAnthropic}}
 	case config.AuthOAuth:
 		out := make([]routing.Source, 0, len(rec.Accounts))
@@ -143,7 +200,12 @@ func legacySources(rec creds.RepoAuth) []routing.Source {
 		}
 		return out
 	case config.AuthCascade:
-		return []routing.Source{{Kind: routing.KindLauncherPool}, {Kind: routing.KindAnthropic}}
+		out := make([]routing.Source, 0, 2)
+		out = append(out, routing.Source{Kind: routing.KindLauncherPool})
+		if paid {
+			out = append(out, routing.Source{Kind: routing.KindAnthropic})
+		}
+		return out
 	case authVertex:
 		return []routing.Source{{Kind: routing.KindVertex}}
 	}
