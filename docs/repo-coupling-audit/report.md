@@ -11,9 +11,12 @@ and this report disagree, the reconciliation wins.
 
 - **Class.** `Infra` (infra-bound), `Benign` (benign override candidate, Bn in §3), `Identity`
   (identity only), `Dead` (dead or vestigial).
-- **Perms today.** `TF-admin` (`terraform.admins`: apply Terraform, submit builds), `DB-admin`
-  (`roles/firebasedatabase.admin`), `operator`, `repo-write` (push to the default branch), `local`
-  (the owner's machine), `none`.
+- **Surface.** Each section heading names the surface; the rows below it share it.
+- **Perms today.** `TF-admin` (an admin in the grants node `config/admin/access`, from which
+  `update` derives `terraform.admins`: apply Terraform), `DB-admin` (`roles/firebasedatabase.admin`),
+  `operator` (start runs; also submits a repository's builds and acts as its job and build service
+  accounts, by design: `modules/repo/build.tf` `operator_build`), `repo-write` (push to the default
+  branch), `local` (the owner's machine), `none`.
 - **Update.** `blocks`: an admin's single `fugaro update` cannot do it, so a per-checkout run is
   needed. `varies`: the result depends on the working directory. `none`: no effect.
 - **Effort and risk.** `S`, `M`, `L`.
@@ -52,7 +55,7 @@ and 3, where the setting lives.
 | RC3 | `internal/cli/project.go` `resolveCheckout`, `selectedProjectErr` | the checkout's `fugaro.yaml` `project:` picks the project when no `--project` is given | Identity | none | none | keep; see F10 for monorepos | none | S | M |
 | RC4 | `internal/cli/review.go` (calls `originRepo`) | `review` needs a checkout without `--repo` | Identity | operator | none | keep | none | S | S |
 | RC5 | `internal/cli/orchestrator_import.go` | `orchestrator import` needs a checkout | Identity | operator | none | keep | none | S | S |
-| RC6 | `internal/cli/image_build_catalog.go`, `image_refresh.go` | `image build <entry>` runs as the cwd checkout's build SA; `image refresh --repo` must match the checkout | Infra | TF-admin | blocks | project build identity (D3232) | build SA per repo retired | M | M |
+| RC6 | `internal/cli/image_build_catalog.go`, `image_refresh.go` | `image build <entry>` runs as the cwd checkout's build SA; `image refresh --repo` must match the checkout | Infra | TF-admin or operator | blocks | project build identity (D3232) | build SA per repo retired | M | M |
 | RC7 | `internal/cli/project_enroll_converge.go` `runProjectReposEnroll` | `project repos add` needs a checkout unless `--allow-list-only`, then runs stages Policy, Installation, Repository | Infra | TF-admin (admin gate) | none (a separate command) | an allow-list write only, once M2 lands | none | M | M |
 | RC8 | `internal/cli/init.go` `initRun.repoEngine` | `setup\|update --repo [PATH]`: typed authorization, per-repo root apply, first builds | Infra | TF-admin | blocks | Owned: shared-jobs M2 and M7 (a shared repo already skips it) | retire roots (M2) | L | M |
 | RC9 | `internal/cli/settings_set.go` `settingsRepoFile`; `rigor` `--layer repo` | writes a repo's `fugaro.yaml`, possibly through a remembered checkout | Benign (writer) | repo-write | none | keep for approved Bn only | refuse keys not approved (D3235) | S | S |
@@ -148,8 +151,8 @@ No `google_cloudbuild_trigger` exists. The only per-repo Scheduler is the check 
 
 | ID | Location | Tied to the repo | Class | Perms | Update | Home | Migration | Eff | Risk |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| RC72 | `internal/cli/init_images_catalog.go` `imagesStage.staleCatalog` (`here` and `elsewhere` via `sameRepo`) | builds only the entries the cwd checkout owns | Infra | TF-admin | blocks | project build identity (D3232, L3) | none | M | M |
-| RC73 | `internal/cli/image_refresh_steps.go` `refreshBuilds` (run by `update`) | derived image for a no-catalog project | Infra | TF-admin | blocks | L9 | none | M | M |
+| RC72 | `internal/cli/init_images_catalog.go` `imagesStage.staleCatalog` (`here` and `elsewhere` via `sameRepo`) | builds only the entries the cwd checkout owns | Infra | TF-admin or operator | blocks | project build identity (D3232, L3) | none | M | M |
+| RC73 | `internal/cli/image_refresh_steps.go` `refreshBuilds` (run by `update`) | derived image for a no-catalog project | Infra | TF-admin or operator | blocks | L9 | none | M | M |
 | RC74 | `internal/cli/init_checkout_upgrade.go` `checkoutSteps` (`cloudStep`) | the checkout's job images refresh | Infra | TF-admin | blocks | goes with RC73 | none | S | S |
 | RC75 | `internal/cli/init_images.go` `imagesStage.kinds`; `init_policy_migrate.go` `checkoutWorkflows` | base kinds and the default entry read the cwd's workflows | Infra | TF-admin | varies | read every enrolled repo's default branch, or the published layer (L5) | none | M | M |
 | RC76 | `internal/backend/gcp/run.go` `jobFor`, `TaskTimeout` | falls back to the per-repo `JobPath(slug, wf)` | Infra | operator | none | shared job only | Owned: M2 | S | M |
@@ -177,7 +180,7 @@ setting lives.
 | ID | Location | Tied to the repo | Class | Perms | Update | Home | Migration | Eff | Risk |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | RC87 | `internal/cli/settings_access.go` (comment); `internal/access` gate | `update` asks no role; the gate is lenient by design | Infra (hidden admin dependency) | IAM only | none | admin-only stages refuse a non-admin by name (L7) | none | M | L |
-| RC88 | `internal/cli/write_publish.go` `publishAfterWrite`; `internal/apply/steps.go` | writers that are not role-gated trigger Terraform and Cloud Build stages after the write | Infra (hidden admin dependency) | IAM only | none | the after-write hook runs infra stages for admins only (L7) | none | M | L |
+| RC88 | `internal/cli/write_publish.go` `publishAfterWrite`; `internal/cli/chain.go` `chainApply`; `internal/apply/steps.go` | writers with no role gate (`models add\|rm`, `workspace`, `models provider`, `project binaries`, secrets expiry) trigger Terraform and Cloud Build stages after the write (F7) | Infra (hidden admin dependency) | IAM only | none | the after-write hook runs infra stages for admins only (L7) | none | M | L |
 | RC89 | `internal/cli/init_stages.go` `initStages` | update's stage list | Identity | TF-admin | none | the order L2–L6 empties its checkout stages | none | S | S |
 | RC95 | `internal/access/scope.go` `ScopeRepos`; `internal/cli/access_gate.go` `accessGateRepo`; node `config/admin/access` | a role can be scoped to a list of repository patterns | Identity (project-owned grants scoped by repo) | DB-admin | none | keep | none | S | S |
 
@@ -264,7 +267,8 @@ silently ignores a rejected key re-creates the stale-config problem.
 - **Mixed CLI versions.** An older CLI writes any repo key and the repo cap node unchecked. Only
   the policy schema version refuses (`VersionError`). The fence is lift L1.
 - **Monorepos and shared repos.** One project per repo is enforced by `runner` `sameProject`,
-  except with `FUGARO_PROJECT` unset and for follow-up runs. A monorepo shares one slug, so B-rows
+  except for follow-up runs and, with `FUGARO_PROJECT` unset, a local run (a cloud job without it
+  fails). A monorepo shares one slug, so B-rows
   apply to all its services. `image_map` collides across providers (RC51).
 - **Hidden admin dependencies.** RC87 and RC88. `fugaro run` itself triggers no Terraform or
   Cloud Build.
@@ -288,7 +292,7 @@ own spec when the owner picks it (D3236); "owned" items need none.
 | # | Lift | Rows | Owner | Waits on |
 | --- | --- | --- | --- | --- |
 | L1 | Required-version stamp: `update` writes the minimum CLI release beside `config/policy/shared`; the root pre-run refuses project commands below it, naming `brew upgrade` and `fugaro update` | §6 | new spec | — (first, because every "migrate once, then reject" below needs old CLIs fenced) |
-| L2 | Retire the per-repo roots and jobs | RC8, RC34, RC60, RC64, RC67, RC76–RC78, RC57 | shared-jobs-default M2 | Check 580 |
+| L2 | Retire the per-repo roots and jobs | RC7, RC8, RC34, RC60, RC64, RC67, RC76–RC78, RC57 | shared-jobs-default M2 | Check 580 |
 | L3 | One project build identity; catalog records and leases keyed by entry | RC6, RC44, RC55, RC56, RC61, RC65, RC72, RC82 | new spec (D3232) | L2 |
 | L4 | Credential type out of the repo | RC17, RC47, RC48 | model-credentials-routing MG1–MG6, X4 | its plan edges |
 | L4b | Bitbucket tokens at project or workspace level, not per repository | RC69 | bitbucket-token-types | its plan |
@@ -300,3 +304,4 @@ own spec when the owner picks it (D3236); "owned" items need none.
 | L10 | Docs and skills: fix the missing `fugaro upgrade` now (README, `docs/release.md`, the website's install page); rewrite per-checkout steps as each lift lands | RC90–RC94, RC96, RC97 | docs runs (D1 for RC93, RC96, RC97) | D1 none; the rest follow L2–L5 |
 | L11 | `image_map` keyed by provider | RC51 | small spec | — |
 | L12 | The console's repo-layer write names its target | RC80 | console task | — |
+| L13 | Dead repo keys out of the schema: `model_grades` in a repo file and `agent.compression` refused at decode with the fix, and their merge-time plumbing removed. Repo-level image rows stay (D1900); the plugin pin is L5; the per-repo secret containers are M1/M2 | RC20, RC22 | small spec | L1 |

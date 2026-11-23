@@ -31,18 +31,24 @@ Answers that shaped the plan, all 2026-11-22:
 - **Always.** A check script reads. Its whole call set is:
   - `gcloud … list|describe|get-iam-policy`, `gcloud storage ls`, `gcloud storage cat`
   - `gcloud auth print-access-token`
-  - `curl` GET on the RTDB REST API with `shallow=true`
-  - `fugaro update --plan-only --json --events step --project <p>` and `fugaro doctor --json`
+  - `curl` GET on the RTDB REST API (with `shallow=true`, except the grants node, below)
+  - `curl` POST to Firestore's `documents:listCollectionIds`, which reads (it is a POST only by the
+    API's shape)
+  - `fugaro update --plan-only --json --events --project <p>` (`--events` is a bool) and
+    `fugaro doctor --json`
 
   Two side effects of `update --plan-only` are accepted and documented in Check 891's section:
   Terraform's plan takes the state lock (it writes, then deletes, a `.tflock` object in the state
-  bucket; `internal/infra` passes no `-lock=false`), and the root pre-run records remembered
-  checkouts in the local config.
+  bucket, once for the installation root and once more for a checkout's repo root;
+  `internal/infra` passes no `-lock=false`), and the root pre-run records remembered checkouts in
+  the local config.
 - **Tokens and values.** The access token never reaches an argv. It goes into a 0600 curl config
   file in a 0700 scratch directory that the exit trap removes (`check-840.sh` `mint_token` is the
   pattern). An RTDB read prints keys only, never values: `shallow=true` returns primitive leaves
-  verbatim.
-- **No input.** Every `fugaro` and `gcloud` call runs with `</dev/null` and `--quiet`. It prints
+  verbatim. The one exception is the grants node `config/admin/access` in Check 892, whose values
+  are the principals and roles the check exists to compare; they hold no secret.
+- **No input.** Every call runs with `</dev/null`, and every `gcloud` call also with `--quiet`
+  (`fugaro` has no such flag; `--json` confirms nothing). It prints
   PASS or FAIL with what differed from `report.md`. It asks nothing (the no-prompt policy,
   `docs/no-prompt-policy/`).
 - **Ask first.** Any write, any launch that costs money, any new dependency.
@@ -63,20 +69,27 @@ Answers that shaped the plan, all 2026-11-22:
 
 ### K1: Check 890, as a script — the data layout of a real project
 
-- Acceptance: `check-890-data-layout.sh <fugaro-project>` lists, read-only, the RTDB keys two
-  levels under `config/`, `runs/`, `spend/<today>/`, `buildleases/`, `coordinator/` and `creds/`
-  (shallow GETs); the GCS prefixes two levels under `runs/`, `builds/`, `cache/`, `locks/`,
-  `tokens/` and `reports/`; the keys under `config/admin/`; and the Firestore collection ids. A
-  listing under a per-repo or per-run level samples at most `--sample N` slugs (default 3), so
-  `runs/` does not enumerate every run. It prints keys only. It marks every path with a slug
-  segment and prints FAIL naming any repo-keyed layout that is not among the expected patterns. The
-  patterns (rows RC40–RC59 and RC95 of `report.md`, each with its RC id) are a data block at the top
-  of the script.
+- Acceptance: `check-890-data-layout.sh <fugaro-project>` reads, keys only:
+  - in RTDB, the top-level keys, then for each storage-path row of `report.md` the parent of its
+    slug segment (`config/caps/repos`, `config/kill/repos`, `config/policy/repos`,
+    `config/policy/voice/repos`, `config/policy/route`, `creds/repoauth`, `creds/repoaccess`,
+    `runs`, `spend/<today>/repos`, `agents`, `outcomes/<today>`, `buildleases`,
+    `coordinator/repos`), plus one level under every other top-level key and `config/`'s children;
+  - in GCS, the prefixes two levels under `runs/`, `builds/`, `cache/`, `locks/`, `tokens/` and
+    `reports/`;
+  - in Firestore, the collection ids.
+
+  A listing at a per-repo or per-run level samples at most `--sample N` keys (default 3), so `runs/`
+  does not enumerate every run. It marks every path with a slug segment and prints FAIL naming any
+  repo-keyed layout outside the expected patterns. The patterns are a data block at the top of the
+  script, one per storage-path row (RC40–RC50 and RC52–RC56, each with its RC id). Rows that are not
+  storage paths (RC51, RC57–RC59, RC95) are left out.
 - Files: `scripts/live-checks/check-890-data-layout.sh` (new), `scripts/live-checks/check-890-data-layout_test.sh` (new).
 - Interfaces: Consumes nothing. Produces the output R1 records.
 - Tests: the script's own test, with the cases `test_a_known_layout_passes`,
   `test_an_unnamed_repo_keyed_path_fails`, `test_only_reads_are_called`, `test_values_are_never_printed`,
-  `test_the_token_is_never_on_argv` and `test_runs_are_sampled`.
+  `test_the_token_is_never_on_argv`, `test_runs_are_sampled`, `test_the_slug_level_is_reached`
+  (a `config/caps/repos/<slug>` fixture) and `test_stdin_is_closed`.
 - Command: `bash scripts/live-checks/check-890-data-layout_test.sh`
 - Red step: `test_a_known_layout_passes` fails before the script exists.
 - Depends on: none.
@@ -86,23 +99,27 @@ Answers that shaped the plan, all 2026-11-22:
 ### K2: Check 891, as a script — where `update` and a launch read repo context
 
 - Acceptance: `check-891-update-trace.sh <fugaro-project> [checkout…]` does three things:
-  1. It runs `fugaro update --plan-only --json --events step --project "$1"` once from an empty
+  1. It runs `fugaro update --plan-only --json --events --project "$1"` once from an empty
      temporary directory and once from each checkout named. `--project` is always passed, so a
      checkout's own `project:` cannot switch the comparison to another project; a checkout whose
      `project:` differs is reported and skipped.
   2. It prints, per stage, its state and detail in each place, and marks every stage whose state
      or detail differs between the empty directory and a checkout.
   3. It reads the newest `launch.json` of each enrolled repository (`gcloud storage cat`) and
-     prints the repository fields it holds.
+     prints its `job`. `runstore.Launch` holds no repository field; the job name says whether the
+     launch went to a shared project job or to the repository's own `JobPath(slug, workflow)`,
+     which is the launch's repo coupling (RC76). A live launch is not part of the check (see
+     "Considered and declined").
 
   It prints FAIL when a stage that differs is not among the blockers in `report.md` §4.
 - Files: `scripts/live-checks/check-891-update-trace.sh` (new), `scripts/live-checks/check-891-update-trace_test.sh` (new).
-- Interfaces: Consumes `update`'s `--events step` feed as it is. Produces the output R1 records,
+- Interfaces: Consumes `update`'s `--events` feed (its `stage` lines) as it is. Produces the output R1 records,
   which settles U4.
 - Tests: `test_matching_stages_pass`, `test_an_unlisted_differing_stage_fails`,
   `test_plan_only_is_always_passed`, `test_project_is_always_passed`,
   `test_a_checkout_of_another_project_is_skipped`, `test_only_reads_are_called`,
-  `test_stdin_is_closed`.
+  `test_stdin_is_closed`, `test_values_and_tokens_are_never_printed` (a fake secret in a stage
+  detail and in `launch.json`), `test_the_token_is_never_on_argv`.
 - Command: `bash scripts/live-checks/check-891-update-trace_test.sh`
 - Red step: `test_plan_only_is_always_passed` fails before the script exists.
 - Depends on: none.
@@ -118,23 +135,28 @@ Answers that shaped the plan, all 2026-11-22:
   - the local config's `terraform.admins`, `operators` and `budget_admins`.
 
   It prints, for each member named, which of `TF-admin`, `DB-admin` and `operator` it holds, and
-  which report rows (by the Perms column) it can therefore exercise. The admin set is read from
-  the grants node `config/admin/access` (keys only, through the RTDB REST API); the local
-  `terraform.admins` is printed beside it, and a difference is reported. It prints FAIL when a
-  member the node does not hold as admin holds any of these on the GCP project, the state bucket or
-  a per-repo service account, which settles U3:
-  - `roles/owner`, `roles/editor`, `roles/resourcemanager.projectIamAdmin`
-  - `roles/iam.serviceAccountUser` or `roles/iam.serviceAccountTokenCreator` on a build or job SA
-  - `roles/storage.admin` or `roles/storage.objectAdmin` on the Terraform state bucket
-  - `roles/cloudbuild.builds.editor`, `roles/run.admin`, `roles/secretmanager.admin`
-  - `roles/firebasedatabase.admin` (budget admins excepted: they hold it by design)
+  which report rows (by the Perms column) it can therefore exercise. Each principal's role comes
+  from the grants node `config/admin/access` (`{grants: [{user, role, scope}]}`, read with its
+  values; the local `terraform.admins` is printed beside it, and a difference is reported). The
+  script holds a data block of the grants each role is expected to hold, taken from the Terraform
+  modules:
+  - an operator: `roles/iam.serviceAccountUser` on the shared job SA (`modules/project/sa.tf`
+    `operator`) and on each per-repo build SA (`modules/repo/build.tf` `operator_build`),
+    `roles/storage.objectAdmin` on the state bucket (`modules/installation/iam.tf` `state`), and
+    the build submission those imply;
+  - a budget admin: `roles/firebasedatabase.admin`;
+  - an admin: anything.
 
-  The list is a data block at the top of the script.
+  It prints FAIL when a principal holds a grant outside its role's expected set: for example a
+  viewer or an unplaced principal with `roles/owner`, `roles/editor`,
+  `roles/resourcemanager.projectIamAdmin`, `roles/run.admin` or `roles/secretmanager.admin`, or an
+  operator with any of those. This settles U3.
 - Files: `scripts/live-checks/check-892-iam.sh` (new), `scripts/live-checks/check-892-iam_test.sh` (new).
 - Interfaces: Consumes nothing. Produces the output R1 records.
-- Tests: `test_an_admin_maps_to_tf_admin`, `test_a_member_with_apply_rights_fails` (one case per
-  role in the list), `test_a_budget_admin_is_not_flagged`, `test_a_stale_local_admin_list_is_reported`,
-  `test_only_reads_are_called`, `test_the_token_is_never_on_argv`.
+- Tests: `test_an_admin_maps_to_tf_admin`, `test_a_correct_operator_passes` (the three
+  by-design grants), `test_an_operator_with_owner_fails`, `test_a_viewer_with_apply_rights_fails`,
+  `test_a_budget_admin_is_not_flagged`, `test_a_stale_local_admin_list_is_reported`,
+  `test_only_reads_are_called`, `test_the_token_is_never_on_argv`, `test_stdin_is_closed`.
 - Command: `bash scripts/live-checks/check-892-iam_test.sh`
 - Red step: `test_an_admin_maps_to_tf_admin` fails before the script exists.
 - Depends on: none.
@@ -145,14 +167,16 @@ Answers that shaped the plan, all 2026-11-22:
 ### K4: Checks 890 to 892 registered in the suite and the checklist
 
 - Acceptance: `scripts/live_checks_test.go`'s list names the three scripts and their tests.
+  `scripts/live-checks/README.md` says both naming forms are in use (`check<NNN>.sh` and
+  `check-<NNN>-<name>.sh`).
   `docs/gcp-live-checklist.md` has a section per check: what it measures, the one command the
   owner types, and what PASS means. It also has a register row for each.
   `go test ./scripts -run TestLiveCheckScripts` passes.
-- Files: `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md`.
+- Files: `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md`, `scripts/live-checks/README.md`.
 - Interfaces: Consumes K1–K3's files. Produces the registered checks.
 - Tests: `TestLiveCheckScripts`, `TestLiveCheckCIShardCoversTheSuiteOnce`, and the Docs tests that
   pin the checklist.
-- Command: `go test ./scripts -run 'TestLiveCheckScripts|TestLiveCheckCIShardCoversTheSuiteOnce' -count=1 -timeout 30m && go test ./internal/cli/ -run Docs -count=1`
+- Command: `for i in 0 1 2 3; do LIVE_CHECK_SHARD=$i/4 go test ./scripts -run TestLiveCheckScripts -count=1 -timeout 30m || break; done && go test ./scripts -run TestLiveCheckCIShardCoversTheSuiteOnce -count=1 && go test ./internal/cli/ -run Docs -count=1` (the README's sharded pass)
 - Red step: `TestLiveCheckScripts` lists no check-890 entry; a docs test that counts checklist
   sections fails until the sections exist.
 - Depends on: K1, K2, K3 (kept, data: the list test runs every file it names).
@@ -187,8 +211,9 @@ Answers that shaped the plan, all 2026-11-22:
 
 ### D1: the docs name `fugaro update`, not the missing `fugaro upgrade`
 
-- Acceptance: `README.md` (Getting started, Upgrading), `docs/release.md` (the users' step 3 and
-  the plugin paragraph) and `website/data/install.yaml` say `brew upgrade`, then one
+- Acceptance: `README.md` (Getting started, Upgrading), the whole of `docs/release.md` (the
+  maintainers' migrator bullet, the plugin paragraph and the users' step 3) and
+  `website/data/install.yaml` say `brew upgrade`, then one
   `fugaro update`. None names `fugaro upgrade` (no such command), committing the retired plugin
   pin, or the `/fugaro:upgrade` skill (the skill is `/fugaro:update`). Any test that pinned the old
   wording pins the new one. These are report rows RC93, RC96 and RC97, and the first half of lift
@@ -216,6 +241,9 @@ Answers that shaped the plan, all 2026-11-22:
 - Files: `docs/repo-coupling-audit/report.md`, `docs/repo-coupling-audit/reconciliation.md`,
   `docs/repo-coupling-audit/README.md`.
 - Interfaces: Consumes the owner's pasted outputs of Checks 890–892 and V1's answers.
+- Gate: launched only with the three outputs in its brief. A run that finds none stops at once and
+  writes nothing: the graph shows R1 ready when K4 and V1 merge, but its real input is the owner's
+  runs.
 - Tests: none (documents). The graph read still passes.
 - Command: `fugaro plan graph --plan docs/repo-coupling-audit/implementation-plan.md`
 - Red step: none (a documents task).
@@ -238,7 +266,7 @@ The critical path is K1 → K4 → owner runs → R1. Three agent tasks and one 
 
 | File | Writers | Levels |
 | --- | --- | --- |
-| `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md` | K4 | 1 |
+| `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md`, `scripts/live-checks/README.md` | K4 | 1 |
 | `docs/repo-coupling-audit/report.md`, `docs/repo-coupling-audit/reconciliation.md`, `docs/repo-coupling-audit/README.md` | V1, R1 | 0, 2 |
 | `README.md`, `docs/release.md`, `website/data/install.yaml`, `internal/cli/docs_upgrade_test.go` | D1 | 0 |
 | each check script | its own task | 0 |
@@ -284,5 +312,7 @@ Nothing ships: the checks are scripts and the rest is documents. No `### For ope
 - **Per-surface report runs**, declined by D3230: the static inventory was verified in this PR.
 - **Building the version stamp**, declined by D3233: it is lift L1.
 - **Removing the per-repo image code**, declined by D3234 (D1900 stands).
+- **A live launch in Check 891**, declined: it costs a run, and the stored `launch.json` already
+  names the job a launch went to. The owner can launch one by hand and rerun the check.
 - **One task for all three scripts**, declined: eight files, past the five-file limit, and three
   independent reviews in one.

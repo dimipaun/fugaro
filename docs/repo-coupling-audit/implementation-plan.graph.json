@@ -59,7 +59,8 @@
         "prediction": true,
         "paths": [
           "scripts/live_checks_test.go",
-          "docs/gcp-live-checklist.md"
+          "docs/gcp-live-checklist.md",
+          "scripts/live-checks/README.md"
         ]
       }
     },

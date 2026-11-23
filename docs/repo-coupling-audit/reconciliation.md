@@ -75,14 +75,21 @@ document records what the spec assumed, what the code says instead, and the owne
   on where it is run. This is the "blocks a single admin-run update" list in the report (§4).
 - **F7 (Gap, hidden admin dependency).** `fugaro update` asks no role (`settings_access.go`
   comment), and `publishAfterWrite` (`write_publish.go`, mapping in `internal/apply/steps.go`) runs
-  converge stages, Terraform and Cloud Build included, in-process after a write. Re-derived from
-  the call sites (no `accessGate*` call in the file), these writers are not role-gated: `rigor`
-  (`rigor.go`, `rigor_floor.go`, `rigor_security.go`), `workflow add|rm` (`workflow.go`),
-  `models add|rm` (`models_add.go`, `models_rm.go`), `project repos set`, `project routing set`,
-  `project profile`, `project clone-url` and the `workspace` commands. The `accounts` writers,
-  `secrets` and `models use` do call `accessGateProject` or `accessGateRepo`; the comment in
-  `settings_access.go` that lists them as ungated is stale. Cloud IAM is the only stop for the
-  ungated ones. The
+  converge stages, Terraform and Cloud Build included, in-process after a write; `chainApply`
+  (`internal/cli/chain.go`) does the same for a chain of changes. Two lists, re-derived from the
+  call sites:
+  - **Writers that run converge stages and call no role gate**: `models add|rm` and the
+    `workspace` writers (`chainApply`), `models provider` (`models_provider.go`, providers and
+    prices), `project binaries` (`project_binaries.go`) and the secrets-expiry writer
+    (`secrets_expiry.go`), all through `runAfterWrite`.
+  - **Gated writers that also run stages**: `settings set|unset` (`settingsAccessWrite`), the
+    `accounts` cascade, craft and pool writers and `models use` (`accessGateProject`), and
+    `image add` (`accessGate`).
+
+  `rigor`, `workflow add|rm`, `project repos set`, `project profile` and `project clone-url` write
+  through `applySettingsEdit` (`settings_write.go`), call no role gate and run no stage: they print
+  the next `fugaro update`. The comment in `settings_access.go` that lists `accounts` and `secrets`
+  as ungated is stale. Cloud IAM is the only stop for the ungated stage-running writers. The
   role gate is lenient by design: no roles means not judged, an unplaced caller is an implicit
   admin, an unreadable database is not judged. Report RC87 and RC88.
 - **F8 (Gap).** A repo can loosen the project:
@@ -105,7 +112,8 @@ document records what the spec assumed, what the code says instead, and the owne
   - `launchLevelsConfig` (`recipes_skew.go`)
   - `settingsRepoFile` (`settings_set.go`)
   - `config.EffectiveBaseBranch`, which also reads `localcfg repos.<r>.base_branch`
-  - the runner's default-branch and run-branch reads (`internal/runner/policy.go`, `rigor.go`)
+  - the runner's default-branch and run-branch reads (`internal/runner/policy.go`, `rigor.go`,
+    `followup.go`)
 
   Report §5 lists each one with what it can override.
 - **F10 (Gap, monorepos and shared repos).** A repository belongs to one project at a time: the
@@ -122,7 +130,7 @@ document records what the spec assumed, what the code says instead, and the owne
 - **F12 (Wrong, docs).** `README.md`'s Upgrading section says
   `brew upgrade … && fugaro upgrade`, "in each checkout", and says it pins the plugin in
   `.claude/settings.json`. No `upgrade` command exists, and the pin is retired: `pluginwire` only
-  removes it. Getting started (line 48) also tells the user to commit the pin and run
+  removes it. Getting started also tells the user to commit the pin and run
   `fugaro upgrade --local`. `docs/release.md` (the users' step 3) and `website/data/install.yaml`
   name the same missing command. Report RC93, RC96 and RC97.
 - **F13 (Exists).** Several lifts are already owned by approved plans:
@@ -194,7 +202,8 @@ Resolutions (one defensible answer, stated rather than asked):
   shared job takes the profile's `timeout_class`. Check 891 or a reading of
   `internal/sharedjob` settles it.
 - U2. Whether `localcfg repos.<r>.github_app_id` still mints per repository, or the project's App
-  covers every repository. Settled by reading `internal/gitprov/github` and Check 892.
+  covers every repository. Settled from the code by task V1 (leads: `internal/cli/catalog_provider.go`
+  `repoGitHubAppID`, `internal/backend/gcp/build.go`).
 - U3. The real IAM a member holds on `belong`. Settled by Check 892.
 - U4. Whether any member-run command triggers Terraform on `belong` today. F7 says the code allows
   it under IAM; Check 891's trace settles what actually happens.
