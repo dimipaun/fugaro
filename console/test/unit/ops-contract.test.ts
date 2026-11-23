@@ -41,10 +41,11 @@
 // drops `version`, which is the wizard's own refusal of a key that is not one of
 // its questions.
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   CONSOLE_OPERATION_NAMES,
@@ -67,8 +68,9 @@ import {
   setupAnswersFromFile,
 } from '../../src/main/handlers'
 import type { NewOperationDeps, NewOperationHandlerName } from '../../src/main/handlers'
-import { SETUP_ANSWERS_UNKNOWN_KEY, validateSetupAnswers } from '../../src/main/wizardrun'
+import { SETUP_ANSWERS_UNKNOWN_KEY, SETUP_NO_PLAN_REFUSAL, setupFloorSentence, validateSetupAnswers } from '../../src/main/wizardrun'
 import type { SetupAnswersHeld } from '../../src/main/wizardrun'
+import { SETUP_CLI_FLOOR } from '../../src/shared/version'
 import type { LaunchConfirmer } from '../../src/main/launch'
 import type { SettingsEditorRunner } from '../../src/main/settingsedit'
 import { imageAddConfirmID } from '../../src/main/imagesview'
@@ -94,6 +96,7 @@ import {
 import type { NewOperationName, NewOperationRequest } from '../../src/shared/new-ops'
 import { newReadFloorSentence } from '../../src/source/new-reads'
 import { NEW_OP_ANSWERS, SETUP_REFUSED_LINES } from '../support/newOpAnswers'
+import { itHostRoute } from '../support/hostRoute'
 
 /** CONSOLE_ROOT and REPO_ROOT are this package and the repository it sits in:
  * five of the fixtures are the Go tree's own goldens, and a fixture here is held
@@ -333,6 +336,41 @@ function aVersionProbe(): { readonly spawner: ChildSpawner; readonly probes: () 
   return { spawner, probes: () => probes }
 }
 
+/**
+ * aVersionAnswer is a `spawn` that answers every version handshake with
+ * `PROBE_VERSION`. The onboarding case below needs one: the resolution it drives
+ * walks rule 4's well-known prefixes and must succeed on whatever candidate the
+ * machine holds, and which binary that is -- and what a real one reports -- is
+ * not a fact a test may depend on.
+ */
+function aVersionAnswer(): ChildSpawner {
+  return (() => {
+    const stdout: ((chunk: Buffer | string) => void)[] = []
+    const closes: ((code: number | null, signal: string | null) => void)[] = []
+    const child: SpawnedChildLike = {
+      stdout: {
+        on: (_event, listener) => {
+          stdout.push(listener)
+        },
+      },
+      stderr: { on: () => undefined },
+      on: ((event: string, listener: (...args: never[]) => void) => {
+        if (event === 'spawn') (listener as () => void)()
+        else if (event === 'close') {
+          closes.push(listener as (code: number | null, signal: string | null) => void)
+        }
+        return undefined
+      }) as SpawnedChildLike['on'],
+      kill: () => true,
+    }
+    setImmediate(() => {
+      for (const listener of stdout) listener(`${PROBE_VERSION}\n`)
+      for (const listener of closes) listener(0, null)
+    })
+    return child
+  }) as ChildSpawner
+}
+
 describe('every name of the contract is an operation of the allow-list', () => {
   it('is a row of the surface, under the method the preload exposes', () => {
     for (const name of THE_NINE) {
@@ -406,6 +444,13 @@ describe('the operations MW1 and MW2 added are outside the contract', () => {
 })
 
 describe('the handlers behind the contract are the real ones', () => {
+  // The onboarding case points `HOME` at a scratch home -- `binDirectories` reads
+  // the process's own home when the caller passes none -- and this gives the
+  // environment back whatever that case does.
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it('builds one row per name, and every row takes the validated arguments alone', () => {
     const surface = surfaceWith(bench().deps)
     expect(Object.keys(surface.rows).sort()).toEqual([...NEW_OPERATION_HANDLER_NAMES].sort())
@@ -425,9 +470,11 @@ describe('the handlers behind the contract are the real ones', () => {
     // console that had lost a row looked exactly like one whose CLI was too old.
     // These rows read the binding, resolve the installation and then refuse in
     // the flow's own words; with nothing chosen there is nothing to resolve, and
-    // the answer is D13's sentence.
+    // the answer is D13's sentence. **Except the two setup rows**, which are the
+    // onboarding wizard in this state and are the case below this one.
     const surface = surfaceWith(bench().deps)
     for (const name of NEW_OPERATION_HANDLER_NAMES) {
+      if (name === 'setup.plan' || name === 'setup.apply') continue
       const reply = await surface.call(name, PAYLOADS[name])
       expect(reasonOf(reply), `${name} answered what the stub used to`).not.toBe(NEW_OPS_NOT_AVAILABLE)
       if (name === 'settings.editor.open') {
@@ -443,6 +490,40 @@ describe('the handlers behind the contract are the real ones', () => {
     }
   })
 
+  itHostRoute('shows the onboarding wizard with no installation, and resolves the CLI itself', async () => {
+    // **The wizard is the no-installation state's own view**: the plan's SW3b has
+    // the onboarding screen show it in place of a command line, and its two rows
+    // take no project at all (`spawn.ts`'s `takesProject: false`) -- so a plan
+    // refused for the lack of an installation would be a wizard nothing can run
+    // where it is shown. These two rows resolve the CLI the way the startup
+    // handshake does with nothing chosen: rule 4's walk, with no override.
+    //
+    // The walk is made a fact of this case rather than of the machine: a scratch
+    // home carries a `fugaro` of its own and `HOME` is pointed at it (the idiom
+    // `spawn.test.ts` uses), so a machine that has one in an earlier prefix and
+    // one that has none both reach a candidate -- and the version probe is this
+    // case's own, so no binary on the machine is ever run.
+    const home = mkdtempSync(join(tmpdir(), 'fugaro-onboarding-home-'))
+    const prefix = join(home, '.local', 'bin')
+    mkdirSync(prefix, { recursive: true })
+    const stub = join(prefix, 'fugaro')
+    writeFileSync(stub, '#!/bin/sh\n')
+    chmodSync(stub, 0o755)
+    vi.stubEnv('HOME', home)
+    const surface = surfaceWith(bench({ spawner: aVersionAnswer() }).deps)
+    // The plan reaches the wizard, which is behind its own floor: the sentence is
+    // the flow's own, and the stub's `not available in this build` is nobody's.
+    const plan = await surface.call('setup.plan', PAYLOADS['setup.plan'])
+    expect(reasonOf(plan), 'setup.plan answered what the stub used to').not.toBe(NEW_OPS_NOT_AVAILABLE)
+    expect(reasonOf(plan), 'setup.plan with no installation chosen').toBe(
+      setupFloorSentence(SETUP_CLI_FLOOR, PROBE_VERSION),
+    )
+    // The apply is the wizard's other row, and with no plan held it answers the
+    // flow's own "no plan is waiting" -- a sentence no stub and no floor
+    // produces, and one only a wizard that was really built can give.
+    const apply = await surface.call('setup.apply', PAYLOADS['setup.apply'])
+    expect(reasonOf(apply), 'setup.apply with no installation chosen').toBe(SETUP_NO_PLAN_REFUSAL)
+  })
   it('refuses an installation the resolver will not take, in the resolver’s words', async () => {
     // The other half of "a handler really ran": the binding is read, the override
     // is resolved, and the refusal is the resolution's own sentence. The override
@@ -559,6 +640,24 @@ describe('the handlers behind the contract are the real ones', () => {
     // inside the lapse, both of them around the table.
     expect(index).toContain(
       'lapseHandlers(reducedModeHandlers(gated, storedCompatibility), licenceReplyFor)',
+    )
+  })
+
+  it('reads the licence the three flows are handed, per project', () => {
+    // The one reader `handlers.ts` builds the wizard and the two writes from.
+    // It is read out of the source because `index.ts` imports Electron, and it
+    // is pinned at all because nothing else in the tree would notice it going:
+    // the flows' own tests build their writers directly, and the gate at the
+    // door (`lapseHandlers`) is a different mechanism -- it takes the row away
+    // from the renderer, while a window's own yes leaves the reader as the only
+    // thing between a lapsed licence and a child. `lapse-wiring.test.ts` drives
+    // that path; this is the wiring it drives.
+    const index = withoutComments(readFileSync(join(CONSOLE_ROOT, 'src', 'main', 'index.ts'), 'utf8'))
+    expect(
+      index,
+      'the reader is no longer the store read with the project it was asked about',
+    ).toContain(
+      "lapsed: (project) => licenceStateOf(licenceStore.read(project, new Date())) === 'lapsed',",
     )
   })
 

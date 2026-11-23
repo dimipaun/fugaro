@@ -1204,6 +1204,46 @@ describe('setup.apply', () => {
     expect(removed).toHaveLength(1)
   })
 
+  it('stops the apply the window’s own yes starts when the licence has lapsed', async () => {
+    // **The lapse is asked where the child is spawned, and not only at the
+    // door.** The window's yes reaches `runApply` from `decide`, and no IPC
+    // handler is on that path at all -- so `lapseHandlers`' gate on
+    // `setup.apply` (the row's own `refusedAfterLapse` column) is not what stops
+    // a plan the operator made after the lapse, which is kept and opens its
+    // window. The plan is a dry run and stays reachable; the apply it stands for
+    // is the row the lapse takes away, and this is that column on the window's
+    // path.
+    let lapsed = true
+    const feeds = [aFeed([DONE]), aFeed([DONE]), aFeed([DONE])]
+    const { wizard, calls, confirmer, removed } = aWizard({
+      floor: '0.120.0',
+      lapsed: () => lapsed,
+      feeds,
+    })
+    await wizard['setup.plan'](planArgs(anAnswers()))
+    // The plan is a child of its own and runs: the lapse takes the apply, not the
+    // plan the operator reads before deciding.
+    expect(calls).toHaveLength(1)
+    confirmer.opened[0]?.decide(true)
+    await flush()
+    // **Nothing was spawned**, and the renderer's own door answers the lapse's
+    // sentence -- the one sentence a lapsed console gives (`licence-state.ts`) --
+    // rather than the apply's. The working directory goes with the refusal
+    // instead of staying behind a record nothing will use.
+    expect(calls).toHaveLength(1)
+    expect(await refusalOf(() => wizard['setup.apply']({}))).toBe(LAPSE_REFUSAL)
+    expect(removed).toHaveLength(1)
+
+    // **The answer is read per apply and not captured once**: a renewal pasted
+    // during the session gives the apply back at the next plan, which is why the
+    // wiring asks the predicate instead of holding its answer.
+    lapsed = false
+    await wizard['setup.plan'](planArgs(anAnswers()))
+    confirmer.opened[1]?.decide(true)
+    await flush()
+    expect(calls).toHaveLength(3)
+    expect((await wizard['setup.apply']({})).document.lines).toEqual([DONE])
+  })
   it('gives the record and the directory up on a no, and applies nothing', async () => {
     const { wizard, calls, confirmer, removed } = aWizard({ floor: '0.120.0' })
     await wizard['setup.plan'](planArgs(anAnswers()))
