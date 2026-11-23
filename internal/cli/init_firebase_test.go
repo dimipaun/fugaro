@@ -922,9 +922,11 @@ func TestTheRunIndexIndexesWaitForTheDatabase(t *testing.T) {
 	}
 
 	// The next run meets the database the first one made, and says so. It is
-	// the update door with the flag, because a plain `update` skips a stage
-	// whose database this machine already records (F34) and would leave the
-	// root unplanned.
+	// the update door with the flag: this rig's state bucket holds no Firebase
+	// state, so the stage's own check cannot read whether the run index's
+	// composite indexes are already there, and F34's skip stands (RI2, the
+	// firebaseSkip the check asks) — a plain `update` would leave the root
+	// unplanned here.
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.save(t)
 	if out, err := updateRun(t, r.initRig, "update", "--firebase-project", fpID); err != nil {
