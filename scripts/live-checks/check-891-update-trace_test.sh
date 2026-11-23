@@ -33,6 +33,10 @@ DEADLINE=${CHECK891_TEST_DEADLINE:-120}
 FAKE_SECRET="Fake${RANDOM}Value$(printf '%05d' 891)_Not_A_Real_One"
 FAKE_TOKEN="Fake${RANDOM}Access$(printf '%05d' 891)_Token_For_Tests"
 
+rand_from() { # rand_from <tr-set> <length>
+  LC_ALL=C tr -dc "$1" </dev/urandom | head -c "$2" || true
+}
+
 failures=0
 fail() {
   echo "FAIL: $*" >&2
@@ -154,7 +158,7 @@ PY
 }
 
 # base_feed writes the stages every place shares; a case then bends a place.
-base_feed() { # base_feed <out> <repository-state> <repository-detail> [preflight-detail]
+base_feed() { # base_feed <out> <repository-state> <repository-detail> [preflight-detail] [secrets-state] [secrets-detail]
   {
     printf '{"type":"step","stage":"preflight","name":"preflight","detail":""}\n'
     stage_line preflight "done" "${4:-gcloud, terraform and the credentials are in place}"
@@ -162,6 +166,7 @@ base_feed() { # base_feed <out> <repository-state> <repository-detail> [prefligh
     stage_line firebase "done" "No changes"
     stage_line images "done" "the base image is pinned"
     stage_line plugin "done" "the plugin is installed at user scope"
+    stage_line secrets "${5:-skipped}" "${6:-not in a checkout of a repository: run fugaro update there to take its secrets}"
     stage_line repository "$2" "$3"
     stage_line policy "done" "the published policy is this release's"
     stage_line checkout skipped "not in a checkout: the checkout's job images are refreshed where the checkout is"
@@ -334,10 +339,28 @@ test_stdin_is_closed() {
   expect_status "$status" 0 "stdin"
 }
 
+test_a_differing_secrets_stage_passes() {
+  case_dir secrets
+  base_feed "$answers/feed-sub.ndjson" will-do "would apply the repository root of acme/sub" "" \
+    will-do "would create the secret container of acme/sub"
+  run891 test "$sub"
+  expect_status "$status" 0 "a differing secrets stage"
+  expect_contains "$out" "CHECK 891 RESULT: PASS (exit 0)" "a differing secrets stage"
+  expect_contains "$out" "RC98" "a differing secrets stage: its row is named"
+  expect_not_contains "$out" "NOT A BLOCKER" "a differing secrets stage"
+}
+
 test_values_and_tokens_are_never_printed() {
   case_dir values
-  base_feed "$answers/feed-empty.ndjson" skipped "not in a checkout; token=$FAKE_SECRET"
-  base_feed "$answers/feed-sub.ndjson" will-do "would apply the repository root, holding $FAKE_SECRET"
+  # Lower-case credentials have no case to give them away: a forge-style
+  # prefixed token, a long plain run and a short hex key.
+  local ghp lower32 hex26 digest
+  ghp="ghp_$(rand_from 'a-z0-9' 40)"
+  lower32=$(rand_from 'a-z' 32)
+  hex26=$(rand_from '0-9a-f' 26)
+  digest="sha256:$(rand_from '0-9a-f' 64)"
+  base_feed "$answers/feed-empty.ndjson" skipped "not in a checkout; token=$FAKE_SECRET; base $digest in gs://fugaro-runs-sbx-proj/runs/"
+  base_feed "$answers/feed-sub.ndjson" will-do "would apply the repository root, holding $FAKE_SECRET $ghp $lower32 key $hex26; base $digest in gs://fugaro-runs-sbx-proj/runs/"
   launch_json "$answers/obj/runs_acme-sub-1a2b3c_20261122-100000-bbbb_launch.json" 20261122-100000-bbbb \
     fugaro-p-default-github-team-0a1b2c3d "$FAKE_SECRET"
   run891 test "$sub"
@@ -349,6 +372,11 @@ test_values_and_tokens_are_never_printed() {
   expect_not_contains "$out" "$FAKE_TOKEN" "values: the token on stdout"
   expect_not_contains "$err" "$FAKE_TOKEN" "values: the token on stderr"
   expect_not_contains "$out" "owner@example.invalid" "values: launch.json's other fields"
+  expect_not_contains "$out" "$ghp" "values: a lower-case prefixed token"
+  expect_not_contains "$out" "$lower32" "values: a long lower-case run"
+  expect_not_contains "$out" "$hex26" "values: a 26-character hex key"
+  expect_contains "$out" "$digest" "values: an image digest is kept"
+  expect_contains "$out" "gs://fugaro-runs-sbx-proj/runs/" "values: a bucket path is kept"
 }
 
 test_the_token_is_never_on_argv() {
@@ -381,6 +409,7 @@ t test_a_checkout_of_another_project_is_skipped
 t test_only_reads_are_called
 t test_stdin_is_closed
 t test_values_and_tokens_are_never_printed
+t test_a_differing_secrets_stage_passes
 t test_the_token_is_never_on_argv
 
 if [ "$failures" -ne 0 ]; then

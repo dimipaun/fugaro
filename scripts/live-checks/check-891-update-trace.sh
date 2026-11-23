@@ -69,7 +69,8 @@ BLOCKERS='repository|§4.1, §4.3, §4.4, §4.5|RC8 RC13 RC17 RC39 RC48 RC60 RC6
 images|§4.2, §4.4, §4.6|RC32 RC72 RC75
 policy|§4.4|RC75
 plugin|§4.4|RC38
-checkout|§4.6|RC73 RC74'
+checkout|§4.6|RC73 RC74
+secrets|§4.4|RC98'
 
 FACTS=""
 TRACE=""
@@ -227,10 +228,13 @@ def redact(text):
     def opaque(m):
         s = m.group(0)
         start = m.start()
-        if re.fullmatch(r"[0-9a-f]{32,}", s) and text[max(0, start - 7):start] != "sha256:":
-            return "[redacted]"
+        if re.fullmatch(r"[0-9a-f]{64}", s) and text[max(0, start - 7):start] == "sha256:":
+            return s
         # Names Fugaro prints (projects, buckets, jobs, run ids, paths) are
-        # lower case; a run with upper case or base64 padding is not one.
+        # short pieces joined by -, / or .; a credential is one long piece,
+        # whatever its case, so a piece of 24 or more is masked first.
+        if any(len(piece) >= 24 for piece in re.split(r"[-/.]", s)):
+            return "[redacted]"
         if re.fullmatch(r"[a-z0-9._/-]+", s):
             return s
         if not (re.search(r"[0-9]", s) and re.search(r"[A-Za-z]", s)) and not re.search(r"[+=]", s):
@@ -416,8 +420,13 @@ step_plans() {
 # gs_ls URL prints the immediate children gcloud lists under a prefix, as the
 # last path segment of each.
 gs_ls() { # gs_ls <url> <gcp>
+  local entry
   gcloud storage ls "$1" --project="$2" --quiet </dev/null 2>/dev/null |
-    sed -e "s#^$1##" -e 's#/$##' | grep -v '^$' || true
+    while IFS= read -r entry; do
+      entry=${entry#"$1"}
+      entry=${entry%/}
+      [ -z "$entry" ] || printf '%s\n' "$entry"
+    done || true
 }
 
 step_launches() {
