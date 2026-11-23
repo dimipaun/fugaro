@@ -725,12 +725,19 @@ func workspaceCredentialsIn(ctx context.Context, lc *localcfg.Config, db *rtdb.C
 		return nil, err
 	}
 	c.declared = declared
+	// The fence is asked on EVERY path, the unchanged one included, and that is
+	// the path it exists for: the credentials node carries no cap, so an owner
+	// who removes `workspace_cap` from their own file while an all_members entry
+	// stands leaves the node saying exactly what the installation declares. The
+	// run that skipped the fence there would report nothing to publish and leave
+	// a pool offered to every member of a workspace whose ceiling is gone —
+	// existing members and the ones that join later, bounded by nothing.
+	if err := workspaceCredentialsAllMembersFence(rec, declared, node); err != nil {
+		return nil, err
+	}
 	if found && len(c.changes) == 0 && workspaceCredentialsMatch(node, declared) {
 		c.done = true
 		return c, nil
-	}
-	if err := workspaceCredentialsAllMembersFence(rec, declared, node); err != nil {
-		return nil, err
 	}
 	written, err := projectpolicy.WorkspaceCredentialsNode(declared)
 	if err != nil {

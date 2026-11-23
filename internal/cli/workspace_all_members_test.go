@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -182,6 +183,50 @@ func TestAllMembersPublishesVersionTwo(t *testing.T) {
 	}
 	if _, ok := byName["claude-oauth-token-team"]["all_members"]; ok {
 		t.Errorf("the entry offered to a named member carries an all_members key:\n%s", raw)
+	}
+}
+
+// TestAllMembersFenceAsksWhenOnlyTheCapMoved is D2977's own case, and the one
+// the credentials node cannot be asked about: the node carries no cap, so an
+// owner who takes `workspace_cap` out of their own file while an `all_members`
+// entry stands leaves the published node saying exactly what the installation
+// declares. A run that only asked the fence where the node changes would read
+// "nothing to publish" and leave a pool offered to every member of the
+// workspace — the ones that join later included — with the ceiling that is the
+// only bound on it gone.
+func TestAllMembersFenceAsksWhenOnlyTheCapMoved(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap+wsAllMembersShared)
+	fakeTerminal(t)
+	first := newWSUpdateRig(t, h)
+	if _, out, err := first.apply(t, false); err != nil {
+		t.Fatalf("the first run published nothing: %v\n%s", err, out)
+	}
+	p := h.project(t, "workspace-alpha")
+	if len(wsCredsNode(t, p.db, "workspace-alpha").Shared) == 0 {
+		t.Fatal("the first run published no pool for the second run to agree with")
+	}
+	// The owner takes the ceiling out of the file and leaves the entry: node and
+	// declaration still agree, which is the state this refusal is about.
+	text := readFileString(t, p.path)
+	stripped := strings.Replace(text, wsOwnerCap, "", 1)
+	if stripped == text {
+		t.Fatalf("the cap the fixture states is not in the config the rig wrote:\n%s", text)
+	}
+	if err := os.WriteFile(p.path, []byte(stripped), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second := newWSUpdateRig(t, h)
+	_, out, err := second.apply(t, false)
+	if err == nil {
+		t.Fatalf("a run published a workspace whose all_members entry stands and whose cap is gone:\n%s", out)
+	}
+	for _, want := range []string{"states no cap", "claude-oauth-token", "every member", "fugaro workspace cap set --workspace workspace-alpha --monthly"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if v := p.db.Value(projectpolicy.PathWorkspaceCredentials("workspace-alpha")); v == nil {
+		t.Error("the refusal took the published node with it: a refusal writes nothing and leaves what is there")
 	}
 }
 
