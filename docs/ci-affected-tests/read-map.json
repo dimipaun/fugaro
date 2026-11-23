@@ -18363,6 +18363,7 @@
         "internal/runindex/**",
         "internal/runindex/contract.go",
         "internal/runindex/firestore.go",
+        "internal/runindex/fold.go",
         "internal/runmsg/**",
         "internal/runner/**",
         "internal/runner/discovered.go",
