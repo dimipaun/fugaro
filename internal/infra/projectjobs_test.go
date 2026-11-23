@@ -416,6 +416,18 @@ func TestFilledSharedJobListDropsTheModelMounts(t *testing.T) {
 		t.Errorf("the unswitched job mounts %v and then %v: the flip moves a served profile's job alone (G9)", before.SecretEnv, off[name].SecretEnv)
 	}
 
+	// The fact the run's own door is keyed on (C1 (h), CS13): a served job's
+	// environment says its credentials are served, which is what stops a run of
+	// it reading its own auth or the account its name carries to choose a model
+	// credential the container does not hold — and the unswitched job carries
+	// no such entry, because it mounts them all.
+	if got := before.Env[config.CredentialsServedEnv]; got != "" {
+		t.Errorf("the unswitched job's environment carries %s = %q: the fact says the class's mounts are served, and this job keeps every one of them", config.CredentialsServedEnv, got)
+	}
+	if got := after.Env[config.CredentialsServedEnv]; got != config.ServedValue {
+		t.Errorf("the switched job's environment carries %s = %q, want %q: a run of it mounts no model credential, so the credential that serves its calls is the credentials service's answer and never the run's own selection (internal/runner's projectJobServed)", config.CredentialsServedEnv, got, config.ServedValue)
+	}
+
 	// The account's own token, which is the mount this class is mostly made of
 	// on a shared job: an account job of a served profile carries no
 	// CLAUDE_CODE_OAUTH_TOKEN at all, while the same profile's jobs with the

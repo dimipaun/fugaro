@@ -1540,6 +1540,20 @@ func runnerKeyCredential(lc *localcfg.Config, provider, repo string) (string, bo
 	return secret, true
 }
 
+// RunnerKeyCredential is runnerKeyCredential for a reader outside this package:
+// the container the runner-path key credential of provider's own name holds the
+// key in, for the repositories claude_accounts.<provider>.allow_data_to names.
+//
+// The reader is internal/cli's copy of the installation's model keys into the
+// credentials service's bundle (KS12): which container a repository's runs are
+// served a provider's key from is this function's answer and nobody else's, and
+// an entry the copy wrote holding a key the repository's own job does not mount
+// is a key no released run is served (F27, R6). It is exported rather than
+// spelled a second time there so the two cannot disagree.
+func RunnerKeyCredential(lc *localcfg.Config, provider, repo string) (string, bool) {
+	return runnerKeyCredential(lc, provider, repo)
+}
+
 // runnerKeyCredentialName is the credential a logical secret is the derived
 // container of, when this installation declares it as a RUNNER-path key
 // credential (D1670, MC23). It is the one place that reads the half off a

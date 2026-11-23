@@ -1454,7 +1454,7 @@ exec '%s' "$@"
 	res.requireSuccess(t)
 
 	if _, err := os.Stat(asked); !os.IsNotExist(err) {
-		t.Errorf("--at resolved a local `main` ref, which a linked worktree or a single-branch checkout need not have (stat: %v)\n%s", err, res.out)
+		t.Errorf("--at resolved a local `main` ref: the commit a cut is held to origin/main by is HEAD's, which the branch check has already tied to main, and the bare ref is a second question whose only other answer is git's own fatal: line ending the script (stat: %v)\n%s", err, res.out)
 	}
 	if got := testutil.Git(t, r.bare, "rev-parse", "v0.12.0^{commit}"); got != sha {
 		t.Errorf("tag v0.12.0 is on %s, want the commit --at named (%s)", got, sha)
