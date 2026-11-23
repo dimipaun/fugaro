@@ -904,12 +904,18 @@ func TestWorkspaceScopeWritesNothingToAMember(t *testing.T) {
 // R18, R14: what a call may carry, and which routes a workspace serves
 // ---------------------------------------------------------------------------
 
-// TestWorkspaceScopeRefusesACallThatPresentsASlip: a call to the workspace's
-// service carries the job's identity and the run's token and nothing else of
-// the member's — no slip id and no claim secret (R18, F40) — so a call that
-// presents one is refused rather than served slip-less, and a call that
-// presents none is served exactly as before.
-func TestWorkspaceScopeRefusesACallThatPresentsASlip(t *testing.T) {
+// TestWorkspaceScopeRefusesAMembersSlip: a call to the workspace's service
+// carries the job's identity and the run's token and nothing else of the
+// member's — no slip id and no claim secret (R18, F40) — and now that the
+// workspace has a slip of its OWN (WC4) the fence has two sides: a workspace
+// with no roster wired accepts no slip at all and refuses a member's, and one
+// with the roster wired reads only its own two headers, so a member's slip is
+// refused there too rather than read as the workspace's (F13 — each slip is
+// presented to the service that granted it).
+//
+// The two refusals are the same status and the same type on purpose: what tells
+// them apart is the sentence, and neither names the slip or where it came from.
+func TestWorkspaceScopeRefusesAMembersSlip(t *testing.T) {
 	s := newWS2Scope(t, nil)
 	s.serve(wsMemberA, wsPoolName)
 	sc := s.served(t, MessagesPath, wsAccountA)
@@ -943,6 +949,41 @@ func TestWorkspaceScopeRefusesACallThatPresentsASlip(t *testing.T) {
 			}
 			if !strings.Contains(e.Message, "carries no slip") {
 				t.Errorf("the refusal message %q does not say the service carries no slip", e.Message)
+			}
+		})
+	}
+
+	// The other side: the same call to a deployment that DOES read the
+	// workspace's own slip. The member's headers are not the workspace's, so
+	// the call is refused — and it is refused rather than served slip-less,
+	// because a run holding a slip means to use the credential that slip names
+	// (D2974) and this service does not serve it.
+	p := newWSPerson(t)
+	personSvc := p.service(t)
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"a slip id", HeaderSlip},
+		{"a claim secret", HeaderSlipClaim},
+	} {
+		t.Run("the workspace reads its own slip: "+tc.name, func(t *testing.T) {
+			resp, body := personSvc.callPath(t, MessagesPath, callBody("ws4-members-slip"), func(r *http.Request) {
+				p.hdr(wsAccountA)(r)
+				r.Header.Set(tc.value, "an-id-the-workspace-s-service-would-know")
+			})
+			if resp.StatusCode != StatusUnverified {
+				t.Fatalf("a call presenting the member's %s = %d, want %d: %s", tc.name, resp.StatusCode, StatusUnverified, body)
+			}
+			e := refusal(t, resp.StatusCode, body)
+			if e.Error != ErrorUnverifiedRunIdentity {
+				t.Errorf("the refusal type = %q, want %q", e.Error, ErrorUnverifiedRunIdentity)
+			}
+			if !strings.Contains(e.Message, "no member's") {
+				t.Errorf("the refusal's sentence is %q, want the one that says the workspace's service reads the workspace's own slip", e.Message)
+			}
+			if len(personSvc.up.Seen()) != 0 {
+				t.Errorf("the upstream saw %d calls, want none: the call was refused before any handler", len(personSvc.up.Seen()))
 			}
 		})
 	}
