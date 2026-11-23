@@ -755,6 +755,13 @@ var notADecisionSites = map[string]string{
 	// helper that decodes it rather than a file of the family.
 	"workspace_wiring.go:Read":              "the roster node as the adapter onto C1's Store reads it (WU1's `workspace.RosterStore.Read(ctx)`): one argument, which is the byte-level read's shape, and what it answers is a Realtime Database document with the ETag a conditional write is made under — read with the workspace owner's own credentials over IAM, answering or failing, with no line behind it to wait for. The adapter is the only place the family's sides read a node at all, so this one entry covers every command registered through it (docs/workspace-projects-users/contract.md, C1)",
 	"workspace_wiring.go:workspaceRosterAt": "the same roster node, decoded for the commands that need the workspace's mechanism, its folder or its people: a `Store.Read(ctx)` of a database document, which answers or fails rather than waiting on anyone, and a node that is not there is refused with the command that writes it first (`fugaro workspace init`, WU24) rather than read as an empty workspace",
+	// ... and WC3's own read of the same node, from the one stage that
+	// renders the intake's class list (R5, D3143): `Store.Read(ctx)` over IAM
+	// of the workspace's own database, on the workspace owner's own run, with
+	// no terminal and no question on any path — an absent node is the empty
+	// list rather than a wait, and a read that fails warns and leaves the list
+	// where it was, so nothing here can stop to ask a person anything.
+	"init_stages.go:rosterPeople": "the workspace's own roster node, read through WU1's `workspace.RosterStore.Read(ctx)` for the intake's class list (WC3, R5): a Realtime Database document with its revision, answering or failing; an installation that is not a workspace's project never reaches it at all (workspaceDeclared is asked first), and a node that is not there is an empty list, not a person's line",
 }
 
 // pendingSites is every decision read the package still makes and the task of

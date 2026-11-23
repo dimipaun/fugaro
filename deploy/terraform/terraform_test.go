@@ -8379,21 +8379,30 @@ func TestIntakeRefusesAContainerOfAnotherShape(t *testing.T) {
 }
 
 // TestLauncherAccountsReachTheServices pins the class list to the deployment
-// rather than to a literal: FUGARO_LAUNCHER_ACCOUNTS is the launcher class
-// (D1938, F25) — the bare addresses a Google ID token's email claim carries —
-// and the two services that admit a launcher read it from var.launcher_accounts,
-// which internal/infra derives from the same roster list the invoker grants are
-// made from (internal/infra/launchers.go; F31, F36).
+// rather than to a literal: FUGARO_LAUNCHER_ACCOUNTS is the class the process
+// reads — the bare addresses a Google ID token's email claim carries — and the
+// two services that admit a caller by it read it from the installation's
+// launchers, which internal/infra derives from the same roster list the invoker
+// grants are made from (internal/infra/launchers.go; F31, F36).
+//
+// The INTAKE's is the launchers AND the workspace roster's people (WC3, R5,
+// D3143): the module composes var.launcher_accounts with var.intake.people in
+// one expression (local.intake_accounts), which is also what the invoker grant
+// above it is made from, so the class and the grant cannot drift apart. The
+// credentials service's stays the launchers' own: that service's read mint
+// reaches the installing person's whole workspace, which is not what a roster
+// person is given (F10), so it reads no second list and neither does its grant.
 //
 // It is rendered the way every optional class list here is (credentials.tf's
 // FUGARO_PERSON_ACCOUNTS): a dynamic block, so an installation whose roster
 // names no launcher starts with a class that admits nobody rather than
 // refusing to bind a port, and no address is written into the module.
 func TestLauncherAccountsReachTheServices(t *testing.T) {
-	for _, path := range []string{
-		"gcp/modules/installation/credentials.tf",
-		"gcp/modules/installation/intake.tf",
+	for _, tc := range []struct{ path, expr string }{
+		{"gcp/modules/installation/credentials.tf", "jsonencode(var.launcher_accounts)"},
+		{"gcp/modules/installation/intake.tf", "jsonencode(local.intake_accounts)"},
 	} {
+		path := tc.path
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -8408,8 +8417,8 @@ func TestLauncherAccountsReachTheServices(t *testing.T) {
 			t.Errorf("%s: FUGARO_LAUNCHER_ACCOUNTS is not rendered by a dynamic env block, so an installation whose roster names no launcher gets an empty value rather than no entry (credentialsServiceLaunchers reads an absent entry as an empty class, and an empty string is refused)", path)
 			continue
 		}
-		if !strings.Contains(squash(m[1]), "jsonencode(var.launcher_accounts)") {
-			t.Errorf("%s: the launcher class is not jsonencode(var.launcher_accounts): the value is a JSON array of bare addresses and it is derived from the roster, never written here:\n%s", path, squash(m[1]))
+		if !strings.Contains(squash(m[1]), tc.expr) {
+			t.Errorf("%s: the class is not %s: the value is a JSON array of bare addresses derived from the roster, never written here, and the intake's is the launchers composed with the workspace roster's own people (WC3, R5):\n%s", path, tc.expr, squash(m[1]))
 		}
 	}
 	// The variable is the roster's own people, so the module must not carry a
