@@ -1,8 +1,9 @@
 # Repo-coupling inventory
 
 A static audit of `origin/main` at `3de72b780`, 2026-11-22: five read-only code surveys, one per
-group of surfaces. Each cited symbol was then re-checked by hand. Locations name a path and a
-symbol, never a line, because lines drift. The live columns (data layout on a real project,
+group of surfaces. Each cited symbol was then re-checked by hand. Rows RC98–RC105, which the
+check scripts' reviews found, were checked against `1d4b59344` on 2026-11-23 (reconciliation F20).
+Locations name a path and a symbol, never a line, because lines drift. The live columns (data layout on a real project,
 runtime trace, IAM a member really holds) are **static** until owner Checks 890–892 run
 ([implementation-plan.md](implementation-plan.md)). Where [reconciliation.md](reconciliation.md)
 and this report disagree, the reconciliation wins.
@@ -29,14 +30,14 @@ and this report disagree, the reconciliation wins.
 | --- | --- | --- | --- | --- | --- |
 | 1 CLI commands | 3 | 1 | 7 | 1 | 12 |
 | 2 Repo-local config | 3 | 17 | 2 | 5 | 27 |
-| 3–4 Data model, GCS | 6 | 2 | 11 | 1 | 20 |
+| 3–4 Data model, GCS | 7 | 2 | 15 | 1 | 25 |
 | 5 Terraform | 5 | 0 | 1 | 2 | 8 |
-| 6 Secrets | 3 | 0 | 0 | 1 | 4 |
+| 6 Secrets | 4 | 0 | 0 | 1 | 5 |
 | 7–8 Images, jobs | 7 | 0 | 0 | 0 | 7 |
 | 10 Console, mobile, MCP | 0 | 1 | 7 | 0 | 8 |
-| 11 Update and writers | 2 | 0 | 2 | 0 | 4 |
+| 11 Update and writers | 2 | 0 | 2 | 2 | 6 |
 | 12 Skills and docs | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **36** | **21** | **30** | **10** | **97** |
+| **Total** | **38** | **21** | **34** | **12** | **105** |
 
 Benign counts 21 rows: the 19 candidates B1–B19 of §3, plus two writers of repo-level config
 (RC9, RC80) that follow whatever the owner keeps. RC40 and RC41 are admin-written yet Benign;
@@ -123,6 +124,11 @@ and 3, where the setting lives.
 | RC57 | IAM `gcp.BucketCondition`, `TokenBucketCondition` | repo jobs scoped to their slug's prefixes | Infra | TF-admin | blocks | `ProjectBucketCondition` (shared job) | Owned: M2 | S | M |
 | RC58 | Policy `allow_repos`, `accounts.*.allow_repos`, `job_profiles.*.allow_repos`, `clone_urls`, `issue_sync.repos` | project lists naming repos | Identity | DB-admin | none | keep | none | S | S |
 | RC59 | Project layer `rigor.repos` | project-set level per repo | Identity | TF-admin (layer publish) | none | keep | none | S | S |
+| RC99 | RTDB `creds/workflowsecrets/<slug>` (`internal/creds/workflowsecrets.go` `pathWorkflowSecrets`) | one record per repo of its workflows' secrets (variable and container), read by the credentials service; written by `update` from the checkout (RC70). Infra: what it holds is the repo's own job wiring, not a fact about the repo | Infra | TF-admin | blocks (with RC70) | project workflow secrets (L6) | follows RC70 | M | M |
+| RC100 | RTDB `creds/leases/<slug>/<run>` (`internal/creds/state.go` `pathLeases`) | one probe lease per run, written by the credentials service. Identity: the slug names the run's repo, as in `runs/<slug>/<run>` (RC42) | Identity | service | none | keep | none | S | S |
+| RC101 | RTDB `creds/review-signs/<slug>/<run>` (`internal/credsvc/verdict.go` `pathReviewSigns`) | one run's one-signature mark on its verdict, written by the service. Identity, as RC100 | Identity | service | none | keep | none | S | S |
+| RC102 | RTDB `creds/issuance/<slug>/<run>` (`internal/identitywire/wire.go` `pathRecords`) | the record of the ticket the service issued one run. Identity, as RC100 | Identity | service | none | keep | none | S | S |
+| RC103 | RTDB `creds/buildpairs/<identity>/<build>` (`internal/creds/buildpairs.go` `pathBuildPairs`) | keyed by build identity, not by slug; each record names the repos the build may fetch, by canonical name. Identity: the names are the fence, and the key follows whatever build identity L3 leaves | Identity | service | none | keep | none (records expire) | S | S |
 
 ### Surface 5: Terraform
 
@@ -146,6 +152,7 @@ No `google_cloudbuild_trigger` exists. The only per-repo Scheduler is the check 
 | RC68 | `gcp.SecretID(slug, logical)`; `modules/repo` `google_secret_manager_secret.this` | per-repo secret containers (ignored since D2313) | Dead | TF-admin | none | project secrets | Owned: shared-jobs M1, M2 | S | S |
 | RC69 | `config.PerRepositorySecret` (Bitbucket only) | Bitbucket token per repo | Infra | TF-admin | blocks | project `bitbucket_tokens` | Owned: bitbucket-token-types | M | M |
 | RC70 | `internal/cli/update_workflowsecrets.go` `writeWorkflowSecrets` | per-repo records written by `update` from the checkout | Infra | TF-admin | blocks | project workflow secrets (L6) | write from the published layer | M | M |
+| RC98 | `internal/cli/initsecrets.go` `secretsStage.resolve` (the `update` stage `secrets`) | reads the working directory (`gitRead` ".", `readOrigin`, `defaultBranchConfig`), then creates and takes the checkout's repo secrets in containers named by slug (`gcp.SecretID`), or the project copy where one serves (`projectScope`). From outside a checkout it skips. Infra: it makes per-repo containers | Infra | TF-admin | varies | the target from the enrolled repos, not the cwd (L5) | none | M | M |
 | RC71 | `localcfg repos.<r>.github_app_id`, `github-app-key` container | stored per repo; the per-repo job and build read it per repo, while the shared job, coordinator and Firebase stage take one ID and refuse two (`recordedGitHubAppID`, F19) | Infra | TF-admin | blocks | the project's App | one project-level App ID and key (L6) | M | M |
 
 ### Surfaces 7–8: images, Cloud Build and jobs
@@ -175,14 +182,16 @@ No `google_cloudbuild_trigger` exists. The only per-repo Scheduler is the check 
 
 ### Surface 11: `fugaro update` and the writers
 
-Rows RC8, RC13, RC17, RC38, RC48, RC70–RC75 are update steps too; they are filed where the
-setting lives.
+Rows RC8, RC13, RC17, RC38, RC48, RC70–RC75 and RC98 are update steps too; they are filed where
+the setting lives.
 
 | ID | Location | Tied to the repo | Class | Perms | Update | Home | Migration | Eff | Risk |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | RC87 | `internal/cli/settings_access.go` (comment); `internal/access` gate | `update` asks no role; the gate is lenient by design | Infra (hidden admin dependency) | IAM only | none | admin-only stages refuse a non-admin by name (L7) | none | M | L |
 | RC88 | `internal/cli/write_publish.go` `publishAfterWrite`; `internal/cli/chain.go` `chainApply`; `internal/apply/steps.go` | writers with no role gate (`models add\|rm`, `workspace`, `models provider`, `project binaries`, secrets expiry) trigger Terraform and Cloud Build stages after the write (F7) | Infra (hidden admin dependency) | IAM only | none | the after-write hook runs infra stages for admins only (L7) | none | M | L |
 | RC89 | `internal/cli/init_stages.go` `initStages` | update's stage list | Identity | TF-admin | none | the order L2–L6 empties its checkout stages | none | S | S |
+| RC104 | `internal/cli/update_budget_off.go` `offerBudgetModeRemoval` (called from `init_stages.go`) | finds the checkout with `gitRead` "." and reads its working-tree `fugaro.yaml`; offers the removal of a `budget.mode: off` line as a diff. Runs under `--plan-only` too, and prints the diff. Not a stage, so Check 891 cannot see it. Dead: it migrates a value that is refused | Dead | repo-write | varies | a refusal or doctor notice that names the line (L5) | none | S | S |
+| RC105 | `internal/cli/update_backlog.go` `foldBacklog` (via `pluginwire.Locate` ".", then `docs/backlog/`) | folds the checkout's backlog folder into the project's backlog node, once. Returns early under `--plan-only`; on a real update it differs per working directory. Not a stage, so Check 891 cannot see it. Dead: it migrates a folder format D2716 superseded | Dead | operator | varies | fold from each enrolled repo's default branch, or retire the step (L5) | none | S | S |
 | RC95 | `internal/access/scope.go` `ScopeRepos`; `internal/cli/access_gate.go` `accessGateRepo`; node `config/admin/access` | a role can be scoped to a list of repository patterns | Identity (project-owned grants scoped by repo) | DB-admin | none | keep | none | S | S |
 
 ### Surface 12: skills, docs and templates
@@ -235,9 +244,11 @@ undone, or do differently depending on the directory it runs in?
 2. **Catalog entries owned by another repository** (RC72, RC6, RC55, RC61, RC65). Lift L3.
 3. **Credential records written from the checkout's auth** (RC17, RC48). Lift L4, owned by MCR.
 4. **Stages that read the working directory**: base kinds and the default catalog entry (RC75),
-   the `gcp_project` anchor edit (RC13), the plugin pin removal (RC38), `update --check` (RC12).
-   Lift L5.
-5. **Workflow-secret records from the checkout** (RC70) and the GitHub App per repo (RC71,
+   the `gcp_project` anchor edit (RC13), the plugin pin removal (RC38), `update --check` (RC12),
+   and the secrets stage, which takes the checkout's repo secrets and skips outside one (RC98).
+   Two steps that are not stages read it too: the `budget.mode` removal (RC104) and the backlog
+   fold (RC105). Check 891 sees stages only, so it cannot see these two. Lift L5.
+5. **Workflow-secret records from the checkout** (RC70, RC99) and the GitHub App per repo (RC71,
    F19). Lift L6. The per-repo Bitbucket token (RC69) is lift L4b, owned by
    bitbucket-token-types.
 6. **Derived images of a no-catalog project** (RC73, RC74, RC32). These are kept by D1900; L9
@@ -264,6 +275,8 @@ undone, or do differently depending on the directory it runs in?
 | `internal/cli/config_show.go` `configLayerAnchor` | checkout | which layer `config show` reads |
 | `internal/cli/cloud.go` `refuseSharedCheckout` | checkout | refuses a shared checkout |
 | `internal/cli/init_images.go` `imagesStage.kinds`; `init_policy_migrate.go` `checkoutWorkflows` | working tree | base kinds and the default catalog entry (RC75) |
+| `internal/cli/initsecrets.go` `secretsStage.resolve` (`defaultBranchConfig`) | default branch | which secrets the stage takes, and for which repo (RC98) |
+| `internal/cli/update_budget_off.go` `offerBudgetModeRemoval` (`prepareBudgetModeRemoval`) | working tree | nothing; it edits the file (RC104) |
 
 A key the owner rejects under D3235 must be refused by every one of these readers. A reader that
 silently ignores a rejected key re-creates the stale-config problem.
@@ -302,8 +315,8 @@ own spec when the owner picks it (D3236); "owned" items need none.
 | L3 | One project build identity; catalog records and leases keyed by entry | RC6, RC44, RC55, RC56, RC61, RC65, RC72, RC82 | new spec (D3232) | L2 |
 | L4 | Credential type out of the repo | RC17, RC47, RC48 | model-credentials-routing MG1–MG6, X4 | its plan edges |
 | L4b | Bitbucket tokens at project or workspace level, not per repository | RC69 | bitbucket-token-types | its plan |
-| L5 | `update` reads no working directory: kinds and default entry from every enrolled repo's default branch; the anchor edit in `repos add`; the pin removal as a doctor notice | RC12, RC13, RC38, RC39, RC75 | new spec | L2 |
-| L6 | Workflow-secret records and the GitHub App from project data | RC70, RC71 | new spec | — (U2 settled, F19) |
+| L5 | `update` reads no working directory: kinds and default entry from every enrolled repo's default branch; the anchor edit in `repos add`; the pin removal, and the `budget.mode` removal, as doctor notices; the secrets stage and the backlog fold take their repos from the enrolled list | RC12, RC13, RC38, RC39, RC75, RC98, RC104, RC105 | new spec | L2 |
+| L6 | Workflow-secret records and the GitHub App from project data | RC70, RC71, RC99 | new spec | — (U2 settled, F19) |
 | L7 | Admin-only infra stages: `update` and the after-write hook refuse a non-admin by name before any infra stage | RC87, RC88 | new spec | — |
 | L8 | Apply the benign rulings: migrate once, then reject the keys not kept, in every §5 reader | RC9, B1–B19 | new spec | D3235 rulings, L1 |
 | L9 | A no-catalog project gets a default catalog entry, so no derived image is built in `update` (T1) | RC32, RC73, RC74 | new spec (T1, answered 2026-11-22; D1900 stands) | L3, unless the default entry names no source repository |
