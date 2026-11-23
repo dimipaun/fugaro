@@ -92,8 +92,12 @@ func TestSetupAdoptsWithBillingAlreadyLinked(t *testing.T) {
 
 // TestSetupAdoptsRefusesAProjectThatHoldsSomethingOfFugaros: the read that
 // decides (init_adopt.go) is what stops the adoption, and the refusals are the
-// ones the stage has always had. The runs bucket, the installation's state
-// bucket, and the origin label a run of fugaro setup writes are each enough.
+// ones the stage has always had. The runs bucket and the installation's state
+// bucket are each enough, and so is the origin label's key carrying a value
+// this program does not write — what the refusal itself says of "a label
+// fugaro setup writes", and what init_adopt.go's list makes of that key. The
+// two values this program does write are not a refusal: they are the resume
+// (the last subtest here).
 func TestSetupAdoptsRefusesAProjectThatHoldsSomethingOfFugaros(t *testing.T) {
 	t.Run("the runs bucket", func(t *testing.T) {
 		r := newProjectRig(t)
@@ -122,7 +126,24 @@ func TestSetupAdoptsRefusesAProjectThatHoldsSomethingOfFugaros(t *testing.T) {
 		}
 	})
 
-	t.Run("the origin label", func(t *testing.T) {
+	t.Run("the origin label with a value this program does not write", func(t *testing.T) {
+		r := newProjectRig(t)
+		r.foreign(true)
+		// The key is the one fugaro setup writes, and "managed" is not a value
+		// it writes: the project is not Fugaro's by this label, and the refusal
+		// is the answer, exactly as it is for a bucket.
+		r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: "managed"})
+		out, _, err := r.run(t, true, newProj+"\n", "--create-project")
+		if ExitCode(err) != ExitUserError || !strings.Contains(out+errString(err), "holds something of Fugaro's") {
+			t.Errorf("exit %d (%v), want the refusal:\n%s", ExitCode(err), err, out)
+		}
+		if got := r.crm.Labels(newProj)[infra.CreatedLabelKey]; got != "managed" {
+			t.Errorf("the refused project's %s = %q, want the value it already carried, %q", infra.CreatedLabelKey, got, "managed")
+		}
+		r.nothingDone(t, "a project carrying the origin label with a value this program does not write")
+	})
+
+	t.Run("the origin label a run of fugaro setup wrote", func(t *testing.T) {
 		r := newProjectRig(t)
 		r.foreign(true)
 		r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
