@@ -1,0 +1,378 @@
+{
+  "schema_version": 3,
+  "plan": "docs/required-version-stamp/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the stamp contract",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/versionstamp/stamp.go",
+          "internal/versionstamp/stamp_test.go",
+          "internal/versionstamp/stub.go",
+          "schemas/required-cli.schema.json",
+          "docs/required-version-stamp/contract.md",
+          "internal/cli/required_cli_source.go"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/versionstamp/stub.go"
+      ]
+    },
+    {
+      "id": "T1",
+      "title": "the reader: cache, timeout, fail-open",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/versionstamp/source.go",
+          "internal/versionstamp/cache.go",
+          "internal/versionstamp/source_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T2a",
+      "title": "the version-stamp stage",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/initflow/stage.go",
+          "internal/cli/update_version_stamp.go",
+          "internal/cli/update_version_stamp_test.go",
+          "internal/cli/init_stages.go",
+          "internal/cli/setup_refusals_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T2b",
+      "title": "the stamp under the gate, in the in-flight note and beside the policy delete",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_managed.go",
+          "internal/cli/update_in_flight_test.go",
+          "docs/design/update-in-flight.md",
+          "internal/cli/policy_delete_keeps_stamp_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T3",
+      "title": "the fence at the root",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/root.go",
+          "internal/cli/required_cli.go",
+          "internal/cli/required_cli_test.go",
+          "internal/cli/project.go",
+          "internal/cli/required_cli_shared_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T4",
+      "title": "update refuses below the stamp",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_stamp_guard.go",
+          "internal/cli/init.go",
+          "internal/cli/update_stamp_guard_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T5",
+      "title": "doctor's cli-below-required",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor.go",
+          "internal/cli/doctor_required.go",
+          "internal/cli/doctor_required_test.go"
+        ]
+      }
+    },
+    {
+      "id": "T6",
+      "title": "the daemon holds below the stamp",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/orchestrator_run.go",
+          "internal/cli/orchestrator_required_test.go"
+        ]
+      }
+    },
+    {
+      "id": "K1",
+      "title": "Check 900, as a script",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-900-version-stamp.sh",
+          "scripts/live-checks/check-900-version-stamp_test.sh"
+        ]
+      }
+    },
+    {
+      "id": "K2",
+      "title": "Check 900 registered",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live_checks_test.go",
+          "docs/gcp-live-checklist.md",
+          "docs/coordinator/README.md",
+          "docs/periodic-reviews/README.md"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "integration",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/versionstamp/stub.go",
+          "internal/versionstamp/source.go",
+          "internal/cli/required_cli_e2e_test.go",
+          "docs/releases/v0.29.0.md"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "T7",
+      "title": "the working skill names the refusal",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/working/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "R-stamp-shape",
+      "title": "amend the stamp contract: the node's shape",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/versionstamp/stamp.go",
+          "schemas/required-cli.schema.json",
+          "docs/required-version-stamp/contract.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "T2a",
+      "needs": "C1",
+      "reason": "the node's shape it writes"
+    },
+    {
+      "task": "T3",
+      "needs": "C1",
+      "reason": "the Source interface and the refusal error"
+    },
+    {
+      "task": "T4",
+      "needs": "C1",
+      "reason": "the Source interface and the refusal error"
+    },
+    {
+      "task": "T5",
+      "needs": "C1",
+      "reason": "the Source interface"
+    },
+    {
+      "task": "T6",
+      "needs": "C1",
+      "reason": "the Source interface"
+    },
+    {
+      "task": "K1",
+      "needs": "C1",
+      "reason": "the node's shape it checks"
+    },
+    {
+      "task": "T2b",
+      "needs": "T2a",
+      "reason": "it gates, documents and tests the stage T2a writes"
+    },
+    {
+      "task": "K2",
+      "needs": "K1",
+      "reason": "it registers the script K1 writes"
+    },
+    {
+      "task": "I1",
+      "needs": "T1",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "T2a",
+      "reason": "the end-to-end test needs the stage to write the stamp"
+    },
+    {
+      "task": "I1",
+      "needs": "T3",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "T4",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "T5",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "T6",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "K1",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "T7",
+      "needs": "I1",
+      "reason": "the sentence becomes true only then"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T3",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "the fence needs the Source interface and the error, not the cache"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T4",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "the door check needs a fresh read's interface, not the reader's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T5",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "doctor needs the Source interface, not the reader's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T6",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "the daemon needs the Source interface, not the reader's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "T2a",
+        "needs": "T1"
+      },
+      "integration": "I1",
+      "reason": "the writer needs the node's shape, not the reader"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "K1",
+        "needs": "T2a"
+      },
+      "integration": "I1",
+      "reason": "the script needs the node's shape, not its writer"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-stamp-shape",
+      "contract": "C1",
+      "raised_by": "T2a",
+      "reason": "if the node needs a field the contract does not carry",
+      "affects": [
+        "T3",
+        "T5",
+        "K1"
+      ]
+    }
+  ]
+}
