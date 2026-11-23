@@ -224,7 +224,8 @@ func (r *run) escalateSecurity(ctx context.Context, at string) {
 		r.recordRefusedSecurity(at, matched[0])
 		return
 	}
-	r.levels, r.plan = levels, plan
+	r.levels = levels
+	r.setPlan(plan)
 	r.rec.Security = runstore.NewSecurityEscalation(at, matched[0])
 	if turnedOff {
 		// A layer wrote the level's own off-switch and the forced resolution

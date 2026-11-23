@@ -8,6 +8,9 @@ Report:   runs/acme-app-dc4d4e59e884fc44/20260101-000000-abcd/report.md
 Reviews
   round 2 senior: changes, 2 findings
 
+Review levels
+  level l2: 2 rounds, no cap recorded
+
 Findings (last review)
   [minor] (likelihood 1, impact 4, fix cost 4, class correctness) internal/queue/retry.go: the retry ceiling differs by one when a job is requeued twice
   [nit] (likelihood 2, impact 1, fix cost 1, class cosmetic) internal/queue/retry_test.go: the retry table test does not cover a requeue after a drain

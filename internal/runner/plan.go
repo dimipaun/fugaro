@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // planStep is one step of the run's loop after implement, with its rounds
@@ -205,8 +206,35 @@ func (r *run) buildPlan() error {
 	if err != nil {
 		return err
 	}
-	r.plan = plan
+	r.setPlan(plan)
 	return nil
+}
+
+// setPlan commits a plan to the run and writes it to the record: the plan the
+// runner runs and the plan a reader sees are one plan, and the second of them is
+// the only place a level's cap survives — the resolution that produced it reads
+// the recipe's text, the run's configuration and the mode, none of which the
+// record keeps, so nothing else can replay it (V1.3). The escalation's rebuild
+// (security.go) commits through here for that reason.
+func (r *run) setPlan(plan []planStep) {
+	r.plan = plan
+	r.rec.Plan = planRecordOf(plan)
+}
+
+// planRecordOf is the plan as the record carries it. A plan of no steps records
+// nothing rather than an empty block: the field is absent for a run that built
+// none, so a reader cannot tell an empty plan from an unread one, and an empty
+// plan is not a state the runner reaches — a recipe always holds at least the
+// review step (recipe.Parse).
+func planRecordOf(plan []planStep) *runstore.PlanRecord {
+	if len(plan) == 0 {
+		return nil
+	}
+	steps := make([]runstore.PlanStepRecord, 0, len(plan))
+	for _, st := range plan {
+		steps = append(steps, runstore.PlanStepRecord{Kind: string(st.Kind), Rounds: st.Rounds})
+	}
+	return &runstore.PlanRecord{Steps: steps}
 }
 
 // planFor is the plan the run's levels make of its recipe, checked. levels is

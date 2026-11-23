@@ -328,6 +328,37 @@ func TestPlanAdversarialRounds(t *testing.T) {
 	}
 }
 
+// TestPlanRoundsOfEveryStep: the record's plan block carries every step the
+// plan holds -- each level's loop with the rounds planOf resolved for it, and a
+// rebase step with its own one -- in the plan's own order, and nothing at all
+// for a plan of no steps (V1.3). It is the figure the Run screen's iteration bar
+// is drawn against, so a step the block dropped would be a level drawn with no
+// cap.
+func TestPlanRoundsOfEveryStep(t *testing.T) {
+	a := config.Agent{FirstLineRounds: 3, ReviewRounds: 2, AdversarialRounds: 4}
+	rec := planRecordOf(planOf(catalogRecipe(t, recipe.DefaultName), planLevels(true, true, true), a, nil, rigor.Pro))
+	want := []runstore.PlanStepRecord{
+		{Kind: string(recipe.StepFirstLine), Rounds: 3},
+		{Kind: string(recipe.StepReview), Rounds: 2},
+		{Kind: string(recipe.StepAdversarial), Rounds: 4},
+	}
+	if rec == nil || !slices.Equal(rec.Steps, want) {
+		t.Fatalf("plan record = %+v, want %+v", rec, want)
+	}
+	// A rebase step is a step like any other in the block; it is not a review
+	// level, and its one round bounds a stage rather than a loop.
+	rb := planRecordOf([]planStep{{Kind: recipe.StepRebase, Rounds: 1}})
+	if rb == nil || !slices.Equal(rb.Steps, []runstore.PlanStepRecord{{Kind: string(recipe.StepRebase), Rounds: 1}}) {
+		t.Fatalf("rebase plan record = %+v", rb)
+	}
+	// A plan of no steps records nothing, so the field is absent rather than an
+	// empty block: a reader can tell a run that built no plan from one whose
+	// plan is empty, and an empty plan is not a state the runner reaches.
+	if got := planRecordOf(nil); got != nil {
+		t.Fatalf("a plan of no steps recorded %+v, want the key absent", got)
+	}
+}
+
 // TestCheckPlanLevelSteps is planRecipe's own contract, which checkPlan has to
 // state because planRecipe cannot: a level that runs and whose recipe has no
 // step for it must be marked Inserted, or planRecipe leaves it out of the plan
