@@ -81,8 +81,8 @@ owner in Google Cloud and in Entra ID, and the spec's own sentence — *"Each pr
 Fugaro app's OAuth client ID as an allowed client, which project setup handles once"* — is asking
 for an `init`/Terraform surface that does not exist. What **does** exist now, and did not when
 [reconciliation.md](reconciliation.md) was written, is the app's side of it: the app carries Firebase
-through two `@react-native-firebase` packages (`mobile/package.json`: `app`, `crashlytics` —
-three until the owner's ruling of 2026-10-30, D731, dropped Analytics from the app),
+through three `@react-native-firebase` packages (`mobile/package.json`: `app`, `crashlytics`,
+`messaging` — four until the owner's ruling of 2026-10-30, D731, dropped Analytics from the app),
 `mobile/app.config.js` registers their config plugins and points them at the two
 native config files, and those files — `google-services.json` for Android and
 `GoogleService-Info.plist` for iOS — are **the owner's**, written by the Firebase console, named in

@@ -601,13 +601,14 @@ var mobileAuthProviderSymbols = map[string][]string{
 	"mobile/src/app-config.test.js": {"no reverse-DNS identity is committed here"},
 	"mobile/app.config.js":          {"export function resolveConfig(", "export const ID_VARIABLES = Object.freeze({"},
 	// The Firebase packages the app carries today -- which is why the fence is
-	// "no provider and no Auth package" rather than "no Firebase". Two, since
+	// "no provider and no Auth package" rather than "no Firebase". Three, since
 	// the owner's ruling of 2026-10-30 (D731) dropped Analytics from the app
 	// (review-levels re-plan, task T3.1), and the document's sentence moves
 	// with the manifest.
 	"mobile/package.json": {
 		"\"@react-native-firebase/app\"",
 		"\"@react-native-firebase/crashlytics\"",
+		"\"@react-native-firebase/messaging\"",
 	},
 	// Identity Platform is not a resource, and the workspace's own project is the
 	// one where the pin lives rather than the refusal.
