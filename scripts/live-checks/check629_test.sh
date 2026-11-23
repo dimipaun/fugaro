@@ -258,17 +258,19 @@ FUGARO_EOF
 
 # ------------------------------------------------------------------ documents
 # The credentials listing: the names, the types and the half that serves each —
-# never a value.
+# never a value. `serving_path` is the config's own spelling of that half
+# (config.CredentialServingPath): "credsvc" or "runner", as `fugaro accounts ls
+# --json` prints it, and the pool listing below reads the same half as prose.
 write_creds() { # json-dir MODE
   case "$2" in
   missing-member)
     cat >"$1/creds-missing-member.json" <<JSON
-{"version":1,"project":"$installation","complete":true,"credentials":[{"name":"$first_member","type":"openrouter","serving_path":"OpenRouter (api key)"}]}
+{"repo":"acme/sandbox","accounts":["default"],"complete":true,"credentials":[{"name":"$first_member","type":"openrouter","serving_path":"runner"}]}
 JSON
     ;;
   esac
   cat >"$1/creds.json" <<JSON
-{"version":1,"project":"$installation","complete":true,"credentials":[{"name":"$first_member","type":"openrouter","serving_path":"OpenRouter (api key)"},{"name":"$second_member","type":"openrouter","serving_path":"OpenRouter (api key)"},{"name":"claude-oauth-work","type":"anthropic","serving_path":"your Claude subscription (OAuth)"}]}
+{"repo":"acme/sandbox","accounts":["default"],"complete":true,"credentials":[{"name":"$first_member","type":"openrouter","serving_path":"runner"},{"name":"$second_member","type":"openrouter","serving_path":"runner"},{"name":"claude-oauth-work","type":"anthropic","serving_path":"credsvc"}]}
 JSON
 }
 
@@ -281,7 +283,7 @@ write_pools() { # json-dir MODE
 pools for project $installation (offline)
 
 NAME        STRATEGY  MEMBERS       SERVED BY
-coder-pool  failover  $first_member  OpenRouter (api key)
+coder-pool  failover  $first_member  a run's own gateway
 TXT
     ;;
   pool-none)
@@ -296,7 +298,7 @@ TXT
 pools for project $installation (offline)
 
 NAME        STRATEGY  MEMBERS                    SERVED BY
-coder-pool  failover  $first_member, $second_member  OpenRouter (api key)
+coder-pool  failover  $first_member, $second_member  a run's own gateway
 TXT
 }
 
@@ -487,12 +489,12 @@ test_happy_path() {
   run_check "$dir"
   expect_status "$status" 0 "the happy path"
   local key
-  for key in installation declaration publish node-blocks run-launched terminal result-json served-by-second first-exhausted restore scratch-removed; do
+  for key in fugaro-version xtrace agent-session belong installation declaration publish node-blocks run-launched terminal result-json served-by-second first-exhausted restore scratch-removed; do
     expect_contains "$out" "FACT $key: PASS" "the happy path: the $key row"
   done
   expect_contains "$out" "FACT craft-credentials: INFO" "the happy path: this build's record carries no craft_credentials, and the row says so rather than passing"
   expect_contains "$out" "MC8's record half has not landed in this build" "the happy path: the row names the task that owns the field"
-  expect_absent "$out" "FACT installation: FAIL" "the happy path: no row failed"
+  expect_absent "$out" ": FAIL" "the happy path: no row failed"
   expect_contains "$out" "CHECK 629 RESULT END (exit 0)" "the happy path: the block ends"
   expect_contains "$out" "the pool $pool is declared in $installation's config with its members in order ($first_member,$second_member" "the happy path: the declaration row reads the pool's order"
   expect_contains "$out" "fugaro project policy publish wrote the policy node of $installation" "the happy path: the publish row"

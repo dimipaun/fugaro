@@ -279,13 +279,6 @@ elif what == "node":
         row = crafts[name] or {}
         print("nodecraft\t%s\t%s\t%s" % (
             name, row.get("model") or "", row.get("access") or ""))
-elif what == "accounts":
-    creds = doc.get("credentials") or []
-    print("credentials=%d" % len(creds))
-    for c in creds:
-        print("cred\t%s\t%s\t%s" % (
-            c.get("name") or "", c.get("type") or "", c.get("serving_path") or ""))
-    print("accounts=%d" % len(doc.get("accounts") or []))
 elif what == "rows":
     rows = doc.get("runs") or []
     print("count=%d" % len(rows))

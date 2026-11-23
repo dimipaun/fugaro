@@ -498,10 +498,10 @@ test_happy_path() {
   run_check "$dir"
   expect_status "$status" 0 "the happy path"
   local key
-  for key in installation layer role-slot craft-ls allow-list run-launched terminal result-json stage-model credential not-pinned restore scratch-removed; do
+  for key in fugaro-version xtrace agent-session belong installation layer role-slot craft-ls allow-list run-launched terminal result-json stage-model credential not-pinned restore scratch-removed; do
     expect_contains "$out" "FACT $key: PASS" "the happy path: the $key row"
   done
-  expect_absent "$out" "FACT $key: FAIL" "the happy path: no row failed"
+  expect_absent "$out" ": FAIL" "the happy path: no row failed"
   expect_contains "$out" "CHECK 628 RESULT END (exit 0)" "the happy path: the block ends"
   expect_contains "$out" "the project layer sets agent.crafts.coder.model = $model" "the happy path: the layer row names the model and its source"
   expect_contains "$out" "every coder stage of $run_id records model $model" "the happy path: the stages are the coder craft's"

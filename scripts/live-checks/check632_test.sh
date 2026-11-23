@@ -310,10 +310,10 @@ JSON
 
 write_creds() { # json-dir
   cat >"$1/creds.json" <<JSON
-{"version":1,"project":"$installation","complete":true,"credentials":[{"name":"claude-oauth-work","type":"anthropic","serving_path":"credsvc"},{"name":"deepseek-key","type":"openrouter","serving_path":"runner"}]}
+{"repo":"acme/sandbox","accounts":["default"],"complete":true,"credentials":[{"name":"claude-oauth-work","type":"anthropic","serving_path":"credsvc"},{"name":"deepseek-key","type":"openrouter","serving_path":"runner"}]}
 JSON
   cat >"$1/creds-none.json" <<JSON
-{"version":1,"project":"$installation","complete":true,"credentials":[]}
+{"repo":"acme/sandbox","accounts":["default"],"complete":true,"credentials":[]}
 JSON
 }
 
@@ -334,13 +334,13 @@ TXT
 pools for project $installation (offline)
 
 NAME        STRATEGY  MEMBERS                          SERVED BY
-coder-pool  failover  deepseek-key, claude-oauth-work  the credentials service and a run's own gateway
+coder-pool  failover  deepseek-key, claude-oauth-work  the credentials service and a run's own gateway: failover at a stage boundary
 TXT
   cat >"$1/pools-after-crossing.txt" <<TXT
 pools for project $installation (offline)
 
 NAME        STRATEGY  MEMBERS                          SERVED BY
-coder-pool  failover  deepseek-key, claude-oauth-work  the credentials service and a run's own gateway
+coder-pool  failover  deepseek-key, claude-oauth-work  the credentials service and a run's own gateway: failover at a stage boundary
 TXT
   cat >"$1/pools-after-split.txt" <<TXT
 pools for project $installation (offline)
@@ -382,7 +382,7 @@ JSON
 
 write_configshow() { # json-dir
   cat >"$1/configshow.json" <<JSON
-{"version":1,"config_sha256":"deadbeef","values":[{"path":"agent.max_output_tokens.reviewer","value":32000,"source":"repo"}]}
+{"config_sha256":"deadbeef","values":[{"path":"agent.max_output_tokens.reviewer","value":32000,"source":"repo"}]}
 JSON
 }
 
@@ -406,13 +406,13 @@ JSON
 
 write_show() { # json-dir
   cat >"$1/show-before.json" <<JSON
-{"version":1,"repo":"acme/sandbox","run":"$slug/$run_id","chain":"$run_id","run_count":1,"enforced":true,"limits_read":true,"limits":[{"dimension":"dollars","limit":2000000,"used":100000,"remaining":1900000,"source":"launch"}]}
+{"version":1,"repo":"acme/sandbox","run":"$slug/$run_id","chain":"$run_id","run_count":1,"enforced":true,"limits_read":true,"limits":[{"dimension":"usd","limit":2000000,"used":100000,"remaining":1900000,"source":"launch"}]}
 JSON
   cat >"$1/show-after.json" <<JSON
-{"version":1,"repo":"acme/sandbox","run":"$slug/$run_id","chain":"$run_id","run_count":1,"enforced":true,"limits_read":true,"limits":[{"dimension":"dollars","limit":2000000,"used":420000,"remaining":1580000,"source":"launch"}]}
+{"version":1,"repo":"acme/sandbox","run":"$slug/$run_id","chain":"$run_id","run_count":1,"enforced":true,"limits_read":true,"limits":[{"dimension":"usd","limit":2000000,"used":420000,"remaining":1580000,"source":"launch"}]}
 JSON
   cat >"$1/show-after-lost.json" <<JSON
-{"version":1,"repo":"acme/sandbox","run":"$slug/$run_id","chain":"$other_run","run_count":1,"enforced":true,"limits_read":true,"limits":[{"dimension":"dollars","limit":2000000,"used":420000,"remaining":1580000,"source":"launch"}]}
+{"version":1,"repo":"acme/sandbox","run":"$slug/$run_id","chain":"$other_run","run_count":1,"enforced":true,"limits_read":true,"limits":[{"dimension":"usd","limit":2000000,"used":420000,"remaining":1580000,"source":"launch"}]}
 JSON
 }
 

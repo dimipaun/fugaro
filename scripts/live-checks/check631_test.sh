@@ -103,7 +103,7 @@ serving_path() {
 }
 
 creds_listing() {
-  printf '{"version":1,"project":"%s","complete":true,"credentials":[' "$installation"
+  printf '{"repo":"acme/sandbox","accounts":["default"],"complete":true,"credentials":['
   awk -F'\t' 'BEGIN { n = 0 } { if (n) printf ","; n++; printf "{\"name\":\"%s\",\"type\":\"%s\",\"serving_path\":\"%s\"}", $1, $2, $3 }' "$state/creds.tsv"
   printf ']}\n'
 }
@@ -278,7 +278,7 @@ run)
     printf 'fugaro: the runs bucket is not reachable\n' >&2
     exit 1
   fi
-  printf '{"project":"%s","repo":"acme/sandbox","run_id":"%s","status":"queued"}\n' "$installation" "$run_id"
+  printf '{"project":"%s","repo":"acme/sandbox","run_id":"%s","status":"launched"}\n' "$installation" "$run_id"
   ;;
 runs)
   [ "${2:-}" = "ls" ] || { printf 'fugaro: unexpected runs subcommand\n' >&2; exit 1; }

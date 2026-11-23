@@ -219,11 +219,11 @@ project)
 validate)
   case "$mode" in
   validate-problems)
-    printf '{"path":"fugaro.yaml","problems":[{"path":"agent.models.coder","message":"names a model the project does not define"}]}\n'
+    printf '{"valid":false,"problems":[{"path":"agent.models.coder","message":"names a model the project does not define"}]}\n'
     exit 1
     ;;
   esac
-  printf '{"path":"fugaro.yaml","problems":[]}\n'
+  printf '{"valid":true,"problems":[]}\n'
   ;;
 update)
   case "$mode" in
@@ -250,12 +250,15 @@ FUGARO_EOF
 }
 
 # ------------------------------------------------------------------ documents
+# `fugaro accounts ls --json` (internal/cli/accountsListDoc): the repository, the
+# accounts, and the credentials block with the half that serves each type, spelled
+# as the config constant (config.CredentialServingPath): "credsvc" or "runner".
 write_creds() { # json-dir
   cat >"$1/creds.json" <<JSON
-{"version":1,"project":"$installation","complete":true,"credentials":[{"name":"$runner_member","type":"openrouter","serving_path":"a run's own gateway"},{"name":"$credsvc_member","type":"anthropic","serving_path":"the credentials service"},{"name":"$oauth_member","type":"claude-oauth","serving_path":"the credentials service"}]}
+{"repo":"acme/sandbox","accounts":["default"],"complete":true,"credentials":[{"name":"$runner_member","type":"openrouter","serving_path":"runner"},{"name":"$credsvc_member","type":"anthropic","serving_path":"credsvc"},{"name":"$oauth_member","type":"claude-oauth","serving_path":"credsvc"}]}
 JSON
   cat >"$1/creds-no-pair.json" <<JSON
-{"version":1,"project":"$installation","complete":true,"credentials":[{"name":"$oauth_member","type":"claude-oauth","serving_path":"the credentials service"}]}
+{"repo":"acme/sandbox","accounts":["default"],"complete":true,"credentials":[{"name":"$oauth_member","type":"claude-oauth","serving_path":"credsvc"}]}
 JSON
 }
 
@@ -439,7 +442,7 @@ test_happy_path() {
   run_check "$dir"
   expect_status "$status" 0 "the happy path"
   local key
-  for key in installation refused-at-add update converged-node restore scratch-removed; do
+  for key in fugaro-version xtrace agent-session belong installation refused-at-add update converged-node restore scratch-removed; do
     expect_contains "$out" "FACT $key: PASS" "the happy path: the $key row"
   done
   expect_contains "$out" "FACT converged-pools: INFO" "the happy path: with no crossing before it, the update had nothing to split"
@@ -451,7 +454,7 @@ test_happy_path() {
   expect_contains "$out" "it reads a repository's fugaro.yaml" "the validate row says what the command really reads"
   expect_contains "$out" "The crossing's second door in this build is the read of a PUBLISHED node" "the validate row names the crossing's real second door"
   expect_contains "$out" "FACT config-crossing: INFO" "the happy path: a config with no crossing has no premise"
-  expect_absent "$out" "FACT installation: FAIL" "the happy path: no row failed"
+  expect_absent "$out" ": FAIL" "the happy path: no row failed"
   expect_contains "$out" "refused a pool naming $runner_member (an OpenRouter member) and $credsvc_member (an Anthropic member) with the crossing's one sentence" "the happy path: the write door refused with the one sentence"
   expect_contains "$out" "and the pool is not in the listing afterwards" "the happy path: the refusal wrote nothing"
   expect_contains "$out" "CHECK 630 RESULT END (exit 0)" "the happy path: the block ends"
