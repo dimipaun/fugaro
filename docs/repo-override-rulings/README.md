@@ -14,8 +14,8 @@ proposes to carry lift L13 (the dead repository keys) as a module.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved by the owner on 2026-11-23. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A7, the capability map (nine modules, approved as D3299), findings F1–F24, decisions D3290–D3304 (D3290–D3298 the owner's answers to the spec's Q1–Q9; D3299–D3304 the owner's answers to the questions it raised), resolutions R1–R16, tension T1 (settled by D3300), open items O1–O3, UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contracts C1 and C2, 39 tasks and integrations I1 and I2 over two releases (43 runs, and two contract changes that run only if raised), eight levels, the critical path, the shared files, the edges broken and kept, Checks 910–912 |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A7, the capability map (nine modules, approved as D3299), findings F1–F24, decisions D3290–D3304 (D3290–D3298 the owner's answers to the spec's Q1–Q9; D3299–D3304 the owner's answers to the questions it raised), resolutions R1–R20, tension T1 (settled by D3300), open items O1–O5, UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Contracts C1 and C2, 42 tasks and integrations I1 and I2 over two releases (46 runs, and two contract changes that run only if raised), eight levels, the critical path, the shared files, the edges broken and kept, Checks 910–913 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
 **The owner's answers of 2026-11-23** (D3290–D3298): eight as recommended, and **D3295 not the
@@ -28,7 +28,9 @@ The reconciliation follows that through everywhere the spec assumed the prefix.
 as module `dead-keys` (D3299); release A at least one release after L1's (D3300, which settles
 tension T1); a clash is any name another repository already resolves to different text (D3301);
 the copy is spelled `<name>.<owner-repo>` with its own grammar and the `recipeCopySince` gate
-(D3302); each repository is pointed at its copy by a lookup rule, with no new data (D3303); and a
+(D3302; **amended after review**, the owner's answer of the same day: `<name>.<owner-repo>-<8 hex>`,
+the 8 hex from the repository's `task.Slug` hash, because the readable half alone merges
+"acme/app-web" and "acme-app/web"; at most 96 characters; the owner to confirm, O4); each repository is pointed at its copy by a lookup rule, with no new data (D3303); and a
 release-A runner refuses at bootstrap a pre-L8 task naming a repository recipe (D3304).
 
 **Headline findings:**
@@ -47,7 +49,7 @@ release-A runner refuses at bootstrap a pre-L8 task naming a repository recipe (
 - **B4's mode baseline cannot be computed in `config.Resolve`** (F4, R3); **no command writes
   `rigor.repos` today** (F13, R6).
 
-**Numbers reserved:** decisions **D3290–D3319** (D3290–D3304 used), checks **910–919** (910–912
+**Numbers reserved:** decisions **D3290–D3319** (D3290–D3304 used), checks **910–919** (910–913
 used). The block was assigned with this spec on 2026-11-23: the highest decision on `main` was
 D3239 (repo-coupling-audit's block D3230–D3259), L1's spec beside this one holds D3260–D3289, and
 the highest check on `main` was 892 (repo-coupling-audit's block 890–899). No decision in
@@ -55,4 +57,4 @@ D3290–D3319 and no Check 910–919 is on `main`.
 
 **What waits on something external:** the release that carries L1 (`docs/required-version-stamp/`,
 not on `main` yet), shipped at least one release before release A is cut (D3300); release A
-before release B (D3298); and the owner's runs of Checks 910–912.
+before release B (D3298); and the owner's runs of Checks 910–913.

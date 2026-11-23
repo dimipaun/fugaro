@@ -73,7 +73,7 @@
     },
     {
       "id": "S0",
-      "title": "the scope table: lifted rows retired in a repository, kept rows cite D3237",
+      "title": "the scope table: kept rows cite D3237",
       "run": null,
       "version": null,
       "tier": "small",
@@ -83,7 +83,6 @@
         "paths": [
           "internal/config/scope.go",
           "docs/project-layer.md",
-          "schemas/fugaro.schema.json",
           "internal/config/scope_lift_test.go"
         ]
       }
@@ -100,7 +99,8 @@
         "paths": [
           "internal/config/resolve.go",
           "internal/config/lifted_drop.go",
-          "internal/config/lifted_drop_test.go"
+          "internal/config/lifted_drop_test.go",
+          "schemas/fugaro.schema.json"
         ]
       }
     },
@@ -130,6 +130,7 @@
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/config/levels.go",
           "internal/runner/plan.go",
           "internal/cli/launch_budget.go",
           "internal/cli/budget_preview.go",
@@ -196,9 +197,10 @@
         "prediction": true,
         "paths": [
           "internal/config/ab.go",
-          "internal/config/layer.go",
           "internal/config/ab_repos_test.go",
-          "schemas/project-layer.schema.json"
+          "schemas/project-layer.schema.json",
+          "internal/settings/meta_layer.go",
+          "schemas/settings.schema.json"
         ]
       }
     },
@@ -213,8 +215,6 @@
         "prediction": true,
         "paths": [
           "ee/ab/launch.go",
-          "ee/ab/cli/ab.go",
-          "ee/report/ab.go",
           "ee/ab/repos_rate_test.go"
         ]
       }
@@ -309,6 +309,7 @@
         "paths": [
           "internal/cli/recipes_resolve.go",
           "internal/cli/recipes.go",
+          "internal/cli/budget_preview.go",
           "internal/cli/recipes_lift_test.go"
         ]
       }
@@ -376,6 +377,56 @@
       }
     },
     {
+      "id": "PR6",
+      "title": "B16: every recipe-name check that refuses a dot accepts a copy name",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/recipe/recipe.go",
+          "schemas/recipe.schema.json",
+          "internal/task/task.go",
+          "internal/localcfg/recipecache.go",
+          "internal/recipe/copyname_accept_test.go"
+        ]
+      }
+    },
+    {
+      "id": "D3",
+      "title": "the in-flight design document follows the new stage and the bootstrap refusal",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/design/update-in-flight.md"
+        ]
+      }
+    },
+    {
+      "id": "CK3",
+      "title": "Check 913 as a script, and registered: does a retried execution boot on the rebuilt image",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-913-retry-image.sh",
+          "scripts/live-checks/check-913-retry-image_test.sh",
+          "scripts/live_checks_test.go",
+          "docs/gcp-live-checklist.md",
+          "scripts/live-checks/README.md"
+        ]
+      }
+    },
+    {
       "id": "RC1",
       "title": "B18: Caps clamps a repository cap to its ceiling",
       "run": null,
@@ -402,8 +453,8 @@
         "paths": [
           "internal/budget/rules/rules.go",
           "internal/budget/rules/rules.json.tmpl",
-          "internal/budget/rules/marker.go",
           "internal/budget/rules/testdata/rules.golden.json",
+          "internal/budget/rules/rules_test.go",
           "internal/budget/rules/lease_ceiling_emulator_test.go"
         ]
       }
@@ -523,7 +574,7 @@
     },
     {
       "id": "DK1",
-      "title": "L13: model_grades in a repository's file and agent.compression refused; RepoModelGradesSet goes",
+      "title": "L13: agent.compression's repository row and RepoModelGradesSet go",
       "run": null,
       "version": null,
       "tier": "small",
@@ -541,7 +592,7 @@
     },
     {
       "id": "DK2",
-      "title": "L13: the merge's repository half of the grades and its skew gates go",
+      "title": "L13: the grades' repository half goes; the default branch refuses the model grades",
       "run": null,
       "version": null,
       "tier": "small",
@@ -552,6 +603,7 @@
           "internal/cli/recipes_skew.go",
           "internal/cli/init.go",
           "internal/policy/craft.go",
+          "internal/cli/validate.go",
           "internal/cli/dead_keys_skew_test.go"
         ]
       }
@@ -680,7 +732,7 @@
     },
     {
       "id": "XB3",
-      "title": "release B: the schemas and the settings registry drop the lifted keys",
+      "title": "release B: the schemas, the settings registry and the empty rigor block's opt-in",
       "run": null,
       "version": null,
       "tier": "small",
@@ -691,6 +743,7 @@
           "schemas/fugaro.schema.json",
           "internal/settings/registry.go",
           "schemas/settings.schema.json",
+          "internal/rigor/resolve.go",
           "internal/settings/lift_rows_test.go"
         ]
       }
@@ -848,6 +901,41 @@
       "task": "PR4",
       "needs": "PR0",
       "reason": "kept: it names a copy with PR0's function"
+    },
+    {
+      "task": "PR6",
+      "needs": "PR0",
+      "reason": "kept: it widens the checks to PR0's grammar"
+    },
+    {
+      "task": "PR1",
+      "needs": "PR6",
+      "reason": "kept, behaviour: a copy must parse before the launcher resolves it"
+    },
+    {
+      "task": "PR2",
+      "needs": "PR6",
+      "reason": "kept, behaviour: the task validation must accept a copy before a launch embeds one"
+    },
+    {
+      "task": "D3",
+      "needs": "M2",
+      "reason": "kept, behaviour: it states what the stage does"
+    },
+    {
+      "task": "D3",
+      "needs": "PR3",
+      "reason": "kept, behaviour: it states the bootstrap refusal"
+    },
+    {
+      "task": "CK3",
+      "needs": "CK2",
+      "reason": "kept: three files, the registration CK2 writes"
+    },
+    {
+      "task": "DK2",
+      "needs": "S2",
+      "reason": "kept: one file, internal/cli/validate.go"
     },
     {
       "task": "RC3",

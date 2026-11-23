@@ -24,7 +24,7 @@ the same day as recommended, the six this reconciliation raised:
 | D3299 (capability map, L13 inside) | The nine modules; DK1 and DK2 are in the plan |
 | D3300 (release A one release after L1) | The release gate below |
 | D3301 (a clash is any name another repository already resolves to different text) | PR4's clash rule |
-| D3302 (`<name>.<owner-repo>`, one dot, at most 81 characters) | PR0's grammar and S5's `recipeCopySince` gate |
+| D3302, amended after review (`<name>.<owner-repo>-<8 hex>`, at most 96 characters; the owner to confirm, O4) | PR0's grammar, PR6's checks and S5's `recipeCopySince` gate |
 | D3303 (the pointer is a lookup rule, no new data) | PR0's lookup order, PR1 and PR2 |
 | D3304 (a pre-L8 task naming a repository recipe is refused at bootstrap) | PR3 |
 
@@ -84,16 +84,25 @@ The modules are the capability map of reconciliation §2 (D3299, approved): `lif
 1. **Contracts and the inert first slice** (level 0): A1, C1, C2, PR0, S0, PR5, AB1, RG1, PR3,
    RC1, RC2, M1, CK1. Nothing here changes what a run does except PR3, RG1, RC1 and RC2, which are
    held by the release gate below.
-2. **Release A, items and planners**: S1, S4, S5, AB2, AB3, MC1, RG2, PR1, PR2, PR4, RC3, RC4,
-   M2, CK2, RT1, RG3, RT2, S2, DK1, D1, D2, DK2.
+2. **Release A, items and planners**: S1, S4, S5, AB2, AB3, MC1, RG2, PR6, PR4, M2, RC3, RC4,
+   CK2, RT1, RG3, PR1, PR2, D3, CK3, RT2, S2, DK1, D1, D2, DK2.
 3. **Release A, integrations**: I2, I3, I1.
-4. **Release B** (gated on release A being cut, D3298): XB4, XB1, XB2, XB3, XB5.
+4. **Release B** (D3298): XB4, XB1, XB2, XB3, XB5.
 
-**The release gate.** Contracts, planners, documents and check scripts may merge at any time: no
-caller reaches them before I2 registers the planners. Every task that changes what a command or a
-run does — S1, RT1, RT2, S2, S4, S5, AB2, RG1, RG3, PR1, PR2, PR3, RC1, RC2, RC3, M2, I2, DK1,
-DK2 — is **not launched before L1's implementation has merged**, and release A is not cut before
-the release carrying L1 has shipped (D3300).
+**The release gate (R18, amended after review).** Contracts, planners, check scripts and S0 may
+merge at any time: no caller reaches a planner before I2 registers it, and S0 changes only sentences
+that are true today. Every other release-A task — S1, RT1, RT2, S2, S4, S5, AB2, RG1, RG3, PR1, PR2,
+PR3, PR6, RC1, RC2, RC3, M2, I2, I3, I1, DK1, DK2, D1, D2, D3 — is **not launched before the release
+carrying L1 has been tagged** (`docs/release.md`: a `vX.Y.Z` tag is cut from `main`'s head), so
+release A is at least one release after L1's (D3300).
+
+**The release fence.** Release A lands **as one batch**: from the first gated merge until I1, I2 and
+I3 have merged, no CLI tag is cut, so no release carries half of release A (a launcher that drops
+keys before `update` can migrate them, or a runner that refuses a recipe no launcher embeds yet).
+Release B is fenced the same way: XB4, XB1, XB2, XB3 and XB5 are not launched before release A has
+been tagged (D3298), and from XB4's merge until the last of them has merged, no CLI tag is cut. A
+batch rather than a switch, because a switch is code the spec does not ask for and a tag freeze
+costs nothing; console and mobile tags are not affected.
 
 ## Tasks
 
@@ -115,16 +124,17 @@ the release carrying L1 has shipped (D3300).
 ### C1: contract: the lifted keys and their notes
 - Module: `lift-keys`. Kind: contract.
 - Acceptance: `internal/config/lifted.go` holds `LiftedKeys` (every B3 key including
-  `agent.levels.l1–l3.model` (D3291), `ab.rate`, `rigor.default`, `rigor.areas`, and the L13 keys
-  `model_grades.*` and `agent.compression` marked refuse-now (D3299)), each with
-  its new home and its fix sentence, and `LiftedKeyNotes(data []byte) []RetiredKeyNote`, which names
-  every lifted key a repository's file writes; no model-credentials-routing retired key is on the
-  list (R1). `contract-lift-keys.md` says what each side may rely on: the list is the only
-  answer to "is this key lifted", the sentence is the one refusal text release B prints, and
-  `config.Resolve` is the only place that drops.
+  `agent.levels.l1–l3.model` (D3291), `ab.rate`, `rigor.default`, `rigor.areas`, and L13's
+  `model_grades.strong.model` and `model_grades.strongest.model` (D3299); never a
+  `model_grades.*.access` row, which is MCR's), each with its new home and its fix sentence, and
+  `LiftedKeyNotes(data []byte) []RetiredKeyNote`, which names every lifted key a repository's file
+  writes. No lifted key is marked `Retired` and no MCR retired key is on the list (R1, amended after
+  review). `contract-lift-keys.md` says what each side may rely on: the list is the only answer to
+  "is this key lifted", the sentence is the one refusal text release B prints, and `config.Resolve`
+  is the only place that drops.
 - Files: `internal/config/lifted.go` (new), `internal/config/lifted_test.go` (new),
   `docs/repo-override-rulings/contract-lift-keys.md` (new).
-- Interfaces: Produces `config.LiftedKeys`, `config.LiftedKeyNotes`, which S1, S2, S4, S5 consume.
+- Interfaces: Produces `config.LiftedKeys`, `config.LiftedKeyNotes`, which S1, S2, S4 and S5 consume.
 - Tests: `TestLiftedKeysAreNotMCRsRetiredKeys`, `TestLiftedKeyNotesNamesEveryWrittenKey`.
 - Command: `go test ./internal/config/ -run 'TestLiftedKey' -count=1`
 - Red step: `TestLiftedKeyNotesNamesEveryWrittenKey` fails before the function exists.
@@ -155,48 +165,70 @@ the release carrying L1 has shipped (D3300).
 
 ### PR0: a recipe's project copy, its name and its lookup order
 - Module: `project-recipes`.
-- Acceptance: `recipe.CopyName(name, repo string) string` returns `<name>.<owner-repo>` (A4);
-  `recipe.IsCopyName` and the widened grammar accept it and nothing else with a dot (D3302);
-  `recipe.LookupOrder(name, repo string) []string` is `[<name>.<owner-repo>, <name>]` (D3303), the
-  catalog last; a name over the limit and a slug with an unsafe character are refused.
+- Acceptance: `recipe.CopyName(name, provider, repo string) string` returns
+  `<name>.<owner-repo>-<8 hex>`: the readable half of `task.Slug` and the first 8 hex of its hash
+  (D3302, amended after review); `recipe.IsCopyName` and `recipe.CopyNameRE` accept it (a recipe
+  name, one dot, a readable half, a hyphen and 8 hex; at most 96 characters) and nothing else with
+  a dot; `recipe.LookupOrder(name, provider, repo string) []string` is `[<copy>, <name>]` (D3303), the
+  catalog last.
 - Files: `internal/recipe/copyname.go` (new), `internal/recipe/copyname_test.go` (new).
-- Interfaces: Produces the functions PR1, PR2, PR4 and S5 call.
-- Tests: `TestCopyName`, `TestLookupOrder`, `TestNameREStillRefusesADot`.
+- Interfaces: Produces the functions PR6, PR1, PR2, PR4 and S5 call.
+- Tests: `TestCopyName`, `TestCopyNameKeepsCollidingSlugsApart` ("acme/app-web" and "acme-app/web"
+  share a readable half and get two names), `TestCopyNameAtMost96`, `TestLookupOrder`, `TestNameREStillRefusesADot`.
 - Command: `go test ./internal/recipe/ -run 'TestCopyName|TestLookupOrder|TestNameREStillRefusesADot' -count=1`
 - Red step: `TestCopyName` fails before the file exists.
-- Depends on: none. Implements D3302 and D3303. Kept as a task, not a contract: the
+- Depends on: none. Implements D3302 (amended) and D3303. Kept as a task, not a contract: the
   functions are the interface, and a contract would equal them.
 - Commit: `repo-override-rulings PR0: a recipe's project copy, its name and its lookup order`
 - Reviewer tier: standard.
 
+### PR6: every recipe-name check that refuses a dot accepts a copy name
+- Module: `project-recipes`.
+- Acceptance: `recipe.Parse`'s `name:` check, `schemas/recipe.schema.json`'s `name` pattern, the
+  task's recipe validation (`internal/task`'s `Spec` validation of `Recipe.Name`) and the recipe
+  cache (`internal/localcfg/recipecache.go`) accept a name `recipe.IsCopyName` accepts, and still
+  refuse any other dotted name (R19).
+- Files: `internal/recipe/recipe.go`, `schemas/recipe.schema.json`, `internal/task/task.go`,
+  `internal/localcfg/recipecache.go`, `internal/recipe/copyname_accept_test.go` (new).
+- Interfaces: Consumes PR0.
+- Tests: `TestEveryNameCheckAcceptsACopy` (Parse, the task, the cache), `TestRecipeSchemaAcceptsACopy`.
+- Command: `go test ./internal/recipe/ ./internal/task/ ./internal/localcfg/ -run 'TestEveryNameCheckAcceptsACopy|TestRecipeSchemaAcceptsACopy|Recipe' -count=1`
+- Red step: `TestEveryNameCheckAcceptsACopy/parse` fails: "must be a recipe name".
+- Depends on: PR0 (kept: the grammar). Release gate.
+- Commit: `repo-override-rulings PR6: every recipe-name check accepts a copy name`
+- Reviewer tier: standard.
+
 ### S0: the scope table
 - Module: `lift-keys`.
-- Acceptance: every lifted key's row in `config.Scopes` is `Retired: InRepo` with a `RetiredWhy`
-  naming its new home and command (R1); every kept row's `Why` cites D3237; `docs/project-layer.md`
-  prints the table (`TestScopeTableMatchesDocs`); `schemas/fugaro.schema.json` describes each
-  lifted key as retired.
-- Files: `internal/config/scope.go`, `docs/project-layer.md`, `schemas/fugaro.schema.json`,
-  `internal/config/scope_lift_test.go` (new).
-- Interfaces: Produces the rows `RetiredKeyNotes` reads.
-- Tests: `TestScopeTableMatchesDocs`, `TestKeptRowsCiteD3237`, the Docs tests.
-- Command: `go test ./internal/config/ -run 'TestScopeTableMatchesDocs|TestKeptRowsCiteD3237' -count=1 && go test ./internal/cli/ -run Docs -count=1`
+- Acceptance: every kept row's `Why` in `config.Scopes` cites D3237; no lifted row is marked
+  `Retired` (R1, amended after review: that would break `TestEveryRetiredKeyIsNamedWhereItIsWritten`
+  and would announce a move `update` cannot make yet); `docs/project-layer.md` prints the table
+  (`TestScopeTableMatchesDocs`).
+- Files: `internal/config/scope.go`, `docs/project-layer.md`, `internal/config/scope_lift_test.go` (new).
+- Interfaces: none new.
+- Tests: `TestScopeTableMatchesDocs`, `TestKeptRowsCiteD3237`, `TestEveryRetiredKeyIsNamedWhereItIsWritten`, the Docs tests.
+- Command: `go test ./internal/config/ -run 'TestScopeTableMatchesDocs|TestKeptRowsCiteD3237|TestEveryRetiredKeyIsNamedWhereItIsWritten' -count=1 && go test ./internal/cli/ -run Docs -count=1`
 - Red step: `TestKeptRowsCiteD3237` fails on today's rows.
-- Depends on: none.
-- Commit: `repo-override-rulings S0: the scope table`
+- Depends on: none. **Not release-gated**: it changes sentences that are true today (each kept
+  row was kept by D3237) and no behaviour.
+- Commit: `repo-override-rulings S0: the scope table cites D3237`
 - Reviewer tier: standard.
 
 ### S1: config.Resolve drops the lifted keys, on every ref
 - Module: `lift-keys`.
 - Acceptance: both arms of `config.Resolve` (with and without a layer) drop every key
   `config.LiftedKeys` lists before the merge, record each in the resolution with its note, and leave
-  MCR's retired keys as they are; a file that writes only lifted keys resolves to the project's (or
-  Fugaro's) values (R2).
+  MCR's retired keys as they are; the repository-own fields computed from the file —
+  `Config.RepoRigor`, `RepoRigorSet`, `RepoRigorLevelSet`, `RepoRigorScalarSet`,
+  `RepoLevelsNoneModelSet` — are computed after the drop, while an empty `rigor:` block still opts
+  in (R2); a file that writes only lifted keys resolves to the project's (or Fugaro's) values;
+  `schemas/fugaro.schema.json` describes each lifted key as read and not honoured.
 - Files: `internal/config/resolve.go`, `internal/config/lifted_drop.go` (new),
-  `internal/config/lifted_drop_test.go` (new).
+  `internal/config/lifted_drop_test.go` (new), `schemas/fugaro.schema.json`.
 - Interfaces: Consumes C1. Produces the dropped keys in `Resolution`, which S2 and I1 read.
 - Tests: `TestResolveDropsLiftedKeys` (one case per key, with and without a layer),
-  `TestResolveKeepsMCRRetiredKeys`.
-- Command: `go test ./internal/config/ -run 'TestResolveDropsLiftedKeys|TestResolveKeepsMCRRetiredKeys' -count=1`
+  `TestResolveKeepsMCRRetiredKeys`, `TestRepoRigorFlagsSeeNoLiftedKey`.
+- Command: `go test ./internal/config/ -run 'TestResolveDropsLiftedKeys|TestResolveKeepsMCRRetiredKeys|TestRepoRigorFlagsSeeNoLiftedKey' -count=1`
 - Red step: `TestResolveDropsLiftedKeys/agent.models.coder` fails: the repository's value wins.
 - Depends on: C1 (the contract's list). Release gate.
 - Commit: `repo-override-rulings S1: config.Resolve drops the lifted keys, on every ref`
@@ -224,15 +256,19 @@ the release carrying L1 has shipped (D3300).
 
 ### RT2: a silent project's baseline is the run's mode
 - Module: `review-tighten`.
-- Acceptance: where RT1 marked a value unchecked, the runner's `setRounds` and the launch's budget
-  and preview take the tighter of it and the mode's default (`rigor.DefaultRounds`,
-  `rigor.AdversarialDefault`) at the mode the run is at, and the record names which decided (R3).
-- Files: `internal/runner/plan.go`, `internal/cli/launch_budget.go`, `internal/cli/budget_preview.go`,
-  `internal/runner/plan_tighten_test.go` (new).
+- Acceptance: where RT1 marked a value unchecked, the baseline is where the defaults are applied
+  (R20): `config.ResolveLevels` takes the tighter of the repository's level settings and the mode's
+  `rigor.DefaultLevels` row (`none`, effort); the runner's `setRounds` and the launch's budget and
+  preview take the tighter of the repository's rounds and `rigor.DefaultRounds` /
+  `rigor.AdversarialDefault` at the mode the run is at; a key no mode row holds is judged against
+  Fugaro's `applyDefaults` value; the record names which decided. A silent project, a critical run
+  and a repository's `l3.none: true` leave L3 running.
+- Files: `internal/config/levels.go`, `internal/runner/plan.go`, `internal/cli/launch_budget.go`,
+  `internal/cli/budget_preview.go`, `internal/runner/plan_tighten_test.go` (new).
 - Interfaces: Consumes RT1's mark.
-- Tests: `TestUncheckedRoundsTakeTheMode`, `TestLaunchBudgetUsesTheTighter`.
-- Command: `go test ./internal/runner/ -run 'TestUncheckedRoundsTakeTheMode' -count=1 && go test ./internal/cli/ -run 'TestLaunchBudgetUsesTheTighter' -count=1`
-- Red step: `TestUncheckedRoundsTakeTheMode` fails: a critical run takes the repository's 1.
+- Tests: `TestSilentProjectCriticalRunKeepsL3`, `TestUncheckedRoundsTakeTheMode`, `TestLaunchBudgetUsesTheTighter`.
+- Command: `go test ./internal/config/ -run 'TestSilentProjectCriticalRunKeepsL3' -count=1 && go test ./internal/runner/ -run 'TestUncheckedRoundsTakeTheMode' -count=1 && go test ./internal/cli/ -run 'TestLaunchBudgetUsesTheTighter' -count=1`
+- Red step: `TestSilentProjectCriticalRunKeepsL3` fails: the repository turns L3 off.
 - Depends on: RT1 (kept, behaviour). Release gate.
 - Commit: `repo-override-rulings RT2: a silent project's baseline is the run's mode`
 - Reviewer tier: standard.
@@ -285,13 +321,16 @@ the release carrying L1 has shipped (D3300).
 ### AB1: ab.repos in the layer's ab block
 - Module: `ab-repos`.
 - Acceptance: the layer's `ab:` block accepts `repos: {<owner/name>: <rate>}`, each in
-  `[0, ab.rate]` (D3297), keyed as `rigor.repos` is; `Layer.SetsABRepos` says whether it is written;
-  `schemas/project-layer.schema.json` describes it; a value above `ab.rate` is refused with the fix.
-- Files: `internal/config/ab.go`, `internal/config/layer.go`, `internal/config/ab_repos_test.go` (new),
-  `schemas/project-layer.schema.json`.
-- Interfaces: Produces `config.AB.Repos`, `Layer.SetsABRepos`.
-- Tests: `TestABReposBounds`, `TestABReposSchema`.
-- Command: `go test ./internal/config/ -run 'TestABRepos' -count=1`
+  `[0, ab.rate]` (D3297), keyed as `rigor.repos` is; `config.AB` is shared with a repository's file,
+  so `validateRepoAB` refuses `ab.repos` there explicitly, with the fix; `ProjectLayer.SetsABRepos`
+  says whether the layer writes it; the settings registry carries the row
+  (`internal/settings/meta_layer.go`, so `TestRegistryCoversEveryConfigField` passes) and
+  `schemas/settings.schema.json` and `schemas/project-layer.schema.json` describe it.
+- Files: `internal/config/ab.go`, `internal/config/ab_repos_test.go` (new),
+  `schemas/project-layer.schema.json`, `internal/settings/meta_layer.go`, `schemas/settings.schema.json`.
+- Interfaces: Produces `config.AB.Repos`, `ProjectLayer.SetsABRepos`.
+- Tests: `TestABReposBounds`, `TestABReposRefusedInARepoFile`, `TestRegistryCoversEveryConfigField`.
+- Command: `go test ./internal/config/ -run 'TestABRepos' -count=1 && go test ./internal/settings/ -run 'TestRegistryCoversEveryConfigField' -count=1`
 - Red step: `TestABReposBounds` fails: the strict decode refuses `repos`.
 - Depends on: none.
 - Commit: `repo-override-rulings AB1: ab.repos in the layer's ab block`
@@ -299,10 +338,12 @@ the release carrying L1 has shipped (D3300).
 
 ### AB2: ee/ab reads a repository's rate from ab.repos
 - Module: `ab-repos`.
-- Acceptance: `abRate` (and its copies in `ee/ab/cli` and `ee/report`) feeds the repository's rate
-  from `ab.repos.<repo>` through `policy.Merge`, unchanged; a repository's own `ab.rate` no longer
-  reaches it (dropped by S1); the new file carries the `ee/` notice.
-- Files: `ee/ab/launch.go`, `ee/ab/cli/ab.go`, `ee/report/ab.go`, `ee/ab/repos_rate_test.go` (new).
+- Acceptance: `abRate` in `ee/ab/launch.go`, the one reader that samples, feeds the repository's
+  rate from `ab.repos.<repo>` through `policy.Merge`, unchanged; a repository's own `ab.rate` no
+  longer reaches it (dropped by S1); the new file carries the `ee/` notice. (`ee/ab/cli`'s
+  `abRateSource` and `ee/report`'s `abRate` read the exchange rates, not the sample, and are not
+  touched.)
+- Files: `ee/ab/launch.go`, `ee/ab/repos_rate_test.go` (new).
 - Interfaces: Consumes AB1.
 - Tests: `TestABRateFromRepos`, `go test ./internal/eeboundary/`.
 - Command: `go test ./ee/ab/ -run 'TestABRateFromRepos' -count=1 && go test ./internal/eeboundary/ -count=1`
@@ -331,10 +372,12 @@ the release carrying L1 has shipped (D3300).
   claude-y (the project's)"); a silent project takes the value every writer agrees on, and every
   non-writing repository that moves off Fugaro's default is named; writers that disagree give the
   majority, ties to the cheaper model in the price table (D3290), and each repository whose model
-  changes is named; `budget.allowed_models` is not touched.
+  changes is named; a repository whose own `budget.allowed_models` excludes the chosen value is
+  not counted for it and is named with the fix before the write (R17); `budget.allowed_models` is
+  not written.
 - Files: `internal/lift/models.go` (new), `internal/lift/models_test.go` (new).
 - Interfaces: Consumes C2. Produces `lift.PlanModels`.
-- Tests: `TestPlanModels` (project sets, all agree, majority, tie by price, levels models).
+- Tests: `TestPlanModels` (project sets, all agree, majority, tie by price, levels models, a repository's allow-list excludes the choice).
 - Command: `go test ./internal/lift/ -run 'TestPlanModels' -count=1`
 - Red step: `TestPlanModels/majority` fails before the file exists.
 - Depends on: C2.
@@ -346,7 +389,8 @@ the release carrying L1 has shipped (D3300).
 - Acceptance: in `rigor.Resolve` a project area with a member naming the run's repository ranks
   above `rigor.repos` (D3294), a `match`-only project area stays below it; `Configured` is per
   repository: the project's default or project-wide areas, else this repository's `rigor.repos`
-  entry or a member area naming it; the repository's own block still counts until release B.
+  entry or a member area naming it, else the repository's empty `rigor:` block, which still opts in
+  until release B (XB3) — its `rigor.default` and `rigor.areas` are dropped from release A by S1.
 - Files: `internal/rigor/resolve.go`, `internal/rigor/select.go`, `internal/rigor/resolve_lift_test.go` (new).
 - Interfaces: none new.
 - Tests: `TestMemberAreaOutranksRigorRepos`, `TestConfiguredPerRepository`.
@@ -392,15 +436,18 @@ the release carrying L1 has shipped (D3300).
 
 ### PR1: the launcher resolves a repository's own copy, then the flat name, then the catalog
 - Module: `project-recipes`.
-- Acceptance: `resolveRecipe` never reads the checkout's `.fugaro/recipes/`; it reads the store in
-  `recipe.LookupOrder` and then the catalog; `fugaro recipes ls` lists the store and says the
-  folder is not read; `refuseFollowUpRepoRecipe` judges the project copy.
-- Files: `internal/cli/recipes_resolve.go`, `internal/cli/recipes.go`, `internal/cli/recipes_lift_test.go` (new).
-- Interfaces: Consumes PR0.
-- Tests: `TestResolveRecipeOwnCopyFirst`, `TestResolveRecipeIgnoresTheFolder`, `TestRecipesLsSaysTheFolderIsNotRead`.
-- Command: `go test ./internal/cli/ -run 'TestResolveRecipeOwnCopyFirst|TestResolveRecipeIgnoresTheFolder|TestRecipesLsSaysTheFolderIsNotRead' -count=1`
+- Acceptance: `resolveRecipe` accepts a copy name and never reads the checkout's
+  `.fugaro/recipes/`; it reads the store in `recipe.LookupOrder` and then the catalog; `fugaro
+  recipes ls`, `publish` and `rm` accept copy names, so an admin can replace or remove a migrated
+  copy, and `ls` says the folder is not read; `refuseFollowUpRepoRecipe` judges the project copy;
+  `budget_preview.go`'s recipe read accepts a copy name (R19).
+- Files: `internal/cli/recipes_resolve.go`, `internal/cli/recipes.go`, `internal/cli/budget_preview.go`,
+  `internal/cli/recipes_lift_test.go` (new).
+- Interfaces: Consumes PR0, PR6.
+- Tests: `TestResolveRecipeOwnCopyFirst`, `TestResolveRecipeIgnoresTheFolder`, `TestRecipesCommandsAcceptACopy`, `TestRecipesLsSaysTheFolderIsNotRead`.
+- Command: `go test ./internal/cli/ -run 'TestResolveRecipeOwnCopyFirst|TestResolveRecipeIgnoresTheFolder|TestRecipesCommandsAcceptACopy|TestRecipesLsSaysTheFolderIsNotRead' -count=1`
 - Red step: `TestResolveRecipeIgnoresTheFolder` fails: the checkout's file wins.
-- Depends on: PR0 (kept). Implements D3303. Release gate.
+- Depends on: PR0 (kept); PR6 (kept, behaviour: a copy must parse). Implements D3303. Release gate.
 - Commit: `repo-override-rulings PR1: the launcher resolves a repository's own copy first`
 - Reviewer tier: standard.
 
@@ -422,27 +469,33 @@ the release carrying L1 has shipped (D3300).
 ### PR2: every launch path embeds the project copy
 - Module: `project-recipes`.
 - Acceptance: a first run from outside a checkout reads `agent.recipe` from the ref's file and
-  embeds the copy; a follow-up that inherits a repository recipe by name embeds its copy; the
-  `default` fallback embeds a repository's own `default` copy when one exists; no task this
-  launcher writes carries `Source: repo` (R7); the launch prints PR5's cleanup lines.
+  embeds the copy; a follow-up that inherits a repository recipe by name embeds its copy, and an
+  inherited copy name is carried rather than dropped (`internal/cli/followup.go` drops today, without
+  a word, a name `NameRE` refuses, R19); the `default` fallback embeds a repository's own `default`
+  copy when one exists; no task this launcher writes carries `Source: repo` (R7); the launch prints
+  PR5's cleanup lines.
 - Files: `internal/cli/run.go`, `internal/cli/followup.go`, `internal/cli/recipes_launch_lift_test.go` (new).
-- Interfaces: Consumes PR0, PR5.
-- Tests: `TestLaunchEmbedsTheCopy` (outside a checkout, follow-up, default fallback), `TestNoTaskCarriesARepoRecipe`.
-- Command: `go test ./internal/cli/ -run 'TestLaunchEmbedsTheCopy|TestNoTaskCarriesARepoRecipe' -count=1`
-- Red step: `TestNoTaskCarriesARepoRecipe/follow-up` fails: the name travels alone.
-- Depends on: PR0 (kept); PR5 (kept). Implements D3303. Release gate.
+- Interfaces: Consumes PR0, PR5, PR6.
+- Tests: `TestLaunchEmbedsTheCopy` (outside a checkout, follow-up, default fallback), `TestFollowUpCarriesACopyName`, `TestNoTaskCarriesARepoRecipe`.
+- Command: `go test ./internal/cli/ -run 'TestLaunchEmbedsTheCopy|TestFollowUpCarriesACopyName|TestNoTaskCarriesARepoRecipe' -count=1`
+- Red step: `TestFollowUpCarriesACopyName` fails: the inherited name is dropped.
+- Depends on: PR0 (kept); PR5 (kept); PR6 (kept, behaviour). Implements D3303. Release gate.
 - Commit: `repo-override-rulings PR2: every launch path embeds the project copy`
 - Reviewer tier: standard.
 
 ### PR3: the runner stops reading .fugaro/recipes/
 - Module: `project-recipes`.
 - Acceptance: a release-A runner resolves the embedded recipe or a catalog one, never the
-  repository's folder; a task naming a repository recipe is refused at bootstrap with the fix (R8);
-  a run already bootstrapped is untouched.
+  repository's folder; a task naming a repository recipe (`Source: repo`) is refused at bootstrap
+  with the fix (D3304, R8); so is a task that embeds no recipe on a ref that still holds
+  `.fugaro/recipes/<name>.yaml` for the name it resolves (today the runner would read that file);
+  a task that embeds none, on a ref whose folder is already gone, for a name the catalog has, runs
+  the catalog recipe, which nothing at the ref can contradict (open item O5); a run already
+  bootstrapped is untouched.
 - Files: `internal/runner/recipe.go`, `internal/runner/recipe_lift_test.go` (new).
 - Interfaces: none new.
-- Tests: `TestRunnerNeverReadsTheFolder`, `TestRepoSourcedTaskIsRefused`.
-- Command: `go test ./internal/runner/ -run 'TestRunnerNeverReadsTheFolder|TestRepoSourcedTaskIsRefused' -count=1`
+- Tests: `TestRunnerNeverReadsTheFolder`, `TestRepoSourcedTaskIsRefused`, `TestUnembeddedTaskWithTheFileStillThereIsRefused`.
+- Command: `go test ./internal/runner/ -run 'TestRunnerNeverReadsTheFolder|TestRepoSourcedTaskIsRefused|TestUnembeddedTaskWithTheFileStillThereIsRefused' -count=1`
 - Red step: `TestRunnerNeverReadsTheFolder` fails: `readRepoRecipe` reads it.
 - Depends on: none. Implements D3304. Release gate.
 - Commit: `repo-override-rulings PR3: the runner stops reading .fugaro/recipes/`
@@ -482,14 +535,15 @@ the release carrying L1 has shipped (D3300).
 ### RC2: the rules' lease check clamps the same way
 - Module: `repo-caps`.
 - Acceptance: the database rules' lease check reads a repository node above its ceiling as the
-  ceiling; the rules marker moves one generation, so `update` publishes it; the golden file and an
-  emulator test agree.
+  ceiling; the change is named in `rules_test.go`'s `namedRuleChanges`; the rules' version marker
+  moves if the rules generation must (so `update` publishes it); the golden file and an emulator test
+  agree.
 - Files: `internal/budget/rules/rules.go`, `internal/budget/rules/rules.json.tmpl`,
-  `internal/budget/rules/marker.go`, `internal/budget/rules/testdata/rules.golden.json`,
+  `internal/budget/rules/testdata/rules.golden.json`, `internal/budget/rules/rules_test.go`,
   `internal/budget/rules/lease_ceiling_emulator_test.go` (new).
 - Interfaces: none new.
-- Tests: `TestLeaseClampsRepoCap` (emulator), the rules golden test.
-- Command: `go test -tags firebase ./internal/budget/rules/ -run 'TestLeaseClampsRepoCap|TestRulesGolden' -count=1`
+- Tests: `TestLeaseClampsRepoCap` (emulator), the rules golden test, the named-changes test.
+- Command: `go test -tags firebase ./internal/budget/rules/ -run 'TestLeaseClampsRepoCap' -count=1 && go test ./internal/budget/rules/ -count=1`
 - Red step: `TestLeaseClampsRepoCap` fails: a lease above the default is granted.
 - Depends on: none. Release gate.
 - Commit: `repo-override-rulings RC2: the rules' lease check clamps the repository cap`
@@ -592,47 +646,63 @@ the release carrying L1 has shipped (D3300).
 - Module: `lift-keys`. Kind: integration (C1).
 - Acceptance: every reader of report §5 and spec §6 (through `TestEveryConsumerResolvesTheSameBytes`
   and a runner test over `ResolveConfig`, `readBaseConfig` and the ref arm) on a file that writes
-  every lifted key yields a resolved config with none of their values (acceptance 3); every lifted
-  key is a retired `InRepo` row of `Scopes` and no MCR retired key is lifted (R1); the writers
-  refuse (S4, RG3); the launch names and gates (S5).
+  every lifted key yields a resolved config with none of their values (acceptance 3); no lifted key
+  is a `Retired` row, and `RetiredKeys` is still exactly MCR's list (R1); the writers refuse (S4,
+  RG3); the launch names and gates (S5).
 - Files: `internal/cli/consumers_test.go`, `internal/cli/testdata/lifted/fugaro.yaml` (new),
   `internal/runner/lifted_readers_test.go` (new), `internal/config/lifted_rows_test.go` (new).
 - Interfaces: Consumes C1, S0, S1, S2, S4, S5, RG3.
-- Tests: `TestEveryReaderDropsLiftedKeys`, `TestLiftedKeysAreRetiredRows`.
-- Command: `go test ./internal/cli/ -run 'TestEveryConsumerResolvesTheSameBytes|TestEveryReaderDropsLiftedKeys' -count=1 && go test ./internal/runner/ -run 'TestEveryReaderDropsLiftedKeys' -count=1 && go test ./internal/config/ -run 'TestLiftedKeysAreRetiredRows' -count=1`
-- Red step: `TestLiftedKeysAreRetiredRows` fails until S0 has marked the rows.
+- Tests: `TestEveryReaderDropsLiftedKeys`, `TestLiftedAndRetiredListsAreApart`.
+- Command: `go test ./internal/cli/ -run 'TestEveryConsumerResolvesTheSameBytes|TestEveryReaderDropsLiftedKeys' -count=1 && go test ./internal/runner/ -run 'TestEveryReaderDropsLiftedKeys' -count=1 && go test ./internal/config/ -run 'TestLiftedAndRetiredListsAreApart|TestEveryRetiredKeyIsNamedWhereItIsWritten' -count=1`
+- Red step: `TestEveryReaderDropsLiftedKeys` fails for any reader that resolves the file outside `config.Resolve`.
 - Depends on: S0, S1, S2, S4, S5, RG3 (the sides it wires).
 - Commit: `repo-override-rulings I1: every reader of a repository's file drops every lifted key`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
-### DK1: model_grades in a repository's file and agent.compression refused; RepoModelGradesSet goes
+### D3: the in-flight design document follows the new stage and the bootstrap refusal
+- Module: `migrate`, `project-recipes`.
+- Acceptance: `docs/design/update-in-flight.md` says, step by step, what M2's stage writes and that a
+  run in flight keeps its task, layer and recipe; that a lowered repository cap is met at the next
+  lease and named; and that D3304's bootstrap refusal meets no run already bootstrapped (U1 and
+  Check 913 named for the retried execution); the Docs tests pass.
+- Files: `docs/design/update-in-flight.md`.
+- Interfaces: none.
+- Tests: the Docs tests.
+- Command: `go test ./internal/cli/ -run Docs -count=1`
+- Red step: none (documents).
+- Depends on: M2, PR3 (kept, behaviour: it states what they do). Release gate.
+- Commit: `repo-override-rulings D3: update in flight, with the L8 stage`
+- Reviewer tier: standard.
+
+### DK1: agent.compression's repository row goes; RepoModelGradesSet goes
 - Module: `dead-keys` (D3299).
-- Acceptance: `model_grades.*` in a repository's file is refused at decode with the fix naming the
-  project layer, in the sentence model-credentials-routing X2 uses for `model_grades.*.access`
+- Acceptance: `model_grades.strong.model` and `model_grades.strongest.model` in a repository's file
+  are dropped and named on every ref (C1's list, through S1), and the `.access` rows stay MCR's
   (R11); `agent.compression`'s row loses `InRepo` (it is refused already, F16);
   `Config.RepoModelGradesSet` and its setter go.
 - Files: `internal/config/scope.go`, `internal/config/grades.go`, `internal/config/resolve.go`,
   `internal/config/config.go`, `internal/config/dead_keys_test.go` (new).
 - Interfaces: none new.
-- Tests: `TestRepoModelGradesRefused`, `TestScopeTableMatchesDocs`.
-- Command: `go test ./internal/config/ -run 'TestRepoModelGradesRefused|TestScopeTableMatchesDocs' -count=1`
-- Red step: `TestRepoModelGradesRefused` fails: the key is dropped silently.
+- Tests: `TestRepoModelGradesModelDropped`, `TestModelGradesAccessStaysMCRs`, `TestScopeTableMatchesDocs`.
+- Command: `go test ./internal/config/ -run 'TestRepoModelGradesModelDropped|TestModelGradesAccessStaysMCRs|TestScopeTableMatchesDocs' -count=1`
+- Red step: `TestRepoModelGradesModelDropped` fails: nothing names the key.
 - Depends on: S0 (kept: `scope.go`); RT1 (kept: `resolve.go`). Release gate.
-- Commit: `repo-override-rulings DK1: model_grades in a repository's file refused`
+- Commit: `repo-override-rulings DK1: model_grades' model and agent.compression leave a repository's file`
 - Reviewer tier: standard.
 
-### DK2: the merge's repository half of the grades and its skew gates go
+### DK2: the grades' repository half and skew gates go; the default branch refuses the model grades
 - Module: `dead-keys` (D3299).
 - Acceptance: `policy.tightenGrades` loses its repository half; `refuseModelGradesSkew` and the
-  `recipes_skew.go` readers of `RepoModelGradesSet` read the layer alone; the build and the skew
-  tests pass.
+  `recipes_skew.go` readers of `RepoModelGradesSet` read the layer alone; `fugaro validate` and a
+  default-branch launch refuse `model_grades.*.model` in the file with the fix, in the sentence MCR
+  X2 uses for `model_grades.*.access`, while an older ref only names it (R2, R11).
 - Files: `internal/cli/recipes_skew.go`, `internal/cli/init.go`, `internal/policy/craft.go`,
-  `internal/cli/dead_keys_skew_test.go` (new).
+  `internal/cli/validate.go`, `internal/cli/dead_keys_skew_test.go` (new).
 - Interfaces: none new.
-- Tests: `TestModelGradesSkewReadsTheLayer`, `go test ./internal/policy/`.
-- Command: `go test ./internal/cli/ -run 'TestModelGradesSkew' -count=1 && go test ./internal/policy/ -count=1`
-- Red step: the build fails once DK1 removed the field; the new test pins the layer-only read.
-- Depends on: DK1 (kept, behaviour); S5 (kept: `recipes_skew.go`). Release gate.
+- Tests: `TestModelGradesSkewReadsTheLayer`, `TestDefaultBranchRefusesModelGrades`, `go test ./internal/policy/`.
+- Command: `go test ./internal/cli/ -run 'TestModelGradesSkew|TestDefaultBranchRefusesModelGrades' -count=1 && go test ./internal/policy/ -count=1`
+- Red step: `TestDefaultBranchRefusesModelGrades` fails: the launch goes through.
+- Depends on: DK1 (kept, behaviour); S5 (kept: `recipes_skew.go`); S2 (kept: `validate.go`). Release gate.
 - Commit: `repo-override-rulings DK2: the grades' repository half goes`
 - Reviewer tier: standard.
 
@@ -709,8 +779,27 @@ the release carrying L1 has shipped (D3300).
 - Owner-run: the owner runs `bash scripts/live-checks/check-912-lift-refusal.sh fugaro <a checkout>`
   after release B is installed. No agent runs it.
 
+### CK3: Check 913 as a script, and registered
+- Module: `project-recipes`.
+- Acceptance: `check-913-retry-image.sh <project>` lists, read-only, every running execution of the
+  project's jobs, the image digest it runs and its job's current image digest: PASS when every
+  execution keeps its own image after an update (so D3304's refusal meets no retried execution, U1
+  settled), FAIL naming each execution that took the job's new image; a hermetic test drives it
+  against fakes; stdin closed, no token on an argv; registered beside 910–912.
+- Files: `scripts/live-checks/check-913-retry-image.sh` (new), `…_test.sh` (new),
+  `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md`, `scripts/live-checks/README.md`.
+- Interfaces: none.
+- Tests: `go test ./scripts`, the Docs tests.
+- Command: `go test ./scripts/ -count=1 && go test ./internal/cli/ -run Docs -count=1`
+- Red step: the registration test fails before the row exists.
+- Depends on: CK2 (kept: three files of the registration).
+- Commit: `repo-override-rulings CK3: Check 913, as a script`
+- Reviewer tier: standard.
+- Owner-run: the owner runs `bash scripts/live-checks/check-913-retry-image.sh fugaro` right after
+  release A's `fugaro update`, with a run in flight. No agent runs it.
+
 ### XB4: release B: the launch gate for the refusal
-- Module: `lift-keys`. Gate: **not launched before release A is cut** (D3298).
+- Module: `lift-keys`. Gate: release B, fenced (R18, D3298).
 - Acceptance: a default-branch launch on an image before release B is refused where the refusal
   would apply, with `fugaro update` as the fix (as MCR X1 gates X2).
 - Files: `internal/cli/recipes_skew.go`, `internal/cli/l8b_skew_test.go` (new).
@@ -723,21 +812,23 @@ the release carrying L1 has shipped (D3300).
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### XB1: release B: config.Resolve refuses a lifted key on the default branch, ignores it on an older ref
-- Module: `lift-keys`. Gate: not launched before release A is cut.
-- Acceptance: the lifted rows lose `InRepo`; resolving a default branch's file that writes one is a
-  problem with the fix (C1's sentence); resolving an older ref's file (a follow-up's base, a
-  non-default `--ref`) drops it and names it (R2); `docs/project-layer.md` prints the table.
+- Module: `lift-keys`. Gate: release B (R18).
+- Acceptance: the lifted rows lose `InRepo` (none is marked `Retired`, so "`Retired` is a subset of
+  `In`" holds throughout, R1); resolving a default branch's file that writes one, or an empty
+  `rigor:` block, is a problem with the fix (C1's sentence); resolving an older ref's file (a
+  follow-up's base, a non-default `--ref`) drops it and names it (R2); `docs/project-layer.md`
+  prints the table.
 - Files: `internal/config/scope.go`, `internal/config/lifted_drop.go`, `internal/config/resolve.go`,
   `internal/config/lifted_refuse_test.go` (new), `docs/project-layer.md`.
-- Tests: `TestLiftedKeyRefusedOnTheDefaultBranch`, `TestLiftedKeyIgnoredOnAnOlderRef`, `TestScopeTableMatchesDocs`.
-- Command: `go test ./internal/config/ -run 'TestLiftedKey|TestScopeTableMatchesDocs' -count=1 && go test ./internal/cli/ -run Docs -count=1`
+- Tests: `TestLiftedKeyRefusedOnTheDefaultBranch`, `TestLiftedKeyIgnoredOnAnOlderRef`, `TestEmptyRigorBlockRefusedOnTheDefaultBranch`, `TestScopeTableMatchesDocs`.
+- Command: `go test ./internal/config/ -run 'TestLiftedKey|TestEmptyRigorBlock|TestScopeTableMatchesDocs' -count=1 && go test ./internal/cli/ -run Docs -count=1`
 - Red step: `TestLiftedKeyRefusedOnTheDefaultBranch` fails: the key is dropped.
 - Depends on: XB4 (kept, behaviour); DK1 (kept: two files); D1 (kept: `project-layer.md`).
 - Commit: `repo-override-rulings XB1: release B refuses a lifted key on the default branch`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### XB2: release B: the runner's older ref, the launch's refusal and the recipes folder refused
-- Module: `lift-keys`, `project-recipes`. Gate: not launched before release A is cut.
+- Module: `lift-keys`, `project-recipes`. Gate: release B, fenced (R18).
 - Acceptance: the runner resolves a follow-up's, a review's and a `--ref` run's file in the
   older-ref mode, and the default branch in the refusing mode; a default-branch launch whose file
   writes a lifted key, or whose default branch holds `.fugaro/recipes/`, is refused with the fix
@@ -751,22 +842,23 @@ the release carrying L1 has shipped (D3300).
 - Commit: `repo-override-rulings XB2: release B refuses at the launch`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
-### XB3: release B: the schemas and the settings registry drop the lifted keys
-- Module: `lift-keys`. Gate: not launched before release A is cut.
+### XB3: release B: the schemas, the settings registry and the empty rigor block's opt-in
+- Module: `lift-keys`, `rigor-repos`. Gate: release B (R18).
 - Acceptance: `schemas/fugaro.schema.json` no longer accepts a lifted key; the settings registry and
-  `schemas/settings.schema.json` give each lifted key the project scope only;
+  `schemas/settings.schema.json` give each lifted key the project scope only; `rigor.Config.RepoBlock`
+  no longer opts a repository in (`Configured`), since RG2 moved every empty block to `rigor.repos`;
   `TestRegistryCoversEveryConfigField` passes.
 - Files: `schemas/fugaro.schema.json`, `internal/settings/registry.go`, `schemas/settings.schema.json`,
-  `internal/settings/lift_rows_test.go` (new).
-- Tests: `TestRegistryCoversEveryConfigField`, `TestLiftedRowsAreProjectOnly`.
-- Command: `go test ./internal/settings/ -run 'TestRegistryCoversEveryConfigField|TestLiftedRowsAreProjectOnly' -count=1`
+  `internal/rigor/resolve.go`, `internal/settings/lift_rows_test.go` (new).
+- Tests: `TestRegistryCoversEveryConfigField`, `TestLiftedRowsAreProjectOnly`, `TestEmptyRigorBlockOptsInNoLonger`.
+- Command: `go test ./internal/settings/ -run 'TestRegistryCoversEveryConfigField|TestLiftedRowsAreProjectOnly' -count=1 && go test ./internal/rigor/ -run 'TestEmptyRigorBlockOptsInNoLonger' -count=1`
 - Red step: `TestLiftedRowsAreProjectOnly` fails on the repository scope.
 - Depends on: XB1 (kept, behaviour).
-- Commit: `repo-override-rulings XB3: the schemas drop the lifted keys`
+- Commit: `repo-override-rulings XB3: the schemas and the empty rigor block`
 - Reviewer tier: standard.
 
 ### XB5: release B: update refuses a lifted key on a default branch, with the fix
-- Module: `migrate`. Gate: not launched before release A is cut.
+- Module: `migrate`. Gate: release B, fenced (R18).
 - Acceptance: `fugaro update` names every enrolled repository whose default branch still writes a
   lifted key or holds `.fugaro/recipes/`, with the fix and the diff, and converges everything else;
   it asks nothing (spec §4's "refused at update", read under the HARD RULE as named, never as a
@@ -786,11 +878,11 @@ the release carrying L1 has shipped (D3300).
 | Level | Tasks |
 | --- | --- |
 | 0 | A1, C1, C2, PR0, S0, PR5, AB1, RG1, PR3, RC1, RC2, M1, CK1 |
-| 1 | S1, S4, S5, AB2, AB3, MC1, RG2, PR1, PR2, PR4, RC3, RC4, M2, CK2 |
-| 2 | RT1, RG3, I2 |
+| 1 | S1, S4, S5, AB2, AB3, MC1, RG2, PR6, PR4, M2, RC3, RC4, CK2 |
+| 2 | RT1, RG3, PR1, PR2, D3, CK3, I2 |
 | 3 | RT2, S2, I3, DK1, D1, D2 |
 | 4 | I1, DK2 |
-| 5 | XB4 (release B, gated on release A) |
+| 5 | XB4 (release B, fenced) |
 | 6 | XB1 |
 | 7 | XB2, XB3, XB5 |
 
@@ -810,11 +902,16 @@ No level holds two writers of one file (checked against the graph's footprints):
 | `internal/config/lifted_drop.go` | S1 (1), XB1 (6) |
 | `docs/project-layer.md` | S0 (0), D1 (3), XB1 (6) |
 | `internal/cli/recipes_skew.go` | S5 (1), DK2 (4), XB4 (5) |
-| `internal/cli/run.go` | PR2 (1), XB2 (7) |
+| `internal/cli/run.go` | PR2 (2), XB2 (7) |
 | `internal/cli/recipes_cleanup.go` | PR5 (0), XB2 (7) |
 | `internal/cli/update_lift.go` | M2 (1), XB5 (7) |
 | `internal/lift/stubs.go` | C2 (0, creates), I2 (2, deletes) |
-| `schemas/fugaro.schema.json` | S0 (0), XB3 (7) |
+| `internal/cli/validate.go` | S2 (3), DK2 (4) |
+| `internal/cli/budget_preview.go` | PR1 (2), RT2 (3) |
+| `internal/rigor/resolve.go` | RG1 (0), XB3 (7) |
+| `schemas/settings.schema.json` | AB1 (0), XB3 (7) |
+| `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md`, `scripts/live-checks/README.md` | CK2 (1), CK3 (2) |
+| `schemas/fugaro.schema.json` | S1 (1), XB3 (7) |
 | `website/content/cli-reference.md` | S4 (1), RG3 (2) |
 
 Across plans (reconciliation O2): model-credentials-routing's MG5 (`scope.go`, both schemas), MG6
@@ -835,7 +932,7 @@ The decoupling switch is on for `dimipaun/fugaro` (`fugaro settings planning.dec
   files, not the provider read that fills it) and M2's wait on each of those five (the stage needs a
   planner's signature and its change type, not what it computes). Integration: I2.
 
-**Kept (38 edges)**, each with its reason in the graph; the families: one file (`resolve.go`,
+**Kept (45 edges)**, each with its reason in the graph; the families: one file (`resolve.go`,
 `scope.go`, `recipes_skew.go`, `run.go`, `update_lift.go`, `project-layer.md`, the CLI reference);
 behaviour (RT2 on RT1's mark, S2 on RT1's record, DK2 on DK1, the documents and skills on what
 they describe, every release-B task on release A); and four small functions a contract would equal
@@ -844,7 +941,7 @@ they describe, every release-B task on release A); and four small functions a co
 **Considered and not broken:** a contract for B16's copy name (PR0 is the function itself, so it
 stays a task); a contract for `ab.repos` (the field is the whole of AB1).
 
-**The gain**, as the read reports it: 14 broken, 38 kept, 6 added; before 8 tasks, weight 18;
+**The gain**, as the read reports it: 14 broken, 45 kept, 6 added; before 8 tasks, weight 18;
 after 8 tasks, weight 17; improves. The critical path is release B's chain; the contracts widen
 level 1 (fourteen tasks run at once) rather than shorten it.
 
@@ -859,23 +956,24 @@ level 1 (fourteen tasks run at once) rather than shorten it.
 
 `fugaro plan graph --plan docs/repo-override-rulings/implementation-plan.md` printed:
 
-`ready in 347–1535 min, no history yet for 20 tasks (45 tasks; tiers for 25, seeds for 20; from the cached history of 2026-11-22 07:25 UTC)`
+`ready in 347–1535 min, no history yet for 21 tasks (48 tasks; tiers for 27, seeds for 21; from the cached history of 2026-11-22 07:25 UTC)`
 
 It is informational and reserves no budget: it is what the tasks' tiers and this machine's cached
-history predict, and it moves as runs finish and as the graph changes. The 45 count includes the
-two contract changes, which run only if raised. **Proposed runs:** 43 (the two contracts, 39 tasks and the two integrations),
+history predict, and it moves as runs finish and as the graph changes. The 48 count includes the
+two contract changes, which run only if raised. **Proposed runs:** 46 (the two contracts, 42 tasks and the two integrations),
 plus up to two contract changes, plus one independent review (`fugaro review --pr N`) for each
 opus-tier task and for C1 and C2 before their consumers launch.
 
 ## Checks the plan takes
 
-Block **910–919**; this plan uses 910–912.
+Block **910–919**; this plan uses 910–913.
 
 | Check | What it measures | Who runs it, when |
 | --- | --- | --- |
 | 910 | Every enrolled repository's resolved models, rigor, A/B rate and recipe sums, and `update --plan-only`'s L8 lines, before release A | The owner, before release A's `fugaro update` (CK1) |
 | 911 | The same read after release A's update, compared with 910: every value the same or named by the update | The owner, after release A's `fugaro update` (CK1) |
 | 912 | Release B refuses a lifted key on the default branch with the fix and names it on an older ref | The owner, after release B is installed (CK2) |
+| 913 | Whether a retried execution of a run launched before `update` boots on the rebuilt image (U1): each running execution's image against its job's, read-only | The owner, during release A's `fugaro update` with a run in flight (CK3) |
 
 ## After-deploy steps
 

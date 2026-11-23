@@ -20,7 +20,9 @@ reconciliation raised (D3299–D3304) were answered the same day, each as recomm
   otherwise the default repository cap (spec §5.6). "Unless the global cap allows more" (D3237) is
   read as: a set global cap is the ceiling.
 - A4. `<owner-repo>` in D3295 is the readable half of a repository's slug (`task.Slug`: "acme/app"
-  becomes `acme-app`), lower case, without the 16-hex hash.
+  becomes `acme-app`), lower case. **Amended after review (D3302):** the readable half alone is not
+  unique — `task.Slug` merges "acme/app-web" and "acme-app/web" into one readable `acme-app-web` and
+  keeps them apart only by its 16-hex hash — so the copy carries the first 8 hex of that hash.
 - A5. L13 sits in wave 2 by D3238; carrying it inside L8 (spec §9) needs the owner's go (D3299).
 - A6. Release A and release B are two consecutive CLI releases (D3298); every image-age gate below
   names the release that carries its side, as the `*Since` constants of
@@ -47,7 +49,7 @@ module id. **Approved by the owner on 2026-11-23 (D3299).**
 | `rigor-repos` | B11: `rigor.repos` and member areas, the new precedence (D3294), `Configured` per repository, the writers | `lift-keys`, `migrate` |
 | `project-recipes` | B16: repository recipes move to the flat project store (D3295), each repository pointed at its own copy, the launcher and runner stop reading `.fugaro/recipes/` | `lift-keys`, `migrate` |
 | `repo-caps` | B18: the repository cap's ceiling, at the writer, at every read and in the rules | `migrate` |
-| `dead-keys` | L13: `model_grades.*` in a repository's file and `agent.compression` refused, their merge plumbing removed | `lift-keys` |
+| `dead-keys` | L13: `model_grades.*.model` in a repository's file and `agent.compression` refused, their merge plumbing removed | `lift-keys` |
 
 Build order: `lift-keys` and `review-tighten` first (the contracts of §6 let `migrate`'s planners
 run beside them), then the items, then release B.
@@ -89,7 +91,8 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
   `config.Resolve` drop them. On `main` "retired" means named and still honoured
   (`RetiredKeyNotes`: "decides nothing", D3063), and model-credentials-routing relies on that: its
   retired `agent.auth`, craft `access` and grade `access` drive a run until its release 2 (MCR X2).
-  A `Resolve` that dropped every `Retired: InRepo` row would cut MCR's bridge. → R1.
+  A `Resolve` that dropped every `Retired: InRepo` row would cut MCR's bridge, and marking the
+  lifted rows `Retired` breaks MCR's own test of the retired list. → R1 (amended after review).
 - **F2 (Wrong).** "`config.RetiredKeyNotes` names them in `validate`, `doctor` and the launch": no
   command calls it today; the comment in `scope.go` says `update`, `validate` and `doctor` print it,
   and none does. L8 has to wire it. → R1, task S2.
@@ -231,21 +234,29 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
 | D3299 | Approve the capability map of §2, with L13 inside L8 as module `dead-keys` (spec §9)? | **Approve.** L13 edits the same scope rows, schema, `Resolve` and refusal wording, needs no migration and waits on L1 too; two plans would write one table twice | L13 stays its own small spec in wave 2 (D3238 as it stands): the `dead-keys` tasks DK1–DK2 leave this plan; cost: a second plan over `scope.go`, `resolve.go` and the schema, and two refusal styles | **As recommended (2026-11-23).** The capability map is approved and L13 is module `dead-keys`, because one plan then writes the scope table and the refusal wording once; amends D3238's wave-2 placement of L13 |
 | D3300 | May release A ride L1's own release? (F14, T1) | **No: release A is cut at least one release after the release that carries L1.** That is what spec §4's "must have shipped" says, and it is what makes the stamp fence the CLIs of L1's release against L8 | Release A rides L1's release; cost: no CLI is fenced against L8 at all, and the lift rests wholly on the runner, the clamp and the image gates (F18, F19) | **As recommended (2026-11-23).** Release A is cut at least one release after L1's, so the stamp fences the CLIs of L1's release against L8; settles T1 |
 | D3301 | Under D3295, what is a clash? (F21) | **A name some other repository of the project already resolves to different text: another repository's file, an existing project recipe, or a catalog recipe.** Each clashing copy is renamed `<name>.<owner-repo>`; a name nothing else answers is published flat. This keeps every run where it was (spec §2) | Only two repositories' files (the follow-up's words); cost: a repository's `default.yaml` or a catalog-named file published flat becomes every other repository's recipe of that name on the next launch | **As recommended (2026-11-23).** A clash is any name another repository already resolves to different text (its file, a project recipe or a catalog recipe), so no other repository's runs move |
-| D3302 | How is the renamed copy spelled, given `recipe.NameRE`? (F5) | **The owner's spelling, `<name>.<owner-repo>`**: `recipe` gains a second grammar for a project copy (a recipe name, one dot, the readable slug; up to 81 characters), the launcher and the runner accept it, and a launch that embeds one is gated on the image (`recipeCopySince`) | `<name>--<owner>-<repo>` inside today's grammar; cost: not the owner's words, and the 40-character limit forces a truncation with a hash for most real slugs | **As recommended (2026-11-23).** `<name>.<owner-repo>` stays, with the copy-name grammar (one dot, at most 81 characters) and the `recipeCopySince` gate, because it is the owner's own spelling |
+| D3302 | How is the renamed copy spelled, given `recipe.NameRE`? (F5) | **The owner's spelling, `<name>.<owner-repo>`**: `recipe` gains a second grammar for a project copy (a recipe name, one dot, the readable slug; up to 81 characters), the launcher and the runner accept it, and a launch that embeds one is gated on the image (`recipeCopySince`) | `<name>--<owner>-<repo>` inside today's grammar; cost: not the owner's words, and the 40-character limit forces a truncation with a hash for most real slugs | **As recommended (2026-11-23).** `<name>.<owner-repo>` stays, with the copy-name grammar and the `recipeCopySince` gate, because it is the owner's own spelling. **Amended after review, the owner's answer of 2026-11-23:** the copy is `<name>.<owner-repo>-<8 hex>`, the 8 hex the first eight of the repository's `task.Slug` hash, because the readable half merges "acme/app-web" and "acme-app/web" (`task.Slug`'s own comment) and the hash keeps them apart. Length: a name of at most 40, the dot, a readable half of at most 46 (`maxSlugReadable` = 63 − 1 − 16), the hyphen and 8 hex: **at most 96 characters** (the 81 first written was wrong). Owner to confirm the amended form (O4) |
 | D3303 | How is each repository "pointed at its own copy"? (F7) | **A lookup rule, no new data:** for repository R, the launcher resolves `<name>.<owner-repo of R>` in the store before `<name>`, then the catalog. Nothing in the layer changes, so no strict-decode skew (F15) and no new writer | A map in the project layer (`recipes.repos.<owner/name>.<name>: <copy>`); cost: a new layer member every pre-L8 reader refuses, a gate of its own, and a writer | **As recommended (2026-11-23).** The lookup rule, no new data, so no new layer member, gate or writer |
 | D3304 | What does a release-A runner do with a task that leaves the recipe to the repository's folder (`Source: repo` by name, or no recipe on a ref that holds `.fugaro/recipes/<name>.yaml`)? (F9, F18) | **Refuse at bootstrap with the fix** ("the recipe is the project's now (D3237): launch with fugaro 0.X or later"): acceptance 7 says a repository recipe reaches a run only from the store, and a pre-L1 CLI is the accepted gap, which fails closed this way | Read the folder as today until release B, record `source: repo`; cost: any pre-L8 launcher, including the unfenced pre-L1 ones, keeps bringing repository recipes for a whole release | **As recommended (2026-11-23).** Refuse at bootstrap with the fix, so a repository recipe reaches a run only from the store (acceptance 7) |
 
 ### Resolutions (one defensible answer)
 
-- **R1 (F1, F2).** A lifted key is a retired row (`Retired: InRepo`, `RetiredWhy` naming its new
-  home), so `RetiredKeyNotes` names it, **and** it is on a separate list in
-  `internal/config/lifted.go` (`LiftedKeys`: the path and its phase) that `config.Resolve` reads to
-  drop it. A test holds every lifted key to a retired `InRepo` row. MCR's retired rows are not on
-  the list and stay honoured. `validate`, `doctor` and the launch print the notes (S2).
+- **R1 (F1, F2). Amended after review.** A lifted key is **not** marked `Retired`: it is on its own
+  list in `internal/config/lifted.go` (`LiftedKeys`: the path, its home and its fix), which
+  `config.Resolve` reads to drop it and `LiftedKeyNotes` reads to name it. Marking the rows
+  `Retired` would break `TestEveryRetiredKeyIsNamedWhereItIsWritten` (`internal/config/retired_test.go`,
+  which holds `RetiredKeys` to MCR's R3 list exactly) and, in a build between the scope edit and
+  release A, would tell a person a key had moved before `update` can move it. MCR's retired rows
+  stay MCR's and stay honoured; a test holds the two lists apart. Release B takes `InRepo` off the
+  lifted rows (XB1), so "`Retired` is a subset of `In`" (`ScopeRow.Retired`) never comes into play.
+  `validate`, `doctor` and the launch print the notes (S2, S5).
 - **R2 (F3).** The drop lives in `config.Resolve`, both arms (with and without a layer), so every
   ref's file — the default branch, a `--ref` branch, a follow-up's base — loses the lifted keys in
   release A. Release B refuses them only on the default branch; every other ref keeps the drop and
-  the note (spec §4).
+  the note (spec §4). The same holds for L13's `model_grades.*.model` (DK1). The resolution's
+  repository-own fields read after the drop: `Config.RepoRigor` and `RepoRigorSet`,
+  `RepoRigorLevelSet`, `RepoRigorScalarSet` (set in both arms of `Resolve`) see no lifted rigor key,
+  while an empty `rigor:` block, which is no lifted key, keeps opting in until release B retires it
+  (XB3).
 - **R3 (F4).** `config.Resolve` applies B4's rule against the project's value where the project
   sets one; where it is silent, it keeps the repository's value marked as unchecked in the
   resolution, and the places that apply the mode's defaults (`internal/runner/plan.go` `setRounds`,
@@ -272,8 +283,10 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
   `projectpolicy.Version` bump.
 - **R10 (F6).** Task A1 writes the dated amendment of model-credentials-routing's F7 naming D3237,
   in that folder's reconciliation and README.
-- **R11 (F16).** `dead-keys` refuses `model_grades.*` in a repository's file at once (no
-  migration: the merge drops it today), removes `policy.tightenGrades`' repository half,
+- **R11 (F16), amended after review.** `dead-keys` refuses `model_grades.*.model` in a repository's
+  file on the default branch, and drops and names it on an older ref (R2), from release A (no
+  migration: the merge drops it today); the `model_grades.*.access` rows are MCR's (`Retired: InRepo`
+  in `scope.go`) and stay out of this plan; removes `policy.tightenGrades`' repository half,
   `Config.RepoModelGradesSet` and the skew gates that read it; `agent.compression`'s row loses
   `InRepo` and the schema says so. MCR X2 refuses `model_grades.*.access` in the same subtree:
   one refusal sentence for both.
@@ -287,6 +300,27 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
   with `--layer repo`, `rigor set --layer repo`; `models use` defaults to `--layer project`.
 - **R16 (F19).** The release-A launch gate refuses a pre-L8 image also where the default branch
   holds `.fugaro/recipes/`, with `fugaro update` as the fix.
+- **R17 (review).** MC1 never moves a repository onto a model its own `budget.allowed_models`
+  (B7, kept) excludes without saying so: such a repository is named before the write with the
+  fix (its allow-list, or the project's value), and it is not counted in the majority (D3290)
+  for a model it may not use. The planner writes no per-repository model, since B3 is lifted.
+- **R18 (review).** The release fence. Release A's gated tasks are not launched before the release
+  carrying L1 has been **tagged** (`docs/release.md`: a tag is cut from `main`'s head), and release
+  A lands **as one batch**: from the first gated merge until I1, I2 and I3 have merged, no CLI tag
+  (`vX.Y.Z`) is cut. Release B is fenced the same way, from XB4's merge until XB1, XB2, XB3 and XB5
+  have merged. A batch rather than a switch, because a switch is code the spec does not ask for and
+  a tag freeze costs nothing; console and mobile tags are not affected.
+- **R19 (review).** Every recipe-name check that refuses a dot accepts a copy name: `recipe.Parse`'s
+  name check, `schemas/recipe.schema.json`, the task's recipe validation (`internal/task`), the
+  recipe cache (`internal/localcfg/recipecache.go`), `recipes ls`, `publish` and `rm`
+  (`internal/cli/recipes.go`, so an admin can replace or remove a migrated copy),
+  `resolveRecipe`, `budget_preview.go`'s recipe read and the follow-up's inherited name
+  (`internal/cli/followup.go`, which today drops a name `NameRE` refuses without a word) (PR6, PR1, PR2).
+- **R20 (review).** B4's baseline for a silent project comes from where the defaults are applied:
+  the mode's `rigor.DefaultLevels` inside `config.ResolveLevels` for the levels (`none`, effort,
+  model of a level), the mode's rounds (R3) for the round counts, and Fugaro's `applyDefaults` for a
+  key no mode row holds. A repository's `l3.none: true` under a silent project leaves a critical
+  run's L3 running (RT2).
 
 ## 6. Open tensions and open items
 
@@ -298,13 +332,22 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
   `layer.go`, `validate.go`, both schemas and `models_use.go`. An L8 task that finds one of them
   merged first rebases on it; none waits for it.
 - **O3.** L1's plan (`docs/required-version-stamp/`, D3260–D3289) is not on `main`. L8 needs
-  nothing from its code; the dependency is the release order (D3300).
+  nothing from its code; the dependency is the release order (D3300, R18).
+- **O4.** The owner confirms D3302's amended form, `<name>.<owner-repo>-<8 hex>` (at most 96
+  characters).
+- **O5.** A residue of D3304: a task from a pre-L8 launcher that embeds no recipe, on a ref whose
+  `.fugaro/recipes/` the repository has already removed, for a name the catalog also has (`default`
+  first), runs the catalog recipe, because nothing left at the ref says a copy exists (`internal/runner/recipe.go`
+  `resolveRecipe`). PR3 refuses every case it can see (the file still at the ref). Closing the rest
+  means every release-A launcher embeds every recipe and the runner refuses any task that embeds
+  none, which refuses every pre-L8 launcher outright: the owner's to choose.
 
 ## 7. UNVERIFIED
 
 - **U1.** Whether a retried execution of a run launched before `update` boots on the rebuilt image.
   If it does, D3304's refusal could meet an in-flight run whose task names a repository recipe.
-  Settled by reading `internal/backend/gcp`'s execution retry and job update, or by the owner.
+  It is the platform's behaviour, not this repository's code, so Check 913 settles it (task CK3,
+  owner-run, read-only: each running execution's image against its job's after an update).
 - **U2.** Spec §5.6's "enforce needs the global caps (`budget.go`)" was not found as a rule in
   `internal/cli/budget.go`; the B18 migration does not depend on it. Settled by a reader of
   `internal/budget/evaluate.go`.
