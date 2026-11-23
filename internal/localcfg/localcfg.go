@@ -1118,6 +1118,18 @@ type WorkspaceShared struct {
 	// file does not know is refused rather than read as a model one, because
 	// the kind is what decides whether Covers is required.
 	Kind string `yaml:"kind"`
+	// AllMembers offers the credential to every member of the workspace, the
+	// ones that join later included (D2977). It is exclusive with Projects and
+	// one of the two is written (contract C3's rule 5): an entry offered to the
+	// members it names carries Projects and no AllMembers at all, and one
+	// offered to every member carries AllMembers and no Projects. The reader
+	// refuses a node that carries both rather than picking one, because a
+	// reader that picked would be deciding who may be served a credential.
+	//
+	// An entry offered to every member is bounded by the workspace's ceiling
+	// alone, which is why the workspace's own cap has to be stated before
+	// `fugaro workspace share --all-members` writes one (D2977).
+	AllMembers bool `yaml:"all_members,omitempty"`
 	// Projects are the member projects this credential may be served to, as
 	// project names. It is the workspace's own allow-list, and the effective
 	// set is this list intersected with the member's own policy (D1298): a
@@ -3912,8 +3924,17 @@ func validateWorkspace(c *Config, bad func(string, ...any)) {
 					bad("workspace_shared.%s: covers lists %s twice", name, why)
 				}
 			}
-			if len(s.Projects) == 0 {
-				bad("workspace_shared.%s names no project: a written entry states the members it may be served to, and an empty list is refused rather than read as every member", name)
+			// Who the entry may be served to is one of two declarations and
+			// never both (contract C3's rule 5): the members it names, or every
+			// member of the workspace. A file that carried both, or neither, is
+			// refused here as the node's own reader refuses it — an entry read
+			// as one of the two when the owner wrote the other would be a pool
+			// wider or narrower than the declaration beside it.
+			switch {
+			case s.AllMembers && len(s.Projects) > 0:
+				bad("workspace_shared.%s carries both all_members and projects: they are exclusive — an entry offered to the members it names carries `projects` and no all_members, and one offered to every member carries `all_members: true` and no projects", name)
+			case !s.AllMembers && len(s.Projects) == 0:
+				bad("workspace_shared.%s names no project and does not offer the credential to every member: a written entry states the members it may be served to — a list of `projects`, or `all_members: true` — and one that says neither is refused rather than read as every member", name)
 			}
 			for _, p := range s.Projects {
 				if !config.ProjectNameRE.MatchString(p) {

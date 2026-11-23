@@ -808,8 +808,11 @@ func workspaceCredentialsDeclared(ctx context.Context, lc *localcfg.Config, rec 
 // is held to the workspace's member table first: a shared entry naming a project
 // the table does not declare is an entry the service would resolve a caller
 // against and find no member for (F13), and the table is the whole of who the
-// workspace reaches. The covers are the entry's repositories, canonical, with
-// the entry's own kind as the provider segment (rule 4, U2).
+// workspace reaches. An entry offered to every member names no project here —
+// the node carries `all_members` instead, and the service offers it to each of
+// the node's members, the intersection with the member's own policy unchanged
+// (D2977, R5). The covers are the entry's repositories, canonical, with the
+// entry's own kind as the provider segment (rule 4, U2).
 func workspaceSharedEntry(rec *workspace.Record, name string, entry localcfg.WorkspaceShared) (projectpolicy.WorkspaceShared, error) {
 	var kind string
 	switch entry.Kind {
@@ -820,8 +823,22 @@ func workspaceSharedEntry(rec *workspace.Record, name string, entry localcfg.Wor
 	default:
 		return projectpolicy.WorkspaceShared{}, userErr("workspace_shared.%s: kind %q is not one this Fugaro publishes for a workspace's pool", name, entry.Kind)
 	}
-	out := projectpolicy.WorkspaceShared{Name: name, Kind: kind, Projects: slices.Clone(entry.Projects)}
-	slices.Sort(out.Projects)
+	// Who the entry may be served to is the node's one-of-two column (contract
+	// C3's rule 5): an entry offered to the members it names carries the projects
+	// and no all_members at all, and one offered to every member carries
+	// all_members and no projects. The local list's own loader refuses both at
+	// once, and this writes the one the entry declared rather than passing both
+	// through, so a value built past that loader is still a node the service
+	// reads.
+	if entry.AllMembers && len(entry.Projects) > 0 {
+		return projectpolicy.WorkspaceShared{}, userErr("workspace_shared.%s carries both all_members and projects, which the node's own reader refuses: an entry offered to every member of the workspace names no project, and one offered to the members it names carries projects and no all_members; nothing was written — write the one the entry means ('fugaro workspace share %s --workspace %s --all-members', or --projects <member>)",
+			name, name, rec.Name)
+	}
+	out := projectpolicy.WorkspaceShared{Name: name, Kind: kind, AllMembers: entry.AllMembers}
+	if !entry.AllMembers {
+		out.Projects = slices.Clone(entry.Projects)
+		slices.Sort(out.Projects)
+	}
 	// The local list's name is the map key and the node's is a field, so an empty
 	// key is the one entry the two cannot be built from; the loader refuses it, and
 	// a config this function is handed has not always been through that loader.
