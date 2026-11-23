@@ -62,7 +62,7 @@ Three things this design settles that the ask does not:
 
 1. **Which rows get a pencil is the CLI's answer, never the console's.** S5 keeps the allow-list of
    writable rows (`settingsGenericKeys` and `settingsGenericPrefixes`, `internal/cli/settings_set.go:117`, `:315`) and
-   the registry's `Owner` and `Sensitive` facts (`internal/settings/registry.go:80`). The console
+   the registry's `Owner` and `Sensitive` facts (`internal/settings/registry.go:81`). The console
    reads them and keeps no list of its own; the read's own field is the subject of **D1102** and the
    prerequisite **P2**. A row the read marks `sensitive: true` is **hidden** — no key, no value, no
    pencil — which is the owner's ruling of 2026-11-01 and is pinned as `a Sensitive row is absent
