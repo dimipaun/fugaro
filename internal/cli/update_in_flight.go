@@ -206,6 +206,10 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 		steps = append(steps, inFlightStep{
 			line: "credentials service: a call between the node's raise and its move is refused"})
 	}
+	if e.orchestratorToWrite() {
+		steps = append(steps, inFlightStep{
+			line: "resident orchestrator: the credentials service's new revision names its account; a call is served by either revision"})
+	}
 	if e.tokensPublishReachesRuns(ctx, db) {
 		steps = append(steps, inFlightStep{
 			line: "bitbucket tokens: a proxied call after the publish may use a different token"})

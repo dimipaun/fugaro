@@ -20,7 +20,7 @@ An owner or operator who wants the whole local config on a second machine — fo
 fugaro update --gcp-project <gcp-project> --region <region>
 ```
 
-On a machine with no config for the installation it takes the project's name from the installation, writes the local config from its outputs (the launchers, operators and budget backend included) and applies nothing; it then names the roles you may lack and the one command an owner runs to grant them. `fugaro setup` is never that command: it only starts fresh, and it refuses a GCP project that already holds an installation.
+On a machine with no config for the installation it takes the project's name from the installation, writes the local config from its outputs (the launchers, operators and budget backend included) and applies nothing; it then names the roles you may lack and the one command an owner runs to grant them. `fugaro setup` is never that command: it adopts only a project that holds nothing of Fugaro's, so it refuses a GCP project that already holds an installation.
 
 ## The cache
 

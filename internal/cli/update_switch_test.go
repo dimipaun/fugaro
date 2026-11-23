@@ -719,6 +719,10 @@ func TestTheCredentialsStageAppliesForAMovedRecord(t *testing.T) {
 	// release's image, so the stage has no image of its own to move and its
 	// skip has nothing to decide on but the records.
 	seedCredentialsService(t, r, r.credentialsRef())
+	// The installation already holds the resident orchestrator's block: this
+	// test is about the records, and a block still to be written is the other
+	// reason the stage has an apply to make.
+	seedOrchestratorBlock(t, r, r.credentialsRef())
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 
 	// The records have not moved: the door derived the jobs from them, nothing

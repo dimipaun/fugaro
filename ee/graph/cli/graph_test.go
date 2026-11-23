@@ -583,6 +583,10 @@ func TestGraphAllIsTheCoordinatorToday(t *testing.T) {
 	t.Run("a project the coordinator has never reconciled", func(t *testing.T) {
 		f := newGraphFixture(t)
 		id := f.seedRun(t)
+		// The index is where the fallback reads the runs half from (IR3, F3):
+		// the fold has written the run's own row, and the bucket's copy of it is
+		// what this read no longer lists.
+		f.indexing(t, indexEntry(id, fcli.LsNow().UTC().Add(-time.Hour)))
 		doc := graphDocument(t, "graph", "--json")
 		if len(doc.Sources) != 1 || doc.Sources[0].State != graph.SourceDown {
 			t.Fatalf("a project with nothing stored is %+v, want the scope down: the read succeeded and answered with the runs half", doc.Sources)
@@ -1204,6 +1208,9 @@ func TestGraphTextTableNamesTheScopeAndGroupsByRelease(t *testing.T) {
 
 	f = newGraphFixture(t)
 	f.seedRun(t)
+	// A repository the sweep has never reconciled is the runs half, and it is
+	// read from the index (IR3, F3).
+	f.indexing(t, indexEntry(indexedRunID, fcli.LsNow().UTC().Add(-time.Hour)))
 	out, errOut, err = execute(t, "graph")
 	if err != nil {
 		t.Fatalf("%v (stderr: %s)", err, errOut)
