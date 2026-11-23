@@ -196,7 +196,7 @@ func TestPolicyOfInvalidIsError(t *testing.T) {
 		"-inf cap":      "budget: { per_run_usd: -.inf }",
 		"over max":      "budget: { per_run_usd: 100001 }",
 		"too small":     "budget: { per_run_usd: 0.0000001 }",
-		"dup key":       "budget: { mode: off, mode: observe }",
+		"dup key":       "budget: { mode: observe, mode: enforce }",
 		"dup list":      "budget: { allowed_models: [claude-sonnet-5-5, claude-sonnet-5-5] }",
 		"null entry":    "budget: { allowed_models: [null] }",
 		"budget scalar": "budget: 5",
@@ -221,7 +221,7 @@ func TestPolicyOfStrictInsideBlocks(t *testing.T) {
 		"output role typo":   {"agent: { max_output_tokens: { coder2: 5 } }", "coder2"},
 		"budget not mapping": {"budget: 5", "budget"},
 		"agent not mapping":  {"agent: [1]", "agent"},
-		"duplicate budget":   {"budget: { mode: off }\nbudget: { mode: off }", "budget"},
+		"duplicate budget":   {"budget: { mode: observe }\nbudget: { mode: observe }", "budget"},
 	} {
 		_, err := PolicyOf([]byte(c.y))
 		if err == nil || !strings.Contains(err.Error(), c.key) {
@@ -229,7 +229,7 @@ func TestPolicyOfStrictInsideBlocks(t *testing.T) {
 		}
 	}
 	// Other agent keys, and unknown keys elsewhere, stay lenient.
-	if _, err := PolicyOf([]byte("surprise: 1\nagent: { auth: x, review_rounds: 99, max_run_tokens: 5 }\nbudget: { mode: off }")); err != nil {
+	if _, err := PolicyOf([]byte("surprise: 1\nagent: { auth: x, review_rounds: 99, max_run_tokens: 5 }\nbudget: { mode: observe }")); err != nil {
 		t.Errorf("lenient parts: %v", err)
 	}
 }
