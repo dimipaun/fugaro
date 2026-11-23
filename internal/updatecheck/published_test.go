@@ -215,8 +215,16 @@ func TestUnknownTagIsNotPublished(t *testing.T) {
 // instead of pretending the release is missing. A wrong "yes" would write a
 // stamp no release backs; a wrong "no" would silently never raise one.
 //
+// The two error-status cases carry a complete, published release object for
+// the tag that was asked for — a body Published would answer true from if it
+// were the only thing it read. That is what makes them tests of the status
+// rule rather than of the parse: without the status switch, these bodies
+// parse, match the tag and are published.
+//
 // Mutation: collapsing any of these to `return false, nil` (or to a bare
-// miss, as Fetch does) fails the case, since each asserts a non-nil error.
+// miss, as Fetch does) fails the case, since each asserts a non-nil error;
+// so does dropping the status switch, which leaves the 500 and the 429
+// answering true from their bodies.
 func TestLookupFailureIsAnError(t *testing.T) {
 	t.Run("a network failure", func(t *testing.T) {
 		srv, _ := tagServer(t, http.StatusOK, publishedBody("v0.29.0", false, false))
@@ -234,8 +242,8 @@ func TestLookupFailureIsAnError(t *testing.T) {
 		status int
 		body   string
 	}{
-		{"a server error", http.StatusInternalServerError, `{"message":"boom"}`},
-		{"a rate limit", http.StatusTooManyRequests, `{"message":"rate limited"}`},
+		{"a server error", http.StatusInternalServerError, publishedBody("v0.29.0", false, false)},
+		{"a rate limit", http.StatusTooManyRequests, publishedBody("v0.29.0", false, false)},
 		{"an oversized body", http.StatusOK, `{"tag_name":"v0.29.0","padding":"` + strings.Repeat("x", 2*maxBody) + `"}`},
 		{"a body that is not a release", http.StatusOK, `{not json`},
 		{"an answer about another tag", http.StatusOK, publishedBody("v0.28.0", false, false)},
@@ -258,9 +266,14 @@ func TestLookupFailureIsAnError(t *testing.T) {
 // so the redirect is what Published sees, and it must be an unexpected
 // status rather than a trip to whatever host the responder named next.
 //
-// Mutation: accepting any 2xx-or-redirect (or letting a client that follows
-// redirects answer for us) fails this test twice over: the error goes away,
-// and the second server records the request.
+// The redirect carries a complete, published release object for the tag that
+// was asked for, written out by hand rather than by http.Redirect's HTML
+// body, so the status alone is what refuses it.
+//
+// Mutation: accepting a 3xx as read-and-published fails this test: the body
+// parses, matches the tag and answers true. Letting a client that follows
+// redirects answer for us fails it too, since the second server records the
+// request.
 func TestPublishedRefusesARedirect(t *testing.T) {
 	var reached atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -269,7 +282,9 @@ func TestPublishedRefusesARedirect(t *testing.T) {
 	}))
 	defer target.Close()
 	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusFound)
+		w.Header().Set("Location", target.URL+r.URL.Path)
+		w.WriteHeader(http.StatusFound)
+		_, _ = w.Write([]byte(publishedBody("v0.29.0", false, false)))
 	}))
 	defer redirector.Close()
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
