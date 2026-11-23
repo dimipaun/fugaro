@@ -755,9 +755,6 @@ step_installation() {
   fact installation PASS "installation '${PROJECT_NAME}' in GCP project ${GCP_PROJECT}, region ${REGION:-unset}, read from fugaro doctor --project ${INSTALLATION} at $(date -u +%Y-%m-%dT%H:%M:%SZ). It is a sandbox installation: this check refuses 'belong' as an installation, as a workspace and as the project doctor selects"
 }
 
-# step_token: the token's allow-list, the switch that hands it to the service,
-# and the store. The value never leaves the file the owner named: it is handed
-# to the one command that stores it, on stdin.
 # step_config: WHICH config this check is about to edit, read before the first
 # write. The three commands that carry the allow-list and the profile —
 # `fugaro secrets allow`, `fugaro project profile add/set` — edit the project
@@ -783,6 +780,9 @@ step_config() {
   fact config PASS "the config this check edits is ${cfgpath} — the installation '${INSTALLATION}'s own, selected with FUGARO_PROJECT=${INSTALLATION} (fugaro project profile and fugaro secrets allow edit the selected config and take no --project). Every write below is a write to this file, and the profile it carries stays on it after this check (the register's Restore)"
 }
 
+# step_token: the token's allow-list, the switch that hands it to the service,
+# and the store. The value never leaves the file the owner named: it is handed
+# to the one command that stores it, on stdin.
 step_token() {
   local facts
   facts=$(reader tokenfile "$TOKEN_FILE" 2>"$SCRATCH/reader.err" || true)
