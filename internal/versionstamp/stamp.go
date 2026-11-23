@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -145,29 +146,32 @@ func malformed(reason, fix string) *MalformedError {
 // refusal.
 //
 // It decodes strictly, in the order that names the cause: the `schema` is read
-// first and by name, so a node a later release wrote is refused as a version
-// this code does not know rather than as one unknown field (its own fix is the
-// upgrade); then the members are walked, so an unknown or twice-written key is
-// refused (the typed decode below cannot say either, because encoding/json
-// matches case-insensitively and lets the last spelling win); then the typed
-// decode and the checks on `min` and `set_at`. `min` is returned canonical
+// first and under its exact spelling (schemaMember), so a node a later release
+// wrote is refused as a version this code does not know — its own fix is the
+// upgrade — while a schema spelled any other way is a hand edit; then the
+// members are walked, so an unknown or twice-written key is refused (the typed
+// decode below cannot say either, because encoding/json matches
+// case-insensitively and lets the last spelling win); then the typed decode and
+// the checks on `min` and `set_at`. `min` is returned canonical
 // (updatecheck.CanonicalRelease), so a `v` a hand edit added is dropped and one
 // stamp has one value, whatever spelling the node carries.
 func Decode(raw []byte) (Stamp, bool, error) {
 	if projectpolicy.IsNull(raw) {
 		return Stamp{}, false, nil
 	}
-	var head struct {
-		Schema *int `json:"schema"`
+	rawSchema, hasSchema, err := schemaMember(raw)
+	if err != nil {
+		return Stamp{}, true, err
 	}
-	if err := json.Unmarshal(raw, &head); err != nil {
-		return Stamp{}, true, malformed("it is not one JSON object with a schema member: "+err.Error(), fixHandEdit)
-	}
-	switch {
-	case head.Schema == nil:
+	if !hasSchema {
 		return Stamp{}, true, malformed("it carries no schema member", fixHandEdit)
-	case *head.Schema != SchemaVersion:
-		return Stamp{}, true, malformed(fmt.Sprintf("its schema is %d and this fugaro reads %d", *head.Schema, SchemaVersion), fixUpgrade)
+	}
+	var schema int
+	if err := json.Unmarshal(rawSchema, &schema); err != nil || projectpolicy.IsNull(rawSchema) {
+		return Stamp{}, true, malformed("its schema is not a version number", fixHandEdit)
+	}
+	if schema != SchemaVersion {
+		return Stamp{}, true, malformed(fmt.Sprintf("its schema is %d and this fugaro reads %d", schema, SchemaVersion), fixUpgrade)
 	}
 	if err := refuseOtherSpellings(raw); err != nil {
 		return Stamp{}, true, err
@@ -186,6 +190,57 @@ func Decode(raw []byte) (Stamp, bool, error) {
 		return Stamp{}, true, malformed("it carries no set_at instant", fixHandEdit)
 	}
 	return Stamp{Schema: w.Schema, Min: min, SetAt: w.SetAt}, true, nil
+}
+
+// schemaMember returns the raw `schema` member, found only under that exact
+// spelling. It exists because the choice between the two repairs turns on who
+// wrote the node: an unknown schema means a newer release wrote it (fixUpgrade)
+// and everything else means a hand edit (fixHandEdit). The typed decode cannot
+// answer that — encoding/json matches a key case-insensitively and lets the
+// later of two spellings win — so {"SCHEMA":2}, {"Schema":2} and a node with
+// `schema` twice would all be read as 2 and sent to the upgrade repair, when no
+// release writes any of those spellings and the console is what repairs them.
+//
+// Members other than `schema` are left to refuseOtherSpellings below, which runs
+// once the version is known: a genuine stamp from a newer release may carry a
+// member this binary does not know, and that node's fix is still the upgrade.
+func schemaMember(raw []byte) (json.RawMessage, bool, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, false, malformed("it could not be read: "+err.Error(), fixHandEdit)
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, false, malformed("it is not one JSON object", fixHandEdit)
+	}
+	var schema json.RawMessage
+	seen := false
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, false, malformed("it could not be read: "+err.Error(), fixHandEdit)
+		}
+		name, ok := tok.(string)
+		if !ok {
+			return nil, false, malformed("a member name is not a string", fixHandEdit)
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, false, malformed("it could not be read: "+err.Error(), fixHandEdit)
+		}
+		switch {
+		case name == "schema" && seen:
+			return nil, false, malformed(`it carries the member "schema" twice: a stamp writes each of its members once`, fixHandEdit)
+		case name == "schema":
+			schema, seen = value, true
+		case strings.EqualFold(name, "schema"):
+			return nil, false, malformed(fmt.Sprintf("it carries the unknown member %q: the stamp's members are schema, min and set_at, spelled exactly", name), fixHandEdit)
+		}
+	}
+	if _, err := dec.Token(); err != nil {
+		return nil, false, malformed("it could not be read: "+err.Error(), fixHandEdit)
+	}
+	return schema, seen, nil
 }
 
 // refuseOtherSpellings walks the node's object and refuses a member this

@@ -115,6 +115,21 @@ func TestStampDecodesStrictly(t *testing.T) {
 			why:  "upgrade with " + updatecheck.BrewCommand,
 		},
 		{
+			name: "the schema member in another case",
+			raw:  `{"SCHEMA":2,"min":"0.29.0","set_at":"` + goodSetAt + `"}`,
+			why:  "unknown member",
+		},
+		{
+			name: "the schema member written twice",
+			raw:  `{"schema":1,"schema":2,"min":"0.29.0","set_at":"` + goodSetAt + `"}`,
+			why:  "twice",
+		},
+		{
+			name: "a schema that is not a number",
+			raw:  `{"schema":"1","min":"0.29.0","set_at":"` + goodSetAt + `"}`,
+			why:  "not a version number",
+		},
+		{
 			name: "no schema at all",
 			raw:  `{"min":"0.29.0","set_at":"` + goodSetAt + `"}`,
 			why:  "no schema member",
@@ -198,6 +213,7 @@ func TestMalformedSentenceNamesItsFix(t *testing.T) {
 		fix  string
 	}{
 		{"a schema from a newer release", stampJSON(2, "0.29.0", goodSetAt), "upgrade with " + updatecheck.BrewCommand},
+		{"a schema spelled another way", `{"Schema":2,"min":"0.29.0","set_at":"` + goodSetAt + `"}`, "Firebase console"},
 		{"a min nobody wrote", stampJSON(1, "next", goodSetAt), "Firebase console"},
 		{"a member nobody wrote", `{"schema":1,"min":"0.29.0","set_at":"` + goodSetAt + `","x":1}`, "Firebase console"},
 	} {

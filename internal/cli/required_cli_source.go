@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"os"
 
 	"github.com/dimipaun/fugaro/internal/versionstamp"
 )
@@ -20,6 +21,14 @@ var newStampSource = versionstamp.New
 // of the seam above, shared by every consumer so the client, the URL validation
 // and the no-auth switch have one spelling.
 func stampOpen(ctx context.Context, url string, noAuth bool) (versionstamp.Reader, error) {
+	// The root fence opens the cloud from a hook that has no guard of its own,
+	// which makes this the first Google call of commands that were purely local
+	// before it. It carries the guard every other cloud open carries: without it
+	// the token refresh and the GET would be printed, bearer token included, to
+	// stderr under GODEBUG=http2debug.
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return nil, err
+	}
 	db, err := newBudgetClient(ctx, url, noAuth)
 	if err != nil {
 		return nil, err

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -65,7 +66,13 @@ func node(min string) string {
 // database.
 func testSource(t *testing.T, r *fakeReader, openErr error) (Source, func(string) string) {
 	t.Helper()
-	dir := t.TempDir()
+	return testSourceIn(t, t.TempDir(), r, openErr)
+}
+
+// testSourceIn is testSource over a cache directory the caller owns, so a test
+// that needs two Sources to share one cache directory can say so.
+func testSourceIn(t *testing.T, dir string, r *fakeReader, openErr error) (Source, func(string) string) {
+	t.Helper()
 	getenv := func(key string) string {
 		if key == "XDG_CACHE_HOME" {
 			return dir
@@ -410,14 +417,18 @@ func TestFreshReadFailureStillRefusesOnAFreshCacheAbove(t *testing.T) {
 // TestCacheIsPerDatabase: the stamp is per installation (A4), so two projects
 // have two cache files and one project's value never answers for another.
 func TestCacheIsPerDatabase(t *testing.T) {
-	src, getenv := testSource(t, &fakeReader{raw: node("0.29.0")}, nil)
+	// Both Sources share one cache directory: with one directory each, the
+	// second database would be read from an empty directory whatever the cache
+	// file is named, and the test could not fail.
+	dir := t.TempDir()
+	src, getenv := testSourceIn(t, dir, &fakeReader{raw: node("0.29.0")}, nil)
 	if _, err := src.Required(context.Background(), Query{URL: urlA, Now: testNow}); err != nil {
 		t.Fatal(err)
 	}
 	seedCache(t, getenv, urlA, "0.29.0", testNow)
 
 	r := &fakeReader{err: errors.New("rtdb: GET /" + Path + ": 503")}
-	srcB, _ := testSource(t, r, nil)
+	srcB, _ := testSourceIn(t, dir, r, nil)
 	res, err := srcB.Required(context.Background(), Query{URL: urlB, Now: testNow})
 	if err != nil {
 		t.Fatal(err)
@@ -465,6 +476,73 @@ func TestCorruptCacheIsNoCache(t *testing.T) {
 				t.Errorf("Required = %+v after %d read(s), want the database read as if no cache existed", res, r.calls)
 			}
 		})
+	}
+}
+
+// TestCacheSymlinkIsNoCache: save only ever creates a regular file (a temp file
+// renamed over the path), so a symlink at the cache path is somebody else's and
+// is never followed — a link to /dev/zero would read without limit if the target
+// were opened. It counts as no cache: the database is read and answers.
+//
+// Mutation: os.Stat in place of os.Lstat follows the link and reads the valid
+// entry behind it, which would answer without a read — the read count and the
+// database's own value both catch that.
+func TestCacheSymlinkIsNoCache(t *testing.T) {
+	r := &fakeReader{raw: node("0.29.0")}
+	src, getenv := testSource(t, r, nil)
+	path, err := cachePath(getenv, urlA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedCache(t, getenv, urlA, "9.9.9", testNow)
+	target := filepath.Join(filepath.Dir(path), "target.json")
+	if err := os.Rename(path, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks unsupported here: %v", err)
+	}
+	res, err := src.Required(context.Background(), Query{URL: urlA, Now: testNow})
+	if err != nil {
+		t.Fatalf("Required = %v, want no error", err)
+	}
+	if r.calls != 1 || res.Origin != OriginDatabase || res.Stamp.Min != "0.29.0" {
+		t.Errorf("Required with a symlinked cache = %+v after %d read(s), want the symlink treated as no cache", res, r.calls)
+	}
+}
+
+// TestCacheFIFOIsNoCache pins the same refusal for a named pipe: opening one for
+// reading blocks until a writer connects, and Lstat cannot tell it from a
+// regular file by name alone, so the regular-file check is what refuses it
+// before any open.
+//
+// Mutation: dropping the IsRegular check makes this test hang on the open rather
+// than answer, which the timeout below catches.
+func TestCacheFIFOIsNoCache(t *testing.T) {
+	r := &fakeReader{raw: node("0.29.0")}
+	src, getenv := testSource(t, r, nil)
+	path, err := cachePath(getenv, urlA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Skipf("FIFOs unsupported here: %v", err)
+	}
+	done := make(chan Result, 1)
+	go func() {
+		res, _ := src.Required(context.Background(), Query{URL: urlA, Now: testNow})
+		done <- res
+	}()
+	select {
+	case res := <-done:
+		if r.calls != 1 || res.Origin != OriginDatabase || res.Stamp.Min != "0.29.0" {
+			t.Errorf("Required with a FIFO cache = %+v after %d read(s), want the FIFO treated as no cache", res, r.calls)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Required blocked on a FIFO cache file: a pipe is opened by nothing in this package")
 	}
 }
 
