@@ -41,6 +41,18 @@ import (
 // section rather than reopened: D31's own honest rule beside the pin is "a run
 // may not close an item it did not fix", and it is a review rule, stated so a
 // reviewer can ask.
+//
+// **Where an item lives.** `docs/backlog/` is the store this pass both reads and
+// writes, and it is the folder D2716 retired for everything else: the project's
+// live backlog is the orchestrator's node, which a run's session does not reach,
+// so the audit's list has no other home a later pass could read back. The task
+// sanctions both halves (LV7.1 reads the folder through internal/backlog and has
+// the audit write its list as items of it) and the ruling retires the folder, so
+// the two conflict and this code does not settle it — the conflict, and the
+// question the owner has to answer, is Item 14 of
+// docs/rigor-modes/levels-reconciliation.md §4. The reading here is the one that
+// keeps the pass working: the audit writes item files of that folder, and a run
+// that cannot write it puts the same list in its hand-back.
 
 // promotePass is what a promote run resolved at its first brief: the area,
 // the level it works at, the area's open items as the run found them, the
