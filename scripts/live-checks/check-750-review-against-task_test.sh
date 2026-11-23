@@ -125,6 +125,15 @@ project)
 runs)
   [ "${2:-}" = ls ] || { printf 'fake fugaro: unexpected runs %s\n' "${2:-}" >&2; exit 64; }
   if printf ' %s ' "$*" | grep -q -- ' --pr '; then
+    # The CLI refuses a `runs ls --pr` with no `--repo` unless the local config
+    # names exactly one repository, so the check passes `--repo .` — the
+    # checkout's own repository, which the CLI resolves from its origin. The
+    # refusal is mirrored here: a case whose premise read lost that argument
+    # fails rather than reading rows out of a repository nobody named.
+    if ! printf ' %s ' "$*" | grep -q -- ' --repo '; then
+      printf 'runs ls --pr needs --repo: the local config lists 2 repositories\n' >&2
+      exit 1
+    fi
     serve "$D/prrows.json" "$D/prrows.exit"
     exit 0
   fi
@@ -460,7 +469,7 @@ case_healthy() {
   expect_calls "fugaro review --pr $PR --code-only --json" "healthy: --code-only is what the third launch asks for"
   # The reads, each by the command the section names.
   expect_calls "fugaro doctor --json" "healthy: the installation is read first"
-  expect_calls "fugaro runs ls --pr $PR --limit 20 --json" "healthy: the rows of the pull request are read"
+  expect_calls "fugaro runs ls --pr $PR --repo . --limit 20 --json" "healthy: the rows of the pull request are read, with the repository named so a multi-repo local config cannot refuse the read"
   expect_calls "fugaro project show --json" "healthy: the ceiling is read from the project"
   expect_calls "fugaro review show $SLUG/$RV_AGAINST" "healthy: the first review's own output is read"
   expect_calls "fugaro review show $SLUG/$RV_UNMET --json" "healthy: the second review's artifact is read as JSON"
@@ -874,8 +883,11 @@ case_pr_needs_a_number() {
 case_unknown_argument() {
   setup_case unknown
   run750 --installation "$INSTALLATION" --pr "$PR" --repo "$REPO"
-  # There is no --repo: the repository is the checkout's, and a flag that would
-  # silently do nothing is refused.
+  # The check names the repository itself — `--repo .` on the rows read, the
+  # checkout it is run from, which is the repository `fugaro review --pr` takes
+  # too — so a `--repo` of your own would let the rows and the launcher read two
+  # different repositories, and a flag that would do nothing of its own is
+  # refused.
   expect_status "$status" 2 "unknown"
   expect_contains "$out" "unknown argument '--repo'" "unknown"
   expect_no_calls "fugaro doctor" "unknown"

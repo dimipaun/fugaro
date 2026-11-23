@@ -145,6 +145,10 @@ func TestDocsCheck750StatesWhatOnlyTheRunSettles(t *testing.T) {
 		"against: run <bare-run-id>",
 		"`against: run <that run>`",
 		"fugaro runs ls --pr n --json",
+		// The read names its repository: `runs ls --pr` with no `--repo` is
+		// refused unless the local config lists exactly one repository, so the
+		// section has to say where the one it passes comes from.
+		"`--repo .`",
 		"launchspecforpr",
 		// What a `none` on a pull request a Fugaro run opened means: a launcher
 		// that lost the task, or the older job image of D2933 that runs

@@ -56,12 +56,15 @@
 #             answer is held to it: a name that is not the one doctor reports is
 #             a STOP before anything is launched.
 #             --pr is the pull request a Fugaro run opened, in the repository of
-#             the checkout this is run from: `fugaro review --pr` and `fugaro
-#             runs ls --pr` both take the repository from the checkout's origin,
-#             so run this from a checkout of the repository the pull request is
-#             in. A pull request no Fugaro run opened is refused before the
-#             first launch: `fugaro runs ls --pr N --json` must name the run
-#             that opened it, and zero such rows (or several) is a STOP.
+#             the checkout this is run from. The check names that repository
+#             explicitly — `--repo .`, which `fugaro` resolves from the
+#             checkout's origin, the same repository `fugaro review --pr` takes
+#             from it — because `runs ls --pr` with no `--repo` reads the local
+#             config's repositories instead and refuses the call when that lists
+#             more than one. So run this from a checkout of the repository the
+#             pull request is in. A pull request no Fugaro run opened is refused
+#             before the first launch: `fugaro runs ls --pr N --json` must name
+#             the run that opened it, and zero such rows (or several) is a STOP.
 #             --unmet-pr is the second pull request: a Fugaro run opened one
 #             whose head deliberately leaves out one item of its own brief.
 # Needs:      bash, mktemp, python3 and fugaro on PATH. No cloud tool is needed:
@@ -854,11 +857,14 @@ step_release() {
 }
 
 # step_pr_opened: the premise the whole check rests on, and the one run the
-# first reading compares the launcher's answer against. `fugaro runs ls --pr N`
-# takes the repository from the checkout's origin, so this is where a run from
-# somewhere else stops — and it stops BEFORE the first launch, because a review
-# of a pull request no Fugaro run opened is not this check's subject (the
-# launcher would answer `against: none (no run found)`, which is a correct
+# first reading compares the launcher's answer against. The call names the
+# checkout's own repository with `--repo .` — the CLI resolves that from this
+# checkout's origin, which is also where `fugaro review --pr` below takes it —
+# so a `runs ls --pr` here cannot be refused for a local config that lists more
+# than one repository, and cannot read rows out of another one. This is where a
+# run from somewhere else stops — and it stops BEFORE the first launch, because
+# a review of a pull request no Fugaro run opened is not this check's subject
+# (the launcher would answer `against: none (no run found)`, which is a correct
 # answer about a pull request that is not what Check 750 measures).
 #
 # The opening run is found from the rows alone, never from the launcher: a check
@@ -867,9 +873,9 @@ step_release() {
 step_pr_opened() {
   local status=0
   run_call "$CALL_SECONDS" "$SCRATCH/prrows.out" "$SCRATCH/prrows.err" \
-    "$FUGARO_BIN" runs ls --pr "$PR" --limit "$RUNS_LIMIT" --json || status=$?
+    "$FUGARO_BIN" runs ls --pr "$PR" --repo . --limit "$RUNS_LIMIT" --json || status=$?
   if [ "$status" != 0 ]; then
-    fact pr-opened FAIL "fugaro runs ls --pr ${PR} --json exited ${status}, so this check cannot say which run opened pull request ${PR}: $(reader err "$SCRATCH/prrows.err" | sed -n 's/^line=//p' | head -n 1). Run it yourself from a checkout of the repository the pull request is in — 'runs ls --pr' and 'fugaro review --pr' both take the repository from that checkout's origin — and look at what it says"
+    fact pr-opened FAIL "fugaro runs ls --pr ${PR} --repo . --json exited ${status}, so this check cannot say which run opened pull request ${PR}: $(reader err "$SCRATCH/prrows.err" | sed -n 's/^line=//p' | head -n 1). Run it yourself from a checkout of the repository the pull request is in — the check passes '--repo .' so 'runs ls --pr' names the repository 'fugaro review --pr' takes from that checkout's origin — and look at what it says"
     stop "the rows of pull request ${PR} could not be read: $(reader err "$SCRATCH/prrows.err" | sed -n 's/^line=//p' | head -n 1)"
   fi
   local answer count
@@ -1218,8 +1224,10 @@ What the check will do, in this order:
   2. probe the build offline — 'fugaro version' and 'fugaro review --help' — and stop
      if it carries neither --code-only nor --spec, because the against line could not
      be asked for at all;
-  3. read the rows of pull request ${PR} with 'fugaro runs ls --pr ${PR} --json' and
-     REFUSE the pull request unless exactly one of them is the run that opened it: a
+  3. read the rows of pull request ${PR} with 'fugaro runs ls --pr ${PR} --repo . --json',
+     where '--repo .' is this checkout's repository, resolved from its origin — the one
+     'fugaro review --pr' takes from there — and REFUSE the pull request unless exactly
+     one of them is the run that opened it: a
      row that names this pull request, is not a follow-up, whose branch names the run
      itself and whose record delivered no artifact. This happens BEFORE the first
      launch — a review of a pull request no run opened is not what this check
