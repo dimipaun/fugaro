@@ -3988,7 +3988,7 @@ cached brief, which the stream re-reads on every document it writes.
 consume.
 
 Exit codes: 1 for a refused scope or a project with no database, 2 for a
-failure of the database or the runs bucket.
+failure of the database or the run index.
 
 Usage: `fugaro graph`
 
