@@ -409,6 +409,22 @@ func (r *run) prepareResume(ctx context.Context) error {
 		// to pick up, and starting the work afresh is not this run's to do.
 		return fmt.Errorf("resuming run %s: %w", pausedID, err)
 	}
+	// What the paused run worked from, read before anything is restored: a
+	// resume continues the chain's questions as well as its work. Suspending
+	// never ended a ruling — a run launched with `--owner-ruled` that paused
+	// mid-stage has an answer the owner has already given — and a resumed run
+	// whose reviewers were told nothing would mark the same finding needs_owner
+	// and stop on a settled question, while its own record, written with no
+	// ruling, would drop that answer for every run after it. The record is an
+	// object the paused run's own job wrote beside the pause, so a resume that
+	// cannot read it cannot say what it is continuing and refuses rather than
+	// continuing the work without the answers it was given (R18, R23).
+	prevRec, err := paused.ReadRecord(ctx)
+	if err != nil {
+		r.d.Log.Warn("reading the paused run's record failed", "paused_run", pausedID, "err", r.redact(err.Error()))
+		return fmt.Errorf("resuming run %s: %w: it has no readable record, so what it worked from cannot be read", pausedID, runstore.ErrInvalidPause)
+	}
+	r.inheritRulings(prevRec, pausedID)
 	if !gitprov.SameCommit(r.follow.startSHA, rec.Checkpoint) {
 		return fmt.Errorf("resuming run %s: %w: it paused at %s and %s is at %s, so this checkout is not the work in progress it pushed",
 			pausedID, runstore.ErrInvalidPause, rec.Checkpoint, r.spec.Branch, r.follow.startSHA)
@@ -431,17 +447,23 @@ func (r *run) prepareResume(ctx context.Context) error {
 	}
 	r.follow.restored, r.follow.resumedStage = res, stage
 	// A resume reads no comment of the pull request (its prompt says so: it
-	// acts on its launch's instructions alone), and it inherits no ruling. The
-	// delimiters that would wrap either still have to be a nonce this run
-	// chose — the builders refuse an empty one, so text from outside could
-	// never pass for the prose around a block — and a resume that emitted none
-	// would panic where it is read.
+	// acts on its launch's instructions alone). The delimiters that would wrap
+	// one — and the ruling inherited above — still have to be a nonce this run
+	// chose: the builders refuse an empty one, so text from outside could never
+	// pass for the prose around a block, and a resume that emitted none would
+	// panic where it is read.
 	r.follow.nonce = followup.NewNonce()
 	// The record says what a follow-up's own record says (runstore.FollowUp):
 	// which session this run continued, and why. Its Comments stays zero — a
 	// resume reads no comment of the pull request and acts on its launch's
 	// instructions alone.
 	r.rec.FollowUp.Session, r.rec.FollowUp.SessionNote = "resumed", res.Note
+	// And the rulings this run works from, onto its own record (OD1): the pair
+	// the paused run held, behind whatever its own launch carried, which is
+	// what a later follow-up on this chain inherits (recordRuling,
+	// workingRulings). Written before the save so the record a reader finds
+	// while the run goes says the same as the briefs the agent is handed.
+	r.recordRuling()
 	r.save(ctx)
 	r.d.Log.Info("resuming the paused run", "paused_run", pausedID, "stage", stage, "session", res.ID, "checkpoint", rec.Checkpoint)
 	return nil

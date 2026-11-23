@@ -3876,9 +3876,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 			// A resumed run's task is a follow-up's too (task.Spec.Resumes):
 			// it works on the paused run's pull request and continues its
 			// chain. What it starts from is the pause and not the pull
-			// request's comments: it reads none, and it inherits no ruling,
-			// because the run it continues is the one that suspended and not
-			// one that left decisions to answer.
+			// request's comments: it reads none. What it does inherit is what
+			// the paused run worked from — its rulings and the questions they
+			// answer — read off that run's record with the pause
+			// (prepareResume, inheritRulings): suspending a run does not end
+			// the answers the owner has given it.
 			if err := r.prepareResume(ctx); err != nil {
 				return err
 			}

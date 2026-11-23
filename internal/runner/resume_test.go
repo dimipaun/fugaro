@@ -3,6 +3,7 @@ package runner_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -181,6 +182,81 @@ func TestAResumedRunRestoresTheSession(t *testing.T) {
 				t.Fatalf("branch = %q; want %q", rec.Branch, "fugaro/"+runID)
 			}
 		})
+	}
+}
+
+// TestAResumedRunKeepsTheChainsRuling: suspending a run does not end the
+// answers the owner has given it. The paused run here worked from a ruling and
+// the decisions it answered — its record carries the pair, as a run launched
+// with --owner-ruled leaves them — and the resumed run, whose own launch
+// carries no ruling, continues that chain: its reviewers are handed the same
+// ruling and the same list of decisions, so a finding the owner already settled
+// is not marked needs_owner again and does not stop the run on a question that
+// was answered before it paused; and its own record carries the pair, so the
+// follow-up after it inherits it too rather than losing it for good.
+func TestAResumedRunKeepsTheChainsRuling(t *testing.T) {
+	h := followUpHarness(t, criticalLevelsCfg(t), nil,
+		implement("feature"), review("ship", 0), review("ship", 0), review("ship", 0))
+	const ruling = "Counsel cleared the MIT text as it stands. Keep the approval flow; product will revisit it next quarter."
+	const decision = "`LICENSE.md`: the licence text needs counsel's clearance"
+	seedRuled(t, h, ruling, runstore.OwnerDecision{File: "LICENSE.md", Summary: "the licence text needs counsel's clearance"})
+	paused(t, h, "implement")
+	h.followUpSpec(t, resumeTask(h, "Carry the change on"))
+	rec, err := h.run(t, implement("resumed"), review("ship", 0), review("ship", 0), review("ship", 0))
+	mustReady(t, rec, err)
+	if rec.OwnerRuled != ruling || rec.OwnerRuledDecisions == nil {
+		t.Fatalf("the resumed run recorded ruling %q, decisions %+v; want the pair the paused run worked from",
+			rec.OwnerRuled, rec.OwnerRuledDecisions)
+	}
+	// The brief the resumed run works from carries it, and so does every review
+	// level: a reviewer told nothing about the ruling is the reviewer that puts
+	// the settled question back to the owner.
+	if !strings.Contains(h.agent.calls[0].Prompt, ruling) {
+		t.Errorf("the resumed run's brief does not carry the paused run's ruling:\n%s", h.agent.calls[0].Prompt)
+	}
+	for i, level := range []string{"the first line", "the senior review", "the adversarial review"} {
+		prompt := h.agent.calls[i+1].Prompt
+		if !strings.Contains(prompt, ruling) {
+			t.Errorf("%s's prompt does not carry the paused run's ruling verbatim:\n%s", level, prompt)
+		}
+		if !strings.Contains(prompt, decision) {
+			t.Errorf("%s's prompt does not list the decision that ruling answers:\n%s", level, prompt)
+		}
+	}
+}
+
+// TestAResumeNeverStartsTheStageAfresh is R18 where the AGENT is what refuses
+// the session: Claude Code reports it cannot find the one it was handed, which
+// a follow-up answers by starting a fresh session and carrying on (a follow-up
+// that finds nothing is a follow-up — TestFollowUpResumeFailureFallsBackFresh)
+// and a resumed run may not. The session it was given is the work the pause
+// names, and the stage it entered is that work's own stage: a run that started
+// a fresh session here would run the whole stage over a tree it did not
+// understand, which is exactly the fresh start R18 refuses. So the run ends
+// failed, once, and its record still says it resumed.
+func TestAResumeNeverStartsTheStageAfresh(t *testing.T) {
+	h := followUpHarness(t, "", nil)
+	session := paused(t, h, "implement")
+	h.followUpSpec(t, resumeTask(h, "Carry the change on"))
+	noSession := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if !req.Resume || req.SessionID != session {
+			t.Errorf("the resumed stage did not ask for the restored session %s: session %q resume %v",
+				session, req.SessionID, req.Resume)
+		}
+		return agent.Result{CostUSD: 0.01}, fmt.Errorf("%w: claude exited with code 1", agent.ErrNoSession)
+	}
+	rec, err := h.run(t, noSession)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "stage implement failed") {
+		t.Fatalf("record = status %q, reason %q; want %q with the stage that failed named", rec.Status, rec.Reason, runstore.StatusFailed)
+	}
+	if n := len(h.agent.calls); n != 1 {
+		t.Fatalf("the stage ran %d times: a second call is the fresh session R18 refuses", n)
+	}
+	if rec.FollowUp == nil || rec.FollowUp.Session != "resumed" {
+		t.Fatalf("follow_up = %+v; want the session the pause named and not a fresh one", rec.FollowUp)
 	}
 }
 
