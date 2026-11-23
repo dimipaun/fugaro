@@ -1762,7 +1762,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			BundleRefusal(err), labelRead(readBundle, err))
 		return
 	}
-	cands, strategy, notAdmitted, err := s.candidates(ctx, id, canonical, shared, b)
+	cands, strategy, exclusive, notAdmitted, err := s.candidates(ctx, id, canonical, shared, b)
 	if err != nil {
 		// Two refusals share this branch and they are not the same answer. A
 		// state the caller cannot fix — the admissions or the crafts could not
@@ -1834,7 +1834,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// repository's recorded auth — lands in the database of the scope that
 	// answered the caller, which for a workspace's member is the workspace's
 	// own and never the member's machine or the installation's.
-	sel := &creds.Selector{Store: sc.State(), Settings: settingsOf(shared), Now: s.now, Strategy: strategy}
+	// Exclusive is R7's candidate when this call has one — the person's own
+	// token their slip entitles them to — and it is the SELECTION that is told
+	// so rather than the list that is marked: serving a candidate outright is a
+	// fact about this call and not about the credential, so the name the
+	// offering read once travels here (candidates, creds.Selector.Exclusive).
+	sel := &creds.Selector{
+		Store: sc.State(), Settings: settingsOf(shared), Now: s.now,
+		Strategy: strategy, Exclusive: exclusive,
+	}
 	s.forward(ctx, w, cl, sel, id, b, cands, notAdmitted)
 }
 

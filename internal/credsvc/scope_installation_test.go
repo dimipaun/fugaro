@@ -604,7 +604,7 @@ func TestTheCraftsNeverWidenTheScopesPool(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the resolver refused a call of its own run: %v", err)
 	}
-	cands, _, skipped, err := s.server.candidates(withScope(ctx, sc), sc.Caller(), testRepo, s.policy.shared, b)
+	cands, _, _, skipped, err := s.server.candidates(withScope(ctx, sc), sc.Caller(), testRepo, s.policy.shared, b)
 	if err != nil {
 		t.Fatalf("candidates: %v", err)
 	}
