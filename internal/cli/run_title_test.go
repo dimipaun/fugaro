@@ -787,3 +787,23 @@ func TestRunTitleGatesOnAFollowUpThatTookItFromThePR(t *testing.T) {
 		t.Fatalf("%d executions, want none", n)
 	}
 }
+
+// A job image too old to read a title does not make a follow-up unlaunchable
+// over the name the launcher made up: the default is dropped with a note and
+// the run goes on, listed by its own instructions as before. A title a person
+// wrote is still refused there (TestRunTitleGatesOnTheImageThatKnowsIt).
+//
+// Mutation (return the gate's error for a defaulted title too): the launch is
+// refused and this test fails on the first call.
+func TestFollowUpDefaultTitleIsDroppedOnAnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	followUpTitleStub(t).noHost = true
+	writeBuildRecord(t, f, appSlug, "web", release060)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
+		t.Fatalf("a follow-up on an old image with a defaulted title: %v", err)
+	}
+	if got := readSpec(t, f, fuID).Title; got != "" {
+		t.Fatalf("title = %q, want none: the image cannot read one", got)
+	}
+}
