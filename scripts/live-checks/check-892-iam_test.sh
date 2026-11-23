@@ -139,7 +139,7 @@ done
 code=401
 body='{"error":"Permission denied"}'
 if [ -n "$conf" ] && grep -q "Authorization: Bearer ${FAKE892_TOKEN:?}" "$conf" 2>/dev/null; then
-  perm=$(stat -f '%Lp' "$conf" 2>/dev/null || stat -c '%a' "$conf" 2>/dev/null)
+  perm=$(stat -c '%a' "$conf" 2>/dev/null || stat -f '%Lp' "$conf" 2>/dev/null)
   printf 'curl-config-mode %s\n' "$perm" >>"$FAKE892_LOG"
   case "$url" in
   */config/admin/access.json)
