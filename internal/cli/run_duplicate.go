@@ -110,6 +110,8 @@ func (d duplicateOf) prWord() string {
 		return d.prState
 	case prStateLive:
 		return "still being worked on"
+	case prStatePaused:
+		return "suspended in a pause that will resume it"
 	}
 	return "still there"
 }
@@ -152,15 +154,17 @@ func (d duplicateOf) what(planTask, repo string) string {
 // also inherits the chain's remainder from the ledgers the live run is still
 // spending against -- the two between them spending up to twice what one chain
 // holds. --pr is named only where a run of the task ended and left its pull
-// request behind and no run of that pull request is going: continuing the pull
-// request is the one way its chain is continued (chainFrom refuses a --continues
-// of a run that is part of one), and resolvePR refuses a follow-up while any run
-// of the pull request is still live -- the run of the task itself, or one the
-// guard did not match at all, a --pr follow-up launched without --plan-task
-// (followup.go records o.planTask, so the command this refusal prints itself
-// leaves it empty) whose row carries the pull request and no task -- so naming
-// --pr in either case would be one more dead end, and the pull request's own
-// listing is the way out instead.
+// request behind and no run of that pull request is in flight: continuing the
+// pull request is the one way its chain is continued (chainFrom refuses a
+// --continues of a run that is part of one), and resolvePR refuses a follow-up
+// while any run of the pull request is still live -- the run of the task
+// itself, or one the guard did not match at all, a --pr follow-up launched
+// without --plan-task (followup.go records o.planTask, so the command this
+// refusal prints itself leaves it empty) whose row carries the pull request and
+// no task -- and a run of it that suspended itself into a standing pause is one
+// of those, which is why that shape is waited for too. So naming --pr in any of
+// those cases would be one more dead end, and the pull request's own listing is
+// the way out instead.
 //
 // Every launch a way out prints carries --repo, and the listings carry it too:
 // the caller that reads the refusal may be in another checkout, or in none at
@@ -196,6 +200,18 @@ func (d duplicateOf) refusal(planTask, repo string) string {
 		// Waiting is the whole of the way out here too, read over that one pull
 		// request rather than the repository.
 		ways = fmt.Sprintf("wait for the run going on that pull request (fugaro runs ls --pr %d --repo %s), or %s", d.pr, repo, second)
+	case d.prState == prStatePaused:
+		// The pull request a run of the task left has a run of its own suspended
+		// in a pause that still stands -- a --pr follow-up launched without
+		// --plan-task, or any other run of it that this guard never matches --
+		// so it is in flight exactly as a pull request with a run going is, and
+		// for the same reason: resolvePR refuses a follow-up while one of its
+		// runs is suspended too (followup.go), so the --pr the default below
+		// prints would be a way out that is itself refused. The wait is read
+		// over that one pull request, and the resume instant is not named: the
+		// node that holds it belongs to a run of the pull request, not to any
+		// row of the task this launch is about.
+		ways = fmt.Sprintf("wait for the pause on that pull request to be resumed (fugaro runs ls --pr %d --repo %s), or %s", d.pr, repo, second)
 	default:
 		// The caveat belongs where the pull request is named and nowhere else:
 		// the records cannot see a merge, so one that is done with still
