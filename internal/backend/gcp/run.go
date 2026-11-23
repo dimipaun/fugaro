@@ -239,7 +239,7 @@ func (b *Backend) Execution(ctx context.Context, name string) (backend.Execution
 	if err != nil {
 		return backend.Execution{}, err
 	}
-	e, err := b.run.Projects.Locations.Jobs.Executions.Get(id.String()).Context(ctx).Do()
+	e, err := retryRead(ctx, b.run.Projects.Locations.Jobs.Executions.Get(id.String()).Context(ctx))
 	if err != nil {
 		return backend.Execution{}, apiError("reading execution "+id.String(), err)
 	}
@@ -277,7 +277,7 @@ func (b *Backend) list(ctx context.Context, parent string, onlyFugaro bool, f ba
 	var out []backend.Execution
 	token := ""
 	for {
-		resp, err := b.run.Projects.Locations.Jobs.Executions.List(parent).PageSize(b.listPageSize).PageToken(token).Context(ctx).Do()
+		resp, err := retryRead(ctx, b.run.Projects.Locations.Jobs.Executions.List(parent).PageSize(b.listPageSize).PageToken(token).Context(ctx))
 		if err != nil {
 			return nil, apiError("listing executions of "+parent, err)
 		}
@@ -318,7 +318,7 @@ func (b *Backend) LongestTaskTimeout(ctx context.Context) (time.Duration, error)
 	var longest time.Duration
 	token := ""
 	for {
-		resp, err := b.run.Projects.Locations.Jobs.List(b.location()).PageSize(b.listPageSize).PageToken(token).Context(ctx).Do()
+		resp, err := retryRead(ctx, b.run.Projects.Locations.Jobs.List(b.location()).PageSize(b.listPageSize).PageToken(token).Context(ctx))
 		if err != nil {
 			return 0, apiError("listing jobs", err)
 		}
@@ -345,7 +345,7 @@ func (b *Backend) LongestTaskTimeout(ctx context.Context) (time.Duration, error)
 // TaskTimeout is the task timeout of the workflow's job, Cloud Run's default
 // (backend.DefaultTaskTimeout) when the job sets none.
 func (b *Backend) TaskTimeout(ctx context.Context, slug, workflow string) (time.Duration, error) {
-	j, err := b.run.Projects.Locations.Jobs.Get(b.JobPath(slug, workflow)).Context(ctx).Do()
+	j, err := retryRead(ctx, b.run.Projects.Locations.Jobs.Get(b.JobPath(slug, workflow)).Context(ctx))
 	if err != nil {
 		return 0, apiError("reading job "+JobName(slug, workflow), err)
 	}
@@ -386,7 +386,7 @@ func (b *Backend) JobFullEnv(ctx context.Context, job string) (map[string]string
 	if !nameRE.MatchString(job) {
 		return nil, false, fmt.Errorf("bad job name %q", job)
 	}
-	j, err := b.run.Projects.Locations.Jobs.Get(b.location() + "/jobs/" + job).Context(ctx).Do()
+	j, err := retryRead(ctx, b.run.Projects.Locations.Jobs.Get(b.location()+"/jobs/"+job).Context(ctx))
 	if err != nil {
 		err = apiError("reading job "+job, err)
 		if errors.Is(err, backend.ErrNotFound) {
@@ -424,7 +424,7 @@ func (b *Backend) JobSecretRefs(ctx context.Context, job string) (map[string]str
 	if !nameRE.MatchString(job) {
 		return nil, false, fmt.Errorf("bad job name %q", job)
 	}
-	j, err := b.run.Projects.Locations.Jobs.Get(b.location() + "/jobs/" + job).Context(ctx).Do()
+	j, err := retryRead(ctx, b.run.Projects.Locations.Jobs.Get(b.location()+"/jobs/"+job).Context(ctx))
 	if err != nil {
 		err = apiError("reading job "+job, err)
 		if errors.Is(err, backend.ErrNotFound) {
