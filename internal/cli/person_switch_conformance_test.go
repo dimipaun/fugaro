@@ -1,16 +1,18 @@
-// Package projectpolicy_test holds the one check this package cannot make
-// about itself: that its reader is the reader internal/creds declared.
+// This file holds the one check internal/projectpolicy cannot make about
+// itself: that the reader it builds is the reader internal/creds declared.
 //
 // internal/projectpolicy must not import internal/creds — creds imports
 // projectpolicy, so the edge the other way is a cycle — and Go's structural
-// satisfaction means nothing here *breaks* if creds.PersonSwitchReader's
+// satisfaction means nothing there *breaks* if creds.PersonSwitchReader's
 // method set moves and projectpolicy.PersonSwitchReader's does not: the
-// assignment that fails would be in internal/credsvc, at the one call site
-// that wires the service, and a compile error there is the only warning until
-// then. This file states the conformance where both packages can be named, so
-// the two sides of WC6's seam are held together by a test rather than by a
-// coincidence of method names.
-package projectpolicy_test
+// assignment that fails would be at the one call site that wires the service,
+// and a compile error there is the only warning until then. This file states
+// the conformance where both packages can be named, and it is internal/cli
+// because that is where the two may be named: creds' own boundary test keeps
+// the credential state out of every directory but its allow-list
+// (internal/creds/boundary_test.go, TestCredsIsNotReachableFromARun), and
+// internal/projectpolicy is a run-side package.
+package cli
 
 import (
 	"context"

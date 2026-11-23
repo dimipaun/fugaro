@@ -2070,8 +2070,10 @@ func (p *Policy) PersonalWorkspaceTokensOn() bool {
 // the interface it declares and the reader that satisfies it cannot be in the
 // same package. The method signature is the whole of the agreement — this type
 // carries no import of internal/creds and satisfies the interface structurally —
-// and the conformance is pinned by an external test (person_switch_conformance_test.go in
-// package projectpolicy_test), which may import both sides.
+// and the conformance is pinned where both packages can be named
+// (internal/cli/person_switch_conformance_test.go), which is not this package's
+// own test: creds' boundary test keeps the credential state out of every
+// directory but its allow-list, and this package is a run-side one.
 //
 // **Read answers one member project's published policy**, and it is a function
 // because the two callers reach the node differently: a member's own machine
