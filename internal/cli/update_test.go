@@ -121,7 +121,7 @@ func TestUpdateWithoutAnInstallationNamesSetup(t *testing.T) {
 // themselves, pins that line, because an apply that stops at the installation
 // prints no left-for-you at all (report.Brief keeps one clause of a step's
 // reason; the whole of it is in the log the run names). The covered step is a
-// different matter, and TestUpdateAppliesTheFourStepsItOwns pins it: D12 makes
+// different matter, and TestUpdateAppliesTheThreeStepsItOwns pins it: D12 makes
 // the step a covered one, which is why the sentence above says "by asking".
 func TestUpdateLeavesAnUnenrolledRepositoryAloneAndExitsOne(t *testing.T) {
 	// The rig of an installation that converges with nothing to do, not a bare

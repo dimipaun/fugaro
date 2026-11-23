@@ -564,7 +564,7 @@ func TestHistoryLatestNeedsReplaceImage(t *testing.T) {
 // ordinary covered row of both front doors — so a person at the terminal is
 // what replaces the tag, with nothing typed at them, and the same call site in
 // `update` takes the same answer (update_test.go's
-// TestUpdateAppliesTheFourStepsItOwns). A run that has no terminal to be at (a
+// TestUpdateAppliesTheThreeStepsItOwns). A run that has no terminal to be at (a
 // pipe, --json, a coding agent's session) leaves the replacement to the user
 // with the one-line route and moves nothing. The real rule is in force here.
 //
