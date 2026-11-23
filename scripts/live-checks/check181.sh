@@ -18,8 +18,8 @@
 # Usage:      bash scripts/live-checks/check181.sh \
 #               --installation <sandbox> \
 #               --token-file <path> \
-#               --repo <owner/name>=<checkout path> \
-#               --repo <owner/name>=<checkout path> \
+#               --repo <owner/name> \
+#               --repo <owner/name> \
 #               --third-repo <owner/name> \
 #               [--workspace <workspace>] [--profile <name>]
 #             --dry-run  prints the plan and touches nothing.
@@ -39,8 +39,11 @@
 #             it on a command line and never prints it. It is handed to
 #             `fugaro secrets set` on stdin, and that is the only command that
 #             ever sees it.
-#             The two --repo pairs are the repositories the token's block is
-#             allow-listed for (owner/name) and their checkouts, one pair each.
+#             The two --repo values are the repositories the token's block is
+#             allow-listed for, given as owner/name: one run of each is what
+#             makes the shared job a reading of two repositories rather than of
+#             one. No checkout is needed — every command this check runs takes
+#             the repository by name.
 #             --third-repo is the sandbox repository of the SAME workspace the
 #             block does NOT name: added to the profile it is refused at the
 #             publish and at the deploy, and launched by hand against the shared
@@ -318,6 +321,7 @@ guard_belong() {
       ;;
     esac
   done
+  fact belong PASS "neither the installation '${INSTALLATION}', the workspace '${WORKSPACE}', nor any of the three repositories (${REPO_A}, ${REPO_B}, ${THIRD_REPO}) names 'belong': this check runs on a sandbox installation and a sandbox workspace, and the guard that says so runs before the first command — so a refused run has sent nothing anywhere"
 }
 
 # guard_workspace: every repository this check names has to belong to the one
@@ -723,6 +727,9 @@ step_token() {
   600) ;;
   *) stop "the token file $TOKEN_FILE is mode ${mode:-?} and this check wants 0600: a token any other user of this machine can read is not one to store project-wide. Type 'chmod 600 $TOKEN_FILE' and run again. Nothing was sent anywhere" ;;
   esac
+  if [ "${bytes:-0}" -lt 1 ]; then
+    stop "the token file $TOKEN_FILE is empty (0 bytes): there is no token in it to store, and a store that ran anyway would put an empty value where every run's git credential comes from. Write the project access token into it, one line and nothing else, and run again. Nothing was sent anywhere"
+  fi
   fact token PASS "the token file ${TOKEN_FILE} is mode ${mode} and ${bytes} byte(s), read for its shape and nothing else: no value from it is printed, and the only command that ever sees it is the store below, which reads it from the file on stdin"
 
   local rc=0
@@ -781,13 +788,13 @@ step_profile() {
     fact profile FAIL "the profile '${PROFILE}' serves provider '${provider:-unset}' and this check needs a BITBUCKET profile: the shared job it deploys is named from the profile and the provider, and a job of another provider is not the one a Bitbucket repository's run resolves. Define a bitbucket profile (fugaro project profile add <name> --provider bitbucket …) or pass --profile <the bitbucket one>"
     return 0
   fi
+  # The tokenless shape is what step 2 of the register's section writes. A
+  # profile an earlier shape left MOUNTING the credential has the entry taken
+  # off it rather than refused: the entry is what the two refusal readings below
+  # put back on purpose, and a profile left carrying it is the state this
+  # reading is about.
   case ",$secrets," in
-  *,bitbucket-token,*) ;;
-  *)
-    # The tokenless shape is what step 2 of the register's section writes; the
-    # check sets it rather than refusing, because a profile left mounting the
-    # credential from an earlier shape is the state the mount reading below is
-    # about.
+  *,bitbucket-token,*)
     rc=0
     call_q "$CLI_SECONDS" "$SCRATCH/set.out" "$SCRATCH/set.err" \
       fugaro project profile set "$PROFILE" secrets "" --project "$INSTALLATION" || rc=$?
@@ -937,7 +944,9 @@ step_deploy() {
     fact job FAIL "no job of the profile '${PROFILE}' is on ${GCP_PROJECT}/${REGION} after the update (the listing names ${count:-0} of the prefix fugaro-p-${PROFILE}-bitbucket and of that profile's labels): $(last_line "$SCRATCH/jobs.err"). One fugaro-p-… job per (profile, provider, account) is what the deploy leaves, and a run of an allow-listed repository resolves it or nothing"
     return 0
   fi
-  JOB=$(printf '%s\n' "$facts" | sed -n 's/^job=//p' | head -n 1)
+  # The reader prints one line per job of the profile, `<name> url=… token=…`:
+  # the name is the first word, and it is the whole of what is read from it.
+  JOB=$(printf '%s\n' "$facts" | sed -n 's/^job=\([^ ]*\).*/\1/p' | head -n 1)
   local rc3=0
   call_q "$CLI_SECONDS" "$SCRATCH/job.json" "$SCRATCH/job.err" \
     gcloud run jobs describe "$JOB" --project "$GCP_PROJECT" --region "$REGION" --format=json || rc3=$?
@@ -1180,8 +1189,8 @@ secret is stored, no run is launched and no job is read.
   installation   ${INSTALLATION}
   workspace      ${WORKSPACE}   (the sandbox Bitbucket workspace; every repository below is checked against it)
   profile        ${PROFILE}   (the Bitbucket profile the shared job is deployed for)
-  repositories   ${REPO_A} (checkout ${PATH_A})
-                 ${REPO_B} (checkout ${PATH_B})
+  repositories   ${REPO_A}
+                 ${REPO_B}
   third repo     ${THIRD_REPO}   (NOT in the token's block: refused at the publish, the deploy and the run)
   token file     ${TOKEN_FILE}
   run cap        ${RUN_SECONDS}s per run, polled every ${RUN_POLL_SECONDS}s up to ${RUN_POLL_MAX} polls
@@ -1215,7 +1224,7 @@ PLAN_EOF
 }
 
 # ----------------------------------------------------------------------- main
-USAGE="check181.sh --installation <sandbox> --token-file <path> --repo <owner/name>=<checkout> --repo <owner/name>=<checkout> --third-repo <owner/name> [--workspace <workspace>] [--profile <name>] [--dry-run]"
+USAGE="check181.sh --installation <sandbox> --token-file <path> --repo <owner/name> --repo <owner/name> --third-repo <owner/name> [--workspace <workspace>] [--profile <name>] [--dry-run]"
 
 parse_args() {
   INSTALLATION=""
@@ -1224,8 +1233,6 @@ parse_args() {
   PROFILE=${CHECK181_PROFILE:-bitbucket-shared}
   REPO_A=""
   REPO_B=""
-  PATH_A=""
-  PATH_B=""
   THIRD_REPO=""
   DRY_RUN=no
   PROJECT_NAME=""
@@ -1255,21 +1262,17 @@ parse_args() {
       shift 2
       ;;
     --repo)
-      [ $# -ge 2 ] || die "--repo needs owner/name=<checkout path>. usage: $USAGE"
-      local pair=$2 name=${2%%=*} path=${2#*=}
-      if [ "$name" = "$pair" ] || [ -z "$name" ] || [ -z "$path" ]; then
-        die "--repo takes owner/name=<checkout path>, and '$pair' is not that. usage: $USAGE"
-      fi
+      [ $# -ge 2 ] || die "--repo needs owner/name. usage: $USAGE"
+      local name=$2
       case "$name" in
-      */*) ;;
+      */*/*) die "--repo's repository '$name' is not owner/name. usage: $USAGE" ;;
+      */?*) ;;
       *) die "--repo's repository '$name' is not owner/name. usage: $USAGE" ;;
       esac
       if [ -z "$REPO_A" ]; then
         REPO_A=$name
-        PATH_A=$path
       elif [ -z "$REPO_B" ]; then
         REPO_B=$name
-        PATH_B=$path
       else
         die "--repo was given three times: this check runs for TWO allow-listed repositories. usage: $USAGE"
       fi
