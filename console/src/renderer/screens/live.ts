@@ -61,6 +61,7 @@ import type { RigorView } from '../../shared/rigor'
 import { isMarkerText, sanitizeText } from '../../shared/sanitize'
 import { displayRuns, shortRun } from '../../shared/shortid'
 import type { RunRef } from '../../shared/shortid'
+import { authModeOf } from '../../shared/schema'
 import type { BurnView, FinishedView, KillView, LiveDocument, RunView, TotalsView } from '../../shared/schema'
 import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
@@ -1960,7 +1961,13 @@ function runRow(factory: ScreenFactory, row: LiveRunRow, ending: string): Screen
 
   const actors = cell(element, factory, 'td', 'live-run-coder')
   putActor(cell(actors, factory, 'span', 'live-run-models'), row.models, 'runs[].models')
-  putActor(cell(actors, factory, 'span', 'live-run-auth'), row.auth, 'runs[].auth')
+  // **A run with no auth mode draws no auth mode.** Since D3070 the CLI writes
+  // `-` under `auth` for one, and the mark is not a mode: `n/a` here would be the
+  // console reporting a question the feed answered, and drawing the `-` itself
+  // would put the CLI's placeholder on the screen as if it were a word about the
+  // run. So the cell is not drawn at all (`authModeOf`).
+  const auth = authModeOf(row.auth)
+  if (auth !== null) putActor(cell(actors, factory, 'span', 'live-run-auth'), auth, 'runs[].auth')
 
   numberCell(element, factory, 'td', row.spend, 'usd', 'live-run-spend')
   // The age is a **span**, not a count of seconds: `duration` is the unit a
