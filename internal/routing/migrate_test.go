@@ -481,6 +481,23 @@ func TestMigrate(t *testing.T) {
 			Chain: []Source{{Kind: KindPool, Pool: SharedPool}},
 		}},
 		bridge: []string{"acme/vertex\x00gemini-9-ultra"},
+	}, {
+		// The guard on the shared pool (m.shared): an installation with no
+		// account at all writes no pool, because the config refuses a pool with
+		// no members, and no chain may name one either — a table naming a pool
+		// the config does not hold is refused whole. This repository is oauth,
+		// so without the guard its chain would name the cascade pool that was
+		// never written; as it is, it reaches nothing, which is what it reaches
+		// today.
+		name: "an oauth repository of an installation with no account reaches nothing",
+		in: Installation{
+			Project: "acme/widgets",
+			Repos: []Repo{{
+				Name:   "acme/api",
+				Auth:   testAuthOAuth,
+				Models: []Model{claude("claude-haiku-4-5")},
+			}},
+		},
 	}}
 
 	for _, tc := range cases {
