@@ -2805,22 +2805,22 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 	//
 	// It is asked once, outside the loop, because it is the same for every
 	// repository and every model: only the routes do not depend on it. It is
-	// asked of an api-key credential and the job's own budget mode — doctor
-	// reads the policy and this machine's config, not the repository's
-	// fugaro.yaml, so neither the credential nor the stored key is its to read.
-	// api-key is the credential auto's key question is about, and Vertex
-	// answers the same for every other via — the sentence the auto state prints
-	// names that difference itself. The mode is the job's (doctorNodeMode: the
-	// node's own, or the environment's where the node says nothing).
-	mode := doctorNodeMode(lc, p)
-	reach, reason := routingReachOf(c, "api-key", mode)
+	// asked of an api-key credential — doctor reads the policy and this
+	// machine's config, not the repository's fugaro.yaml, so neither the
+	// credential nor the stored key is its to read. api-key is the credential
+	// auto's key question is about, and Vertex answers the same for every other
+	// via — the sentence the auto state prints names that difference itself.
+	// The budget mode is not one of the facts it is asked of (AB1b, D3009): an
+	// api-key run has a gateway whatever the mode says, so the mode no longer
+	// words any arm below.
+	reach, reason := routingReachOf(c, "api-key")
 	// inert is appended to a line whose resolution no run of this repository
 	// carries out, and its reader is the same one validate's note has: the line
 	// says what the switch licenses and the clause says that nothing here takes
 	// it, so the resolution is not read as a cost the project is paying.
 	inert := ""
 	if reach == routingInert {
-		inert = " (nothing takes it here: " + routingInertWhy(reason, "api-key", mode) + ", so the pins keep Claude's own IDs)"
+		inert = " (nothing takes it here: " + routingInertWhy(reason, "api-key") + ", so the pins keep Claude's own IDs)"
 	}
 	for _, repo := range repos {
 		// The routes a run of this repository carries: this machine's
@@ -2840,16 +2840,13 @@ func doctorRoutingChecks(lc *localcfg.Config, p *projectpolicy.Policy, why strin
 				case routingKeyless:
 					lines = append(lines, base+"; via: auto is key-presence driven, so a run of this repository whose gateway is on halts at it unless the job has an Anthropic API key stored, and a Vertex run never reaches it at all"+tail+layer.unknownFor(repo))
 				default:
-					// The mode is the node's when it sets one and the job's own
-					// ceiling when it does not (doctorNodeMode), and the line
-					// says which: "the published policy's budget" is false of a
-					// node that says nothing about the budget, and that reading
-					// is what this sentence used to make for it.
-					who := "the job's own ceiling"
-					if p.Budget.Mode != "" {
-						who = "the published policy's budget"
-					}
-					lines = append(lines, base+", and under "+who+" no run of this repository reaches the switch (budget.mode is "+mode+"), so the switch is inert and nothing halts under it"+tail+layer.unknownFor(repo))
+					// The switch is inert for a reason that is not the mode any
+					// more (AB1b, D3009): a via: cascade switch and a run that
+					// did not ask for the cascade, a via: auto switch and a
+					// Vertex run. The reason is the runner's own (routingInertWhy
+					// over routingReachOf's answer), which is what this line says
+					// instead of naming a mode that no longer decides it.
+					lines = append(lines, base+", and no run of this repository reaches the switch ("+routingInertWhy(reason, "api-key")+"), so the switch is inert and nothing halts under it"+tail+layer.unknownFor(repo))
 				}
 			case route == config.RouteDirect:
 				lines = append(lines, fmt.Sprintf("%s: %s -> direct (via: %s)%s", repo, m, c.ViaValue(), inert))
@@ -2972,34 +2969,6 @@ func doctorRoutes(lc *localcfg.Config, repo string, claims map[string][]string) 
 		return providers
 	}
 	return merged
-}
-
-// doctorNodeMode is the budget mode a run of the project has under the
-// published node: the node's own mode when it sets one, and the job
-// environment's own — this machine's config, whose ceiling update --repo deploys
-// into the job (localcfg.BudgetMode) — when it does not.
-//
-// The fallback is the whole point of the function. runner.policyCeiling
-// replaces the environment's ceiling per key, and replaces the mode only when
-// the node writes one (pp.Budget.Mode != ""), while projectpolicy's decoder
-// refuses a *present* budget block that names no mode — leaving the block out
-// is how a policy sets no budget at all. So "" here is "the node says nothing
-// about the mode", never "the node says off": reading it as off made this
-// check print "no run of this repository reaches the switch (budget.mode is
-// off) … nothing halts under it" for a node under an installation that
-// enforces, whose every run does halt on the switch.
-//
-// What the environment's mode is is this machine's own budget block read the
-// way the deploy reads it (localcfg.BudgetMode: an absent block, or one with no
-// mode, is off), which is the same reading the drift note compares the deployed
-// job with. It is not the repository's fugaro.yaml — doctor reads the policy
-// and this machine's config — and the credential is api-key for the same
-// reason, which the caller's own sentence names.
-func doctorNodeMode(lc *localcfg.Config, p *projectpolicy.Policy) string {
-	if p == nil || p.Budget.Mode == "" {
-		return lc.BudgetMode()
-	}
-	return p.Budget.Mode
 }
 
 // doctorCanonicalRepos are the repositories this machine's project config
