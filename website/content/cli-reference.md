@@ -8770,9 +8770,12 @@ still going, whatever its age, read from the installation's run index rather
 than by scanning the bucket: no listing of the bucket's objects is made on
 that path, so the listing costs a handful of requests however much history
 there is. Its totals are then the index's own summary -- every run the
-installation's index carries, not the page. While the index is still
-building, the listing says so in one line above its table, and --json
-carries index_complete and folded_through.
+installation's index carries, not the page -- which is the figure of a
+listing that covers the installation: one narrowed to some of its
+repositories (--repo, or a local config that lists them) totals the rows
+it read, as a windowed listing does. While the index is still building,
+the listing says so in one line above its table, and --json carries
+index_complete and folded_through.
 
 A run shows as succeeded only when its result.json says so; an execution that
 ended without finalizing is an infra_error.
@@ -8780,10 +8783,12 @@ ended without finalizing is an infra_error.
 --since W bounds a window instead of a count: every run of it is listed,
 bounded by the window and not by history, and its totals are those rows'.
 --mine and --batch bound one the same way. A listing the index cannot answer
--- a fresh installation, or an index that could not be read -- reads the
-bucket's own window instead, one note saying so, and that window is the last
+reads the bucket's own window instead, and that window is the last
 7 days of the local config's repositories (every repository in the
-bucket when the config lists none).
+bucket when the config lists none). An index that could not be read says so
+in one note; an index that has folded nothing yet -- a fresh installation,
+before its first fold -- reads the window in silence and carries no index
+fact either way, which is the state every installation is in until then.
 
 --limit N prints the newest N rows of the listing and shortens nothing else:
 the totals line, in the text listing and in --json's totals, is the listing's

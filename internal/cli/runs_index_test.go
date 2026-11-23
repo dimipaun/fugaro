@@ -11,10 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"gocloud.dev/blob"
+
+	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // indexFake is the run index a listing reads in these tests: the documents a
@@ -238,7 +242,7 @@ func lsIndexDoc(t *testing.T, args ...string) (lsIndexFields, lsOut) {
 // is the installation: the fixture's local config lists acme/app, and a listing
 // of one repository's rows is figured from its own rows and never from a
 // summary that counts every repository (readIndex, and what --repo's own case
-// in TestRunsLsTotalsFollowTheScope pins).
+// in TestRunsLsTotalsFollowTheListingScope pins).
 //
 // Mutation caught: bounding the default read by the window (the listing then
 // holds the seven days nothing else), totalling the page instead of the
@@ -322,6 +326,11 @@ func TestRunsLsDefaultNewestPlusActive(t *testing.T) {
 // allow-list checks, and the reader resolves it to that run's own sort key: the
 // listing starts after the run, and the figure beside the page does not move
 // (D818).
+//
+// The listing is asked for with --all for the figure's own reason
+// (TestRunsLsTotalsFollowTheListingScope): only a listing that covers the
+// installation is figured from the summary, and the fixture's config lists one
+// repository.
 func TestRunsLsAfterRunID(t *testing.T) {
 	f := newCloudFixture(t)
 	idx := &indexFake{}
@@ -332,21 +341,23 @@ func TestRunsLsAfterRunID(t *testing.T) {
 	}
 	idx.summary = runindex.Summary{Version: runindex.Version, Complete: true, States: map[string]int64{}, Runs: 99}
 
-	_, got := lsIndexDoc(t, "--after", ids[1])
+	_, got := lsIndexDoc(t, "--all", "--after", ids[1])
 	if want := ids[2:]; !slices.Equal(runIDs(got.Runs), want) {
 		t.Fatalf("runs ls --after %s listed %v, want %v: the page starts after the run itself", ids[1], runIDs(got.Runs), want)
 	}
 	if got.Totals.Runs != 99 {
 		t.Errorf("totals count %d runs, want the summary's 99: paging moves the page and not the total", got.Totals.Runs)
 	}
+	// One question, and the active runs are not the second: the first page
+	// carries every active run whatever its age, so a page after a cursor of one
+	// has them all already and asking again would hand on an old active run's
+	// sort key (mergeIndexEntries, TestRunsLsDefaultPagesCoverEveryRun).
 	ask := idx.asked()
-	if len(ask) != 2 {
-		t.Fatalf("the reader was asked %+v, want the page and the active runs", ask)
+	if len(ask) != 1 {
+		t.Fatalf("the reader was asked %+v, want the page alone: the cursor is a position in the newest-N page", ask)
 	}
-	for _, a := range ask {
-		if a.After != ids[1] {
-			t.Errorf("the reader was asked After %q, want the run id %s: --after is a run id and not a cursor (IR1)", a.After, ids[1])
-		}
+	if ask[0].After != ids[1] {
+		t.Errorf("the reader was asked After %q, want the run id %s: --after is a run id and not a cursor (IR1)", ask[0].After, ids[1])
 	}
 }
 
@@ -633,6 +644,182 @@ func TestRunsLsIndexUnreadableFallsBackToTheWindow(t *testing.T) {
 	if plain != out {
 		t.Errorf("the fallback reads:\n%s\nwant the listing with no index at all:\n%s", out, plain)
 	}
+}
+
+// TestRunsLsDefaultPagesCoverEveryRun walks the default listing the way the
+// documented next page does -- the same argv with --after of the last run id --
+// and pins that the pages together are every run: none of them is skipped by any
+// page.
+//
+// An old active run is the one row that can be printed twice: the first page
+// leads with it (D3203) and its sort key is older than the newest-N page's, so a
+// page the cursor carries on to reaches it again. That is the price of the
+// active runs leading, and it is the safe half of the trade: a run listed twice
+// is read again by a person, and a run no page lists is a run nobody sees.
+//
+// Mutation caught: merging the active runs into the index's own order, which
+// puts a run two hundred days old at the end of the first page -- the cursor the
+// last row hands on -- and the ten runs behind the newest fifty are then never
+// listed by any page.
+func TestRunsLsDefaultPagesCoverEveryRun(t *testing.T) {
+	f := newCloudFixture(t)
+	idx := &indexFake{}
+	lsIndex(t, idx)
+
+	var newest []string
+	for i := range 60 {
+		id := lsIndexRun(t, f, idx, time.Duration(i+1)*24*time.Hour, runstore.StatusSucceeded, fmt.Sprintf("b2%03x", i))
+		if i < lsIndexPage {
+			newest = append(newest, id)
+		}
+	}
+	active := lsIndexRun(t, f, idx, 200*24*time.Hour, runstore.StatusRunning, "act2")
+	idx.summary = runindex.Summary{Version: runindex.Version, Complete: true, States: map[string]int64{}, Runs: 61}
+
+	seen := map[string]int{}
+	var last string
+	for page := 1; page <= len(newest)+2; page++ {
+		args := []string{"--all"}
+		if last != "" {
+			args = append(args, "--after", last)
+		}
+		_, got := lsIndexDoc(t, args...)
+		ids := runIDs(got.Runs)
+		if page == 1 {
+			if len(ids) == 0 || ids[len(ids)-1] != newest[lsIndexPage-1] {
+				t.Fatalf("the first page ends with %v, want %s, the oldest row of the newest %d: the last row is the cursor the next page starts from", ids, newest[lsIndexPage-1], lsIndexPage)
+			}
+			if !slices.Contains(ids, active) {
+				t.Errorf("the first page does not carry the run still going since two hundred days ago (%s): D3203 lists every run that has not ended", active)
+			}
+		}
+		if len(ids) == 0 {
+			break
+		}
+		for _, id := range ids {
+			seen[id]++
+		}
+		last = ids[len(ids)-1]
+	}
+	if len(seen) != 61 {
+		t.Fatalf("the pages together listed %d runs, want all 61 -- no run may be missing:\n%v", len(seen), seen)
+	}
+	for id, n := range seen {
+		if n > 1 && id != active {
+			t.Errorf("the pages listed %s %d times, want once: a page starts after the page before it, and only the run still going leads out of the index's order", id, n)
+		}
+	}
+	if seen[active] == 0 {
+		t.Errorf("the pages never listed the run still going since two hundred days ago (%s)", active)
+	}
+}
+
+// TestRunsLsTotalsFollowTheListingScope: the summary document counts every run
+// the installation's index carries, so it is the figure of a listing that covers
+// the installation and of no other. A listing narrowed to some of the
+// installation's repositories -- --repo, or a local config that lists them --
+// puts the one repository's rows beside the whole installation's spend
+// otherwise, and that figure is the one part of a listing the access gate cannot
+// take back (D1586's read half).
+//
+// Mutation caught: reading the summary whatever the listing's scope, which is
+// what a --repo listing did (TestRunsLsTotalsExcludeWhatTheGateDropped is the
+// gate's own half of the same rule).
+func TestRunsLsTotalsFollowTheListingScope(t *testing.T) {
+	f := newCloudFixture(t)
+	idx := &indexFake{}
+	lsIndex(t, idx)
+	var ids []string
+	for i := range 3 {
+		ids = append(ids, lsIndexRun(t, f, idx, time.Duration(i+1)*24*time.Hour, runstore.StatusSucceeded, fmt.Sprintf("b3%03x", i)))
+	}
+	idx.summary = runindex.Summary{Version: runindex.Version, Complete: true, States: map[string]int64{}, Runs: 4321, SpentMicros: 1234567}
+
+	// The listing that covers the installation: --all asks the index for no
+	// repository at all, which is every one of them.
+	_, wide := lsIndexDoc(t, "--all")
+	if wide.Totals.Runs != 4321 {
+		t.Errorf("runs ls --all totals %d runs, want the summary document's 4321: the installation is the scope that figure is of (D818)", wide.Totals.Runs)
+	}
+	if want := budget.Micros(1234567).USD(); wide.Totals.ModelUSD != want {
+		t.Errorf("runs ls --all totals model_usd = %v, want the summary's %v", wide.Totals.ModelUSD, want)
+	}
+
+	// A listing of the one repository the config lists, and the same one named
+	// with --repo: its rows are its own figure, never the installation's.
+	for _, args := range [][]string{nil, {"--repo", "acme/app"}} {
+		_, got := lsIndexDoc(t, args...)
+		if !slices.Equal(runIDs(got.Runs), ids) {
+			t.Fatalf("runs ls %v listed %v, want %v", args, runIDs(got.Runs), ids)
+		}
+		if got.Totals.Runs != len(ids) {
+			t.Errorf("runs ls %v totals %d runs, want its own %d and not the installation summary's 4321: the summary counts every repository's runs", args, got.Totals.Runs, len(ids))
+		}
+		if got.Totals.ModelUSD != 0 {
+			t.Errorf("runs ls %v totals model_usd = %v, want the rows' own 0 and not the summary's %v: the summary counts every repository's spend", args, got.Totals.ModelUSD, budget.Micros(1234567).USD())
+		}
+	}
+}
+
+// TestRunsLsTotalsExcludeWhatTheGateDropped: the access gate drops the rows of
+// repositories the credential holds no role in (D1586's read half), and the
+// summary document counts them either way. A listing the gate has narrowed puts
+// one repository's rows beside a figure that counts another repository's runs
+// and spend unless the figure is recomputed from the rows the gate left -- for a
+// viewer of one repository, the installation's spend.
+//
+// Mutation caught: keeping the summary's figure after the gate dropped a row.
+func TestRunsLsTotalsExcludeWhatTheGateDropped(t *testing.T) {
+	f := newCloudFixture(t)
+	idx := &indexFake{}
+	lsIndex(t, idx)
+	f.budget.DB.Set(accesslib.PathNode, accessNodeDoc(userStored(t, accessViewer, accesslib.RoleViewer, accessRepoA)))
+	accessRunAs(t, accessViewer)
+
+	var kept []string
+	for i := range 2 {
+		kept = append(kept, lsIndexRun(t, f, idx, time.Duration(i+1)*24*time.Hour, runstore.StatusSucceeded, fmt.Sprintf("d%03x", i)))
+	}
+	dropped := lsIndexRunIn(t, f, idx, otherSlug, "acme/other", 24*time.Hour, runstore.StatusSucceeded, "c4c4")
+	idx.summary = runindex.Summary{Version: runindex.Version, Complete: true, States: map[string]int64{}, Runs: 4321, SpentMicros: 1234567}
+
+	_, got := lsIndexDoc(t, "--all")
+	if ids := runIDs(got.Runs); !slices.Equal(ids, kept) {
+		t.Fatalf("runs ls listed %v, want the viewer's own %v: the gate drops the row of %s, a repository the credential holds no role in (D1586)", ids, kept, dropped)
+	}
+	if got.Totals.Runs != len(kept) {
+		t.Errorf("totals count %d runs, want the %d rows the gate left and not the summary's 4321: a figure the gate has changed is recomputed from the rows it left", got.Totals.Runs, len(kept))
+	}
+	if got.Totals.ModelUSD != 0 {
+		t.Errorf("totals model_usd = %v, want the rows' own 0 and not the summary's %v: the summary counts repositories the credential holds no role in", got.Totals.ModelUSD, budget.Micros(1234567).USD())
+	}
+}
+
+// lsIndexRunIn seeds one run of another repository -- its task and its record
+// under that repository's own slug -- and answers the index document naming it.
+// It is lsIndexRun for a run that is not the fixture's own: the access gate
+// follows a row's repository (D1586), so a run of a repository the credential
+// holds no role in is exactly the row it drops.
+func lsIndexRunIn(t *testing.T, f *cloudFixture, idx *indexFake, slug, repo string, ago time.Duration, status runstore.Status, suffix string) string {
+	t.Helper()
+	id := recentRunID(t, ago, suffix)
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	s := runstore.Open(b, slug, id)
+	if err := s.CreateTask(ctx, &task.Spec{Version: 1, RunID: id, Repo: repo, Ref: "main", Workflow: "web", Task: "x", RequestedBy: "someone@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if status != "" {
+		if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: repo, Workflow: "web", Status: status}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	idx.entries = append(idx.entries, runindex.Entry{RunID: id, Slug: slug, Repo: repo, UpdatedAt: lsNow().UTC().Add(-ago), Status: status, Workflow: "web"})
+	return id
 }
 
 // errIndexUnreadable is a reader that could not answer: what a listing meets

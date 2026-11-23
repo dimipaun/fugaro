@@ -888,13 +888,27 @@ a run still going is in the listing however far back it started, and 100× the h
 costs the same handful of requests. **The bucket is not listed on this path at all** —
 the index has said which runs to read, so no flat listing of a repository's objects is
 made, which is what the read exists to avoid. The row shape is unchanged: every run named
-is read and rendered exactly as the window's runs are.
+is read and rendered exactly as the window's runs are. **The runs that have not ended lead
+the page**, ahead of the newest-50 rows: the page's last row is the cursor `--after` takes
+the next page from, and it has to be a row inside the newest-50 page, or an old active run
+printed last would hand on a cursor two hundred days old and the runs between the two
+would never be listed. An old active run can therefore be printed again by a later page —
+the active runs lead, and the index's order reaches their sort key again; the alternative,
+a run no page lists, is the one outcome the cursor must not have.
 
-**`totals` on this path is the summary document's**, not the page's: `runs ls` reads the
-index's own summary (`internal/runindex`), which counts every run the installation's index
-carries, and prints that as `totals` (D3203, D818). It is the same shape
-`runview.Totals` always was — the figure is a total of the installation rather than of the
-page drawn, which is the rule the paragraph above states and this path keeps.
+**`totals` on this path is the summary document's**, not the page's, **when the listing
+covers the installation**: `runs ls` reads the index's own summary
+(`internal/runindex`), which counts every run the installation's index carries, and
+prints that as `totals` (D3203, D818). It is the same shape `runview.Totals` always was —
+the figure is a total of the installation rather than of the page drawn, which is the rule
+the paragraph above states and this path keeps. **A listing narrowed to some of the
+installation's repositories** — `--repo`, or a local config that lists them — **totals its
+own rows instead**, as a windowed listing does: the summary counts every repository's runs
+and spend, so a listing of one repository's rows beside the installation's figure would
+report money the reader did not ask for. **So does a listing the access gate has
+narrowed**: the gate drops the rows of repositories the credential holds no role in
+(D1586's read half), and a figure it has changed is recomputed from the rows it left, or a
+viewer of one repository would be shown the installation's spend.
 
 **`--since` still bounds a window, and the bound is the window's and not history's.** A
 listing given `--since` (or `--mine`, or `--batch`) is read whole from the index — every
@@ -914,12 +928,16 @@ it, in the index's order. An id neither holds stays the command's refusal.
 come from it, and the pull request's own index in the bucket and the other sources below
 go on covering the runs the run index does not have (`internal/cli/runs_pr.go`).
 
-**A listing the index cannot answer reads the window, note and all.** An index that has
-folded nothing and finished no walk — a fresh installation, and the stub every release
-before the index is wired answers with — and a reader that failed are both answered the
-way every listing was answered before the index existed, in one note on stderr, with the
-same rows and the same document as then. Nothing silently short is ever printed: the two
-fields below are how a reader knows the difference.
+**A listing the index cannot answer reads the window.** An index that has folded nothing
+and finished no walk — a fresh installation, and the stub every release before the index
+is wired answers with — is answered the way every listing was answered before the index
+existed, and **says nothing**: the window it reads is the listing, not a fallback from
+one, so there is no note to print and neither of the two fields below reaches the
+document (which is why the document is byte for byte the one this command printed before
+the index existed). **A reader that failed is the one case with a line**, on stderr, in
+one note: a listing that could not ask the index has something to say and reads the window
+beside it. Nothing silently short is ever printed: the two fields below are how a reader
+knows the difference.
 
 **`index_complete` and `folded_through` are on this document** — the index's own two
 facts about itself — and **the text listing says one line above its table while the index
