@@ -439,13 +439,16 @@ import (
 // and where Batch printed it (the job's own document, the logs and the CreateJob
 // audit record -- D3115's rule measured rather than assumed) -- and then four
 // attacks made as a SECOND launcher, every one of them running as the run's own
-// job account so that a refusal is about the VM and not the account: the run's
-// ticket replayed into a job of the second launcher's own, the same job with no
-// ticket at all (the control), the run's job deleted and re-created under the
-// same name with the same ticket (D3108's id, F30), and the issuance record read
-// straight out of the database with the second launcher's own token. Its fakes
-// are a `gcloud`, a `curl` and a `fugaro` over a small model of Batch, the
-// Realtime Database and Cloud Logging driven by files the case writes -- the
+// job account so that a refusal is about the VM and not the account: the ticket
+// the second launcher's own read of the run's job found, replayed into a job of
+// its own, the same job with no ticket at all (the control), a SECOND launch's
+// job deleted while it is still queued and re-created under the same name with
+// that run's unspent ticket (D3108's id, F30 -- the queued window is the attack,
+// and the row FAILs when the job was not queued when it was deleted), and the
+// issuance record read straight out of the database with the second launcher's
+// own token. Its fakes are a `gcloud`, a `curl` and a `fugaro` over a small
+// model of Batch, the Realtime Database and Cloud Logging driven by files the
+// case writes -- the
 // jobs that exist, each job's uid, state and object, one task-log answer per
 // uid, the project-wide log answer, the CreateJob audit record, the database's
 // answers per path with a different answer from the second read on (so a row
@@ -455,7 +458,8 @@ import (
 // the platform has finished with it -- so a case can read the body it sent,
 // including the ticket, which the test asserts never reaches the block, the
 // progress log or any file but the one of its own. The refusal a claim comes
-// back with is what the two replay rows are judged on, and its own sentence is
+// back with is what the two claim rows -- the replay and the re-creation -- are
+// judged on, and its own sentence is
 // what tells the VM's refusal from the ones the route answers WITHOUT asking the
 // link -- the once-only fence's, the ticket's own life, and `not_served` -- so
 // cases bend that sentence each of those ways and the rows are required to FAIL

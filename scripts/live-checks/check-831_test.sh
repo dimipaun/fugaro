@@ -17,6 +17,10 @@
 #                  delete_fail, delete_fail.<job>, delete_lists, delete_submits,
 #                  claim_status, claim_error, claim_message, claim_token, and the
 #                  same four per job as claim_status.<job> etc.,
+#                  second_ticket.<job> (what the SECOND LAUNCHER's own describe
+#                  of that job answers with: `none` takes the ticket out of the
+#                  document, any other value puts that value there, and no
+#                  value at all leaves the platform's own job as it is),
 #                  no_lines.<job>, run_fail
 #   jobs/<name>/job.json  the job document: `describe --format=json` answers with
 #                  it, `list` reads its labels, `delete` removes it
@@ -30,7 +34,9 @@
 #   logs/<uid>.json  the entries a job's task logs answer with, selected by the
 #                  tree's own filter (labels.job_uid="<uid>")
 #   audit.json     the entries the CreateJob audit filter answers with
-#   launch.json    the answer `fugaro run --json` gives
+#   launch.json, launch2.json  the answers `fugaro run --json` gives, one per
+#                  call: the run under test's, then the second launch's (a
+#                  counter under runs.next is what tells the two calls apart)
 #   rtdb/<path>.json and .code  the body and the status one Realtime Database
 #                  read answers with; a `.then.json`/`.then.code` beside them is
 #                  served on the SECOND and later reads of that path, which is
@@ -113,6 +119,13 @@ slug=acme-widget-0123456789abcdef
 runid=20261122-120000-abcd
 runjob=fugaro-acme-widget-implement-abc123def456
 uid=55001
+# The SECOND launch of the check: the run the third attack deletes while its job
+# is still queued. It is another run of the same repository, with its own id, its
+# own job and its own ticket.
+runid2=20261122-120500-beef
+runjob2=fugaro-acme-widget-implement-def456abc123
+uid2=55002
+ticket2=chk831-ticket-4b7e15
 runacct=fugaro-acme-widget-implement@fugaro-dev.iam.gserviceaccount.com
 owner=owner@example.com
 second=second-launcher@fugaro-dev.iam.gserviceaccount.com
@@ -364,6 +377,21 @@ elif args[0] == "batch":
                  "uid": "", "status": {"state": "DELETION_IN_PROGRESS"}}
         if d is None:
             fail("NOT_FOUND: job %s" % name)
+        # What the SECOND LAUNCHER's own read answers, when a case bends it: the
+        # two accounts read the same document on the platform, so the only way a
+        # case can show that the check took the ticket it replays out of the
+        # impersonated read — and not out of its own — is to make that read
+        # answer another document.
+        bend = C.get("second_ticket." + name)
+        if flag("--impersonate-service-account") and bend is not None:
+            vars_ = {}
+            for tg in d.get("taskGroups") or []:
+                env = ((tg or {}).get("taskSpec") or {}).setdefault("environment", {})
+                vars_ = env.setdefault("variables", {})
+            if bend == "none":
+                vars_.pop("FUGARO_IDENTITY_TICKET", None)
+            else:
+                vars_["FUGARO_IDENTITY_TICKET"] = bend
         fmt = flag("--format")
         if fmt == "json":
             sys.stdout.write(json.dumps(d, indent=2) + "\n")
@@ -524,8 +552,24 @@ if args and args[0] == "run":
     if knobs.get("run_fail") == "yes":
         sys.stderr.write("fugaro: the launch was refused\n")
         sys.exit(1)
+    # The check launches twice — the run under test, and the second launch whose
+    # still-queued job the third attack deletes — and the two are different runs
+    # with different ids, jobs and tickets. The answer is served per call, so the
+    # second launch is not the first one's answer read again.
+    nth = 0
+    path = os.path.join(D, "runs.next")
     try:
-        sys.stdout.write(open(os.path.join(D, "launch.json")).read())
+        nth = int(open(path).read().strip() or "0")
+    except OSError:
+        nth = 0
+    try:
+        with open(path, "w") as fh:
+            fh.write(str(nth + 1))
+    except OSError:
+        pass
+    answer = "launch.json" if nth == 0 else "launch2.json"
+    try:
+        sys.stdout.write(open(os.path.join(D, answer)).read())
     except OSError:
         sys.stdout.write("{}\n")
     sys.exit(0)
@@ -642,14 +686,17 @@ write_install_config() { # write_install_config DIR [bend]
 # write_default_case: the platform as Check 831 expects to find it — one running
 # run of acme/widget on Batch, its ledger saying it opened its session and then
 # that it was metered, a ticket on the job, the ticket in the job's logs and in
-# the CreateJob audit record, and a database that refuses the second launcher the
-# issuance record. MODE bends one thing at a time.
+# the CreateJob audit record, a second launch whose job is still QUEUED and
+# carries that run's own ticket (the one the third attack deletes and re-creates
+# under its name), and a database that refuses the second launcher the issuance
+# record. MODE bends one thing at a time.
 write_default_case() { # write_default_case DIR [mode]
   python3 - "$1/state" "${2:-}" "$slug" "$runid" "$runjob" "$uid" "$runacct" "$repo" \
-    "$ticket" "$rtdb" "$service" <<'PY'
+    "$ticket" "$rtdb" "$service" "$runid2" "$runjob2" "$uid2" "$ticket2" <<'PY'
 import json, os, sys
 
-(d, mode, slug, runid, runjob, uid, runacct, repo, ticket, rtdb, service) = sys.argv[1:12]
+(d, mode, slug, runid, runjob, uid, runacct, repo, ticket, rtdb, service,
+ runid2, runjob2, uid2, ticket2) = sys.argv[1:16]
 
 os.makedirs(os.path.join(d, "jobs", runjob), exist_ok=True)
 os.makedirs(os.path.join(d, "logs"), exist_ok=True)
@@ -672,7 +719,7 @@ doc = {
     "name": "projects/fugaro-dev/locations/us-east5/jobs/" + runjob,
     "uid": uid,
     "createTime": "2026-11-22T12:00:00Z",
-    "status": {"state": "QUEUED" if mode == "queued" else "RUNNING"},
+    "status": {"state": "RUNNING"},
     "labels": {"fugaro_run": slug + "-" + runid, "fugaro_repo": slug},
     "allocationPolicy": {"serviceAccount": {"email": runacct}},
     "taskGroups": [{"taskSpec": {"environment": {"variables": variables}}}],
@@ -680,6 +727,47 @@ doc = {
 if mode != "no-job":
     with open(os.path.join(d, "jobs", runjob, "job.json"), "w") as fh:
         json.dump(doc, fh, indent=2)
+
+# The second launch of the check: another run of the same repository, whose job
+# the third attack deletes. Its state is that attack's own window — QUEUED, and
+# the run's VM has therefore never existed, so its ticket is never claimed — and
+# a case that needs the window already gone writes mode `second-running`, which
+# is the state that makes the row FAIL rather than pass on a re-creation whose
+# ticket the run's own bootstrap has spent.
+second_variables = {
+    "FUGARO_RUN": slug + "/" + runid2,
+    "FUGARO_RTDB_URL": rtdb,
+    "FUGARO_CREDENTIALS_SERVICE_URL": service,
+    "FUGARO_BACKEND": "cloud-batch",
+    "FUGARO_DEPLOYED_JOB": "fugaro-acme-widget-implement",
+    "FUGARO_IDENTITY_TICKET": ticket2,
+}
+second = {
+    "name": "projects/fugaro-dev/locations/us-east5/jobs/" + runjob2,
+    "uid": uid2,
+    "createTime": "2026-11-22T12:05:00Z",
+    "status": {"state": "RUNNING" if mode == "second-running" else "QUEUED"},
+    "labels": {"fugaro_run": slug + "-" + runid2, "fugaro_repo": slug},
+    "allocationPolicy": {"serviceAccount": {"email": runacct}},
+    "taskGroups": [{"taskSpec": {"environment": {"variables": second_variables}}}],
+}
+if mode != "no-job":
+    os.makedirs(os.path.join(d, "jobs", runjob2), exist_ok=True)
+    with open(os.path.join(d, "jobs", runjob2, "job.json"), "w") as fh:
+        json.dump(second, fh, indent=2)
+
+with open(os.path.join(d, "launch2.json"), "w") as fh:
+    json.dump(
+        {
+            "run_id": runid2,
+            "repo": repo,
+            "execution": "projects/fugaro-dev/locations/us-east5/jobs/" + runjob2,
+            "status": "launched",
+            "log_url": "https://console.cloud.google.com/batch/jobs/" + runjob2,
+            "branch": "fugaro/20261122-120500-beef",
+        },
+        fh,
+    )
 
 # The run's own task logs: the container's own lines, one of which carries the
 # ticket. That is the model of what Batch prints, and the check measures it.
@@ -780,7 +868,13 @@ PY
   # ledger to say the run opened its session and was metered, which is after the
   # run's claim). A tree with no VM-to-job link at all answers exactly this, so
   # a row that read it as its own refusal would record a PASS proving nothing.
-  fence) printf 'claim_error=identity_refused\nclaim_message=the ticket was already claimed: a ticket is claimed once, and this claim is not the one that claimed it\nclaim_message.%s=this record names a job and the claim carries no attestation field\n' "$job_noticket" >>"$1/state/cfg" ;;
+  fence) printf 'claim_error=identity_refused\nclaim_message=the ticket was already claimed: a ticket is claimed once, and this claim is not the one that claimed it\nclaim_message.%s=this record names a job and the claim carries no attestation field\n' "$job_noticket" >>"$1/state/cfg"
+    # The re-created job carries the SECOND launch's ticket, and that run's VM
+    # never existed — its job was deleted while it was queued — so the ticket is
+    # unspent: a tree that reads no attestation serves the claim, which is the
+    # hole the third attack is for (the record's own job id is the only thing
+    # left, D3108, F30, and nothing reads it). The fence is the first attack's.
+    printf 'claim_token.%s=yes\n' "$runjob2" >>"$1/state/cfg" ;;
   # The link is not wired at all: a claim the service cannot judge is answered
   # 'not served' and nothing falls back (D3114).
   not-served) printf 'claim_status=503\nclaim_error=not_served\nclaim_message=this service does not issue a run identity: no issuer is configured on this installation\n' >>"$1/state/cfg" ;;
@@ -788,6 +882,12 @@ PY
   # the caller's class, in the shape refuseIdentityCaller writes it.
   claim-other) printf 'claim_error=caller_not_admitted\nclaim_message=this route admits a run own job service account\n' >>"$1/state/cfg" ;;
   run-fail) printf 'run_fail=yes\n' >>"$1/state/cfg" ;;
+  # The second launcher's OWN read of the run's job is what the first attack has
+  # to take the ticket it replays out of: a read that carries no ticket, and one
+  # that carries a different ticket from the one this check read as the owner,
+  # are both the row's FAIL rather than a replay of the check's own reading.
+  second-read-no-ticket) printf 'second_ticket.%s=none\n' "$runjob" >>"$1/state/cfg" ;;
+  second-read-other-ticket) printf 'second_ticket.%s=%s\n' "$runjob" "$ticket2" >>"$1/state/cfg" ;;
   esac
 }
 
@@ -851,6 +951,8 @@ run_check() { # run_check [K=V ...] [-- ARGS...]
     # than spinning.
     CHK831_WAIT_RENAME=0
     CHK831_RENAME_POLL=0
+    CHK831_WAIT_QUEUED=0
+    CHK831_QUEUE_POLL=0
     CHK831_SWEEP_BOUND=2
     CHK831_SWEEP_POLL=0
   )
@@ -939,11 +1041,18 @@ expect_curl_token() { # which-url-fragment token what
   fi
   expect_contains "$line" "Bearer $2" "$3"
 }
+# A ticket is a handle and not a secret (D3115), and the check reads two of them
+# — the run-under-test's out of its job, and the second launch's out of the job
+# the third attack deletes — so no line of the block, the progress log, a gcloud
+# command line or a fugaro command line may carry either value.
 expect_no_ticket_anywhere() { # what
-  expect_absent "$out" "$ticket" "$1: the block"
-  expect_absent "$err" "$ticket" "$1: the progress log"
-  expect_absent "$(calls)" "$ticket" "$1: a gcloud command line"
-  expect_absent "$(fugaro_calls)" "$ticket" "$1: a fugaro command line"
+  local t
+  for t in "$ticket" "$ticket2"; do
+    expect_absent "$out" "$t" "$1: the block"
+    expect_absent "$err" "$t" "$1: the progress log"
+    expect_absent "$(calls)" "$t" "$1: a gcloud command line"
+    expect_absent "$(fugaro_calls)" "$t" "$1: a fugaro command line"
+  done
 }
 # --------------------------------------------------------------- the run, end to end
 test_help() {
@@ -995,28 +1104,35 @@ test_happy_path() {
   expect_row attack-replay "refusal identity_refused" "happy: the refusal is the service's own code"
   expect_verdict attack-noticket PASS "happy: the control"
   expect_verdict attack-rename PASS "happy: the re-creation is refused"
-  expect_row attack-rename "deleted while it was RUNNING" "happy: the state the job was in"
+  expect_row attack-rename "a second run's job was deleted while it was QUEUED" "happy: the queued window the plan asks to be measured, and the run it belongs to"
   expect_verdict attack-record PASS "happy: the record read is refused"
   expect_verdict cost PASS "happy: the cost"
   expect_verdict restore PASS "happy: nothing left"
   expect_row restore "every job this check made is deleted" "happy: the sweep"
   expect_no_ticket_anywhere "happy"
   # The four attacks were made as the second launcher, and the reading that
-  # matters was made AS it: the run's job read, the three submits and the
-  # record's read all carry the impersonation.
-  expect_call "batch jobs describe $runjob --project=fugaro-dev --location=us-east5 --impersonate-service-account=$second --format=value(name.basename())"
+  # matters was made AS it: the run's ticket is taken out of the document the
+  # second launcher's own read of the job answered (--format=json, the whole
+  # document), the second launch's job is read the same way, and the three
+  # submits and the record's read all carry the impersonation.
+  expect_call "batch jobs describe $runjob --project=fugaro-dev --location=us-east5 --impersonate-service-account=$second --format=json"
+  expect_call "batch jobs describe $runjob2 --project=fugaro-dev --location=us-east5 --impersonate-service-account=$second --format=json"
   expect_call "batch jobs submit $job_replay --project=fugaro-dev --location=us-east5 --impersonate-service-account=$second"
   expect_call "batch jobs submit $job_noticket --project=fugaro-dev --location=us-east5 --impersonate-service-account=$second"
-  expect_call "batch jobs delete $runjob --project=fugaro-dev --location=us-east5 --impersonate-service-account=$second --quiet"
-  expect_call "batch jobs submit $runjob --project=fugaro-dev --location=us-east5 --impersonate-service-account=$second"
+  expect_call "batch jobs delete $runjob2 --project=fugaro-dev --location=us-east5 --impersonate-service-account=$second --quiet"
+  expect_call "batch jobs submit $runjob2 --project=fugaro-dev --location=us-east5 --impersonate-service-account=$second"
+  # Two runs, and neither is launched twice.
+  local launches
+  launches=$(grep -c "^fugaro run " <<<"$(fugaro_calls)")
+  [ "$launches" = 2 ] || fail "happy: the check launched $launches runs, want 2 (the run under test and the second launch)"
   # The ledger is read with your own token — the installation owner's, which the
   # database treats as an administrator — and the record with the second
   # launcher's, which is the caller the rules answer.
   expect_curl_token "runs/$slug/$runid.json" token-owner "happy: the ledger is read as the owner"
   expect_curl_token "creds/issuance/$slug/$runid.json" token-second "happy: the record is read as the second launcher"
   nothing_left "happy"
-  # The run's own job was deleted by the third attack and the attack jobs by
-  # their own steps: the sweep has nothing left to do.
+  # The two runs' jobs and the three attack jobs are all deleted by the steps
+  # that made them: the sweep has nothing left to do.
   expect_row restore "nothing of this check's is left in fugaro-dev" "happy: the sweep found nothing"
 }
 
@@ -1099,12 +1215,16 @@ test_a_claim_that_nobody_decided_is_not_a_refusal() {
   expect_row attack-replay "nothing decided it (HTTP 500)" "a 500: an outage is not a refusal"
 }
 
-# The finding the two replay rows were fixed for. The check waits for the ledger
+# The finding the two claim rows were fixed for. The check waits for the ledger
 # to say the run opened its session and was metered, and the run's own bootstrap
 # has claimed the ticket by then — so a service that never asks whether the VM is
 # the job's (this tree, until BR2 and BR3 merge) refuses the replay with the
 # once-only fence, and a row that read any non-5xx refusal as its own would print
-# a PASS on a tree with no VM-to-job link at all.
+# a PASS on a tree with no VM-to-job link at all. The re-creation is the other
+# half of the same tree: it carries the SECOND launch's ticket, which no VM ever
+# spent, so a route that reads no attestation SERVES it — the identity of a run
+# whose job was deleted while it was still queued, handed to a job the second
+# launcher re-created under that name.
 test_a_refusal_the_route_answers_without_the_link_is_not_the_rows() {
   setup_case fence
   write_default_case "$dir" fence
@@ -1113,8 +1233,8 @@ test_a_refusal_the_route_answers_without_the_link_is_not_the_rows() {
   expect_verdict attack-replay FAIL "the fence: the row"
   expect_row attack-replay "the ticket was already claimed" "the fence: the service's own sentence is named"
   expect_row attack-replay "WITHOUT asking whether the VM is the job's" "the fence: the row says what the refusal is not"
-  expect_verdict attack-rename FAIL "the fence: the re-created job's claim met it too"
-  expect_row attack-rename "the ticket being spent and not the VM" "the fence: the re-creation's row says the same"
+  expect_verdict attack-rename FAIL "the fence: the re-created job's claim is served"
+  expect_row attack-rename "OBTAINED the run's identity" "the fence: the third attack's finding is named"
   expect_verdict attack-noticket PASS "the fence: the control's own refusal is its own"
 }
 
@@ -1163,10 +1283,10 @@ test_a_name_the_platform_is_still_reaping_is_waited_for() {
   expect_row attack-rename "re-created under the same name" "a slow submit: the re-creation happened"
   expect_contains "$err" "still the platform's to reap" "a slow submit: the wait is reported"
   expect_contains "$err" "waiting, 0s of 8s" "a slow submit: the bound is named"
-  # The re-creation was attempted three times: the platform refused the first
-  # two, and the third was made.
+  # The re-creation of the SECOND run's job was attempted three times: the
+  # platform refused the first two, and the third was made.
   local tries
-  tries=$(printf '%s\n' "$(calls)" | grep -c -- "batch jobs submit $runjob ")
+  tries=$(printf '%s\n' "$(calls)" | grep -c -- "batch jobs submit $runjob2 ")
   [ "$tries" = 3 ] || fail "a slow submit: the re-creation was submitted $tries times, want 3 (two refusals, then the create)"
   expect_verdict restore PASS "a slow submit: nothing left"
   nothing_left "a slow submit"
@@ -1199,8 +1319,14 @@ test_the_second_launcher_must_be_able_to_read_the_job() {
   run_check
   expect_status "$status" 1 "a describe the second launcher cannot make"
   expect_verdict attack-replay FAIL "describe: the row"
-  expect_row attack-replay "could not read the run's job" "describe: the attack was not made"
+  expect_row attack-replay "could not read the run's ticket out of its job" "describe: the attack was not made"
   expect_no_call "batch jobs submit $job_replay"
+  # The third attack reads the second run's job the same way, so a describe the
+  # second launcher cannot make leaves it with nothing to delete and nothing to
+  # carry into a re-creation: it is not made either.
+  expect_verdict attack-rename FAIL "describe: the third attack's row"
+  expect_row attack-rename "could not be read as the second launcher" "describe: the third attack was not made"
+  expect_no_call "batch jobs delete $runjob2 --project=$P_CHK --location=us-east5 --impersonate-service-account=$second"
 }
 
 test_the_second_launcher_must_be_able_to_submit() {
@@ -1219,20 +1345,63 @@ test_the_second_launcher_must_be_able_to_delete() {
   run_check
   expect_status "$status" 1 "a delete the second launcher cannot make"
   expect_verdict attack-rename FAIL "delete: the row"
-  expect_row attack-rename "could not delete the run's job" "delete: the attack was not made"
+  expect_row attack-rename "could not delete the second run's job" "delete: the attack was not made"
   # The job the second launcher could not delete is still there, and the sweep
   # (which deletes as the owner) is what removes it: nothing is left behind.
   nothing_left "delete: the sweep still cleared it"
   expect_verdict restore PASS "delete: nothing left"
 }
 
-test_the_rename_row_names_the_state_the_job_was_in() {
-  setup_case queued
-  write_default_case "$dir" queued
+# The replay's own premise: what the second launcher carries has to be the ticket
+# IT found in the run's job. Two bends of the impersonated read show that the
+# check measures that rather than replaying the launcher's own reading of it: a
+# read that answers the job without a ticket, and one that answers a different
+# ticket from the owner's read of it, are both the row's FAIL and neither is
+# submitted.
+test_the_replay_carries_the_ticket_the_second_launcher_read() {
+  setup_case second-read-no-ticket
+  write_default_case "$dir" second-read-no-ticket
   run_check
-  expect_status "$status" 0 "queued"
-  expect_row attack-rename "deleted while it was QUEUED" "queued: the state the plan asks to be measured"
-  expect_last_line "CHECK 831 RESULT: PASS" "queued"
+  expect_status "$status" 1 "no ticket as the second launcher"
+  expect_verdict attack-replay FAIL "no ticket as the second launcher: the row"
+  expect_row attack-replay "could not read the run's ticket out of its job" "no ticket as the second launcher: the reading is named as the missing thing"
+  expect_no_call "batch jobs submit $job_replay"
+  # The third attack reads the SECOND run's job, which the bend does not touch:
+  # it is still made.
+  expect_verdict attack-rename PASS "no ticket as the second launcher: the re-creation is unaffected"
+}
+
+test_a_ticket_the_second_launcher_reads_another_one_of_is_not_the_replay() {
+  setup_case second-read-other-ticket
+  write_default_case "$dir" second-read-other-ticket
+  run_check
+  expect_status "$status" 1 "another ticket as the second launcher"
+  expect_verdict attack-replay FAIL "another ticket as the second launcher: the row"
+  expect_row attack-replay "is not the ticket this check read out of that job as the owner" "another ticket as the second launcher: the two readings are held together"
+  expect_no_call "batch jobs submit $job_replay"
+  expect_verdict attack-rename PASS "another ticket as the second launcher: the re-creation is unaffected"
+}
+
+# The whole point of the third attack's window: the job it deletes must still be
+# QUEUED, because a run whose VM has come up has claimed its ticket already — and
+# the re-creation, carrying a ticket that is already spent, would be refused for
+# the ticket rather than by the record's job id, which is the one thing this
+# attack measures (D3108, F30). A job the read answers past QUEUED is therefore
+# this row's FAIL, and the attack is not made at all.
+test_the_rename_row_fails_when_the_window_has_gone() {
+  setup_case second-running
+  write_default_case "$dir" second-running
+  run_check
+  expect_status "$status" 1 "the window gone"
+  expect_verdict attack-rename FAIL "the window gone: the row"
+  expect_row attack-rename "was already RUNNING when this attack read it" "the window gone: the state the read answered is named"
+  expect_row attack-rename "NOT deleted while it was queued" "the window gone: the row says the attack was not made"
+  # Nothing was deleted as the second launcher and nothing was re-created: the
+  # job the read answered past QUEUED is the owner's sweep's to remove.
+  expect_no_call "batch jobs delete $runjob2 --project=$P_CHK --location=us-east5 --impersonate-service-account=$second"
+  expect_no_call "batch jobs submit $runjob2"
+  nothing_left "the window gone: the sweep still cleared it"
+  expect_verdict restore PASS "the window gone: nothing left"
 }
 
 test_a_record_the_second_launcher_can_read_is_the_finding() {
@@ -1512,8 +1681,9 @@ test_the_four_attacks_run_as_the_runs_own_account() {
   # VM's identity, and the row would not have earned its PASS.
   expect_submitted_field "$job_replay" "\"email\": \"$runacct\"" "the attacks' account: the replay"
   expect_submitted_field "$job_noticket" "\"email\": \"$runacct\"" "the attacks' account: the control"
-  expect_submitted_field "$runjob" "\"email\": \"$runacct\"" "the attacks' account: the re-creation"
-  expect_submitted_field "$job_replay" "$ticket" "the attacks' account: the replay carries the ticket it read"
+  expect_submitted_field "$runjob2" "\"email\": \"$runacct\"" "the attacks' account: the re-creation"
+  expect_submitted_field "$job_replay" "$ticket" "the attacks' account: the replay carries the ticket the second launcher read"
+  expect_submitted_field "$runjob2" "$ticket2" "the attacks' account: the re-creation carries the SECOND launch's ticket, the one it was deleted under"
 }
 
 test_the_launch_ticket_is_read_out_of_the_jobs_own_variables() {
@@ -1563,7 +1733,9 @@ t test_an_attack_that_reported_nothing_is_not_judged
 t test_the_second_launcher_must_be_able_to_read_the_job
 t test_the_second_launcher_must_be_able_to_submit
 t test_the_second_launcher_must_be_able_to_delete
-t test_the_rename_row_names_the_state_the_job_was_in
+t test_the_replay_carries_the_ticket_the_second_launcher_read
+t test_a_ticket_the_second_launcher_reads_another_one_of_is_not_the_replay
+t test_the_rename_row_fails_when_the_window_has_gone
 t test_a_record_the_second_launcher_can_read_is_the_finding
 t test_a_record_that_is_not_there_is_not_measured
 t test_a_record_read_nobody_decided_is_not_a_refusal

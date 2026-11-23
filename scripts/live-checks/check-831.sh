@@ -3,10 +3,12 @@
 # BR13 of docs/batch-run-identity: the proof the plan's Check 831 row asks for
 # (R11, D3108, D3115, F30).
 #
-# It launches one real sandbox run on Batch, reads that the run OPENED ITS
-# SESSION and was METERED, and then — as a SECOND LAUNCHER, an account that may
-# read and write Batch jobs in the project but is not the run's own job — tries
-# to obtain that run's identity FOUR WAYS. It prints one PASS or FAIL per
+# It launches a real sandbox run on Batch, reads that the run OPENED ITS SESSION
+# and was METERED, and then — as a SECOND LAUNCHER, an account that may read and
+# write Batch jobs in the project but is not the run's own job — tries to obtain
+# that run's identity FOUR WAYS. It launches a SECOND run for the third of them,
+# and deletes that one's job while it is still queued: that run never comes up,
+# so it never claims its ticket and never spends. It prints one PASS or FAIL per
 # reading:
 #
 #   launch, job-found, session, metered
@@ -44,12 +46,19 @@
 #          ticket and not on the VM.
 #
 #   attack-rename
-#          The second launcher DELETES the run's job while it is queued and
-#          RE-CREATES one under the same name carrying the same ticket, which
-#          claims from its own VM. A job re-created under a deleted job's name is
-#          another job with another Google id, and the record's id is what must
-#          refuse it (D3108, F30). The row names the state the job was in when it
-#          was deleted, because "queued" is what the plan asks to be measured.
+#          The second launcher DELETES a job while it is still QUEUED and
+#          RE-CREATES one under the same name carrying that run's ticket, which
+#          claims from its own VM. The job is a SECOND LAUNCH's — a run launched
+#          for this attack and read before its VM ever came up — because the
+#          queued window is the whole attack: the run whose identity the other
+#          rows read has been metered by the time this check reaches here, and
+#          its own bootstrap has spent its ticket by then, so a re-creation
+#          carrying THAT ticket would be refused for being spent and prove
+#          nothing about the record. This one's ticket is unspent and the name is
+#          the same, so nothing but the record's job id is left to refuse it: the
+#          re-created job is another job with another Google id (D3108, F30). The
+#          row FAILS when the job was not QUEUED when it was deleted, because the
+#          window had passed and the attack, as the plan asks it, was not made.
 #
 #   attack-record
 #          The second launcher reads the issuance record DIRECTLY, at the
@@ -60,8 +69,8 @@
 #   cost, restore
 #          The run's own spend and tokens out of its ledger, and the fact that
 #          every job this check made is deleted: its own attack jobs by their
-#          label, the run's job by the label the backend writes on it, and the
-#          re-created one by the name it holds.
+#          label, the two runs' jobs by the label the backend writes on them, and
+#          the re-created one by the name it holds.
 #
 # **What one sitting can and cannot show, stated up front.** This is a proof of
 # the mechanism as the tree under test implements it, not of the design: every
@@ -107,20 +116,24 @@
 # Where:      GCP project `fugaro-dev` (hard-coded, never read from gcloud and
 #             never `belong`, EdgeWeb or EdgeServer) and region `us-east5`. The
 #             resources it makes are all labelled `fugaro_chk=831`: three attack
-#             jobs, plus the run's own job and the one re-created under its name.
-# Costs:      ONE real sandbox run (small: its job is deleted as soon as the
-#             ledger says it was metered, and `CHK831_MAX_USD` caps it at $1 by
-#             default) and three small Batch jobs on e2-standard-4
-#             (2000m/4096MiB), each alive for its linger (60s by default). No
-#             image is built, and no model call is made by this check itself.
-# Runs:       by YOU. No agent runs any step of it: it launches a run and it
+#             jobs, plus the run's own job and the one re-created under the
+#             second launch's name.
+# Costs:      TWO real sandbox runs — the run whose identity the four attacks are
+#             about (small: its job is deleted once the attacks that read it have
+#             read it, and `CHK831_MAX_USD` caps it at $1 by default) and the
+#             second launch the third attack deletes while its job is still
+#             queued, which never comes up and so spends nothing — and three
+#             small Batch jobs on e2-standard-4 (2000m/4096MiB), each alive for
+#             its linger (60s by default). No image is built, and no model call is
+#             made by this check itself.
+# Runs:       by YOU. No agent runs any step of it: it launches two runs and it
 #             makes four attacks on a live service with a second account.
-# Cleanup:    every job it made is deleted — the run's, the three attacks' and
-#             the re-created one — and the scratch directory always goes,
-#             including on a Ctrl-C. The `restore` row names anything an
-#             interrupted run left behind, with the one command that removes it.
-#             The run's own record in the runs bucket is the run's and stays: it
-#             is what `fugaro runs ls` reads.
+# Cleanup:    every job it made is deleted — the run's, the second launch's, the
+#             three attacks' and the re-created one — and the scratch directory
+#             always goes, including on a Ctrl-C. The `restore` row names anything
+#             an interrupted run left behind, with the one command that removes
+#             it. The runs' own records in the runs bucket are the runs' and stay:
+#             they are what `fugaro runs ls` reads.
 # Output:     progress on stderr, ONE block on stdout headed `CHECK 831 RESULT`,
 #             whose last line is `CHECK 831 RESULT: PASS|FAIL`. Exit 0 when
 #             every row passed, 1 when one FAILed, 2 when the run could not tell
@@ -227,6 +240,12 @@ RUN_RTDB=""
 RUN_SERVICE=""
 TICKET_FILE=""
 TICKET_PRESENT=no
+# The second launch of this check: the run whose job the third attack deletes
+# while it is still queued. Its ticket lives in a file of its own in the scratch
+# directory and never in a variable that could reach a fact.
+RENAME_RUN_ID=""
+RENAME_JOB=""
+RENAME_UID=""
 # The second launcher, and the jobs the attacks made.
 SECOND=""
 SUBMITS=0
@@ -269,12 +288,20 @@ jobs_of_mine() {
 # jobs_of_run: the jobs the backend labels as this run's, by the run id. This is
 # the net under a run whose job the check never found: the label is the
 # backend's own (internal/backend/batch/names.go), so it is there whether or not
-# this check read the launch's answer.
-jobs_of_run() {
-  [ -n "$RUN_ID" ] || return 0
-  gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
-    --filter="labels.${RUN_LABEL}:*" --format='value(name.basename(),labels.'"${RUN_LABEL}"')' 2>/dev/null \
-    | awk -v run="$RUN_ID" 'index($2, run) > 0 { print $1 }' || true
+# this check read the launch's answer. It takes one or more run ids and defaults
+# to the run this check is about, so the sweep covers the second launch as well:
+# a check that died between the two has two runs' jobs to remove, and the second
+# launch's job is one of them.
+jobs_of_run() { # jobs_of_run [RUN ...]
+  [ $# -gt 0 ] || set -- "$RUN_ID"
+  local listed=""
+  listed=$(gcloud batch jobs list --project="${P:?}" --location="${L:?}" \
+    --filter="labels.${RUN_LABEL}:*" --format='value(name.basename(),labels.'"${RUN_LABEL}"')' 2>/dev/null || true)
+  local run
+  for run in "$@"; do
+    [ -n "$run" ] || continue
+    printf '%s\n' "$listed" | awk -v run="$run" 'index($2, run) > 0 { print $1 }'
+  done
 }
 
 delete_job() {
@@ -292,7 +319,7 @@ sweep_leftovers() {
   local names n
   names=$(jobs_of_mine 2>/dev/null || true)
   for n in $names; do delete_job "$n"; done
-  names=$(jobs_of_run 2>/dev/null || true)
+  names=$(jobs_of_run "$RUN_ID" "$RENAME_RUN_ID" 2>/dev/null || true)
   for n in $names; do delete_job "$n"; done
   # A job whose delete has been accepted is still listed until the platform has
   # finished with it, so the list is read again, bounded, rather than once: a job
@@ -302,12 +329,12 @@ sweep_leftovers() {
   local waited=0 tick="$SWEEP_POLL"
   [ "$tick" -gt 0 ] || tick=1
   names=$(jobs_of_mine 2>/dev/null || true)
-  names="$names$(jobs_of_run 2>/dev/null || true)"
+  names="$names$(jobs_of_run "$RUN_ID" "$RENAME_RUN_ID" 2>/dev/null || true)"
   while [ -n "$names" ] && [ "$waited" -lt "$SWEEP_BOUND" ]; do
     sleep "$tick"
     waited=$((waited + tick))
     names=$(jobs_of_mine 2>/dev/null || true)
-    names="$names$(jobs_of_run 2>/dev/null || true)"
+    names="$names$(jobs_of_run "$RUN_ID" "$RENAME_RUN_ID" 2>/dev/null || true)"
   done
   if [ -n "$names" ]; then
     LEFT_BEHIND="${LEFT_BEHIND}${LEFT_BEHIND:+, }the job(s) $(printf '%s' "$names" | oneline)"
@@ -357,8 +384,9 @@ finish() {
       restore=FAIL
       note="${note}. STILL IN ${P:-fugaro-dev}: ${LEFT_BEHIND}. Remove each by hand — a job with: gcloud batch jobs delete <name> --project=${P:-fugaro-dev} --location=${L:-us-east5} --quiet"
     else
-      note="${note}, and every job this check made is deleted: nothing of this check's is left in ${P:-fugaro-dev}. The run's own record in the runs bucket is the run's and stays — it is what \`fugaro runs ls\` reads"
+      note="${note}, and every job this check made is deleted: nothing of this check's is left in ${P:-fugaro-dev}. The runs' own records in the runs bucket are the runs' and stay — they are what \`fugaro runs ls\` reads"
       if [ -n "$RUN_ID" ]; then note="${note}, and this run's id is ${RUN_ID}"; fi
+      if [ -n "$RENAME_RUN_ID" ]; then note="${note}, and the second launch's id is ${RENAME_RUN_ID}"; fi
     fi
   fi
   # A row that no step reached is a FAIL of its own, recorded before the verdict
@@ -423,6 +451,14 @@ WAIT_AUDIT=${CHK831_WAIT_AUDIT:-180}
 # attack's refusal, and it is a knob for the same reason the others are.
 WAIT_RENAME=${CHK831_WAIT_RENAME:-180}
 RENAME_POLL=${CHK831_RENAME_POLL:-5}
+# The third attack's own window: the second launch's job must be caught while it
+# is still QUEUED — before its VM exists and its bootstrap spends the ticket —
+# so the job is read as the second launcher as soon as the platform publishes it,
+# and this is how long that reading is retried. It is short on purpose: every
+# second spent here is a second the job may leave the queued window in, and a job
+# that has already left it is the row's FAIL rather than a silent pass.
+WAIT_QUEUED=${CHK831_WAIT_QUEUED:-30}
+QUEUE_POLL=${CHK831_QUEUE_POLL:-2}
 # Deleting a Batch job is asynchronous: the delete is accepted at once and the
 # job stays listable, in DELETION_IN_PROGRESS, until the platform has finished
 # with it (the engine's own reaper lists that state: internal/backend/batch/
@@ -561,16 +597,12 @@ guard_belong() {
 # ------------------------------------------------------------------ the cloud
 # job_field: one value out of a job object, with the disclaimer that an empty
 # answer is an answer (a job with no UID is a job whose logs cannot be read).
-job_field() { # job_field NAME FORMAT [IMPERSONATE]
-  if [ -n "${3:-}" ]; then
-    gcloud batch jobs describe "$1" --project="${P:?}" --location="${L:?}" \
-      --impersonate-service-account="$3" --format="value($2)" 2>/dev/null || true
-  else
-    gcloud batch jobs describe "$1" --project="${P:?}" --location="${L:?}" --format="value($2)" 2>/dev/null || true
-  fi
+job_field() { # job_field NAME FORMAT
+  gcloud batch jobs describe "$1" --project="${P:?}" --location="${L:?}" \
+    --format="value($2)" 2>/dev/null || true
 }
 
-job_uid() { job_field "$1" uid "${2:-}"; }
+job_uid() { job_field "$1" uid; }
 
 # log_lines: the entries of one Batch job's task logs, as the tree's own filter
 # selects them, flattened to text. This is where an attack's own readings come
@@ -960,24 +992,44 @@ step_installation() {
   fact installation PASS "the installation at ${cfg} is ${P}/${L}$([ -n "$backend" ] && echo ", backend ${backend}" || echo ", backend not stated in the file — the run's own job in the \`job-found\` row is what says whether it was Batch")$([ -n "$RTDB" ] && echo ", its Realtime Database ${RTDB}" || echo ", and it states no Realtime Database URL (the ledger is then read at the URL the run's own job carries)"). \`fugaro version\` says: ${ver:-<unread>}"
 }
 
+# launch_run: one sandbox run of ${REPO} on Batch, its answer written to the
+# named file. Both launches of this check are made with this one command: the run
+# whose identity the four attacks are about, and the second launch whose still
+# queued job the third attack deletes and re-creates.
+launch_run() { # launch_run OUTFILE
+  local args=(run --repo "$REPO" --task-file "$SCRATCH/task.md" --json)
+  [ -n "$MAX_USD" ] && args+=(--max-usd "$MAX_USD")
+  fugaro "${args[@]}" >"$1" 2>"$SCRATCH/err"
+}
+
+# execution_job: the job's own name out of a launch's answer. The answer's
+# execution field names the job (…/jobs/<name>), and a launch that named none
+# leaves this empty: the row that needs the name says so rather than guessing.
+execution_job() { # execution_job JSONFILE
+  local execution name=""
+  execution=$(json_field "$1" execution)
+  case "$execution" in
+  */jobs/*) name=${execution##*/} ;;
+  esac
+  printf '%s\n' "$name"
+}
+
 # launch: one real sandbox run. The task is a file this check writes, and it says
-# what it is: the run is deleted as soon as its ledger says it was metered, so it
-# must not do any work in the repository it is launched in.
+# what it is: its job is deleted once the attacks have read it, so it must not do
+# any work in the repository it is launched in.
 step_launch() {
   say "launching one sandbox run of ${REPO} on Batch"
   cat >"$SCRATCH/task.md" <<'C831TASK'
 # Task: check 831 sandbox probe — do not change anything
 
 This run is a probe of the run's own identity, launched by
-`scripts/live-checks/check-831.sh` and deleted as soon as the installation's
-ledger says it was metered. It is not asked to do any work.
+`scripts/live-checks/check-831.sh`, which deletes its job once the attacks have
+read it. It is not asked to do any work.
 
 Change nothing in this repository, push nothing, and open no pull request. Read
 this file and stop.
 C831TASK
-  local args=(run --repo "$REPO" --task-file "$SCRATCH/task.md" --json)
-  [ -n "$MAX_USD" ] && args+=(--max-usd "$MAX_USD")
-  if ! fugaro "${args[@]}" >"$SCRATCH/launch.json" 2>"$SCRATCH/err"; then
+  if ! launch_run "$SCRATCH/launch.json"; then
     local msg
     msg=$(oneline <"$SCRATCH/err")
     fact launch FAIL "the run could not be launched in ${REPO} (${msg}); nothing was created, so the run's identity and the four attacks are all unmeasured"
@@ -985,18 +1037,15 @@ C831TASK
   fi
   CREATED_ANYTHING=yes
   RUN_ID=$(json_field "$SCRATCH/launch.json" run_id)
-  local status execution branch
+  local status branch
   status=$(json_field "$SCRATCH/launch.json" status)
-  execution=$(json_field "$SCRATCH/launch.json" execution)
   branch=$(json_field "$SCRATCH/launch.json" branch)
+  RUN_JOB=$(execution_job "$SCRATCH/launch.json")
   if [ -z "$RUN_ID" ]; then
     fact launch FAIL "fugaro run answered with no run_id, so the run this check is about has no name: its ledger, its job and its record are all unreachable (the answer was: $(oneline <"$SCRATCH/launch.json"))"
     stop "the launch answered with no run id, so nothing about the run's identity can be read"
   fi
-  case "$execution" in
-  */jobs/*) RUN_JOB=${execution##*/} ;;
-  esac
-  fact launch PASS "one run of ${REPO} was launched in ${P} on Batch: run ${RUN_ID} (status ${status:-<unread>}, branch ${branch:-<unread>}$([ -n "$MAX_USD" ] && echo ", capped at \$$MAX_USD by --max-usd" || echo ", with no cap of this check's — the installation's own stand")). The task file asks the run to change nothing, and the run is deleted as soon as its ledger says it was metered. The launch answered the job's own name as ${RUN_JOB:-<none>}, which the \`job-found\` row holds to the run rather than trusting"
+  fact launch PASS "one run of ${REPO} was launched in ${P} on Batch: run ${RUN_ID} (status ${status:-<unread>}, branch ${branch:-<unread>}$([ -n "$MAX_USD" ] && echo ", capped at \$$MAX_USD by --max-usd" || echo ", with no cap of this check's — the installation's own stand")). The task file asks the run to change nothing, and this check deletes the run's job as soon as the attack that reads it has read it. The launch answered the job's own name as ${RUN_JOB:-<none>}, which the \`job-found\` row holds to the run rather than trusting"
 }
 
 # job-found: the run's Batch job, out of the launch's answer when it named one
@@ -1121,7 +1170,7 @@ try:
 except Exception:
     print("<unread>")' "${LEDGER_SPENT:-0}" 2>/dev/null || echo "<unread>")
   if [ "${LEDGER_TOKENS:-0}" -gt 0 ] || [ "${LEDGER_SPENT:-0}" -gt 0 ]; then
-    fact metered PASS "the run was metered: its ledger holds spent ${LEDGER_SPENT} micros (\$${spent_dollars}) and ${LEDGER_TOKENS} tokens. The run is deleted at once from here on — its job is what the third attack deletes — so these are its figures as they stood when the meter first moved"
+    fact metered PASS "the run was metered: its ledger holds spent ${LEDGER_SPENT} micros (\$${spent_dollars}) and ${LEDGER_TOKENS} tokens. The run's job is what the attacks read next and is deleted by this check once they have, so these are its figures as they stood when the meter first moved"
   else
     fact metered FAIL "the run opened its session (reserved ${LEDGER_RESERVED} micros) but no spend and no tokens appeared in its ledger within ${WAIT_METERED}s: nothing says the run was metered, so the reading the acceptance asks for is NOT taken. Read the ledger by hand, and the run's own job: gcloud batch jobs describe ${RUN_JOB:-<job>} --project=${P} --location=${L}"
   fi
@@ -1284,7 +1333,7 @@ claim_row() { # claim_row KEY LINES WHAT-REFUSED
   # measure.
   case "$words" in
   *"already claimed"* | *"has expired"*)
-    fact "$key" FAIL "the claim was refused, and the refusal is one the service answers WITHOUT asking whether the VM is the job's: '${words}'. The attack's ticket was already spent — the run's own bootstrap claimed it, which is what the check's own order guarantees: it waits for the ledger to say the run opened its session and was metered, and that claim is the run's — so this refusal is the ticket being spent and not the VM being another job's. The tree under test does not ask the link on this route (BR2, BR3), and this row is the measurement of that, not a PASS: the identity was not served to the attack's VM by any decision about the VM, and a tree with no link at all answers exactly this"
+    fact "$key" FAIL "the claim was refused, and the refusal is one the service answers WITHOUT asking whether the VM is the job's: '${words}'. The attack's ticket was already spent — a run's own bootstrap claimed it, and the two rows meet that differently: the replay carries the run-under-test's ticket, which the check's own order guarantees is spent, because it waits for the ledger to say the run opened its session and was metered and that claim is the run's; the re-creation carries the second launch's ticket, which is spent only if that run's VM came up between this check's read of its job and the delete, so the window was not kept open — so this refusal is the ticket being spent and not the VM being another job's. The tree under test does not ask the link on this route (BR2, BR3), and this row is the measurement of that, not a PASS: the identity was not served to the attack's VM by any decision about the VM, and a tree with no link at all answers exactly this"
     return 0
     ;;
   esac
@@ -1295,6 +1344,24 @@ claim_row() { # claim_row KEY LINES WHAT-REFUSED
   fact "$key" PASS "the attack was refused: the claim was made from the attack's own VM (${what}), the service decided it, and no identity came back (HTTP ${status}, the contract's refusal ${refusal}). The refusal is a decision about the VM and not the ticket: the service's own words are '${words}', and the refusals this route answers before it asks the link — the ticket already spent, and the ticket expired — are this row's FAIL. A claim answered 5xx or not answered at all is this row's FAIL too, so this PASS is a decision read once"
 }
 
+# ticket_as_second: the ticket out of a job's own document AS THE SECOND LAUNCHER
+# reads it. The row that says the second launcher "carried the ticket it found
+# there" has to measure that it could read it: this describes the job under its
+# impersonation with --format=json — the whole document, not one field — and
+# takes the ticket out of THAT document with read_job.py, into a file of its own
+# in the scratch directory. It prints the ticket and returns 0 when the
+# second launcher's own read carried one, and returns non-zero when the describe
+# answered nothing or the document carried no ticket, which is the row's FAIL.
+ticket_as_second() { # ticket_as_second JOB STEM — reads as $SECOND, writes $SCRATCH/STEM-ticket
+  local job=$1 stem=$2
+  rm -f "$SCRATCH/$stem-ticket"
+  gcloud batch jobs describe "$job" --project="${P:?}" --location="${L:?}" \
+    --impersonate-service-account="${SECOND:?}" --format=json >"$SCRATCH/$stem-job.json" 2>/dev/null || return 1
+  python3 "$SCRATCH/read_job.py" "$SCRATCH/$stem-job.json" "$SCRATCH/$stem-job-facts" "$SCRATCH/$stem-ticket" "$TICKET_ENV" 2>/dev/null || true
+  [ -s "$SCRATCH/$stem-ticket" ] || return 1
+  cat "$SCRATCH/$stem-ticket"
+}
+
 # attack-replay: the second launcher reads the run's job, takes the ticket out of
 # it, and runs a job of its own carrying that ticket.
 step_attack_replay() {
@@ -1302,15 +1369,16 @@ step_attack_replay() {
     fact attack-replay FAIL "there is nothing to replay: the run's job carries no ${TICKET_ENV} (see \`launch-ticket\`), so the ticket could not be read out of the job and this attack was NOT made as the plan asks it"
     return 0
   fi
-  say "reading the run's job as the second launcher ${SECOND}"
-  local name
-  name=$(job_field "$RUN_JOB" 'name.basename()' "${SECOND:-}")
-  if [ -z "$name" ]; then
-    fact attack-replay FAIL "the second launcher ${SECOND} could not read the run's job ${RUN_JOB} (gcloud batch jobs describe with --impersonate-service-account=${SECOND} answered nothing): either the impersonation is not allowed from your account (roles/iam.serviceAccountTokenCreator on ${SECOND}) or the job is not there. The reading this attack is about — a second launcher holding the run's ticket — was not made"
+  say "reading the run's job ${RUN_JOB} as the second launcher ${SECOND}"
+  local ticket
+  if ! ticket=$(ticket_as_second "$RUN_JOB" replay); then
+    fact attack-replay FAIL "the second launcher ${SECOND} could not read the run's ticket out of its job ${RUN_JOB}: gcloud batch jobs describe --impersonate-service-account=${SECOND} --format=json either answered nothing — the impersonation is not allowed from your account (roles/iam.serviceAccountTokenCreator on ${SECOND}), or the job is not there — or the document it answered carries no ${TICKET_ENV} the second launcher could take. The reading this attack is about is the second launcher's OWN read of the ticket: replaying the launcher's reading of it would claim the second launcher could see it without measuring that, so this row is NOT measured"
     return 0
   fi
-  local ticket
-  ticket=$(cat "$TICKET_FILE" 2>/dev/null || true)
+  if ! cmp -s "$SCRATCH/replay-ticket" "$TICKET_FILE"; then
+    fact attack-replay FAIL "the ticket the second launcher read out of the run's job is not the ticket this check read out of that job as the owner (the two readings of one document differ), so what was replayed would not be the ticket the second launcher found there: the run's job may have been replaced under this check, and neither reading is the one this row is about. The attack was NOT made as the plan asks it"
+    return 0
+  fi
   say "submitting the replay job ${JOB_REPLAY} as ${SECOND}, running as ${RUN_ACCOUNT:-<unread>}"
   if ! submit_attack "$JOB_REPLAY" "$ticket"; then
     local msg
@@ -1324,7 +1392,7 @@ step_attack_replay() {
     fact attack-replay FAIL "the replay job ran as ${RUN_ACCOUNT:-<unread>} but no line of its own came back within ${WAIT_ATTACK}s, so the attack was NOT judged: the container may not have started, or its lines do not land in the log the runner reads"
     return 0
   fi
-  claim_row attack-replay "$SCRATCH/replay-lines" "it read the run's job as the second launcher and carried the ticket it found there, from its own VM"
+  claim_row attack-replay "$SCRATCH/replay-lines" "it read the run's job as the second launcher, took the ticket out of the document that read answered, and carried that ticket from its own VM"
   delete_job "$JOB_REPLAY"
 }
 
@@ -1349,72 +1417,125 @@ step_attack_noticket() {
   delete_job "$JOB_NOTICKET"
 }
 
-# attack-rename: the second launcher deletes the run's job while it is queued and
-# re-creates one under the same name carrying the same ticket. A re-created job
-# is another job with another Google id, and the record's id is what must refuse
-# it (D3108, F30). The re-creation waits, bounded, for the deleted name to be
-# free again: a Batch delete is asynchronous, and a submit under the name while
-# the platform is still finishing with the job is refused ALREADY_EXISTS — the
-# platform's own answer, and not the attack's refusal.
+# attack-rename: the second launcher deletes a SECOND LAUNCH's job while it is
+# still QUEUED — before that run's VM exists, so before its bootstrap has spent
+# its ticket — and re-creates a job under the same name carrying that run's
+# ticket. Nothing but the record's job id is then left to refuse the re-created
+# job: the name is the same and the ticket is unspent, so a service that judged
+# the name would be satisfied, while the re-created job is another job with
+# another Google id (D3108, F30). The row FAILS when the job was not QUEUED when
+# it was read, because then the window had passed and the attack the plan asks
+# for — the queued one — was not made. The re-creation waits, bounded, for the
+# deleted name to be free again: a Batch delete is asynchronous, and a submit
+# under the name while the platform is still finishing with the job is refused
+# ALREADY_EXISTS — the platform's own answer, and not the attack's refusal.
 step_attack_rename() {
   if [ "$TICKET_PRESENT" != yes ]; then
     fact attack-rename FAIL "there is nothing to carry into a re-created job: the run's job carries no ${TICKET_ENV} (see \`launch-ticket\`), so the re-creation could not be the attack the plan asks for and this row is NOT measured"
     return 0
   fi
-  if [ -z "$RUN_JOB" ]; then
-    fact attack-rename FAIL "the run's job was never found (see \`job-found\`), so there is no name to delete and re-create under"
-    return 0
-  fi
-  local before
-  before=$(job_field "$RUN_JOB" status.state)
-  say "deleting the run's job ${RUN_JOB} (state ${before:-<unread>}) as the second launcher and re-creating it under the same name"
-  if ! gcloud batch jobs delete "$RUN_JOB" --project="${P:?}" --location="${L:?}" \
-    --impersonate-service-account="$SECOND" --quiet >/dev/null 2>"$SCRATCH/err"; then
-    local msg
+  # The run under test has been read by the attack that reads it — the replay,
+  # which takes its ticket out of that job as the second launcher — so its job is
+  # deleted here, by this check as the installation owner. This is not the attack:
+  # this attack used to delete that very job, and that is what made its row wrong.
+  # A run that has been metered has already claimed its ticket with its own
+  # bootstrap, so a re-creation carrying that ticket is refused for being spent,
+  # and the record's own job id — the one thing the attack is about (D3108, F30)
+  # — is never what refuses it.
+  say "deleting the run's job ${RUN_JOB} as the owner: the attack that reads it has read it"
+  delete_job "$RUN_JOB"
+  # A second launch, because this attack's window is the one before a run's
+  # bootstrap claims its ticket: the run whose identity every other row reads has
+  # been metered by now, so its ticket is already spent and a re-creation carrying
+  # it would be refused for being spent rather than by the record. This run's job
+  # is deleted while it is still queued, so its VM never exists, its ticket is
+  # never claimed, and the record's own job id is the only thing left that can
+  # refuse the re-created job.
+  say "launching a second sandbox run of ${REPO}: its job is the one this attack deletes while it is still queued"
+  local msg
+  if ! launch_run "$SCRATCH/launch2.json"; then
     msg=$(oneline <"$SCRATCH/err")
-    fact attack-rename FAIL "the second launcher could not delete the run's job ${RUN_JOB} (${msg}): the attack was NOT made, so nothing is concluded. The account must hold roles/batch.jobsEditor on ${P} (F4)"
+    fact attack-rename FAIL "the second sandbox run of ${REPO} could not be launched (${msg}), so this attack has no job that is still queued and it was NOT made as the plan asks it. Nothing was deleted and nothing was re-created: the launch's own failure is not the attack's refusal"
     return 0
   fi
-  local ticket
-  ticket=$(cat "$TICKET_FILE" 2>/dev/null || true)
+  RENAME_RUN_ID=$(json_field "$SCRATCH/launch2.json" run_id)
+  RENAME_JOB=$(execution_job "$SCRATCH/launch2.json")
+  if [ -z "$RENAME_RUN_ID" ] || [ -z "$RENAME_JOB" ]; then
+    fact attack-rename FAIL "the second launch answered without naming the run and its job (run_id '${RENAME_RUN_ID:-<none>}', execution job '${RENAME_JOB:-<none>}'), so the job this attack deletes cannot be found and the attack was NOT made. The second run was launched and this check's own sweep deletes its job as the owner"
+    return 0
+  fi
+  # The job is read AS THE SECOND LAUNCHER as soon as the platform publishes it,
+  # and the state that read answers is the state the attack acts on — the queued
+  # window is short, so it is measured in the same call the attack is made from,
+  # and the ticket comes out of that same document. A document that arrives
+  # already past QUEUED means the window has gone: that is this row's FAIL and
+  # never a silent pass.
+  local waited=0 tick="$QUEUE_POLL" state="" ticket=""
+  [ "$tick" -gt 0 ] || tick=1
+  while :; do
+    if ticket=$(ticket_as_second "$RENAME_JOB" queued); then
+      state=$(job_fact "$SCRATCH/queued-job-facts" state)
+      RENAME_UID=$(job_fact "$SCRATCH/queued-job-facts" uid)
+      break
+    fi
+    [ "$waited" -ge "$WAIT_QUEUED" ] && break
+    sleep "$tick"
+    waited=$((waited + tick))
+    say "waiting for the second run's job ${RENAME_JOB} to be readable (${waited}s of ${WAIT_QUEUED}s)"
+  done
+  if [ -z "$ticket" ]; then
+    fact attack-rename FAIL "the second run's job ${RENAME_JOB} could not be read as the second launcher ${SECOND} within ${WAIT_QUEUED}s, so there is nothing to delete and nothing to carry into a re-creation: gcloud batch jobs describe --impersonate-service-account=${SECOND} --format=json either answered nothing — the impersonation is not allowed from your account (roles/iam.serviceAccountTokenCreator on ${SECOND}), or the job is not there yet — or the document it answered carries no ${TICKET_ENV}. The attack was NOT made. The second run's job is left to this check's own sweep, which deletes it as the installation owner"
+    return 0
+  fi
+  if [ "$state" != QUEUED ]; then
+    fact attack-rename FAIL "the second run's job ${RENAME_JOB} was already ${state:-<unread>} when this attack read it, so it was NOT deleted while it was queued and this attack was NOT made as the plan asks it: a run whose VM has come up has claimed its ticket already, and a re-creation carrying that ticket would be refused for being spent rather than by the record's job id (D3108, F30), which is the one thing this attack measures. Nothing was deleted and nothing was re-created. The second run is stopped here rather than left to spend, and this check's own sweep removes its job"
+    delete_job "$RENAME_JOB"
+    return 0
+  fi
+  say "deleting the second run's job ${RENAME_JOB} (state ${state}, uid ${RENAME_UID:-<unread>}) as the second launcher, before its VM has claimed its ticket"
+  if ! gcloud batch jobs delete "$RENAME_JOB" --project="${P:?}" --location="${L:?}" \
+    --impersonate-service-account="$SECOND" --quiet >/dev/null 2>"$SCRATCH/err"; then
+    msg=$(oneline <"$SCRATCH/err")
+    fact attack-rename FAIL "the second launcher could not delete the second run's job ${RENAME_JOB} (${msg}): the attack was NOT made, so nothing is concluded. The account must hold roles/batch.jobsEditor on ${P} (F4). The job is left to this check's own sweep, which deletes it as the installation owner"
+    return 0
+  fi
   # The re-creation is retried, bounded, and the reason is the platform's: the
   # delete above was accepted and the name is still the platform's until it has
   # finished with the job (DELETION_IN_PROGRESS — the state the sweep's own
   # comment is about), so a submit under it is refused ALREADY_EXISTS and that
   # refusal is the platform's and not the third attack's. A check that read it
-  # as the attack would report the attack refused on the owner's one paying run
-  # and never make it. Any other refusal is the submit's own failure and stops
-  # the step at once, and the platform's first refusal is kept to be named if
-  # the name never comes free.
-  local waited=0 first="" msg tick="$RENAME_POLL"
-  [ "$tick" -gt 0 ] || tick=1
+  # as the attack would report the attack refused and never make it. Any other
+  # refusal is the submit's own failure and stops the step at once, and the
+  # platform's first refusal is kept to be named if the name never comes free.
+  local first="" msg2 tick2="$RENAME_POLL" waited2=0
+  [ "$tick2" -gt 0 ] || tick2=1
   while :; do
-    if submit_attack "$RUN_JOB" "$ticket"; then break; fi
-    msg=$(oneline <"$SCRATCH/err")
-    case "$msg" in
+    if submit_attack "$RENAME_JOB" "$ticket"; then break; fi
+    msg2=$(oneline <"$SCRATCH/err")
+    case "$msg2" in
     *ALREADY_EXISTS* | *"already exists"*) ;;
     *)
-      fact attack-rename FAIL "the run's job ${RUN_JOB} was deleted, and the second launcher could not re-create a job under the same name (${msg}): the attack was NOT made. A job left deleted is a run that stops here — this check's own sweep deletes the re-created one, and the run's job is already gone"
+      fact attack-rename FAIL "the second run's job ${RENAME_JOB} was deleted while it was queued, and the second launcher could not re-create a job under the same name (${msg2}): the attack was NOT made. That run stopped here — this check's own sweep deletes anything left of it"
       return 0
       ;;
     esac
-    [ -n "$first" ] || first=$msg
-    if [ "$waited" -ge "$WAIT_RENAME" ]; then
-      fact attack-rename FAIL "the run's job ${RUN_JOB} was deleted and the name is still the platform's after ${waited}s of waiting, so a job could not be re-created under it and the attack was NOT made. The platform's own answer was '${first}'. A Batch delete is asynchronous: the job stays the platform's — listed, and described as DELETION_IN_PROGRESS — until it has finished with it, and a submit under its name before then is refused ALREADY_EXISTS. Give it longer (CHK831_WAIT_RENAME=<seconds>) and run again: this check waits up to ${WAIT_RENAME}s. The run's job is deleted either way, so the run stopped here, and \`restore\` names what is left"
+    [ -n "$first" ] || first=$msg2
+    if [ "$waited2" -ge "$WAIT_RENAME" ]; then
+      fact attack-rename FAIL "the second run's job ${RENAME_JOB} was deleted while it was queued, and the name is still the platform's after ${waited2}s of waiting, so a job could not be re-created under it and the attack was NOT made. The platform's own answer was '${first}'. A Batch delete is asynchronous: the job stays the platform's — listed, and described as DELETION_IN_PROGRESS — until it has finished with it, and a submit under its name before then is refused ALREADY_EXISTS. Give it longer (CHK831_WAIT_RENAME=<seconds>) and run again: this check waits up to ${WAIT_RENAME}s. That run stopped here, and \`restore\` names what is left"
       return 0
     fi
-    say "the name ${RUN_JOB} is still the platform's to reap ('${msg}'); waiting, ${waited}s of ${WAIT_RENAME}s"
-    sleep "$tick"
-    waited=$((waited + tick))
+    say "the name ${RENAME_JOB} is still the platform's to reap ('${msg2}'); waiting, ${waited2}s of ${WAIT_RENAME}s"
+    sleep "$tick2"
+    waited2=$((waited2 + tick2))
   done
   local uid
-  uid=$(job_uid "$RUN_JOB")
+  uid=$(job_uid "$RENAME_JOB")
   if ! wait_for_lines "$uid" '^C831 read$' "$SCRATCH/rename-lines" "$WAIT_ATTACK"; then
-    fact attack-rename FAIL "a job was re-created under ${RUN_JOB} (uid ${uid:-<unread>}) carrying the run's ticket, but no line of its own came back within ${WAIT_ATTACK}s, so the attack was NOT judged. The run's own job is deleted either way: the run stopped here"
+    fact attack-rename FAIL "a job was re-created under ${RENAME_JOB} (uid ${uid:-<unread>}) carrying the second run's ticket, but no line of its own came back within ${WAIT_ATTACK}s, so the attack was NOT judged. That run's own job is deleted either way: it stopped here"
     return 0
   fi
-  claim_row attack-rename "$SCRATCH/rename-lines" "the run's job was deleted while it was ${before:-<unread>} and a job was re-created under the same name (uid ${uid:-<unread>}) carrying the same ticket, claiming from its own VM"
-  delete_job "$RUN_JOB"
+  claim_row attack-rename "$SCRATCH/rename-lines" "a second run's job was deleted while it was ${state} (uid ${RENAME_UID:-<unread>}, before any VM of that run existed, so its ticket was never claimed) and a job was re-created under the same name (uid ${uid:-<unread>}) carrying that run's ticket, claiming from its own VM"
+  delete_job "$RENAME_JOB"
 }
 
 # attack-record: the second launcher reads the issuance record directly, at the
@@ -1459,7 +1580,7 @@ try:
     print("%.4f" % (int(sys.argv[1]) / 1000000.0))
 except Exception:
     print("<unread>")' "${LEDGER_SPENT:-0}" 2>/dev/null || echo "<unread>")
-  fact cost PASS "the run's own ledger says it spent ${LEDGER_SPENT} micros (\$${dollars}) and ${LEDGER_TOKENS} tokens, with ${LEDGER_RESERVED} micros reserved for it — the run is the real money of this check, and it was deleted as soon as it was metered. This check's own jobs were ${SUBMITS} Batch job(s) of ${MT} (${CPU_MILLI}m/${MEMORY_MIB}MiB), each alive for its linger (${LINGER}s) and each deleted once its line was read: no image was built and no model call was made by the check itself"
+  fact cost PASS "the run's own ledger says it spent ${LEDGER_SPENT} micros (\$${dollars}) and ${LEDGER_TOKENS} tokens, with ${LEDGER_RESERVED} micros reserved for it — that run is the real money of this check, and its job was deleted once the attacks had read it. The second launch of this check (the third attack's, run ${RENAME_RUN_ID:-<unread>}) never came up: its job was deleted while it was queued, before its VM existed, so it was never metered and spent nothing. This check's own jobs were ${SUBMITS} Batch job(s) of ${MT} (${CPU_MILLI}m/${MEMORY_MIB}MiB), each alive for its linger (${LINGER}s) and each deleted once its line was read: no image was built and no model call was made by the check itself"
 }
 # ------------------------------------------------------------------- the plan
 print_plan() {
@@ -1467,16 +1588,18 @@ print_plan() {
   say "  [local]  guards: no xtrace, the owner marker, the tree this script lives in, and the project refusal (with the second launcher's own shape and the account gcloud is authenticated as)"
   say "  [local]  the tree reads: the ticket's variable, the claim's route and the record's path family out of internal/identitywire/wire.go, the escaping out of internal/budget/model.go, the run's own variable out of internal/backend/batch/env.go, the run label out of internal/backend/batch/names.go and the two URL variables out of internal/runner/budget_session.go and internal/backend/batch/env.go"
   say "  [local]  the installation's own configuration: \${HOME}/.config/fugaro/projects/fugaro.yaml, which must say ${P}/${L}"
-  say "  [cloud]  fugaro run --repo ${REPO:-<owner/name>} --task-file <scratch>/task.md --json$([ -n "$MAX_USD" ] && echo " --max-usd ${MAX_USD}") — ONE real sandbox run on Batch"
+  say "  [cloud]  fugaro run --repo ${REPO:-<owner/name>} --task-file <scratch>/task.md --json$([ -n "$MAX_USD" ] && echo " --max-usd ${MAX_USD}") — ONE real sandbox run on Batch, the run whose identity the four attacks are about"
   say "  [cloud]  gcloud batch jobs describe — the job the launch answered, held to the run by its own ${RUN_ENV} variable (uid, state, account, variables)"
   say "  [cloud]  curl ${RTDB:-<rtdb_url>}/runs/<slug>/<run>.json with your own access token — until the ledger says the run opened its session, bounded at ${WAIT_SESSION}s, and then until it says the run was metered, bounded at ${WAIT_METERED}s"
   say "  [cloud]  gcloud logging read (labels.job_uid=\"<uid>\" AND logName=\"${TASK_LOG}\") and the CreateJob audit filter, waited for within ${WAIT_AUDIT}s — where Batch printed the ticket (the job's own document is the reading the check took it from)"
-  say "  [cloud]  gcloud batch jobs describe ${RUN_JOB:-<the job of this run>} --impersonate-service-account=<second launcher> — the first attack's read of the run's job"
-  say "  [cloud]  gcloud batch jobs submit ${JOB_REPLAY} --impersonate-service-account=<second launcher> — the replay: the second launcher's own job, running as the run's own account, carrying the ticket it read, claiming from its own VM"
+  say "  [cloud]  gcloud batch jobs describe ${RUN_JOB:-<the job of this run>} --impersonate-service-account=<second launcher> --format=json — the first attack's own read of the run's job, which is where it takes the ticket it replays from"
+  say "  [cloud]  gcloud batch jobs submit ${JOB_REPLAY} --impersonate-service-account=<second launcher> — the replay: the second launcher's own job, running as the run's own account, carrying the ticket its own read of the job found, claiming from its own VM"
   say "  [cloud]  gcloud batch jobs submit ${JOB_NOTICKET} --impersonate-service-account=<second launcher> — the same job with no ticket"
-  say "  [cloud]  gcloud batch jobs delete ${RUN_JOB:-<the job of this run>} --impersonate-service-account=<second launcher>, then gcloud batch jobs submit under the SAME name with the same ticket — the re-creation, claiming from its own VM, retried within ${WAIT_RENAME}s because a Batch delete is asynchronous and the name stays the platform's (DELETION_IN_PROGRESS) until it has finished with the job"
+  say "  [cloud]  gcloud batch jobs delete ${RUN_JOB:-<the job of this run>} --project=${P} --location=${L} --quiet — as the OWNER and not as an attack: the run under test has been read by the attack that reads it, and its job is deleted here so it stops"
+  say "  [cloud]  fugaro run --repo ${REPO:-<owner/name>} --task-file <scratch>/task.md --json$([ -n "$MAX_USD" ] && echo " --max-usd ${MAX_USD}") — a SECOND real sandbox run, launched only for the third attack: its job is deleted while it is still QUEUED, before its VM exists, so it never comes up and never spends"
+  say "  [cloud]  gcloud batch jobs delete <the second launch's job> --impersonate-service-account=<second launcher> — while it is QUEUED — then gcloud batch jobs submit under the SAME name carrying that run's unspent ticket — the re-creation, claiming from its own VM, retried within ${WAIT_RENAME}s because a Batch delete is asynchronous and the name stays the platform's (DELETION_IN_PROGRESS) until it has finished with the job. Nothing but the record's job id can refuse that claim (D3108, F30)"
   say "  [cloud]  curl ${RTDB:-<rtdb_url>}/${RECORDS_PATH}/<slug>/<run>.json with the second launcher's access token — the direct read of the issuance record, which the database's rules must refuse"
-  say "  [local]  the exit trap deletes every job of this check's by its label, and the run's job by the label the backend writes on it, and removes the scratch directory"
+  say "  [local]  the exit trap deletes every job of this check's by its label, the two runs' jobs by the label the backend writes on them, and removes the scratch directory"
   say "A dry run runs the guards and the tree reads only. It launches no run, makes no attack, and touches no cloud project"
 }
 
@@ -1525,7 +1648,7 @@ print_block() {
 }
 
 step_manual() {
-  MANUAL_LINE="paste this block into docs/gcp-live-checklist.md's Check 831 section, with the date and \`fugaro version\`: whether the launcher put a ticket on the run's job, where Batch printed it (the job's document, the logs, the audit record — D3115's rule measured), and what each of the four attacks was answered. The four attacks are the proof R11 asks for: a FAIL on \`attack-replay\` or \`attack-rename\` says the identity of a Batch run can be obtained by a VM that is not its job's, and the work returns to the plan rather than being recorded as a pass"
+  MANUAL_LINE="paste this block into docs/gcp-live-checklist.md's Check 831 section, with the date and \`fugaro version\`: whether the launcher put a ticket on the run's job, where Batch printed it (the job's document, the logs, the audit record — D3115's rule measured), and what each of the four attacks was answered. The four attacks are the proof R11 asks for: a FAIL on \`attack-replay\` says the identity of a Batch run was served to a VM that is not its job's, and a FAIL on \`attack-rename\` says a job re-created under a deleted job's name was not refused by the record's own job id (D3108, F30) — the identity is obtainable, and the work returns to the plan rather than being recorded as a pass"
 }
 
 interrupted() {
@@ -1605,7 +1728,7 @@ main() {
     fact ticket-printed INFO "not taken: this is a dry run, so no log and no audit record was read"
     fact attack-replay INFO "not taken: this is a dry run, so no attack job was submitted"
     fact attack-noticket INFO "not taken: this is a dry run, so no control job was submitted"
-    fact attack-rename INFO "not taken: this is a dry run, so no job was deleted and none was re-created"
+    fact attack-rename INFO "not taken: this is a dry run, so no second run was launched, no job was deleted and none was re-created"
     fact attack-record INFO "not taken: this is a dry run, so the issuance record was not read"
     fact cost INFO "not taken: this is a dry run, so nothing was spent"
   else
