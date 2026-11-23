@@ -1035,6 +1035,16 @@ func validateAgentTokens(a Agent) []Problem {
 	return ps
 }
 
+// CodeRemovedBudgetMode is the Code of the problem of a fugaro.yaml whose
+// budget block still says the word that was a budget mode (D3022). The text
+// beside it is policy.ModeOffRefusal, which every door refuses the word with;
+// the code is here for the one caller that has to act on the problem rather
+// than print it: `fugaro update` reads the default branch's file to onboard the
+// repository, and it is that same run which offers the line's removal, so it
+// reads the file as the file its own offer leaves behind instead of stopping on
+// the line it is taking out (init_repo_target.go, AB8b, F22).
+const CodeRemovedBudgetMode = "removed_budget_mode"
+
 // validateBudget checks fugaro.yaml's budget: block. It follows the project
 // config's rules for the mode and the cap's range; whether enforce has a cap
 // is decided after the merge, so a repository may set enforce and leave the
@@ -1055,7 +1065,7 @@ func validateBudget(b *Budget) []Problem {
 	// is refused as the mode it is not.
 	if b.Mode != "" && !policy.ValidMode(b.Mode) {
 		if policy.Mode(b.Mode).Removed() {
-			add("budget.mode", "%s", policy.ModeOffRefusal)
+			ps = append(ps, Problem{Path: "budget.mode", Message: policy.ModeOffRefusal, Code: CodeRemovedBudgetMode})
 		} else {
 			add("budget.mode", "%q must be observe or enforce; leave the key out for observe", b.Mode)
 		}

@@ -874,9 +874,10 @@ func doctorPublishedCatalog(t *testing.T, f *cloudFixture) *gcpfake.RTDB {
 	t.Helper()
 	db := gcpfake.NewRTDB(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	// No budget block: off is not a mode this release has (D3009), and a
+	// published block has to name one. The node is published for its catalog.
 	db.Set(projectpolicy.PathShared(), &projectpolicy.Policy{
 		Version:    projectpolicy.Version,
-		Budget:     projectpolicy.Budget{Mode: "off"},
 		AllowRepos: []string{"github/acme/other"},
 		ImageCatalog: &config.Catalog{Entries: []config.Entry{{
 			Name: "go", Tags: []string{"node"},

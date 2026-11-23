@@ -1093,7 +1093,7 @@ func TestPolicyBudgetWithoutAModeHaltsTheRun(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), projectpolicy.PathShared()) {
 		t.Fatalf("a budget block with no mode must stop the run: err = %v, rec = %+v", err, rec)
 	}
-	for _, want := range []string{"mode", "off, observe or enforce", "leaves the budget block out"} {
+	for _, want := range []string{"mode", "observe or enforce", "leaves the budget block out"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}

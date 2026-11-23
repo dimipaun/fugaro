@@ -380,9 +380,11 @@ func publishedMapNodesFixture(t *testing.T, imap projectpolicy.ImageMap) (*cloud
 	f := catalogFixture(t)
 	db := gcpfake.NewRTDB(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	// No budget block: off is not a mode this release has (D3009), and a
+	// published block has to name one. This node is published for its image map,
+	// and the installation's own config is where the budget lives here.
 	db.Set(projectpolicy.PathShared(), &projectpolicy.Policy{
 		Version:  projectpolicy.Version,
-		Budget:   projectpolicy.Budget{Mode: "off"},
 		ImageMap: imap,
 	})
 	f.appendConfig(t, "budget: { mode: off, rtdb_url: "+db.URL+" }\n")

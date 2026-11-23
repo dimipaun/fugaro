@@ -1255,7 +1255,7 @@ func TestCascadeLaunchRefusesWithoutPolicySwitch(t *testing.T) {
 // document a launch can read expresses a mode that leaves a cascade run without
 // a gateway, so there is nothing left for that gate to refuse — the rule's own
 // answer is pinned where the rule lives (internal/config's
-// TestAnEmptyModeIsNotOffForTheCascadeRule) — and what a launch still refuses
+// TestCascadeRefusedWithBudgetOff) — and what a launch still refuses
 // about a cascade workflow is the switch, the allow-list and the credentials
 // rules marker, the tests around this note.
 
