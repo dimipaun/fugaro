@@ -2052,6 +2052,14 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 			verified = "NO"
 			notes = append(notes, "UNVERIFIED placeholder: "+r.Source+" ("+r.CheckedAt+")")
 		}
+		// A row priced from its own publisher says so on the row: the header
+		// line above is the embedded table's own source and date, which are the
+		// Claude page's and cover the Claude rows alone, and a row that
+		// answered to them would show Vertex's number under Anthropic's page
+		// (pricing/vertex_gemini.go, the Gemini rows).
+		if r.Source != "" && r.Catalog == nil && !r.Unverified {
+			notes = append(notes, "source "+r.Source+", checked "+r.CheckedAt)
+		}
 		if c := r.Catalog; c != nil {
 			// Which tier and which end of that tier's range is charged;
 			// "highest" is the dearest end, whether price_policy asked for

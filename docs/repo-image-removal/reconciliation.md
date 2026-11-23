@@ -314,8 +314,8 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   Recommendation: `schemas/fugaro.schema.json:358` loses `image` (`:396` for `dockerfile`, `:511` for
   `rebuild`) and its mutual-exclusion clauses (`:306`) shrink to `image_name` with `needs`;
   `schemas/project-layer.schema.json:265` loses the same keys (`:338` for `rebuild`);
-  `internal/settings/registry.go:229` loses the twenty-one rows that make the keys writable (`:234`,
-  `:254`, `:258`, and the `layerRow`s at `internal/settings/registry.go:454`, `:458`, `:477`, `:481`),
+  `internal/settings/registry.go:241` loses the twenty-one rows that make the keys writable (`:246`,
+  `:266`, `:270`, and the `layerRow`s at `internal/settings/registry.go:466`, `:470`, `:489`, `:493`),
   and `schemas/settings.schema.json:1151` loses their twenty-one members (`:838`, `:1187`) — a key
   with no scope row and no registry row is a key `settings set` must not offer. `image_catalog.*`
   (`schemas/settings.schema.json:550`), `base_images` and the catalog's own rows are untouched.

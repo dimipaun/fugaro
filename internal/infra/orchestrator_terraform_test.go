@@ -354,6 +354,20 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		}
 	}
 
+	// The tick is written from the service's deterministic URL, and the cover
+	// holds it by the service's name (tf.orchestratorServiceName), so the name
+	// the module renders is the one the installation's block carries. A value
+	// the plan cannot read yet is the project number's own read at apply.
+	if ht, _ := on[tickAddr].After["http_target"].([]any); len(ht) == 1 {
+		m, _ := ht[0].(map[string]any)
+		if uri, ok := m["uri"].(string); ok {
+			prefix := "https://" + OrchestratorServiceName + "-"
+			if !strings.HasPrefix(uri, prefix) || !strings.HasSuffix(uri, ".run.app/tick") || strings.Contains(uri, ".a.run.app") {
+				t.Errorf("%s: uri is %q, want %s<project number>.<region>.run.app/tick — the form the managed gate's cover reads, not Cloud Run's own .uri", tickAddr, uri, prefix)
+			}
+		}
+	}
+
 	// And the run's one confirmation: `fugaro update` may not turn an
 	// installation's own opt-in into a question the owner has to answer item by
 	// item. Other rows of this plan may legitimately be refused (the store's own
@@ -538,4 +552,38 @@ func missing(got, want []string) []string {
 func str(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+// TestOrchestratorOperatorsMayActAsTheDaemonsAccount is the grant that lets the
+// daemon run on an operator's machine: with the block on, each operator holds
+// roles/iam.serviceAccountTokenCreator on fugaro-orch (and on that account
+// alone), and with it off nobody does. It is the plan-level half of
+// iam.serviceAccountTokenCreator's one new site (orchestrator.tf).
+func TestOrchestratorOperatorsMayActAsTheDaemonsAccount(t *testing.T) {
+	lc := credentialsLC(t)
+	spec, err := Installation(lc, InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Operators = []string{"user:ops@example.com"}
+	const prefix = "module.installation.google_service_account_iam_member.fugaro_orchestrator_token_creator"
+
+	_, off := installationPlan(t, spec)
+	for addr := range off {
+		if strings.HasPrefix(addr, prefix) {
+			t.Errorf("%s is in the plan of an installation with no orchestrator block", addr)
+		}
+	}
+
+	_, on := installationPlanWith(t, spec, map[string]any{"orchestrator": orchestratorBlock(t, spec, credentialsFP)})
+	row, ok := on[prefix+`["user:ops@example.com"]`]
+	if !ok {
+		t.Fatalf("the plan with the orchestrator on grants the operator no token creation on the daemon's account")
+	}
+	account := "projects/" + spec.Project + "/serviceAccounts/" + OrchestratorAccountID + "@" + spec.Project + ".iam.gserviceaccount.com"
+	for key, want := range map[string]string{"role": "roles/iam.serviceAccountTokenCreator", "member": "user:ops@example.com", "service_account_id": account} {
+		if got := str(row.After[key]); got != want {
+			t.Errorf("%s is %q, want %q", key, got, want)
+		}
+	}
 }

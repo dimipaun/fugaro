@@ -24,21 +24,30 @@
 // operations it reads and the bridge that reaches them belong to MW1/MW2, which
 // consume this task's list (`docs/console-improvements/implementation-plan.md`,
 // I-MG's Interfaces and MW1's) -- so this spec calls the door the tab exposes,
-// `mountProjectsManage`, the way that wiring will, and answers the ten reads
+// `mountProjectsManage`, the way that wiring will, and answers the eleven reads
 // itself.
 //
-// **Where the documents come from, and why three of them are views.** Seven of
-// the ten kinds decode the CLI's own document (`members.list` twice, and
-// `accounts.inventory`, `repos.ls`, `repos.status`, `models.list`,
-// `secrets.inventory`, `budget.show`), and two decode a view their operation has
-// already decoded: `image.catalog.ls` answers C-OPS's `ImageCatalogView` and
-// `recipes.ls` its `RecipesView`, which is the shape `manage-code.test.ts` feeds
-// those two kinds through a bridge. The documents below are written here in
-// those two shapes, as `projects.spec.ts` writes its own corpus; the kinds'
-// reading of a real CLI's answers is the unit suite's subject, and no answer
-// here reaches a network or a CLI -- every one of them is an object in this
-// file. `test/fixtures/` holds the watch feed alone, so there is no recording of
-// these eight to read instead.
+// **Where the documents come from, and why two of them are views.** Nine of the
+// eleven kinds decode the CLI's own document (`members.list` twice, and
+// `accounts.inventory`, `accounts.pools`, `repos.ls`, `repos.status`,
+// `models.list`, `secrets.inventory`, `budget.show`), and two decode a view their
+// operation has already decoded: `image.catalog.ls` answers C-OPS's
+// `ImageCatalogView` and `recipes.ls` its `RecipesView`, which is the shape
+// `manage-code.test.ts` feeds those two kinds through a bridge. The documents
+// below are written here in those two shapes, as `projects.spec.ts` writes its
+// own corpus; the kinds' reading of a real CLI's answers is the unit suite's
+// subject, and no answer here reaches a network or a CLI -- every one of them is
+// an object in this file. `test/fixtures/` holds the watch feed alone, so there
+// is no recording of these nine to read instead.
+//
+// **One kind names an operation this console does not admit yet.** The pools
+// kind's `source` is `accounts.pools`, the read `fugaro accounts pool ls --json`
+// answers (the model-credentials-routing plan's VS2), and no operation of that
+// name is in `src/main/ipc.ts`'s allow-list: admitting one is a security-sensitive
+// change of its own (`.claude/rules/console.md`) and belongs to the task that
+// wires the Manage section's reads, not to the kind. This spec answers the name
+// from its own corpus, exactly as it answers every other read, so what is under
+// test here is the kind and the list -- which is what the acceptance asks for.
 //
 // **No golden.** Every kind that lands draws an `as of HH:MM` stamp from
 // `Date.now()` (the shell's own, `section.ts`'s `renderStamp`), so the frame
@@ -150,6 +159,60 @@ const ACCOUNTS: JSONDoc = {
   states: {},
   aliases: {},
   credentials: [],
+}
+
+/**
+ * POOLS is `accounts.pools` (`fugaro accounts pool ls --json`, C2's
+ * `routing.PoolListDoc`, `internal/routing/pools.go`): the project's shared pool
+ * with two members and a person's own pool with one -- and the figures the
+ * acceptance turns on, one member each: a counted member with headroom, an
+ * exhausted member with its reset and no headroom at all (the figure the contract
+ * refuses to guess, D3178 and U1), and a member the service counts nothing for.
+ * The document carries no `owner`, which is what makes the Owner column the
+ * pool's `principal`: a person's pool is that person's Google subject, and the
+ * shared pool is the project.
+ */
+const POOLS: JSONDoc = {
+  project: 'example-project',
+  pools: [
+    {
+      name: 'launcher',
+      rule: 'ordered',
+      principal: { kind: 'project', id: 'example-project' },
+      threshold: 0.9,
+      members: [
+        {
+          name: 'fugaro-launcher-primary',
+          state: 'available',
+          next_reset: null,
+          usage: { calls: 128, tokens: 4820000 },
+          headroom: 0.42,
+        },
+        {
+          name: 'fugaro-launcher-secondary',
+          state: 'exhausted',
+          next_reset: '2026-11-22T18:30:00Z',
+          usage: { calls: 41, tokens: 1500000 },
+          headroom: null,
+        },
+      ],
+    },
+    {
+      name: 'ana',
+      rule: '',
+      principal: { kind: 'person', id: '104293871120293847' },
+      threshold: null,
+      members: [
+        {
+          name: 'ana-claude-max',
+          state: 'backed_off',
+          next_reset: '2026-11-22T13:45:00Z',
+          usage: { calls: 3, tokens: 90000 },
+          headroom: 0.8,
+        },
+      ],
+    },
+  ],
 }
 
 /** REPOS is `repos.ls` (`fugaro project repos ls --json`): a repository the
@@ -373,6 +436,7 @@ const BUDGET: JSONDoc = {
 const DOCUMENTS: Readonly<Record<string, unknown>> = Object.freeze({
   'members.list': MEMBERS,
   'accounts.inventory': ACCOUNTS,
+  'accounts.pools': POOLS,
   'repos.ls': REPOS,
   'repos.status': STATUS,
   'image.catalog.ls': IMAGES,
@@ -390,7 +454,7 @@ const DOCUMENTS: Readonly<Record<string, unknown>> = Object.freeze({
  * MODULES is every compiled module the screen under test requires, computed from
  * `renderer/screens/projects.js`'s relative `require`s and closed under them:
  * the Project tab's own modules, the Manage section's shell and descriptor, the
- * nine files of kinds `index.ts` names, the Spend screen the Budget kind's rows
+ * ten files of kinds `index.ts` names, the Spend screen the Budget kind's rows
  * come from and `renderer/gating.js`, which the harness reads for the gate it
  * hands the section (`ManageDeps.can` is required, and a harness with no role
  * read hands the no-answer value that module builds). The list is written out by
@@ -408,6 +472,7 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/manage/kinds/keys.js',
   'renderer/manage/kinds/models.js',
   'renderer/manage/kinds/people.js',
+  'renderer/manage/kinds/pools.js',
   'renderer/manage/kinds/read.js',
   'renderer/manage/kinds/recipes.js',
   'renderer/manage/kinds/repos.js',
@@ -763,6 +828,15 @@ const EXPECTED: readonly { readonly group: string; readonly kinds: readonly Kind
         columns: [],
         rows: 0,
       },
+      {
+        // One row per (pool, member), which is what the document is: three
+        // members across the two pools above.
+        id: 'pools',
+        title: 'Pools',
+        operation: 'accounts.pools',
+        columns: ['pool', 'owner', 'rule', 'member', 'state', 'nextReset', 'usage', 'headroom'],
+        rows: 3,
+      },
     ],
   },
   {
@@ -929,7 +1003,7 @@ test('draws the four groups in the plan’s order, collapsed, with every kind un
   )
 
   // **And nothing has been read**: the disclosure is the gate, so a console that
-  // read ten documents the moment the tab was opened -- the thing the owner's
+  // read eleven documents the moment the tab was opened -- the thing the owner's
   // rule of 2026-10-31 forbids -- fails here rather than in a stopwatch.
   expect(drawn.reads).toEqual([])
 })
@@ -953,7 +1027,7 @@ test('opens each group and draws every kind’s own table, one read per kind', a
     }
   }
 
-  // **The ten reads, in the order the groups were opened**: each kind's own
+  // **The eleven reads, in the order the groups were opened**: each kind's own
   // source and no other, the two kinds of `members.list` reading that one
   // document, and no read repeated.
   expect(drawn.reads).toEqual(READ_ORDER)

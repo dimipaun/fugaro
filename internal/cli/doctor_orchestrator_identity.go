@@ -77,17 +77,21 @@ func doctorOrchestratorIdentity(ctx context.Context, lc *localcfg.Config, c *crm
 		if !isNotFound(err) {
 			return unread("the service account", err)
 		}
-		// Not a finding, and it is the one arm this check has that reports
-		// nothing wrong: the account exists only for an installation whose
-		// tfvars carry the orchestrator block (the module's own switch), so an
-		// installation that never opted in has no identity to check and no row
-		// of the table to hold. It is still printed as an info line, because
-		// "no resident orchestrator" is a fact about the installation an owner
-		// asking about one needs, and because an OK check that says nothing
-		// would be indistinguishable from a check that did not run.
+		// `fugaro update` gives every installation that can carry one its
+		// resident orchestrator (update_orchestrator.go), so the account's absence
+		// is a finding exactly where an update should have made it: an installation
+		// whose config records both the credentials service (the account's caller
+		// class) and the Firebase backend (what its process reads). Anywhere else the
+		// installation cannot carry one, and the line says why instead of asking for
+		// an update that would only repeat it.
+		if lc.CredentialsService != nil && lc.Budget != nil && lc.Budget.FirebaseProject != "" && lc.Budget.RTDBURL != "" {
+			return []doctorCheck{{ID: id, Severity: "warning",
+				Problem: "this installation has no resident orchestrator: " + psa + " is not in " + pluginwire.Printable(lc.GCPProject) + ", though the installation has the credentials service and the Firebase backend one needs, so the update that gives it one has not run to the end here",
+				Fix:     "run fugaro update: it writes the orchestrator's block and applies it, and nothing else is needed"}}
+		}
 		return []doctorCheck{{ID: id, Severity: "info",
-			Problem: "this installation has no resident orchestrator: " + psa + " is not in " + pluginwire.Printable(lc.GCPProject) + ", so the installation has not opted in and no row of the design's section 4.3 table exists to check",
-			Fix:     "no action: an installation that did not ask for a resident orchestrator plans exactly as it did before the installation module carried the account, and every fugaro update leaves it that way"}}
+			Problem: "this installation has no resident orchestrator: " + psa + " is not in " + pluginwire.Printable(lc.GCPProject) + ", and the installation has no " + orchestratorMissing(lc) + " for one to use, so no row of the design's section 4.3 table exists to check",
+			Fix:     "no action: fugaro update gives the installation a resident orchestrator once it has the credentials service and the Firebase backend, and says on every run what is still missing"}}
 	}
 
 	var (
@@ -444,4 +448,18 @@ func neverRole(role string) bool {
 		return true
 	}
 	return false
+}
+
+// orchestratorMissing names what an installation lacks of the two things a
+// resident orchestrator needs, for the doctor's info line.
+func orchestratorMissing(lc *localcfg.Config) string {
+	noService := lc.CredentialsService == nil
+	noBackend := lc.Budget == nil || lc.Budget.FirebaseProject == "" || lc.Budget.RTDBURL == ""
+	switch {
+	case noService && noBackend:
+		return "credentials service or Firebase budget backend recorded"
+	case noService:
+		return "credentials service recorded"
+	}
+	return "Firebase budget backend recorded"
 }

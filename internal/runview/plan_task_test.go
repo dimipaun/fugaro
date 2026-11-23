@@ -128,6 +128,11 @@ var planTaskReaders = map[string]string{
 	// the same display-only join the rows already carry, from the same field,
 	// and no path is built from it.
 	"internal/runindex/contract.go": "the index entry's own plan_task field: the id plan status and graph join a run to a node by, display-only",
+	// The fold that writes such an entry (RI4): it copies the id out of the
+	// run's own task record into the document and decides nothing by it -- no
+	// path is built from it, nothing is matched on it, and it admits no run,
+	// budgets nothing and grants nothing.
+	"internal/runindex/fold.go": "writes the entry's plan_task from the run's own task record, for the join a screen draws",
 	// The reader of that entry (RI3): it names the field as the equality one
 	// page of the index is queried by, and the value is compared and nothing
 	// else -- no path is built from it, no record is opened by it, and what the

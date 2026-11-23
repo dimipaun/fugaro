@@ -60,8 +60,10 @@ Credentials), so that fugaro run works; --operator or --admin replaces that,
 an existing config is never changed by it, and with a service
 account's credentials it stops and names the two flags.
 
-Fugaro only starts fresh: a first run creates the GCP project the installation
-lives in, and that project is Fugaro's, and managed, from its creation. On a
+A first run creates the GCP project the installation
+lives in — or adopts one that is already there and holds nothing of Fugaro's,
+using it as if it had created it (the owner's ruling of 2026-11-22) — and that
+project is Fugaro's, and managed, from its creation. On a
 first run it asks its questions once, in this order, each with a suggestion
 Enter takes, and writes the local config, so later runs ask nothing: the new
 GCP project's ID (--gcp-project; a project named after this one,
@@ -85,14 +87,18 @@ confirmations below need a terminal at all: without one, or with
 --json, the run names every missing flag in one
 error — the bake switch and the budget need no flag there, because an absent
 key means the same as a written yes and a budget nobody answered takes its own
-default. An ID that already exists is refused before anything is
-asked or changed ("Fugaro only starts fresh: <id> already exists; pick
-another id"), and so is one that already holds a Fugaro installation, with the
+default. An ID that already exists and holds anything of Fugaro's is refused
+before anything is asked or changed ("<id> already exists and holds something
+of Fugaro's: fugaro setup only adopts a project that holds nothing of
+Fugaro's, so pick another id"), and so is one that already holds a Fugaro
+installation, with the
 command that uses that installation from this machine instead: fugaro update
 --gcp-project <id> --region <region>, which writes the local config from the
-installation and applies nothing. The one taken ID a first run goes on with is a project an
-earlier run of fugaro setup created and did not finish (it carries the label
-fugaro_created=true from its creation): the rerun resumes it. The budget
+installation and applies nothing. A project that already exists and holds
+nothing of Fugaro's is adopted: the run uses it as if it had created it. The
+other ID a first run goes on with is a project an
+earlier run of fugaro setup made Fugaro's and did not finish (it carries the
+label fugaro_created, true or adopted, from that run): the rerun resumes it. The budget
 section of a local config written from an installation (rtdb_url,
 firebase_project, firebase_api_key, token_signer: none a secret) is filled
 from the Firebase root's outputs, read only. A --name given for an
@@ -874,11 +880,12 @@ func wizardStages(ctx context.Context, r *initRun) []initflow.Stage {
 }
 
 // settleCreation records what this run does about the GCP project, where the
-// rest of the run reads it: --create-project's own field. Fugaro only starts
-// fresh (the owner's ruling of 2026-10-23), so there is no question to ask: a
-// first run of fugaro setup creates its project (the project stage,
-// init_project.go, refuses an ID that already exists before anything is
-// changed), and the flag only says so explicitly.
+// rest of the run reads it: --create-project's own field. There is no question
+// to ask: a first run of fugaro setup makes its project Fugaro's — it creates
+// it, or adopts one that is already there and holds nothing of Fugaro's (the
+// owner's ruling of 2026-11-22; the project stage, init_project.go, refuses an
+// ID that holds anything of Fugaro's before anything is changed), and the flag
+// only says so explicitly.
 //
 // A run that cannot act on a creation does not get one: `fugaro update` creates
 // nothing (its stage set has no project stage at all, init_stages.go), and

@@ -1554,11 +1554,14 @@ POLL_SECONDS=${CHECK564_POLL_SECONDS:-10}
 # shell arithmetic expansion.
 WAIT_WINDOW=$(python3 -c 'import sys; print("%g" % (float(sys.argv[1]) * float(sys.argv[2])))' "$WAIT" "$POLL_SECONDS" 2>/dev/null || printf '%s' "$WAIT")
 
+# The portal's origin, per project (P0.1): `fugaro-portal-staging` serves
+# app.staging.fugaro.dev and `fugaro-portal` serves app.fugaro.dev, each site's
+# custom domain being the host the owner attached to it.
 if [ -z "$API" ]; then
   if [ "$PRODUCTION" = 1 ]; then
     API=https://app.fugaro.dev
   else
-    API=https://fugaro-portal.web.app
+    API=https://app.staging.fugaro.dev
   fi
 fi
 case "$API" in

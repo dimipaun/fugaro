@@ -20,8 +20,9 @@ import (
 // A new machine (design §3.1, "A new team member", and the owner's own second
 // machine): the installation exists (its Terraform state is in the state
 // bucket) and this machine has no local config for it. That is `fugaro
-// update`'s case. `fugaro setup` only starts fresh: it refuses a project that
-// no run of setup created before it gets here (init_project.go), so the one
+// update`'s case. `fugaro setup` makes a project Fugaro's only when it holds
+// nothing of Fugaro's, so it refuses one an earlier run of setup installed
+// into before it gets here (init_project.go), and the one
 // setup run that reaches this is the creator's own resume, after an earlier
 // run applied the installation and stopped before writing its config. The installation
 // stage then does what update --config-only does, writing the config from the

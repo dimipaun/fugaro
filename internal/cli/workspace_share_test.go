@@ -120,25 +120,24 @@ func TestAPinAddressMustBeHTTPS(t *testing.T) {
 	}
 }
 
-// TestMemberAddTakesRegionAndRepositories is R6 and D2992: a member row carries
+// TestProjectAddTakesRegionAndRepositories is R6 and D2992: a member row carries
 // where its database lives, and every job service account carries the
 // repositories it is a job of — concrete names, one for a repository's own job
 // and several for a shared project job, never a pattern. The two halves are
 // written as one item per account, so a table read back names each account with
 // its own repositories rather than a list beside the accounts.
-func TestMemberAddTakesRegionAndRepositories(t *testing.T) {
+func TestProjectAddTakesRegionAndRepositories(t *testing.T) {
 	_, _, owner := workspaceOwnerHome(t)
-	args := []string{"workspace", "member", "add", "workspace-alpha", "aurora",
+	decl := []string{
 		"--job-service-account", "marker-job@aurora-gcp.iam.gserviceaccount.com",
 		"--job-repos", "marker-job@aurora-gcp.iam.gserviceaccount.com=marker-org/aurora",
 		"--job-service-account", "marker-shared@aurora-gcp.iam.gserviceaccount.com",
 		"--job-repos", "marker-shared@aurora-gcp.iam.gserviceaccount.com=marker-org/aurora",
 		"--job-repos", "marker-shared@aurora-gcp.iam.gserviceaccount.com=marker-org/borealis",
-		"--database-region", "europe-west1",
 		"--firebase-project", "aurora-fb",
 		"--fp", "aurora",
 		"--exchange-url", "https://exchange.example.com/v1"}
-	out, _, chainErr := execute(t, args...)
+	_, out, chainErr := workspaceProjectAddWholeRun(t, append(slices.Clone(decl), "--database-region", "europe-west1")...)
 	after := readFileString(t, owner)
 	lc, err := localcfg.Parse([]byte(after))
 	if err != nil {
@@ -175,7 +174,7 @@ func TestMemberAddTakesRegionAndRepositories(t *testing.T) {
 			t.Errorf("the read does not carry %q:\n%s", wantLine, shown)
 		}
 	}
-	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+	workspaceAssertSavedNotLive(t, "workspace project add", out, chainErr)
 
 	// A region is optional on the command line, and this declaration names none:
 	// where the member's database is comes from the member's own budget.rtdb_url,
@@ -185,7 +184,9 @@ func TestMemberAddTakesRegionAndRepositories(t *testing.T) {
 	// workspace's service reads that member's database (LP9, D3084). What this
 	// reads is the file: the chain behind a replacement is this fixture's own
 	// answer, which workspaceAssertSavedNotLive holds beside it.
-	execute(t, workspaceMemberAddArgs()...)
+	if _, _, err := workspaceProjectAddWholeRun(t, decl...); err != nil {
+		t.Fatalf("workspace project add: %v", err)
+	}
 	lc, err = localcfg.Parse([]byte(readFileString(t, owner)))
 	if err != nil {
 		t.Fatal(err)
@@ -195,29 +196,46 @@ func TestMemberAddTakesRegionAndRepositories(t *testing.T) {
 	}
 }
 
-// TestMemberAddRefusesAnAccountWithNoRepositories and the pair below it are
+// TestProjectAddRefusesAnAccountWithNoRepositories and the pair below it are
 // D2992's refusals: the account and its repositories are one statement, so an
 // account the declaration names no repository for, a repository that is a
 // pattern, and a repository written for an account the entry does not carry are
 // each refused by name before anything is written.
-func TestMemberAddRefusesAnAccountWithNoRepositories(t *testing.T) {
+func TestProjectAddRefusesAnAccountWithNoRepositories(t *testing.T) {
 	_, _, owner := workspaceOwnerHome(t)
 	before := readFileString(t, owner)
 	for _, tc := range []struct {
 		name string
 		args []string
 		want string
+		// fakes: the declaration reaches the workspace's roster before this
+		// refusal is made. The account-and-repository checks are the command's
+		// own, so they are made before anything is read; the pattern is refused
+		// by the config's strict loader, which reads the entry back once it is
+		// declared, and the roster read comes first on the way there.
+		fakes bool
 	}{
-		{"an account with no repositories", []string{
-			"--job-service-account", "marker-bare@aurora-gcp.iam.gserviceaccount.com",
-		}, "no --job-repos is given for marker-bare@aurora-gcp.iam.gserviceaccount.com"},
-		{"a pattern", []string{"--job-repos", "marker-job@aurora-gcp.iam.gserviceaccount.com=marker-org/*"}, "must look like owner/name"},
-		{"another account's repository", []string{"--job-repos", "marker-other@aurora-gcp.iam.gserviceaccount.com=marker-org/aurora"}, "not one of this declaration's job service accounts"},
-		{"a bare repository", []string{"--job-repos", "marker-org/aurora"}, "must be <account>=<owner/name>"},
+		{name: "an account with no repositories",
+			args: []string{"--job-service-account", "marker-bare@aurora-gcp.iam.gserviceaccount.com"},
+			want: "no --job-repos is given for marker-bare@aurora-gcp.iam.gserviceaccount.com"},
+		{name: "a pattern",
+			args: []string{"--job-repos", "marker-job@aurora-gcp.iam.gserviceaccount.com=marker-org/*"},
+			want: "must look like owner/name", fakes: true},
+		{name: "another account's repository",
+			args: []string{"--job-repos", "marker-other@aurora-gcp.iam.gserviceaccount.com=marker-org/aurora"},
+			want: "not one of this declaration's job service accounts"},
+		{name: "a bare repository",
+			args: []string{"--job-repos", "marker-org/aurora"},
+			want: "must be <account>=<owner/name>"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			args := append(append([]string{}, workspaceMemberAddArgs()...), tc.args...)
-			out, _, err := execute(t, args...)
+			var out string
+			var err error
+			if tc.fakes {
+				_, out, err = workspaceProjectAddRun(t, tc.args...)
+			} else {
+				out, _, err = execute(t, append(workspaceProjectAddArgs(), tc.args...)...)
+			}
 			if err == nil {
 				t.Fatalf("%s was accepted:\n%s", tc.name, out)
 			}
@@ -248,7 +266,7 @@ func TestShareRefusesAProjectThatIsNotAMember(t *testing.T) {
 	if err == nil {
 		t.Fatalf("sharing to a project the table does not declare was accepted:\n%s", out)
 	}
-	for _, want := range []string{"declares no member borealis", "fugaro workspace show workspace-alpha", "fugaro workspace member add workspace-alpha borealis"} {
+	for _, want := range []string{"declares no member borealis", "fugaro workspace show workspace-alpha", "fugaro workspace project add borealis --workspace workspace-alpha"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}

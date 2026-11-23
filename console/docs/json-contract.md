@@ -1712,9 +1712,13 @@ keeps the view the CLI resolved out of a screen's hands: an admin of the
 installation sees every user's rows, a plain operator sees their own row
 alone, and an identity the installation's own lists do not place stays
 private. It is read-only —
-the figures come from the run records (`launch.json`'s `launched_by`, and
-`result.json`'s outcome and settled cost), never from the budget database, so
-there is no write path behind it and no counter a screen has to reconcile.
+the figures come from the run index, one page of entries for the window and no
+run object read at all (IR6, F32) — or, while the index has never finished a
+walk, from the run records themselves (`launch.json`'s `launched_by`, and
+`result.json`'s outcome and settled cost), which is the read this command made
+before the index existed and the same figures over the same window; `index_complete`
+says which of the two it was. Never from the budget database, so there is no
+write path behind it and no counter a screen has to reconcile.
 
 | Field | Type | omitempty | Availability state |
 |---|---|---|---|
@@ -1728,9 +1732,10 @@ there is no write path behind it and no counter a screen has to reconcile.
 | `until` | string | no | the window's last UTC day. Both are UTC days, like `runs ls`'s window |
 | `max_runs` | int | no | the bound the read ran under (`--max-runs`, default 5000) |
 | `truncated` | bool | no | **the window held more runs than `max_runs`**: every figure is over its newest `max_runs` alone. The bound is on the read and not on a person: it is applied before the view is, so a private view can be over fewer of the caller's own runs than `max_runs` suggests. A console must show this the way it shows a gap, never as the window's own total |
+| `index_complete` | bool | no | whether the figures are the **run index**'s own page: `true` when they are, read as one page of entries for the window with no run object read at all (F32), and `false` while the index has never finished a walk, when the run records are read instead — the same figures over the same window, one object read per run. It is the one field this document gained for the index (IR6), and it is the whole of the difference a consumer sees: the rows, the totals and the counts are the same figures whichever read produced them, so a screen renders them the same way and reads this only to know which one it is looking at |
 | `rows` | `[]userstats.Row` | no | `[]` when none. One row per (user, currency) — dollars are never added across currencies |
 | `totals` | `[]userstats.Row` | no | one per currency, in currency order, with `user` `""` |
-| `unlaunched` | int | no | runs in the window with neither a launch nor a record (never launched, cancelled before launch, or a stale claim). They never started: they are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
+| `unlaunched` | int | no | runs in the window that **never started**: neither a launch nor a record, and no status settled for them (never launched, cancelled before launch, or a stale claim). A run the overlay lists with a status and no records yet — in flight, or finished inside the fold gap — started, so it is not one of these: it is a row with no record, under the unknown launcher. They are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
 | `notes` | `[]string` | no | the lines the human table prints before and after its own: whose numbers these are, what the money counts, and what the read left out. The document and the table say the same things |
 
 **The `"own"` view filters a read that is not its own.** It holds the runs
@@ -1848,11 +1853,12 @@ it on the surface (`plan.status` in `console/src/main/ipc.ts`), as the data
 behind the graph screen's per-task state (console v2 plan GV1.6). The section
 stays here for §6.11's reason — the screen reads a shape off the code rather
 than assuming one from a design. Its argv is design §5.1 rule 6's
-`plan status --json` row: at most `--all` (GD6's "everything" toggle), plus
-`--project <name>` and `--config <path>` like every other cloud row, and **no
-path** — the checkout reaches the CLI as the spawn's own working directory, from
-the installation's record and never from the renderer. The console asks for it
-at most once a minute per installation and arguments.
+`plan status --json` row: at most `--all` (GD6's "everything" toggle) and
+`--no-merges` (D3217 as amended, below), plus `--project <name>` and
+`--config <path>` like every other cloud row, and **no path** — the checkout
+reaches the CLI as the spawn's own working directory, from the installation's
+record and never from the renderer. The console asks for it at most once a
+minute per installation and arguments.
 
 **It is a cloud read, unlike `plan graph`.** A task's state is a *run's* state,
 and a run lives in the runs bucket of the selected project — so this command
@@ -1864,19 +1870,26 @@ naming the same task is not theirs to claim. It writes nothing — the remembere
 checkouts included: `plan status` is one of the console's reads
 (`consoleReadPaths`), so resolving the checkout records nothing.
 
-**What it reads is bounded, and the lookups are bounded more tightly, because
-they are what a console pays for.** The runs it lists are every run the bucket
-still holds — the ninety-day window `fugaro run --pr` reads with, which is the
-bucket's own lifecycle, since a run older than that has been deleted with its
-run and can join nothing. Every run in that window is read. What is scoped is
-the merge lookup below: it spawns the operator's `gh`, one spawn per distinct
-pull request, and it is asked only about the pull requests of the runs that
-**join at least one plan here**, at most **32** per read, the newest runs'
-first; a pull request past the cap has no answer (`merge unknown`, and a
-warning says how many). The answers are not kept between invocations (that
-cache lives in `internal/watch`'s process, and this command is one process). A
-repository whose history is full of runs naming no task of any plan in this
-checkout spends no lookup on them.
+**What it reads is bounded by the checkout's plans, not by the repository's
+history.** The runs come from the run index (C-INDEX: the collection the
+history job's fold writes, one document per run), and the read asks it one
+question per plan task of the checkout's plans, plus one per pull request the
+runs those questions answered carry — the second pass is how a follow-up, which
+records no `plan_task` of its own, is joined (rule iii below). **No listing of
+the runs bucket is made at all**, so a plan of four tasks asks four questions
+however much history the repository has, and a run older than the bucket's own
+life cycle still joins as long as the index holds it. The estimate's history is
+the summary document's own table, so it is one read rather than a scan (F15).
+What is scoped is the merge lookup below: it spawns the operator's `gh`, one
+spawn per distinct pull request, and it is asked only about the pull requests
+of the runs that **join at least one plan here**, at most **32** per
+read, the newest runs' first; a pull request past the cap has no answer
+(`merge unknown`, and a warning says how many). The answers are not kept
+between invocations (that cache lives in `internal/watch`'s process, and this
+command is one process). A repository whose history is full of runs naming no
+task of any plan in this checkout spends no lookup on them. `--no-merges` is
+the new console's first paint: it asks `gh` nothing at all, and says so in the
+document (below).
 
 The document:
 
@@ -1887,6 +1900,9 @@ The document:
 | `totals` | object | never | never | every plan's figures added up, below. A header line a screen draws before the plans |
 | `streams` | array | never | never | the release streams catalogue, in the file's own order, below; `[]` when the catalogue could not be read (`warnings` says why, and a release's name and version are then simply absent) |
 | `warnings` | array | never | never | the lines a human read prints before its table, below; `[]` when there is nothing to say |
+| `index_complete` | bool | never | never | whether the run index has ever finished a walk (C-INDEX, D3215). While it is **`false`** the text listing prints one line saying the index is still building, and the runs joined here are the ones folded so far: a reader never prints a silently short list as the whole truth |
+| `folded_through` | string (RFC 3339) | **yes** | never | how fresh the indexed runs are: the moment the index is folded through, and the point after which a run's own change comes from the overlay rather than a document. Absent before the first fold — never a zero timestamp |
+| `merges_read` | bool | **yes** | never | **present, and `false`, only under `--no-merges`** (D3217 as amended): the read spawned no `gh`, so every task whose run recorded a ready pull request reads `done` with the `merge unknown` mark and nothing is counted `closed`. Its presence is what lets a screen tell "no merges were read" from "there was no merge to read"; the default read does not carry it at all |
 
 one entry of `plans`:
 
@@ -1917,7 +1933,7 @@ one entry of `nodes`:
 | `run` | string | **yes** | never | the **suffix** of the run this task is joined to — the four characters after the last dash of a run id, which is the part a person reads out loud, and the short form `fugaro watch` shows a run by (`internal/task`'s `ShortRun`; where two shown rows collide it is longer, and `DisplayRuns` extends it); `runs ls` prints the whole id |
 | `stage` | string | **yes** | never | the stage that run is in. **Job-written display text**: it arrives sanitised (`safetext.Field`) and is rendered as text |
 | `pr_number` | number | **yes** | never | the pull request number this task shows, **whenever the run has recorded one** — running or finished. It is the run's `record_pr` (F9) when it has one, the run's own number otherwise, and it is absent rather than `0` when there is none: a repository that numbers its pull requests from 1 makes `0` no number at all. It is never a link (§5.1 rule 2) |
-| `mark` | string | **yes** | never | `"merge unknown"`, and nothing else today: the task's run recorded a ready pull request and no lookup could say whether it merged (below). A screen shows it beside the state, never instead of it |
+| `mark` | string | **yes** | never | `"merge unknown"`, and nothing else today: the task's run recorded a ready pull request and no lookup could say whether it merged — because none answered, or because `--no-merges` made none (below). A screen shows it beside the state, never instead of it |
 
 one entry of `releases`:
 
@@ -1954,7 +1970,8 @@ the CLI's, not a screen's rule:
   or `launching`), and `stage` comes from it. The task is being worked on now.
 - `done` — a joined run's pull request is **merged**, according to the
   operator's own `gh` (GitHub only, fail-open); or a finished run recorded a
-  ready or reviewed pull request and **no lookup could answer at all**, and then
+  ready or reviewed pull request and **no lookup could answer at all** (the
+  default read's cap reached, or `--no-merges`, which asks nothing), and then
   `mark` is `merge unknown`. Either way the work is in.
 - `cancelled` — the latest run was cancelled **and it is the task's only run**.
   The work was dropped.
@@ -1973,7 +1990,8 @@ subprocess. A URL that matches but names **another repository** than the
 checkout's is not asked about either, and answers *not merged*: a run's
 `pr_url` is job-written, and a job must not mark its own task done by pointing
 at somebody else's merged pull request. Where there is no answer (no `gh`, a
-Bitbucket repository, a failed or timed-out lookup, one past the cap), a task
+Bitbucket repository, a failed or timed-out lookup, one past the cap, or
+`--no-merges`, which asks nothing at all), a task
 whose run's record says its pull request is ready shows `done` with the mark,
 rather than staying open forever: a screen that waited for an answer nobody can
 give would be a screen that never settles. A `done` **with** the mark is **not** counted closed — only a confirmed merge is

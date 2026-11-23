@@ -1198,6 +1198,9 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	profiles := policyProfiles(lc)
 	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts())
 	if err != nil {
+		if gaps := repoAccountGaps(lc); len(gaps) > 0 {
+			return nil, false, userErr("%v. The one command that fixes it: %s", err, gaps[0].fix())
+		}
 		return nil, false, userErr("%v", err)
 	}
 	// The Bitbucket block is derived the same way and for the same reason: it

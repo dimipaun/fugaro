@@ -606,6 +606,17 @@ import (
 // is made only after the decline that proved it refused, that the config comes
 // back byte-identical with its sidecar removed, and that no value of the
 // installation's ever reaches the block.
+// Checks 890 to 892 are the repo-coupling audit's owner-run checks, and each
+// only reads. 890's fakes are a fake `gcloud` and `curl` answering out of the
+// case's own Realtime Database tree, bucket listing and Firestore ids, so a case
+// says which listed path a storage-path row of the audit's report names and
+// which it leaves UNNAMED. 891's are a fake `fugaro` whose `update --plan-only
+// --json --events` feed differs by the directory it ran in, and a fake `gcloud`
+// serving each repository's launch.json, so a case says which stage differs
+// between an empty directory and a checkout and whether that stage is a §4
+// blocker. 892's are a fake `gcloud` holding the projects' and the build and
+// job accounts' IAM policies and a fake `curl` serving the grants node, so a
+// case says which principal is an admin in all but name.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -716,6 +727,7 @@ var liveCheckScripts = []struct {
 	{"check-830.sh", "check-830_test.sh"},
 	{"check-840.sh", "check-840_test.sh"},
 	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
+	{"check-750-review-against-task.sh", "check-750-review-against-task_test.sh"},
 	{"check670.sh", "check670_test.sh"},
 	{"check-881-chain-falls-through.sh", "check-881-chain-falls-through_test.sh"},
 	{"check-882-vertex-capped.sh", "check-882-vertex-capped_test.sh"},
@@ -723,6 +735,9 @@ var liveCheckScripts = []struct {
 	{"check-883-pause-resume.sh", "check-883-pause-resume_test.sh"},
 	{"check-884-update-migrates.sh", "check-884-update-migrates_test.sh"},
 	{"check-885-retired-keys.sh", "check-885-retired-keys_test.sh"},
+	{"check-890-data-layout.sh", "check-890-data-layout_test.sh"},
+	{"check-891-update-trace.sh", "check-891-update-trace_test.sh"},
+	{"check-892-iam.sh", "check-892-iam_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
