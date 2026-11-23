@@ -419,14 +419,22 @@ step_plans() {
 
 # gs_ls URL prints the immediate children gcloud lists under a prefix, as the
 # last path segment of each.
+# A prefix with no objects is an answer (gcloud says "matched no objects" and
+# exits 1); any other failure, an expired login above all, is returned as a
+# non-zero status with gcloud's message left in $SCRATCH/gs.err, so the caller
+# can name it instead of reporting an empty bucket.
 gs_ls() { # gs_ls <url> <gcp>
-  local entry
-  gcloud storage ls "$1" --project="$2" --quiet </dev/null 2>/dev/null |
-    while IFS= read -r entry; do
-      entry=${entry#"$1"}
-      entry=${entry%/}
-      [ -z "$entry" ] || printf '%s\n' "$entry"
-    done || true
+  local entry listing rc=0
+  listing=$(gcloud storage ls "$1" --project="$2" --quiet </dev/null 2>"$SCRATCH/gs.err") || rc=$?
+  if [ "$rc" -ne 0 ] && grep -q 'matched no objects' "$SCRATCH/gs.err" 2>/dev/null; then
+    rc=0
+  fi
+  printf '%s\n' "$listing" | while IFS= read -r entry; do
+    entry=${entry#"$1"}
+    entry=${entry%/}
+    [ -z "$entry" ] || printf '%s\n' "$entry"
+  done || true
+  return "$rc"
 }
 
 step_launches() {
@@ -442,8 +450,13 @@ step_launches() {
   bucket=${CHECK891_BUCKET:-fugaro-runs-$gcp}
   local n=${CHECK891_RUNS:-5}
   say "listing gs://$bucket/runs/"
-  local slugs
-  slugs=$(gs_ls "gs://$bucket/runs/" "$gcp" | grep -E '^[A-Za-z0-9._-]+$' || true)
+  local slugs listing lrc=0
+  listing=$(gs_ls "gs://$bucket/runs/" "$gcp") || lrc=$?
+  if [ "$lrc" -ne 0 ]; then
+    fact launches UNVERIFIED "gcloud storage ls gs://$bucket/runs/ failed (exit $lrc): $(head -1 "$SCRATCH/gs.err" 2>/dev/null | cut -c1-200); run 'gcloud auth login' if it is the login"
+    return 0
+  fi
+  slugs=$(printf '%s\n' "$listing" | grep -E '^[A-Za-z0-9._-]+$' || true)
   if [ -z "$slugs" ]; then
     fact launches UNVERIFIED "gs://$bucket/runs/ listed no repository, so no launch.json was read"
     return 0
@@ -461,7 +474,7 @@ step_launches() {
         job=$(reader job "$SCRATCH/launch.json")
         [ -n "$job" ] && break
       fi
-    done <<<"$(gs_ls "gs://$bucket/runs/$slug/" "$gcp" | grep -E '^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$' | LC_ALL=C sort -r)"
+    done <<<"$({ gs_ls "gs://$bucket/runs/$slug/" "$gcp" || true; } | grep -E '^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$' | LC_ALL=C sort -r)"
     if [ -z "$job" ]; then
       none=$((none + 1))
       printf '    %-28s no launch.json with a job in its %s newest run(s)\n' "$slug" "$n" >>"$TRACE"

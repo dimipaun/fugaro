@@ -98,6 +98,7 @@ RC99 rtdb creds/workflowsecrets/<slug>/**
 RC100 rtdb creds/leases/<slug>/<run>/**
 RC101 rtdb creds/review-signs/<slug>/<run>/**
 RC102 rtdb creds/issuance/<slug>/<run>/**
+RC106 rtdb creds/current/<slug>/<run>/**
 RC50 firestore spendDaily/<date>_<slug>
 RC52 gcs runs/<slug>/pr-index/**
 RC52 gcs runs/<slug>/<run>/**
@@ -318,6 +319,7 @@ try:
 except Exception:
     sys.exit(1)
 sec = ""
+child = None
 want_top = {"gcp_project", "runs_bucket", "bucket_url"}
 want_budget = {"rtdb_url", "firebase_project"}
 for line in lines:
@@ -329,10 +331,16 @@ for line in lines:
         continue
     key, value = m.group(1), m.group(2).strip().strip("\"'")
     if indent == 0:
-        sec = key
+        sec, child = key, None
         if key in want_top and value:
             print("%s=%s" % (key, value))
-    elif indent <= 2 and sec == "budget" and key in want_budget and value:
+        continue
+    # fugaro writes the file with four-space indentation and a person may use
+    # two: a section's direct children are at whatever indent its first child
+    # has, and anything deeper belongs to a nested map or list.
+    if child is None:
+        child = indent
+    if indent == child and sec == "budget" and key in want_budget and value:
         print("%s=%s" % (key, value))
 PY
 }

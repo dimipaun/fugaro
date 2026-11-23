@@ -198,6 +198,7 @@ write_answers() { # dir
     "repoaccess": {"$slug_a": {"kind": "app"}},
     "workflowsecrets": {"$slug_a": {"names": true}},
     "leases": {"$slug_a": {"$run1": {"held": true}}},
+    "current": {"$slug_a": {"$run1": {"on": true}}},
     "review-signs": {"$slug_a": {"$run1": {"signed": true}}},
     "issuance": {"$slug_a": {"$run1": {"issued": true}}},
     "buildpairs": {"$build_identity": {"build-1": {"run": "$run1"}}},
@@ -245,10 +246,14 @@ gcp_project: $gcp
 region: us-east5
 runs_bucket: $bucket
 budget:
-  mode: enforce
-  per_run_usd: 5
-  rtdb_url: $rtdb_url
-  firebase_project: $fp
+    mode: enforce
+    per_run_usd: 5
+    allowed_models:
+        - claude-sonnet-5-5
+    caps:
+        rtdb_url: https://decoy-default-rtdb.firebaseio.com
+    rtdb_url: $rtdb_url
+    firebase_project: $fp
 YAML
 }
 
@@ -324,7 +329,7 @@ test_a_known_layout_passes() {
     "RC46 rtdb config/policy/voice/repos/<slug>" "RC47 rtdb config/policy/route/<slug>" \
     "RC48 rtdb creds/repoauth/<slug>" "RC48 rtdb creds/repoaccess/<slug>" \
     "RC49 rtdb coordinator/repos/<slug>" "RC99 rtdb creds/workflowsecrets/<slug>" \
-    "RC100 rtdb creds/leases/<slug>" "RC101 rtdb creds/review-signs/<slug>" "RC102 rtdb creds/issuance/<slug>" \
+    "RC100 rtdb creds/leases/<slug>" "RC101 rtdb creds/review-signs/<slug>" "RC102 rtdb creds/issuance/<slug>" "RC106 rtdb creds/current/<slug>" \
     "RC50 firestore spendDaily/<date>_<slug>" \
     "RC52 gcs runs/<slug>/<run>" "RC52 gcs runs/<slug>/pr-index" \
     "RC53 gcs cache/<slug>" "RC53 gcs locks/<slug>" "RC53 gcs tokens/<slug>" "RC53 gcs reports/<slug>" \
