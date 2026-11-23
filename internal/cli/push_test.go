@@ -593,6 +593,50 @@ func TestPushDropsAPendingIntentWhoseStateChangeHasEnded(t *testing.T) {
 	}
 }
 
+// TestPushRetriesAPendingIntentWhenASweepsOwnReadFailed is what bounds the drop
+// above: a key missing from `live` says the state change is over only when the
+// derivation answered whole. The installation's events come back beside the
+// errors the reads that failed left (installationEvents) and the sweep warns on
+// them and goes on, so a cap the sender could not read is a key missing from a
+// PARTIAL derivation — and the intent is retried there, which is what §6
+// promises a pending one, rather than dropped with the dedupe and the hourly
+// cap's slot it holds.
+func TestPushRetriesAPendingIntentWhenASweepsOwnReadFailed(t *testing.T) {
+	asked := pushTestNow.Add(-10 * time.Minute).UnixMilli()
+	run := "20261115-090000-cap1"
+	f := newPushFixture(t, pushTestNow)
+	f.pair(t, mailboxSwitchState(nil))
+	// The run IS at its cap: the state change is in force, and the only reason
+	// the sweep cannot see it is the node below.
+	f.stoppedByCap(run, 1_000_000, 1_000_000)
+	key := budget.Key(pushCapReached + ":cap:" + appSlug + "/" + run)
+	f.db.Set(pushTestPath+"/ledger/"+key, map[string]any{"category": pushCapReached, "key": "cap:" + appSlug + "/" + run,
+		"at": asked, "state": pushStatePending, "attempts": 1})
+	// The cap read fails this sweep: the node holds a value it cannot be read
+	// as, which is the error capEvents answers with when a read fails — and the
+	// one DenyRead cannot give here, because a denied read answers for every
+	// node above it too, the root the registry phase reads first among them.
+	f.db.Set(budget.PathCapsRepo(appSlug), "not a cap node")
+
+	out, errOut := f.sweep(t)
+	if got := f.categories(); !slices.Equal(got, []string{pushCapReached}) {
+		t.Fatalf("sent %v, want the pending intent retried: the derivation was partial, and a key missing from one says the read failed", got)
+	}
+	if !strings.Contains(out, "1 retried") {
+		t.Errorf("output = %q, want the retry counted", out)
+	}
+	if !strings.Contains(errOut, "push:") {
+		t.Errorf("stderr = %q, want the read that failed said out loud", errOut)
+	}
+	row, _ := f.db.Value(pushTestPath + "/ledger/" + key).(map[string]any)
+	if row == nil {
+		t.Fatal("the intent was dropped on a read that failed, and its dedupe and cap slot went with it")
+	}
+	if got := mailboxNodeString(t, row, "state"); got != pushStateSent {
+		t.Errorf("the retried row's state = %q, want %q", got, pushStateSent)
+	}
+}
+
 // TestPushDoesNotRetryInsideQuietHours is §6's quiet-hours row applied to the
 // retry path: the window is honoured at the sender before the provider is
 // called, and a retry is a send. An intent that comes due inside the window is

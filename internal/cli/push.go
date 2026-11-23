@@ -255,10 +255,17 @@ func (p *pushSender) Sweep(ctx context.Context) (pushReport, error) {
 	// they are facts about the installation, and a paired account is one of its
 	// operators. The per-account events (a prompt, a consumer gone quiet) are
 	// derived inside the loop.
+	// What the installation's reads answered, beside the errors the ones that
+	// failed left: a kill switch that could be read is a fact about the
+	// installation whether or not the caps could be, so the events go to every
+	// account either way — and whether they are the WHOLE of this sweep's events
+	// goes with them, because a key missing from a derivation that failed says
+	// the read failed and not that the state change is over.
 	shared, errs := p.installationEvents(ctx)
+	whole := len(errs) == 0
 	sort.Strings(uids)
 	for _, uid := range uids {
-		errs = append(errs, p.account(ctx, uid, shared, &rep))
+		errs = append(errs, p.account(ctx, uid, shared, whole, &rep))
 	}
 	return rep, errors.Join(errs...)
 }
@@ -271,7 +278,7 @@ func (p *pushSender) Sweep(ctx context.Context) (pushReport, error) {
 // records a state change, and a state change is over only when the event it
 // names is no longer derived (§3.7 — the key is the transition, and a transition
 // that has not happened again is still the one notification).
-func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent, rep *pushReport) error {
+func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent, whole bool, rep *pushReport) error {
 	paired, err := p.paired(ctx, uid)
 	if err != nil {
 		return err
@@ -334,8 +341,9 @@ func (p *pushSender) account(ctx context.Context, uid string, shared []pushEvent
 	// registration is gone, so the events this sweep derived must not be offered
 	// to a provider that has just said the token is dead. `live` goes with it:
 	// an intent is worth retrying only while the state change it names is still
-	// in force.
-	stop, err := p.retry(ctx, uid, &node, live, rep)
+	// in force — and `whole` says whether `live` is the whole of this sweep's
+	// events or only what the installation's reads could answer with.
+	stop, err := p.retry(ctx, uid, &node, live, whole, rep)
 	if err != nil || stop {
 		return err
 	}
@@ -474,11 +482,19 @@ func (p *pushSender) consider(ctx context.Context, uid string, node *pushNode, e
 // happens again is a new transition, and `consider` derives it with no row in
 // the way.
 //
+// That is knowable only from a derivation that answered WHOLE (`whole`): the
+// installation's events come back beside the errors the reads that failed left
+// (installationEvents, Sweep), and a key missing from a partial one says the
+// read failed and not that the state change is over. Such an intent is retried
+// — what §6 promises a pending one — rather than dropped with the dedupe and the
+// hourly cap's slot it holds: a transient cap or kill read is not an account
+// that has stopped being at its cap.
+//
 // It answers what deliver answers — whether the account's turn is over because
 // the provider reported the token unregistered — so a retry that reaps the
 // registration stops the sweep's own events from following it to a token the
 // provider has just called dead.
-func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, live map[string]bool, rep *pushReport) (bool, error) {
+func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, live map[string]bool, whole bool, rep *pushReport) (bool, error) {
 	now := p.now().UnixMilli()
 	keys := make([]string, 0, len(node.Ledger))
 	for key := range node.Ledger {
@@ -493,7 +509,7 @@ func (p *pushSender) retry(ctx context.Context, uid string, node *pushNode, live
 		if row.State != pushStatePending || now-row.At >= pushRetryWindow.Milliseconds() {
 			continue
 		}
-		if !live[key] {
+		if whole && !live[key] {
 			// The state change this intent names is over. Deleting the row is the
 			// sender's own write to its own state and never a marker, and the
 			// intent is dropped rather than left pending: nothing would ever send
