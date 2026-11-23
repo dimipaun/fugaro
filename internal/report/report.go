@@ -316,11 +316,18 @@ func (s *Step) Failed(err error, context []string) {
 	if !s.begin(Failed) {
 		return
 	}
-	var body []string
+	var msg []string
 	if err != nil {
-		body = append(body, splitLines(err.Error())...)
+		msg = append(msg, splitLines(err.Error())...)
 	}
-	body = append(body, context...)
+	msg = append(msg, context...)
+	// A stage's message can open with a blank line, which is layout rather than
+	// anything to read: the label goes on the first line that says something,
+	// and the rest of the message is printed whole under it either way.
+	for len(msg) > 0 && strings.TrimSpace(msg[0]) == "" {
+		msg = msg[1:]
+	}
+	body := msg
 	r.appendLogLine(&body)
 	r.appendDiagnoseLine(&body)
 	r.logLine(glyphFailed.text(r.o.ASCII) + " " + s.name + "\n")
@@ -331,6 +338,10 @@ func (s *Step) Failed(err error, context []string) {
 	// The label goes on the message's first line, at the step line's own
 	// column; everything after it — the rest of the message, the context, the
 	// log and the diagnose command — lines up two spaces in.
+	if len(msg) == 0 {
+		r.under(body)
+		return
+	}
 	r.logLine("Error: " + body[0] + "\n")
 	fmt.Fprintln(r.human, r.Error(body[0]))
 	r.under(body[1:])
