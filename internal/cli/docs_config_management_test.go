@@ -360,8 +360,8 @@ const (
 // table (MG2) and `fugaro routing set` edits one after that (RT5) — so neither a
 // name in the allowlist nor a prefix of it reaches a row of it.
 const (
-	cfmRegistryRows   = 535
-	cfmAllowlistNamed = 121
+	cfmRegistryRows   = 536
+	cfmAllowlistNamed = 122
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

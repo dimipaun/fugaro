@@ -294,6 +294,15 @@ func (c *Config) Shared() *Config {
 	// node for. ParseShared refuses it besides, because a shared config
 	// carrying it was not written by the converge.
 	s.ReviewAgainstTask = nil
+	// PersonalWorkspaceTokens travels the triage switch's way too, and is
+	// dropped here for its reason one key over: the switch decides whether a
+	// project's people draw on the token each stored at the workspace instead of
+	// the shared entries the workspace pays for, so a launcher who could write it
+	// into the shared file would be moving every teammate's runs onto a spend the
+	// owner's own statement is about — and the switch is read from the published
+	// node, which the launcher cannot write. ParseShared refuses it besides,
+	// because a shared config carrying it was not written by the converge.
+	s.PersonalWorkspaceTokens = nil
 	// RigorPending is dropped here for Triage's reason and one of its own that
 	// is nearer still: it is the wizard's rigor answer waiting to be written
 	// into the project layer, and the mode decides how much review every run of

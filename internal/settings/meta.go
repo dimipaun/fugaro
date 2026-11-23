@@ -116,8 +116,8 @@ const (
 	// GroupProfiles is the project layer's own file: `layer.*`.
 	GroupProfiles MetaGroup = "Profiles"
 	// GroupCredentials is what a model call goes out on: `credentials.`,
-	// `default_claude_account`, `claude_account_auto`, `subscription_spread`
-	// and `verifier_accounts`.
+	// `default_claude_account`, `claude_account_auto`, `subscription_spread`,
+	// `verifier_accounts` and `personal_workspace_tokens`.
 	GroupCredentials MetaGroup = "Credentials"
 	// GroupReviews is how much review a run gives and what it costs:
 	// `governance.`, `triage` and `issues.`.

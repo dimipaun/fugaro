@@ -175,6 +175,18 @@ var singleMeta = map[string]Meta{
 		Group:       GroupCredentials,
 		Type:        TypeString,
 	},
+	// The member's switch for the personal half of a workspace's credentials
+	// (WC6, R9, D2972): the machine's own file states a boolean the publish
+	// copies into the member's policy node, which the workspace's service — the
+	// only enforcer — reads per call. It is the shape `triage` below has, and
+	// its group is the credentials one because what it turns on is a person's
+	// own token being served.
+	"personal_workspace_tokens": {
+		Label:       "Personal workspace tokens",
+		Description: "Whether this project's runs may be served a person's own workspace token ahead of the shared entries.",
+		Group:       GroupCredentials,
+		Type:        TypeBool,
+	},
 	"triage": {
 		Label:       "Triage review findings",
 		Description: "Whether a review round's findings are judged by the triage stage.",
