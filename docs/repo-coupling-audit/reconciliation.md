@@ -1,7 +1,8 @@
 # Repo-coupling audit: reconciliation
 
 Checked against `origin/main` at `3de72b780` on 2026-11-22; F18 and F19 (task V1) against
-`8316578f6` on 2026-11-23; F20 against `1d4b59344` on 2026-11-23. **Where this document disagrees with
+`8316578f6` on 2026-11-23; F20 against `1d4b59344` on 2026-11-23; F21 (task R1) against
+`d8f1ae007` on 2026-11-23, with the owner's runs of Checks 890–892 on `fugaro` that day. **Where this document disagrees with
 [spec.md](spec.md), this document wins.** The inventory itself is [report.md](report.md); this
 document records what the spec assumed, what the code says instead, and the owner's answers.
 
@@ -212,6 +213,32 @@ document records what the spec assumed, what the code says instead, and the owne
 
   RC104 and RC105 are steps after the stage loop, not stages, so Check 891, which compares
   stages, cannot see them. Both are §4 item 4 and lift L5.
+- **F21 (Gap, from the live checks).** The owner's runs of Checks 890–892 on `fugaro`
+  (2026-11-23) found two rows the report lacked and three facts that matter for the lift. The
+  totals move from 105 rows to 107. Report §1, "Live result", has the detail.
+  - **RC106 (Identity).** `creds/current/<slug>/<run>` (`internal/creds/state.go` `pathCurrent`),
+    the credential a run is on. The service writes it with the lease (`SetPlacement`) and removes
+    both when the run has ended (`internal/credsvc/server.go` `forgetRun`). Check 890 named it.
+  - **RC107 (Infra).** The Batch compute root (`modules/compute/iam.tf`, `for_each =
+    var.run_accounts`) grants each per-repo job account two project roles, from a snapshot
+    (`infra.JobRunAccounts`) taken when `setup --provision-batch` last ran. `update` never runs
+    that stage (`init_stages.go`). Check 892 shows the drift: a deleted job account still holds
+    the pair, and three of six live job accounts lack it. It goes with the per-repo jobs (L2), but
+    M2's brief does not name it.
+  - **Shared jobs are unused on `fugaro`.** Both repos' newest launches went to their own job
+    (RC76), so every blocker of report §4 item 1 is live there, not a corner case.
+  - **Per-repo records outlive their repo.** `creds/repoauth`, `creds/workflowsecrets` and
+    `config/policy/repos` hold slugs no run uses, among them a repo with no runs, no builds and no
+    checkout, and two slugs for one owner/name. `task.Slug` hashes the provider with the name, so
+    the second is RC51's collision case in real data. `project repos rm` (RC78) narrows
+    `config/policy/repos` but leaves `creds/repoauth` and `creds/workflowsecrets` behind
+    (`project_repos_rm.go`), and nothing removes a slug's records when its repo moves provider.
+    The lifts that retire these nodes (L4 for RC48, L6 for RC99) have stale slugs to clear too.
+  - **A per-repo credential the report has no row for.** The `secrets` stage's detail sends the
+    owner to `fugaro secrets set <provider key> --repo <repo>` once per repository: a provider key
+    is a bundle entry per repository (`internal/credsvc/provider_wire.go` `RepoCredentialKey`,
+    D3008). It is a credential, so its lift is L4's (model-credentials-routing) to name; it is not
+    a row here because no check listed the bundle. Open item O5.
 
 ## 4. Decisions
 
@@ -252,11 +279,14 @@ Resolutions (one defensible answer, stated rather than asked):
   The code stays, as D1900 rules.
 - O1. The benign-candidate rulings (D3235) are owed after merge. Until then no candidate is kept
   or rejected.
-- O2. Checks 890–892's output fills the live columns. Until then those columns read "static".
+- O2. **Closed 2026-11-23.** The owner ran Checks 890–892 on `fugaro`; report §1's "Live result"
+  records them, and F21 what they found.
 - O3. `docs/status.md` gets this spec's row when the plan merges, as for every spec folder before
   it; this pull request does not touch it.
 - O4. `config.RepoCraftsNodePrefix` (`config/policy/repocrafts/<slug>`) is a constant with no
   writer on `main` yet. Model-credentials-routing CM2 adds one; the node becomes a row then.
+- O5. The per-repository provider-key entry in the credentials bundle (`RepoCredentialKey`,
+  D3008; F21) has no row. Whether it is a row here or a line in L4's plan is the owner's call.
 
 ## 6. UNVERIFIED
 
@@ -264,6 +294,12 @@ Resolutions (one defensible answer, stated rather than asked):
   which holds the total to the profile's `timeout_class`.
 - U2. **Settled by V1 (F19).** Stored per repository; one App per project wherever a shared job
   is involved, several Apps only on per-repo jobs.
-- U3. The real IAM a member holds on `fugaro`. Settled by Check 892.
-- U4. Whether any member-run command triggers Terraform on `fugaro` today. F7 says the code allows
-  it under IAM; Check 891's trace settles what actually happens.
+- U3. **Settled by Check 892 (2026-11-23).** `fugaro` has one principal in the grants node, an
+  admin, and no member. The admin holds what the legend says TF-admin, DB-admin and operator mean.
+  No member's IAM exists to read; a project with an operator needs the check run again.
+- U4. **Restated after Checks 891 and 892 (2026-11-23).** On `fugaro` no member exists, so no
+  member-run command can trigger Terraform there today. Check 891 ran as the admin and showed
+  that only three stages change with the directory, each a blocker report §4 names. Whether a
+  member's writer runs Terraform on a project that has members is still F7's answer from the
+  code: the IAM allows it.
+  It stays open until a project with an operator runs Check 891 as that operator.
