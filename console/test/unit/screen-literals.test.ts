@@ -1883,6 +1883,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'manage/shell.ts',
       'manage/types.ts',
       'new-bridge.ts',
+      'prewarm.ts',
       'screens/accountkeys.ts',
       'screens/coordinator.ts',
       'screens/credentialsservice.ts',
