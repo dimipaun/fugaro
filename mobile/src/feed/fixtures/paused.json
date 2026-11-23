@@ -1,0 +1,48 @@
+{
+  "note": "A paused run that fell back, recorded for VS4 of docs/model-credentials-routing (contract-pause.md C3, contract-table.md C1). Every value is invented: no installation is recorded here, and I2 replaces this file with what its end-to-end test records. `nodes` is a value per path the way fixtures/nodes.js records one, including the paths the database answers with nothing (null): the first is what the credentials service writes at paused/<slug>/<run>, the second is a run that never paused. `record` is the run's own result.json, whose stages[].fallback and cost.fallback_usd are C1's members -- the record is the runs bucket's and the phone cannot read it, so the test reads it here and nowhere else.",
+  "recorded_at": "2026-11-22T19:55:24Z",
+  "project": "fugaro",
+  "slug": "example-one-0123456789abcdef",
+  "run": "20261122-195524-8a7c",
+  "nodes": {
+    "paused/example-one-0123456789abcdef/20261122-195524-8a7c": {
+      "launcher": "10769150350006150715113082367",
+      "pool": "team",
+      "resume_at": 1795406520000,
+      "chain": "20261122-195524-8a7c",
+      "paused_seconds": 1800,
+      "cancelled": false
+    },
+    "paused/example-one-0123456789abcdef/20261121-090000-ffff": null
+  },
+  "record": {
+    "run_id": "20261122-195524-8a7c",
+    "repo": "example/one",
+    "status": "paused",
+    "stage": "implement",
+    "started_at": "2026-11-22T20:00:00Z",
+    "stages": [
+      {
+        "name": "implement",
+        "started_at": "2026-11-22T20:00:00Z",
+        "duration_s": 5400,
+        "source": { "kind": "pool", "name": "team" },
+        "fallback": true
+      },
+      {
+        "name": "review",
+        "started_at": "2026-11-22T21:30:00Z",
+        "duration_s": 300
+      }
+    ],
+    "cost": {
+      "model_usd": 1.1,
+      "compute_usd": 0.1,
+      "compute_estimated": false,
+      "total_usd": 1.2,
+      "estimate": false,
+      "model_basis": "gateway",
+      "fallback_usd": 0.35
+    }
+  }
+}

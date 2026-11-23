@@ -92,8 +92,9 @@
 # Knobs, all read with a default so an unset shell runs it as written:
 # CHECK570_SANDBOX, CHECK570_PROJECT, CHECK570_TOKEN_FILE,
 # CHECK570_NO_INSTALLATION_PROJECT, CHECK570_API (the portal's origin; the
-# staging default is the `fugaro-portal` hosting site's own Firebase domain, P9.2
-# — an origin typed from memory is how a check measures the wrong deployment),
+# staging default is the staging site's own domain, `app.staging.fugaro.dev`,
+# and the production one is `app.fugaro.dev` — P0.1, P9.2 — an origin typed from
+# memory is how a check measures the wrong deployment),
 # CHECK570_EXPECT_SEATS (1), CHECK570_PRODUCTION, CHECK570_DRY_RUN,
 # CHECK570_KEEP_SCRATCH, CHECK570_LOGIN_SECONDS (600: the bound on the login this
 # check runs, which is `fugaro licence login`'s own ten-minute code),
@@ -869,11 +870,14 @@ DRY_RUN=${CHECK570_DRY_RUN:-${DRY_RUN_CLI:-}}
 KEEP_SCRATCH=${CHECK570_KEEP_SCRATCH:-}
 EXPECT_SEATS=${CHECK570_EXPECT_SEATS:-$EXPECT_SEATS}
 API=${CHECK570_API:-${API_CLI:-}}
+# The portal's origin, per project (P0.1): `fugaro-portal-staging` serves
+# app.staging.fugaro.dev and `fugaro-portal` serves app.fugaro.dev, each site's
+# custom domain being the host the owner attached to it.
 if [ -z "$API" ]; then
   if [ "$PRODUCTION" = 1 ]; then
     API=https://app.fugaro.dev
   else
-    API=https://fugaro-portal.web.app
+    API=https://app.staging.fugaro.dev
   fi
 fi
 case "$API" in

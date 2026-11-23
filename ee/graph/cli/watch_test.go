@@ -626,8 +626,10 @@ func TestWatchSourceDownIsAStateNotAnExit(t *testing.T) {
 	t.Run("nothing is stored", func(t *testing.T) {
 		f := newGraphFixture(t)
 		// A project whose coordinator has never reconciled: the read answers
-		// with the runs half and the scope's state says so.
+		// with the runs half and the scope's state says so. That half is read
+		// from the index (IR3, F3).
 		f.seedRun(t)
+		f.indexing(t, indexEntry(indexedRunID, fcli.LsNow().UTC().Add(-time.Hour)))
 		fast(t, testFloor, testKeep)
 
 		sink := newWatchSink()
@@ -681,8 +683,8 @@ func TestWatchSourceDownIsAStateNotAnExit(t *testing.T) {
 }
 
 // TestWatchTransientReadFailureIsADownScopeAndIsRetried: the subscription is
-// up and the read behind a document fails — a database answering 503, a bucket
-// that refused a listing — which is a scope that is down and never the end of
+// up and the read behind a document fails — a database answering 503, a run
+// index that refused a query — which is a scope that is down and never the end of
 // the child (H3). The last document stays beside the state, the change stays
 // pending so the next floor reads again rather than waiting for something to
 // change, and the same child says up with the next sequence once the database

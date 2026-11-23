@@ -73,8 +73,8 @@ func TestSchemaVectorsReplay(t *testing.T) {
 		t.Fatalf("the vectors' key is %q: the file's own rule is a readable placeholder, never a credential", key)
 	}
 	cases := list(t, file["cases"], "cases")
-	if len(cases) != 25 {
-		t.Fatalf("vectors.json carries %d cases, not 25: the file, not the replay, is what changed", len(cases))
+	if len(cases) != 26 {
+		t.Fatalf("vectors.json carries %d cases, not 26: the file, not the replay, is what changed", len(cases))
 	}
 
 	for _, entry := range cases {
@@ -219,8 +219,8 @@ func TestRecordsNestedInRecordsValidate(t *testing.T) {
 			}
 		})
 	}
-	if accepted != 22 {
-		t.Fatalf("%d cases were accepted, not the 22 the schema accepts", accepted)
+	if accepted != 23 {
+		t.Fatalf("%d cases were accepted, not the 23 the schema accepts", accepted)
 	}
 }
 
@@ -255,8 +255,8 @@ func TestSchemaVectorDirectionPairs(t *testing.T) {
 func TestSchemaVectorRefusals(t *testing.T) {
 	file := loadVectors(t)
 	refusals := list(t, file["refusals"], "refusals")
-	if len(refusals) != 39 {
-		t.Fatalf("vectors.json carries %d refusals, not 39: the file, not the replay, is what changed", len(refusals))
+	if len(refusals) != 40 {
+		t.Fatalf("vectors.json carries %d refusals, not 40: the file, not the replay, is what changed", len(refusals))
 	}
 	for _, entry := range refusals {
 		vector := object(t, entry, "refusal")
@@ -464,7 +464,7 @@ func TestTheRefusalCodesNoRefusalVectorCarries(t *testing.T) {
 
 		// unknown-kind: the kind is a closed vocabulary of four.
 		{"a kind outside the four", message(Record{"kind": "nudge"}), false, CodeUnknownKind, "kind",
-			"the kinds are plain, prompt, answer and action, and nothing else"},
+			"the kind is a closed vocabulary, and a word outside it is not one"},
 
 		// duplicate-entry: two identical entries are one entry with two answers.
 		{"two identical options", message(Record{"kind": "prompt", "options": []any{"merge it", "merge it"}}), false, CodeDuplicateEntry, "options[1]",

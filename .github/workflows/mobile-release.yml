@@ -202,6 +202,7 @@ jobs:
       # The release gate below asks GitHub for the tagged commit's check-runs,
       # which is a read of the checks API and of nothing else.
       checks: read
+      actions: read # the gate lists the tag's workflow runs and reads their titles
     steps:
       # Full depth: the gate asks whether the tagged commit is reachable from
       # `origin/main`, and a shallow clone cannot answer that.
@@ -478,6 +479,7 @@ jobs:
     permissions:
       contents: read
       checks: read # the release gate below reads the commit's check-runs
+      actions: read # the gate lists the tag's workflow runs and reads their titles
     steps:
       # Full depth, for the same reason the iOS job's checkout is: the gate
       # below asks whether the tagged commit is reachable from `origin/main`.

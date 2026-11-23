@@ -31,13 +31,17 @@ workflows:
 
 // layerProfile is a project layer a repository names: the same workflow the
 // fixture declares, with a stage bound of its own, which is what a harness
-// that seeds the project layer sets the run's timeouts.stage from.
+// that seeds the project layer sets the run's timeouts.stage from. Its agent
+// defaults carry the pins a run must name to be priced — layeredRepo below
+// names no model of its own, and since the gateway runs in every mode (AB1b,
+// D3009) the price rule reaches every run, so the pins have to arrive from
+// the layer, which is where a real installation's do (config.ProjectLayer).
 const layerProfile = `version: 1
 project: aurora
 gcp_project: proj-1234
 defaults:
   git: { provider: github }
-  agent: { auth: api-key, review_rounds: 2 }
+  agent: { auth: api-key, review_rounds: 2, models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5, background: claude-haiku-4-5 } }
 profiles:
   app:
     commands:
@@ -97,8 +101,15 @@ func TestHarnessRunsTheStagesATestScripted(t *testing.T) {
 	if len(pr.Comments) == 0 {
 		t.Fatal("the run posted no report on the pull request")
 	}
-	if report := pr.Comments[len(pr.Comments)-1]; !strings.Contains(report, "**Cost:** model $1.50") {
-		t.Errorf("the report does not carry the run's own spend:\n%s", report)
+	// The two steps report 1 and 0.50 of their own, and none of it reaches the
+	// report: this is an api-key run, so it is behind the gateway (AB1b,
+	// D3009) and a gateway run's figure is the gateway's ledger, which the two
+	// steps leave at zero because neither makes an HTTP call. What a run that
+	// really spends looks like on the report is internal/runner's own tests',
+	// where a step calls through a fake upstream.
+	if report := pr.Comments[len(pr.Comments)-1]; !strings.Contains(report, "**Cost:** model $0.00") ||
+		strings.Contains(report, "model $1.50") {
+		t.Errorf("the report does not carry the run's spend as the gateway accounted it:\n%s", report)
 	}
 }
 

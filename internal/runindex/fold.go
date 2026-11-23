@@ -29,10 +29,6 @@ import (
 const (
 	// EntriesCollection holds one document per run, `runIndex/<run id>`.
 	EntriesCollection = "runIndex"
-	// SummaryCollection and SummaryDocument are the installation's one summary,
-	// `runIndexMeta/summary`.
-	SummaryCollection = "runIndexMeta"
-	SummaryDocument   = "summary"
 )
 
 // The estimate table's bounds. They are the ones `plan status` reads its own

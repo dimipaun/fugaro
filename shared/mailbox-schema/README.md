@@ -43,7 +43,7 @@ verifyMac({ …message, text: 'merge it' }, key, 'inbox');   // => false: the by
 | `mac` | string | **yes** (P6.3) | exactly 64 lowercase hex characters | §3.5, D169, D171, O7 — see below |
 | `acked` | boolean | no | — | D113's second phone write; **absent means not acked**, and it is **outside the tagged bytes** |
 | `agent` | string | no | 1–64 code units, an **identity string** | D161: one mailbox per account, the agent travels in the message. The same shape the heartbeat advertises (D163) |
-| `kind` | string | no | `message` · `prompt` · `answer` · `action` · `registration`; absent means `message` | D167, D169, §3.2, §3.5(b). P6.5/P6.7 map it to an acceptance window (D173) |
+| `kind` | string | no | `message` · `prompt` · `answer` · `action` · `registration` · `stop`; absent means `message` | D167, D169, §3.2, §3.5(b). P6.5/P6.7 map it to an acceptance window (D173) |
 | `options` | string[] | on a `prompt`, optional | 1–8 entries, each 1–200 code units, distinct, single-line | §3.2: the app reads them aloud and the answer names one by position |
 | `reply_to` | string | on an `answer`, optional on an `action` | a message id | D168 (as amended) for the answer; §3.5 for the action that settles a prompt |
 | `action` | object | on an `action` | the record below | D169's typed destructive command |
@@ -67,6 +67,7 @@ proves nothing.
 | `answer` | — | `reply_to` | the answer to a prompt; the chosen words are `text`, because the answer is *spoken*, not selected |
 | `action` | `reply_to` | `action` | D169's destructive command |
 | `registration` | `prefs` | `token`, `platform` | P5.2.1, §3.5(b): the phone's push registration, the **only** path that writes §3.4's node |
+| `stop` | — | — | P5.1g, Q10(c): the phone's **stop request** — the phone asking a human to stop what it is looking at. Nothing raises a prompt for it and nothing ever executes it — the human at the console or the laptop acts on the request — and it is not an `action` record, so it carries no verb and no confirmation |
 
 A field on the wrong kind is **`field-not-allowed`**, not an unknown field: two agents
 disagreeing about whether a message *is* an action is exactly the ambiguity this module
@@ -359,7 +360,7 @@ from a malformed write instead of seeing "no message" for both:
 | `too-few` | a list that is **present and empty**: a claim that says nothing |
 | `bad-character` | a control character (line breaks are allowed in `text`, not in a single-line field), DEL, an unpaired surrogate, U+2028/U+2029, or a character outside a run id's, a repository's or an identity string's alphabet |
 | `bad-timestamp` | `at` is **a number but not a time**: a float, `NaN`, `Infinity`, `-1` |
-| `unknown-kind` | a `kind` outside `message` · `prompt` · `answer` · `action` · `registration` |
+| `unknown-kind` | a `kind` outside `message` · `prompt` · `answer` · `action` · `registration` · `stop` |
 | `unknown-verb` | an action's verb outside `cancel` · `merge` · `confirm` |
 | `unknown-platform` | a registration's `platform` outside `ios` · `android` |
 | `field-not-allowed` | a field on a kind of message that does not carry it (a `reply_to` on a prompt, an `action` on an answer, a head SHA on a cancel) |

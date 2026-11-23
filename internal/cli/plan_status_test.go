@@ -95,11 +95,13 @@ const statusStreams = `streams:
 
 // planStatusRig is a checkout of acme/app — the fixture's own repository, so a
 // run of the fixture's bucket joins its plans — carrying one graph artifact and
-// the streams catalogue.
+// the streams catalogue, with a run index the read is pointed at (planIndexFake,
+// in plan_status_index_test.go).
 func planStatusRig(t *testing.T, graph string) *cloudFixture {
 	t.Helper()
 	// Before any git runs: CI has no identity of its own.
 	testutil.IsolateGit(t)
+	installPlanIndex(t)
 	f := newCloudFixture(t)
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
@@ -132,14 +134,25 @@ func checkoutDir(t *testing.T) string {
 	return dir
 }
 
-// runDay is the day these tests mint their run ids on. The read lists the runs
-// the bucket still holds — its lifecycle age — so a run id dated against another
-// day is one the read never sees, and every run these tests seed is dated today.
+// runDay is the day these tests mint their run ids on. A run id is its run's
+// own launch order, so this is what puts today's runs after yesterday's.
 func runDay() string { return time.Now().UTC().Format("20060102") }
 
 // seedPlanRun is a run of the fixture's repository whose launch recorded
-// planTask, with rec as its result.json when one is given.
+// planTask, with rec as its result.json when one is given. It is written where
+// the run left it — its own objects — and folded into the index, because the
+// index is where this read's runs come from (D3205). A test that wants one of
+// the two without the other calls seedRunObjects or seedIndexRun directly.
 func seedPlanRun(t *testing.T, f *cloudFixture, id, planTask string, rec *runstore.Record) {
+	t.Helper()
+	seedRunObjects(t, f, id, planTask, rec)
+	seedIndexRun(t, id, planTask, rec)
+}
+
+// seedRunObjects writes a run's own objects — its task, its execution and its
+// launch, and its result.json when it has one — and folds nothing into the
+// index.
+func seedRunObjects(t *testing.T, f *cloudFixture, id, planTask string, rec *runstore.Record) {
 	t.Helper()
 	ctx := context.Background()
 	b, err := blob.OpenBucket(ctx, f.bucket)
@@ -362,7 +375,8 @@ func TestPlanStatusRunningNodeShowsRecordPR(t *testing.T) {
 // What this pins is the claim: the run joins nothing, so its stage is never read
 // at all. TestPlanStatusSanitisesAJoinedStage is the one that pins safetext.Field
 // on the stage of a run that does join. Mutation caught: opening launch.json
-// here rather than reading the row the run reader already sanitised.
+// here rather than reading the id the row or the index entry already had
+// shape-checked.
 func TestPlanStatusIgnoresAMisshapenPlanTask(t *testing.T) {
 	testutil.FakeCommand(t, "gh", "echo OPEN\n")
 	f := planStatusRig(t, statusGraphOne)
@@ -466,8 +480,8 @@ func TestPlanStatusSumsEveryPlan(t *testing.T) {
 // that claims no task of any plan here — one with no plan task at all, and one
 // claiming another plan — is never looked up, so the cost of a command the
 // console calls to draw a graph follows the plans rather than the repository's
-// whole run history. Mutation caught: handing planMerges every row the listing
-// produced instead of plan.JoinedRuns.
+// whole run history. Mutation caught: handing planMerges every run the index
+// answered with instead of plan.JoinedRuns.
 func TestPlanStatusLooksUpOnlyJoinedRuns(t *testing.T) {
 	calls := mergedGH(t)
 	f := planStatusRig(t, statusGraphOne)
@@ -488,32 +502,34 @@ func TestPlanStatusLooksUpOnlyJoinedRuns(t *testing.T) {
 	}
 }
 
-// TestPlanStatusReadsOnlyTheRunsTheBucketHolds: the listing is bounded by the
-// runs bucket's own age, the window `run --pr` reads with. A run older than that
-// has been deleted with its run, so it cannot join anything and is not looked up
-// either. Mutation caught: a listing with no bound at all, which reads — and
-// looks up — everything the repository has ever launched.
-func TestPlanStatusReadsOnlyTheRunsTheBucketHolds(t *testing.T) {
+// TestPlanStatusReadsRunsPastTheBucketsLife: the runs this read joins are the
+// index's, so a run older than the bucket's own age — the ninety-day window
+// `run --pr` reads with, past which its objects are gone — still joins its task
+// and is still looked up. What bounds the read is the checkout's plans, not the
+// bucket's lifecycle (D3205, F1). Mutation caught: a read that joins from a
+// listing of the bucket's objects, which has forgotten exactly the runs a
+// plan's history is made of.
+func TestPlanStatusReadsRunsPastTheBucketsLife(t *testing.T) {
 	calls := mergedGH(t)
-	f := planStatusRig(t, statusGraphOne)
+	planStatusRig(t, statusGraphOne)
 	old := time.Now().UTC().Add(-followUpLookback - 24*time.Hour).Format("20060102")
-	seedPlanRun(t, f, old+"-090000-aaaa", "plan/R", &runstore.Record{
+	seedIndexRun(t, old+"-090000-aaaa", "plan/R", &runstore.Record{
 		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady,
 		PR: &runstore.PRRef{Number: 1, URL: "https://github.com/acme/app/pull/1"},
 	})
 
-	doc, _ := planStatusJSON(t)
+	doc, _ := planStatusJSON(t, "--all")
 	p := doc.Plans[0]
-	if p.Open != 1 || p.Closed != 0 {
-		t.Errorf("plan = %d open, %d closed, want the task open: its run is past the bucket's life", p.Open, p.Closed)
+	if p.Closed != 1 || p.Open != 0 {
+		t.Errorf("plan = %d closed, %d open, want the task closed: its run is in the index however old it is", p.Closed, p.Open)
 	}
 	for _, n := range p.Nodes {
-		if n.State != plan.StateReady || n.Run != "" {
-			t.Errorf("node = %+v, want ready and unjoined: its run is past the bucket's life", n)
+		if n.State != plan.StateDone || n.Run == "" {
+			t.Errorf("node = %+v, want done and joined: the index keeps a run the bucket has forgotten", n)
 		}
 	}
-	if asked := ghLookups(t, calls); len(asked) != 0 {
-		t.Errorf("gh was asked %q, want nothing: no run the bucket holds carries a pull request", asked)
+	if asked := ghLookups(t, calls); len(asked) != 1 || !strings.Contains(asked[0], " view 1 ") {
+		t.Errorf("gh was asked %q, want the old run's own pull request (1)", asked)
 	}
 }
 
@@ -799,13 +815,7 @@ const statusTieredGraph = `{
 // from.
 func seedHistoryRun(t *testing.T, f *cloudFixture, id string, tr tier.Tier, minutes, usd float64) {
 	t.Helper()
-	start := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
-	end := start.Add(time.Duration(minutes) * time.Minute)
-	seedPlanRun(t, f, id, "", &runstore.Record{
-		Status: runstore.StatusSucceeded, StartedAt: start, FinishedAt: &end,
-		Tier: &runstore.TierRecord{Tier: tr}, Rigor: &runstore.RigorRecord{Level: rigor.Pro},
-		Cost: &runstore.Cost{TotalUSD: usd},
-	})
+	seedPlanRun(t, f, id, "", historyRecord(tr, minutes, usd))
 }
 
 // TestPlanStatusPrintsEstimateLine: the read estimates the plan it has just

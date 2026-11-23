@@ -3988,7 +3988,7 @@ cached brief, which the stream re-reads on every document it writes.
 consume.
 
 Exit codes: 1 for a refused scope or a project with no database, 2 for a
-failure of the database or the runs bucket.
+failure of the database or the run index.
 
 Usage: `fugaro graph`
 
@@ -5436,9 +5436,9 @@ command with no flags records a figure rather than asking for one (design
 D2212 and D2211). The amount is the budget ALERT amount the installation's
 Terraform creates and nothing else — this command does not create or change a
 budget, and it makes no billing call. The alert itself is the installation's
-own Terraform and belongs to the fugaro update that applies it, not to this
+own Terraform and belongs to the update step of that installation, not to this
 object — fugaro update --budget N --budget-currency CCC --billing-account ID
-applies the amount this command records. Nothing else is a question: the bound
+sets the amount this command records. Nothing else is a question: the bound
 on
 billable image builds this object used to record (D1013) is gone (D1543), so
 there is no count to ask the owner for and none to write, exactly as fugaro
@@ -6692,7 +6692,7 @@ Print every plan's tasks, joined to the runs working on them
 
 Print every plan's graph under docs/, with each task's state from the runs.
 
-A task's state joins the graph to the runs bucket of the selected project:
+A task's state joins the graph to the runs the project's index holds:
 running with the stage of the run working on it, done when the run's pull
 request is merged, cancelled when the task's only run was, blocked while a
 task it needs is not done, ready when the work can start (the task a launch
@@ -6703,11 +6703,11 @@ is a run of this checkout's own repository: a run of another repository
 naming the same task is ignored. The join is display-only — nothing here
 makes another plan's task ready.
 
-Every run the bucket still holds (ninety days) is listed. Only the runs that
-join a task of a plan here have their pull requests looked up, so the
-lookups cost what the plans hold rather than what the repository's history
-holds, and one read asks about at most 32 pull requests, the newest runs'
-first.
+The runs come from the run index, one query per task of the plans here, so
+the read costs what the plans hold rather than what the repository's history
+holds, and a task's runs are listed however old they are. Only the runs that
+join a task of a plan here have their pull requests looked up, and one read
+asks about at most 32 pull requests, the newest runs' first.
 
 Whether a pull request is merged is asked of your own gh, when it is
 installed, and only about a pull request of this checkout's own
@@ -6715,6 +6715,10 @@ repository: a run that recorded another repository's pull request is not
 merged here. Where gh cannot answer (a Bitbucket repository, no gh, a
 lookup that failed, one past the 32) a task whose run recorded a ready pull
 request shows done with the mark "merge unknown" rather than nothing.
+
+--no-merges does not ask your gh at all: every task whose run recorded a
+ready pull request reads the same way, and the document says merges_read is
+false. It is the read a screen paints before merge state.
 
 Two artifacts that would be one plan id — docs/plans/foo.graph.json and
 docs/plans/foo/bar.graph.json both give plans/foo — cannot be joined apart,
@@ -6734,6 +6738,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for status |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--no-merges` | bool | `false` | no | spawn no gh: every task whose run recorded a ready pull request reads merge unknown |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -7313,7 +7318,10 @@ will change, asks once for the project's name, and then does each step as
 far as it can:
 
   1. the repository's own fugaro.yaml: read, never written
-  2. this machine's project config: the repository's repos: entry
+  2. this machine's project config: the repository's repos: entry (and, when
+     its fugaro.yaml names a Claude account by agent.oauth_token, the
+     repository in that one account's allow_data_to, which the next
+     update's publish requires; no other account's list is touched)
   3. this machine's project config: its repo-to-image mapping
   4. the published policy's allow_repos
   5. the publish of the policy node (fugaro update's policy stage)
@@ -7486,11 +7494,13 @@ The repos.* scalars and lists are the generic writer's (D1173):
     fugaro settings set repos.acme/app.base_branch main
     fugaro settings set repos.acme/app.workflows --add docs
 
-The write and the publish are one act, as they are for the same keys through
-fugaro settings set: the keys land in this machine's project config and the
-policy node they are served from is published by this same command, so no second
-command is needed. --no-apply saves the write and leaves the publish to fugaro
-apply.
+The write and the publish are one act, through the same chain fugaro settings
+set runs for a key it writes: the keys land in this machine's project config and
+the policy node they are served from is published by this same command, so no
+second command is needed. A repository's workflows selection is a key the
+generic writer spells too; a profile's seven keys are not, and the generic path
+refuses them and names this command's family instead (D853). --no-apply saves
+the write and leaves the publish to fugaro apply.
 
 This write is a person's own: a coding agent's session is refused it, in a
 managed project by that project's gate.
@@ -9047,20 +9057,25 @@ sanitises to the same text is never counted in it and your own row can be
 smaller than that key's row in the full table.
 
 A window can hold every run of every repository in the bucket, so the read is
-bounded: at most --max-runs records are read per call, newest first, and a window
+bounded: at most --max-runs runs are read per call, newest first, and a window
 holding more says so in the output rather than publishing figures over a part of
 itself silently. The bound is on the read, not on a person: the newest --max-runs
 runs are taken before any view is applied, so a private view can be over fewer of
 the caller's own runs than --max-runs suggests. A run with neither a launch nor a
-record -- never launched, cancelled before launch, or a stale claim -- never
-started and is counted in no figure. The count of those is the window's, over
-everyone's runs, and is no more the caller's own than the truncation is.
+record, and no status settled for it -- never launched, cancelled before launch,
+or a stale claim -- never started and is counted in no figure. The count of those
+is the window's, over everyone's runs, and is no more the caller's own than the
+truncation is. The rows come from the run index -- one page of entries for the
+window, and no run object read at all -- which index_complete reports: it is false
+while the index has not finished a walk, when the run records are read instead,
+over the same window and with the same figures.
 
 --json prints {version, project, by, view, you, admin, since, until, max_runs,
-truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,
-currency, runs, succeeded, failed, halted, infra_error, other, no_record,
-counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the counts add up:
-runs == succeeded + failed + halted + infra_error + other + no_record.
+truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals
+carry {user, currency, runs, succeeded, failed, halted, infra_error, other,
+no_record, counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the
+counts add up: runs == succeeded + failed + halted + infra_error + other +
+no_record.
 
 Usage: `fugaro runs stats`
 
@@ -10553,7 +10568,6 @@ Flags:
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
 | `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal) |
 | `--operator` | stringArray | `[]` | no | an IAM member who may start and watch runs (the operator role; repeatable; default: the local config's, and for a new config you, the authenticated user) |
-| `--orchestrator` | bool | `false` | no | with --firebase-project, opt the installation in to the resident orchestrator (docs/mobile/design/always-on-orchestrator.md, P5.1): the fugaro-orch service account with exactly the grants that design's section 4.3 table lists — the launcher's project role, the runs bucket's conditioned write and its unconditioned read, iam.serviceAccounts.signJwt on the budget signer (the widest grant there is: a holder may mint any identity in the installation), the job runner's role on each of the installation's jobs and roles/run.invoker on the credentials service — the fugaro-orch-pairing secret container, the Cloud Run service that account runs (min-instances = 0, woken by a Scheduler tick) and a Scheduler job per minute. Nothing creates any of it by default, and it is refused where the installation has no credentials service, no Firebase backend or no released image to pin. The opt-in is recorded in the installation root's tfvars (its orchestrator block) by the same command, so later runs keep it and move only the image inside it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--parent` | string | "" | no | on a first run, which creates the project: organizations/<number> or folders/<number> to create it under (default: no parent; an organization is never guessed) |
 | `--plan-only` | bool | `false` | no | stop after showing the plan (it creates nothing) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
@@ -10562,7 +10576,7 @@ Flags:
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (setup does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
-| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
+| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names an image the release source never published (a customised or hand-pushed history:latest needs it once; the image of an earlier release needs no flag, and is moved on its own). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
 | `--repo` | bool | `false` | no | onboard the repository of the checkout at PATH (default: the current directory) instead of the installation |
 | `--retire` | bool | `false` | no | with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; no flag, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply |
 | `--rigor` | string | "" | no | answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set |
@@ -10850,14 +10864,13 @@ Flags:
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
 | `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal) |
 | `--operator` | stringArray | `[]` | no | an IAM member who may start and watch runs (the operator role; repeatable; default: the local config's, and for a new config you, the authenticated user) |
-| `--orchestrator` | bool | `false` | no | with --firebase-project, opt the installation in to the resident orchestrator (docs/mobile/design/always-on-orchestrator.md, P5.1): the fugaro-orch service account with exactly the grants that design's section 4.3 table lists — the launcher's project role, the runs bucket's conditioned write and its unconditioned read, iam.serviceAccounts.signJwt on the budget signer (the widest grant there is: a holder may mint any identity in the installation), the job runner's role on each of the installation's jobs and roles/run.invoker on the credentials service — the fugaro-orch-pairing secret container, the Cloud Run service that account runs (min-instances = 0, woken by a Scheduler tick) and a Scheduler job per minute. Nothing creates any of it by default, and it is refused where the installation has no credentials service, no Firebase backend or no released image to pin. The opt-in is recorded in the installation root's tfvars (its orchestrator block) by the same command, so later runs keep it and move only the image inside it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--plan-only` | bool | `false` | no | stop after showing the plan (it creates nothing) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (update does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
-| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
+| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names an image the release source never published (a customised or hand-pushed history:latest needs it once; the image of an earlier release needs no flag, and is moved on its own). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
 | `--repo` | bool | `false` | no | onboard the repository of the checkout at PATH (default: the current directory) instead of the installation |
 | `--retire` | bool | `false` | no | with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; no flag, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply |
 | `--rigor` | string | "" | no | answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set |
