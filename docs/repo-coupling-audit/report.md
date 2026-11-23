@@ -98,7 +98,7 @@ each is a §4 blocker:
   the policy was already published. Their "varies" stays from the code. So does `plugin` (RC38):
   none of the three checkouts holds a pin.
 
-Both repos' newest launches went to the repo's own job (RC76): `fugaro-dimipaun-fugaro-go-…` and
+Both repos' newest launches went to the repo's own job (RC76): the one named for `dimipaun/fugaro`'s `go` workflow and
 `fugaro-edgeappinc-fugarosandbox-web-…`. None went to a shared `fugaro-p-…` job. **Shared jobs are
 not in use on `fugaro`**, so every L2 blocker is live there today.
 

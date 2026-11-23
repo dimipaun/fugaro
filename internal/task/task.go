@@ -104,12 +104,6 @@ type Spec struct {
 	// terminal line and a pull request's title, and neither may be forged
 	// by the text of a title.
 	Title string `json:"title,omitempty"`
-	// TitleDefaulted marks a Title the launcher made up (a follow-up whose
-	// pull request's name could not be read) rather than one a person or the
-	// host gave: a job image too old to read a title drops it, where a title
-	// somebody wrote is refused. It is the launcher's own fact and is never
-	// stored.
-	TitleDefaulted bool `json:"-"`
 	// PlanTask is the plan task this run works on, from fugaro run
 	// --plan-task: the id of one task in one plan, as the plan's own graph
 	// artifact spells it ("setup-wizard/W1.3"; a plan under docs/plans/ is

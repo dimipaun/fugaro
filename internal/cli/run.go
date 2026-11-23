@@ -7350,17 +7350,17 @@ func gitUserName(ctx context.Context) string {
 }
 
 // dropDefaultedTitle lets a launch whose job image cannot read a title go on
-// without the one the launcher made up for a follow-up (Follow-up of PR #N):
-// the run is then listed by its own instructions, as before the default
-// existed. It answers false for a title a person or the host gave, which the
+// without the one the launcher made up for a follow-up (Follow-up of PR #N,
+// followUpDefaultTitle): the run is then listed by its own instructions, as
+// before the default existed. It answers false for any other title, which the
 // gate still refuses.
 func dropDefaultedTitle(spec *task.Spec, warn io.Writer) bool {
-	if !spec.TitleDefaulted {
+	if !spec.IsFollowUp() || spec.Title != followUpDefaultTitle(spec.PR) {
 		return false
 	}
-	spec.Title, spec.TitleDefaulted = "", false
+	spec.Title = ""
 	if warn != nil {
-		fmt.Fprintln(warn, "note: the job image predates job titles, so this run carries none; fugaro update rebuilds it")
+		fmt.Fprintln(warn, "note: the job image predates job titles, so this run carries none")
 	}
 	return true
 }
