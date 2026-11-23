@@ -26,7 +26,12 @@ import (
 // each work's own docs tests carry it for its own numbers; these are 390–392's.
 const (
 	compositeChecksPlan = "docs/composite-commands/implementation-plan.md"
-	compositeChecksRel  = "docs/releases/v0.28.0.md"
+	// The next CLI release, from docs/release-streams.yaml (current 0.28.0, so
+	// 0.29.0 "Zander" is next). A feature writes its bullets into the notes of
+	// the release it ships in BEFORE the cut — that is how v0.28.0's own file
+	// grew, and how docs_checks_500_501_test.go's release file was written —
+	// and when the release is cut this constant moves with the next one.
+	compositeChecksRel = "docs/releases/v0.29.0.md"
 )
 
 // compositeChecks is each check's number and the script and sibling test the
@@ -143,39 +148,38 @@ func TestDocsCheck392SaysWhyItCannotRunOnAManagedProject(t *testing.T) {
 	}
 }
 
-// TestDocsCompositeReleaseNotesCarryTheOperatorLine: the release notes of the
-// version this work ships in state what a management command now does, and their
-// `### For operators` is the whole upgrade and nothing more — `fugaro update`
-// (the rule the release notes' own README states, and the rule that no release
-// may ship a second operator command).
-func TestDocsCompositeReleaseNotesCarryTheOperatorLine(t *testing.T) {
+// TestDocsCompositeReleaseNotesCarryTheReleaseActions: the notes of the release
+// this work ships in state what a management command now does — one command runs
+// the steps its change owes, `--no-apply` stops it, and a step that cannot run
+// costs the run and not the work — and, where they carry an operator section at
+// all, it is the whole upgrade and nothing more: `fugaro update`, and no second
+// operator command (the rule docs/releases/README.md states).
+//
+// The section and the end-user summary line of a release the CLI stream has not
+// reached are written by the pull request that cuts it, so this test asserts
+// neither about the release these bullets are waiting in — an operator step this
+// work does not add is a step nobody owes yet.
+func TestDocsCompositeReleaseNotesCarryTheReleaseActions(t *testing.T) {
 	notes := readDoc(t, compositeChecksRel)
 	flat := strings.ToLower(flattenDoc(notes))
 	for _, want := range []string{
-		// The two sentences an operator reads to know what changed: one command
-		// runs its own steps, and a step that cannot run costs the run and not
-		// the work.
+		// What a management command does now: it runs the steps that make its
+		// change live, so no second command is needed (**D1561**).
+		"runs the steps that make its change live",
 		"`--no-apply` saves the change and stops",
-		"leaves the change saved and the step owed",
 		"fugaro apply",
-		// The operator line itself, and the promise that nothing else is asked
-		// for. The release notes carry exactly one operator step and it is this
-		// command.
-		"### for operators",
-		"run `fugaro update` once",
-		"there is no second command",
+		// The failure path: the change is saved, the step is owed and the run
+		// is the thing that is lost (**D1563**).
+		"leaves the change saved and the step owed",
 	} {
 		if !strings.Contains(flat, want) {
-			t.Errorf("%s does not say %q: AP10 writes the release actions, and the operator line is `fugaro update` and nothing else", compositeChecksRel, want)
+			t.Errorf("%s does not say %q: AP10 writes the release actions, and a reader has to be able to tell what changed for them", compositeChecksRel, want)
 		}
 	}
 
-	// The summary line is due in the PR that cuts the release, not in the task
-	// that writes its notes: the summaries file carries one entry per released
-	// version at or below the CLI stream's current, and v0.28.0 is above it.
-	// A line added here would announce a release nobody cut.
-	summaries := readDoc(t, "website/data/release-summaries.yaml")
-	if strings.Contains(summaries, "v0.28.0:") {
-		t.Errorf("website/data/release-summaries.yaml carries a v0.28.0 line: the line is due in the pull request that cuts the release, not in the task that writes its notes")
+	if i := strings.Index(flat, "### for operators"); i >= 0 {
+		if !strings.Contains(flat[i:], "fugaro update") {
+			t.Errorf("%s carries a `### For operators` section that does not name `fugaro update`: the section of a release is the whole upgrade and nothing more", compositeChecksRel)
+		}
 	}
 }
