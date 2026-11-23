@@ -38,7 +38,9 @@
         "paths": [
           "internal/versionstamp/source.go",
           "internal/versionstamp/cache.go",
-          "internal/versionstamp/source_test.go"
+          "internal/versionstamp/source_test.go",
+          "internal/versionstamp/schema_test.go",
+          "docs/ci-affected-tests/read-map.json"
         ]
       }
     },
@@ -53,6 +55,7 @@
         "prediction": true,
         "paths": [
           "internal/initflow/stage.go",
+          "internal/initflow/loop.go",
           "internal/cli/update_version_stamp.go",
           "internal/cli/update_version_stamp_test.go",
           "internal/cli/init_stages.go",
@@ -71,9 +74,10 @@
         "prediction": true,
         "paths": [
           "internal/cli/update_managed.go",
+          "internal/cli/update_version_stamp.go",
           "internal/cli/update_in_flight_test.go",
           "docs/design/update-in-flight.md",
-          "internal/cli/policy_delete_keeps_stamp_test.go"
+          "internal/cli/update_version_stamp_gate_test.go"
         ]
       }
     },
@@ -170,7 +174,8 @@
           "scripts/live_checks_test.go",
           "docs/gcp-live-checklist.md",
           "docs/coordinator/README.md",
-          "docs/periodic-reviews/README.md"
+          "docs/periodic-reviews/README.md",
+          "docs/ci-affected-tests/read-map.json"
         ]
       }
     },
@@ -194,7 +199,7 @@
     },
     {
       "id": "T7",
-      "title": "the working skill names the refusal",
+      "title": "the required-CLI refusal in the working skill, and its last-resort recovery",
       "run": null,
       "version": null,
       "tier": "trivial",
@@ -202,7 +207,8 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "plugin/skills/working/SKILL.md"
+          "plugin/skills/working/SKILL.md",
+          "docs/release.md"
         ]
       }
     },

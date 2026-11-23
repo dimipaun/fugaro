@@ -11,11 +11,16 @@ The answers that shaped it, all 2026-11-23:
 - There is no way to lower the stamp (D3262).
 - A cached stamp is trusted for 15 minutes (D3263).
 - Read failures fail open, except a cached stamp above the binary and a malformed stamp, which
-  refuse (D3264).
+  refuse (D3264, bounded by D3268).
 - Console read paths are exempt and print one stderr line (D3265).
 - An `update` from a binary below the stamp refuses before its first write (D3266).
 - A coding agent's `update` raises the stamp under the managed gate: `version-stamp` joins
-  `gatedStages`, like `rules` (D3267).
+  `gatedStages`, like `rules` (D3267). **Amended after review:** it raises only once the
+  installation has converged, and it goes through its own `gateStep`. The owner is to confirm the
+  amendment (O4).
+- The stamp is bounded (D3268). `update` writes only a published release, no newer than the newest
+  tag `updatecheck` sees. A cached value above the binary refuses on its own for 15 minutes; after
+  that, only a re-read that confirms it refuses.
 
 ## 1. Conventions every task follows
 
@@ -28,6 +33,12 @@ no-prompt policy, "a field never changes meaning", tested docs), `docs/no-prompt
   - Keep tests hermetic: `internal/gcpfake` for the database, `t.TempDir()` with `XDG_CACHE_HOME`
     pointed into it for the cache, and no home directory.
   - A doc change runs `go test ./internal/cli/ -run Docs -count=1`.
+  - A task whose tests add a literal repository-path read regenerates
+    `docs/ci-affected-tests/read-map.json` with `go run ./scripts/ci-readmap`, which `TestReadMap…`
+    (`internal/ciselect`) checks. In this plan, T1 (the schema) and K2 (the check scripts) do, at
+    different levels. Every other task reads its fixtures from `t.TempDir()`. A task that finds it
+    needs a new literal read raises it, rather than writing the map in a level that already has a
+    writer.
   - The refusal sentence comes from the contract and nowhere else.
   - Every exemption is keyed by command path, never by name (R6).
 - **Ask first.** A new dependency. A change to a contract file: raise a contract change (§6).
@@ -53,6 +64,10 @@ no-prompt policy, "a field never changes meaning", tested docs), `docs/no-prompt
 | A run in flight keeps running | T2b `TestUpdateLeavesARunInFlightRunning` with the stamp raised mid-run |
 | The unit's daemon never crash-loops on the stamp | T6 `TestDaemonBelowTheStampHoldsUnderAUnit` |
 | `dev` neither checks nor writes | T2a `TestDevBuildLeavesTheStampAlone`, T3 `TestDevBuildSkipsTheFence` |
+| The stamp rises only once the installation has converged (D3267 as amended) | T2a `TestStampHoldsWhilePolicyIsHeld`, `TestStampHoldsWhileCredentialsServiceIsSkipped` |
+| An agent session's raise is judged and audited | T2b `TestAgentSessionStampRaiseWritesTheAuditRecord` |
+| A database that is not this installation's is never stamped | T2a `TestStampStageSkipsAnUnadoptedDatabase` |
+| Only a published release is written, and a stale cached value is re-read before it refuses (D3268) | T2a `TestStampNotRaisedAboveTheNewestRelease`, T1 `TestStaleCachedStampAboveBinaryNeedsAReRead` |
 | No prompt anywhere | T2a runs the stage under the no-prompt harness with stdin closed |
 
 Review focus: the exempt table (T3), the gate entry (T2b), the door check's position (T4) and the
@@ -76,7 +91,9 @@ contract's sentence and schema (C1).
     reason it could not read).
 
   The contract also holds:
-  - `schemas/required-cli.schema.json`, closed at every level, and a test that holds it to `Decode`;
+  - `schemas/required-cli.schema.json`, closed at every level. The test that holds it to `Decode` is
+    T1's, because it reads the schema by a literal path and so must regenerate the read-map, which is
+    no contract's file;
   - `docs/required-version-stamp/contract.md`, which says what a writer and a reader may rely on;
   - a stub `New(Options) Source` that answers "no stamp";
   - `internal/cli/required_cli_source.go`, the one seam `newStampSource = versionstamp.New` that every
@@ -87,10 +104,10 @@ contract's sentence and schema (C1).
   is six files; the sixth is a one-line seam.
 - Interfaces: produces everything above. Consumed by T2a, T3, T4, T5, T6 and K1. T1 builds the other
   side.
-- Tests: `TestStampDecodesStrictly`, `TestSchemaAgreesWithDecode`, `TestBelowIsFalseForDev`,
-  `TestBelowErrorIsTheSpecSentence`, `TestStubSourceFindsNoStamp`.
+- Tests: `TestStampDecodesStrictly`, `TestBelowIsFalseForDev`, `TestBelowErrorIsTheSpecSentence`,
+  `TestStubSourceFindsNoStamp`.
 - Command: `go test ./internal/versionstamp/ -count=1`
-- Red step: `TestSchemaAgreesWithDecode` fails while the schema accepts a key `Decode` refuses.
+- Red step: `TestStampDecodesStrictly` fails while an unknown key decodes.
 - Depends on: none.
 - Commit: `versionstamp: the required-CLI stamp contract (C1, R10)`
 - Reviewer tier: opus, mandatory independent review (`fugaro review --pr N`) before any side is
@@ -105,23 +122,30 @@ contract's sentence and schema (C1).
   - It keeps one cache file per RTDB URL (the URL hashed) under `localcfg.UserDir(...,
     localcfg.DirCache)/fugaro/`. The file holds the stamp value, never a verdict.
   - A cache entry younger than 15 minutes is used without a read (D3263). A cached value above the
-    binary refuses with no read at all.
+    binary refuses with no read only while it is younger than 15 minutes. Past that, it refuses only
+    if a re-read confirms it (D3268).
   - An unreachable database, a timeout, missing credentials or a denied read is a `Result` with its
-    reason and no error. The cached value still applies.
+    reason and no error. A cached value younger than 15 minutes still applies; an older one does not
+    refuse on its own.
   - A malformed stamp is `*MalformedError`.
   - `Fresh` skips the cache for the read and writes it afterwards.
   - A corrupt or oversized cache file counts as no cache (`updatecheck.readBounded`'s rule).
+  - `TestSchemaAgreesWithDecode` holds `schemas/required-cli.schema.json` to C1's `Decode`, both
+    ways.
 - Files: `internal/versionstamp/source.go` (new), `internal/versionstamp/cache.go` (new),
-  `internal/versionstamp/source_test.go` (new).
+  `internal/versionstamp/source_test.go` (new), `internal/versionstamp/schema_test.go` (new), and
+  `docs/ci-affected-tests/read-map.json`, regenerated for the schema's literal read.
 - Interfaces: consumes C1's types. Produces `newSource`, which I1 exposes as `New`.
 - Tests: `TestUnreachableDatabasePasses`, `TestTimeoutIsTwoSeconds`,
-  `TestCachedStampAboveBinaryRefusesWithoutARead`, `TestFreshCacheSkipsTheRead`,
+  `TestCachedStampAboveBinaryRefusesWithoutARead`, `TestStaleCachedStampAboveBinaryNeedsAReRead`,
+  `TestStaleCachedStampPassesWhenTheReReadFails`, `TestFreshCacheSkipsTheRead`,
   `TestStaleCacheReads`, `TestMalformedStampRefuses`, `TestDeniedReadPassesWithItsReason`,
-  `TestCorruptCacheIsNoCache`, `TestFreshQueryIgnoresTheCache`, `TestCacheIsPerDatabase`.
-- Command: `go test ./internal/versionstamp/ -run 'Source|Cache|Unreachable|Timeout|Malformed|Denied|Fresh' -count=1`
+  `TestCorruptCacheIsNoCache`, `TestFreshQueryIgnoresTheCache`, `TestCacheIsPerDatabase`,
+  `TestSchemaAgreesWithDecode`, and `TestReadMap…` in `internal/ciselect`.
+- Command: `go test ./internal/versionstamp/ -run 'Source|Cache|Unreachable|Timeout|Malformed|Denied|Fresh|Schema' -count=1 && go test ./internal/ciselect/ -run TestReadMap -count=1`
 - Red step: `TestCachedStampAboveBinaryRefusesWithoutARead` fails on a fake that counts reads.
 - Depends on: C1 (the types it implements).
-- Commit: `versionstamp: the cached, fail-open reader (T1, D3263, D3264)`
+- Commit: `versionstamp: the cached, fail-open reader (T1, D3263, D3264, D3268)`
 - Reviewer tier: standard.
 
 ### T2a: the `version-stamp` stage
@@ -131,7 +155,16 @@ contract's sentence and schema (C1).
   - The stage is `SelfConfirming` and confirms through `confirmStageWrite` with no prompt (R2). It is
     not in `runCovered`, and `cliStages` gets its row.
   - It is registered in `initStages` for both doors.
-  - Its `Check` reads the node and is done when the stored `min` is not below `Version`.
+  - Its `Check` first asks `budgetDBUnadopted` (`internal/cli/init_rules_stage.go`) and skips with
+    that function's sentence when the database is not this installation's (F22). It then reads the
+    node and is done when the stored `min` is not below `Version`.
+  - It holds (`Skipped`, `Undone`, with a line naming the stage it waits for) while any earlier stage
+    of this run answered `Skipped` with `Undone`, or while the credentials service is not at this
+    release (`credentialsImageStale`) (D3267 as amended, F20). The loop hands the stage the earlier
+    stages' undone skips through a `PriorUndone` call, delivered the way `PastStops` is.
+  - It writes only a published release (D3268): a `Version` that `updatecheck.Valid` accepts and that
+    is no newer than the newest release `updatecheck` sees. Otherwise it leaves the stamp unchanged,
+    with a line that says why.
   - Its `Apply` writes through `GetETag` and `PutIfMatch`, retries on a lost race, keeps the higher of
     the stored and the new value, and stamps `set_at`.
   - Its line is `required CLI: 0.28.0 → 0.29.0 (members below it are refused until they upgrade)`,
@@ -140,37 +173,48 @@ contract's sentence and schema (C1).
   - `--plan-only` plans and writes nothing.
   - `apply` and `stagesNamed` write it only when it is named.
   - In a coding agent's session on a managed project, the stage writes when the gate opens it
-    (D3267); T2b adds the gate entry.
-- Files: `internal/initflow/stage.go`, `internal/cli/update_version_stamp.go` (new),
-  `internal/cli/update_version_stamp_test.go` (new), `internal/cli/init_stages.go`,
-  `internal/cli/setup_refusals_test.go`.
+    (D3267). T2b adds the gate entry and the `gateStep`.
+- Files: `internal/initflow/stage.go`, `internal/initflow/loop.go` (`PriorUndone`),
+  `internal/cli/update_version_stamp.go` (new), `internal/cli/update_version_stamp_test.go` (new),
+  `internal/cli/init_stages.go`, `internal/cli/setup_refusals_test.go`. That is six files; the loop
+  change is one call.
 - Interfaces: consumes C1 (`Decode`, `Encode`, the path, `Below`). Produces `initflow.VersionStamp`,
   which L8's spec places its stage after (O1).
 - Tests: `TestUpdateRaisesTheStampToItsRelease`, `TestOlderUpdateNeverLowersTheStamp`,
   `TestConcurrentRaisesKeepTheHigher`, `TestFailedPolicyStageLeavesTheStampUnchanged`,
-  `TestDevBuildLeavesTheStampAlone`, `TestPlanOnlyWritesNoStamp`, `TestStampLineSaysCurrent`, and
+  `TestDevBuildLeavesTheStampAlone`, `TestPlanOnlyWritesNoStamp`, `TestStampLineSaysCurrent`,
+  `TestStampHoldsWhilePolicyIsHeld` (the policy stage under `credentialsMoveHeld`),
+  `TestStampHoldsWhileCredentialsServiceIsSkipped` (a session's `credentialsSessionHeld`),
+  `TestStampStageSkipsAnUnadoptedDatabase`, `TestStampNotRaisedAboveTheNewestRelease`, and
   `TestRefusalMatrixListsEveryStageTheCLIRegisters` with the new row.
 - Command: `go test ./internal/cli/ -run 'Stamp|RefusalMatrix' -count=1 && go test ./internal/initflow/ -count=1`
 - Red step: `TestUpdateRaisesTheStampToItsRelease` fails while no stage writes the node.
 - Depends on: C1 (the node's shape).
-- Commit: `update: the version-stamp stage raises the required CLI (T2a, D3260, R1, R2)`
+- Commit: `update: the version-stamp stage raises the required CLI (T2a, D3260, D3267, D3268, R1, R2)`
 - Reviewer tier: opus (a write to the project's config node, and a stage of `update`).
 
 ### T2b: the stamp under the gate, in the in-flight note and beside the policy delete
 - Acceptance:
   - `initflow.VersionStamp` joins `gatedStages` (D3267), with a comment that
     gives the `rules` stage's reason: the document is the binary's own.
+  - `versionStampStage.gateStep` sits beside `rulesStage.gateStep`, `policyMigrateStage.gateStep`
+    and `workspaceStage.gateStep` (F21). Its document is the exact bytes `PutIfMatch` writes, under
+    the ETag that was read. Its admitted rule names the binary's own `Version`. The stage's `Apply`
+    admits, which writes the audit record, before the write. A refused admission comes back as a
+    `GatedError`.
   - `TestUpdateLeavesARunInFlightRunning` raises the stamp mid-run, and the run still finishes.
-  - `docs/design/update-in-flight.md` gets a `version-stamp` row after the policy rows, below line 62
-    (F13). The row says what the stage changes (one node no run reads) and its exposure for a run in
+  - `docs/design/update-in-flight.md` gets a `version-stamp` row right after the `credentials-service`
+    row, below line 62 (F13). The row says what the stage changes (one node no run reads) and its exposure for a run in
     flight (none); it adds no line to `announceRunsInFlight`.
   - `fugaro project policy publish --delete` leaves `config/policy/required_cli` in place.
-- Files: `internal/cli/update_managed.go`, `internal/cli/update_in_flight_test.go`,
-  `docs/design/update-in-flight.md`, `internal/cli/policy_delete_keeps_stamp_test.go` (new).
+- Files: `internal/cli/update_managed.go`, `internal/cli/update_version_stamp.go` (the call to
+  `gateStep`), `internal/cli/update_in_flight_test.go`, `docs/design/update-in-flight.md`,
+  `internal/cli/update_version_stamp_gate_test.go` (new).
 - Interfaces: consumes T2a's stage.
 - Tests: `TestUpdateLeavesARunInFlightRunning`, `TestUpdateManagedGatesTheVersionStampStage`,
-  `TestPolicyDeleteKeepsTheStamp`, plus the docs census.
-- Command: `go test ./internal/cli/ -run 'LeavesARunInFlight|GatesTheVersionStamp|PolicyDeleteKeepsTheStamp|InFlightLine' -count=1 && go test ./internal/cli/ -run Docs -count=1`
+  `TestAgentSessionStampRaiseWritesTheAuditRecord` (the record names the document's digest and the
+  binary's `Version`), `TestPolicyDeleteKeepsTheStamp`, plus the docs census.
+- Command: `go test ./internal/cli/ -run 'LeavesARunInFlight|GatesTheVersionStamp|StampRaiseWritesTheAuditRecord|PolicyDeleteKeepsTheStamp|InFlightLine' -count=1 && go test ./internal/cli/ -run Docs -count=1`
 - Red step: `TestUpdateManagedGatesTheVersionStampStage` fails while an agent session stops at the
   stage.
 - Depends on: T2a (the stage it gates and documents; behaviour).
@@ -186,14 +230,18 @@ contract's sentence and schema (C1).
   - With no project or no RTDB URL, it passes.
   - With a stamp above `Version`, it returns `*BelowError` as a user error, which exits 1 with the
     sentence on stderr and nothing on stdout, `--json` included.
-  - `selectProject`'s shared-config branch calls `requireCLI` too (R4).
+  - `selectProject`'s shared-config branch calls `requireCLI` too (R4). It has no `cmd`, so the
+    pre-run records its verdict in the context: exempt, console read, or on a platform. That branch
+    reads the verdict and honours it.
   - One table keyed by command path holds every exemption:
     - `version`, `help` and the completion tree;
     - `doctor`, `update`, `setup` and `update-skills`;
     - the retired tombstone;
     - `orchestrator run` (R7);
-    - the console read paths, except bare `apply`. `apply --status` passes (R5). These print one
-      stderr line when the stamp is above the binary;
+    - the console read paths, except bare `apply`. `apply --status` passes (R5): the table entry
+      for `fugaro apply` carries the flag predicate `cmd.Flags().Changed("status")`, and it is the
+      only entry with a predicate. These paths print one stderr line when the stamp is above the
+      binary;
     - `exec` and every hidden in-cloud entry point: `credentials serve`, `orchestrator serve`,
       `voice serve`, `intake serve`, `coordinator serve`, `history`, `image gate`, `image record`,
       `image git-credential` and `image selftest`.
@@ -210,11 +258,14 @@ contract's sentence and schema (C1).
   - `TestBareApplyIsFencedButApplyStatusPasses`;
   - `TestFenceReadsTheCommandsOwnProjectFlag`;
   - `TestFenceCoversTheSharedConfigFallback`;
+  - `TestDoctorOnTheSharedConfigPassesBelowTheStamp` and
+    `TestRunsLsOnTheSharedConfigPassesBelowTheStamp` (the context's verdict at the `selectProject`
+    site);
   - `TestOnPlatformPasses`;
   - `TestDevBuildSkipsTheFence`;
   - `TestNoUpdateCheckDoesNotDisableTheFence`;
   - `TestTheUpdateCheckLookupRemembersNothing`, which still passes.
-- Command: `go test ./internal/cli/ -run 'Fence|FencedOrExempt|BelowTheStamp|ConsoleReadsPrint|BareApply|OnPlatformPasses|DevBuildSkips|NoUpdateCheckDoesNot|RemembersNothing' -count=1`
+- Command: `go test ./internal/cli/ -run 'Fence|FencedOrExempt|BelowTheStamp|ConsoleReadsPrint|BareApply|OnPlatformPasses|DevBuildSkips|NoUpdateCheckDoesNot|RemembersNothing|SharedConfigPasses' -count=1`
 - Red step: `TestEveryCommandIsFencedOrExempt` fails on the first command with no check.
 - Depends on: C1 (the interface).
 - Commit: `cli: refuse a project command below the required CLI (T3, D3264, D3265, R3-R6)`
@@ -267,13 +318,16 @@ contract's sentence and schema (C1).
 - Acceptance:
   - `orchestratorDaemon` reads the stamp at `start` and at every tick through the cache.
   - When the stamp is above its binary, it prints one line naming the stamp and the brew command.
-    Under a unit, it then goes to `holdForUpdate`. Under `--once` or with no `--binary`, it exits 1.
+    Under a unit, it then goes to `holdForUpdate`. Under `--once` or with no `--binary`, it exits 0,
+    because `holdForUpdate` returns nil there, as it does for `updateDue`.
   - It claims nothing and drives nothing after that line (R7).
+  - When the stamp rises mid-run, the daemon stops claiming, releases its lease the way `abandon`
+    does, and serves nothing more. It then holds under a unit, or exits 0.
   - Under a unit it never exits on the stamp.
 - Files: `internal/cli/orchestrator_run.go`, `internal/cli/orchestrator_required_test.go` (new).
 - Interfaces: consumes C1.
-- Tests: `TestDaemonBelowTheStampHoldsUnderAUnit`, `TestDaemonOnceBelowTheStampExits`,
-  `TestDaemonRaisedMidRunStopsClaiming`.
+- Tests: `TestDaemonBelowTheStampHoldsUnderAUnit`, `TestDaemonOnceBelowTheStampExits` (exit 0),
+  `TestDaemonRaisedMidRunStopsClaiming` (and releases its lease).
 - Command: `go test ./internal/cli/ -run 'DaemonBelowTheStamp|DaemonOnceBelowTheStamp|RaisedMidRunStopsClaiming' -count=1`
 - Red step: `TestDaemonRaisedMidRunStopsClaiming` fails while the stamp is read only at `start`.
 - Depends on: C1 (the interface).
@@ -316,9 +370,10 @@ contract's sentence and schema (C1).
   - The coordinator and periodic-reviews READMEs' reading of the register's highest written section
     moves from 892 to 900.
 - Files: `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md`, `docs/coordinator/README.md`,
-  `docs/periodic-reviews/README.md`.
+  `docs/periodic-reviews/README.md`, and `docs/ci-affected-tests/read-map.json`, regenerated for the
+  new script paths `liveCheckScripts` reads.
 - Tests: `go test ./scripts/ -run LiveCheck -count=1` and the docs census.
-- Command: `go test ./scripts/ -run LiveCheck -count=1 && go test ./internal/cli/ -run Docs -count=1`
+- Command: `go test ./scripts/ -run LiveCheck -count=1 && go test ./internal/ciselect/ -run TestReadMap -count=1 && go test ./internal/cli/ -run Docs -count=1`
 - Red step: the suite fails while the script is not registered.
 - Depends on: K1 (the script it registers).
 - Commit: `required-version-stamp K2: Check 900 registered`
@@ -353,13 +408,16 @@ contract's sentence and schema (C1).
     `brew upgrade dimipaun/tap/fugaro` and then `fugaro update` for their own terminal;
   - the agent never runs `brew`, never retries, and never looks for a way around the refusal.
 
-  The `plugin/` tests pass.
-- Files: `plugin/skills/working/SKILL.md`.
-- Tests: the plugin's command-and-flag tests.
-- Command: `cd plugin && go test ./... -count=1`
+  `docs/release.md`, beside its "Update checks" paragraph, says what the stamp is, that nothing
+  lowers it (D3262), that `update` writes only a published release (D3268), and what to do as a last
+  resort when a stamp is wrong: an admin edits `config/policy/required_cli` by hand in the Firebase
+  console. The `plugin/` tests and the docs census pass.
+- Files: `plugin/skills/working/SKILL.md`, `docs/release.md`.
+- Tests: the plugin's command-and-flag tests and the docs census.
+- Command: `cd plugin && go test ./... -count=1 && cd .. && go test ./internal/cli/ -run Docs -count=1`
 - Red step: none. This is a doc line, and the plugin tests guard what it names.
 - Depends on: I1. The sentence becomes true only then.
-- Commit: `plugin: the working skill names the required-CLI refusal (T7)`
+- Commit: `plugin, docs: the required-CLI refusal and its last-resort recovery (T7, D3268)`
 - Reviewer tier: opus (a plugin skill).
 
 ## 5. Parallel execution
@@ -380,9 +438,16 @@ Measured by weight, the chain through T3 (`large`, the fence) is the one to watc
 for every level-1 task. The read reports `gain: 6 broken, 2 kept, 3 added; before 4 tasks, weight
 4.5; after 4 tasks, weight 4; improves`.
 
-**Where the graph and this table differ.** T1 builds C1's other side, so the graph gives it no edge
-to C1 and shows it ready at once. It is not ready at once: it starts after C1 merges, as its
-Depends-on line says.
+**T1 is held explicitly.** T1 builds C1's other side, and it starts only after C1 merges, as its
+Depends-on line and this table say. The graph cannot record that wait, and it shows T1 ready at once.
+Two ways of recording it were tried, and `fugaro plan graph` refuses both:
+- An edge from T1 to C1 is refused: "no decoupling entry records an edge from T1".
+- A decoupling entry for T1 is refused: "the graph's recorded breaks restore a cycle through T1".
+  Every other side of C1 was waiting on T1 before the pass, so any recorded break for T1 closes a
+  cycle.
+
+So the launcher follows this table, not the graph's ready column, for T1. I1 is not affected: it
+waits for every side, each of which waits on C1.
 
 **Edges broken by C1, each rejoined in I1:**
 - T3, T4, T5 and T6 after T1: each needs the `Source` interface and the error types, not the cache
@@ -404,11 +469,13 @@ no edge to C1 in the graph, because a task (T7) waits on I1. It reaches C1 throu
 | File | Writers, by level |
 | --- | --- |
 | `internal/versionstamp/stamp.go`, `stamp_test.go`, `schemas/required-cli.schema.json`, `docs/required-version-stamp/contract.md`, `internal/cli/required_cli_source.go` | C1 (0) only |
+| `docs/ci-affected-tests/read-map.json` (regenerated) | T1 (1), K2 (2) |
 | `internal/versionstamp/stub.go` | C1 (0), deleted by I1 (2) |
 | `internal/versionstamp/source.go` | T1 (1), I1 (2) |
-| `internal/versionstamp/cache.go`, `source_test.go` | T1 (1) |
-| `internal/initflow/stage.go`, `internal/cli/init_stages.go`, `internal/cli/setup_refusals_test.go`, `internal/cli/update_version_stamp*.go` | T2a (1) |
-| `internal/cli/update_managed.go`, `internal/cli/update_in_flight_test.go`, `docs/design/update-in-flight.md`, `internal/cli/policy_delete_keeps_stamp_test.go` | T2b (2) |
+| `internal/versionstamp/cache.go`, `source_test.go`, `schema_test.go` | T1 (1) |
+| `internal/initflow/stage.go`, `internal/initflow/loop.go`, `internal/cli/init_stages.go`, `internal/cli/setup_refusals_test.go`, `internal/cli/update_version_stamp_test.go` | T2a (1) |
+| `internal/cli/update_version_stamp.go` | T2a (1), T2b (2) |
+| `internal/cli/update_managed.go`, `internal/cli/update_in_flight_test.go`, `docs/design/update-in-flight.md`, `internal/cli/update_version_stamp_gate_test.go` | T2b (2) |
 | `internal/cli/root.go`, `internal/cli/project.go`, `internal/cli/required_cli*.go` (but the seam) | T3 (1) |
 | `internal/cli/init.go`, `internal/cli/update_stamp_guard*.go` | T4 (1) |
 | `internal/cli/doctor.go`, `internal/cli/doctor_required*.go` | T5 (1) |
@@ -416,7 +483,7 @@ no edge to C1 in the graph, because a task (T7) waits on I1. It reaches C1 throu
 | `scripts/live-checks/check-900-*` | K1 (1) |
 | `scripts/live_checks_test.go`, `docs/gcp-live-checklist.md`, `docs/coordinator/README.md`, `docs/periodic-reviews/README.md` | K2 (2) |
 | `internal/cli/required_cli_e2e_test.go`, the release notes file | I1 (2) |
-| `plugin/skills/working/SKILL.md` | T7 (3) |
+| `plugin/skills/working/SKILL.md`, `docs/release.md` | T7 (3) |
 
 T3, T4 and T6 all add tests to `internal/cli`, each in its own new file. A helper two of them need
 lives in C1's seam file, or is written once by whichever merges first and reused by the other: no

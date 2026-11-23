@@ -61,7 +61,8 @@ so it was reconciled without a capability map.
   contract: `CredentialsService` needs `Policy` "and nothing else in the run is between them", and
   `CredentialsCopy` comes "immediately AFTER" that (`internal/initflow/stage.go`, both constants'
   comments, and the order's own comments). *Consequence:* R1 puts `version-stamp` right after
-  `credentials-copy`.
+  `credentials-copy`, and ahead of `workspace-project`, the next slot, which is a Terraform grant in
+  the workspace's own project.
 - **F4 (Wrong).** "It joins `runCovered`." `runCovered` is the set of stages the plan-review screen
   confirms (`initEngine.todo`, `internal/cli/init_review.go`). These are mostly Terraform applies.
   `TestRefusalMatrixListsEveryStageTheCLIRegisters` (`internal/cli/setup_refusals_test.go`) pins
@@ -149,6 +150,32 @@ so it was reconciled without a capability map.
   (`NormalizeVersionArgs`, `internal/cli/root.go`). On a subcommand, `-v` is `--verbose`, so the
   spec's "`--version`/`-v`" means the leading form only. *Consequence:* none.
 
+Findings added by the first review round, each checked against `0dec0bb36`:
+
+- **F20 (Gap, amends D3267).** A run can get past a stage whose work was not done. A stage may
+  answer `Skipped` with `Undone: true` (`initflow.Status.Undone`), and the loop goes on, because
+  `Skipped` counts as converged for linear gating (F2). The policy stage does this when the node is
+  held: `policyMigrateStage.Check` returns `Skipped` and `Undone` when `credentialsMoveHeld` holds
+  the node back (`internal/cli/init_policy_migrate.go`). The credentials-service stage skips in a
+  coding agent's session with `credentialsSessionHeld` (`internal/cli/init_stages.go`). So a gated
+  session could raise the stamp while the policy node and the credentials service stay at the
+  release behind. *Consequence:* D3267 is amended. The stamp stage holds, with a named line, while
+  any earlier stage of this run answered `Skipped` and `Undone`, or while the credentials service is
+  not at this release (`credentialsImageStale`).
+- **F21 (Gap).** A `gatedStages` entry alone admits nothing. Each gated database write judges its own
+  document in a `gateStep` and writes an audit record before it writes: `rulesStage.gateStep`,
+  `policyMigrateStage.gateStep` and `workspaceStage.gateStep` (`internal/cli/update_managed.go`).
+  *Consequence:* the stamp stage gets `versionStampStage.gateStep`. Its document is the exact bytes
+  `PutIfMatch` writes, under the ETag that was read. Its admitted rule names the binary's own
+  `Version`. The admit, with its audit record, comes before the write (T2b).
+- **F22 (Rule).** A stage that writes the budget database first asks whether that database is this
+  installation's: `budgetDBUnadopted` (`internal/cli/init_rules_stage.go`). The rules stage skips
+  with its sentence when it is not (D1017). *Consequence:* the stamp stage's `Check` does the same
+  (T2a).
+- **F23 (Gap, availability).** The stamp only rises, and nothing lowers it (D3262). That makes a bad
+  value permanent: a build stamped with `-X` with a version that was never released, or a mistaken
+  cached value. *Consequence:* D3268 bounds both ways in.
+
 ## 4. Decisions
 
 The owner answered the spec's open questions Q1–Q7 on 2026-11-23. Each was asked on its own, with
@@ -160,18 +187,21 @@ the recommendation first.
 | D3261 | (Q2) CLIs released before L1 cannot be fenced by the stamp. How does L8 handle them? | L8 ships at least one release after L1, and L8's new project keys bump `projectpolicy.Version`, the one fence every older CLI obeys (`CLISkew`) | **2026-11-23, not the recommendation: accept the gap.** CLIs released before L1 stay unfenced; the runner and the cap clamp still decide what a run does. Followed through: L1 bumps no `projectpolicy.Version` for this purpose, and no task here does; L8's own spec decides its release timing. The gap covers a pre-L1 *admin* too: a pre-L1 `update` does not know the stamp, does not refuse, and can re-apply its own images over a newer installation, where only the existing fences (`DB.Plan`'s rules marker, the policy node's `projectpolicy.VersionError`) still refuse |
 | D3262 | (Q3) Is there ever a way to lower the stamp? | None for now; add one when a yank happens | **2026-11-23, as recommended** |
 | D3263 | (Q4) How long may a cached stamp be trusted without a read? | 15 minutes | **2026-11-23, as recommended** |
-| D3264 | (Q5) Do read failures fail open? | Yes, except a cached value above the binary and a malformed stamp, which refuse | **2026-11-23, as recommended** |
+| D3264 | (Q5) Do read failures fail open? | Yes, except a cached value above the binary and a malformed stamp, which refuse | **2026-11-23, as recommended.** D3268 bounds the cached-value exception |
 | D3265 | (Q6) Are console read paths exempt? | Exempt, with one stderr line | **2026-11-23, as recommended.** R5 keeps `apply`'s write arm out of the exemption |
 | D3266 | (Q7) Does an `update` below the stamp refuse, or run and not lower it? | Refuse before its first write | **2026-11-23, as recommended.** R8 places it |
-| D3267 | In a coding agent's session on a managed project, does `update` raise the stamp (F12)? | **Yes: `version-stamp` joins `gatedStages`.** Its document is the binary's own `Version`, the same kind of document as the `rules` stage's, which the gate already opens: "a document the binary carries, so the plan IS the generation". The policy node moves in that session; if the stamp did not, members would stay unfenced until the owner's own terminal ran `update`. Because gating is linear (F2), a stop at this stage would also block every later stage in the session: `workspace`, `credentials-route`, `layer`, `checkout`, `unit` and `compute` | The `credentials-route` model: the stage refuses in a session (`AgentError`), and the owner's terminal raises it. Its cost: every release's agent-session `update` ends with a step left for the owner, every later stage stays blocked behind it until then, and members stay unfenced in between. Both options write nothing a run holds | **2026-11-23, as recommended: gated like `rules`.** The stamp is a document the binary carries, so an agent's `update` raises it with the policy node it already moves, and no later stage is left blocked behind it |
+| D3267 | In a coding agent's session on a managed project, does `update` raise the stamp (F12)? | **Yes: `version-stamp` joins `gatedStages`.** Its document is the binary's own `Version`, the same kind of document as the `rules` stage's, which the gate already opens: "a document the binary carries, so the plan IS the generation". The policy node moves in that session; if the stamp did not, members would stay unfenced until the owner's own terminal ran `update`. Because gating is linear (F2), a stop at this stage would also block every later stage in the session: `workspace`, `credentials-route`, `layer`, `checkout`, `unit` and `compute` | The `credentials-route` model: the stage refuses in a session (`AgentError`), and the owner's terminal raises it. Its cost: every release's agent-session `update` ends with a step left for the owner, every later stage stays blocked behind it until then, and members stay unfenced in between. Both options write nothing a run holds | **2026-11-23, as recommended: gated like `rules`.** The stamp is a document the binary carries, so an agent's `update` raises it with the policy node it already moves. **Amended after review, 2026-11-23 (F20, F21):** the owner's intent stands, and an agent session's `update` still raises the stamp under the gate, like `rules`. It does so only once the installation has really converged. An earlier stage can answer `Skipped` with `Undone: true` and the loop goes on (`initflow.Status.Undone`; the policy stage under `credentialsMoveHeld`, and the credentials service under `credentialsSessionHeld`). So the stage holds, with a named line, while any earlier stage of this run answered `Skipped` and `Undone`, or while the credentials service is not at this release. When it does raise, it goes through its own `gateStep` and audit record. The owner is to confirm this amendment (O4) |
+| D3268 | The stamp only rises (D3262). How is a bad value kept out (F23)? | **Bound it.** `update` writes only a published release: a `Version` that `updatecheck.Valid` accepts and that is no newer than the newest release tag `updatecheck` can see. It never writes a `dev` build or one stamped with `-X` for a release that does not exist; it leaves the stamp unchanged with a line instead. A cached value above the binary refuses on its own only while it is younger than 15 minutes. Past that, only a re-read that confirms it refuses, and a re-read that fails passes with the stderr line. D3262 stands: there is still no command that lowers the stamp. The last-resort recovery is a hand edit of the node in the Firebase console, documented in T7 | Leave it unbounded: a mistaken value stays until someone hand-edits the node, and every member is refused meanwhile | **2026-11-23, as recommended ("Bound it").** Owner's ruling on the availability risk the first review raised |
 
 ## 5. Resolutions (one defensible answer, stated rather than asked)
 
 - **R1. The slot.** `version-stamp` comes right after `credentials-copy` in `initflow`'s `order`,
   with `needs: Policy, Rules` recorded (F2, F3). The earlier stages through the credentials copy must
-  be done or skipped before it runs. Every later stage is a member-visible document or this machine's
-  own files, and none of them is what "this installation is at release R" depends on. L8's migration
-  comes after it (O1).
+  be done or skipped before it runs, and F20's hold covers the ones that skipped with their work
+  undone. The stages after the slot are `workspace-project` (a Terraform grant in the workspace's own
+  project), the workspace record, the credentials route, the layer, the checkout, the unit and
+  compute. None of them is part of what a member's CLI must match for "this installation is at
+  release R". L8's migration comes after the slot (O1).
 - **R2. The confirmation.** The stage is `SelfConfirming` and confirms through `confirmStageWrite`,
   as `credentials-route` does. It asks nothing at the owner's terminal (D1540). It is not added to
   `runCovered` (F4). The refusal matrix gets its row: `self: true`, `covered: false`, `noYes: false`.
@@ -181,18 +211,26 @@ the recommendation first.
   on `updateCheckDisabled` (A5).
 - **R4. The shared-config fallback.** Where the pre-run finds no local project, `selectProject`'s
   shared-config branch runs the same check once it has the shared config. One function, two call
-  sites (F6).
+  sites (F6). `selectProject` has no `cmd`, so the pre-run records its verdict in the context:
+  exempt, console read, or on a platform. The shared-config site reads that verdict and honours it.
+  So `doctor` and `runs ls` on the shared config pass below the stamp, the console read with its
+  stderr line.
 - **R5. Console read paths.** The exemption is `consoleReadPaths` minus the write arm of `apply`:
   `fugaro apply --status` passes with the stderr line, and a bare `fugaro apply` is fenced (F7). A test
-  lists every `consoleReadPaths` entry that has a writing arm.
+  lists every `consoleReadPaths` entry that has a writing arm. The table entry for `fugaro apply`
+  carries a flag predicate: it is exempt only when `cmd.Flags().Changed("status")` is true.
 - **R6. Exemption by command path.** Every exemption is keyed by command path in one table. That
   table holds every hidden in-cloud entry point: the services, the Cloud Build steps, `image
   selftest` and `exec`. `OnPlatform` stays as a second gate. The tree-walk test (acceptance 2) fails
-  on any command that is neither checked nor in the table (F8).
+  on any command that is neither checked nor in the table (F8). An entry is a command path with an
+  optional predicate over the parsed flags. Only `apply`'s entry has one (R5).
 - **R7. The daemon.** `fugaro orchestrator run` is exempt from the root refusal. Instead, the daemon
   reads the stamp at `start` and at every tick (through the cache, so at most one read per 15
   minutes). When the stamp is above its binary, it takes the `updateDue` path: it prints why, then
-  `holdForUpdate` under a unit, or exits under `--once` or with no `--binary` (F9).
+  `holdForUpdate` under a unit. Under `--once` or with no `--binary`, it exits 0, because
+  `holdForUpdate` returns nil there, as it does for `updateDue` (F9). When the stamp rises mid-run,
+  the daemon stops claiming, releases its lease the way `abandon` does, and serves nothing more. It
+  then holds under a unit, or exits 0.
 - **R8. Where `update` refuses.** The check is at the converge door, shared by `update`, `update
   --repo` and `setup`. It comes before the image catalog guard, `syncAccess`, `rewriteLocalBudgetMode`
   and the first stage (F11), and reads the stamp fresh, not from the cache. It also runs under
@@ -216,6 +254,8 @@ No open tension.
 - **O2.** Closed 2026-11-23: the owner answered D3267 (gated, as recommended).
 - **O3.** `docs/status.md` gets this spec's row when the plan merges; this pull request does not
   touch it.
+- **O4.** The owner is to confirm the amended D3267 (F20): an agent session's `update` raises the
+  stamp under the gate only once the installation has converged.
 
 ## 7. UNVERIFIED
 
