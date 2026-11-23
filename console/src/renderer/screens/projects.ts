@@ -2412,7 +2412,7 @@ export const PROJECTS_MODELS_BUSY = 'Reading the project’s models…'
  * `projects-body` inside the same `section.projects`, so the second read's mark
  * and skeleton have an element of their own. One element wearing both claims
  * would have whichever read landed first take the other's claim down
- * (`COORDINATOR_WINDOW_SHAPE`'s reason, one tab over). */
+ * (`PROJECTS_SHAPE`'s reason, one section over). */
 export const PROJECTS_MODELS_CLASS = 'projects-models'
 
 /** PROJECTS_SETTINGS_BUSY is the tab's **third** section's mark (the

@@ -39,6 +39,7 @@ creds.go	Run fugaro update
 creds_bitbucket.go	run fugaro update
 doctor.go	fugaro project policy publish writes this
 doctor.go	fugaro update publishes your
+doctor.go	next fugaro update
 doctor.go	re-run fugaro update
 doctor.go	run fugaro update
 doctor.go	then fugaro project policy publish
@@ -133,6 +134,7 @@ project_cmd.go	now is one the runs it bounds cannot read; run fugaro update
 project_cmd.go	re-run fugaro update
 project_cmd.go	run fugaro update
 project_cmd.go	then run fugaro update
+project_enroll_converge.go	next fugaro update
 project_job.go	run fugaro update
 project_job.go	with fugaro update
 project_profile.go	fugaro update, which publishes it

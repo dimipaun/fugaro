@@ -463,10 +463,10 @@ Four answers shape the plan most:
 - Acceptance:
   - The stub `BuildMap` is deleted and the command calls `ee/orchestrator`'s builder.
   - An end-to-end test runs two named orchestrators in one project, with a cross dependency and an overlapping collision, and gets one solid and one dashed edge in the document the console decodes.
-  - The v2 operations no screen uses any more are removed from the allow-lists.
+  - The v2 operations no screen uses any more are removed from the allow-lists, **and so is the surface above them**: the preload's rows and the renderer's `ReadBridge`/`LinkBridge` members for `coordinator.status`, `coordinator.show`, `coordinator.intents` and `link.openPullRequest`, plus `entry.ts`'s `RUNS_STREAM_OPERATION` and `COORDINATOR_SUMMARY_SINCE`. One surface, removed in one place: half of it left behind is an operation no screen can reach that every reader still sees. Whether `link.openPullRequest` itself stays is this task's call — it is the console's one external-link path and no screen uses it now.
   - `console/docs/json-contract.md` gains the map's section, and its §6.22 is amended: an edge may join two orchestrators (F17).
   - CG2's `TestPreviousReleaseReadsNewNodes` passes against nodes the wired code writes.
-- Files: `internal/orchestrator/map_stub.go` (deleted), `ee/orchestrator/cli/map.go`, `ee/orchestrator/map_e2e_test.go` (new), `console/src/main/spawn.ts`, `console/src/main/ipc.ts`, `console/docs/json-contract.md`, `docs/desktop-console/spec.md`.
+- Files: `internal/orchestrator/map_stub.go` (deleted), `ee/orchestrator/cli/map.go`, `ee/orchestrator/map_e2e_test.go` (new), `console/src/main/spawn.ts`, `console/src/main/ipc.ts`, `console/src/preload/index.ts`, `console/src/renderer/entry.ts`, `console/docs/json-contract.md`, `docs/desktop-console/spec.md`. The console's pinning tests and the stub's fixture move with them: `console/test/unit/ipc.test.ts`, `preload-surface.test.ts`, `entry-wiring.test.ts`, `launch-form.test.ts`, `run-busy.test.ts`, `cli-stub.test.ts`, `schema.test.ts`, `console/test/support/cliStub.ts`, and `console/test/fixtures/coordinator-status.json` with its licence file.
 - Tests: `TestOrchestratorMapEndToEnd`, plus the allow-list pinning tests.
 - Command: `go test ./ee/orchestrator/... -run TestOrchestratorMapEndToEnd -count=1 && go test ./internal/eeboundary/ -count=1 && cd console && npx jest test/unit/spawn.test.ts test/unit/ipc.test.ts --maxWorkers=2 && cd .. && go test ./internal/cli/ -run Docs -count=1`
 - Red step: the stub returns an empty map.

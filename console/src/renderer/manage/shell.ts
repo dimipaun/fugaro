@@ -75,12 +75,14 @@ import { sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { SkewTheme } from '../../shared/version'
 import { putText } from '../app'
 import type { ElementLike } from '../app'
+import type { GateAction, GateDecision } from '../gating'
 import { BUSY_SLOT_CLASS, renderRetry, renderStamp, sectionRead } from '../section'
 import type { SectionElement, SectionRead, SectionTimers } from '../section'
 import type { SkeletonBlock, SkeletonShape } from '../skeleton'
+import { disabledWrite } from '../writes'
 import { copyCommandText } from './command'
 import { MANAGE_GROUPS } from './types'
-import type { ManageAction, ManageKind, ManageRow } from './types'
+import type { ManageAction, ManageKind, ManageRow, WriteAction } from './types'
 
 // ---------------------------------------------------------------------------
 // The element surface, and the caller's four doors.
@@ -120,9 +122,22 @@ export interface ManageFactory {
 }
 
 /**
+ * ManageControlElement is the slice of an entry form's control this section
+ * touches: the value the operator typed, and the one property that gates the
+ * submit. It is declared here rather than added to `ManageElement` on purpose --
+ * `ManageElement` is what every node of this section is, and a text box is not
+ * one of those: a shell that could read a value off any element it draws would
+ * be a shell that could read one off a heading.
+ */
+export interface ManageControlElement extends ManageElement {
+  value: string
+  disabled: boolean
+}
+
+/**
  * ManageDeps is what the caller hands the section: where elements come from,
- * the theme the busy mark is drawn with, the read, and the two things the
- * console does on the operator's behalf.
+ * the theme the busy mark is drawn with, the read, the role the writes are
+ * asked about, and the two things the console does on the operator's behalf.
  *
  * **The read is handed in rather than imported.** The shell spawns nothing: the
  * caller's `read` is the console's own operation surface (`entry.ts`'s bridge),
@@ -137,6 +152,24 @@ export interface ManageDeps {
   readonly read: (operation: string, args: Readonly<Record<string, unknown>>) => Promise<unknown>
   readonly copy: (text: string) => void
   readonly openView: (view: string) => void
+  /**
+   * can is RB4's read of the caller's own role, asked once per write control as
+   * it is drawn (`gating.ts`'s `Gate.can`) -- the section asks about the action
+   * it is about to offer and never about a role, which is F19's rule.
+   *
+   * **It is required, and no caller may hand nothing.** A section that drew a
+   * write control without a role read would offer the write to a role the CLI
+   * refuses, and the models write is the one the CLI cannot correct: `models add`
+   * has no role check of its own to fall back on (U5 of the reconciliation), so
+   * an unwired gate there is a write offered to everybody. A caller that read no
+   * role says so with a value -- `gateFrom(null).can`, which allows every action
+   * and is exactly `gating.ts`'s "no answer" case -- rather than by leaving the
+   * member out, so the decision is the caller's and read at the one place it is
+   * made. The tab that draws this section is the caller
+   * (`screens/projects.ts`), and the role read it hands is the entry's
+   * (`entry.ts`'s `roles`).
+   */
+  readonly can: (action: GateAction) => GateDecision
   readonly now?: () => number
   readonly timers?: SectionTimers
 }
@@ -195,9 +228,28 @@ export const MANAGE_CELL_CLASS = 'manage-cell'
 export const MANAGE_ACTIONS_CLASS = 'manage-actions'
 export const MANAGE_COPY_CLASS = 'manage-copy'
 export const MANAGE_VIEW_CLASS = 'manage-view'
+/** MANAGE_COPY_BOX_CLASS and MANAGE_COPY_CONSEQUENCE_CLASS are the Copy-command
+ * that states a consequence: the pair the command is drawn in -- the button, and
+ * the sentence under it (`CopyCommandAction`'s `consequence`). A command with no
+ * consequence is the bare button, with neither of these drawn. */
+export const MANAGE_COPY_BOX_CLASS = 'manage-copy-box'
+export const MANAGE_COPY_CONSEQUENCE_CLASS = 'manage-copy-consequence'
+/** MANAGE_WRITE_CLASS is the control a write action is drawn as -- the button
+ * the operator presses to open the form, and the button that submits it -- and
+ * MANAGE_WRITE_BOX_CLASS, MANAGE_WRITE_FORM_CLASS, MANAGE_WRITE_FIELD_CLASS,
+ * MANAGE_WRITE_INPUT_CLASS and MANAGE_WRITE_CANCEL_CLASS are the rest of that
+ * drawing: the write's own box in the actions line, the form inside it, one row
+ * per field, the box a value is typed into, and the way out. */
+export const MANAGE_WRITE_CLASS = 'manage-write'
+export const MANAGE_WRITE_BOX_CLASS = 'manage-write-box'
+export const MANAGE_WRITE_FORM_CLASS = 'manage-write-form'
+export const MANAGE_WRITE_FIELD_CLASS = 'manage-write-field'
+export const MANAGE_WRITE_INPUT_CLASS = 'manage-write-input'
+export const MANAGE_WRITE_CANCEL_CLASS = 'manage-write-cancel'
 /** MANAGE_REFUSAL_CLASS is the CLI's own sentence for a read that did not
  * answer, and MANAGE_EMPTY_CLASS the console's sentence for a read that
- * answered with nothing. They are two elements because they are two facts. */
+ * answered with nothing. They are two elements because they are two facts. A
+ * refused **plan** is drawn as the first of them, inside the write's own box. */
 export const MANAGE_REFUSAL_CLASS = 'manage-refusal'
 export const MANAGE_EMPTY_CLASS = 'manage-empty'
 
@@ -235,6 +287,20 @@ export const MANAGE_BUSY_LEAD = 'Reading'
  * only spelling of the label. */
 export const MANAGE_VIEW_LEAD = 'Open the'
 export const MANAGE_VIEW_TAIL = 'view'
+
+/** MANAGE_WRITE_SUBMIT is the form's own button: it runs the write's dry run,
+ * and the window main opens from that document is where anything is confirmed.
+ * A second word rather than the write control's own label, because the two
+ * presses are two steps -- one opens a form, the other asks the CLI what the
+ * values would change -- and the operator reads which one they are on. */
+export const MANAGE_WRITE_SUBMIT = 'Continue'
+
+/** MANAGE_WRITE_CANCEL is the form's way out, and it is the same word the
+ * confirmation window's own cancel carries (`confirm.ts`'s `CANCEL_LABEL`)
+ * because it is the same fact: a form the operator has decided not to submit.
+ * It is spelled here rather than imported so that this module keeps drawing the
+ * section's own vocabulary and nothing of a window's. */
+export const MANAGE_WRITE_CANCEL = 'Cancel'
 
 /** MANAGE_SKELETON_BLOCKS is the shape a kind's list is drawn as while its
  * first read is in flight: the heading line the kind draws, then the rows of the
@@ -408,24 +474,38 @@ function tableOf(factory: ManageFactory, kind: ManageKind, rows: readonly Manage
  * spelled, so nothing here quotes, escapes or reassembles it. An **open-view**
  * is a button that asks the caller to show a view of the console's own rail;
  * which views exist is the entry's business, and a view the rail does not have
- * is a view the entry does not draw. */
+ * is a view the entry does not draw. A **write** is the third arm below.
+ */
 function actionControl(
   factory: ManageFactory,
   action: ManageAction,
   deps: ManageDeps,
 ): ManageElement {
-  // The two kinds of control are drawn one per arm rather than through a class
-  // chosen by a ternary: each is a different button -- one copies, one asks the
-  // caller to show a view -- and the arm is also what lets `manage.css` qualify
-  // each hook with the tag the shell really draws, which is a fact the selector
-  // scan reads out of a call whose tag and class are both literals.
+  // The three kinds of control are drawn one per arm rather than through a class
+  // chosen by a ternary: each is a different control -- one copies, one asks the
+  // caller to show a view, one collects values and runs a dry run -- and the arm
+  // is also what lets `manage.css` qualify each hook with the tag the shell
+  // really draws, which is a fact the selector scan reads out of a call whose tag
+  // and class are both literals.
   if (action.kind === 'copy-command') {
     const text = copyCommandText(action)
     const copy = literal(make(factory, 'button', MANAGE_COPY_CLASS), text)
     copy.setAttribute('type', 'button')
     copy.addEventListener('click', () => deps.copy(text))
-    return copy
+    // **The sentence travels with the command** (`CopyCommandAction`'s
+    // `consequence`): what the command does that a person has to read before
+    // running it is drawn beside the button rather than left in the descriptor.
+    // It is the case for the below-floor copy-commands above all, where the
+    // sentence is the whole of why there is no write button and what the CLI
+    // still needs. A command that states nothing draws nothing but itself, so a
+    // kind whose command destroys nothing keeps the bare button it had.
+    if (action.consequence === '') return copy
+    const box = make(factory, 'div', MANAGE_COPY_BOX_CLASS)
+    box.append(copy)
+    box.append(literal(make(factory, 'p', MANAGE_COPY_CONSEQUENCE_CLASS), action.consequence))
+    return box
   }
+  if (action.kind === 'write') return writeControl(factory, action, deps)
   const view = literal(
     make(factory, 'button', MANAGE_VIEW_CLASS),
     `${MANAGE_VIEW_LEAD} ${action.view} ${MANAGE_VIEW_TAIL}`,
@@ -433,6 +513,149 @@ function actionControl(
   view.setAttribute('type', 'button')
   view.addEventListener('click', () => deps.openView(action.view))
   return view
+}
+
+/**
+ * writeControl draws one write action: the control that opens its form, and --
+ * once pressed -- the form itself. **The role is asked here and the floor is
+ * not**: whether this CLI can be shown the write at all is the kind's own
+ * decision when it is built (`types.ts`'s `WriteAction`), and a kind below the
+ * floor hands this shell a Copy-command instead, so this function is only ever
+ * reached for a write this console can really perform.
+ *
+ * A role that may not use it draws the control through `disabledWrite` -- the
+ * one function every write this console refuses goes through, with the role
+ * sentence as its tooltip -- and binds nothing at all, which is the whole of
+ * "disabled with the reason": the operator reads why, and there is no listener,
+ * no channel and no form behind the button.
+ *
+ * The form submits the values to the kind's **plan** operation. What comes back
+ * is main's, and main's answer to a plan is the window it opened: the document
+ * is drawn there (`renderer/confirm.ts`), and this section draws none of it. A
+ * refusal -- a CLI below its own floor, a value its grammar refused, a window
+ * already waiting for an answer -- is drawn as the CLI's own sentence inside the
+ * box, which is the same door a refused read's sentence comes through.
+ */
+function writeControl(
+  factory: ManageFactory,
+  action: WriteAction,
+  deps: ManageDeps,
+): ManageElement {
+  const box = make(factory, 'div', MANAGE_WRITE_BOX_CLASS)
+  const decision = deps.can(action.gate)
+  const button = decision.allowed
+    ? literal(make(factory, 'button', MANAGE_WRITE_CLASS), action.label)
+    : disabledWrite(factory, MANAGE_WRITE_CLASS, action.label, null, decision)
+  button.setAttribute('type', 'button')
+  box.append(button)
+  if (!decision.allowed) return box
+
+  /** open replaces the control with the form, in the write's own box: one press
+   * reveals the values, and Cancel puts the control back exactly as it was. */
+  const open = (): void => {
+    const form = make(factory, 'div', MANAGE_WRITE_FORM_CLASS)
+    const controls: { readonly field: WriteAction['fields'][number]; readonly box: ManageControlElement }[] =
+      []
+    for (const field of action.fields) {
+      const line = literal(make(factory, 'label', MANAGE_WRITE_FIELD_CLASS), field.label)
+      const box_ = factory.create('input') as ManageControlElement
+      box_.setAttribute('class', MANAGE_WRITE_INPUT_CLASS)
+      box_.setAttribute('type', 'text')
+      box_.value = ''
+      line.append(box_)
+      form.append(line)
+      controls.push({ field, box: box_ })
+    }
+    const status = make(factory, 'p', MANAGE_REFUSAL_CLASS)
+    status.textContent = ''
+
+    const submit = literal(
+      make(factory, 'button', MANAGE_WRITE_CLASS),
+      MANAGE_WRITE_SUBMIT,
+    ) as ManageControlElement
+    submit.setAttribute('type', 'button')
+    const back = literal(
+      make(factory, 'button', MANAGE_WRITE_CANCEL_CLASS),
+      MANAGE_WRITE_CANCEL,
+    ) as ManageControlElement
+    back.setAttribute('type', 'button')
+
+    /** values is what the form holds now: every box with something in it, and no
+     * member at all for an optional box the operator left alone. */
+    const values = (): Readonly<Record<string, string>> => {
+      const out: Record<string, string> = {}
+      for (const control of controls) {
+        if (control.box.value === '') continue
+        out[control.field.key] = control.box.value
+      }
+      return out
+    }
+
+    /** check is the button's pre-check and never the decision: a required box
+     * that is empty leaves the submit disabled, and everything else is the
+     * CLI's own reader to refuse. */
+    const check = (): void => {
+      submit.disabled = controls.some(
+        (control) => control.field.required && control.box.value.trim() === '',
+      )
+    }
+
+    submit.addEventListener('click', () => {
+      if (submit.disabled) return
+      submit.disabled = true
+      back.disabled = true
+      void deps.read(action.plan, values()).then(
+        () => {
+          // The window main opened from the dry run's document is what the
+          // operator reads next, and it is main's: this box has nothing to add
+          // and nothing to redraw. **A sentence an earlier press drew is cleared
+          // here**, because a refusal that no longer holds must not stand beside
+          // a window main has just opened: the second press of a form whose
+          // first was refused (`a window is already waiting for an answer`) ends
+          // with main waiting on an answer and the box saying nothing. The form
+          // stays where it is, so a refusal below leaves the values typed and
+          // one press away from another try.
+          status.textContent = ''
+          submit.disabled = false
+          back.disabled = false
+        },
+        (error: unknown) => {
+          status.textContent = refusalSentenceOf(action, becauseOf(error))
+          submit.disabled = false
+          back.disabled = false
+          check()
+        },
+      )
+    })
+    back.addEventListener('click', () => {
+      box.replaceChildren(button)
+    })
+    for (const control of controls) {
+      control.box.addEventListener('input', () => {
+        check()
+      })
+    }
+
+    check()
+    form.append(submit)
+    form.append(back)
+    form.append(status)
+    box.replaceChildren(form)
+  }
+
+  button.addEventListener('click', open)
+  return box
+}
+
+/** refusalSentenceOf is the sentence a refused plan is drawn with. It is the
+ * read's own door (`refusalSentence`) with the operation named rather than the
+ * kind: a plan that refused names no list at all. */
+function refusalSentenceOf(action: WriteAction, because: string | null): string {
+  if (because !== null) {
+    const drawn = sanitizeRefusal(because, 'the reason this write has nothing to show')
+    if (drawn.ok && drawn.text.trim() !== '') return drawn.text
+  }
+  return `no plan arrived for the write \`${action.plan}\``
 }
 
 /** actionsOf draws the controls a kind offers, or nothing when it offers none.

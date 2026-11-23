@@ -71,7 +71,7 @@ func newIndexFixture(t *testing.T) *indexFixture {
 // seed writes one run's index document.
 func (f *indexFixture) seed(e Entry) {
 	f.t.Helper()
-	fields := docFields(f.t, e)
+	fields := testDocFields(f.t, e)
 	// The round trip leaves a moment as the string the wire format spells it
 	// with; the document carries the timestamp the fold writes.
 	fields["updated_at"] = e.UpdatedAt
@@ -87,7 +87,7 @@ func (f *indexFixture) seed(e Entry) {
 // seedSummary writes the installation's summary document.
 func (f *indexFixture) seedSummary(s Summary) {
 	f.t.Helper()
-	fields := docFields(f.t, s)
+	fields := testDocFields(f.t, s)
 	fields["updated_at"] = s.UpdatedAt
 	if s.FoldedThrough != nil {
 		fields["folded_through"] = *s.FoldedThrough
@@ -117,9 +117,9 @@ func (f *indexFixture) list(filter Filter) Page {
 	return page
 }
 
-// docFields is a value's own fields as the fold writes them: the wire format's
+// testDocFields is a value's own fields as the fold writes them: the wire format's
 // names, which are the struct's own.
-func docFields(t *testing.T, v any) map[string]any {
+func testDocFields(t *testing.T, v any) map[string]any {
 	t.Helper()
 	raw, err := json.Marshal(v)
 	if err != nil {

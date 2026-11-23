@@ -1,32 +1,31 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See console/LICENSE.md for the terms.
-// The Started-by column's own rules: the short form, and the two shapes that
-// draw nothing (owner request 2026-10-18, wording from the 2026-10-22 watch
-// spec; `console/src/shared/launcher.ts`).
+// Who started a run, as the screens draw it: the whole recorded identity, and
+// the two shapes that draw nothing (owner request 2026-10-18, wording from the
+// 2026-10-22 watch spec, whole values from D3213 of 2026-11-21;
+// `console/src/shared/launcher.ts`).
 //
 // Three things are held here, and each of them is a sentence from the request:
 //
-//   1. **the short form is the CLI's own cut** -- `runview.LauncherShort`, the
-//      part before an address's first `@`, the whole value for anything else.
-//      The table below is the Go test's table (`internal/runview/runview_test.go`,
-//      `TestLauncherShort`), value for value, because two renderers that shorten
-//      one recorded string two ways are two answers to "who started this run".
-//      The console diverges from the CLI in exactly one place -- a marker is
-//      kept whole, where the CLI cuts `redacted@example.invalid` to `redacted`
-//      -- and the second test below is where that divergence is stated rather
-//      than left to be discovered;
-//   2. **the person string goes through the sanitizer on the text path**, and a
-//      person name is untrusted data: the request names the cases to test --
-//      control characters, a very long name, bidi marks, an empty string, a
-//      missing key. A value the sanitizer refuses is not drawn, and a value it
-//      masks is drawn masked;
+//   1. **the whole value is drawn** -- `dana@example.com` is `dana@example.com`,
+//      a service account's address is its address, and a display name is its
+//      name. This console used to cut at the first `@` (the CLI's own
+//      `runview.LauncherShort`), which drew `ana.smith@acme.com` as
+//      `ana.smith`: the operator's own tool has no reason to hide the address of
+//      the person who started a run, and the CLI's own `BY` column is now the
+//      one place the two forms differ. The Go table that once held the console to
+//      that cut is left to the Go test (`internal/runview/runview_test.go`,
+//      `TestLauncherShort`), which still pins the CLI's column;
+//   2. **the string goes through the sanitizer on the text path**, and a
+//      launcher is untrusted data (SECURITY.md D4: every launcher can write
+//      `launch.json`): the request names the cases to test -- control
+//      characters, a very long name, bidi marks, an empty string, a missing key.
+//      A value the sanitizer refuses is not drawn, and a value it masks is drawn
+//      masked;
 //   3. **it fails private**: a row without `launched_by` draws nothing at all --
-//      never another person's name -- and no drawn cell carries the address the
-//      record named: the cut is at the first `@`, so the local part is all that
-//      survives it, and a marker (the one value the cut does not touch) is the
-//      console's own placeholder rather than an address. The screen tests assert
-//      the element is absent (`live.test.ts`, `projects.test.ts`); this file
-//      asserts the string.
+//      never another person's name -- and the mark a class would draw for a blank
+//      is the same empty cell. The screen tests assert the element is absent
+//      (`live.test.ts`, `projects.test.ts`); this file asserts the string.
 //
 // **No line of this file contains a credential-shaped string**: the one input
 // that is shaped like a token comes from `test/support/fakeSecrets.ts`, which
@@ -34,159 +33,120 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { launcherCell, launcherFull, launcherShort } from '../../src/shared/launcher'
+import { launcherFull } from '../../src/shared/launcher'
 import { ADDRESS_PLACEHOLDER, MAX_LABEL_LENGTH, TOKEN_PLACEHOLDER, sanitizeText } from '../../src/shared/sanitize'
 import { githubToken } from '../support/fakeSecrets'
 
 /** drawn is the cell as the screens draw it: the class `launcher.ts`'s header
- * names, through the one text door (`app.ts`'s `putText` calls this). */
+ * names for the Live column, through the one text door (`app.ts`'s `putText`
+ * calls this). */
 function drawn(cell: string): string {
   const result = sanitizeText(cell, 'label', 'runs[].launched_by')
   return result.ok ? result.text : `refused: ${result.reason}`
 }
 
-describe('launcherShort', () => {
-  it('cuts at the first @, exactly as `runview.LauncherShort` does', () => {
-    // The Go table, value for value (`internal/runview/runview_test.go`): the
-    // console's column and `fugaro runs ls`'s column must name a run the same
-    // way, and this is the pair of tests that keeps them equal.
-    const cases: readonly (readonly [string, string])[] = [
-      ['dana@example.com', 'dana'],
-      ['dana.person+fugaro@example.com', 'dana.person+fugaro'],
-      ['fugaro-runner@proj.iam.gserviceaccount.com', 'fugaro-runner'],
-      ['ci-runner', 'ci-runner'],
-      ['', ''],
-      ['@example.com', ''],
-      ['a@b@c', 'a'],
-    ]
-    for (const [input, want] of cases) {
-      expect(launcherShort(input), input).toBe(want)
-    }
-  })
-
-  it('keeps a marker the CLI already wrote whole, and this is the one divergence from the Go cut', () => {
-    // The console does **not** shorten a marker, and `runview.LauncherShort`
-    // does: the Go function cuts `redacted@example.invalid` to `redacted`, so
-    // the CLI's `BY` column draws the bare word `redacted`. That reads as a
-    // person's *name* -- the one thing a redaction must never look like -- and
-    // every class in `sanitize.ts` keeps a marker as it is, so the console
-    // keeps it here too. The table above is the Go table value for value and
-    // this is the single value the two renderers disagree about, which is why
-    // it is its own test and not a row of that table.
-    expect(launcherShort(ADDRESS_PLACEHOLDER)).toBe(ADDRESS_PLACEHOLDER)
-    expect(launcherShort('person-1a2b3c4d')).toBe('person-1a2b3c4d')
-  })
-})
-
-describe('launcherCell', () => {
-  it('draws nothing for a row the record does not name', () => {
-    // The request's "fail private", as a value: `null` is no element at all. An
-    // empty string is the same state -- the contract's `omitempty` arrives as
-    // `''` through `schema.ts` -- and so is an address with nothing before its
-    // `@`, which shortens to nothing rather than to a name.
-    for (const raw of [null, undefined, '', '@example.com']) {
-      expect(launcherCell(raw), JSON.stringify(raw)).toBeNull()
-    }
-  })
-
-  it('draws nothing for a short form the class would draw as an empty string', () => {
-    // A blank short form is the same empty cell as no value at all: the label
-    // class strips the invisible characters and trims (`stripInvisible`,
-    // `oneLine`), so handing it any of these would put an **empty span** on the
-    // row -- a flex `gap`, which is exactly the outcome `launcher.ts`'s header
-    // rules out. The screen tests read `null` as "no element", so a blank has to
-    // be `null` and not `''`. Three shapes, one per pass the class makes: only
-    // whitespace, only an invisible character (a zero-width space -- `.trim()`
-    // alone would keep it, which is why the check is not just a trim), and only
-    // a terminal escape sequence.
-    for (const raw of [' ', '  ', '\t', ' ', '  @example.com', '​@example.com', '\u001b[31m']) {
-      expect(launcherCell(raw), JSON.stringify(raw)).toBeNull()
-    }
-    // Whitespace *around* a name is not blank: the class trims it, so the cell
-    // is still drawn.
-    expect(launcherCell(' dana @example.com')).toBe(' dana ')
-  })
-
-  it('draws the short form of a recorded launcher', () => {
-    expect(launcherCell('dana@example.com')).toBe('dana')
-    expect(launcherCell('dana.person+fugaro@example.com')).toBe('dana.person+fugaro')
-    expect(launcherCell('ci-runner')).toBe('ci-runner')
-    expect(launcherCell('fugaro-runner@proj.iam.gserviceaccount.com')).toBe('fugaro-runner')
-  })
-
-  it('never carries the address it was given, whatever the shape', () => {
-    // The cut is at the first `@`, so no `@` -- and therefore no domain, and no
-    // address -- survives it. This is the property that lets the cell be drawn
-    // in a class that is not `person` (`launcher.ts`'s header): there is no
-    // address left for the class's address rule to find.
-    const shapes = [
+describe('launcherFull', () => {
+  it('draws the whole recorded value, address and all', () => {
+    // The red step of ID2: `ana.smith@acme.com` used to be drawn as
+    // `ana.smith`. Every one of these is a launcher a real record carries, and
+    // each is drawn as it was written.
+    const cases: readonly string[] = [
+      'ana.smith@acme.com',
       'dana@example.com',
       'dana.person+fugaro@example.com',
       'fugaro-runner@proj.iam.gserviceaccount.com',
-      'a@b@c',
-      '"dana"@example.com',
+      'Ana Lopez <ana@example.com>',
+      'ci-runner',
+      'user:ana.smith@acme.com',
     ]
-    for (const shape of shapes) {
-      const cell = launcherCell(shape)
-      expect(cell, shape).not.toBeNull()
-      expect(cell, shape).not.toContain('@')
+    for (const value of cases) {
+      expect(launcherFull(value), value).toBe(value)
     }
+  })
+
+  it('keeps a marker the recorder wrote, as it keeps every other value', () => {
+    // The marker is no longer a special case: it is simply a value, and the cut
+    // that would have turned `redacted@example.invalid` into the bare word
+    // `redacted` -- a string that reads as a person's *name* -- is gone.
+    expect(launcherFull(ADDRESS_PLACEHOLDER)).toBe(ADDRESS_PLACEHOLDER)
+    expect(launcherFull('person-1a2b3c4d')).toBe('person-1a2b3c4d')
+  })
+
+  it('draws nothing for a row the record does not name', () => {
+    // The request's "fail private", as a value: `null` is no element at all. An
+    // empty string is the same state -- the contract's `omitempty` arrives as
+    // `''` through `schema.ts`.
+    for (const raw of [null, undefined, '']) {
+      expect(launcherFull(raw), JSON.stringify(raw)).toBeNull()
+    }
+  })
+
+  it('draws nothing for a value the class would draw as an empty string', () => {
+    // A blank value is the same empty cell as no value at all: the class strips
+    // the invisible characters and trims (`stripInvisible`, `oneLine`), so
+    // handing it any of these would put an **empty span** on the row -- a flex
+    // `gap`, which is exactly the outcome `launcher.ts`'s header rules out. The
+    // screen tests read `null` as "no element", so a blank has to be `null` and
+    // not `''`. Three shapes, one per pass the class makes: only whitespace, only
+    // an invisible character (a zero-width space -- `.trim()` alone would keep
+    // it, which is why the check is not just a trim), and only a terminal escape
+    // sequence.
+    for (const raw of [' ', '  ', '\t', ' ', '​', '\u001b[31m']) {
+      expect(launcherFull(raw), JSON.stringify(raw)).toBeNull()
+    }
+    // Whitespace *around* a name is not blank: the class trims it, so the cell
+    // is still drawn.
+    expect(launcherFull(' dana@example.com ')).toBe(' dana@example.com ')
   })
 })
 
-describe('the person string on the text path', () => {
+describe('the launcher string on the text path', () => {
   it('strips a control character and a bidi mark rather than drawing them', () => {
-    // Two of the request's cases, through the class the cell is drawn in. The
-    // control character goes with the other controls (`stripInvisible`), and
+    // Two of the request's cases, through the class the Live cell is drawn in.
+    // The control character goes with the other controls (`stripInvisible`), and
     // the bidi override with the format characters: a value drawn with one in it
     // is a value a screen can be made to spell something else.
-    expect(drawn(launcherCell('dana\u0000lopez@example.com') ?? '')).toBe('danalopez')
-    expect(drawn(launcherCell('dana‮lopez@example.com') ?? '')).toBe('danalopez')
-    expect(drawn(launcherCell('dana​lopez@example.com') ?? '')).toBe('danalopez')
+    expect(drawn(launcherFull('ana\u0000smith@acme.com') ?? '')).toBe('anasmith@acme.com')
+    expect(drawn(launcherFull('ana‮smith@acme.com') ?? '')).toBe('anasmith@acme.com')
+    expect(drawn(launcherFull('ana​smith@acme.com') ?? '')).toBe('anasmith@acme.com')
   })
 
   it('refuses a name that is not one line, and one longer than a label', () => {
-    // The label class's own two refusals, which are why it is the class here:
-    // a cell is one line, and it has a bound. A refused value is drawn as the
-    // console's `n/a` with the reason (app.ts's `putText`), never as the value.
-    expect(drawn(launcherCell('dana\nlopez@example.com') ?? '')).toContain('refused:')
-    expect(drawn(launcherCell(`${'a'.repeat(MAX_LABEL_LENGTH + 1)}@example.com`) ?? '')).toContain('refused:')
+    // The label class's own two refusals, which are why the Live column draws it
+    // in that class rather than in `person`: a cell is one line, and it has a
+    // bound. A refused value is drawn as the console's `n/a` with the reason
+    // (app.ts's `putText`), never as the value.
+    expect(drawn(launcherFull('ana\nsmith@acme.com') ?? '')).toContain('refused:')
+    expect(drawn(launcherFull(`${'a'.repeat(MAX_LABEL_LENGTH + 1)}@example.com`) ?? '')).toContain('refused:')
   })
 
   it('masks a launcher shaped like a credential, and never draws it', () => {
     // A launcher is display text a launcher wrote (SECURITY.md D4), so a value
-    // that is shaped like a token is masked in place by the free-text rules --
+    // that is shaped like a token is masked in place by the credential rules --
     // the direction the request's "fail private" asks for.
     const token = githubToken()
-    const cell = launcherCell(`${token}@example.com`)
+    const cell = launcherFull(token)
     expect(cell).not.toBeNull()
     const text = drawn(cell ?? '')
     expect(text).not.toContain(token)
     expect(text).toBe(TOKEN_PLACEHOLDER)
+    // And where the token is only part of the value, the mask is the
+    // credential's alone: the rest is the record's own text, drawn as it was,
+    // because the console no longer shortens a launcher on the way to the cell.
+    const inAddress = drawn(launcherFull(`${token}@example.com`) ?? '')
+    expect(inAddress).not.toContain(token)
+    expect(inAddress).toBe(`${TOKEN_PLACEHOLDER}@example.com`)
   })
 
-  it('draws a dotted local part and a display name, and the person class draws one too', () => {
-    // The two shapes the owner's column really carries: the dotted local part,
-    // which is the commonest corporate shape, and a display name beside an
-    // address. Neither is a value this console refuses -- `dana.lopez` is a
-    // person the `person` class draws now that it masks only secrets (D3213) --
-    // and the cell is a `label` for the bound and the single-line rule the case
-    // above pins, not for a refusal.
-    expect(drawn(launcherCell('dana.lopez@example.com') ?? '')).toBe('dana.lopez')
-    expect(drawn(launcherCell('Ana Lopez <ana@example.com>') ?? '')).toBe('Ana Lopez <ana')
-    const person = sanitizeText('dana.lopez', 'person', 'runs.[].launched_by')
-    expect(person.ok && person.text).toBe('dana.lopez')
-  })
-})
-
-describe('launcherFull', () => {
-  it('carries the whole recorded identity, and nothing for a row without one', () => {
-    // The run view's form: the owner's "the full identity only in the expanded
-    // or run view". The cut is the column's, not the model's.
-    expect(launcherFull('dana@example.com')).toBe('dana@example.com')
-    expect(launcherFull('fugaro-runner@proj.iam.gserviceaccount.com')).toBe('fugaro-runner@proj.iam.gserviceaccount.com')
-    for (const raw of [null, undefined, '']) {
-      expect(launcherFull(raw), JSON.stringify(raw)).toBeNull()
-    }
+  it('is drawn by the person class in the run view, whole', () => {
+    // The one key this console draws in two classes: the Live column takes
+    // `label` for its bound and its single-line rule, and the Run screen's header
+    // takes the `person` class the wire key carries. Both draw the same whole
+    // value (D3213), and the person class draws an address as the address the
+    // record holds.
+    const person = sanitizeText('ana.smith@acme.com', 'person', 'runs.[].launched_by')
+    expect(person.ok && person.text).toBe('ana.smith@acme.com')
+    const name = sanitizeText('Ana Lopez <ana@example.com>', 'person', 'runs.[].launched_by')
+    expect(name.ok && name.text).toBe('Ana Lopez <ana@example.com>')
   })
 })
