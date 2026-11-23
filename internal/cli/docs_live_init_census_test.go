@@ -179,6 +179,10 @@ var datedRecords = []string{
 	"docs/provider-price-catalog/",
 	"docs/recipes/",
 	"docs/registry-remote-repository/",
+	// The repo-coupling audit's record: its spec, as received, names the
+	// retired command among the surfaces to audit, and the reconciliation and
+	// report answer it in the same words; spec.md is never edited.
+	"docs/repo-coupling-audit/",
 	"docs/retire-image-mirror/",
 	"docs/shared-config/",
 	"docs/upgrade/",
