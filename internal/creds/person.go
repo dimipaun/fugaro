@@ -69,12 +69,20 @@ import (
 // plain field of the member's local config that no settings row and no publish touches, is not the
 // answer: the workspace's service is the only enforcer and reads the member's published policy, never
 // anything on the member's disk, so a key with no road to the node would be a switch nothing could
-// obey. WC6 builds this side, and `internal/localcfg/localcfg.go` is not a file of it.
+// obey. WC6 builds this side, and it adds the key's carrier to `internal/localcfg/localcfg.go` —
+// a `PersonalWorkspaceTokens *bool` field and its keep rule, beside `Triage` and
+// `ReviewAgainstTask` — because that is what the road above is: the file decodes strictly, `settings
+// set` writes and re-parses it, and the publish reads it, so a settings row whose key is publishable
+// is a field of that file. What U8 refused is the alternative (a field no settings row and no
+// publish touches), not the file; the switch's home, reader and enforcer do not move.
 //
 // **Absent reads as off**, and that is the whole of the default: a member that never set the key
 // serves no personal token (D2972), and the key's own value is a boolean. The policy's version does
-// not move for it, and an older reader that lists it as an unknown top-level key and decodes past it
-// loses nothing (R9): the key decides the personal half alone, which no older reader serves.
+// not move for it, and an older reader that lists it as an unknown top-level key decodes past it and
+// reads every other member (R9). That is the decode's half of the skew alone: the readers that
+// decide something by the node — the CLI's launch gate among them — refuse one carrying a key they
+// do not know and name the upgrade, so the member's CLI is upgraded before the `fugaro update` that
+// publishes the switch, the skew `bitbucket_tokens` had (docs/releases/v0.25.0.md).
 const PersonSwitchKey = "personal_workspace_tokens"
 
 // PersonTokenName is the ONE personal name this plan serves (A1): the bare, unsuffixed name of the

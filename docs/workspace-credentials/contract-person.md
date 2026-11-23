@@ -73,13 +73,19 @@ admin sets it in the member's own config, and the member's `fugaro update` carri
 The alternative U8 names — a local-config field no settings row and no publish touches — is not the
 answer, because the workspace's service is the only enforcer and reads the member's published policy
 and nothing on the member's disk: a key with no road to the node would be a switch nothing could
-obey. WC6 therefore does not edit `internal/localcfg/localcfg.go`.
+obey. **WC6 therefore adds the key's carrier to `internal/localcfg/localcfg.go`** — a
+`PersonalWorkspaceTokens *bool` field and its keep rule (`PersonalWorkspaceTokensEffective`), beside
+`Triage` and `ReviewAgainstTask` — because that is what the road above *is*: `localcfg.Parse` is
+strict (`KnownFields(true)`), `fugaro settings set` writes and re-parses this file, and the publish
+reads `localcfg.Config`, so a settings row whose key is publishable is a field of this file by
+construction. What U8 refuses is the *alternative*, not the file: the switch's home, its reader and
+its enforcer are unchanged (see R-switch-carrier under "The changes anticipated").
 
 | Fact | Value |
 | --- | --- |
 | Absent | off: a member that never set the key serves no personal token and no run of it is offered one (D2972) |
 | The value | a boolean |
-| The policy's version | does not move, and an older reader that lists the key as an unknown top-level key and decodes past it loses nothing (R9) |
+| The policy's version | does not move, and an older reader that lists the key as an unknown top-level key decodes past it and reads every other member (R9). The readers that *decide* by the node refuse one carrying a key they do not know and name the upgrade (the CLI's launch gate among them), so the member's CLI is upgraded before the publish that carries the switch — the skew `bitbucket_tokens` had (`docs/releases/v0.25.0.md`) |
 | Who reads it | the workspace's service, the only enforcer; and, on the member's own machine, the launcher and `fugaro doctor`, which decide with it whether a launch asks for a grant at all (WC7, WC11) |
 
 `PersonSwitchReader` is the seam the two sides are built against:
@@ -267,3 +273,18 @@ rules are the route's, held to the same rules the member's grant's fields are. T
 held to a length here either — the launcher that puts it in a job's environment is where that is
 checked (`slipIDUsable`), because a launcher's bound is its own and a value it will not carry must
 not be one this package refused on its behalf.
+
+## The changes anticipated
+
+**R-switch-carrier** (raised by WC6, reaching WC6 alone): the switch's carrier lives in
+`internal/localcfg/localcfg.go`, which "The switch (R9, U8)" said WC6 does not touch. The contract was
+wrong about the road it stated itself: it asks for the `triage` shape — a `fugaro settings set` row
+whose value the member's `fugaro update` publishes — and that shape *is* a field of that file, because
+`localcfg.Parse` decodes strictly, `settings set` writes and re-parses it, and the publish reads
+`localcfg.Config`. U8's rejected candidate is the alternative it names (a field no settings row and no
+publish touches), not the file. WC6 adds the field and its keep rule there; nothing this contract
+fixes moves — the key's spelling, its home at the top level of the member's published policy, the
+reader's signature and the enforcer are as they were, and WC5, WC7, WC8 and WC11 read the boundary
+unchanged. Amended here in the same sweep, in `internal/creds/person.go`'s doc on `PersonSwitchKey`,
+and in the next release's notes (`docs/releases/v0.29.0.md`, `### Known limits`: publishing the key
+makes an older CLI in that project refuse to launch until it is upgraded).

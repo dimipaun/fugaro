@@ -133,10 +133,21 @@ func TestTheReaderCarriesAnErrorAndAnAbsentProject(t *testing.T) {
 
 // TestAnOlderReaderDecodesPastTheSwitch: the policy's version does not move for
 // the switch (R9), so a reader of the release behind meets a node that carries
-// it and loses nothing — the key is listed among the unknown top-level keys it
-// already tolerates and every other member of the node reads exactly as before.
-// That is what lets a member's node be published with the switch on while runs
-// of the release behind keep launching on it.
+// it and reads every other member of it exactly as before — the key is listed
+// among the unknown top-level keys the decode tolerates, and the runner of that
+// release warns once and keeps enforcing what it does understand.
+//
+// The decode is not the whole of the skew, and this test must not be read as
+// one: the readers that DECIDE by the node refuse one carrying a key they do not
+// know — the CLI's launch gate (internal/cli/launch_budget.go, projectPolicyRead)
+// and the publish and migration stages among them — so the moment the member's
+// `fugaro update` publishes the switch, an older CLI in that project loses
+// launches on it until it is upgraded, the skew `bitbucket_tokens` had
+// (docs/releases/v0.25.0.md, and the note WC6 leaves in the next release's
+// `### Known limits`). What this test pins is the half the decode owns: no
+// member is refused for the key, no other member is misread, and no version
+// moves — which is what makes the upgrade of a CLI sufficient, and no
+// republish, migration or fix by hand necessary.
 func TestAnOlderReaderDecodesPastTheSwitch(t *testing.T) {
 	carrying := []byte(fmt.Sprintf(`{"version":%d,"budget":{"mode":"observe","per_run_usd":12},"base_branch":"main","allow_repos":["github/acme/app"],"personal_workspace_tokens":true}`, Version))
 	preKey := make(map[string]bool, len(knownTopLevelKeys))

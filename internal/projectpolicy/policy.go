@@ -467,9 +467,21 @@ type Policy struct {
 	// no member: the node of such a project stays byte for byte what it was
 	// before this member existed. Its key is
 	// creds.PersonSwitchKey ("personal_workspace_tokens") and it moves no
-	// policy version (R9): an older reader lists it in UnknownKeys and decodes
-	// past it, losing nothing, because the key decides a half no older reader
-	// serves.
+	// policy version (R9): the decode tolerates it — an older reader lists it in
+	// UnknownKeys, reads every other member exactly as before and, in the runner
+	// of the release behind, warns once and keeps enforcing what it does
+	// understand (internal/runner/projectpolicy.go).
+	//
+	// **The decode is not the whole of the skew.** The readers that decide
+	// something by the node refuse one carrying a key they do not know rather
+	// than acting on part of it: the CLI's launch gate
+	// (internal/cli/launch_budget.go, projectPolicyRead), the publish and the
+	// migration stage each refuse such a node and name the upgrade. So the
+	// moment the member's `fugaro update` publishes this member, an older CLI in
+	// that project loses launches on it until it is upgraded — `brew upgrade`
+	// and `fugaro update` — which is the skew the `bitbucket_tokens` key set had
+	// (docs/releases/v0.25.0.md) and the reason the member's own CLI must be
+	// upgraded before the publish that carries the switch.
 	PersonalWorkspaceTokens *bool `json:"personal_workspace_tokens,omitempty"`
 
 	// VerifierAccounts are the identities that may ask the credentials
@@ -759,9 +771,12 @@ var knownTopLevelKeys = map[string]bool{
 	"review_against_task": true,
 	// The member's personal-workspace-tokens switch (R9, D2972): a top-level
 	// key and not a member of a block, for the reason the two above are — a
-	// reader of the release behind lists it in UnknownKeys and keeps reading
-	// the policy, which is what R9 asks of it (an older reader decodes past
-	// it and the version does not move).
+	// reader of the release behind lists it in UnknownKeys and reads every other
+	// member, which is what R9 asks of it (an older reader decodes past it and
+	// the version does not move). The readers that DECIDE by the node refuse one
+	// carrying it and name the upgrade, and the member's own CLI must be
+	// upgraded before the publish that carries the switch into it: the doc on
+	// Policy.PersonalWorkspaceTokens states the whole of the skew.
 	"personal_workspace_tokens": true,
 	// The daemon's own two (R1 of docs/orchestrator-graph-estimates): the
 	// switch that hands orchestration back (D2701, D2739) and the project's
