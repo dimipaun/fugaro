@@ -229,13 +229,23 @@ func lsIndexDoc(t *testing.T, args ...string) (lsIndexFields, lsOut) {
 // TestRunsLsDefaultNewestPlusActive: the default listing is no longer the
 // window -- it is the newest lsIndexPage runs by the index's own sort key,
 // whatever their age, plus every run that has not ended, whatever its age
-// (D3203) -- and the figure beside it is the summary document's, which covers
-// the whole index rather than the page (D818).
+// (D3203) -- the active runs first, so that the page's last row is a row of the
+// newest-N page and --after it lists what comes next (TestRunsLsDefaultPages-
+// CoverEveryRun) -- and the figure beside it is the summary document's, which
+// covers the whole index rather than the page (D818).
+//
+// The listing is asked for with --all because that is the listing whose scope
+// is the installation: the fixture's local config lists acme/app, and a listing
+// of one repository's rows is figured from its own rows and never from a
+// summary that counts every repository (readIndex, and what --repo's own case
+// in TestRunsLsTotalsFollowTheScope pins).
 //
 // Mutation caught: bounding the default read by the window (the listing then
-// holds the seven days nothing else), and totalling the page instead of the
+// holds the seven days nothing else), totalling the page instead of the
 // summary (a page is still a page, and its own sum is the one figure D818
-// forbids beside it).
+// forbids beside it), and merging the active runs into the index order (an old
+// active run is then the page's last row, and the next --after it skips every
+// run between the two).
 func TestRunsLsDefaultNewestPlusActive(t *testing.T) {
 	f := newCloudFixture(t)
 	idx := &indexFake{}
@@ -244,29 +254,32 @@ func TestRunsLsDefaultNewestPlusActive(t *testing.T) {
 	// Sixty runs, one a day back: the newest fifty are listed and the ten
 	// behind them are not, though every one of them is far outside the seven
 	// days the window would have read.
-	var want []string
+	var newest []string
 	for i := range 60 {
 		id := lsIndexRun(t, f, idx, time.Duration(i+1)*24*time.Hour, runstore.StatusSucceeded, fmt.Sprintf("%04x", i))
 		if i < lsIndexPage {
-			want = append(want, id)
+			newest = append(newest, id)
 		}
 	}
 	// A run going since two hundred days ago: it is the oldest document the
 	// index carries and it is listed, which is the half of D3203 the newest-N
 	// alone would drop.
 	active := lsIndexRun(t, f, idx, 200*24*time.Hour, runstore.StatusRunning, "act1")
-	want = append(want, active)
+	want := append([]string{active}, newest...)
 
 	compute := int64(700000)
 	idx.summary = runindex.Summary{Version: runindex.Version, Complete: true, States: map[string]int64{},
 		Runs: 4321, SpentMicros: 1234567, NotionalMicros: 200000, ComputeMicros: &compute, ComputeNotEstimated: 3}
 
-	fields, got := lsIndexDoc(t)
+	fields, got := lsIndexDoc(t, "--all")
 	if ids := runIDs(got.Runs); !slices.Equal(ids, want) {
-		t.Fatalf("runs ls listed %v, want the newest %d by time plus the active run %s:\n%v", ids, lsIndexPage, active, want)
+		t.Fatalf("runs ls listed %v, want the active run %s and the newest %d by time:\n%v", ids, active, lsIndexPage, want)
 	}
-	if last := got.Runs[len(got.Runs)-1]; last.Status != string(runstore.StatusRunning) {
-		t.Errorf("the active run is listed as %q, want %q: its row is the run's own record", last.Status, runstore.StatusRunning)
+	if first := got.Runs[0]; first.Status != string(runstore.StatusRunning) {
+		t.Errorf("the first row is listed as %q, want %q: the runs that are still going lead the page", first.Status, runstore.StatusRunning)
+	}
+	if last := got.Runs[len(got.Runs)-1]; last.RunID != newest[lsIndexPage-1] {
+		t.Errorf("the page ends with %s, want %s, the oldest row of the newest %d: the last row is where --after takes the next page from, and a run older than every row of the page would skip the runs between them", last.RunID, newest[lsIndexPage-1], lsIndexPage)
 	}
 	// The figure is the summary's: neither the page (51 rows) nor the window
 	// (nothing) could have produced these numbers.

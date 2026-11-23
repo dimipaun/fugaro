@@ -287,18 +287,23 @@ func newLsCmd() *cobra.Command {
 			"than by scanning the bucket: no listing of the bucket's objects is made on\n" +
 			"that path, so the listing costs a handful of requests however much history\n" +
 			"there is. Its totals are then the index's own summary -- every run the\n" +
-			"installation's index carries, not the page. While the index is still\n" +
-			"building, the listing says so in one line above its table, and --json\n" +
-			"carries index_complete and folded_through.\n\n" +
+			"installation's index carries, not the page -- which is the figure of a\n" +
+			"listing that covers the installation: one narrowed to some of its\n" +
+			"repositories (--repo, or a local config that lists them) totals the rows\n" +
+			"it read, as a windowed listing does. While the index is still building,\n" +
+			"the listing says so in one line above its table, and --json carries\n" +
+			"index_complete and folded_through.\n\n" +
 			"A run shows as succeeded only when its result.json says so; an execution that\n" +
 			"ended without finalizing is an infra_error.\n\n" +
 			"--since W bounds a window instead of a count: every run of it is listed,\n" +
 			"bounded by the window and not by history, and its totals are those rows'.\n" +
 			"--mine and --batch bound one the same way. A listing the index cannot answer\n" +
-			"-- a fresh installation, or an index that could not be read -- reads the\n" +
-			"bucket's own window instead, one note saying so, and that window is the last\n" +
+			"reads the bucket's own window instead, and that window is the last\n" +
 			strconv.Itoa(lsDefaultDays) + " days of the local config's repositories (every repository in the\n" +
-			"bucket when the config lists none).\n\n" +
+			"bucket when the config lists none). An index that could not be read says so\n" +
+			"in one note; an index that has folded nothing yet -- a fresh installation,\n" +
+			"before its first fold -- reads the window in silence and carries no index\n" +
+			"fact either way, which is the state every installation is in until then.\n\n" +
 			"--limit N prints the newest N rows of the listing and shortens nothing else:\n" +
 			"the totals line, in the text listing and in --json's totals, is the listing's\n" +
 			"own -- the index's summary by default, and the rows of the window with --since\n" +
@@ -1047,11 +1052,19 @@ func readListing(ctx context.Context, env *cloudEnv, gate accessRowGate, f lsFil
 // gateRead is read with the access gate applied to it: the rows a credential
 // holds no role in are dropped from what the listing knows and from the page it
 // prints, and what that left out is said in one line (D1586's read half).
+//
+// A figure the gate has changed is recomputed from the rows it left: the
+// summary document counts every repository of the installation, so a listing
+// that dropped a repository's rows and kept the summary's total would report
+// the spend of repositories the reader holds no role in.
 func gateRead(gate accessRowGate, read lsRead, warn io.Writer) lsRead {
 	var dropped int
 	read.rows, dropped = gate.listed(read.rows)
 	if read.page != nil {
 		read.page, _ = gate.listed(read.page)
+	}
+	if dropped > 0 {
+		read.tot = runview.Sum(read.rows)
 	}
 	noteDropped(warn, dropped)
 	return read
@@ -1090,6 +1103,13 @@ func lsNotef(w io.Writer, format string, args ...any) {
 // reads every run it bounds and totals those rows, which is what those flags
 // have always meant, and the page is cut here so that the figure beside it
 // stays the window's and never the page's.
+//
+// The summary is the figure only for a listing that covers the whole
+// installation: one narrowed to some of its repositories (--repo, or a local
+// config that lists them) totals its own rows, because the summary counts every
+// repository's runs and spend and a listing of one repository's rows beside the
+// installation's figure would report money the reader did not ask for (D1586's
+// read half, and the same rule the window has always kept).
 func readIndex(ctx context.Context, env *cloudEnv, idx runindex.Reader, f lsFilter, o *lsOptions, sinceSet, limitSet bool, now time.Time) (lsRead, bool) {
 	bounded := sinceSet || f.mine != "" || f.batch != ""
 	filter := runindex.Filter{Slugs: f.slugs, Since: f.since, Mine: f.mine, Batch: f.batch, After: o.after}
@@ -1110,12 +1130,21 @@ func readIndex(ctx context.Context, env *cloudEnv, idx runindex.Reader, f lsFilt
 	if !ok {
 		return lsRead{}, false
 	}
-	if !bounded {
+	if !bounded && o.after == "" {
 		// The active runs, whatever their age: a run that has not ended is in
 		// the listing however far back it started, which is the half of D3203
 		// the newest-limit alone would drop. It is the same filter without the
 		// limit, since a limit is what "the newest N" is and not what "every
 		// active run" is.
+		//
+		// The first page alone asks. Every active run is on it whatever its age,
+		// so a page after one is paging a listing that has already listed them
+		// all: asking again would put an old active run at the end of the page
+		// the cursor comes from, and the next --after would then start after a
+		// run older than every other row of the page, leaving the runs between
+		// the two unlisted for good (mergeIndexEntries, and D3203's own "newest
+		// N plus the active" is a page of the listing rather than a rule about
+		// every page of it).
 		//
 		// The question is an addition and not a second opinion: the rows the
 		// first one answered are a listing either way, so an index with nothing
@@ -1170,7 +1199,11 @@ func readIndex(ctx context.Context, env *cloudEnv, idx runindex.Reader, f lsFilt
 		// newest runs it was asked for, plus every active run beside them.
 		read.page = read.page[:o.limit]
 	}
-	if !bounded {
+	if !bounded && len(f.slugs) == 0 {
+		// The listing that asks the index for no repository at all is the one
+		// that covers the installation, which is what the summary document is
+		// the figure of. One that names its repositories is a listing of them
+		// and keeps the figure its rows give it.
 		tot, ok := readIndexTotals(ctx, idx, f.warn)
 		if !ok {
 			return lsRead{}, false
@@ -1236,30 +1269,54 @@ func readIndexTotals(ctx context.Context, idx runindex.Reader, warn io.Writer) (
 	return lsSummaryTotals(summary), true
 }
 
-// mergeIndexEntries is the two pages of the default listing in the index's own
-// order: the newest runs by time and the active ones, which overlap (an active
-// run is usually also a recent one) and are one row each here. The order is
-// runindex.Page's -- updated_at descending, then the run id -- which is the
-// order every page of the index is in and the order a cursor is a position in.
+// mergeIndexEntries is the default listing's page: the runs that are still
+// going and are not part of the newest page first, then the newest runs, each
+// part in the index's own order -- updated_at descending, then the run id
+// (runindex.Page), which is the order a cursor is a position in.
+//
+// The active runs lead because the last row of the page is the row --after
+// takes the next page from, and it has to be a row inside the newest-N page: an
+// active run older than every row of that page sorts after all of them, so a
+// listing that printed it last would hand on a cursor two hundred days old and
+// the runs between the two would never be listed. The runs that are still going
+// are the ones a reader must not miss, whichever page they are on, and the
+// first page is the one that carries them all.
 func mergeIndexEntries(newest, active []runindex.Entry) []runindex.Entry {
 	seen := make(map[string]bool, len(newest)+len(active))
-	out := make([]runindex.Entry, 0, len(newest)+len(active))
-	for _, page := range [][]runindex.Entry{newest, active} {
-		for _, e := range page {
-			if e.RunID == "" || seen[e.RunID] {
-				continue
-			}
-			seen[e.RunID] = true
-			out = append(out, e)
+	newestOnly := make([]runindex.Entry, 0, len(newest))
+	for _, e := range newest {
+		if e.RunID == "" || seen[e.RunID] {
+			continue
 		}
+		seen[e.RunID] = true
+		newestOnly = append(newestOnly, e)
 	}
-	slices.SortStableFunc(out, func(a, b runindex.Entry) int {
-		if c := b.UpdatedAt.Compare(a.UpdatedAt); c != 0 {
-			return c
+	extra := make([]runindex.Entry, 0, len(active))
+	for _, e := range active {
+		if e.RunID == "" || seen[e.RunID] {
+			continue
 		}
-		return strings.Compare(a.RunID, b.RunID)
-	})
+		seen[e.RunID] = true
+		extra = append(extra, e)
+	}
+	slices.SortStableFunc(newestOnly, indexEntryOrder)
+	slices.SortStableFunc(extra, indexEntryOrder)
+	out := make([]runindex.Entry, 0, len(newestOnly)+len(extra))
+	out = append(out, extra...)
+	out = append(out, newestOnly...)
 	return out
+}
+
+// indexEntryOrder is the index's own order: updated_at descending, then the run
+// id (runindex.Page). Both halves of a page are one slice of entries a reader
+// answered, and the order is put back here rather than trusted, since --after
+// resolves a run id to that sort key and a page in another order would drop the
+// runs between two pages.
+func indexEntryOrder(a, b runindex.Entry) int {
+	if c := b.UpdatedAt.Compare(a.UpdatedAt); c != 0 {
+		return c
+	}
+	return strings.Compare(a.RunID, b.RunID)
 }
 
 // lsSummaryTotals is the figure beside a listing the summary answered, in the
