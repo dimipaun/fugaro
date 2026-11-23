@@ -505,3 +505,20 @@ run "the_service_on_a_tag_with_no_digest_is_refused" {
 
   expect_failures = [var.credentials_service]
 }
+
+# A roster row is a person or a machine by its kind AND by its address (WC2's
+# review): the member this root binds a person through is `user:<address>` and
+# nothing else, and IAM refuses a `user:` member that is a machine's. A row
+# marked a `human` at a service account's address is therefore refused HERE, at
+# the plan, rather than at apply in the API's own words about the member — which
+# name no roster row. A machine the workspace admits is admitted as one, through
+# the members' own invoke grant above.
+run "a_persons_address_that_is_a_machines_is_refused" {
+  command = plan
+
+  variables {
+    people = ["ada@example.com", "fugaro-run-alpha@member-alpha-1234.iam.gserviceaccount.com"]
+  }
+
+  expect_failures = [var.people]
+}

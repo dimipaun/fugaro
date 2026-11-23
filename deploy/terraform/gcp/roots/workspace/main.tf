@@ -405,7 +405,8 @@ resource "google_cloud_run_v2_service_iam_member" "workspace_invoker" {
 # the members' and no other. The member is the ADDRESS itself — `user:<address>`
 # — and never a service account: a roster's `sa` entries are the members' job
 # accounts, which the invoker grant above is bound to, and the root's own
-# validation refuses an entry that is not an address.
+# validation refuses an entry that is not an address and one in that class — a
+# machine's own address — because IAM refuses a `user:` member that is a machine.
 resource "google_cloud_run_v2_service_iam_member" "workspace_person_invoker" {
   for_each = local.credentials_service_on ? local.roster_people : toset([])
 

@@ -55,9 +55,21 @@ variable "people" {
   type        = list(string)
   default     = []
 
+  # A roster row is a person or a machine by its kind AND by its address (WC2's
+  # review): the member below is rendered from the address alone, and IAM refuses
+  # a `user:` member that is a machine's — so a row marked a `human` at a service
+  # account's address fails at apply, in the API's own words about the member and
+  # not in a line an owner can trace to the roster row that caused it. The class
+  # is refused here instead: `<id>@<project>.iam.gserviceaccount.com` is the one
+  # spelling a machine's address has — the same one `members` above holds a job
+  # account to — and a machine the workspace admits is admitted as a member,
+  # through the invoker grant of that variable and never as a person of this one.
   validation {
-    condition     = alltrue([for p in var.people : can(regex("^[^@[:space:]]+@[^@[:space:]]+$", p))])
-    error_message = "people must be the roster's own addresses (a person's email address): the invoke grant is bound to the address itself, so an entry that is not one would grant roles/run.invoker on the workspace's own service to whatever was written there."
+    condition = alltrue([
+      for p in var.people :
+      can(regex("^[^@[:space:]]+@[^@[:space:]]+$", p)) && !can(regex("\\.iam\\.gserviceaccount\\.com$", p))
+    ])
+    error_message = "people must be the workspace roster's own people (a person's email address, and never a machine's): the invoke grant is bound to the address itself as `user:<address>`, so an entry that is not an address would grant roles/run.invoker on the workspace's own service to whatever was written there, and a service account's address (`<id>@<project>.iam.gserviceaccount.com`) is the roster's `sa` kind, whose callers are the members' own job accounts — IAM refuses a `user:` member that is a machine."
   }
 }
 
