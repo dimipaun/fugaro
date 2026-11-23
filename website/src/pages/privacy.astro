@@ -63,8 +63,8 @@
  * website unaffected would be this page contradicting its own first half.
  *
  * **The switch is the project's own published policy, not one inside the app** (D731, built by
- * T3.1): crash reports are on by default and opt-out, the project publishes `mobile.crash_reports`
- * in its policy, and the app follows it — so the page says the reports are on by default, that
+ * T3.1): crash reports are on by default and opt-out, the project publishes `mobile_crash_reports`
+ * in its policy (a top-level key beside the `mobile` block), and the app follows it — so the page says the reports are on by default, that
  * nothing is sent before the app has read the switch, that a project publishing it `false` sends
  * nothing, and that uninstalling or not installing the app is still a reader's way out.
  *

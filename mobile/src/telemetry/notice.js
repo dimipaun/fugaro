@@ -21,7 +21,7 @@
 // default and opt-out**, and Firebase Analytics is **dropped from the app**.
 // T3.1 built both halves: Analytics left the manifest, the config, the SDK
 // wiring and this statement, and the switch is the published project policy's
-// `mobile.crash_reports` member, which the app reads as `crash_reports` in the
+// `mobile_crash_reports` key, which the app reads as `crash_reports` in the
 // pairing session's policy and applies in `src/telemetry/crash.js` -- the app's
 // one collection call site. The statement below therefore says what the app
 // sends, that the switch is the project's own published policy rather than one

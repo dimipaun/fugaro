@@ -80,9 +80,9 @@ export const SESSION_EVENTS = Object.freeze({
  * (a start in one of them needs the read-back, and with `biometric_on_costly`
  * the biometric path too), Z2's auto-compaction reads
  * `compaction_threshold`, and the app's one collection switch reads
- * `crash_reports` (D731, D738). Their names are the project policy's `mobile.*`
- * fields with the prefix stripped, so the session response and the policy file
- * cannot drift into two spellings of one value.
+ * `crash_reports` (D731, D738, the app's name for the project policy's top-level
+ * `mobile_crash_reports` key). The names are this list's own, fixed here so the
+ * session response and the policy file cannot drift into two spellings of one value.
  */
 export const SESSION_POLICY_FIELDS = Object.freeze([
   'costly_modes',

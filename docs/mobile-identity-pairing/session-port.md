@@ -64,10 +64,13 @@ file cannot drift into two spellings of one value:
   project sets no threshold; Z2 renders it as a percentage. The unit is fixed here rather than left
   to whichever surface formats it first.
 * `crash_reports` -- whether the app may send crash reports to the project's Firebase project
-  (`mobile.crash_reports`, on by default and opt-out; D731, D738). It is a **required boolean** and
-  never an absent member: nothing is sent before the switch has been read (D734), so a session that
-  did not carry it would be one the app could not tell from `false` -- and the reader answers an
-  absent member off for exactly that reason (`internal/projectpolicy.MobileCrashReports`). The
+  (`mobile_crash_reports`, the published policy's top-level key beside the `mobile` block, on by
+  default and opt-out; D731, D738 -- the key is deliberately not a member of the strictly-decoded
+  block, so an older reader tolerates it into `UnknownKeys` rather than refusing the policy). It is
+  a **required boolean** and never an absent member: nothing is sent before the switch has been read
+  (D734), so a session that did not carry it would be one the app could not tell from `false` -- and
+  the reader answers an absent member off for exactly that reason
+  (`internal/projectpolicy.MobileCrashReportsOn`). The
   switch decides the app's one collection call site and nothing else; Firebase Analytics is not in
   the app at all (D731).
 

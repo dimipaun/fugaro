@@ -321,7 +321,7 @@ function declaring(section) {
 
 /**
  * The three packages the app's Firebase wiring is made of: `app` (the SDK),
- * `crashlytics` (the crash reporter T3.1's `mobile.crash_reports` switch
+ * `crashlytics` (the crash reporter T3.1's `mobile_crash_reports` switch
  * governs) and P5.2.8's `messaging`, which mints the phone's own push token --
  * the one piece of a registration the publisher's relay is given. It is the
  * same family and the same pinned version, so the native SDK stays one SDK with

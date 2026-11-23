@@ -6,7 +6,8 @@
 //
 // **What this module is.** The app's **only** call site that sets collection
 // state on Crashlytics, and the whole of D731's opt-out on the phone's side: the
-// switch is the project's published policy member `mobile.crash_reports`, the
+// switch is the project's published policy key `mobile_crash_reports` (a top-level
+// key beside the `mobile` block), the
 // app reaches it as `crash_reports` in the pairing session's policy, and this
 // module reads that one member and turns collection on or off with it. Nothing
 // else in the app touches collection state -- §7.4's scan admits exactly this
