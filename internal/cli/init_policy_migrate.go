@@ -1182,6 +1182,17 @@ func withDerivedMembers(raw []byte, lc *localcfg.Config, identities map[string]s
 			return raw, userErr("carrying the policy's %s block into %s: %v", mobileKey, lc.Name, err)
 		}
 	}
+	// The app's crash-report switch travels beside the block for the same
+	// reason (D731, D738): a node this migration writes without the key is a
+	// difference the very next run publishes, and until that run the switch
+	// reads off (MobileCrashReportsOn), so a migrated node states the default a
+	// publish would (MobileCrashReportsForPublish).
+	if !carries(projectpolicy.MobileCrashReportsKey) {
+		var err error
+		if node, err = patchPolicyJSON(node, projectpolicy.MobileCrashReportsKey, projectpolicy.MobileCrashReportsForPublish(nil)); err != nil {
+			return raw, userErr("carrying the policy's %s key into %s: %v", projectpolicy.MobileCrashReportsKey, lc.Name, err)
+		}
+	}
 	return node, nil
 }
 

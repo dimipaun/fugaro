@@ -1783,9 +1783,10 @@ func TestUpdateMigrationWithoutABitbucketCredentialDerivesNothing(t *testing.T) 
 // every installation that already ran a fugaro update of this release.
 func currentPolicyNode() map[string]any {
 	return map[string]any{
-		"version": projectpolicy.Version,
-		"budget":  map[string]any{"mode": "enforce", "per_run_usd": 5},
-		"mobile":  defaultMobileNode(),
+		"version":                           projectpolicy.Version,
+		"budget":                            map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"mobile":                            defaultMobileNode(),
+		projectpolicy.MobileCrashReportsKey: projectpolicy.DefaultMobileCrashReports,
 	}
 }
 

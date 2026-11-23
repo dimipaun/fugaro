@@ -34,10 +34,11 @@ import (
 // about — the node is at this version and is not what the file says.
 func staleBudgetNode() map[string]any {
 	return map[string]any{
-		"mobile":      defaultMobileNode(),
-		"version":     projectpolicy.Version,
-		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 9},
-		"allow_repos": []string{"bitbucket/acme/other", "github/acme/app"},
+		"mobile":                            defaultMobileNode(),
+		projectpolicy.MobileCrashReportsKey: projectpolicy.DefaultMobileCrashReports,
+		"version":                           projectpolicy.Version,
+		"budget":                            map[string]any{"mode": "enforce", "per_run_usd": 9},
+		"allow_repos":                       []string{"bitbucket/acme/other", "github/acme/app"},
 	}
 }
 
@@ -1889,11 +1890,12 @@ func TestPolicyConfigDriftSeesTheDerivedAccounts(t *testing.T) {
 	}
 	node := func(accounts map[string]projectpolicy.Account, profiles map[string]projectpolicy.Profile) *projectpolicy.Policy {
 		return &projectpolicy.Policy{
-			Version:  projectpolicy.Version,
-			Budget:   projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5},
-			Accounts: accounts,
-			Profiles: profiles,
-			Mobile:   projectpolicy.DefaultMobile(),
+			Version:            projectpolicy.Version,
+			Budget:             projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5},
+			Accounts:           accounts,
+			Profiles:           profiles,
+			Mobile:             projectpolicy.DefaultMobile(),
+			MobileCrashReports: projectpolicy.MobileCrashReportsForPublish(nil),
 		}
 	}
 	cases := []struct {
@@ -1961,6 +1963,7 @@ func TestPolicyConfigDriftSeesTheAccountChoiceKeys(t *testing.T) {
 			DefaultClaudeAccount: defaultAccount,
 			ClaudeAccountStages:  stages,
 			Mobile:               projectpolicy.DefaultMobile(),
+			MobileCrashReports:   projectpolicy.MobileCrashReportsForPublish(nil),
 		}
 	}
 	for _, tc := range []struct {
@@ -2441,7 +2444,7 @@ func TestPolicyConfigDriftSeesTheImageMapAndTheSwitches(t *testing.T) {
 		return lc
 	}
 	node := func(mut func(*projectpolicy.Policy)) *projectpolicy.Policy {
-		p := &projectpolicy.Policy{Version: projectpolicy.Version, Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}, Mobile: projectpolicy.DefaultMobile()}
+		p := &projectpolicy.Policy{Version: projectpolicy.Version, Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}, Mobile: projectpolicy.DefaultMobile(), MobileCrashReports: projectpolicy.MobileCrashReportsForPublish(nil)}
 		if mut != nil {
 			mut(p)
 		}
