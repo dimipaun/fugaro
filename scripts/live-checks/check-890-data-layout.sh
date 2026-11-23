@@ -44,7 +44,9 @@
 # Calls:      gcloud auth print-access-token --quiet; gcloud storage ls --quiet;
 #             curl GET <database>/<path>.json?shallow=true; curl POST
 #             .../documents:listCollectionIds; curl GET .../documents/spendDaily
-#             with mask.fieldPaths. Every call runs with stdin from /dev/null.
+#             with mask.fieldPaths; both Firestore calls carry
+#             X-Goog-User-Project, from a second curl config file. Every call
+#             runs with stdin from /dev/null.
 #             Nothing is written, launched or deleted.
 # Costs:      a few hundred reads at most.
 # Runs:       by YOU. The check refuses to start in a coding agent's session
@@ -92,6 +94,10 @@ RC47 rtdb config/policy/route/<slug>/**
 RC48 rtdb creds/repoauth/<slug>/**
 RC48 rtdb creds/repoaccess/<slug>/**
 RC49 rtdb coordinator/repos/<slug>/**
+RC99 rtdb creds/workflowsecrets/<slug>/**
+RC100 rtdb creds/leases/<slug>/<run>/**
+RC101 rtdb creds/review-signs/<slug>/<run>/**
+RC102 rtdb creds/issuance/<slug>/<run>/**
 RC50 firestore spendDaily/<date>_<slug>
 RC52 gcs runs/<slug>/pr-index/**
 RC52 gcs runs/<slug>/<run>/**
@@ -240,6 +246,7 @@ LISTING="$SCRATCH/listing"
 : >"$LISTING"
 : >"$SCRATCH/rtdb.read"
 AUTH_CONF="$SCRATCH/auth.conf"
+FS_CONF="$SCRATCH/firestore.conf"
 say "scratch directory: $SCRATCH (mode 0700, removed at the end)"
 
 cleanup() {
@@ -568,7 +575,10 @@ step_firestore() {
   say "listing Firestore in $FP, ids only"
   local base="https://firestore.googleapis.com/v1/projects/$FP/databases/(default)/documents"
   local out="$SCRATCH/body" code errors=""
-  code=$(http_get "$base:listCollectionIds" "$out" -X POST -H 'Content-Type: application/json' --data '{"pageSize":300}')
+  # Firestore bills and quota-checks a call to the project named here, as
+  # internal/firestore/client.go does; the RTDB reads carry no such header.
+  (umask 077 && printf 'header = "X-Goog-User-Project: %s"\n' "$FP" >"$FS_CONF")
+  code=$(http_get "$base:listCollectionIds" "$out" --config "$FS_CONF" -X POST -H 'Content-Type: application/json' --data '{"pageSize":300}')
   if [ "$code" = 200 ]; then
     ids_of "$out" collections | while IFS= read -r k; do printf 'firestore\t\t%s\n' "$k"; done >>"$LISTING"
     printf 'firestore\t\t\n' >>"$LISTING"
@@ -576,7 +586,7 @@ step_firestore() {
     errors="listCollectionIds (HTTP $code)"
   fi
   rm -f "$out"
-  code=$(http_get "$base/spendDaily?pageSize=$SAMPLE&mask.fieldPaths=$FS_NO_FIELD" "$out")
+  code=$(http_get "$base/spendDaily?pageSize=$SAMPLE&mask.fieldPaths=$FS_NO_FIELD" "$out" --config "$FS_CONF")
   if [ "$code" = 200 ]; then
     ids_of "$out" documents | while IFS= read -r k; do printf 'firestore\tspendDaily\t%s\n' "$k"; done >>"$LISTING"
     printf 'firestore\tspendDaily\t\n' >>"$LISTING"

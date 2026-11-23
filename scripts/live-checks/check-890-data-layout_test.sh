@@ -49,6 +49,9 @@ slug_a=acme-app-0123456789abcdef
 slug_b=acme-web-fedcba9876543210
 run1=20261122-090000-b890
 run2=20261122-100000-c890
+# A build identity is an account, escaped as an RTDB key (budget.Key): it is
+# keyed by account, not by repository, and must not read as a slug.
+build_identity=fugaro-build@${gcp}%2Eiam%2Egserviceaccount%2Ecom
 # Placeholders the fakes hand out. Neither is shaped like a credential: the
 # token is what `gcloud auth print-access-token` answers here, and the leaf is
 # a primitive value the RTDB's shallow read returns verbatim.
@@ -109,20 +112,26 @@ GCLOUD_EOF
 set -euo pipefail
 printf 'curl %s\n' "$*" >>"$FAKE890_LOG/curl.calls"
 if IFS= read -r -t 1 _line 2>/dev/null; then printf 'curl read stdin\n' >>"$FAKE890_LOG/stdin.reads"; fi
-out="" conf="" method=GET url=""
+out="" confs=() url=""
 while [ $# -gt 0 ]; do
   case "$1" in
   -o) out=$2; shift 2 ;;
-  --config) conf=$2; shift 2 ;;
-  -X) method=$2; shift 2 ;;
-  -w | -H | --data | --max-time) shift 2 ;;
+  --config) confs+=("$2"); shift 2 ;;
+  -w | -H | -X | --data | --max-time) shift 2 ;;
   https://*) url=$1; shift ;;
   *) shift ;;
   esac
 done
-if [ -n "$conf" ] && grep -qF -- "$FAKE890_TOKEN" "$conf"; then
+if [ ${#confs[@]} -gt 0 ] && cat "${confs[@]}" | grep -qF -- "$FAKE890_TOKEN"; then
   printf 'config carried the token\n' >>"$FAKE890_LOG/curl.auth"
 fi
+case "$url" in
+https://firestore.googleapis.com/*)
+  if [ ${#confs[@]} -gt 0 ] && cat "${confs[@]}" | grep -qF -- "X-Goog-User-Project: chk890-fp"; then
+    printf '%s\n' "$url" >>"$FAKE890_LOG/curl.userproject"
+  fi
+  ;;
+esac
 code=200
 case "${FAKE890_MODE:-default}:$url" in
 rtdb-denied:*firebaseio.com*) code=401; printf '{"error":"Permission denied"}' >"$out" ;;
@@ -187,6 +196,12 @@ write_answers() { # dir
   "creds": {
     "repoauth": {"$slug_a": {"mode": "pool"}},
     "repoaccess": {"$slug_a": {"kind": "app"}},
+    "workflowsecrets": {"$slug_a": {"names": true}},
+    "leases": {"$slug_a": {"$run1": {"held": true}}},
+    "review-signs": {"$slug_a": {"$run1": {"signed": true}}},
+    "issuance": {"$slug_a": {"$run1": {"issued": true}}},
+    "buildpairs": {"$build_identity": {"build-1": {"run": "$run1"}}},
+    "tokens": {"tok-1": {"a": 1}, "tok-2": {"a": 1}, "tok-3": {"a": 1}, "tok-4": {"a": 1}, "tok-5": {"a": 1}, "tok-6": {"a": 1}},
     "marker": "$fake_leaf"
   },
   "runs": {"$slug_a": {"$run1": {"spent": 1}}, "$slug_b": {"$run2": {"spent": 2}}},
@@ -262,6 +277,7 @@ run_check() {
   : >"$dir/logs/curl.calls"
   : >"$dir/logs/fugaro.calls"
   : >"$dir/logs/curl.auth"
+  : >"$dir/logs/curl.userproject"
   : >"$dir/logs/stdin.reads"
   rm -f "$dir/timed-out"
   (
@@ -307,13 +323,24 @@ test_a_known_layout_passes() {
     "RC44 rtdb buildleases/<slug>" "RC45 rtdb config/policy/repos/<slug>" \
     "RC46 rtdb config/policy/voice/repos/<slug>" "RC47 rtdb config/policy/route/<slug>" \
     "RC48 rtdb creds/repoauth/<slug>" "RC48 rtdb creds/repoaccess/<slug>" \
-    "RC49 rtdb coordinator/repos/<slug>" "RC50 firestore spendDaily/<date>_<slug>" \
+    "RC49 rtdb coordinator/repos/<slug>" "RC99 rtdb creds/workflowsecrets/<slug>" \
+    "RC100 rtdb creds/leases/<slug>" "RC101 rtdb creds/review-signs/<slug>" "RC102 rtdb creds/issuance/<slug>" \
+    "RC50 firestore spendDaily/<date>_<slug>" \
     "RC52 gcs runs/<slug>/<run>" "RC52 gcs runs/<slug>/pr-index" \
     "RC53 gcs cache/<slug>" "RC53 gcs locks/<slug>" "RC53 gcs tokens/<slug>" "RC53 gcs reports/<slug>" \
     "RC54 gcs builds/<slug>/implement" "RC55 gcs builds/<slug>/catalog" "RC56 gcs builds/<slug>/project-layer.yaml"; do
     expect_contains "$out" "[slug] $row" "a known layout: the path is marked and matched"
   done
   expect_absent "$out" "UNNAMED" "a known layout: nothing is outside the report"
+  expect_absent "$out" "creds/buildpairs/<" "a known layout: a build identity is not read as a repo key"
+  expect_contains "$out" "rtdb  creds/tokens  6 keys: tok-1, tok-2, tok-3, ..." "a known layout: creds/ children print at most --sample names"
+  expect_absent "$out" "tok-4" "a known layout: no fourth creds/tokens name"
+  local fs_calls fs_headed
+  fs_calls=$(grep -c 'https://firestore.googleapis.com/' "$dir/logs/curl.calls" || true)
+  fs_headed=$(grep -c . "$dir/logs/curl.userproject" || true)
+  [ "$fs_calls" -eq 2 ] && [ "$fs_headed" -eq 2 ] ||
+    fail "a known layout: every Firestore call carries X-Goog-User-Project from a config file ($fs_headed of $fs_calls did)"
+  expect_absent "$(cat "$dir/logs/curl.calls")" "X-Goog-User-Project" "a known layout: the header is not on argv"
   expect_contains "$out" "gcs   /" "a known layout: the bucket's root is listed"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro" "a known layout: no fugaro call"
 }
@@ -325,7 +352,7 @@ test_an_unnamed_repo_keyed_path_fails() {
 import json, sys
 p, slug = sys.argv[1], sys.argv[2]
 t = json.load(open(p))
-t["creds"]["workflowsecrets"] = {slug: {"names": True}}
+t["creds"]["mirrors"] = {slug: {"names": True}}
 t["mirror"] = {slug: {"x": 1}}
 json.dump(t, open(p, "w"))
 PY
@@ -333,13 +360,13 @@ PY
   run_check "$dir" -- "$project" --config "$dir/config.yaml"
   expect_status "$status" 1 "an unnamed repo-keyed path"
   expect_contains "$out" "CHECK 890 RESULT: FAIL (exit 1)" "an unnamed path: the verdict"
-  expect_contains "$out" "[slug] UNNAMED rtdb creds/workflowsecrets/<slug>" "an unnamed path under creds/"
+  expect_contains "$out" "[slug] UNNAMED rtdb creds/mirrors/<slug>" "an unnamed path under creds/"
   expect_contains "$out" "[slug] UNNAMED rtdb mirror/<slug>" "an unnamed top-level node"
   expect_contains "$out" "[slug] UNNAMED gcs logs/<slug>" "an unnamed bucket prefix"
   local layout
   layout=$(printf '%s\n' "$out" | grep -m1 '^  layout ' || true)
   expect_contains "$layout" "FAIL" "an unnamed path: the layout row"
-  expect_contains "$layout" "creds/workflowsecrets/<slug>" "an unnamed path: the layout row names it"
+  expect_contains "$layout" "creds/mirrors/<slug>" "an unnamed path: the layout row names it"
 }
 
 test_only_reads_are_called() {
