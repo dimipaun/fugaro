@@ -155,9 +155,16 @@ func TestRosterPeopleAreNotLaunchersOfTheWorkspaceProject(t *testing.T) {
 			// folds too and a spelling Google would never mint still cannot
 			// reach the class list.
 			{Address: "ROBOT@example.IAM.GServiceAccount.com", Kind: workspace.KindHuman},
+			// A `:` in the local part is a roster address and not a member
+			// spelling (canonical addresses allow it, and the module's own
+			// validation accepts one): the filter keeps it, because the class
+			// list has to be exactly what the module takes — a value this
+			// dropped and the module refused, or the other way round, is an
+			// update that fails on the roster's own content.
+			{Address: "a:b@example.com", Kind: workspace.KindHuman},
 		},
 	}
-	want := []string{"ada@example.com", "zoe@example.com"}
+	want := []string{"a:b@example.com", "ada@example.com", "zoe@example.com"}
 	if got := IntakePeople(roster); !slices.Equal(got, want) {
 		t.Errorf("IntakePeople(roster) = %v, want %v: the intake's second class is the roster's HUMANS, sorted and each once — a machine's address is a service account's and no interactive ID token carries one, whatever kind the roster spells beside it, and credsvc's foldLauncherAccounts refuses that shape outright (the revision would exit on start)", got, want)
 	}

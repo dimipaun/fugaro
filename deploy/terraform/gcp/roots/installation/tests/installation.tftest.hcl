@@ -3689,3 +3689,28 @@ run "a_roster_person_may_not_be_a_service_account_in_any_case" {
 
   expect_failures = [var.intake]
 }
+
+# An address with a `:` in its LOCAL part is accepted, because a roster can
+# hold one and `fugaro update` writes what the roster holds: internal/workspace's
+# CanonicalAddress keeps any printable ASCII address with one `@`, and
+# `fugaro workspace user add` puts it on the roster without looking at the local
+# part. A validation that refused it would fail the plan of a value the run has
+# already written into the tfvars — the update that fails, and stays failed.
+# The member spelling the run above refuses is caught by the prefix instead, so
+# nothing is lost by widening the character class.
+run "a_roster_person_may_be_an_address_with_a_colon" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      people     = ["a:b@example.com"]
+    }
+  }
+}

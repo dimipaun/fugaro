@@ -76,6 +76,15 @@ const serviceAccountSuffix = ".gserviceaccount.com"
 // spelling: DecodeRoster refuses a node whose person is not canonical, and the
 // class is compared to the email claim of a token Google minted, which is lower
 // cased.
+//
+// The list is what the module's own validation takes, and that is a rule rather
+// than a coincidence: the value this writes is planned by the installation root
+// a moment later, so a class list holding one address more or one fewer than
+// var.intake.people accepts is an update that fails — or a person the roster
+// named and the module's plan refuses. It is why the suffix above is the ONLY
+// shape dropped: an address with a `:` in its local part (which
+// workspace.CanonicalAddress keeps and `fugaro workspace user add` accepts)
+// stays, and the module's validation takes it as the bare address it is.
 func IntakePeople(roster *workspace.Roster) []string {
 	out := []string{}
 	if roster == nil {
