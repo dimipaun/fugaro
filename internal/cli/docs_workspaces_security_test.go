@@ -348,6 +348,53 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 	}
 }
 
+// TestSecurityMdStatesTheWorkspacesOwnSlip is WC4's half of the sentence this
+// task makes false, and it is the reason the plan's shared-files table takes
+// `SECURITY.md` as its one exception: the slip paragraph states, of every slip,
+// that the roster which decided its credential set "is read at issue time and
+// never remembered" and that "a slip already issued keeps serving the run it was
+// granted for" — and the workspace's own slip is narrower than that on every
+// count. The service re-reads the roster as it re-reads the node, so a person
+// taken off the roster is refused within the minute, a slip a person holds is
+// refused on every call once they are gone, the slip records the owner's
+// verified address case-folded at grant time, and a grant nobody claimed is
+// over at its claim deadline rather than claimable for weeks. The pin reads the
+// section the sentence lives in, because a claim stated anywhere else in the
+// document is not a claim the reader of that paragraph has.
+func TestSecurityMdStatesTheWorkspacesOwnSlip(t *testing.T) {
+	s := readDoc(t, "SECURITY.md")
+	const slipsHeading = "### The intake, and the slips a run holds"
+	if !strings.Contains(s, "\n"+slipsHeading+"\n") {
+		t.Fatalf("SECURITY.md has no `%s` section: the workspace's own slip is narrower than the installation's, and the paragraph that states the wider rule is where the narrowing has to be read", slipsHeading)
+	}
+	section := flattenDoc(docSection(t, "SECURITY.md", s, slipsHeading))
+	for _, want := range []string{
+		// The narrowing, named as one: a reader who takes the paragraph above
+		// at face value has to meet this sentence in the same place.
+		"A workspace's own slip is narrower than that on every count",
+		// The roster IS re-read, as the node is, and a removed person is
+		// refused within the minute -- both their next grant and the calls of
+		// the runs they already launched (R3, D3146).
+		"re-reads the roster as it re-reads the node",
+		"every 60 seconds",
+		"is refused their next grant",
+		"every call under a slip they already hold within that minute",
+		// The check every call makes needs the verified address, and it is
+		// case-folded when the grant writes it (F11, finding 7).
+		"records its owner's verified address, case-folded at grant time",
+		"the check every call reads",
+		// And the claim deadline: the number is WC4's to choose and is chosen
+		// here, so the document states it rather than leaving a reader to
+		// guess how long an unclaimed grant is worth.
+		"a claim deadline counted from the grant — 30 minutes",
+		"can no longer be claimed",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("SECURITY.md's slips paragraph never says %q: the paragraph states the wider rule, and WC4's narrower one has to be read beside it or the document is false about the workspace's own slip", want)
+		}
+	}
+}
+
 // TestDesignV1NamesTheWorkspace: docs/design/v1.md is the design the whole
 // repository is written against, its project section defines the unit every
 // other document names, and W9 is the task the plan lets add the workspace

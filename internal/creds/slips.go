@@ -116,6 +116,47 @@ type Slip struct {
 	// slip cannot outlive the run it was granted for, whatever the job does.
 	// Issuance ends at Expires.
 	MaxRuntime time.Duration `json:"max_runtime"`
+	// ClaimDeadline is the instant an UNCLAIMED slip can no longer be claimed,
+	// counted from the grant. It is the zero time for a slip that carries none,
+	// which is every slip this package wrote before the field existed: a
+	// member's own grant is asked for by a launcher the member's service has
+	// just verified and claimed by a run that is starting at that instant, so
+	// an unclaimed one is worth nothing to anyone and needs no clock of its
+	// own (Claim's own comment). A WORKSPACE's grant is the case the field
+	// exists for (WC4, threat-model §11 finding 1): the workspace's service
+	// mints a slip over the workspace's paid entries for a person's own token,
+	// and a grant nobody claims would otherwise stay claimable for ever.
+	//
+	// It bounds the CLAIM and nothing else. Once the slip is claimed, Expires
+	// is the claim plus MaxRuntime, exactly as it always was, so a person's
+	// runtime is not shortened by the wait between the grant and the run's
+	// first call.
+	//
+	// It is a POINTER so that a slip which carries none writes no key at all,
+	// and that is the reason and not a preference: the deadline is one
+	// deployment's (the workspace's) fact, and every slip this package wrote
+	// before it existed — every member's grant, and every workspace slip of a
+	// reader older than the field — must keep the node shape it had, because
+	// `omitempty` does not omit a time.Time and a zero one would write
+	// "0001-01-01T00:00:00Z" on every record forever. nil is therefore "no
+	// deadline", never "a deadline at the zero time".
+	ClaimDeadline *time.Time `json:"claim_deadline,omitempty"`
+	// OwnerAddress is the case-folded address of the person the slip was
+	// granted to — the verified address the roster was read for (F11, WC4) —
+	// and it is empty for a slip that is not a person's: a member's grant is a
+	// run's, and Owner and ExpectedAccount are the whole of it.
+	//
+	// **It is the only fact the check on a later call can make about the
+	// roster.** A workspace slip is admitted by the workspace's service on
+	// every call under it, and one of the two things that admission asks on
+	// every call is whether the person it belongs to is still on the roster
+	// (R3, WC4): the roster is keyed by address, so an address on the record is
+	// what answers it without a second read of the launcher's token — which the
+	// route does not hold. It is case-FOLDED because that is the shape the
+	// roster's comparison is in (foldedAddress), and it is an address and never
+	// a token: it is written here at the grant, from the token's verified
+	// claims, and reaches no log, no error and no caller.
+	OwnerAddress string `json:"owner_address,omitempty"`
 	// Claimed is who claimed the slip and when; its zero value is an unclaimed
 	// slip, which is not live and serves nothing (R9).
 	Claimed Claim `json:"claimed"`
@@ -141,8 +182,24 @@ type Claim struct {
 }
 
 // Expires is the instant the slip's issuance ends: its max runtime from the
-// claim. The zero time for an unclaimed slip, which is not live at all.
-func (s Slip) Expires() time.Time { return s.Claimed.At.Add(s.MaxRuntime) }
+// claim, and for a slip no run has claimed the claim DEADLINE it was granted
+// with. The zero time for a slip that carries neither, which is an unclaimed
+// slip with no deadline and is not live at all.
+//
+// The two are one question asked of two records, and they are the only two
+// instants a slip's life has: a claimed slip ends MaxRuntime after its claim,
+// and an unclaimed one that carries a deadline (a workspace's grant) ends at
+// that deadline. Both are strict Befores at their readers (Live, Claim), so a
+// slip whose instant has arrived is over rather than current.
+func (s Slip) Expires() time.Time {
+	if !s.isClaimed() {
+		if s.ClaimDeadline == nil {
+			return time.Time{}
+		}
+		return *s.ClaimDeadline
+	}
+	return s.Claimed.At.Add(s.MaxRuntime)
+}
 
 // Live reports whether the slip may serve a call at now: it has been claimed,
 // and now is inside its max runtime.
@@ -440,6 +497,16 @@ func (s *RTDBStore) Claim(ctx context.Context, id string, run Run, account strin
 		case prev.Slug != run.Slug || prev.Run != run.ID || prev.ExpectedAccount != account:
 			return Slip{}, fmt.Errorf("creds: claiming the slip %q: %w", id, ErrSlipIdentity)
 		case !prev.Claimed.At.IsZero() && !prev.Live(now):
+			return Slip{}, fmt.Errorf("creds: claiming the slip %q: %w", id, ErrSlipExpired)
+		case !prev.isClaimed() && prev.ClaimDeadline != nil && !now.Before(*prev.ClaimDeadline):
+			// The claim DEADLINE of an unclaimed slip (Slip.ClaimDeadline): a
+			// grant nobody claimed inside its window is over, and it is refused
+			// as expired rather than granted, which is what keeps a workspace's
+			// grant from being claimable for ever. It is asked beside the
+			// claimed slip's own expiry and BEFORE the taken-flag, for that
+			// case's reason read the other way: a deadline that has passed is
+			// the fact the caller can act on, and a slip that is both dead and
+			// unclaimed is dead.
 			return Slip{}, fmt.Errorf("creds: claiming the slip %q: %w", id, ErrSlipExpired)
 		case prev.isClaimed():
 			// The record decides, not the instant: a claim that arrived with no

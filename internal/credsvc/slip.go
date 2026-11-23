@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // The slip routes (DS1.3, D1937): the grant a launcher asks for and the claim
@@ -1218,4 +1219,545 @@ func writeSlipAnswer(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// The workspace's own grant and claim (WC4, R3, D2970, D3147): the two routes
+// workspace mode serves for ITSELF. They are the other side of C1
+// (internal/creds/person.go) and of C2 (scope_person.go), and the rules they
+// carry are the ones docs/workspace-credentials/reconciliation.md states as R3,
+// R4 and R8:
+//
+//   - **the class is the WORKSPACE's own** (R3, D2970). A member's admins can
+//     forge their own project's launcher list (D1943), so a slip over the
+//     workspace's money that they could mint would be one signed by the party
+//     spending it. What admits a caller here is the workspace's roster, read
+//     through the workspace's OWN database, and the class WC14 builds over it.
+//   - **the roster is re-read as the node is** (R3): the copy the resolver holds
+//     is served for workspaceNodeTTL and a re-read that failed refuses the call
+//     rather than serving a stale one, so a person taken off the roster stops
+//     being admitted within the same minute a member's reach moves in.
+//   - **the binding is the run's, and then the person's** (R3, D3145 reopened):
+//     the job account and the repository are held to the published node exactly
+//     as they are for a member's grant, AND the person is held to the members
+//     they are a launcher of — read from the workspace's own roster's `grants`
+//     mark (D2818), which is the one record of that fact the workspace's
+//     service can read, because it holds no grant on any member's own roster.
+//   - **"no token held" is answered before the node is read** (R3, D3147): a
+//     person who holds no token of the name they asked for is answered `held`
+//     false and the run starts on the shared entries exactly as it did before
+//     this plan, and they learn nothing about the workspace's membership table
+//     from the route at all.
+//   - **one class of refusal, naming nothing** (R3, D3147): every refusal OF
+//     THE CALLER is ErrPersonGrantRefused's wire class, and no refusal names an
+//     account, a repository or a person. A failure of the service's OWN state —
+//     a roster, a node or a container that could not be read — is the state
+//     class every other route answers a failed read with (D143), because a
+//     launcher must be able to tell "the workspace refused me" from "the
+//     workspace is not answering" (D3147's three answers).
+//   - **the slip is the WORKSPACE's own** (R3): minted, written and read
+//     through the workspace's own database, never a member's, and a call
+//     carrying a member's slip is refused by the gate before a handler is
+//     reached (R4, R18, F13, F40).
+
+// personSlipClaimWindow is how long an UNCLAIMED workspace slip may be claimed,
+// counted from the grant. It is this task's choice and it is pinned by
+// TestAnUnclaimedWorkspaceSlipExpiresAtTheClaimDeadline.
+//
+// **Thirty minutes is the shape of the thing it bounds, and nothing else.** The
+// window is the launcher's one hand-off — the id goes into the job's environment
+// (creds.PersonSlipEnv) and the run claims it at bootstrap — so what it has to
+// cover is a job that is queued, started and has read its environment: minutes,
+// not hours. It is deliberately not `maxSlipRuntime`, which is the cap on how
+// long a run may be SERVED: a grant nobody claimed in half an hour is a launch
+// that did not happen, and leaving it claimable for a day would leave a record
+// over the workspace's paid entries that a leaked id could still take. Nothing
+// downstream is shortened by it — the run's own runtime is measured from its
+// claim (creds.Slip.Expires), so a run that waits 29 minutes for a slot still
+// gets every second it was granted.
+const personSlipClaimWindow = 30 * time.Minute
+
+// personSlipRuntime is how long a claimed workspace slip may serve, and it is
+// the CAP rather than a value the caller asked for: C1's request carries four
+// fields and no runtime (a person's grant asks whether the caller holds ONE
+// token, not how long a run wants to run), so this is the service's own answer
+// and it is the longest a slip may serve at all. A run that ends sooner ends
+// sooner; issuance stops at this bound whatever the job does (R10).
+const personSlipRuntime = maxSlipRuntime
+
+// personGrantRefused is the ONE sentence every refused workspace grant is
+// answered with (R3, D3147). It names no account, no repository and no person —
+// not even which of the four things was wrong — so a person who holds a token
+// learns nothing from a refusal beyond the fact of it, and the launcher has one
+// answer to branch on.
+const personGrantRefused = "the workspace did not grant this call a slip"
+
+// personGrant answers the workspace's own grant (R3, D2970).
+//
+// The order is the rules, one step at a time:
+//
+//  1. the bearer and the launcher class (C2's Launchers), with no line before a
+//     caller is verified — a line's "who" is what the class verified and there
+//     is none yet.
+//  2. the run-identity headers refused by name: a grant is asked for before the
+//     run exists, exactly as the installation's is.
+//  3. the body, read strictly (creds.ParsePersonGrantRequest) and registered
+//     with the call's scrub, so the launcher's own token reaches no log.
+//  4. the operator's stop switches, read HERE because this route is answered
+//     ahead of the shared parse: a stopped workspace writes no new record.
+//  5. **whether the caller holds the token they asked about**, and this is the
+//     step that comes before the workspace's membership table is read at all
+//     (R3): a container that is not there — none, or one with no version — is
+//     the `held:false` ANSWER and not a refusal (D3147, §11 finding 5), and a
+//     read that FAILED is the state class, because answering "not held" from a
+//     Secret Manager that was unreachable would start a run on the shared
+//     entries while the person's own token sat there (D143's fail-closed rule).
+//  6. the roster, re-read as the node is (R3): the verified address must be a
+//     `human` of it, and the person must be a launcher of the member the job
+//     account belongs to (D3145 reopened — the `grants` mark below).
+//  7. the job account and the repository held to the published node (R3, R19):
+//     the account is one the node names, and the repository is one that
+//     account's own row declares. It is the member's grant's own binding, made
+//     against the same table.
+//  8. the slip, written into the WORKSPACE's own store (ps.Slips), with the
+//     claim deadline this file pins and the person's folded address on it.
+//
+// Every terminal step writes exactly one line: an audit line for a refusal, the
+// service's own line for a grant and for a `held:false` answer — the same shape
+// the installation's grant and claim have, and for the same reason (a StatusOK
+// audit line requires a credential and a grant issues none, audit.go).
+func (s *Server) personGrant(ctx context.Context, w http.ResponseWriter, r *http.Request, ps personScope) {
+	tok, err := bearerFromHTTP(r)
+	if err != nil {
+		s.refuse(w, StatusUnverified, ErrorUnverifiedJobIdentity, err.Error())
+		return
+	}
+	caller, err := ps.Launchers().VerifyLauncher(ctx, tok)
+	if err != nil {
+		// The class's own refusal, answered as the installation's grant answers
+		// its launcher class's and with no line: nothing has been verified.
+		s.refuseLauncher(w, err)
+		return
+	}
+	if r.Header.Get(HeaderRunIdentity) != "" || r.Header.Get(HeaderRunJob) != "" {
+		// A run identity on a grant is the shape C1 says this route never sees,
+		// and it is answered as the route's ONE class and not with a refusal
+		// that says which header it was (D3147's "and nothing finer").
+		s.refusePersonGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, personGrantRefused)
+		return
+	}
+	cl, err := readCall(r, []string{tok})
+	if err != nil {
+		s.refusePersonGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, personGrantRefused)
+		return
+	}
+	req, err := creds.ParsePersonGrantRequest(cl.body)
+	if err != nil {
+		// The refusal names the field and never what the call sent, and it is
+		// the route's one class: a launcher reads the shape mistake on its own
+		// side (the parse is C1's, and the launcher that wrote the body has it
+		// too).
+		s.refusePersonGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, personGrantRefused)
+		return
+	}
+	on, which, err := s.cfg.Kills.Stop(ctx, req.Slug)
+	if err != nil {
+		s.refusePersonGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "the operator's stop switches could not be read")
+		return
+	}
+	if on {
+		s.refusePersonGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable,
+			"the credentials service is stopped by the "+which+" kill switch")
+		return
+	}
+	// Step 5: the container, by its exact name and by nothing else. It is read
+	// BEFORE the roster and before the node, which is R3's whole ordering: a
+	// person who holds no token learns nothing at all from this route.
+	held, err := s.personTokenHeld(ctx, caller.Sub, req.Name)
+	if err != nil {
+		s.refusePersonGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "the personal credential could not be read")
+		return
+	}
+	if !held {
+		// The ANSWER, not a refusal (R8, D3147): the run starts on the shared
+		// entries exactly as it did before this plan, and the launcher prints
+		// nothing. The line is the service's own, and it is what tells an
+		// operator that a person asked and held nothing.
+		s.log.Info("credsvc: a workspace grant found no token",
+			"launcher", caller.Account, "repository", req.Slug, "run", req.Run)
+		s.writePersonGrant(w, creds.PersonGrant{Held: false})
+		return
+	}
+	// Step 6a: the roster's `human`. The address the class verified is the
+	// roster's own key (F11: the roster is keyed by address), and the fold is
+	// the one the class's own comparison uses.
+	roster, found, err := ps.Roster(ctx)
+	if err != nil {
+		s.refusePersonGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "the workspace's roster could not be read")
+		return
+	}
+	address := foldedAddress(caller.Account)
+	if !found || !rosterListsHuman(roster, address) {
+		s.refusePersonGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, personGrantRefused)
+		return
+	}
+	// Step 7: the job account and the repository, held to the node the resolver
+	// has already admitted callers against.
+	member, repos, err := ps.Member(ctx, req.Account)
+	if err != nil {
+		s.refusePersonGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "the workspace's published node could not be read")
+		return
+	}
+	if member == nil {
+		s.refusePersonGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, personGrantRefused)
+		return
+	}
+	if _, ok := repos[req.Slug]; !ok {
+		s.refusePersonGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, personGrantRefused)
+		return
+	}
+	// Step 6b: the person held to the members they are a launcher of (D3145
+	// reopened). The record is the workspace's OWN roster's `grants` mark —
+	// what the workspace wrote into that member's roster (D2818) — because the
+	// workspace's service holds no grant on a member's own roster and could not
+	// read the grant itself even if it wanted to (R8).
+	if !rosterGrantsLauncher(roster, member.Project, address) {
+		s.refusePersonGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, personGrantRefused)
+		return
+	}
+	id, err := newSlipID()
+	if err != nil {
+		s.log.Error("credsvc: a slip id could not be drawn", "error", err)
+		s.refusePersonGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "no slip could be written for this call")
+		return
+	}
+	personalName, err := secretname.User(caller.Sub, req.Name)
+	if err != nil {
+		// The class verified a `sub` of Google's own shape (maxLauncherSubDigits)
+		// and C1 refused a name that is not this plan's, so this is a wiring
+		// mistake rather than a caller's, and the refusal says nothing of it.
+		s.log.Error("credsvc: a personal name could not be built", "error", err)
+		s.refusePersonGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "no slip could be written for this call")
+		return
+	}
+	deadline := s.now().Add(personSlipClaimWindow)
+	sl := creds.Slip{
+		ID:              id,
+		Owner:           caller.Sub,
+		Launcher:        routing.Principal{Kind: routing.PrincipalPerson, ID: caller.Sub},
+		Slug:            req.Slug,
+		Run:             req.Run,
+		ExpectedAccount: req.Account,
+		Allowed:         []string{personalName},
+		OwnerAddress:    address,
+		ClaimDeadline:   &deadline,
+		MaxRuntime:      personSlipRuntime,
+	}
+	if err := ps.Slips().Create(ctx, sl); err != nil {
+		s.log.Error("credsvc: a workspace slip could not be written", "slip", id, "run", req.Run, "repository", req.Slug, "error", err)
+		s.refusePersonGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "no slip could be written for this call")
+		return
+	}
+	// The grant is recorded as one audit line (R3, WC4): the launcher's own act,
+	// written with the purpose routeAct gives the path and no credential, because
+	// a grant issues none and reads no bundle entry (audit.go's
+	// credentiallessPurpose). The line names the verified launcher and nothing
+	// of what the launcher asked for — the account, the repository and the run
+	// are the caller's own bytes — which is the shape every refusal of this route
+	// is written in, so the grant and its refusals are one class of line.
+	if err := s.auditGrant(ctx, caller.Account, StatusOK); err != nil {
+		// A line that cannot be recorded is not an answer the launcher gets:
+		// refuseGrant's rule (D143), and the refusal it answers is the state
+		// class, because the service's own record of the act is what failed.
+		s.log.Error("credsvc: a workspace grant could not be audited", "error", err)
+		s.refusePersonGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "the grant could not be recorded")
+		return
+	}
+	// The service's own line beside it is where an operator reads which person
+	// asked for which run, and the slip's id.
+	s.log.Info("credsvc: a workspace slip was granted",
+		"slip", id, "run", req.Run, "repository", req.Slug, "account", req.Account,
+		"launcher", caller.Account, "deadline", deadline)
+	s.writePersonGrant(w, creds.PersonGrant{Held: true, Slip: id})
+}
+
+// personGrant answers the grant's body, and it is writeSlipAnswer with C1's
+// answer shape around it: the same no-store rule, for the same reason (the body
+// carries the id of a record a run's calls are bound to).
+func (s *Server) writePersonGrant(w http.ResponseWriter, g creds.PersonGrant) {
+	body, err := json.Marshal(g)
+	if err != nil {
+		s.log.Error("credsvc: the workspace grant's answer could not be built", "error", err)
+		s.refuse(w, StatusUnavailable, ErrorStateUnavailable, "the grant's answer could not be built")
+		return
+	}
+	writeSlipAnswer(w, body)
+}
+
+// personTokenHeld answers whether the caller holds a token of one personal name
+// at the workspace: the per-secret container the intake writes, read by its
+// EXACT name (secretname.User — `fugaro_u_<sub>_<name>`) and by nothing else,
+// out of the Secret Manager project this deployment already reads its own bundle
+// with (perSecrets).
+//
+// **The one read of this route that is deliberately not narrow.** Nothing here
+// answers a VALUE: the container's newest version is read because Secret Manager
+// has no cheaper way to ask whether a container carries one — a container with
+// no version and no container at all are the same absence to this route, which
+// is R6's `found=false` — and the value is dropped where it is read. It is never
+// returned, never registered with the call's scrub (there is nothing of it left
+// to scrub) and never written anywhere: the answer is the fact of it and nothing
+// else, which is the whole of C1's "names, and never values" held here.
+//
+// A deployment that reads no container at all — every hermetic fixture whose
+// bundle source is not Secret Manager's, and any installation reading its
+// document another way — is a process in which no person holds a token: the
+// answer is false, which is the state every call of this half must fall back to
+// (R8), and not an error.
+func (s *Server) personTokenHeld(ctx context.Context, sub, name string) (bool, error) {
+	secrets := s.perSecrets()
+	if secrets == nil || secrets.Source == nil {
+		return false, nil
+	}
+	id, err := secretname.User(sub, name)
+	if err != nil {
+		return false, err
+	}
+	_, found, err := secrets.Source.Value(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return found, nil
+}
+
+// rosterListsHuman reports whether the roster lists the folded address as a
+// person who is a `human` (R3). It is asked of the folded address because the
+// roster is keyed by address and the class's own comparison is folded
+// (foldedAddress), and a machine of the roster is deliberately not admitted:
+// D2806 gives a machine the workspace node and no member roster, and R3's class
+// is people.
+func rosterListsHuman(roster *workspace.Roster, address string) bool {
+	if roster == nil {
+		return false
+	}
+	for _, p := range roster.People {
+		if p.Kind == workspace.KindHuman && foldedAddress(p.Address) == address {
+			return true
+		}
+	}
+	return false
+}
+
+// rosterGrantsLauncher reports whether the workspace's roster records a grant
+// into one member for one person (D2818's mark): the record of "this person is
+// a launcher of that member", which is the whole of what holds a workspace grant
+// to the members the person launches for (D3145 reopened).
+//
+// **It is the mark and not the member's own roster, and the difference is
+// stated rather than papered over.** The real grant lives in the member's own
+// node (internal/access), and this service holds no grant to read one (R8) — it
+// opens a member's database read-only, for that member's own policy and
+// outcomes, and a member's roster is not among the nodes it reads. What the
+// workspace CAN read is its own record of what it wrote, which is the roster's
+// `grants` mark, and it is the fact this decision turns on: a grant whose mark
+// was rewritten by the member's admins is a drift the workspace's `status`
+// already reports, and refusing here would refuse every run of a member whose
+// copy had gone — which the mark's own contract says is the comparison's
+// business and not a reader's.
+//
+// Every role counts: `viewer`, `operator` and `admin` are all grants the
+// workspace wrote, and R3's class is "the members the person is a launcher of"
+// and not "the members the person administers".
+func rosterGrantsLauncher(roster *workspace.Roster, project, address string) bool {
+	if roster == nil {
+		return false
+	}
+	for _, g := range roster.Grants {
+		if g.Project == project && foldedAddress(g.User) == address {
+			return true
+		}
+	}
+	return false
+}
+
+// personClaim answers one call of the workspace's claim route (R3): the two
+// forms of the installation's claim, over the WORKSPACE's own slip store and
+// under the workspace's own headers (creds.PersonSlipHeader,
+// creds.PersonSlipClaimHeader), because the two slips a run holds travel in two
+// sets of names (F13).
+//
+// The route's own admission is the gate's: this handler is reached after the
+// shared parse verified the run identity and the job's token, after the pairing
+// fixed the repository, and after the stop switches were read — so a stopped
+// workspace claims nothing, and the record decides the rest. What this handler
+// adds to the installation's two forms is the roster: a slip whose owner is no
+// longer a `human` of the workspace's roster is refused as not this run's, which
+// is R3's removal rule landing on the record rather than on the grant.
+func (s *Server) personClaim(ctx context.Context, w http.ResponseWriter, r *http.Request, id Identity, req Request, ps personScope) {
+	purpose, _ := routeAct(SlipClaimPath)
+	slipID, err := oneHeader(r, creds.PersonSlipHeader)
+	if err != nil {
+		s.refuseClaim(ctx, w, id, purpose, StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
+		return
+	}
+	if !printableHeaderValue(slipID, maxSlipIDBytes) {
+		s.refuseClaim(ctx, w, id, purpose, StatusRequestRefused, ErrorRequestRefused,
+			requestRefused+"the "+creds.PersonSlipHeader+" header is not one slip id")
+		return
+	}
+	secret, presented, err := personSlipSecretFromHTTP(r)
+	if err != nil {
+		s.refuseClaim(ctx, w, id, purpose, StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
+		return
+	}
+	cl, err := readCall(r, []string{req.RunIDToken, req.JobIDToken, secret})
+	if err != nil {
+		s.refuseClaim(ctx, w, id, purpose, StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
+		return
+	}
+	claim, err := readClaimRequest(cl.body)
+	if err != nil {
+		s.refuseClaim(ctx, w, id, purpose, StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
+		return
+	}
+	// The ownership question comes FIRST and on its own (C2's OwnsSlip, R4,
+	// F13): a call presenting a slip this service never granted — a member's,
+	// another workspace's, this workspace's own and since ended — is refused as
+	// presenting a slip that is not this service's, before the record is read
+	// for its binding, its claim or its allowance.
+	owned, err := ps.OwnsSlip(ctx, slipID)
+	if err != nil {
+		s.refuseClaim(ctx, w, id, purpose, StatusUnavailable, ErrorStateUnavailable, "the slip could not be read")
+		return
+	}
+	if !owned {
+		s.refuseClaim(ctx, w, id, purpose, StatusUnverified, ErrorUnverifiedRunIdentity, slipNotThisRuns)
+		return
+	}
+	now := s.now()
+	if presented {
+		// The reading form: the run already holds the slip and says so.
+		sl, found, err := ps.Slips().Slip(ctx, slipID)
+		if err != nil {
+			s.refuseClaim(ctx, w, id, purpose, StatusUnavailable, ErrorStateUnavailable, "the slip could not be read")
+			return
+		}
+		if !found || !slipIsThisRuns(sl, id) || !sl.ClaimMatches(secret) || !sl.Live(now) {
+			s.refuseClaim(ctx, w, id, purpose, StatusUnverified, ErrorUnverifiedRunIdentity, slipNotThisRuns)
+			return
+		}
+		if refused := s.personStillOnTheRoster(ctx, w, id, purpose, ps, sl); refused {
+			return
+		}
+		body, err := json.Marshal(SlipClaimResponse{
+			ExpiresAt:         sl.Expires(),
+			MaxRuntimeSeconds: int64(sl.MaxRuntime.Seconds()),
+		})
+		if err != nil {
+			s.log.Error("credsvc: the claim's answer could not be built", "error", err)
+			s.refuseClaim(ctx, w, id, purpose, StatusUnavailable, ErrorStateUnavailable, "the claim's answer could not be built")
+			return
+		}
+		s.log.Info("credsvc: a workspace slip was read back",
+			"slip", slipID, "run", id.Run, "repository", id.Slug, "account", id.JobAccount, "execution", claim.Execution)
+		writeSlipAnswer(w, body)
+		return
+	}
+	// The record is read BEFORE the claim so that the roster can be asked about
+	// the person it belongs to: a claim must not hand a claim secret to a run
+	// whose owner has left, and the store's own cas cannot ask the question.
+	before, found, err := ps.Slips().Slip(ctx, slipID)
+	if err != nil {
+		s.refuseClaim(ctx, w, id, purpose, StatusUnavailable, ErrorStateUnavailable, "the slip could not be read")
+		return
+	}
+	if !found {
+		s.refuseClaim(ctx, w, id, purpose, StatusUnverified, ErrorUnverifiedRunIdentity, slipNotThisRuns)
+		return
+	}
+	if refused := s.personStillOnTheRoster(ctx, w, id, purpose, ps, before); refused {
+		return
+	}
+	claimed, claimSecret, err := ps.Slips().Claim(ctx, slipID, creds.Run{Slug: id.Slug, ID: id.Run}, id.JobAccount, now)
+	if err != nil {
+		status, typ, message := StatusUnavailable, ErrorStateUnavailable, "the slip could not be claimed"
+		switch {
+		case errors.Is(err, creds.ErrNoSlip), errors.Is(err, creds.ErrSlipIdentity),
+			errors.Is(err, creds.ErrSlipClaimed), errors.Is(err, creds.ErrSlipExpired):
+			status, typ, message = StatusUnverified, ErrorUnverifiedRunIdentity, slipNotThisRuns
+		}
+		s.log.Error("credsvc: a workspace slip could not be claimed", "slip", slipID, "run", id.Run, "repository", id.Slug, "error", err)
+		s.refuseClaim(ctx, w, id, purpose, status, typ, message)
+		return
+	}
+	body, err := json.Marshal(SlipClaimResponse{
+		ClaimSecret:       claimSecret,
+		ExpiresAt:         claimed.Expires(),
+		MaxRuntimeSeconds: int64(claimed.MaxRuntime.Seconds()),
+	})
+	if err != nil {
+		s.log.Error("credsvc: the claim's answer could not be built", "slip", slipID, "run", id.Run, "error", err)
+		s.refuseClaim(ctx, w, id, purpose, StatusUnavailable, ErrorStateUnavailable, "the claim's answer could not be built")
+		return
+	}
+	s.log.Info("credsvc: a workspace slip was claimed",
+		"slip", slipID, "run", id.Run, "repository", id.Slug, "account", id.JobAccount, "execution", claim.Execution)
+	writeSlipAnswer(w, body)
+}
+
+// personStillOnTheRoster refuses a claim whose slip's owner has left the
+// workspace's roster (R3), and reports whether it refused.
+//
+// **The question is asked of the RECORD's address and of the roster as
+// re-read**, which is why the address is on the slip at all (creds.Slip's
+// OwnerAddress, F11): the claim holds the run's identity and not the person's,
+// so the record is the only thing that can say whose the slip is, and the roster
+// is re-read as the node is rather than trusted to a copy taken at the grant.
+// The refusal is the one sentence every refusal the record makes is given
+// (slipNotThisRuns), so a caller cannot tell "removed" from "not yours".
+//
+// A roster that could not be read does NOT refuse this way: it is the service's
+// own state and it answers the state class (D143, D2983), because a run whose
+// person is still there must not be stopped by a roster nobody could read.
+func (s *Server) personStillOnTheRoster(ctx context.Context, w http.ResponseWriter, id Identity, purpose string, ps personScope, sl creds.Slip) bool {
+	roster, _, err := ps.Roster(ctx)
+	if err != nil {
+		s.refuseClaim(ctx, w, id, purpose, StatusUnavailable, ErrorStateUnavailable, "the workspace's roster could not be read")
+		return true
+	}
+	if !rosterListsHuman(roster, sl.OwnerAddress) {
+		s.refuseClaim(ctx, w, id, purpose, StatusUnverified, ErrorUnverifiedRunIdentity, slipNotThisRuns)
+		return true
+	}
+	return false
+}
+
+// personSlipSecretFromHTTP reads the claim secret a workspace call presents,
+// under the workspace's own header (creds.PersonSlipClaimHeader). It is
+// slipSecretFromHTTP for the other set of names, and the two are apart on
+// purpose: a member's claim secret presented at the workspace's claim is a call
+// of a shape this route does not read (F13).
+func personSlipSecretFromHTTP(r *http.Request) (secret string, presented bool, err error) {
+	values := r.Header.Values(creds.PersonSlipClaimHeader)
+	switch len(values) {
+	case 0:
+		return "", false, nil
+	case 1:
+		if !printableHeaderValue(values[0], maxHeaderTokenBytes) {
+			return "", false, fmt.Errorf("credsvc: the %s header is not one claim secret", creds.PersonSlipClaimHeader)
+		}
+		return values[0], true, nil
+	}
+	return "", false, fmt.Errorf("credsvc: the call carries the %s header more than once", creds.PersonSlipClaimHeader)
+}
+
+// refusePersonGrant answers one refused workspace grant and records it, in
+// refuseGrant's shape: one typed refusal to the launcher, one line to the
+// operator, and the launcher's answer is the same whether or not the line lands
+// (D143). It is reached only once the launcher IS verified, for refuseGrant's
+// own reason.
+func (s *Server) refusePersonGrant(ctx context.Context, w http.ResponseWriter, caller string, status int, typ, message string) {
+	if err := s.auditGrant(ctx, caller, typ); err != nil {
+		s.log.Error("credsvc: a refused workspace grant could not be audited", "error", err)
+	}
+	s.refuse(w, status, typ, message)
 }
