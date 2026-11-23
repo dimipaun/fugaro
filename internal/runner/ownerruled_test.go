@@ -94,7 +94,7 @@ func criticalLevelsCfg(t *testing.T) string {
 	t.Helper()
 	cfg := followUpYAML(t, "")
 	cfg = strings.Replace(cfg, "  review_rounds: 2\n",
-		"  review_rounds: 2\n  first_line_review: on\n  first_line_rounds: 1\n  models: { coder: coder-model, reviewer: senior-model }\n", 1)
+		"  review_rounds: 2\n  first_line_review: on\n  first_line_rounds: 1\n  models: { coder: "+sonnet+", reviewer: "+opus+", background: "+haiku+" }\n", 1)
 	return strings.Replace(cfg, "agent:\n", "rigor:\n  default: critical\nagent:\n", 1)
 }
 

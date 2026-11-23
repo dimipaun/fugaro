@@ -11,12 +11,14 @@
 package diagnoseagent
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/routing"
 )
 
 // ownCredentialEnv are the variables the person's own Claude login writes, in
@@ -62,6 +64,21 @@ type Handle struct {
 	// this handle carries no value: env and secret are empty, there is nothing
 	// to hand the child and nothing for the redactor to replace.
 	local bool
+	// source is which credential source of the project's routing table served
+	// this diagnosis: the kind the table gave the model the diagnosis runs on,
+	// and the name of the one that kind names — a pool's name, and nothing at
+	// all for the project's Anthropic key, which is one credential and has
+	// nothing to distinguish (routing.SourceName). It is the answer the table
+	// gave and never a value, which is what lets the egress line and the report
+	// name it.
+	source routing.SourceName
+	// sourced says whether source is an answer at all, because the zero
+	// SourceName is not one: a SourceName of the anthropic kind with an empty
+	// name is a real answer, so nothing about the value itself says whether
+	// there is one. It is false for the person's own credential (Own,
+	// LocalHandle), which is not the project's and so is reached by no table of
+	// the project's, and for a project that has published no table at all.
+	sourced bool
 }
 
 // handleFields is Handle without its methods, so the methods below can print a
@@ -127,7 +144,9 @@ func (h Handle) Secret() string { return h.secret }
 
 // Account is the credential's account: the name a run would use
 // (config.DefaultClaudeAccount or a claude_accounts name) when the credential
-// is the project's, and "" when it is the person's own. It is what the line the
+// is an account's token, config.AnthropicKeyAccount when it is the project's
+// own Anthropic key, which belongs to no account, and "" when it is the
+// person's own. It is what the line the
 // command prints before it sends anything names (D1606) and what a refusal
 // names — the account, never a value or a prefix of one.
 func (h Handle) Account() string { return h.account }
@@ -146,6 +165,18 @@ func (h Handle) Own() bool { return h.own }
 // value anywhere in this process, which is what the egress line says when it
 // tells the person no token of Fugaro's is being sent.
 func (h Handle) Local() bool { return h.local }
+
+// Source is which credential source served this diagnosis, and whether the
+// project's table named one: the kind the table gave the model the diagnosis
+// runs on, and the name of the one that kind names (routing.SourceName). It is
+// what the report and the egress line say the diagnosis went out through, and
+// it is never a value — a pool's name or nothing at all.
+//
+// false is the person's own credential, which is not the project's and so is
+// reached by no table of the project's, and a project that has published no
+// table at all: a diagnosis that records a source the table never named would
+// be reporting a decision nobody made.
+func (h Handle) Source() (routing.SourceName, bool) { return h.source, h.sourced }
 
 // carries reports whether the handle names a credential a child can reach a
 // provider with: a value in its environment, or the login it inherits from the
@@ -192,6 +223,18 @@ type Accounts struct {
 	// the default applies; a caller that diagnoses one stage names it here, and
 	// that stage's own key then wins, exactly as it does for a run.
 	Stage string
+	// Model is the model this diagnosis runs on: D1607's key, the repository's
+	// own agent.models.diagnose else the project layer's, read by the command.
+	// It is the model the table below is resolved against, which is why it is
+	// a value this package is handed rather than one it looks up.
+	Model string
+	// Table is the project's routing table (C1): how this project says a model
+	// is reached, and the thing that decides whether this diagnosis may make
+	// its call at all and which credential source serves it. The command fills
+	// it from the selected local project config, and this package reads no
+	// config of its own — a project that has published no table hands an empty
+	// one, which is every project until its own migration writes one.
+	Table routing.Table
 }
 
 // choice is the account a local diagnosis would use and the key that chooses
@@ -217,8 +260,9 @@ func (a Accounts) choice() (name, key string) {
 // SecretReader reads one secret's value as the person whose machine this is:
 // the command supplies one over Secret Manager, authenticated by that person's
 // own gcloud login (D1601), and it is asked for a secret name of config's
-// (claude-oauth-token, claude-oauth-token-<name>), never for a name of its own
-// choosing.
+// (claude-oauth-token, claude-oauth-token-<name>, anthropic-api-key — the
+// credential a source of the project's routing table names), never for a name
+// of its own choosing.
 //
 // An empty value and no error is "nothing is stored under that name", which is
 // a different answer from a failure and is refused differently below. A nil
@@ -260,9 +304,26 @@ func Own(env []string) (Handle, bool, error) {
 // Resolve returns the credential a local diagnosis may use, in D1601's order.
 // The person's own credential comes first, read out of env and costing no cloud
 // call and no project account — which is what makes a diagnosis work when the
-// cloud is exactly what is broken. The project's account is the fallback: read
-// through the person's own gcloud login, only when its allow_data_to covers
-// this repository, and only into memory.
+// cloud is exactly what is broken. The project's credential is the fallback:
+// read through the person's own gcloud login, and only into memory.
+//
+// The project's credential is reached THROUGH THE PROJECT'S ROUTING TABLE and
+// never by an account name: the table is resolved for the model the diagnosis
+// runs on (Accounts.Model), a model it does not route is refused before any
+// credential is read at all, and the source it answers with decides which
+// credential is read — the project's own Anthropic key, or the project's Claude
+// account's token. That is what makes a diagnosis go by the table exactly as a
+// run does, and the source it resolved is recorded on the handle it returns
+// (Handle.Source).
+//
+// A project that has published no table is not a project whose model has no
+// entry: it is a project that has said nothing yet, which is every project
+// until its own migration writes the table, and the account's own choice is
+// then read exactly as it was before the table existed. The two are different
+// answers of the contract's own (ErrNoEntry is "this table routes no such
+// model", and a table that is not there routes nothing), and the difference is
+// what keeps this command working through the release that introduces the
+// table.
 //
 // env is the process environment in os.Environ's form. It is read and never
 // written: nothing here sets a variable, and a credential that came from the
@@ -271,6 +332,26 @@ func Own(env []string) (Handle, bool, error) {
 func Resolve(env []string, accounts Accounts, read SecretReader) (Handle, error) {
 	if h, ok, err := Own(env); ok || err != nil {
 		return h, err
+	}
+
+	src, sourced, err := diagnosisSource(accounts)
+	if err != nil {
+		return Handle{}, err
+	}
+	srcName := sourceName(src)
+	if sourced && src.Kind == routing.KindAnthropic {
+		// The project's own Anthropic key is one credential of the project and
+		// belongs to no account of the configuration, which is why nothing
+		// below this line is read on this path: the account choice, the
+		// repository guard and the account's own allow_data_to are all about
+		// an account. Which repositories the key may serve is the source's own
+		// admit list, and it is read where the source is chosen: a key that
+		// does not admit this repository is skipped by diagnosisSource, exactly
+		// as the service's walk skips it (D3182), so a source that reaches this
+		// line has already admitted the repository and nothing is left to
+		// check.
+		h, err := anthropicKey(read)
+		return withSource(h, srcName, sourced), err
 	}
 
 	name, key := accounts.choice()
@@ -323,7 +404,156 @@ func Resolve(env []string, accounts Accounts, read SecretReader) (Handle, error)
 	case v == "":
 		return Handle{}, noCredentials(name, secret, fmt.Sprintf("nothing is stored under it (%s)", secret))
 	}
-	return newHandle(config.ReservedSecrets[config.ClaudeOAuthToken], "stored under "+secret, v, name, false)
+	h, err := newHandle(config.ReservedSecrets[config.ClaudeOAuthToken], "stored under "+secret, v, name, false)
+	return withSource(h, srcName, sourced), err
+}
+
+// diagnosisSource is the credential source this diagnosis reaches its model
+// through, and whether the project's table named one at all.
+//
+// The table is resolved first, before any credential is read, because a model
+// the table does not route is a model this project has said may not be called:
+// reading a credential first would be reading one for a call that is refused.
+//
+// The chain is read in its own order for the first source a local diagnosis can
+// serve, which is what "first usable one wins" means here: the kinds a local
+// process can reach are the project's own Anthropic key and the project's
+// Claude accounts, and the other three are the credentials of a deployment —
+// the launcher's designation, a provider's key read in the cloud, and Vertex
+// through the installation's service account — which no command on a person's
+// machine holds. A key this repository is not admitted to is skipped for the
+// same reason a source nothing holds is: it is not usable here (D3182), and the
+// pool below it may still be. A chain with nothing left is refused with the fix
+// rather than served by something the table did not name, which is the
+// fail-closed direction the whole table is for.
+func diagnosisSource(a Accounts) (routing.Source, bool, error) {
+	entry, err := routing.Resolve(a.Table, a.Model)
+	if err != nil {
+		if len(a.Table) == 0 {
+			// No table published, so nothing to go by: this is the project
+			// that has said nothing yet, and the account's own choice is read
+			// as it was before the table existed.
+			return routing.Source{}, false, nil
+		}
+		if errors.Is(err, routing.ErrNoEntry) {
+			return routing.Source{}, false, fmt.Errorf("this diagnosis runs on the model %s, and this project's routing table has no entry for it: a model no entry matches is a model the project has not said how to reach, and a diagnosis served by whatever credential happened to be around would be reaching a model nobody chose. Add the entry with `fugaro routing set %s <source>`, or set %s (or %s) in this environment to diagnose on your own credential, which goes by no table of the project's",
+				pluginwire.Printable(a.Model), pluginwire.Printable(a.Model), ownCredentialEnv[0], ownCredentialEnv[1])
+		}
+		return routing.Source{}, false, fmt.Errorf("this diagnosis runs on the model %s, and this project's routing table could not be resolved for it: %v. Fix the table with `fugaro routing ls` and `fugaro routing set`, or set %s (or %s) in this environment to diagnose on your own credential",
+			pluginwire.Printable(a.Model), err, ownCredentialEnv[0], ownCredentialEnv[1])
+	}
+	// A source this repository is not admitted to is skipped rather than
+	// served, which is D3182's own rule for the service's walk: the key that
+	// admits another repository is not the end of the chain, because the pool
+	// below it may still be the one this repository's account serves.
+	var withheld []routing.Source
+	for _, src := range entry.Chain {
+		switch src.Kind {
+		case routing.KindAnthropic:
+			if !sourceAdmits(src, a.Repo) {
+				withheld = append(withheld, src)
+				continue
+			}
+			return src, true, nil
+		case routing.KindPool:
+			return src, true, nil
+		}
+	}
+	if len(withheld) > 0 {
+		// The chain reached a key and the repository was not admitted to it.
+		// That is the one reason here a person can act on, so it is named
+		// rather than the general "only a deployment holds these": the fix is
+		// an admission, not another kind of source.
+		if a.Repo == "" {
+			return routing.Source{}, false, fmt.Errorf("this diagnosis runs on the model %s, and the entry %s reaches it through the project's own Anthropic key (%s), whose admit list names the repositories it may serve (D3182): this command is not running in a repository, so there is nothing to check the key against and the key is skipped rather than read. Run this from a checkout of the repository, or set %s (or %s) in this environment to diagnose on your own credential, which needs no repository",
+				pluginwire.Printable(a.Model), pluginwire.Printable(entry.Match), config.AnthropicSecret, ownCredentialEnv[0], ownCredentialEnv[1])
+		}
+		return routing.Source{}, false, fmt.Errorf("this diagnosis runs on the model %s, and no source this project's table gives it may serve %s: the entry %s reaches it through the project's own Anthropic key (%s), and that key's admit list does not name this repository — a source that admits no repository serves none, which is the fail-closed direction D3182 states. Add %s to that source's admit list in the project's model_routing table, name a pool whose account allows it in the entry (`fugaro routing set %s <pool>`), or set %s (or %s) in this environment to diagnose on your own credential",
+			pluginwire.Printable(a.Model), pluginwire.Printable(a.Repo), pluginwire.Printable(entry.Match), config.AnthropicSecret, pluginwire.Printable(a.Repo), pluginwire.Printable(a.Model), ownCredentialEnv[0], ownCredentialEnv[1])
+	}
+	return routing.Source{}, false, fmt.Errorf("this diagnosis runs on the model %s, and every source this project's table gives it is one only a deployment holds: the entry %s names %s, and a local diagnosis reaches a model through the project's own Anthropic key or its Claude accounts alone — the launcher's own credentials are a run's, a provider's key is read in the cloud, and Vertex is the installation's service account. Name one of the two in the entry (`fugaro routing set %s anthropic`), run the diagnosis in the cloud with `fugaro diagnose`, or set %s (or %s) in this environment to diagnose on your own credential",
+		pluginwire.Printable(a.Model), pluginwire.Printable(entry.Match), chainPhrase(entry.Chain), pluginwire.Printable(a.Model), ownCredentialEnv[0], ownCredentialEnv[1])
+}
+
+// sourceAdmits is D3182's per-repository admission, read here for the one kind
+// a local diagnosis serves from a single credential of the project: the
+// Anthropic key. The comparison is config.ClaudeAccount.AllowsData's own —
+// case-folded over owner/name — and a list that names no repository admits
+// none, which is the fail-closed direction the contract states for an empty
+// admit list.
+//
+// A command with no repository in hand therefore admits nothing, which is the
+// same answer the account path's guard gives for the same reason: an admission
+// that is per repository cannot be checked against a repository there is not.
+func sourceAdmits(src routing.Source, repo string) bool {
+	if repo == "" {
+		return false
+	}
+	return slices.ContainsFunc(src.Admit, func(r string) bool { return strings.EqualFold(r, repo) })
+}
+
+// sourceName is the source as the answer carries it (routing.SourceName): the
+// kind, and the name of the one that kind names — a pool's name, and nothing at
+// all for the project's own Anthropic key, which is one credential of the
+// project and has nothing to distinguish.
+func sourceName(src routing.Source) routing.SourceName {
+	if src.Kind == routing.KindPool {
+		return routing.SourceName{Kind: src.Kind, Name: src.Pool}
+	}
+	return routing.SourceName{Kind: src.Kind}
+}
+
+// anthropicKey is the project's own Anthropic key as a diagnosis uses it: the
+// credential a table's `anthropic` source names, which is one credential of the
+// project and belongs to no account of any configuration.
+//
+// The refusals below are the account path's refusals read for a credential that
+// names no account: the same three ways of having none — no reader, a read that
+// failed, nothing stored under the name — and the same way out, which is the
+// person's own credential in this environment.
+func anthropicKey(read SecretReader) (Handle, error) {
+	if read == nil {
+		return Handle{}, fmt.Errorf("this diagnosis runs on a model this project routes through its own Anthropic key (%s), and this command has no project config selected, so there is no project's key to read. Set %s (or %s) in this environment to diagnose on your own credential instead, which needs no cloud call",
+			config.AnthropicSecret, ownCredentialEnv[0], ownCredentialEnv[1])
+	}
+	v, err := read(config.AnthropicSecret)
+	switch {
+	case err != nil:
+		return Handle{}, fmt.Errorf("this diagnosis runs on a model this project routes through its own Anthropic key (%s), and the key could not be read: reading it with your own gcloud login failed: %v. Set %s (or %s) in this environment to diagnose on your own credential instead, which needs no cloud call",
+			config.AnthropicSecret, err, ownCredentialEnv[0], ownCredentialEnv[1])
+	case v == "":
+		return Handle{}, fmt.Errorf("this diagnosis runs on a model this project routes through its own Anthropic key (%s), and nothing is stored under it. Store the key with `fugaro secrets set %s`, or set %s (or %s) in this environment to diagnose on your own credential",
+			config.AnthropicSecret, config.AnthropicSecret, ownCredentialEnv[0], ownCredentialEnv[1])
+	}
+	return newHandle(config.ReservedSecrets[config.AnthropicSecret], "stored under "+config.AnthropicSecret, v, config.AnthropicKeyAccount, false)
+}
+
+// withSource records the source a handle was resolved through (C1). It is a
+// function rather than a field assignment at each return because the source is
+// a fact about the resolution and not about the credential: a path that forgot
+// it would report a diagnosis as having gone out through no source while the
+// table had named one.
+func withSource(h Handle, src routing.SourceName, sourced bool) Handle {
+	h.source, h.sourced = src, sourced
+	return h
+}
+
+// chainPhrase is a chain as a refusal names it: the kinds in their own order,
+// so a person can see what the table said rather than only that it was not
+// servable here.
+func chainPhrase(chain []routing.Source) string {
+	printed := make([]string, 0, len(chain))
+	for _, src := range chain {
+		name := string(src.Kind)
+		switch src.Kind {
+		case routing.KindPool:
+			name += " " + pluginwire.Printable(src.Pool)
+		case routing.KindProvider:
+			name += " " + pluginwire.Printable(src.Provider)
+		}
+		printed = append(printed, name)
+	}
+	return strings.Join(printed, ", ")
 }
 
 // newHandle is the one place a credential becomes a handle, and the one place

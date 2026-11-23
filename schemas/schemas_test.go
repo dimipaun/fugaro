@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -882,6 +883,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	// false: a field the runner writes and the schema does not name is a
 	// record the schema rejects.
 	cost.ReportedBy = map[string]float64{"deepseek/deepseek-v4.1-flash": 4.04, "deepseek/deepseek-v4-pro": 0.02}
+	cost.FallbackUSD = 0.9
 	cost.TableLoUSD, cost.TableHiUSD, cost.UnreportedCalls = 3.6, 5.1, 2
 	rec := runstore.Record{
 		Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Workflow: "web",
@@ -920,7 +922,11 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			Warning: "w", StartedAt: at, DurationS: 1.5,
 		}},
 		CostUSD: 4.12, Cost: &cost,
-		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, ModelNotionalUSD: 0.12, Model: "claude-sonnet-5-5", Calls: &calls, Agents: &agents}},
+		// The chain members ride along for the same reason the artifact ones
+		// do: a member the runner writes and the schema does not name is a
+		// record the schema rejects (C1, CS8).
+		Stages: []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61, ModelUSD: 0.42, ModelNotionalUSD: 0.12, Model: "claude-sonnet-5-5", Calls: &calls, Agents: &agents,
+			Source: &routing.SourceName{Kind: routing.KindProvider, Name: "openrouter"}, Fallback: true}},
 		// The switch log (C1.16, D140): the service's record of a credential
 		// change beside the cache-miss estimate only the gateway can compute,
 		// including the one a tier's unmeasured cache behaviour leaves
@@ -7259,6 +7265,59 @@ func TestRunsShowSchema(t *testing.T) {
 		}
 		if err := sch.Validate(inst); err == nil {
 			t.Errorf("%s: the schema accepts a document the command cannot write", tc.name)
+		}
+	}
+}
+
+// TestOrchestratorIDSchemaAgreesWithGo: the id rule C-ORCH fixed (D3207,
+// internal/orchestrator/naming.go) is the rule the published documents carry, so
+// every field that is an orchestrator id admits exactly what
+// orchestrator.ValidOrchestratorID admits and refuses the rest. A named
+// orchestrator's `<project>~<name>` is an id a state document, an `orchestrator
+// ls` entry and an escalation listing all carry (CG1a), and a string the rule
+// refuses is carried by none of them — a schema still holding the agent rule
+// would refuse a document this release writes.
+//
+// A work item's id is deliberately not this rule (F36): the item ids beside
+// these fields keep idRE, which admits no `~`.
+//
+// Mutation (narrow one of these patterns back to the agent rule, or widen one to
+// idRE): this test fails naming the schema, the field and the id.
+func TestOrchestratorIDSchemaAgreesWithGo(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		path []string
+	}{
+		{"orchestrator-state.schema.json", []string{"properties", "agent_id", "pattern"}},
+		{"orchestrator-output.schema.json", []string{"$defs", "id", "pattern"}},
+		{"orchestrator-output.schema.json", []string{"$defs", "ls", "properties", "orchestrators", "items", "properties", "project", "pattern"}},
+		{"escalation.schema.json", []string{"$defs", "ls", "properties", "project", "pattern"}},
+		{"escalation.schema.json", []string{"$defs", "show", "properties", "project", "pattern"}},
+	} {
+		pattern, ok := schemaAt(t, tc.file, tc.path...).(string)
+		if !ok {
+			t.Fatalf("%s: %v: not a string", tc.file, tc.path)
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			t.Fatalf("%s: %v: %q does not compile: %v", tc.file, tc.path, pattern, err)
+		}
+		for _, id := range []string{
+			// The ids the rule admits: a project's default orchestrator, a named
+			// one, and one at the longest id the rule takes (a project at its own
+			// 40-character cap, the separator, a name).
+			"fugaro", "my-project", "a1", "fugaro~night", "my-project~night-shift-2",
+			strings.Repeat("o", 40) + "~night",
+			// And the ids it refuses, the claim key and a work item's shape among
+			// them: the two that would otherwise be mistaken for an orchestrator.
+			"", "Fugaro", "fugaro_night", "fugaro~Night", "fugaro~night~x", "fugaro-",
+			"-fugaro", "fugaro night", "fugaro/night", "fugaro.night",
+			orchestrator.ClaimsKey, strings.Repeat("n", 41),
+			strings.Repeat("o", 40) + "~" + strings.Repeat("n", 41),
+		} {
+			if got, want := re.MatchString(id), orchestrator.ValidOrchestratorID(id); got != want {
+				t.Errorf("%s: %v: the pattern matches %q = %v, and orchestrator.ValidOrchestratorID says %v", tc.file, tc.path, id, got, want)
+			}
 		}
 	}
 }

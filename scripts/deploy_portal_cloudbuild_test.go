@@ -161,6 +161,44 @@ func TestCloudBuildPushesWhatTheDeployNames(t *testing.T) {
 	}
 }
 
+// TestCloudBuildStepsBuildingPlatformDockerfilesUseBuildKit holds the fault that
+// failed the first submit at step 0: a Dockerfile with BUILDPLATFORM (or
+// TARGETARCH, set from it) only builds under BuildKit, and the docker builder
+// image runs the legacy builder unless DOCKER_BUILDKIT=1 is in the step's env.
+func TestCloudBuildStepsBuildingPlatformDockerfilesUseBuildKit(t *testing.T) {
+	root := testutil.ModuleRoot()
+	var build struct {
+		Steps []struct {
+			ID   string   `yaml:"id"`
+			Env  []string `yaml:"env"`
+			Args []string `yaml:"args"`
+		} `yaml:"steps"`
+	}
+	raw := readRepoFile(t, filepath.Join(root, "ee", "keyservice", "cloudbuild.yaml"))
+	if err := yaml.NewDecoder(strings.NewReader(raw)).Decode(&build); err != nil {
+		t.Fatalf("ee/keyservice/cloudbuild.yaml is not a Cloud Build config this case can read: %v", err)
+	}
+	checked := 0
+	for _, step := range build.Steps {
+		for i, arg := range step.Args {
+			if arg != "--file" || i+1 >= len(step.Args) {
+				continue
+			}
+			dockerfile := readRepoFile(t, filepath.Join(root, step.Args[i+1]))
+			if !strings.Contains(dockerfile, "BUILDPLATFORM") {
+				continue
+			}
+			checked++
+			if !slices.Contains(step.Env, "DOCKER_BUILDKIT=1") {
+				t.Errorf("the step %q builds %s, which uses BUILDPLATFORM, without DOCKER_BUILDKIT=1 in its env: the legacy builder fails it with `failed to parse platform`", step.ID, step.Args[i+1])
+			}
+		}
+	}
+	if checked == 0 {
+		t.Error("no step builds a Dockerfile with BUILDPLATFORM, so this case checks nothing: the Dockerfiles or the steps moved")
+	}
+}
+
 // stepArgs answers every argument the build's steps carry, in order, which is
 // what the last check reads: the images a step builds are named in its argv.
 func stepArgs(steps []struct {

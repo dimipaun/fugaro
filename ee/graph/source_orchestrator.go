@@ -26,10 +26,21 @@ import (
 //     `depends_on`** (F14, F18): the state carries a task-level graph, which is
 //     what the coordinator's stored view has none of (F17, CG2). So this is
 //     where `graph --json` stops being a list of nodes.
-//   - **An edge stays inside one orchestrator.** A `depends_on` naming an item
-//     the same node does not carry draws nothing (contract §6.22): the ids are
-//     the node's own namespace, and an edge to a node this document does not
-//     hold is not one a screen can draw.
+//   - **An edge ends at a node this document holds.** A bare `depends_on` the
+//     node does not carry draws nothing: the ids are the node's own namespace,
+//     so nothing outside it answers to them (contract §6.22). A
+//     `<orchestrator>/<item>` names another orchestrator's item (D3208), and it
+//     draws an edge to that peer's node — keyed under the scope this document
+//     draws the peer in (Peers), because one document holds a local
+//     orchestrator of this machine and a central one under two scope names
+//     (F17). A reference to an id no scope of this document has, and one naming
+//     this very node, draw nothing for the bare case's reason: the far end
+//     would be no node at all. The *item* half is not checked and could not be
+//     from here — whether the peer carries the item is that peer's own state's
+//     answer, and a dependency a state records is one this source draws
+//     whatever the peer has done about it. The granularity is the map
+//     document's own: an edge to an orchestrator the document does not draw is
+//     the shape it refuses (D3221).
 //   - **It reads almost nothing.** The caller has already read
 //     `orchestrator/<id>` through the person's own credential (D1357, T2) and,
 //     for a local scope, listed the cached briefs this machine holds
@@ -114,6 +125,22 @@ type OrchestratorSource struct {
 	// this process's own environment and platform, which is what a scope built
 	// from the command line has (graphSources).
 	Endpoint endpoint.Client
+	// Peers is the scope each orchestrator id of this document is drawn under
+	// (`orchestrator:<id>` or `local:<id>`), built by the read that enumerated
+	// them (documentScopes). A dependency on another orchestrator's item is an
+	// edge to that peer's node (D3208, F17), and which scope the peer's key
+	// carries is a fact of the document and not of this source: one document
+	// holds a local orchestrator of this machine and a central one under two
+	// different scope names, so a source that guessed — by mirroring its own
+	// kind, the one thing it does know, or by always spelling the central one —
+	// would key an edge to a node that is not there whenever the two kinds
+	// differ. A peer this map does not name is no node of the document, and a
+	// reference to it draws nothing (§6.22).
+	//
+	// It is left nil by a caller that reads one scope by name: that document
+	// holds the one node, so a cross-orchestrator dependency has nothing to
+	// point at and draws nothing.
+	Peers map[string]string
 }
 
 // Scope is the scope this source is, as the command line spells it: the source
@@ -134,8 +161,10 @@ func (s OrchestratorSource) Scope() Scope {
 // so keys are unique inside one source — D1356), its title, the repository it
 // names, its phase as its state, and the time of the newest attempt committed
 // against it, which is the one age a work item carries. Its `depends_on` become
-// edges to the items this same node holds, and a dependency it does not hold
-// draws nothing.
+// edges: to the items this same node holds, and — where the reference names
+// another orchestrator's item (`<orchestrator>/<item>`, D3208) and this
+// document draws that peer (Peers) — to the peer's own node (F17). A dependency
+// that answers to neither of those draws nothing.
 //
 // A `local:` scope tries the endpoint this machine's daemon serves before it
 // answers from the node: a live endpoint is the daemon's own document, fresher
@@ -183,23 +212,25 @@ func (s OrchestratorSource) Scope() Scope {
 // and one it lost between the enumeration and the read is left out with the
 // sentence saying so rather than taking the document with it (readGraph).
 //
-// A local scope's id is judged before the endpoint is read, and the judgement
-// keeps this source from reading one and from nothing else: a name H1's pattern
-// cannot carry names no local scope, so no registry file is looked for it and the
-// node and then the cache answer exactly as they do on a machine with no daemon.
-// That is the one place the scope's rule is narrower than the daemon's own
-// (agentRE admits `_` and 64 characters), and the limit is named rather than
-// widened: a project whose name carries `_`, or is longer than 40 characters, has
-// no local scope (H1, CG13c).
+// A local scope's id is judged before the endpoint is read, and the rule it is
+// judged by is the id rule and not a second one (F40, CG8): ParseScope holds the
+// value to naming.go's ValidOrchestratorID, which is the rule `orchestrator/<id>`
+// is keyed by, so `<project>~<name>` is a local scope's argument like any other
+// and the endpoint serving it is read. What the judgement can still refuse is a
+// value no orchestrator may be keyed by at all — an id with `_`, one past 81
+// characters, an empty one — and no enumerator of this CLI can produce one, since
+// NodeIDs and CachedBriefs hold every id they answer with to that same rule
+// (store.go's checkAgentID) and the command line refuses one as it parses the
+// argument, before a source exists (ParseScope). What it guards is a source built
+// by hand, and it keeps that source from looking a registry file up for an id one
+// could not be keyed by: the node and then the cache answer exactly as they do on
+// a machine with no daemon.
 //
-// The *refusal* such a name gets on the command line is the caller's, made when
-// it parses the argument, and it has to be: the command line is the only place a
-// local scope is named rather than enumerated. Under `all` an id comes from the
-// database's listing and this machine's cache, and a cached brief is what makes
-// it a local scope there whatever the database holds — so an id the database
-// holds with a brief beside it is exactly the shape a refusal here would take out
-// of the console's default graph, work items and dependencies with it, although
-// the database has the state to draw (graphSources, readGraph).
+// It answers, and does not refuse, because of what `all` enumerates: an id there
+// is one the database lists or one this machine holds a cached brief for, and a
+// refusal would take that scope out of the console's default graph — work items
+// and dependencies with it — over a value the enumeration itself produced
+// (graphSources, readGraph).
 //
 // It never returns a read's own failure: the caller classifies that before it
 // gets here (a refusal is terminal and is returned by the caller without asking
@@ -209,7 +240,7 @@ func (s OrchestratorSource) Nodes() ([]Node, []Edge, SourceState, error) {
 	source := s.Scope().String()
 	if s.Local && localID(source) {
 		if state, at, ok := s.live(); ok {
-			nodes, edges, err := orchestratorNodes(source, state)
+			nodes, edges, err := orchestratorNodes(source, state, s.Peers)
 			if err != nil {
 				return nil, nil, unreadableState(source, err), nil
 			}
@@ -222,7 +253,7 @@ func (s OrchestratorSource) Nodes() ([]Node, []Edge, SourceState, error) {
 		if err != nil {
 			return nil, nil, unreadableState(source, err), nil
 		}
-		nodes, edges, err := orchestratorNodes(source, state)
+		nodes, edges, err := orchestratorNodes(source, state, s.Peers)
 		if err != nil {
 			return nil, nil, unreadableState(source, err), nil
 		}
@@ -235,22 +266,20 @@ func (s OrchestratorSource) Nodes() ([]Node, []Edge, SourceState, error) {
 }
 
 // localID reports whether a local scope's own name is one the kind may carry: it
-// is the two rules that govern the id, and it is the narrower of them that
-// decides — H1's pattern, which is what a value that reaches argv from a renderer
-// may look like (ParseScope), over the daemon's own rule for the id of
-// `orchestrator/<id>` (agentRE). H1's admits no `_` and stops at 40 characters
-// where the daemon's carries 64, so a name this answers false for is one an
-// endpoint may well be serving and one no `local:` scope names, and the limit is
-// named rather than widened: the source reads no endpoint for it (H1, CG13c).
+// is the id rule ParseScope holds the argument to (naming.go's
+// ValidOrchestratorID, F40), which is the same rule the id of `orchestrator/<id>`
+// is keyed by. A name it answers false for is therefore one no orchestrator may
+// be keyed by at all — an id with `_`, one past 81 characters, an empty one — and
+// one no enumerator of this CLI hands this source (checkAgentID, NodeIDs,
+// CachedBriefs). It is judged before the endpoint is read, so nothing is looked
+// up for such a name (Nodes).
 //
-// It answers, and does not refuse, because of what `all` enumerates: an id there
-// is one the database lists or one this machine holds a cached brief for, and the
-// brief is what makes it local whatever the database holds (graphSources). A
-// refusal would take an orchestrator the database has a state node for — its work
-// items, its dependencies, its place in the console's default graph — out of the
-// document over a project named `my_project`. The command line's own refusal is
-// made before this source exists, when the argument is parsed, which is the one
-// place a scope is named rather than enumerated.
+// It answers, and does not refuse, because of what `all` enumerates: a refusal
+// would take a scope the enumeration itself named out of the console's default
+// graph, where the judgement costs a hand-built source its endpoint and nothing
+// else. The command line's own refusal is made before this source exists, when
+// the argument is parsed (ParseScope), which is the one place a scope is named
+// rather than enumerated.
 func localID(source string) bool {
 	_, err := ParseScope(source)
 	return err == nil
@@ -355,7 +384,10 @@ func unreadableState(source string, reason error) SourceState {
 // refuses an id that is not a name (ValidateState), so this is the second half
 // of the same fence and not the first: a document can also be hand-written, and
 // safetext.Field is lossy in ways a name's own pattern is not.
-func orchestratorNodes(source string, s orchestrator.State) ([]Node, []Edge, error) {
+//
+// peers is the scope every orchestrator id of the document is drawn under, and
+// it is what a cross-orchestrator dependency's far end is keyed by (Peers, F17).
+func orchestratorNodes(source string, s orchestrator.State, peers map[string]string) ([]Node, []Edge, error) {
 	nodes := make([]Node, 0, len(s.WorkItems))
 	edges := []Edge{}
 	for _, w := range s.WorkItems {
@@ -387,12 +419,32 @@ func orchestratorNodes(source string, s orchestrator.State) ([]Node, []Edge, err
 	}
 	for _, w := range s.WorkItems {
 		for _, dep := range w.DependsOn {
-			if !held[dep] {
+			if held[dep] {
+				edges = append(edges, Edge{
+					From: NodeKey(source, w.ID),
+					To:   NodeKey(source, dep),
+					Kind: DependsOnEdge,
+				})
+				continue
+			}
+			// Not this node's own id, so the only other thing a reference can
+			// be is another orchestrator's item (D3208). Its far end is that
+			// peer's node under the scope this document draws the peer in, and
+			// a document that does not draw the peer has no such node: the edge
+			// is left out for the reason above, and so is a reference naming
+			// this very orchestrator, whose item this node has just been seen
+			// not to hold.
+			ref, err := orchestrator.ParseItemRef(dep)
+			if err != nil || ref.Orchestrator == s.AgentID {
+				continue
+			}
+			peer, ok := peers[ref.Orchestrator]
+			if !ok {
 				continue
 			}
 			edges = append(edges, Edge{
 				From: NodeKey(source, w.ID),
-				To:   NodeKey(source, dep),
+				To:   NodeKey(peer, ref.Item),
 				Kind: DependsOnEdge,
 			})
 		}

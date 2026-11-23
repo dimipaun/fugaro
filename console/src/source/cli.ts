@@ -72,13 +72,16 @@ import type {
 import { createSpawnLog } from '../main/spawnlog'
 import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
+import { graphScopeIsNamed } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
-import { licenceKeySupported, noApplySupported } from '../shared/version'
+import { licenceKeySupported, noApplySupported, orchestratorMapSupported } from '../shared/version'
 import {
   SourceRefusal,
   refusalFrom,
   GRAPH_SCOPE_ALL,
   NO_GRAPH_SCOPE,
+  NO_NAMED_SCOPE,
+  NO_ORCHESTRATOR_MAP,
   NO_PLAN_CHECKOUT,
   NO_ROADMAP_NODE,
   NO_ROADMAP_READ,
@@ -882,6 +885,25 @@ export class CliSource implements FugaroSource {
    * where `coordinatorShow`'s host read needs the one its project publishes. */
   coordinatorIntents(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('coordinator.intents', args)
+  }
+
+  /** orchestratorMap reads `orchestrator map --json`: the project's active
+   * orchestrators, the connections between them and the coordinator's own
+   * heartbeat (the console-fixes plan's CG7a; C-ORCH's document,
+   * `internal/orchestrator/mapdoc.go`; D3221). It takes no argument at all --
+   * the whole argv is the spawn row's, `--json` plus the two project flags
+   * main-process state settles -- and like the declarations read above its child
+   * asks nothing of the host: the map is built from the caller's own database
+   * (the orchestrator nodes, their leases, the claims and the heartbeat), read
+   * through the same store and the same ADC, so this read needs no published
+   * credentials service.
+   *
+   * **The version floor is not asked here.** It is asked in the bound source's
+   * own `orchestratorMap` handler, before `resolve`, so an older CLI is never
+   * probed and no child exists to meet a command it does not have (F40's floor,
+   * `ORCHESTRATOR_MAP_CLI_FLOOR`). */
+  orchestratorMap(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('orchestrator.map', args)
   }
 
   /** managedStatus reads `managed status --json`: one project's two marks, the
@@ -1819,6 +1841,11 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      *     `all` -- the selector, not a member -- is admitted without being
      *     listed. What the CLI itself rejects inside an admitted scope is its own
      *     refusal, with its own sentence, on the frame or on the child's exit.
+     *     **A named scope has the same floor `graphRead` below gives it**
+     *     (`ORCHESTRATOR_MAP_CLI_FLOOR`, F40): below it a scope whose id carries
+     *     C-ORCH's separator is refused with `NO_NAMED_SCOPE`, before the
+     *     membership rule and before any child, so a feed cannot be opened on a
+     *     spelling the installation's CLI does not read.
      *   - **no cadence while the child lives, and `graph.read`'s floor once it has
      *     died.** A floor exists to keep a *read* from spawning once per poll, and
      *     a live feed is one child for as long as it is wanted -- the thing that
@@ -1848,6 +1875,9 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       const installation = deps.installation()
       if (installation === null) throw noInstallation()
       const scope = typeof args['source'] === 'string' ? args['source'] : GRAPH_SCOPE_ALL
+      if (graphScopeIsNamed(scope) && !orchestratorMapSupported(installation.version ?? '')) {
+        throw new SourceRefusal(NO_NAMED_SCOPE)
+      }
       if (scope !== GRAPH_SCOPE_ALL && !(graphScopes.get(bindingKey(installation))?.has(scope) ?? false)) {
         throw new SourceRefusal(NO_GRAPH_SCOPE)
       }
@@ -1946,6 +1976,14 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * `resolve` -- no binary is probed and no child runs. `graph.read` is
      * answered whatever the installation's checkout is: the read needs none.
      *
+     * **A named scope has a floor of its own, and it is asked first** (F40):
+     * `orchestrator:<project>~<name>` is a spelling only the release that ships
+     * `orchestrator map --json` reads (`ORCHESTRATOR_MAP_CLI_FLOOR`), so below it
+     * the read is refused with `NO_NAMED_SCOPE` -- before the membership rule,
+     * because the older CLI's document cannot list a named scope either, and the
+     * honest answer to a renderer that asked for one is that this installation's
+     * CLI is too old, not that the scope is missing.
+     *
      * The cadence is `GRAPH_READ_MIN_INTERVAL_MS`, keyed by the binding *and*
      * the scope, on the same terms as `planStatus`'s above: the entry is the read
      * itself, in flight as well as answered, and the clock is read after the
@@ -1961,6 +1999,9 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       if (installation === null) throw noInstallation()
       const binding = bindingKey(installation)
       const scope = typeof args['source'] === 'string' ? args['source'] : GRAPH_SCOPE_ALL
+      if (graphScopeIsNamed(scope) && !orchestratorMapSupported(installation.version ?? '')) {
+        throw new SourceRefusal(NO_NAMED_SCOPE)
+      }
       if (scope !== GRAPH_SCOPE_ALL && !(graphScopes.get(binding)?.has(scope) ?? false)) {
         throw new SourceRefusal(NO_GRAPH_SCOPE)
       }
@@ -2007,6 +2048,33 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * replaces the records in place as declarations arrive, so holding a floor
      * between two calls would hide the newest one for no gain. */
     coordinatorIntents: (args) => read('coordinator.intents', (source) => source.coordinatorIntents(args)),
+    /**
+     * orchestratorMap is the map read (CG7a), and it is the one read here whose
+     * **floor is asked before `resolve`**: `orchestrator map --json` is
+     * registered from `ee/` and no release carries it yet, so
+     * `ORCHESTRATOR_MAP_CLI_FLOOR` is unset and every installation is answered
+     * `NO_ORCHESTRATOR_MAP` -- no binary probed, no child spawned, and no
+     * `unknown command "map"` for the Coordinator tab to draw as a failure the
+     * operator cannot act on. Once a release carries the command the constant
+     * names it and every CLI at or above it reads the map. The handler is
+     * `async` for `graphRead`'s reason: the method is declared as one returning
+     * a promise, so its refusal has to arrive as a rejected promise, never as a
+     * synchronous throw out of a call the surface drew as pending.
+     *
+     * It has no other precondition and no cadence, for `coordinatorIntents`'s
+     * reason: the read is the caller's own database node, so there is no
+     * directory on this machine to refuse for, and the map is rebuilt from the
+     * leases on every call -- a minimum interval between two calls would only
+     * delay the picture a screen opened to see.
+     */
+    orchestratorMap: async (args) => {
+      const installation = deps.installation()
+      if (installation === null) throw noInstallation()
+      if (!orchestratorMapSupported(installation.version ?? '')) {
+        throw new SourceRefusal(NO_ORCHESTRATOR_MAP)
+      }
+      return read('orchestrator.map', (source) => source.orchestratorMap(args))
+    },
     /**
      * roadmapMove is the record's one write (GV3.2). It goes through `read`'s
      * resolution for the reason every other call does -- a console with no

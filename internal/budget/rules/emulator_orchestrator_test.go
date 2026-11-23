@@ -240,6 +240,115 @@ func TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople(t *testing.T) {
 // above it made necessary (repo, run_id). What the job does with them — the
 // digest's item and the chain behind it — is TestEscalationItemFromTheReportsJobRead,
 // which needs no emulator.
+// TestLaunchEnvelopeGrantsTheDeviceItsOwnEntry: the launch envelope against a
+// real rules engine (mobile plan task P5.1g, approved by the owner on
+// 2026-11-14; the design's section 4.5 E1 and section 4.8, the owner's answers
+// Q9 and Q11). The document's shape — the two grants, the two parents that carry
+// none, and the `.write: false` on each child — is rules_test.go's
+// TestLaunchEnvelopeNodesAreReadPerChild, which runs in the job with no
+// emulator; what this test adds is the engine's own verdict on each claim, each
+// beside the positive control that makes its refusal a refusal of the rule and
+// not of an empty tree:
+//
+//   - a paired device reads the installation's named safe recipe and **its own**
+//     entry, and is refused every other device's entry;
+//   - an account whose device node was never written reads neither, and
+//     deleting a live device's node takes its entry away with no ID token
+//     expiring in between (D166's conjunct, which is what ties the envelope to
+//     the pairing);
+//   - no other identity reaches it — a run's own token, the launcher's minter,
+//     the mailbox consumer's `mc` claim, a pairing session's `pu` claim and the
+//     reports job's `rj` claim are each refused, and each is shown reaching a
+//     family the rules do grant it first;
+//   - nothing writes it: not the phone it is granted to, not a run, not an
+//     unpaired account, and not with a whole-node replace or a single child —
+//     the allow-list, the rate and the ceiling are the owner's numbers, and a
+//     phone that could move one would bound nothing (E1's own residual risk).
+func TestLaunchEnvelopeGrantsTheDeviceItsOwnEntry(t *testing.T) {
+	h := newHarness(t)
+	h.seed(leased(2 * usd))
+	// The operator publishes the envelope over IAM, which is the only writer and
+	// bypasses the rules: the values are really there, so every refusal below is
+	// the rule's and not an absent node's.
+	recipePath := PathLaunchEnvelope + "/recipe"
+	aliceEntry := PathLaunchEnvelope + "/devices/" + mbAlice
+	bobEntry := PathLaunchEnvelope + "/devices/" + mbBob
+	h.set(recipePath, map[string]any{"repo": "owner/safe", "task": "safe-recipe"})
+	h.set(aliceEntry, map[string]any{"repos": []any{"owner/one"}, "per_hour": 2, "daily_usd": 5})
+	h.set(bobEntry, map[string]any{"repos": []any{"owner/two"}, "per_hour": 1, "daily_usd": 2})
+
+	alice, bob := h.phone(mbAlice), h.phone(mbBob)
+	// The positive control: each phone reaches a family USER is granted, so the
+	// refusals below are this node's rule and not an empty tree's.
+	h.mustRead(alice, budget.PathCapsGlobal)
+	h.mustRead(bob, budget.PathCapsGlobal)
+
+	// Each device reads the installation's recipe and its own entry, and is
+	// refused the other's — which is the other's own token's to read.
+	h.mustRead(alice, recipePath)
+	h.mustRead(alice, aliceEntry)
+	h.mustReadDenied(alice, bobEntry)
+	h.mustRead(bob, recipePath)
+	h.mustRead(bob, bobEntry)
+	h.mustReadDenied(bob, aliceEntry)
+	// The two parents and the node above them are refused: the grants are per
+	// child, and a read on any of them would hand the recipe and every device's
+	// entry to every paired phone.
+	for _, p := range []string{"config/policy", PathLaunchEnvelope, PathLaunchEnvelope + "/devices"} {
+		h.mustReadDenied(alice, p)
+	}
+
+	// A device whose node was never written reads neither the recipe nor its own
+	// entry, and the caps family every paired device reads is refused to it too:
+	// D166's conjunct is what ties the envelope to the pairing, so an account
+	// that was never paired is refused everywhere at once. The account is one
+	// nothing paired — alice's and bob's own nodes are written above, which is
+	// what makes their reads pass — and its entry is really there, so the
+	// refusal is the missing device node and not an absent path.
+	const neverPairedUid = "never-paired-uid"
+	neverPairedEntry := PathLaunchEnvelope + "/devices/" + neverPairedUid
+	h.set(neverPairedEntry, map[string]any{"repos": []any{"owner/one"}, "per_hour": 2, "daily_usd": 5})
+	neverPaired := h.unpaired(neverPairedUid)
+	h.mustReadDenied(neverPaired, budget.PathCapsGlobal)
+	h.mustReadDenied(neverPaired, recipePath)
+	h.mustReadDenied(neverPaired, neverPairedEntry)
+	// And deleting a live device's node takes its entry away with it, with no
+	// token expiring in between — which is `fugaro pair revoke`'s reach.
+	h.unpairDevice(mbAlice)
+	h.mustReadDenied(alice, recipePath)
+	h.mustReadDenied(alice, aliceEntry)
+	h.pairDevice(mbAlice)
+
+	// No other identity reaches the envelope, and each reaches a family the
+	// rules do grant it in the same database.
+	run := h.run("aurora", "r1")
+	minted := h.minter("svc-minter-1")
+	consumer := h.consumer(mbAlice)
+	job := h.reportsJob(projectID)
+	h.mustRead(run, budget.PathCapsGlobal)
+	h.mustRead(minted, budget.PathCapsGlobal)
+	h.mustAllow(consumer, "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
+	h.mustAllow(h.pairing(pairUid), "its own pairing request", put(request(pairUid), aRequest()))
+	for _, c := range []*rtdb.Client{run, minted, consumer, h.pairing(pairUid), job} {
+		h.mustReadDenied(c, recipePath)
+		h.mustReadDenied(c, aliceEntry)
+	}
+
+	// Nothing writes it: not the phone it is granted to, not a run, not an
+	// unpaired account, and not with a whole-node replace or a single child.
+	doc := map[string]any{"repos": []any{"owner/one", "owner/other"}, "per_hour": 100, "daily_usd": 1000}
+	h.mustDeny(alice, "the phone widening its own repository allow-list", put(aliceEntry, doc))
+	h.mustDeny(alice, "the phone raising its own cost ceiling", put(aliceEntry+"/daily_usd", 1000))
+	h.mustDeny(alice, "the phone writing another device's entry", put(bobEntry, doc))
+	h.mustDeny(alice, "the phone writing the named safe recipe", put(recipePath, map[string]any{"repo": "owner/other"}))
+	h.mustDeny(run, "a run writing a device's envelope entry", put(aliceEntry, doc))
+	h.mustDeny(neverPaired, "an unpaired account writing an entry", put(aliceEntry, doc))
+
+	// And the denials changed nothing: the device still reads its own values.
+	h.mustRead(alice, aliceEntry)
+	h.wantValue(aliceEntry+"/daily_usd", "5")
+}
+
 func TestOrchestratorReportsJobReadsEscalationOnly(t *testing.T) {
 	const (
 		orchItem       = orchState + "/work_items/w1"

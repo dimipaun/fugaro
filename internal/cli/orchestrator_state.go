@@ -82,7 +82,31 @@ type orchestratorStateDoc struct {
 	Rev           *int64 `json:"rev,omitempty"`
 	SchemaVersion int    `json:"schema_version,omitempty"`
 	Brief         string `json:"brief"`
-	CachedAt      string `json:"cached_at,omitempty"`
+	// Items is every work item of the live node, so a reader never parses the
+	// brief's prose, which is capped. Absent for the cache, which keeps the
+	// brief alone.
+	Items    []orchestratorStateItem `json:"items,omitempty"`
+	CachedAt string                  `json:"cached_at,omitempty"`
+}
+
+// orchestratorStateItem is one work item as `state --json` lists it.
+type orchestratorStateItem struct {
+	ID       string `json:"id"`
+	Phase    string `json:"phase"`
+	RunID    string `json:"run_id,omitempty"`
+	Attempts int    `json:"attempts"`
+	Repo     string `json:"repo"`
+	Spec     string `json:"spec,omitempty"`
+}
+
+func orchestratorStateItems(s orchestrator.State) []orchestratorStateItem {
+	items := make([]orchestratorStateItem, 0, len(s.WorkItems))
+	for _, w := range s.WorkItems {
+		items = append(items, orchestratorStateItem{
+			ID: w.ID, Phase: string(w.Phase), RunID: w.RunID, Attempts: w.Attempts, Repo: w.Repo, Spec: w.Spec,
+		})
+	}
+	return items
 }
 
 func runOrchestratorState(cmd *cobra.Command, o *orchestratorStateOptions) error {
@@ -118,7 +142,7 @@ func runOrchestratorState(cmd *cobra.Command, o *orchestratorStateOptions) error
 	if o.json {
 		return writeJSON(w, orchestratorStateDoc{
 			Version: orchestratorOutputVersion, Kind: "state", ID: lc.Name, Source: "node",
-			Rev: &s.Rev, SchemaVersion: s.SchemaVersion, Brief: text,
+			Rev: &s.Rev, SchemaVersion: s.SchemaVersion, Brief: text, Items: orchestratorStateItems(s),
 		})
 	}
 	// The revision is what a patch is built from, so a reader who is about to

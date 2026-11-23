@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runindex"
 )
 
 // `fugaro plan graph` is the console v2 plan's V2.2.1: the read that prints a
@@ -276,6 +277,18 @@ func planWord(n int, singular, plural string) string {
 // from the artifact would open a column of its own.
 func planCell(s string) string { return cellOneLine(pluginwire.Printable(s)) }
 
+// planIndexReader is the run index the plan reads go through: the documents the
+// history job folds, one per run, which `plan status` joins a plan's tasks to
+// (D3201, D3205). It is what makes that join cost what the checkout's plans
+// hold rather than what the repository's history holds.
+//
+// It is a var rather than a call at the use site because which reader a read
+// gets is one answer for the whole CLI, and the default here is C-INDEX's stub:
+// an installation whose index is not wired yet reads an empty page and a
+// summary that has never completed a walk, so the read says the index is still
+// building rather than printing a short list as the truth.
+var planIndexReader = func(*cloudEnv) runindex.Reader { return runindex.NewStub() }
+
 // planGraphEstimate is this read's estimate: what the graph has left to take
 // and what it costs, from the history this machine last cached and the seeds
 // (D2714 as amended).
@@ -348,8 +361,8 @@ func planCachedTable(warn io.Writer) (*estimate.Table, string) {
 // what it costs, the count of tasks it is over, and the sample each task's
 // figure came from (D2714's "history for 9, seeds for 3").
 //
-// from is where the table came from, and it is "" for the read that read the
-// history itself — `plan status` — and a phrase for the offline one, which has
+// from is where the table came from, and it is "" for the read whose history is
+// the index's own — `plan status` — and a phrase for the offline one, which has
 // to say which of the cache and the seeds answered it.
 //
 // The two ranges are printed as a reader reads a number: whole minutes and

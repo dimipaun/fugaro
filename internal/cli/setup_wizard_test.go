@@ -137,6 +137,9 @@ func optionsFor(flags ...string) *initOptions {
 			// the flag is one answer, and the pair is what the installation's
 			// alert is created with.
 			o.budget, o.budgetCurrency = managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+			// A creating run with a budget needs the account the alert is
+			// created with, and these fixtures have no installation state.
+			o.billingAccount = "000000-000000-000000"
 		case "--bake-repos":
 			// The value the flag names, and the fact that it was passed: a run that
 			// answers the question with the flag is the run whose answer the local
@@ -334,6 +337,17 @@ func TestTheCreationIsHeldToTheFlagsChecks(t *testing.T) {
 			name: "--firebase-project names another project",
 			o:    &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, firebase: "proj-9999"},
 			want: "--firebase-project",
+		},
+		{
+			// The carry has nothing to take the account from on a run that
+			// creates the project, and check() sees the creation only where
+			// --create-project is explicit: without this the run reaches the
+			// project stage and only the installation stage's state read
+			// refuses, after the project, Firebase, billing and the APIs are
+			// made (R7).
+			name: "a budget with no billing account",
+			o:    &initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}, budget: 7, budgetCurrency: "USD"},
+			want: "--billing-account",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -549,6 +563,7 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 	only := func() *initOptions {
 		o := &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject, region: defaultRegion}, rigor: string(rigor.Pro)}
 		o.budget, o.budgetCurrency = managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+		o.billingAccount = "000000-000000-000000"
 		return o
 	}
 	ask := func(stdin string) (*initRun, *strings.Builder) {
