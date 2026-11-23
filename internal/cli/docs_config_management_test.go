@@ -351,8 +351,16 @@ const (
 // the two rows an area rule's members are (LF4). The three layer rows are
 // reached by the `layer.defaults.` prefix and the block's own is not carried, so
 // four rows and three of them move the allowlist's figure.
+//
+// RT2 of docs/model-credentials-routing/ is the last mover after it, by six rows
+// and by none: the project's routing table is the local config's own block, one
+// row per entry (`model_routing.*.match`, `model_routing.*.chain.*.kind`, and
+// the three members a kind may or may not use beside the `admit` list), and its
+// writer is the converge — `fugaro update`'s migration writes a project's first
+// table (MG2) and `fugaro routing set` edits one after that (RT5) — so neither a
+// name in the allowlist nor a prefix of it reaches a row of it.
 const (
-	cfmRegistryRows   = 529
+	cfmRegistryRows   = 535
 	cfmAllowlistNamed = 121
 )
 

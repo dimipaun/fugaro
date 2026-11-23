@@ -123,6 +123,13 @@ const (
 	// thing that exists is read, never chosen (R5, D3088). So the row is the
 	// converge's bookkeeping and not an editor's.
 	reasonLocations = "`fugaro setup` and `fugaro update` write the record from what the cloud holds as they converge the installation: where one of the installation's located things is"
+
+	// RT2's block (docs/model-credentials-routing/, D3182): the project's
+	// routing table. `fugaro update`'s migration writes a project's first table
+	// (MG2) and `fugaro routing set` edits one after that (RT5), which then
+	// registers these patterns and is why this label is not a claim that no
+	// command ever will.
+	reasonModelRouting = "a key of the local config's `model_routing` block: `fugaro update`'s migration writes a project's first table (MG2) and `fugaro routing set` edits one after that (RT5), and no settings command writes an entry"
 )
 
 // settingsLabelRows is the table: every row this file answers for. It is
@@ -179,6 +186,12 @@ var settingsLabelRows = []settingsLabelRow{
 	{"locations.log_bucket", labelPlumbing, reasonLocations},
 	{"locations.rtdb", labelPlumbing, reasonLocations},
 	{"locations.secrets", labelPlumbing, reasonLocations},
+	{"model_routing.*.chain.*.admit", labelPlumbing, reasonModelRouting},
+	{"model_routing.*.chain.*.kind", labelPlumbing, reasonModelRouting},
+	{"model_routing.*.chain.*.model", labelPlumbing, reasonModelRouting},
+	{"model_routing.*.chain.*.pool", labelPlumbing, reasonModelRouting},
+	{"model_routing.*.chain.*.provider", labelPlumbing, reasonModelRouting},
+	{"model_routing.*.match", labelPlumbing, reasonModelRouting},
 	{"name", labelPlumbing, "`fugaro setup` writes it when it creates the file: the installation's project name, which is never renamed"},
 	{"region", labelPlumbing, "`fugaro setup` writes it when it creates the file: the installation's GCP region"},
 	{"registry", labelFile, "the legacy shared registry's address, stated in the local config: no command writes it"},

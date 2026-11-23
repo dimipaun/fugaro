@@ -51,6 +51,20 @@ import (
 // versions are the record's and the launch's.
 const Version = 1
 
+// The two collections the index lives in, named as contract-index.md fixes
+// them. They are declared here because a reader and the writer are not always
+// the same release -- the history job's image may lag the CLI a person runs --
+// and a collection name one of them spells differently is a reader that finds
+// nothing where the writer put it.
+const (
+	// EntryCollection holds one Entry per run, the document id being the run id.
+	EntryCollection = "runIndex"
+	// SummaryCollection and SummaryDocument name the installation's one summary
+	// document, `runIndexMeta/summary`.
+	SummaryCollection = "runIndexMeta"
+	SummaryDocument   = "summary"
+)
+
 // Entry is one run's document, `runIndex/<run id>`.
 //
 // The document id is the run id, which is what makes the index one collection
@@ -77,7 +91,12 @@ type Entry struct {
 	Slug string `json:"slug"`
 	Repo string `json:"repo,omitempty"`
 	// UpdatedAt is when the run last changed, as the fold read it: the record's
-	// own finish where it has one, else its start, else the launch's moment.
+	// own finish where it has one, else its start, else the launch's moment,
+	// else the run id's mint time (runstore.RunTime). The last fallback is what
+	// a run that was claimed and never launched has -- a task.json and nothing
+	// else -- and it is not optional: an entry with no sort key falls outside
+	// every window, so a reader that counts such runs in a window would count
+	// none of them.
 	// It is the index's sort key, and it is the only field of the entry the
 	// writer moves forward on its own -- a run's records do not change after
 	// the run ends, so a settled run's entry is written once.

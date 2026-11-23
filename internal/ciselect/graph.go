@@ -152,6 +152,20 @@ func (g *Graph) Affected(changedFiles []string) []string {
 	return slices.Sorted(maps.Keys(seen))
 }
 
+// packages is every package of the module the graph holds a file of, in the
+// repository's form ("./internal/cli").
+func (g *Graph) packages(module string) []string {
+	seen := map[string]bool{}
+	for _, owners := range g.owner {
+		for pkg := range owners {
+			if rel, ok := repoPath(module, pkg); ok {
+				seen[rel] = true
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(seen))
+}
+
 // listedPkg is the part of one `go list -json` object the graph reads.
 type listedPkg struct {
 	ImportPath     string

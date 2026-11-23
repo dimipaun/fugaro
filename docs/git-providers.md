@@ -298,7 +298,7 @@ The end-to-end follow-up, with review comments a person posts by hand, is check 
 
 The full-run steps:
 
-1. **Create the sandbox.** Make a repository containing `testdata/fixture-repo`, with `git.provider` set to that provider, and create its credential as described above.
+1. **Create the sandbox.** Make a repository containing `testdata/fixture-repo`, with `git.provider` set to that provider, with the models it runs pinned under `agent.models` (the fixture pins none, and a local invocation is accounted for as `observe` like every other run: an unpinned model is refused at bootstrap with `agent.models.coder: is required with a budget`), and create its credential as described above.
 2. **Write a task file:**
    ```bash
    cat > /tmp/task.json <<'JSON'
