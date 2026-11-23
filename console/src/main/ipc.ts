@@ -5158,49 +5158,19 @@ export interface IpcMainLike {
  * verbatim -- and a generic one otherwise, so a thrown non-Error cannot put an
  * object on the wire.
  *
- * "Bounded" is meant literally, and it is the three things `boundReason` does: a
+ * "Bounded" is meant literally, and it is the two things `boundReason` does: a
  * message is flattened to one line (a CLI sentence is one line; a message with
  * newlines in it is either a stack or something written to look like the
- * console's own output), its absolute paths are replaced (the CLI's refusals
- * name flags and values, never the machine's directories, and a path in a
- * refusal is a path a screen would print), and it is cut at
- * `MAX_REPLY_REASON_LENGTH`. The CLI's own sentences are short enough that none
- * of the three touches them; a hostile message hits all three.
+ * console's own output), and it is cut at `MAX_REPLY_REASON_LENGTH`. A path is
+ * **not** one of them: the CLI's refusals name flags, values and the operator's
+ * own directories, so a path in a refusal is a path a screen would print, and
+ * D3213 (2026-11-21) leaves it as written -- the renderer's `sanitizeRefusal` is
+ * what masks a secret, wherever one stands. The CLI's own sentences are short
+ * enough that neither of the two touches them; a hostile message hits both.
  */
 function replyReason(error: unknown): string {
   if (error instanceof Error && error.message !== '') return boundReason(error.message)
   return 'the operation failed'
-}
-
-/**
- * ABSOLUTE_PATH_RE matches an absolute path in a message: a POSIX one (`/etc`,
- * `/home/me/x`), a home-relative one (`~/x`), or a Windows one with a drive
- * letter or a UNC prefix. It is anchored on a separator that cannot be part of
- * a word -- the start of the message, whitespace, a quote, a backtick, an
- * opening bracket, `=`, `,`, `;` or `:` -- so a flag like `--repo owner/name`
- * keeps its slash, and it stops at the first character that closes a path in a
- * sentence: whitespace, a quote, a backtick, `)`, `]` or `>`.
- *
- * A colon *is* an anchor, because Go's own wrapped errors put a path straight
- * after one (`open:/Users/me/.config/...`), and so is a drive letter after one
- * (`dir:C:\Users\me`). What keeps a URL from being cut at its `//` -- which
- * would turn `https://x/y` into `https:<path>`, a corrupted sentence rather than
- * a redaction -- is the first alternative: a `scheme://` URL is matched whole,
- * first, and kept, except a `file://` one, which *is* a path and is replaced
- * whole. `replacePath` is the replacer that makes that choice. The scheme is
- * bounded and must start a word, so a long run of letters is scanned once
- * rather than once per position.
- */
-const ABSOLUTE_PATH_RE =
-  /((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\/[^\s'"`)\]>]*)|(^|[\s'"`([<{=,;:])(?:~[\\/]|[A-Za-z]:[\\/]|\\\\|\/)[^\s'"`)\]>]*/g
-
-/** PATH_PLACEHOLDER is what an absolute path in a message becomes. It names
- * *that* a path was there, which is what a reader needs, and not which one. */
-const PATH_PLACEHOLDER = '<path>'
-
-function replacePath(_match: string, url: string | undefined, anchor: string | undefined): string {
-  if (url !== undefined) return /^file:/i.test(url) ? PATH_PLACEHOLDER : url
-  return `${anchor ?? ''}${PATH_PLACEHOLDER}`
 }
 
 /** INVISIBLE_RE is the shared set of invisible characters
@@ -5218,10 +5188,10 @@ const LONE_SURROGATE_RE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff
 /**
  * boundReason is the one place a handler-authored message is made safe to put in
  * front of a user: control characters out, invisible format characters out,
- * half-characters replaced, absolute paths out, one line, and a hard length cut
- * on a character boundary. It never returns an empty string -- a refusal with
- * no text is a screen with nothing to draw -- and it never echoes more of the
- * message than the bound allows.
+ * half-characters replaced, one line, and a hard length cut on a character
+ * boundary. It never returns an empty string -- a refusal with no text is a
+ * screen with nothing to draw -- and it never echoes more of the message than
+ * the bound allows.
  */
 function boundReason(message: string): string {
   // Every pass below is linear, and the input is first cut to a few times the
@@ -5235,16 +5205,15 @@ function boundReason(message: string): string {
     .replace(/\s+/g, ' ')
     .trim()
   if (flattened === '') return 'the operation failed'
-  const redacted = flattened.replace(ABSOLUTE_PATH_RE, replacePath)
-  if (redacted.length <= MAX_REPLY_REASON_LENGTH) return redacted
+  if (flattened.length <= MAX_REPLY_REASON_LENGTH) return flattened
   // The cut is marked, so a reader can tell a truncated sentence from a whole
   // one rather than wondering what the CLI meant to say. It is in UTF-16 code
   // units, like the bound, and it steps back one when it would land between
   // the two halves of a surrogate pair: half an emoji is not text.
   let cut = MAX_REPLY_REASON_LENGTH - 1
-  const last = redacted.charCodeAt(cut - 1)
+  const last = flattened.charCodeAt(cut - 1)
   if (last >= 0xd800 && last <= 0xdbff) cut -= 1
-  return `${redacted.slice(0, cut).trimEnd()}…`
+  return `${flattened.slice(0, cut).trimEnd()}…`
 }
 
 /**

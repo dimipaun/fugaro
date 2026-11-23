@@ -577,15 +577,16 @@ own bundle.
 **A refusal's text is bounded, and the reason is a hostile `error.message`.**
 Design §6.3 wants the CLI's own sentence shown verbatim, and a CLI sentence is
 short and dull; a handler that threw with four megabytes in it, or with a
-newline, an escape sequence or `/home/you/.fugaro/secrets.yaml` in it, would put
-all of that in a renderer that is entitled to treat a reply as the console's own
-words. `replyReason` therefore flattens a message to one line, drops control
-characters and invisible format characters (bidi overrides and isolates,
-zero-width characters), replaces absolute paths (POSIX, `~/`, drive-letter and
-UNC, after a space, quote, backtick, bracket, `;` or `:`, and a `file://` URL
-whole) with `<path>` while leaving a web URL whole, and cuts at 2 KB with an
-ellipsis, never inside a surrogate pair. The test that an ordinary CLI
-sentence comes through byte for byte is what keeps those three from eating the
+newline or an escape sequence in it, would put all of that in a renderer that is
+entitled to treat a reply as the console's own words. `replyReason` therefore
+flattens a message to one line, drops control characters and invisible format
+characters (bidi overrides and isolates, zero-width characters), and cuts at
+2 KB with an ellipsis, never inside a surrogate pair. It replaces nothing else:
+a path in a refusal (POSIX, `~/`, drive-letter and UNC, or a `file://` URL) is
+the operator's own directory and the remedy the refusal names, so it stays as
+written (D3213), and the renderer's `sanitizeRefusal` is what masks a secret,
+wherever one stands. The test that an ordinary CLI
+sentence comes through byte for byte is what keeps those two from eating the
 case the design asks for. The same shape applies to what the console *accepts*:
 after the argument-count bound, a payload's own width (every key plus every
 scalar value) is bounded at `MAX_PAYLOAD_WIDTH`, set deliberately above what the
@@ -672,7 +673,7 @@ allow-list drives `budget kill`, or `--follow`, or any other row.
 | a schema accepting an extra key, a prototype-pollution key, a path, a command, a control or format character, an oversize string or a wrong type | the table entry that names it |
 | one kind shared by two commands whose flags are not one grammar | the per-command window table, row by row, and "gives each command its own window kind" |
 | the sender check removed, or any of its three checks (frame present, frame *is* the main frame, frame URL on the console's origin) | the "sender gate" tests: 12 failures for the check as a whole, and the row named for each individual check |
-| a handler's message left unbounded, or its control characters or absolute paths left in | "bounds a handler's own message", "keeps a refusal to one line", "takes an absolute path out of a handler's message" |
+| a handler's message left unbounded, or its control characters left in | "bounds a handler's own message", "keeps a refusal to one line" |
 | `assertReachableSurface(CONSOLE_OPERATIONS)` removed from registration, or moved after the channels are on | "checks the surface before it registers anything" |
 | the allowed-flags half of `assertReachableSurface` removed (a flag the never table does not even list) | "refuses a table with a flag the never table does not even list" |
 | a never-table *flag* row renamed away | "carries a never-table row for *flag*", one test per flag |
