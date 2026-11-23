@@ -545,12 +545,13 @@ func TestDocsCheck111AssertModeRefusesAModeWithNoCapture(t *testing.T) {
 // carries --create-project, and the section says why in terms of what the
 // wizard does.
 //
-// There is no create/adopt question any more: Fugaro only starts fresh (the
-// owner's ruling of 2026-10-23). `P` has a local config (its installation has
-// converged), and a run with a project config registers the project stage only
-// when --create-project says so; with it, the stage reads `P` — which must be a
-// project `fugaro setup` created, carrying fugaro_created=true, or it is refused —
-// and resumes it, so the guided line has a path to the owner: the stage's own
+// There is no create/adopt question: a first run of `fugaro setup` makes its
+// project Fugaro's without asking — it creates it, or adopts one that is
+// already there and holds nothing of Fugaro's. `P` has a local config (its
+// installation has converged), and a run with a project config registers the
+// project stage only when --create-project says so; with it, the stage reads
+// `P` — which must be a project `fugaro setup` made Fugaro's, carrying
+// fugaro_created=true or =adopted, or it is refused — and resumes it, so the guided line has a path to the owner: the stage's own
 // left-for-you, which it prints only for a `P` that exists, is ACTIVE, has
 // Firebase and has no billing link. The section states that state as the
 // precondition every mode runs on, and mode 2(a) — the one mode whose picker
@@ -623,7 +624,7 @@ func TestDocsCheck111EveryModeCarriesCreateProject(t *testing.T) {
 		"asks for the typed confirmation a run with no terminal cannot give (it is not there yet)",
 	} {
 		if strings.Contains(flat, gone) {
-			t.Errorf("Check 111 still claims %q, which is not what the code does: there is no create/adopt question (Fugaro only starts fresh), and the guided line's left-for-you needs `P` to exist, be ACTIVE, have Firebase and have no billing link", gone)
+			t.Errorf("Check 111 still claims %q, which is not what the code does: there is no create/adopt question, and the guided line's left-for-you needs `P` to exist, be ACTIVE, have Firebase and have no billing link", gone)
 		}
 	}
 }

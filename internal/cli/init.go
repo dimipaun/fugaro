@@ -615,7 +615,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.firebase, "firebase-project", "", "turn the shared budget on: the value is the installation's own GCP project id (the default; the flag is only needed to turn the shared budget on), and any other id is refused. It is the flag that asks for the backend — a run without it builds none — and that backend is three confirmed applies: the database's rules and mark, the Firestore history database (permanent us-east5 location: confirmed by the person at the terminal where it is a first-time question, already there on a run that re-converges an installation that has it) and the config")
 	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
-	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of "+d.name+" created it (the resume). Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing")
+	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of "+d.name+" always creates its project, so the flag only says so explicitly. An ID that already exists is refused unless an earlier run of "+d.name+" made it Fugaro's (the resume), and one that holds nothing of Fugaro's is adopted instead: "+d.name+" uses it as if it had created it. Billing is not linked unless --link-billing is also given; without it "+d.name+" prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing")
 	f.StringVar(&o.displayName, "display-name", "", "on a first run, which creates the project: its display name (default: its ID)")
 	f.StringVar(&o.parent, "parent", "", "on a first run, which creates the project: organizations/<number> or folders/<number> to create it under (default: no parent; an organization is never guessed)")
 	f.BoolVar(&o.managed, "managed", false, "on a first run, which creates the project: record its monthly budget in the creation fact. Every project "+d.name+" creates is Fugaro-managed (its runs bucket's creation fact and the fugaro_managed label); --managed is what records the budget amount the managed apply needs. The monthly budget amount is required — --budget, --budget-currency and --billing-account together, with no default and no suggestion taken for you — and the amount and the currency are recorded in the project's creation fact (gs://fugaro-runs-<gcp-project>/fugaro/managed.json), where a later run and a restore read what was chosen. It removes no confirmation: creating the project still takes a person at a real terminal, and the installation's ordinary steps share the run's one review. Flagging a project that already exists as managed is fugaro managed flag's, run by the owner at a terminal, "+managedFlaggingSentence)
@@ -790,11 +790,14 @@ type initRun struct {
 	// stage, held in memory for the pre-check and cleared when the run ends.
 	appKeyMem []byte
 
-	// resumedCreation is whether the project stage resumed a creation an
-	// earlier run of fugaro setup made: the project was there, and it carries
-	// infra.CreatedLabelKey, which only that run's create request writes
-	// (projectStage.read). markCreated marks it as it marks a creation.
-	resumedCreation bool
+	// resumedCreation is the origin label (infra.CreatedLabelKey's value) of
+	// the project the project stage resumed: infra.CreatedLabelValue for a
+	// creation an earlier run of fugaro setup made, infra.AdoptedLabelValue
+	// for a project an earlier run adopted. Both are labels only a run of
+	// fugaro setup writes (projectStage.read), and markCreated marks the
+	// project as it marks a creation. "" is every other run: one that made the
+	// project Fugaro's itself (Created, Adopted) and one that made nothing.
+	resumedCreation string
 
 	// resumeConfirmed is whether the person typed the resumed project's ID to
 	// have it marked managed (confirmResumedMark).
@@ -1034,6 +1037,11 @@ type initResult struct {
 	RTDBURL  string `json:"rtdb_url,omitempty"`
 	// Anchor is set by update --anchor.
 	Anchor *anchorResult `json:"anchor,omitempty"`
+	// Adopted is the existing project this run adopted (the owner's ruling of
+	// 2026-11-22): it was there, held nothing of Fugaro's, and the run used it
+	// as if it had created it. Created and Adopted are never both set — a run
+	// makes at most one project Fugaro's, and it either made it or found it.
+	Adopted string `json:"adopted_project,omitempty"`
 	// ResolvedIssues is what `fugaro update` found this release fixes about
 	// the project's filed issues (update_resolved.go, T-RU5): the additive
 	// field the console, the mobile app and the history read, so its entries
@@ -1413,40 +1421,54 @@ func runInit(r *initRun) error {
 	return r.printResult()
 }
 
-// creation is the project this run created, or the one it resumed and whose
-// mark the person confirmed by typing its ID (resumeConfirmed): the project
-// markCreated marks. "" when it did neither.
+// creation is the project this run made Fugaro's, or the one it resumed and
+// whose mark the person confirmed by typing its ID (resumeConfirmed): the
+// project markCreated marks. "" when it did neither. Making a project
+// Fugaro's is creating it or adopting an existing one that held nothing of
+// Fugaro's (the owner's ruling of 2026-11-22, projectStage.Apply), and the two
+// are the same fact to everything downstream: the project is this
+// installation's, and the run that made it that writes its creation fact.
 func (r *initRun) creation() string {
 	if r.res.Created != "" {
 		return r.res.Created
 	}
-	if r.resumedCreation && r.resumeConfirmed {
+	if r.res.Adopted != "" {
+		return r.res.Adopted
+	}
+	if r.resumedCreation != "" && r.resumeConfirmed {
 		return r.gcpProject
 	}
 	return ""
 }
 
-// confirmResumedMark is the confirmation a resumed creation is marked managed
-// behind. fugaro_created=true says an earlier run of fugaro setup created the
-// project, but it is a label anyone with resourcemanager.projects.update can
-// set, so it is never enough on its own: the run must be one a person is at,
-// the bar fugaro managed flag keeps (stepConfirmation(false): a real terminal,
-// no --json, no --non-interactive, no coding agent's session, and no answer a
-// run carries stands in for it), and the banner above the mark is what that
-// reader reads.
+// confirmResumedMark is the confirmation a resumed project is marked managed
+// behind. The origin label says an earlier run of fugaro setup made the
+// project Fugaro's — created it (fugaro_created=true) or adopted it
+// (fugaro_created=adopted) — but it is a label anyone with
+// resourcemanager.projects.update can set, so it is never enough on its own:
+// the run must be one a person is at, the bar fugaro managed flag keeps
+// (stepConfirmation(false): a real terminal, no --json, no --non-interactive,
+// no coding agent's session, and no answer a run carries stands in for it),
+// and the banner above the mark is what that reader reads.
 // Nothing is typed: the policy's confirmations are gone (T7), and --ask is the
 // flag that puts the question back. Where no person is at the terminal, and
 // under --yes, nothing is marked and the run says how to mark it.
 func (r *initRun) confirmResumedMark() bool {
 	id := r.gcpProject
-	later := fmt.Sprintf("project %s carries %s=%s (an earlier run of fugaro setup created it) and this run finished its setup, but it is not marked as managed: marking it takes a run a person is at, at your own terminal. Rerun fugaro setup there, or run fugaro managed flag %s --budget N --budget-currency CCC",
-		id, infra.CreatedLabelKey, infra.CreatedLabelValue, id)
+	// How the project became Fugaro's, in the two sentences the reader acts
+	// on: the label's own value says which of the two it was.
+	made, says := "an earlier run of fugaro setup created it", "which says fugaro setup created it"
+	if r.resumedCreation == infra.AdoptedLabelValue {
+		made, says = "an earlier run of fugaro setup adopted it", "which says fugaro setup adopted it"
+	}
+	later := fmt.Sprintf("project %s carries %s=%s (%s) and this run finished its setup, but it is not marked as managed: marking it takes a run a person is at, at your own terminal. Rerun fugaro setup there, or run fugaro managed flag %s --budget N --budget-currency CCC",
+		id, infra.CreatedLabelKey, r.resumedCreation, made, id)
 	if r.stepConfirmation(false) != stepTyped {
 		r.warn(later)
 		return false
 	}
-	fmt.Fprintf(r.w, "⚠ CONFIRM: this MARKS project %s as Fugaro-managed (gs://fugaro-runs-%s/%s and the label %s=%s): its applies then need no confirmation at all, and the deterministic gate, the inventory and the owner's delete list stand in for one. It carries %s=%s, which says fugaro setup created it.\n",
-		id, id, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, infra.CreatedLabelKey, infra.CreatedLabelValue)
+	fmt.Fprintf(r.w, "⚠ CONFIRM: this MARKS project %s as Fugaro-managed (gs://fugaro-runs-%s/%s and the label %s=%s): its applies then need no confirmation at all, and the deterministic gate, the inventory and the owner's delete list stand in for one. It carries %s=%s, %s.\n",
+		id, id, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, infra.CreatedLabelKey, r.resumedCreation, says)
 	ok, err := r.confirmNow("mark project " + id + " as Fugaro-managed?")
 	if err != nil || !ok {
 		r.warn(later)
@@ -1511,29 +1533,43 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		// if this run did not create it.
 		c.Created, c.Existed = r.res.Created, r.projectExisted && r.res.Created == ""
 	}
-	// created is the project this converge marks, and it is one of two
+	// created is the project this converge marks, and it is one of three
 	// things. Created is set by the project stage alone, inside its create
-	// branch (projectStage.Apply in init_project.go). The other is a resumed
-	// creation (the owner's ruling of 2026-10-23: a setup resumed by a later
-	// run is managed by default): the project stage read a project carrying
-	// fugaro_created=true, the label the creating run's create request writes
-	// (infra.CreateProject). That label is forgeable by anyone who may update
-	// the project, so it only says which project to ask about: the mark is
-	// written only where a person at their own terminal confirms the step
-	// (confirmResumedMark; nothing is typed there, the policy's confirmations
-	// being gone — T7), and never under --yes, --non-interactive, --json or in
-	// a coding agent's session. It is asked only once the installation's
-	// runs bucket is known, since that is where the mark goes. "" means this
-	// run neither created nor confirmed a resumed project, and then there is no
-	// fact to record: every ordinary run of an existing installation —
-	// fugaro's own, belong, the owner's — comes through here with it empty.
-	if r.res.Created == "" && r.resumedCreation && !r.resumeConfirmed && e.c != nil && r.res.Outputs != nil && r.res.Outputs.RunsBucket != "" {
+	// branch, and Adopted beside it, inside its adopt branch (projectStage.Apply
+	// in init_project.go): a project that was there and held nothing of
+	// Fugaro's, which this run uses as if it had created it (the owner's
+	// ruling of 2026-11-22) and marks exactly as a creation is marked — the
+	// run decided to adopt it on what it read of the project itself, so there
+	// is no label of anyone's to confirm. The other is a resumed project (the
+	// owner's ruling of 2026-10-23: a setup resumed by a later run is managed
+	// by default): the project stage read a project carrying
+	// fugaro_created=true or fugaro_created=adopted, the label the run that
+	// made it Fugaro's wrote (infra.CreateProject, infra.WriteAdoptedLabel).
+	// That label is forgeable by anyone who may update the project, so it only
+	// says which project to ask about: the mark is written only where a person
+	// at their own terminal confirms the step (confirmResumedMark; nothing is
+	// typed there, the policy's confirmations being gone — T7), and never
+	// under --yes, --non-interactive, --json or in a coding agent's session.
+	// It is asked only once the installation's runs bucket is known, since
+	// that is where the mark goes. "" means this run neither made nor
+	// confirmed a resumed project, and then there is no fact to record: every
+	// ordinary run of an existing installation — fugaro's own, belong, the
+	// owner's — comes through here with it empty.
+	if r.res.Created == "" && r.res.Adopted == "" && r.resumedCreation != "" && !r.resumeConfirmed && e.c != nil && r.res.Outputs != nil && r.res.Outputs.RunsBucket != "" {
 		r.resumeConfirmed = r.confirmResumedMark()
 	}
 	created := r.creation()
+	// made is how the project became Fugaro's, for the sentences below: the
+	// same word confirmResumedMark uses for the two kinds of resume. noun is
+	// the same fact as the thing a run resumes, which those sentences need
+	// ("resumed the creation of", "resumed the adoption of").
+	made, noun := "created", "creation"
+	if r.res.Adopted != "" || r.resumedCreation == infra.AdoptedLabelValue {
+		made, noun = "adopted", "adoption"
+	}
 	if created == "" {
-		// --managed asked for a managed creation and this run created no
-		// project, so there is no fact to record — and the owner must not
+		// --managed asked for a managed creation and this run made no project
+		// Fugaro's, so there is no fact to record — and the owner must not
 		// silently get an unmarked project where they asked for a managed
 		// one.
 		if r.o.managed {
@@ -1554,7 +1590,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		bucket = r.res.Outputs.RunsBucket
 	}
 	if bucket == "" {
-		r.warn(fmt.Sprintf("project %s was created but the runs bucket it would be marked in is not known in this run (the installation did not finish): it is not marked, so nothing is skipped for it until it is", created))
+		r.warn(fmt.Sprintf("project %s was %s but the runs bucket it would be marked in is not known in this run (the installation did not finish): it is not marked, so nothing is skipped for it until it is", created, made))
 		return
 	}
 	// The bucket must be the project's own, under the default name, for the
@@ -1566,7 +1602,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 	// so this writes only into the name the read knows and says which name
 	// it found instead.
 	if want := "fugaro-runs-" + created; bucket != want {
-		r.warn(fmt.Sprintf("project %s was created but its runs bucket is %s, not %s: it is not marked as managed, because the marker is only read from the default bucket name", created, bucket, want))
+		r.warn(fmt.Sprintf("project %s was %s but its runs bucket is %s, not %s: it is not marked as managed, because the marker is only read from the default bucket name", created, made, bucket, want))
 		return
 	}
 	// The number is what makes the marker about this project and not about a
@@ -1628,8 +1664,11 @@ func (e *initEngine) markCreated(ctx context.Context) {
 			c.Marked = true
 		}
 		how := "this run created"
-		if r.res.Created == "" {
-			how = "this run resumed the creation of"
+		switch {
+		case r.res.Adopted != "":
+			how = "this run adopted"
+		case r.res.Created == "":
+			how = "this run resumed the " + noun + " of"
 		}
 		fmt.Fprintf(r.w, "recorded that %s project %s: it is Fugaro-managed (gs://%s/%s, labelled %s=%s)\n", how, created, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue)
 	case fact:
@@ -1642,7 +1681,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		// fact that does, and there the label goes on the project itself. The
 		// warning this replaced gave both halves to the creating run alone
 		// and offered the flag for both states, which for the second refuses.
-		r.warn(fmt.Sprintf("project %s was created but not marked as managed (%v): gs://%s/%s holds the creation fact and the project does not carry the label %s=%s, and the read requires both, so nothing is skipped for it. What completes the mark is the owner's own command at their terminal, and which one depends on what the object records: `fugaro managed flag %s --budget N --budget-currency CCC` replaces a creation fact that records no amount, writing the amount and the label in the same command, while a fact that already records one is replaced by no command of ours — for it the label goes on the project itself (gcloud projects update %s --update-labels %s=%s), the backfill docs/managed-projects/spec.md carries", created, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, created, created, managed.ProjectLabelKey, managed.ProjectLabelValue))
+		r.warn(fmt.Sprintf("project %s was %s but not marked as managed (%v): gs://%s/%s holds the creation fact and the project does not carry the label %s=%s, and the read requires both, so nothing is skipped for it. What completes the mark is the owner's own command at their terminal, and which one depends on what the object records: `fugaro managed flag %s --budget N --budget-currency CCC` replaces a creation fact that records no amount, writing the amount and the label in the same command, while a fact that already records one is replaced by no command of ours — for it the label goes on the project itself (gcloud projects update %s --update-labels %s=%s), the backfill docs/managed-projects/spec.md carries", created, made, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, created, created, managed.ProjectLabelKey, managed.ProjectLabelValue))
 	default:
 		// Nothing of the fact is there, so the read answers "not managed"
 		// for a project no half of it describes. The flag is still the way
@@ -1650,7 +1689,7 @@ func (e *initEngine) markCreated(ctx context.Context) {
 		// replaces the version-1 one (managed.writeFlag), on the owner's own
 		// credentials at their terminal, and a later run of ours cannot —
 		// this function returns above for every run that creates no project.
-		r.warn(fmt.Sprintf("project %s was created but not marked as managed (%v): gs://%s/%s was not written and the project carries no %s=%s label, and the read requires both, so nothing is skipped for it. No later run of ours writes either half — a run that creates no project records nothing — and the mark is completed by the owner's own command at their terminal: `fugaro managed flag %s --budget N --budget-currency CCC` writes the creation fact and the label in the same command", created, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, created))
+		r.warn(fmt.Sprintf("project %s was %s but not marked as managed (%v): gs://%s/%s was not written and the project carries no %s=%s label, and the read requires both, so nothing is skipped for it. No later run of ours writes either half — a run that creates no project records nothing — and the mark is completed by the owner's own command at their terminal: `fugaro managed flag %s --budget N --budget-currency CCC` writes the creation fact and the label in the same command", created, made, err, bucket, managed.MarkerObject, managed.ProjectLabelKey, managed.ProjectLabelValue, created))
 	}
 
 	// D77's state bucket, the other half of what a managed project needs
@@ -1938,15 +1977,16 @@ func (o *initOptions) firebaseProject() string {
 }
 
 // checkFirebaseProject refuses a Firebase project other than the
-// installation's own GCP project. Fugaro only starts fresh (the owner's ruling
-// of 2026-10-23): the budget backend goes in the project fugaro setup created
-// for the installation and nowhere else, so --firebase-project, which asks for
-// the backend, names that project or is refused before anything is read.
+// installation's own GCP project. The budget backend goes in the project
+// fugaro setup made Fugaro's for the installation — one it created, or one it
+// adopted (the owner's ruling of 2026-11-22) — and nowhere else, so
+// --firebase-project, which asks for the backend, names that project or is
+// refused before anything is read.
 func checkFirebaseProject(fp, gcpProject string) error {
 	if fp == "" || gcpProject == "" || fp == gcpProject {
 		return nil
 	}
-	return userErr("--firebase-project %s is not the installation's GCP project %s: Fugaro builds the budget backend only in the project fugaro setup created for the installation, and uses no Firebase project of its own; pass --firebase-project %s", fp, gcpProject, gcpProject)
+	return userErr("--firebase-project %s is not the installation's GCP project %s: Fugaro builds the budget backend only in the project fugaro setup created or adopted for the installation, and uses no Firebase project of its own; pass --firebase-project %s", fp, gcpProject, gcpProject)
 }
 
 // check refuses flag combinations that mean nothing.
