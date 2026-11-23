@@ -9156,6 +9156,7 @@
         "internal/craft/**",
         "internal/creds/**",
         "internal/credsvc/**",
+        "internal/credsvc/*.go",
         "internal/credsvc/auth.go",
         "internal/credsvc/server.go",
         "internal/diagnoseagent/**",
