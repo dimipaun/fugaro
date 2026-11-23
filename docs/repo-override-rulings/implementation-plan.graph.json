@@ -443,6 +443,53 @@
       }
     },
     {
+      "id": "DK3",
+      "title": "L13: tightenGrades loses its repository half",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/policy/grades.go",
+          "internal/policy/merge.go",
+          "internal/policy/grades_repo_test.go"
+        ]
+      }
+    },
+    {
+      "id": "PR7",
+      "title": "B16: the launcher's dead repository-recipe branches go",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/reviewspec.go",
+          "internal/cli/run_digest_manifest.go",
+          "internal/cli/recipes_dead_branches_test.go"
+        ]
+      }
+    },
+    {
+      "id": "XB6",
+      "title": "release B: validate refuses a lifted key only on the default branch",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/validate.go",
+          "internal/cli/validate_release_b_test.go"
+        ]
+      }
+    },
+    {
       "id": "RC1",
       "title": "B18: Caps clamps a repository cap to its ceiling",
       "run": null,
@@ -609,7 +656,7 @@
     },
     {
       "id": "DK2",
-      "title": "L13: the grades' repository half goes; the default branch refuses the model grades",
+      "title": "L13: the grades' skew gates read the layer alone; the default branch refuses the model grades",
       "run": null,
       "version": null,
       "tier": "small",
@@ -619,7 +666,6 @@
         "paths": [
           "internal/cli/recipes_skew.go",
           "internal/cli/init.go",
-          "internal/policy/craft.go",
           "internal/cli/validate.go",
           "internal/cli/dead_keys_skew_test.go"
         ]
@@ -767,7 +813,7 @@
     },
     {
       "id": "XB5",
-      "title": "release B: update refuses a lifted key on a default branch, with the fix",
+      "title": "release B: update names a lifted key still written, never stops the update; the planners retire",
       "run": null,
       "version": null,
       "tier": "small",
@@ -983,6 +1029,41 @@
       "task": "R-planner-change",
       "needs": "I2",
       "reason": "kept: a change to C2's files comes after every planner has landed, never beside the contract"
+    },
+    {
+      "task": "PR5",
+      "needs": "PR0",
+      "reason": "kept: it reads the store in PR0's lookup order"
+    },
+    {
+      "task": "DK3",
+      "needs": "DK1",
+      "reason": "kept, behaviour: the repository's grades no longer reach a layer"
+    },
+    {
+      "task": "PR7",
+      "needs": "PR2",
+      "reason": "kept, behaviour: the branches are dead only once no launcher writes a repository recipe"
+    },
+    {
+      "task": "XB4",
+      "needs": "DK3",
+      "reason": "kept, behaviour: release B follows the whole of release A"
+    },
+    {
+      "task": "XB4",
+      "needs": "PR7",
+      "reason": "kept, behaviour: release B follows the whole of release A"
+    },
+    {
+      "task": "XB6",
+      "needs": "XB1",
+      "reason": "kept, behaviour: it applies XB1's mode rule"
+    },
+    {
+      "task": "XB6",
+      "needs": "DK2",
+      "reason": "kept: one file, internal/cli/validate.go"
     },
     {
       "task": "RC3",

@@ -24,7 +24,7 @@ the same day as recommended, the six this reconciliation raised:
 | D3299 (capability map, L13 inside) | The nine modules; DK1 and DK2 are in the plan |
 | D3300 (release A one release after L1) | The release gate below |
 | D3301 (a clash is any name another repository already resolves to different text) | PR4's clash rule |
-| D3302, amended after review (`<name>.<owner-repo>-<8 hex>`, at most 96 characters; the owner to confirm, O4) | PR0's grammar, PR6's checks and S5's `recipeCopySince` gate |
+| D3302, amended after review (`<name>.<owner-repo>-<8 hex>`, at most 96 characters; the owner's own answer) | PR0's grammar, PR6's checks and S5's `recipeCopySince` gate |
 | D3303 (the pointer is a lookup rule, no new data) | PR0's lookup order, PR1 and PR2 |
 | D3304 (a pre-L8 task naming a repository recipe is refused at bootstrap) | PR3 |
 | D3305 (migrate once per repository, recorded) | C2's `Project`, M2's record, RG2, PR4, XB5 |
@@ -84,31 +84,32 @@ The modules are the capability map of reconciliation §2 (D3299, approved): `lif
 `model-choice`, `review-tighten`, `ab-repos`, `rigor-repos`, `project-recipes`, `repo-caps`,
 `dead-keys`. The slices:
 
-1. **Contracts and the inert first slice** (level 0): A1, C1, C2, PR0, S0, PR5, AB1, RG1, PR3,
-   RC1, RC2, M1. Nothing here changes what a run or a command does except PR3, PR5, AB1, RG1, RC1
-   and RC2, which are held by the release gate below.
-2. **Release A, items and planners**: S1, S4, S5, AB2, AB3, MC1, RG2, PR6, PR4, M2, RC3, RC4,
-   RT1, RG3, PR1, PR2, D3, CK1, CK2, CK3, RT2, RT3, S2, DK1, D1, D2, DK2.
+1. **Contracts and the inert first slice** (level 0): A1, C1, C2, PR0, S0, AB1, RG1, PR3, RC1,
+   RC2, M1. Nothing here changes what a run or a command does except PR3, AB1, RG1, RC1 and RC2,
+   which are held by the release gate below.
+2. **Release A, items and planners**: S1, S4, S5, AB2, AB3, MC1, RG2, PR5, PR6, PR4, M2, RC3, RC4,
+   RT1, RG3, PR1, PR2, PR7, D3, CK1, CK2, CK3, RT2, RT3, S2, DK1, DK2, DK3, D1, D2.
 3. **Release A, integrations**: I2, I3, I1.
-4. **Release B** (D3298): XB4, XB1, XB2, XB3, XB5.
+4. **Release B** (D3298): XB4, XB1, XB2, XB3, XB5, XB6.
 
 **The release gate (R18, amended after review).** Contracts, planners, check scripts and S0 may
 merge at any time: no caller reaches a planner before I2 registers it, and S0 changes only sentences
 that are true today. Every other release-A task — S1, RT1, RT2, S2, S4, S5, AB1, AB2, RG1, RG3, PR1,
-PR2, PR3, PR5, PR6, RC1, RC2, RC3, M2, I2, I3, I1, DK1, DK2, D1, D2, D3 (the **gated set**) — is **not launched before the release
+PR2, PR3, PR5, PR6, PR7, RC1, RC2, RC3, RT3, M2, I2, I3, I1, DK1, DK2, DK3, D1, D2, D3 (the **gated set**) — is **not launched before the release
 carrying L1 has been tagged** (`docs/release.md`: a `vX.Y.Z` tag is cut from `main`'s head), so
 release A is at least one release after L1's (D3300).
 
 **The release fence.** Release A lands **as one batch**: from the first merge of the gated set until
 **every** task of the gated set has merged, no CLI tag is cut, so no release carries half of release A (a launcher that drops
 keys before `update` can migrate them, or a runner that refuses a recipe no launcher embeds yet).
-Release B is fenced the same way: XB4, XB1, XB2, XB3 and XB5 are not launched before release A has
+Release B is fenced the same way: XB4, XB1, XB2, XB3, XB5 and XB6 are not launched before release A has
 been tagged (D3298), and from the first of them to merge until the last has, no CLI tag is cut.
 **The tagged commit.** `docs/release.md` allows tagging an earlier green commit, so the fence is held
 at the tag too, as an owner step of the release (`scripts/release.sh` is not changed): before
 tagging, the person cutting the release runs
-`git log --format=%s <the commit> | grep '^repo-override-rulings '`, compares the subjects with the
-gated set's (each task's Commit line above), and tags only a commit that holds all of them or none; release A's and
+`git log --format=%s <the commit> | grep -oE '^(# Task: )?repo-override-rulings [A-Z]+[0-9]+:'`
+(a run's commit may carry its brief's `# Task: ` line as the subject), reduces each match to its task
+id, compares the ids with the gated set's, and tags only a commit that holds all of them or none; release A's and
 release B's notes record that it was checked. A
 batch rather than a switch, because a switch is code the spec does not ask for and a tag freeze
 costs nothing; console and mobile tags are not affected.
@@ -282,7 +283,7 @@ costs nothing; console and mobile tags are not affected.
 - Tests: `TestSilentProjectCriticalRunKeepsL3`, `TestUncheckedRoundsTakeTheMode`, `TestLaunchBudgetUsesTheTighter`.
 - Command: `go test ./internal/config/ -run 'TestSilentProjectCriticalRunKeepsL3' -count=1 && go test ./internal/runner/ -run 'TestUncheckedRoundsTakeTheMode' -count=1 && go test ./internal/cli/ -run 'TestLaunchBudgetUsesTheTighter' -count=1`
 - Red step: `TestSilentProjectCriticalRunKeepsL3` fails: the repository turns L3 off.
-- Depends on: RT1 (kept, behaviour). Release gate.
+- Depends on: RT1 (kept, behaviour); PR1 (kept: one file, `budget_preview.go`). Release gate.
 - Commit: `repo-override-rulings RT2: a silent project's baseline is the run's mode`
 - Reviewer tier: standard.
 
@@ -454,7 +455,7 @@ costs nothing; console and mobile tags are not affected.
   `.fugaro/recipes/`; it reads the store in `recipe.LookupOrder` and then the catalog; `fugaro
   recipes ls`, `publish` and `rm` accept copy names, so an admin can replace or remove a migrated
   copy, and `ls` says the folder is not read; `refuseFollowUpRepoRecipe` judges the project copy;
-  `budget_preview.go`'s recipe read accepts a copy name (R19).
+  `budget_preview.go`'s `repoHasRecipe` stops reading the folder and accepts a copy name (R19, R22).
 - Files: `internal/cli/recipes_resolve.go`, `internal/cli/recipes.go`, `internal/cli/budget_preview.go`,
   `internal/cli/recipes_lift_test.go` (new).
 - Interfaces: Consumes PR0, PR6.
@@ -467,16 +468,18 @@ costs nothing; console and mobile tags are not affected.
 
 ### PR5: the cleanup diff, and validate prints it
 - Module: `project-recipes`.
-- Acceptance: `recipesCleanupLines(root)` returns, for a checkout holding `.fugaro/recipes/`, the
-  diff `git rm -r .fugaro/recipes` and one line per file naming the copy it became; `validate`
-  prints them; nothing is deleted.
+- Acceptance: `recipesCleanupLines(root, store)` reads the project store through
+  `recipe.LookupOrder` and the stored sums: for a checkout holding `.fugaro/recipes/` it offers the
+  diff `git rm -r .fugaro/recipes` only when every file there has its copy in the store (one line
+  per file naming the copy), and otherwise names, per file with no copy, `fugaro recipes publish
+  <file>` first and offers no removal; `validate` prints the lines; nothing is deleted.
 - Files: `internal/cli/recipes_cleanup.go` (new), `internal/cli/validate_recipes.go`,
   `internal/cli/recipes_cleanup_test.go` (new).
-- Interfaces: Produces `recipesCleanupLines`, which S2 and PR2 call.
-- Tests: `TestRecipesCleanupLines`.
-- Command: `go test ./internal/cli/ -run 'TestRecipesCleanupLines' -count=1`
-- Red step: the test fails before the file exists.
-- Depends on: none.
+- Interfaces: Consumes PR0. Produces `recipesCleanupLines`, which S2, PR2, XB2 and XB5 call.
+- Tests: `TestRecipesCleanupOffersRemovalOnlyWhenEveryCopyIsStored`, `TestRecipesCleanupNamesPublishFirst`.
+- Command: `go test ./internal/cli/ -run 'TestRecipesCleanup' -count=1`
+- Red step: the tests fail before the file exists.
+- Depends on: PR0 (kept: the lookup order). Release gate.
 - Commit: `repo-override-rulings PR5: the cleanup diff`
 - Reviewer tier: standard.
 
@@ -495,6 +498,20 @@ costs nothing; console and mobile tags are not affected.
 - Red step: `TestFollowUpCarriesACopyName` fails: the inherited name is dropped.
 - Depends on: PR0 (kept); PR5 (kept); PR6 (kept, behaviour). Implements D3303. Release gate.
 - Commit: `repo-override-rulings PR2: every launch path embeds the project copy`
+- Reviewer tier: standard.
+
+### PR7: the launcher's dead repository-recipe branches go
+- Module: `project-recipes`.
+- Acceptance: once no launcher writes `Source: repo` (PR2), the branches that handle a
+  repository-sourced recipe in `internal/cli/reviewspec.go` and `internal/cli/run_digest_manifest.go`
+  are removed; the build and their tests pass.
+- Files: `internal/cli/reviewspec.go`, `internal/cli/run_digest_manifest.go`, `internal/cli/recipes_dead_branches_test.go` (new).
+- Interfaces: none new.
+- Tests: `TestNoLauncherPathReadsARepoRecipe`, the existing review-spec and digest tests.
+- Command: `go test ./internal/cli/ -run 'TestNoLauncherPathReadsARepoRecipe|ReviewSpec|Digest' -count=1`
+- Red step: `TestNoLauncherPathReadsARepoRecipe` fails while the branches exist.
+- Depends on: PR2 (kept, behaviour). Release gate.
+- Commit: `repo-override-rulings PR7: the dead repository-recipe branches go`
 - Reviewer tier: standard.
 
 ### PR3: the runner stops reading .fugaro/recipes/
@@ -616,15 +633,18 @@ costs nothing; console and mobile tags are not affected.
   not yet migrated (D3305), prints every line of every change before any write — including each
   admit pattern it could not list and each repository it could not read, whose lifted values are
   dropped and never moved (D3306) — then writes the layer file's edits (published by the Layer
-  stage), the store objects and the database nodes, and last, for each repository whose writes
-  landed, its record `fugaro/lift/l8/<slug>.json` in the runs bucket; it asks nothing; a second run
+  stage), the store objects and the database nodes, each behind the same `confirmStageWrite` gate
+  every other stage's write passes (`internal/cli/init.go`); a repository's record
+  `fugaro/lift/l8/<slug>.json` in the runs bucket is written only after the Layer stage's publish of
+  that repository's edits has landed, and never when the publish is refused or skipped; it asks
+  nothing; a second run
   prints only the names of later file values and writes nothing; the in-flight line names the
   lowered caps. `fugaro update --plan-only` runs the planners, prints the same lines and writes
   nothing, no record included.
 - Files: `internal/cli/update_lift.go` (new), `internal/cli/update_lift_test.go` (new),
   `internal/cli/init_stages.go`, `internal/cli/update_in_flight.go`.
 - Interfaces: Consumes C2.
-- Tests: `TestLiftStageSaysFirst`, `TestLiftStageMigratesOnce`, `TestLiftStageNamesUnlistedPatterns`, `TestLiftStagePlanOnlyWritesNothing`.
+- Tests: `TestLiftStageSaysFirst`, `TestLiftStageRecordsOnlyAfterThePublish`, `TestLiftStageMigratesOnce`, `TestLiftStageNamesUnlistedPatterns`, `TestLiftStagePlanOnlyWritesNothing`.
 - Command: `go test ./internal/cli/ -run 'TestLiftStage' -count=1`
 - Red step: `TestLiftStageSaysFirst` fails before the stage exists.
 - Depends on: C2. Release gate.
@@ -651,15 +671,16 @@ costs nothing; console and mobile tags are not affected.
   and RT3 and wires M1 as the source; `fugaro update` on a fixture project at the previous version,
   whose repositories write every lifted key, converges, prints one line per changed repository
   before any write, writes each repository's migrated record, and changes nothing on a second run
-  (acceptance 1); a later project value survives a third run (D3305); a run of each repository
+  (acceptance 1); a later project value survives a third run (D3305); a run whose layer publish is
+  refused writes no migrated record, so the next `update` migrates those repositories again; a run of each repository
   resolves the same models (where they agreed), rigor, A/B rate and recipe text (acceptance 2);
   `TestUpdateLeavesARunInFlightRunning` is extended with a run holding a repository recipe and a
   repository cap (acceptance 8).
 - Files: `internal/lift/stubs.go` (deleted), `internal/lift/registry.go` (new),
   `internal/e2e/update_test.go`, `internal/cli/update_converge_test.go`, `internal/cli/update_in_flight_test.go`.
 - Interfaces: Consumes M1, M2, MC1, AB3, RG2, PR4, RC4, RT3.
-- Tests: `TestUpdateLiftsEveryKey`, `TestUpdateLiftKeepsEveryRunWhereItWas`, `TestUpdateLiftNeverOverwritesALaterProjectValue`, `TestUpdateLeavesARunInFlightRunning`.
-- Command: `go test ./internal/cli/ -run 'TestUpdateLiftsEveryKey|TestUpdateLiftKeepsEveryRunWhereItWas|TestUpdateLiftNeverOverwritesALaterProjectValue|TestUpdateLeavesARunInFlightRunning' -count=1 && go test ./internal/e2e/ -run 'TestUpdate' -count=1`
+- Tests: `TestUpdateLiftsEveryKey`, `TestUpdateLiftKeepsEveryRunWhereItWas`, `TestUpdateLiftNeverOverwritesALaterProjectValue`, `TestUpdateLiftRefusedPublishWritesNoRecord`, `TestUpdateLeavesARunInFlightRunning`.
+- Command: `go test ./internal/cli/ -run 'TestUpdateLiftsEveryKey|TestUpdateLiftKeepsEveryRunWhereItWas|TestUpdateLiftNeverOverwritesALaterProjectValue|TestUpdateLiftRefusedPublishWritesNoRecord|TestUpdateLeavesARunInFlightRunning' -count=1 && go test ./internal/e2e/ -run 'TestUpdate' -count=1`
 - Red step: `TestUpdateLiftsEveryKey` fails while the stubs are registered.
 - Depends on: M1, M2, MC1, AB3, RG2, PR4, RC4, RT3 (the sides it wires). Release gate.
 - Commit: `repo-override-rulings I2: update converges a project whose repositories write every lifted key`
@@ -729,20 +750,33 @@ costs nothing; console and mobile tags are not affected.
 - Commit: `repo-override-rulings DK1: model_grades' model and agent.compression leave a repository's file`
 - Reviewer tier: standard.
 
-### DK2: the grades' repository half and skew gates go; the default branch refuses the model grades
+### DK2: the grades' skew gates read the layer alone; the default branch refuses the model grades
 - Module: `dead-keys` (D3299).
-- Acceptance: `policy.tightenGrades` loses its repository half; `refuseModelGradesSkew` and the
-  `recipes_skew.go` readers of `RepoModelGradesSet` read the layer alone; `fugaro validate` and a
-  default-branch launch refuse `model_grades.*.model` in the file with the fix, in the sentence MCR
+- Acceptance: `refuseModelGradesSkew` (defined in `recipes_skew.go`, called from `init.go`) and the
+  other `recipes_skew.go` readers of `RepoModelGradesSet` read the layer alone; `fugaro validate` and
+  a default-branch launch refuse `model_grades.*.model` in the file with the fix, in the sentence MCR
   X2 uses for `model_grades.*.access`, while an older ref only names it (R2, R11).
-- Files: `internal/cli/recipes_skew.go`, `internal/cli/init.go`, `internal/policy/craft.go`,
-  `internal/cli/validate.go`, `internal/cli/dead_keys_skew_test.go` (new).
+- Files: `internal/cli/recipes_skew.go`, `internal/cli/init.go`, `internal/cli/validate.go`,
+  `internal/cli/dead_keys_skew_test.go` (new).
 - Interfaces: none new.
-- Tests: `TestModelGradesSkewReadsTheLayer`, `TestDefaultBranchRefusesModelGrades`, `go test ./internal/policy/`.
-- Command: `go test ./internal/cli/ -run 'TestModelGradesSkew|TestDefaultBranchRefusesModelGrades' -count=1 && go test ./internal/policy/ -count=1`
+- Tests: `TestModelGradesSkewReadsTheLayer`, `TestDefaultBranchRefusesModelGrades`.
+- Command: `go test ./internal/cli/ -run 'TestModelGradesSkew|TestDefaultBranchRefusesModelGrades' -count=1`
 - Red step: `TestDefaultBranchRefusesModelGrades` fails: the launch goes through.
 - Depends on: DK1 (kept, behaviour); S5 (kept: `recipes_skew.go`); S2 (kept: `validate.go`). Release gate.
-- Commit: `repo-override-rulings DK2: the grades' repository half goes`
+- Commit: `repo-override-rulings DK2: the grades' skew gates read the layer alone`
+- Reviewer tier: standard.
+
+### DK3: tightenGrades loses its repository half
+- Module: `dead-keys` (D3299).
+- Acceptance: `tightenGrades` (`internal/policy/grades.go`, called from `merge.go`'s `Merge`) no
+  longer reads a repository's grades; `go test ./internal/policy/` passes.
+- Files: `internal/policy/grades.go`, `internal/policy/merge.go`, `internal/policy/grades_repo_test.go` (new).
+- Interfaces: none new.
+- Tests: `TestTightenGradesIgnoresTheRepository`, `go test ./internal/policy/`.
+- Command: `go test ./internal/policy/ -count=1`
+- Red step: `TestTightenGradesIgnoresTheRepository` fails: a repository grade is recorded.
+- Depends on: DK1 (kept, behaviour: the repository's grades no longer reach a layer). Release gate.
+- Commit: `repo-override-rulings DK3: tightenGrades loses its repository half`
 - Reviewer tier: standard.
 
 ### D1: documents: recipes, layered config, rigor order
@@ -780,10 +814,14 @@ costs nothing; console and mobile tags are not affected.
 
 ### CK1: Checks 910 and 911, as scripts
 - Module: `migrate`.
-- Acceptance: `check-910-lift-snapshot.sh <project>` records, read-only, every enrolled
-  repository's resolved model per role, rigor level and areas, A/B rate and recipe sums
-  (`fugaro settings … --repo … --json`, `fugaro recipes ls --json`) and `fugaro update --plan-only`'s
-  lines; `check-911-lift-compare.sh <project> <snapshot>` compares the same read after release A's
+- Acceptance: `check-910-lift-snapshot.sh <project>` records, read-only and with the **pre-L8**
+  binary the owner has installed before the upgrade, every listed repository's raw default-branch
+  values of every lifted key (read with `git show origin/<default>:fugaro.yaml` and
+  `.fugaro/recipes/`, never through a resolver), its resolved model per role, rigor level and areas,
+  A/B rate and recipe sums (`fugaro settings … --repo … --json`, `fugaro recipes ls --json`), and,
+  with the release-A binary, `fugaro update --plan-only`'s lines; Check 911 runs with the release-A
+  binary after the update, so 910 against 911 compares the values before the drop with the values
+  after the migration; `check-911-lift-compare.sh <project> <snapshot>` compares the same read after release A's
   update: PASS where every value matches or the update named the change, FAIL otherwise; each has a
   hermetic test against fakes; stdin closed, no token on an argv, nothing written.
 - Files: `scripts/live-checks/check-910-lift-snapshot.sh` (new), `…_test.sh` (new),
@@ -873,7 +911,8 @@ costs nothing; console and mobile tags are not affected.
 - Acceptance: the runner resolves a follow-up's, a review's and a `--ref` run's file in the
   older-ref mode, and the default branch in the refusing mode; a default-branch launch whose file
   writes a lifted key, or whose default branch holds `.fugaro/recipes/`, is refused with the fix
-  and PR5's diff (acceptance 4, 7).
+  and PR5's lines — the removal only where every copy is stored, `fugaro recipes publish <file>`
+  first otherwise (acceptance 4, 7).
 - Files: `internal/runner/followup.go`, `internal/runner/runner.go`, `internal/cli/run.go`,
   `internal/cli/recipes_cleanup.go`, `internal/cli/release_b_refusal_test.go` (new).
 - Tests: `TestReleaseBRefusesAtLaunch`, `TestReleaseBFollowUpIgnoresAndNames`.
@@ -898,10 +937,25 @@ costs nothing; console and mobile tags are not affected.
 - Commit: `repo-override-rulings XB3: the schemas and the empty rigor block`
 - Reviewer tier: standard.
 
+### XB6: release B: validate refuses a lifted key only on the default branch
+- Module: `lift-keys`. Gate: release B, fenced (R18).
+- Acceptance: `fugaro validate` refuses a lifted key, an empty `rigor:` block or a
+  `.fugaro/recipes/` folder only when the checkout it reads is on the default branch, with the fix
+  and PR5's lines, and names them on any other branch, as XB1 says; its read of
+  `.fugaro/recipes/default.yaml` goes (R22).
+- Files: `internal/cli/validate.go`, `internal/cli/validate_release_b_test.go` (new).
+- Tests: `TestValidateRefusesOnTheDefaultBranch`, `TestValidateNamesOnAFeatureBranch`.
+- Command: `go test ./internal/cli/ -run 'TestValidateRefusesOnTheDefaultBranch|TestValidateNamesOnAFeatureBranch' -count=1`
+- Red step: `TestValidateRefusesOnTheDefaultBranch` fails: validate only names.
+- Depends on: XB1 (kept, behaviour); DK2 (kept: one file, `validate.go`).
+- Commit: `repo-override-rulings XB6: validate refuses only on the default branch`
+- Reviewer tier: standard.
+
 ### XB5: release B: update names a lifted key still written; the planners retire
 - Module: `migrate`. Gate: release B, fenced (R18).
 - Acceptance: `fugaro update` names every listed repository whose default branch still writes a
-  lifted key or holds `.fugaro/recipes/`, with the fix and the diff, and converges everything else;
+  lifted key or holds `.fugaro/recipes/`, with the fix and PR5's lines (the removal only where every
+  copy is stored), and converges everything else;
   it asks nothing (spec §4's "refused at update", read under the HARD RULE as named, never as a
   stop of the whole update); the L8 planners and their stage retire (D3305): nothing is migrated in
   release B.
@@ -919,15 +973,15 @@ costs nothing; console and mobile tags are not affected.
 
 | Level | Tasks |
 | --- | --- |
-| 0 | A1, C1, C2, PR0, S0, PR5, AB1, RG1, PR3, RC1, RC2, M1 |
-| 1 | S1, PR6, S4, S5, AB2, AB3, MC1, RG2, PR4, M2, RC3, RC4 |
+| 0 | A1, C1, C2, PR0, S0, AB1, RG1, PR3, M1, RC1, RC2 |
+| 1 | S1, PR6, PR5, S4, S5, AB2, AB3, MC1, RG2, PR4, M2, RC3, RC4 |
 | 2 | RT1, PR1, RG3, PR2, D3, CK1 |
-| 3 | RT2, S2, CK2, RT3, DK1, D1, D2 |
-| 4 | CK3, I1, I2, DK2 |
+| 3 | RT2, S2, CK2, RT3, DK1, PR7, D1, D2 |
+| 4 | CK3, DK3, DK2, I1, I2 |
 | 5 | I3, and the contract changes R-lift-phase and R-planner-change if raised |
 | 6 | XB4 (release B, fenced) |
 | 7 | XB1 |
-| 8 | XB2, XB3, XB5 |
+| 8 | XB6, XB2, XB3, XB5 |
 
 **Critical path** (9 tasks, as the graph read reports it): C1 → S1 → RT1 → RT3 → I2 → I3 → XB4 →
 XB1 → XB2. Release A ends at level 5. What must be sequential and why: `internal/config/resolve.go`
@@ -947,10 +1001,10 @@ No level holds two writers of one file (checked against the graph's footprints):
 | `docs/project-layer.md` | S0 (0), D1 (3), XB1 (7) |
 | `internal/cli/recipes_skew.go` | S5 (1), DK2 (4), XB4 (6) |
 | `internal/cli/run.go` | PR2 (2), XB2 (8) |
-| `internal/cli/recipes_cleanup.go` | PR5 (0), XB2 (8) |
+| `internal/cli/recipes_cleanup.go` | PR5 (1), XB2 (8) |
 | `internal/cli/update_lift.go` | M2 (1), XB5 (8) |
 | `internal/lift/stubs.go` | C2 (0, creates), I2 (4, deletes) |
-| `internal/cli/validate.go` | S2 (3), DK2 (4) |
+| `internal/cli/validate.go` | S2 (3), DK2 (4), XB6 (8) |
 | `internal/cli/budget_preview.go` | PR1 (2), RT2 (3), ordered by an edge |
 | `internal/config/config.go` | S1 (1), DK1 (3) |
 | C1's files (`lifted.go`, `contract-lift-keys.md`) | C1 (0), R-lift-phase (5, if raised) |
@@ -979,7 +1033,7 @@ The decoupling switch is on for `dimipaun/fugaro` (`fugaro settings planning.dec
   files, not the provider read that fills it) and M2's wait on each of those six (the stage needs a
   planner's signature and its change type, not what it computes). Integration: I2.
 
-**Kept (48 edges)**, each with its reason in the graph; the families: one file (`resolve.go`,
+**Kept (55 edges)**, each with its reason in the graph; the families: one file (`resolve.go`,
 `scope.go`, `recipes_skew.go`, `run.go`, `update_lift.go`, `project-layer.md`, the CLI reference);
 behaviour (RT2 on RT1's mark, S2 on RT1's record, DK2 on DK1, the documents and skills on what
 they describe, every release-B task on release A); and four small functions a contract would equal
@@ -988,9 +1042,9 @@ they describe, every release-B task on release A); and four small functions a co
 **Considered and not broken:** a contract for B16's copy name (PR0 is the function itself, so it
 stays a task); a contract for `ab.repos` (the field is the whole of AB1).
 
-**The gain**, as the read reports it: 16 broken, 48 kept, 6 added; before 9 tasks, weight 20;
+**The gain**, as the read reports it: 16 broken, 55 kept, 6 added; before 9 tasks, weight 20;
 after 9 tasks, weight 19; improves. The critical path is release B's chain; the contracts widen
-level 1 (twelve tasks run at once) rather than shorten it.
+level 1 (thirteen tasks run at once) rather than shorten it.
 
 **Contract changes anticipated:**
 
@@ -1003,11 +1057,11 @@ level 1 (twelve tasks run at once) rather than shorten it.
 
 `fugaro plan graph --plan docs/repo-override-rulings/implementation-plan.md` printed:
 
-`ready in 392–1696 min, no history yet for 21 tasks (49 tasks; tiers for 28, seeds for 21; from the cached history of 2026-11-22 07:25 UTC)`
+`ready in 392–1696 min, no history yet for 21 tasks (52 tasks; tiers for 31, seeds for 21; from the cached history of 2026-11-22 07:25 UTC)`
 
 It is informational and reserves no budget: it is what the tasks' tiers and this machine's cached
-history predict, and it moves as runs finish and as the graph changes. The 49 count includes the
-two contract changes, which run only if raised. **Proposed runs:** 47 (the two contracts, 43 tasks and the two integrations),
+history predict, and it moves as runs finish and as the graph changes. The 52 count includes the
+two contract changes, which run only if raised. **Proposed runs:** 50 (the two contracts, 46 tasks and the two integrations),
 plus up to two contract changes, plus one independent review (`fugaro review --pr N`) for each
 opus-tier task and for C1 and C2 before their consumers launch.
 
@@ -1031,8 +1085,9 @@ repository whose runs now stop at the default `agent.max_budget_usd` of 25 becau
 more and the project sets none (R20); every member upgrades the CLI (R9); `doctor` offers each
 repository's `git rm -r .fugaro/recipes` as a diff; **a repository `update` cannot list (admitted only
 by a pattern such as `*` or `github/acme/*`) or cannot read is not migrated, and its lifted values
-are dropped — an `ab.rate: 0` opt-out, a raised rigor level, its models and its recipes — so list it
-by name and run `fugaro update` again** (D3306; `update` prints each pattern it could not expand);
+are dropped — an `ab.rate: 0` opt-out, a raised rigor level and its models — and a recipe name it
+uses resolves to whatever a listed repository published flat under that name, or to the catalog's;
+list it by name and run `fugaro update` again** (D3306, O6; `update` prints each pattern it could not expand);
 and a task from a pre-L8 launcher that embeds no recipe, on a ref whose `.fugaro/recipes/` is gone,
 runs the catalog recipe of that name (D3307). Release B's say: run `fugaro update`; a repository's
 file that still writes a lifted key is refused on its default branch, with the fix. Both say the

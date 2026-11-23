@@ -211,7 +211,9 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
 
 - **F16 (Exists).** `agent.compression` is refused already (`config.Validate`); L13's half for it is
   the scope row and the schema. Its other half removes `Config.RepoModelGradesSet`, which the
-  model-grades skew gates read (`init.go` `refuseModelGradesSkew`, `recipes_skew.go`). → R11.
+  model-grades skew gates read (`refuseModelGradesSkew`, defined in `recipes_skew.go` and called
+  from `init.go`), and the repository half of `tightenGrades` (`internal/policy/grades.go`, called
+  from `merge.go`'s `Merge`). → R11.
 
 ### Release shape
 
@@ -245,7 +247,7 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
 | D3299 | Approve the capability map of §2, with L13 inside L8 as module `dead-keys` (spec §9)? | **Approve.** L13 edits the same scope rows, schema, `Resolve` and refusal wording, needs no migration and waits on L1 too; two plans would write one table twice | L13 stays its own small spec in wave 2 (D3238 as it stands): the `dead-keys` tasks DK1–DK2 leave this plan; cost: a second plan over `scope.go`, `resolve.go` and the schema, and two refusal styles | **As recommended (2026-11-23).** The capability map is approved and L13 is module `dead-keys`, because one plan then writes the scope table and the refusal wording once; amends D3238's wave-2 placement of L13 |
 | D3300 | May release A ride L1's own release? (F14, T1) | **No: release A is cut at least one release after the release that carries L1.** That is what spec §4's "must have shipped" says, and it is what makes the stamp fence the CLIs of L1's release against L8 | Release A rides L1's release; cost: no CLI is fenced against L8 at all, and the lift rests wholly on the runner, the clamp and the image gates (F18, F19) | **As recommended (2026-11-23).** Release A is cut at least one release after L1's, so the stamp fences the CLIs of L1's release against L8; settles T1 |
 | D3301 | Under D3295, what is a clash? (F21) | **A name some other repository of the project already resolves to different text: another repository's file, an existing project recipe, or a catalog recipe.** Each clashing copy is renamed `<name>.<owner-repo>`; a name nothing else answers is published flat. This keeps every run where it was (spec §2) | Only two repositories' files (the follow-up's words); cost: a repository's `default.yaml` or a catalog-named file published flat becomes every other repository's recipe of that name on the next launch | **As recommended (2026-11-23).** A clash is any name another repository already resolves to different text (its file, a project recipe or a catalog recipe), so no other repository's runs move |
-| D3302 | How is the renamed copy spelled, given `recipe.NameRE`? (F5) | **The owner's spelling, `<name>.<owner-repo>`**: `recipe` gains a second grammar for a project copy (a recipe name, one dot, the readable slug; up to 81 characters), the launcher and the runner accept it, and a launch that embeds one is gated on the image (`recipeCopySince`) | `<name>--<owner>-<repo>` inside today's grammar; cost: not the owner's words, and the 40-character limit forces a truncation with a hash for most real slugs | **As recommended (2026-11-23).** `<name>.<owner-repo>` stays, with the copy-name grammar and the `recipeCopySince` gate, because it is the owner's own spelling. **Amended after review, the owner's answer of 2026-11-23:** the copy is `<name>.<owner-repo>-<8 hex>`, the 8 hex the first eight of the repository's `task.Slug` hash, because the readable half merges "acme/app-web" and "acme-app/web" (`task.Slug`'s own comment) and the hash keeps them apart. Length: a name of at most 40, the dot, a readable half of at most 46 (`maxSlugReadable` = 63 − 1 − 16), the hyphen and 8 hex: **at most 96 characters** (the 81 first written was wrong). Owner to confirm the amended form (O4) |
+| D3302 | How is the renamed copy spelled, given `recipe.NameRE`? (F5) | **The owner's spelling, `<name>.<owner-repo>`**: `recipe` gains a second grammar for a project copy (a recipe name, one dot, the readable slug; up to 81 characters), the launcher and the runner accept it, and a launch that embeds one is gated on the image (`recipeCopySince`) | `<name>--<owner>-<repo>` inside today's grammar; cost: not the owner's words, and the 40-character limit forces a truncation with a hash for most real slugs | **As recommended (2026-11-23).** `<name>.<owner-repo>` stays, with the copy-name grammar and the `recipeCopySince` gate, because it is the owner's own spelling. **Amended after review, the owner's answer of 2026-11-23:** the copy is `<name>.<owner-repo>-<8 hex>`, the 8 hex the first eight of the repository's `task.Slug` hash, because the readable half merges "acme/app-web" and "acme-app/web" (`task.Slug`'s own comment) and the hash keeps them apart. Length: a name of at most 40, the dot, a readable half of at most 46 (`maxSlugReadable` = 63 − 1 − 16), the hyphen and 8 hex: **at most 96 characters** (the 81 first written was wrong). The amended form is the owner's own answer (O4 closed) |
 | D3303 | How is each repository "pointed at its own copy"? (F7) | **A lookup rule, no new data:** for repository R, the launcher resolves `<name>.<owner-repo of R>` in the store before `<name>`, then the catalog. Nothing in the layer changes, so no strict-decode skew (F15) and no new writer | A map in the project layer (`recipes.repos.<owner/name>.<name>: <copy>`); cost: a new layer member every pre-L8 reader refuses, a gate of its own, and a writer | **As recommended (2026-11-23).** The lookup rule, no new data, so no new layer member, gate or writer |
 | D3304 | What does a release-A runner do with a task that leaves the recipe to the repository's folder (`Source: repo` by name, or no recipe on a ref that holds `.fugaro/recipes/<name>.yaml`)? (F9, F18) | **Refuse at bootstrap with the fix** ("the recipe is the project's now (D3237): launch with fugaro 0.X or later"): acceptance 7 says a repository recipe reaches a run only from the store, and a pre-L1 CLI is the accepted gap, which fails closed this way | Read the folder as today until release B, record `source: repo`; cost: any pre-L8 launcher, including the unfenced pre-L1 ones, keeps bringing repository recipes for a whole release | **As recommended (2026-11-23).** Refuse at bootstrap with the fix, so a repository recipe reaches a run only from the store (acceptance 7) |
 
@@ -254,13 +256,23 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
 | # | Question | Recommendation | Alternative and its cost | Answer |
 | --- | --- | --- | --- | --- |
 | D3305 | Does `update` migrate a repository every time it runs, or once? | Once per repository, recorded: a per-repository record in the runs bucket, `fugaro/lift/l8/<slug>.json` (the release and the time), written by `update` after that repository's writes land; a planner acts only on a repository with no record, never overwrites a project value written after it, and names (never applies) a file value that appears after it; the planners retire in release B (XB5) | Every run re-migrates; cost: a project value an admin changes later is overwritten by a repository's file at the next `update` | **As recommended (2026-11-23).** RG2 loses "the file wins over an existing entry", PR4 publishes only on a first migration, M2 writes the record |
-| D3306 | Which repositories does `update` migrate, and what happens to one it cannot read? | Fail closed: refuse a launch of a repository that writes a lifted key and was never migrated | **The real list, fail open** | **Not the recommendation (2026-11-23).** `update` migrates the repositories it can list (the local config's, and the concrete names in the published admits); a repository admitted only by a pattern, or unreadable at update time, is not migrated and is refused nothing, so its lifted values are simply dropped. **Consequence, stated plainly:** such a repository can lose an `ab.rate: 0` opt-out (its runs become eligible for A/B sampling at the project's rate), a raised rigor level, its own models and its recipes. `update` prints each admit pattern it could not expand and each repository it could not read; release A's `### For operators` says so in one line |
+| D3306 | Which repositories does `update` migrate, and what happens to one it cannot read? | Fail closed: refuse a launch of a repository that writes a lifted key and was never migrated | **The real list, fail open** | **Not the recommendation (2026-11-23).** `update` migrates the repositories it can list (the local config's, and the concrete names in the published admits); a repository admitted only by a pattern, or unreadable at update time, is not migrated and is refused nothing: its lifted keys are dropped and only the project's values stand. **Consequence, stated plainly:** such a repository can lose an `ab.rate: 0` opt-out (its runs become eligible for A/B sampling at the project's rate), a raised rigor level and its own models; and a recipe name it uses resolves to whatever a listed repository published flat under that name, or else to the catalog recipe of that name, which is the case D3301 exists to prevent (O6). `update` prints each admit pattern it could not expand and each repository it could not read; release A's `### For operators` says so in one line |
 | D3307 | O5: the pre-L8 task that embeds no recipe, its folder gone, a catalog name | Accept it, and name it in the release notes | Refuse every unembedded task; cost: every pre-L8 launcher refused outright | **As recommended (2026-11-23).** O5 is closed |
 
 - **R21 (F25, review round 2).** `config.AgentOf` drops the lifted keys too (the agent block's
   model keys), in S1, and I1 covers its four readers.
 
 ### Resolutions (one defensible answer)
+
+- **R22 (review round 3).** A repository's own `default` recipe becomes `default` (flat) or its copy
+  `default.<owner-repo>-<8 hex>`. Where a check compares a name with `recipe.DefaultName`: the
+  follow-up's carry (`internal/cli/followup.go`) treats the repository's copy of `default` as its
+  default (PR2); `validate`'s read of `.fugaro/recipes/default.yaml` (`validate.go`) goes with the
+  folder (XB6); `runs ls` (`runs.go`) shows a copy's own name, which is intended, since a copy is a
+  recipe of its own in the record. (`budget_session.go` has no such check.) The orchestrator's
+  recipe-name checks (`internal/orchestrator/validate.go`) keep refusing a copy name: a copy is the
+  launcher's lookup result, never a name a person or the orchestrator writes into a work item, which
+  is intended. `repoHasRecipe` (`budget_preview.go`) stops reading the folder with PR1.
 
 - **R1 (F1, F2). Amended after review.** A lifted key is **not** marked `Retired`: it is on its own
   list in `internal/config/lifted.go` (`LiftedKeys`: the path, its home and its fix), which
@@ -318,8 +330,9 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
 - **R12 (F17), amended by D3306.** The reader uses `ContentsReader` and `TreeReader` over the
   repositories it can list (A2); a host or repository it cannot read is named in one line and
   skipped, each admit pattern it cannot expand is named, and `update` still converges for the rest.
-  Such a repository is not refused anything: its lifted values are dropped by every reader and never
-  moved (D3306's stated cost).
+  Such a repository is not refused anything: its lifted keys are dropped by every reader and never
+  moved, and a recipe name it uses resolves to a listed repository's flat copy of that name or to
+  the catalog's (D3306's stated cost, O6).
   A symbolic link in `.fugaro/recipes/` is judged by the recipe's own parse and size limit.
 - **R13 (F24).** The reader is a contract (C2) shaped so L5 can call the same function.
 - **R14 (F10).** A renamed copy is the repository's file with its `name:` line rewritten and
@@ -334,9 +347,9 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
   for a model it may not use. The planner writes no per-repository model, since B3 is lifted.
 - **R18 (review).** The release fence. Release A's gated tasks are not launched before the release
   carrying L1 has been **tagged** (`docs/release.md`: a tag is cut from `main`'s head), and release
-  A lands **as one batch**: from the first gated merge until I1, I2 and I3 have merged, no CLI tag
-  (`vX.Y.Z`) is cut. Release B is fenced the same way, from XB4's merge until XB1, XB2, XB3 and XB5
-  have merged. A batch rather than a switch, because a switch is code the spec does not ask for and
+  A lands **as one batch**: from the first merge of a gated task until **every** gated task has
+  merged, no CLI tag (`vX.Y.Z`) is cut, and a tag is put only on a commit holding all of them or
+  none (the plan's tag-fence check). Release B is fenced the same way, over XB1–XB6. A batch rather than a switch, because a switch is code the spec does not ask for and
   a tag freeze costs nothing; console and mobile tags are not affected.
 - **R19 (review).** Every recipe-name check that refuses a dot accepts a copy name: `recipe.Parse`'s
   name check, `schemas/recipe.schema.json`, the task's recipe validation (`internal/task`), the
@@ -363,8 +376,13 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
   merged first rebases on it; none waits for it.
 - **O3.** L1's plan (`docs/required-version-stamp/`, D3260–D3289) is not on `main`. L8 needs
   nothing from its code; the dependency is the release order (D3300, R18).
-- **O4.** The owner confirms D3302's amended form, `<name>.<owner-repo>-<8 hex>` (at most 96
-  characters).
+- **O4 (closed 2026-11-23).** D3302's amended form, `<name>.<owner-repo>-<8 hex>` (at most 96
+  characters), is the owner's own answer; nothing is left to confirm.
+- **O6 (open, the owner's).** D3306 against D3301: a repository `update` cannot list keeps no
+  recipe of its own, and a name it uses resolves to another repository's flat copy or to the
+  catalog's — the run-changing case D3301 was answered to prevent. Fail-open was the owner's choice
+  and is not changed here; listing such a repository by name and re-running `update` closes it for
+  that repository.
 - **O5 (closed 2026-11-23 by D3307, accepted).** A residue of D3304: a task from a pre-L8 launcher that embeds no recipe, on a ref whose
   `.fugaro/recipes/` the repository has already removed, for a name the catalog also has (`default`
   first), runs the catalog recipe, because nothing left at the ref says a copy exists (`internal/runner/recipe.go`
