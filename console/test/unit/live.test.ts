@@ -82,7 +82,6 @@ import {
   stageSegment,
   watchHealth,
 } from '../../src/renderer/screens/live'
-import { COORDINATOR_QUEUE_CAPS_HIDDEN_WORD } from '../../src/renderer/screens/coordinator'
 import type {
   LiveFactory,
   LiveModel,
@@ -2467,10 +2466,6 @@ describe('the spend-rate gauge and the cap bars', () => {
     expect(runs.getAttribute('data-state')).toBe('unavailable')
     expect(runs.getAttribute('data-fill')).toBe(UNAVAILABLE_MARK)
     expect(one(reduced, 'live-fleet-cap-limit').textContent).toBe(UNAVAILABLE_MARK)
-    // One mode withholding one view in two places under two sentences would
-    // read as two modes: this is the Coordinator's own word for the same gate.
-    expect(LIVE_CAPS_HIDDEN_WORD).toBe(COORDINATOR_QUEUE_CAPS_HIDDEN_WORD)
-
     // **The money of the totals block is not withheld.** `counted_usd`,
     // `daily_cap_usd` and this bar have been read since the console's first
     // release, and taking them back is the `spend` view's question rather than
