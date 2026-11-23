@@ -169,7 +169,7 @@ func workspaceNoMemberReason(lc *localcfg.Config) string {
 //
 // A config that declares the cap and lists NO member is still this project's
 // workspace: `fugaro workspace cap set` writes the cap alone, and `workspace
-// member rm` of the last member leaves the table empty (workspaceNoMemberReason
+// project rm` of the last member leaves the table empty (workspaceNoMemberReason
 // is that state's own sentence, and it is a skip and never a "not ours").
 //
 // The MEMBER's half decides where both are written, and the narrow reading is
@@ -186,8 +186,8 @@ func workspaceNoMemberReason(lc *localcfg.Config) string {
 // owner's remedy is to delete the half they did not mean. A config reaches the
 // state through this machine's own commands, which name the config they write
 // by the project and not by the half: `fugaro workspace cap set --workspace
-// <a member>` and `member add <a member> <project>` both write the owner's half
-// into a member's file.
+// <a member>` and `fugaro workspace project add <a member> --workspace <name>`
+// both write the owner's half into a member's file.
 func workspaceDeclared(lc *localcfg.Config) bool {
 	if workspaceMember(lc) {
 		return false
@@ -831,7 +831,7 @@ func workspaceSharedEntry(rec *workspace.Record, name string, entry localcfg.Wor
 	for _, p := range out.Projects {
 		if !slices.Contains(memberProjects(rec), p) {
 			return projectpolicy.WorkspaceShared{}, userErr("workspace_shared.%s offers the workspace's credential to %s, which the workspace's member table does not declare: the workspace's own service would be asked to reach a member the workspace does not have (F13); nothing was written — declare the member ('fugaro workspace project add %s --workspace %s'), or offer the entry to the members it is for ('fugaro workspace share %s --workspace %s --projects <member>'), then run %s again",
-				out.Name, p, rec.Name, p, out.Name, rec.Name, selfCommand()+" update")
+				out.Name, p, p, rec.Name, out.Name, rec.Name, selfCommand()+" update")
 		}
 	}
 	if kind != projectpolicy.SharedKindModel {

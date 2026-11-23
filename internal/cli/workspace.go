@@ -1142,7 +1142,7 @@ func workspaceReadMachine() (*workspaceMachine, error) {
 		m.held[name] = lc
 	}
 	// The owner's half is the config of the project the workspace is NAMED
-	// AFTER, which is the file `member add` and `cap set` write: keying the row
+	// AFTER, which is the file `workspace project add` and `cap set` write: keying the row
 	// by the config's own name is what makes this read and those writes agree.
 	for _, name := range slices.Sorted(maps.Keys(m.held)) {
 		if lc := m.held[name]; lc.WorkspaceMembers != nil || lc.WorkspaceCap != nil || lc.WorkspaceShared != nil {

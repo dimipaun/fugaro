@@ -1233,11 +1233,11 @@ func (s *WorkspaceProjectStatus) rosterGrants(project string) []workspace.Stored
 // wsKeyOutlivesRemove is the one sentence both account rows carry, in the fix of
 // a row that warns and in the detail of one that passes, so that the removal
 // commands' own output and this screen cannot come to say two things about what
-// a key is. A key is not a binding: `workspace admin rm` removes the binding and
+// a key is. A key is not a binding: `workspace user rm --admin` removes the binding and
 // leaves every user-managed key on the account alive, and the only control that
 // stops one being created is an organization policy Fugaro cannot set for the
 // owner.
-const wsKeyOutlivesRemove = "a user-managed key on this account outlives 'fugaro workspace admin rm', which removes the binding and not the key, and it survives until it is deleted on the account or the account itself is disabled; 'constraints/iam.disableServiceAccountKeyCreation' is the organization policy that stops new ones, and it is the owner's to set (Fugaro cannot set it for you)"
+const wsKeyOutlivesRemove = "a user-managed key on this account outlives 'fugaro workspace user rm <address> --workspace <name> --admin', which removes the binding and not the key, and it survives until it is deleted on the account or the account itself is disabled; 'constraints/iam.disableServiceAccountKeyCreation' is the organization policy that stops new ones, and it is the owner's to set (Fugaro cannot set it for you)"
 
 // workspaceRows is the workspace's own half of the screen: the admins' live
 // bindings (D2823), a single admin (R1), and the workspace IAM account's
@@ -1322,7 +1322,7 @@ func (s *WorkspaceProjectStatus) rowAdminBinding(ctx context.Context, roster *wo
 		parts = append(parts, "the live bindings name "+strings.Join(unbound, ", ")+" and the record does not list them")
 	}
 	return wsRow(id, wsFail, strings.Join(parts, "; "),
-		selfCommand()+" workspace admin add <address> gives the missing binding, and "+selfCommand()+" workspace admin rm <address> takes the extra one away")
+		selfCommand()+" workspace user add <address> --admin gives the missing binding, and "+selfCommand()+" workspace user rm <address> --workspace "+wsEsc(s.lc.Name)+" --admin takes the extra one away")
 }
 
 // rowSingleAdmin is R1: a workspace with one admin has one person who can
@@ -1336,11 +1336,11 @@ func (s *WorkspaceProjectStatus) rowSingleAdmin(roster *workspace.Roster) wsProj
 	if len(roster.Admins) == 1 {
 		return wsRow(id, wsWarn,
 			fmt.Sprintf("a single workspace admin (%s): if they lose access to their account, nobody can administer this workspace, and the mechanism's binding goes with them", wsEsc(roster.Admins[0])),
-			selfCommand()+" workspace admin add <address>")
+			selfCommand()+" workspace user add <address> --admin")
 	}
 	return wsRow(id, wsWarn,
 		"the workspace has no admin at all: nobody can approve a member's link or remove one from the record",
-		selfCommand()+" workspace admin add <address>")
+		selfCommand()+" workspace user add <address> --admin")
 }
 
 // accountRows is the workspace IAM account's own two rows: the user-managed

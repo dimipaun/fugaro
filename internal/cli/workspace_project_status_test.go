@@ -864,8 +864,8 @@ func TestStatusSingleAdminWarns(t *testing.T) {
 	if !strings.Contains(r.Detail, "one@example.com") {
 		t.Fatalf("the row does not name the single admin: %q", r.Detail)
 	}
-	if !strings.Contains(r.Fix, selfCommand()+" workspace admin add") {
-		t.Fatalf("the row does not name the command that adds one: %q", r.Fix)
+	if !strings.Contains(r.Fix, selfCommand()+" workspace user add <address> --admin") {
+		t.Fatalf("the row does not name the command that adds one, which R1 fixes as `fugaro workspace user add <email> --admin`: %q", r.Fix)
 	}
 	if _, err := h.screen("", false); err != nil {
 		t.Fatalf("a warn made the command exit nonzero: %v", err)
@@ -948,7 +948,7 @@ func TestStatusUnlinkedGrantsLeft(t *testing.T) {
 // TestStatusNamesAccountKeysAndActAsHolders is the acceptance's last two rows:
 // the workspace IAM account's user-managed keys, each with its id and age, and
 // every principal that can act as it. Both say in one line that a key outlives
-// `workspace admin rm` and name the organization policy Fugaro cannot set, so
+// `workspace user rm --admin` and name the organization policy Fugaro cannot set, so
 // neither row is read as "the binding is still there".
 func TestStatusNamesAccountKeysAndActAsHolders(t *testing.T) {
 	h := wu11New(t)
@@ -987,7 +987,7 @@ func TestStatusNamesAccountKeysAndActAsHolders(t *testing.T) {
 
 	for _, r := range []wsProjectRow{keys, actAs} {
 		whole := r.Detail + " " + r.Fix
-		if !strings.Contains(whole, "outlives") || !strings.Contains(whole, selfCommand()+" workspace admin rm") {
+		if !strings.Contains(whole, "outlives") || !strings.Contains(whole, selfCommand()+" workspace user rm") {
 			t.Fatalf("the %s row does not say a key outlives the binding's removal: %q", r.ID, whole)
 		}
 		if !strings.Contains(whole, "constraints/iam.disableServiceAccountKeyCreation") {
