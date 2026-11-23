@@ -47,6 +47,7 @@ package credsvc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,6 +98,11 @@ type claimIssuance struct {
 	// necessarily the one Get answered. LM1's Put is that writer (R6). nil is a
 	// store nothing moved under, which is every other test here.
 	moved func(*identitywire.Record)
+	// getErr is the store's own failure on a read, which the service answers as
+	// its own and never as a decision about the ticket (R16's ScopeFault rule).
+	// nil is a store that reads, which is every test but the one that states
+	// that answer.
+	getErr error
 }
 
 func newClaimIssuance() *claimIssuance {
@@ -145,6 +151,9 @@ func (f *claimIssuance) Put(_ context.Context, slug, run string, rec identitywir
 func (f *claimIssuance) Get(_ context.Context, slug, run string) (identitywire.Record, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.getErr != nil {
+		return identitywire.Record{}, false, f.getErr
+	}
 	rec, ok := f.records[issuanceNode(slug, run)]
 	return rec, ok, nil
 }
@@ -152,9 +161,14 @@ func (f *claimIssuance) Get(_ context.Context, slug, run string) (identitywire.R
 // Claim is the fence (R5) and the retry rule (R2), in one atomic step as the
 // real store's is: a record claimed by this account with THIS nonce digest is
 // the same claim answered again, and every other claim on a claimed record is
-// refused. The account is compared folded, as the real store's is
-// (identity_record.go, sameAccount), so this double cannot pass a claim the real
-// store would refuse or refuse one it would serve.
+// refused. Both comparisons fold as the real store's do (identity_record.go,
+// sameAccount), so the two spellings of one address are one account here too.
+//
+// The real store's own ExpectedAccount floor (ErrAnotherCaller,
+// identity_record.go) is deliberately NOT repeated here: the route decides that
+// on the record this returns, and TestClaimChecksTheRecordTheStoreReturns drives
+// that decision through moved below, which a double that refused first would
+// make unreachable.
 func (f *claimIssuance) Claim(_ context.Context, slug, run string, claim identitywire.Claim) (identitywire.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -615,10 +629,14 @@ func TestClaimOfATicketTheTicketRouteMinted(t *testing.T) {
 // (ticketAccountAdmitted, identity_ticket.go), while the claim's account is the
 // CONFIGURED spelling the verifier answers (auth.go's verifyJob) — so the two
 // spellings of one account reach the claim's match and it has to see them as
-// one. The route's check folds (sameAccount) and so does the real store's floor
-// (TestTicketRecordClaimFoldsTheAccount, identity_record_test.go); a
-// byte-for-byte comparison in either would refuse a ticket the route itself
-// admitted, which is a run that could never claim its identity.
+// one. Each half of that fold is a different comparison with its own test: the
+// route's admission is the one this test drives (a lookup of the raw account in
+// the jobs map, unfolded, would refuse the ask below and answer no ticket), and
+// the store's own floor is TestTicketRecordClaimFoldsTheAccount
+// (identity_record_test.go). The claim's match here is reached with the record
+// still unclaimed, so it is the route's admission that carries the case
+// difference; a byte-for-byte comparison in either half would refuse a ticket
+// the route itself admitted, which is a run that could never claim its identity.
 func TestClaimOfATicketThatNamedTheAccountInAnotherCase(t *testing.T) {
 	f := newClaimFixture(t)
 	ask := identitywire.TicketRequest{
@@ -657,8 +675,11 @@ func TestClaimOfATicketThatNamedTheAccountInAnotherCase(t *testing.T) {
 		t.Fatal("the claim answered no token")
 	}
 	held := f.issuance.record(t, f.slug, f.run)
-	if !sameAccount(held.Claimed.Account, testJobSA) {
+	if held.Claimed.Account != testJobSA {
 		t.Errorf("the record is claimed by %q, want the job's own account %q", held.Claimed.Account, testJobSA)
+	}
+	if want := identitywire.Digest(testNonce); held.Claimed.NonceHash != want {
+		t.Errorf("the record's claim carries the nonce digest %q, want the digest of the nonce the claim carried, %q", held.Claimed.NonceHash, want)
 	}
 }
 
@@ -1162,6 +1183,40 @@ func TestClaimWithNoStoreRefusesOnlyAVerifiedCaller(t *testing.T) {
 	}
 	wantIdentityLine(t, lines[0], "", "", ErrorStateUnavailable)
 	f.wantNothingSigned(t)
+}
+
+// TestClaimStoreFailureCarriesNothingTheCallerTyped: the store's own failure
+// (R16's ScopeFault rule) is on the operator's line as the cause's Go type and
+// never as its text. The error a read fails with is an *identitywire.StoreError,
+// whose message spells the path it read — creds/issuance/<slug>/<run> — and both
+// halves of that path are what the caller typed into the ticket, so a line that
+// passed err itself would put two values the caller chose back on the operator's
+// log before any record at that path had been read. That is the rule this
+// package keeps for every store failure (refusallog.go).
+func TestClaimStoreFailureCarriesNothingTheCallerTyped(t *testing.T) {
+	f := newClaimFixture(t)
+	ticket := f.ticket(t, f.slug, f.run)
+	f.issuance.getErr = &identitywire.StoreError{
+		Path: "creds/issuance/" + f.slug + "/" + f.run,
+		Err:  errors.New("the node could not be read"),
+	}
+
+	resp, body := f.claimCall(t, identityClaimBody(t, ticket, testNonce))
+	wantRefusal(t, resp, body, StatusUnavailable, ErrorStateUnavailable)
+	lines := f.identityLines(t)
+	if len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one", len(lines))
+	}
+	wantIdentityLine(t, lines[0], "", "", ErrorStateUnavailable)
+	f.wantNothingSigned(t)
+
+	logged := f.logs.String()
+	if !strings.Contains(logged, "error_class") {
+		t.Errorf("the service's line does not carry the cause by its Go type, so an operator has nothing to read it by: %s", logged)
+	}
+	if strings.Contains(logged, f.slug) || strings.Contains(logged, f.run) {
+		t.Errorf("the service's line hands the operator the names the caller typed into the ticket: %s", logged)
+	}
 }
 
 // ---------------------------------------------------------------------------

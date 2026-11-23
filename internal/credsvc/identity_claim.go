@@ -277,8 +277,13 @@ func (s *Server) identityClaim(ctx context.Context, w http.ResponseWriter, r *ht
 		// run the ticket names is not written on this line either, because no
 		// record was read: it is still the caller's text, and a line that carried
 		// it would let any job account of this installation write run ids into the
-		// operator's audit.
-		s.log.Error("credsvc: the issuance record could not be read", "error", err)
+		// operator's audit. The cause is carried as its Go type for that reason
+		// and never by its text: an *identitywire.StoreError, like the *rtdb.Error
+		// under it, spells the path it read — creds/issuance/<slug>/<run>, both
+		// halves the caller typed into the ticket — so passing err itself would
+		// put those two names back on the line the rest of this branch keeps them
+		// off (the rule refusallog.go states).
+		s.log.Error("credsvc: the issuance record could not be read", "error_class", errorClass(err))
 		s.refuseIdentityCall(ctx, w, "", "", StatusUnavailable, ErrorStateUnavailable, "the issuance record could not be read")
 		return
 	case !found:
