@@ -3416,57 +3416,79 @@ func TestSummaryCannotOverrideLaunch(t *testing.T) {
 // TestSummaryGoneAtTheReReadIsTheRunsRecord: a listing re-reads the record
 // once the run's execution has ended, so the row is as new as the execution.
 // For a row built from the summary that re-read goes back to the summary --
-// which is the row's own source -- and the one case left is a summary that has
-// gone since: the run's result.json then answers, because the alternative (a
-// nil record, which is how a listing shows a run whose record the backend
-// lost) would be a row nothing wrote. The summary is written beside the record
-// and moves with it, so a summary that goes on its own is a bucket a person,
-// a lifecycle rule or a failed rewrite emptied -- not a run that has no
-// record.
+// which is the row's own source -- and the cases left are a summary that has
+// gone since and one it can no longer vouch for: the run's result.json then
+// answers, because the alternative (a nil record, which is how a listing shows
+// a run whose record the backend lost) would be a row nothing wrote. The
+// summary is written beside the record and moves with it, so a summary that
+// goes or turns unusable on its own is a bucket a person, a lifecycle rule or
+// a failed rewrite left behind -- not a run that has no record.
+//
+// The second case is the invariant the first read keeps (readSummaryVia): a
+// summary the reader cannot vouch for is a fallback and never an error, so a
+// re-read that meets one may not fail the listing it was meant to speed up.
 //
 // Mutations caught: a re-read that reads result.json for a row built from the
-// summary (the summary's own freshness is then lost, which is the row the
-// other half of this pins) and a re-read that gives up when the summary is
-// gone (the row reads as a lost run).
+// summary (the summary's own freshness is then lost, which is the row the other
+// read of this pins), a re-read that gives up when the summary is gone (the row
+// reads as a lost run), and a re-read that returns the summary's own refusal
+// (the whole listing fails over a shortcut).
 func TestSummaryGoneAtTheReReadIsTheRunsRecord(t *testing.T) {
 	ctx := context.Background()
-	f := newCloudFixture(t)
-	b := blobx.Wrap(memblob.OpenBucket(nil))
-	t.Cleanup(func() { b.Close() })
 	const id = "20261019-090000-bbbb"
-	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
-	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web",
-		Task: "the run's prompt", Title: "the run's title"}
-	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
-		Status: runstore.StatusRunning, Stage: "implement", Execution: exec, StartedAt: time.Now().UTC()}
-	s := runstore.Open(b.Bucket, appSlug, id)
-	if err := s.WriteRecord(ctx, rec); err != nil {
-		t.Fatal(err)
-	}
-	if err := runstore.WriteSummary(ctx, s, runstore.NewSummary(rec, spec, time.Now().UTC())); err != nil {
-		t.Fatal(err)
-	}
-	sum, err := s.ReadSummary(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The execution ends between the listing's two reads of the run, and the
-	// summary goes before the second: the re-read has nothing to go back to.
-	f.run.SetState(exec, backend.StateSucceeded)
-	if err := b.Bucket.Delete(ctx, s.Prefix()+runstore.SummaryName); err != nil {
-		t.Fatal(err)
-	}
+	for name, breakIt := range map[string]func(t *testing.T, b *blobx.Bucket, key string){
+		"gone": func(t *testing.T, b *blobx.Bucket, key string) {
+			if err := b.Bucket.Delete(ctx, key); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"unusable": func(t *testing.T, b *blobx.Bucket, key string) {
+			// What a newer writer's summary looks like to this reader, which
+			// is the one refusal a job-written object can make on its own: the
+			// object is there and this reader cannot vouch for it.
+			if err := b.WriteAll(ctx, key, []byte(`{"version":2,"run_id":"`+id+`","slug":"`+appSlug+`","at":"2026-10-19T09:00:00Z","record":{"status":"running","stage":"writeback","started_at":"2026-10-19T09:00:00Z","cost_usd":0}}`), nil); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			b := blobx.Wrap(memblob.OpenBucket(nil))
+			t.Cleanup(func() { b.Close() })
+			exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
+			spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web",
+				Task: "the run's prompt", Title: "the run's title"}
+			rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
+				Status: runstore.StatusRunning, Stage: "implement", Execution: exec, StartedAt: time.Now().UTC()}
+			s := runstore.Open(b.Bucket, appSlug, id)
+			if err := s.WriteRecord(ctx, rec); err != nil {
+				t.Fatal(err)
+			}
+			if err := runstore.WriteSummary(ctx, s, runstore.NewSummary(rec, spec, time.Now().UTC())); err != nil {
+				t.Fatal(err)
+			}
+			sum, err := s.ReadSummary(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The execution ends between the listing's two reads of the run,
+			// and the summary is broken before the second: the re-read has
+			// nothing left to go back to.
+			f.run.SetState(exec, backend.StateSucceeded)
+			breakIt(t, b, s.Prefix()+runstore.SummaryName)
 
-	r := &runObjects{
-		in:         runview.Input{Slug: appSlug, RunID: id, Task: spec, Record: sum.AsRecord()},
-		store:      s,
-		execution:  exec,
-		summarized: true,
-	}
-	if err := followExecution(ctx, envOn(t, f, b), r, nil, func(string, ...any) {}); err != nil {
-		t.Fatalf("followExecution: %v", err)
-	}
-	if r.in.Record == nil || r.in.Record.Status != runstore.StatusRunning || r.in.Record.Stage != "implement" {
-		t.Fatalf("the record after a summary that went at the re-read = %+v, want the run's own result.json (running, implement): a nil record is a row of a run the backend lost", r.in.Record)
+			r := &runObjects{
+				in:         runview.Input{Slug: appSlug, RunID: id, Task: spec, Record: sum.AsRecord()},
+				store:      s,
+				execution:  exec,
+				summarized: true,
+			}
+			if err := followExecution(ctx, envOn(t, f, b), r, nil, func(string, ...any) {}); err != nil {
+				t.Fatalf("followExecution: %v", err)
+			}
+			if r.in.Record == nil || r.in.Record.Status != runstore.StatusRunning || r.in.Record.Stage != "implement" {
+				t.Fatalf("the record after a summary that was %s at the re-read = %+v, want the run's own result.json (running, implement): a nil record is a row of a run the backend lost", name, r.in.Record)
+			}
+		})
 	}
 }

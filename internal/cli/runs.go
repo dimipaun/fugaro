@@ -1125,8 +1125,12 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 	// wrote (a nil record here reads as a run the backend lost).
 	if in.Record != nil && in.Record.Status == runstore.StatusRunning && (in.Exec == nil || in.Exec.State.Terminal()) {
 		if r.summarized {
+			// A summary the reader cannot vouch for is the same fallback the
+			// first read gives it (readSummaryVia): the shortcut is not there,
+			// and the run's own object answers. Only a read that failed is
+			// this listing's error, as it is on the first read.
 			sum, serr := absent(s.ReadSummary(ctx))
-			if serr != nil {
+			if serr != nil && !corruptObject(serr) {
 				return serr
 			}
 			if sum != nil {
@@ -1144,11 +1148,15 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 // corruptObject reports whether err is a run object that can't be used:
 // undecodable, or past its read cap (runstore.ErrTooLarge,
 // blobx.ErrTooLarge). That is the run's problem, not the listing's.
+// runstore.ErrCorrupt is the same verdict from a reader that decodes the
+// object itself (runstore.ReadRecord, ReadSummary): the object is there and
+// does not decode, which is not a read that failed.
 func corruptObject(err error) bool {
 	var syn *json.SyntaxError
 	var typ *json.UnmarshalTypeError
 	return errors.As(err, &syn) || errors.As(err, &typ) || errors.Is(err, io.ErrUnexpectedEOF) ||
-		errors.Is(err, runstore.ErrTooLarge) || errors.Is(err, blobx.ErrTooLarge)
+		errors.Is(err, runstore.ErrTooLarge) || errors.Is(err, blobx.ErrTooLarge) ||
+		errors.Is(err, runstore.ErrCorrupt)
 }
 
 // absent turns runstore.ErrNotFound into a nil value and no error.

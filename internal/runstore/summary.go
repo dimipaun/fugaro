@@ -368,12 +368,22 @@ func WriteSummary(ctx context.Context, s *Store, sum *Summary) error {
 // ReadSummary reads a run's summary object from the bucket: ErrNotFound when
 // the run has none, which is every run written before this object existed and
 // every run whose summary a reader has to fall back from.
+//
+// A summary this reader cannot vouch for is ErrCorrupt, the class a
+// result.json the bucket made undecodable is in: what DecodeSummary refuses is
+// an object that is there and unusable, and a caller tells that apart from a
+// read that failed (the bucket, the network) so it can fall back to the run's
+// own objects rather than fail over a shortcut.
 func (s *Store) ReadSummary(ctx context.Context) (*Summary, error) {
 	raw, err := s.ReadFile(ctx, SummaryName)
 	if err != nil {
 		return nil, err
 	}
-	return DecodeSummary(raw, s.Slug(), s.RunID())
+	sum, err := DecodeSummary(raw, s.Slug(), s.RunID())
+	if err != nil {
+		return nil, fmt.Errorf("decoding %s: %w: %w", SummaryName, ErrCorrupt, err)
+	}
+	return sum, nil
 }
 
 // DecodeSummary reads the bytes of a summary object as the summary of the run

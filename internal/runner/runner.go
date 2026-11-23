@@ -1062,12 +1062,19 @@ func (r *run) save(ctx context.Context) {
 // is read from its three objects exactly as before. rec is the record as it
 // was written, so the summary and the record it stands in for cannot disagree.
 func (r *run) saveSummary(ctx context.Context, rec *runstore.Record) {
-	if r.d.Bucket == nil || rec == nil {
+	// A run with no bucket, no record or no clock is a run there is nothing to
+	// write here for: the first two are a run too early to have a record and a
+	// fixture that carries none, and the clock is the one Run fills in, absent
+	// from a run assembled by hand (which is where the other two come from).
+	// A summary names the moment it was written, so with no clock there is no
+	// object to write, and writing one is never worth a panic in a run.
+	now := r.d.Now
+	if r.d.Bucket == nil || rec == nil || now == nil {
 		return
 	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
 	defer cancel()
-	if err := runstore.WriteSummary(wctx, r.d.Store, runstore.NewSummary(rec, r.spec, r.d.Now().UTC())); err != nil {
+	if err := runstore.WriteSummary(wctx, r.d.Store, runstore.NewSummary(rec, r.spec, now().UTC())); err != nil {
 		r.d.Log.Warn("writing the run summary failed", "err", err)
 	}
 }
