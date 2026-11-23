@@ -3492,3 +3492,65 @@ func TestSummaryGoneAtTheReReadIsTheRunsRecord(t *testing.T) {
 		})
 	}
 }
+
+// TestAStaleSummaryAtTheReReadIsTheRunsRecord: the summary write is
+// best-effort and follows the record write (runner.save), so a run that ends
+// between the two leaves a summary that is there, decodes, and is behind --
+// one describing a run still going, beside a result.json that carries the
+// ending. The re-read may not take it: a listing that did would show a run
+// that succeeded as infra_error, "execution ended without finalizing
+// (succeeded)" (runview's no-final-record row), and every later listing would
+// draw that same wrong row. The run's own result.json is the object the
+// summary stands in for, so it answers instead.
+//
+// Mutations caught: a re-read that trusts any summary it can decode (the row
+// is the stale running one, not the run), and a re-read that gives up on a
+// summary it decoded (the row reads as a run nothing wrote).
+func TestAStaleSummaryAtTheReReadIsTheRunsRecord(t *testing.T) {
+	ctx := context.Background()
+	const id = "20261019-090000-cccc"
+	f := newCloudFixture(t)
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	t.Cleanup(func() { b.Close() })
+	exec := startRunExecution(f, gcp.JobName(appSlug, "web"), appSlug, id)
+	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "the run's prompt", Title: "the run's title"}
+	s := runstore.Open(b.Bucket, appSlug, id)
+	going := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusRunning, Stage: "implement", Execution: exec, StartedAt: time.Now().UTC()}
+	if err := s.WriteRecord(ctx, going); err != nil {
+		t.Fatal(err)
+	}
+	if err := runstore.WriteSummary(ctx, s, runstore.NewSummary(going, spec, time.Now().UTC())); err != nil {
+		t.Fatal(err)
+	}
+	// The run ends in between: the finalize writes result.json, and the
+	// summary write beside it never lands, so the bucket holds the ending and
+	// a summary of a run going.
+	done := *going
+	done.Status, done.Stage = runstore.StatusSucceeded, "finalize"
+	if err := s.WriteRecord(ctx, &done); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := s.ReadSummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.Record.Status != runstore.StatusRunning {
+		t.Fatalf("the fixture's summary says %q, not the stale running one this test is about", sum.Record.Status)
+	}
+	f.run.SetState(exec, backend.StateSucceeded)
+
+	r := &runObjects{
+		in:         runview.Input{Slug: appSlug, RunID: id, Task: spec, Record: sum.AsRecord()},
+		store:      s,
+		execution:  exec,
+		summarized: true,
+	}
+	if err := followExecution(ctx, envOn(t, f, b), r, nil, func(string, ...any) {}); err != nil {
+		t.Fatalf("followExecution: %v", err)
+	}
+	if r.in.Record == nil || r.in.Record.Status != runstore.StatusSucceeded || r.in.Record.Stage != "finalize" {
+		t.Fatalf("the record after a stale summary at the re-read = %+v, want the run's own result.json (succeeded, finalize)", r.in.Record)
+	}
+}

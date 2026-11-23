@@ -1119,10 +1119,12 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 	// built from the summary re-reads the summary, because reading result.json
 	// here would answer a record the rest of the row was never built from --
 	// and the summary is written beside the record, at the same moments, so it
-	// is as new as it. A summary that has gone in between is the one case that
-	// falls back to result.json: the shortcut is not there any more, and the
-	// row is then the run's own record rather than a run shown as one nothing
-	// wrote (a nil record here reads as a run the backend lost).
+	// is as new as it. Two summaries fall back to result.json instead: one that
+	// has gone or cannot be vouched for (the shortcut is not there any more),
+	// and one that still says running while the execution has ended (the
+	// shortcut is there and behind the record). Either way the row is the run's
+	// own record rather than a run shown as one nothing wrote -- a nil record
+	// here reads as a run the backend lost.
 	if in.Record != nil && in.Record.Status == runstore.StatusRunning && (in.Exec == nil || in.Exec.State.Terminal()) {
 		if r.summarized {
 			// A summary the reader cannot vouch for is the same fallback the
@@ -1133,7 +1135,16 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 			if serr != nil && !corruptObject(serr) {
 				return serr
 			}
-			if sum != nil {
+			// A summary that still says running, while the execution has
+			// ended, is one behind the record it stands in for: the summary
+			// write is best-effort and follows the record write (runner.save),
+			// so a run that ended in between leaves a valid summary of a run
+			// still going. Trusting it here would show a succeeded run as
+			// infra_error, "execution ended without finalizing (succeeded)" --
+			// a row wrong for good -- so the run's own record answers instead,
+			// exactly as when the summary has gone: result.json is the object
+			// this one stands in for and the one that carries the ending.
+			if sum != nil && sum.Record != nil && sum.Record.Status != runstore.StatusRunning {
 				in.Record = sum.AsRecord()
 				return nil
 			}
