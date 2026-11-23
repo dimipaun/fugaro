@@ -344,6 +344,77 @@ func TestFoldUpsertsChangedRuns(t *testing.T) {
 	}
 }
 
+// TestFoldCarriesAnUnreadableObject is the difference the entry has to keep
+// between "the run wrote no such object" and "the run wrote one nobody can
+// read". An object the bucket holds and the fold cannot use -- a syntax error,
+// a shape the decoder refuses, one past the size cap -- is a run that happened,
+// so the fold writes its entry with LaunchUnreadable/RecordUnreadable set, and
+// a run whose launch.json is corrupt and which died before finalize is not
+// folded as a run that was claimed and never launched. The read is tolerating
+// the object rather than failing the pass: a fold that returned an error here
+// would stop the sweep on one run's broken object, and a reader that reads no
+// object would never learn the run existed.
+func TestFoldCarriesAnUnreadableObject(t *testing.T) {
+	e := newFoldEnv(t)
+	started := foldNow.Add(-3 * time.Hour)
+	e.agent(foldSlug, runOne, started)
+	e.agent(foldSlug, runTwo, started)
+	// The first run is the finding's case: a task, a launch.json that is there
+	// and unreadable, and no result.json. The second is the same for its
+	// record, with a launch the fold can read.
+	e.objects(foldSlug, foldSpec(runOne), nil, nil)
+	e.objects(foldSlug, foldSpec(runTwo), foldLaunch(runTwo, started.Add(-time.Minute)), nil)
+	put := func(run, name, body string) {
+		t.Helper()
+		if err := runstore.Open(e.bucket, foldSlug, run).
+			PutFile(context.Background(), name, []byte(body), "application/json"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(runOne, "launch.json", `{"version":1,`)
+	put(runTwo, "result.json", `{"version":1,`)
+
+	rep, err := e.fold()
+	if err != nil {
+		t.Fatalf("the fold failed on a run whose object is corrupt: %v", err)
+	}
+	if rep.Folded != 2 || rep.Unreadable != 0 || rep.Held {
+		t.Fatalf("report = %+v", rep)
+	}
+
+	one := e.doc(runOne)
+	if _, ok := one["launch"]; ok {
+		t.Fatalf("the entry carries a launch nobody can read: %v", one)
+	}
+	if one["launch_unreadable"] != true {
+		t.Fatalf("launch_unreadable = %#v, want true: the bucket holds a launch.json the fold could not use", one["launch_unreadable"])
+	}
+	if _, ok := one["record"]; ok {
+		t.Fatalf("a run that never finalized carries a record: %v", one)
+	}
+	if _, ok := one["status"]; ok {
+		t.Fatalf("a run that never finalized carries a status: %v", one)
+	}
+	minted, err := runstore.RunTime(runOne)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if at, ok := one["updated_at"].(time.Time); !ok || !at.Equal(minted) {
+		t.Fatalf("updated_at = %#v, want the run id's mint time: a corrupt launch is no moment", one["updated_at"])
+	}
+
+	two := e.doc(runTwo)
+	if _, ok := two["record"]; ok {
+		t.Fatalf("the entry carries a record nobody can read: %v", two)
+	}
+	if two["record_unreadable"] != true {
+		t.Fatalf("record_unreadable = %#v, want true", two["record_unreadable"])
+	}
+	if _, ok := two["launch"].(map[string]any); !ok {
+		t.Fatalf("launch = %#v, want the launch the fold could read", two["launch"])
+	}
+}
+
 // TestFoldAppliesCountDeltas is the summary's own rule: a fold moves the
 // counts and the money by the run's own state change, so a run that ends
 // differently is counted once and not twice, and a run whose compute stops

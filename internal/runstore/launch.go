@@ -55,7 +55,7 @@ func (s *Store) ReadLaunch(ctx context.Context) (*Launch, error) {
 	}
 	var l Launch
 	if err := json.Unmarshal(data, &l); err != nil {
-		return nil, fmt.Errorf("decoding launch.json: %w", err)
+		return nil, fmt.Errorf("decoding launch.json: %w: %w", ErrCorrupt, err)
 	}
 	return &l, nil
 }
