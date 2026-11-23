@@ -447,23 +447,44 @@ function decodeAccounts(doc: unknown): readonly ManageRow[] {
  * word a newer release wrote left standing rather than guessed at.
  *
  * The console does not import the CLI's formatter and cannot: the four words are a
- * Go constant and this is a renderer, so the words are spelled once here and
- * `manage-people.test.ts` holds them to the same table. `2006-01-02 15:04Z` is the
- * CLI's format for the instant, in UTC, and it is spelled rather than localised
- * because the console draws what the CLI prints.
+ * Go constant and this is a renderer, so the words are spelled once -- in
+ * `stateWordText`, which the pools kind draws from too -- and
+ * `manage-people.test.ts` holds them to the same table. What is this file's and
+ * not the pools kind's is the `until` clause: `accounts ls --json` carries the
+ * instant beside the word, and this column is the one with room for the sentence.
  */
 function accountStateText(state: JsonObject): string {
   const word = asString(state.state)
   if (word === undefined) {
     return STATE_NOT_READ
   }
+  const text = stateWordText(word)
+  if (word !== 'exhausted') {
+    return text
+  }
+  const until = asString(state.until)
+  return until === undefined ? text : `${text} until ${instantText(until)}`
+}
+
+/**
+ * stateWordText is one of `internal/creds`' state words as this console draws it:
+ * `available` and `exhausted` as the service spells them, `backed_off` as `backed
+ * off` -- the CLI's own `stateText` is where the space comes from -- and any word a
+ * newer release wrote left standing rather than guessed at.
+ *
+ * It is exported because two kinds draw the same words about the same marks: a pool
+ * member's `state` is `internal/creds`' own, "which `fugaro accounts ls --json`
+ * already prints" (C2, `routing.PoolMember.State`), and the pools kind
+ * (`pools.ts`) draws it in a column of its own. A second copy of this table would
+ * be a second place `backed off` is spelled, and the two would part the day one of
+ * them learned a word.
+ */
+export function stateWordText(word: string): string {
   switch (word) {
     case 'available':
       return 'available'
-    case 'exhausted': {
-      const until = asString(state.until)
-      return until === undefined ? 'exhausted' : `exhausted until ${untilText(until)}`
-    }
+    case 'exhausted':
+      return 'exhausted'
     case 'backed_off':
       return 'backed off'
     case 'broken':
@@ -475,17 +496,24 @@ function accountStateText(state: JsonObject): string {
 
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
 
-function untilText(until: string): string {
-  if (!RFC3339.test(until)) {
-    return oneLine(until)
+/**
+ * instantText is one instant as the CLI prints it -- `2006-01-02 15:04Z`, in UTC --
+ * and a string that is not an RFC 3339 instant left as it stands rather than
+ * rendered as `Invalid Date`. It is spelled rather than localised because the
+ * console draws what the CLI prints, and it is exported for the pools kind's
+ * `next_reset`, which is the same kind of instant about the same kind of mark.
+ */
+export function instantText(instant: string): string {
+  if (!RFC3339.test(instant)) {
+    return oneLine(instant)
   }
-  const instant = new Date(until)
-  if (Number.isNaN(instant.getTime())) {
-    return oneLine(until)
+  const at = new Date(instant)
+  if (Number.isNaN(at.getTime())) {
+    return oneLine(instant)
   }
   return (
-    `${instant.getUTCFullYear()}-${pad(instant.getUTCMonth() + 1)}-${pad(instant.getUTCDate())}` +
-    ` ${pad(instant.getUTCHours())}:${pad(instant.getUTCMinutes())}Z`
+    `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}` +
+    ` ${pad(at.getUTCHours())}:${pad(at.getUTCMinutes())}Z`
   )
 }
 

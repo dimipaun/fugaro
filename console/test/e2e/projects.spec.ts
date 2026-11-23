@@ -184,6 +184,7 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/manage/kinds/index.js',
   'renderer/manage/kinds/read.js',
   'renderer/manage/kinds/people.js',
+  'renderer/manage/kinds/pools.js',
   'renderer/manage/kinds/repos.js',
   'renderer/manage/kinds/images.js',
   'renderer/manage/kinds/recipes.js',
