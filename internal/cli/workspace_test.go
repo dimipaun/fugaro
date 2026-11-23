@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"bytes"
+	"io"
 	"maps"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -1048,6 +1052,41 @@ func TestWorkspaceCommandsRegistered(t *testing.T) {
 	for _, path := range []string{"workspace member add", "workspace member rm", "workspace member ls"} {
 		if _, ok := reporterCommands[path]; ok {
 			t.Errorf("the census still carries a reporter row for %q", path)
+		}
+	}
+}
+
+// TestAmbientSidesPrintWhereTheCommandDoes pins the one wiring the state
+// writer's own report depends on. `project rm`, `save` and `reconcile` carry no
+// config flags: their side selects the ambient config while the tree is built,
+// and the tree holds that side as a fixed value. A side built without a writer
+// discards what WU15 prints through it -- the file it wrote and, before a push,
+// the repository the snapshot was aimed at and the layer that aimed it (D2824),
+// which is the one thing nothing can read back afterwards -- so each of the
+// three commands points the side at its own output when it runs.
+func TestAmbientSidesPrintWhereTheCommandDoes(t *testing.T) {
+	for _, what := range []string{
+		"fugaro workspace project rm",
+		"fugaro workspace project save",
+		"fugaro workspace project reconcile",
+	} {
+		side := workspaceAmbientSide(what)
+		if side.out != io.Discard {
+			t.Errorf("%s is built with a writer already (%v), so the side is pinned to the tree's build rather than to the command's own output", what, side.out)
+			continue
+		}
+		cmd := &cobra.Command{Use: "save"}
+		buf := &bytes.Buffer{}
+		cmd.SetOut(buf)
+		if err := workspaceAmbientPoint(side)(cmd); err != nil {
+			t.Errorf("%s: pointing the side at the command failed: %v", what, err)
+			continue
+		}
+		if side.out != buf {
+			t.Errorf("%s: the side still writes where the command does not (%v), so its report is discarded", what, side.out)
+		}
+		if got := (workspaceSaveWriter{out: side.out}).out; got != buf {
+			t.Errorf("%s: the state writer prints through %v, want the command's own output", what, got)
 		}
 	}
 }

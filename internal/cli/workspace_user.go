@@ -157,13 +157,20 @@ that cannot be made is refused with the flag or the command that can make it.`,
 	// roster: the member is named by the command's own argument, and its database
 	// is reached with the caller's own credentials, so what they are given is the
 	// selected config's side (WU8's own doc, D2801).
-	grant := workspaceSides{side: workspaceAmbientSide("fugaro workspace user grant")}
+	//
+	// One side each, and not one between them: the side carries the sentence it
+	// refuses an unreadable selection with, and that sentence names the command
+	// that ran -- a shared side would hand a revoke the grant command's words.
+	memberSide := func(what string) workspaceSides {
+		return workspaceSides{side: workspaceAmbientSide(what)}
+	}
+	grant, revoke := memberSide("fugaro workspace user grant"), memberSide("fugaro workspace user revoke")
 	cmd.AddCommand(
 		workspaceReported(newWorkspaceUserAddCmd(open), "workspace-user-add"),
 		workspaceReported(newWorkspaceUserRmCmd(open), "workspace-user-rm"),
 		newWorkspaceUserLsCmd(open),
 		workspaceReported(newWorkspaceUserGrantCmd(grant), "workspace-user-grant"),
-		workspaceReported(newWorkspaceUserRevokeCmd(grant), "workspace-user-revoke"),
+		workspaceReported(newWorkspaceUserRevokeCmd(revoke), "workspace-user-revoke"),
 	)
 	return cmd
 }

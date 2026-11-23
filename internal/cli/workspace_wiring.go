@@ -126,26 +126,26 @@ at their own terminal.`,
 		workspaceReported(newWorkspaceProjectAddCmd(workspaceProjectAddSeamsFor()), "workspace-project-add"),
 		newWorkspaceProjectLsCmd(),
 		newWorkspaceProjectStatusCmd(),
-		workspaceReported(newWorkspaceProjectRmCmd(workspaceProjectRmDeps{
+		workspaceReportedWith(newWorkspaceProjectRmCmd(workspaceProjectRmDeps{
 			Roster:    sides(rm),
 			Audit:     sides(rm),
 			Authority: sides(rm),
 			Members:   sides(rm),
 			State:     sides(rm),
-		}), "workspace-project-rm"),
-		workspaceReported(newWorkspaceProjectSaveCmd(workspaceProjectSaveDeps{
+		}), "workspace-project-rm", workspaceAmbientPoint(rm)),
+		workspaceReportedWith(newWorkspaceProjectSaveCmd(workspaceProjectSaveDeps{
 			Owner:  save.lc,
 			Store:  sides(save),
 			Writer: sides(save),
-		}), "workspace-project-save"),
-		workspaceReported(newWorkspaceProjectReconcileCmd(workspaceReconcileDeps{
+		}), "workspace-project-save", workspaceAmbientPoint(save)),
+		workspaceReportedWith(newWorkspaceProjectReconcileCmd(workspaceReconcileDeps{
 			Workspace: reconcile.name,
 			Members:   workspaceMemberLookup(reconcile),
 			Drift:     workspaceDriftFunc(reconcile),
 			Ops:       sides(reconcile),
 			Admins:    workspaceAdminBindings(reconcile),
 			Audit:     sides(reconcile),
-		}), "workspace-project-reconcile"),
+		}), "workspace-project-reconcile", workspaceAmbientPoint(reconcile)),
 		workspaceReportedWith(newWorkspaceProjectLinkCmd(workspaceLinkDeps{
 			Authority: sides(&link.owner),
 			Members:   sides(&link.owner),
@@ -341,12 +341,37 @@ func openWorkspaceOwner(name string, out io.Writer) (*workspaceOwnerSide, error)
 // A selection that fails is CARRIED and not printed: the command's own fences
 // come first, and its refusal for an unreadable config is the same sentence it
 // would print at the moment it read one.
+//
+// The writer it is built with is io.Discard, which is a placeholder and not a
+// decision: the side is a fixed value built while the tree is built, and the
+// writer that belongs to it is the command's own, which is not known until the
+// command runs. workspaceAmbientPoint puts it there.
 func workspaceAmbientSide(what string) *workspaceOwnerSide {
 	_, lc, err := settingsLocalFile(what)
 	if err != nil {
 		return &workspaceOwnerSide{out: io.Discard, err: userErr("%v", err), resolved: true}
 	}
 	return &workspaceOwnerSide{out: io.Discard, lc: lc, name: workspaceNameOf(lc), resolved: true}
+}
+
+// workspaceAmbientPoint points an ambient side at the output of the command
+// that ran it.
+//
+// What prints through it is not a detail of the screen: WU15's writer reports
+// the file it wrote, and, before anything is pushed, the repository a snapshot
+// was aimed at and the layer that aimed it (D2824) -- the one thing nothing can
+// read back afterwards -- and WU6's save before a removal is the same writer
+// under another command. Discarded, that report is a save whose target the
+// operator never sees.
+//
+// It reads the command and nothing else, so the body's own fences still come
+// first (A7), and it resolves nothing: the selection was made when the tree was
+// built.
+func workspaceAmbientPoint(side *workspaceOwnerSide) func(*cobra.Command) error {
+	return func(c *cobra.Command) error {
+		side.out = c.OutOrStdout()
+		return nil
+	}
 }
 
 // ensure runs the side's own resolution once, if it has one.
@@ -1311,9 +1336,11 @@ func workspaceProjectAddSeamsFor() workspaceProjectAddSeams {
 			// it from.
 			return newWorkspaceMemberOpsFor(lc), nil
 		},
-		caller: workspaceCallerAddress,
-		now:    time.Now,
-		rand:   crand.Reader,
+		caller: func(ctx context.Context) (string, error) {
+			return workspaceCallerAddress(ctx, "fugaro workspace project add")
+		},
+		now:  time.Now,
+		rand: crand.Reader,
 	}
 }
 
@@ -1321,8 +1348,12 @@ func workspaceProjectAddSeamsFor() workspaceProjectAddSeams {
 // belong to, which is what `workspace init` records as the workspace's first
 // admin and what `project add` records as the actor: never the local config's
 // own key and never git's user.email (F21, init_members.go).
-func workspaceCallerAddress(ctx context.Context) (string, error) {
-	_, lc, err := settingsLocalFile("fugaro workspace project add")
+//
+// what is the command reading it, and it is a parameter because the selection
+// this reads through is both commands': a sentence that named the other one
+// would send the person to a command they did not run.
+func workspaceCallerAddress(ctx context.Context, what string) (string, error) {
+	_, lc, err := settingsLocalFile(what)
 	if err != nil {
 		return "", err
 	}
@@ -1349,7 +1380,7 @@ func workspaceInitDepsFor(out io.Writer) workspaceInitDeps {
 		if err != nil {
 			return workspaceInitTarget{}, err
 		}
-		caller, err := workspaceCallerAddress(ctx)
+		caller, err := workspaceCallerAddress(ctx, "fugaro workspace init")
 		if err != nil {
 			return workspaceInitTarget{}, err
 		}
@@ -1477,7 +1508,7 @@ func (w *workspaceLinkWiring) point(c *cobra.Command) error {
 		}
 		name := workspaceNameOf(member)
 		if member.Workspace == "" || name == "" {
-			return userErr("the selected config names no workspace, so there is no workspace to link this project to: `fugaro workspace project link` reads the workspace from this machine's own config (the `workspace:` key, spec §2), and this one states none")
+			return userErr("the selected config names no workspace, so there is no workspace this project belongs to: `fugaro workspace project link` and `fugaro workspace project unlink` read the workspace from this machine's own config (the `workspace:` key, spec §2), and this one states none")
 		}
 		ownerLC, _, err := workspaceOwnerConfig(name)
 		if err != nil {
