@@ -129,9 +129,11 @@ type userStatsDoc struct {
 	// IndexComplete is whether the rows came from the run index: true when the
 	// figures are its own page, read with no run object at all (F32), and false
 	// when the index has never finished a walk and the run records were read
-	// instead -- the same figures over the same window, one object read per run
-	// (readUserStatsRuns). It is the one field this document gained for the
-	// index, and it says which of the two reads a consumer is looking at.
+	// instead, one object read per run (readUserStatsRuns). It is the one field
+	// this document gained for the index, and it says which of the two reads a
+	// consumer is looking at: both build this document the same way -- the same
+	// fields, through the same aggregation, from the same run records -- so a
+	// screen renders either the same way.
 	IndexComplete bool `json:"index_complete"`
 	// Rows are the groups, one per (user, currency); Totals one per currency
 	// with an empty user. Dollars are never added across currencies.
@@ -220,8 +222,10 @@ func newRunsStatsCmd() *cobra.Command {
 			"is the window's, over everyone's runs, and is no more the caller's own than the\n" +
 			"truncation is. The rows come from the run index -- one page of entries for the\n" +
 			"window, and no run object read at all -- which index_complete reports: it is false\n" +
-			"while the index has not finished a walk, when the run records are read instead,\n" +
-			"over the same window and with the same figures.\n\n" +
+			"while the index has not finished a walk, when the run records are read instead.\n" +
+			"Either way the document is built the same way -- the same fields, the same rows,\n" +
+			"totals and counts, from the same run records -- so a reader renders both alike, and\n" +
+			"index_complete says only which read answered.\n\n" +
 			"--json prints {version, project, by, view, you, admin, since, until, max_runs,\n" +
 			"truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals\n" +
 			"carry {user, currency, runs, succeeded, failed, halted, infra_error, other,\n" +
@@ -562,9 +566,18 @@ func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since, u
 // installation is in until the reindex `fugaro update` starts reaches the end of
 // history (RI5), and the state a caller that has wired nothing is in
 // (runindex.NewStub) -- so the command then reads the records exactly as it did
-// before the index existed: the same rows, the same money, the same count of
-// runs that never started, one object read per run. `index_complete` in the
+// before the index existed, one object read per run. `index_complete` in the
 // document says which of the two reads produced the figures.
+//
+// The two reads build the document the same way, but they are not promised the
+// same figures: the window is resolved differently at its edge. The index
+// bounds --since by its own sort key, a run's last change (runindex.Entry.
+// UpdatedAt: the record's finish where it has one), and the records by the run
+// id's mint time, the run's start (runstore.ListRunIDs). A run that started
+// before the window and finished inside it is therefore in the index's page and
+// not in the record read's listing. The claim that the two agree over the same
+// window ran ahead of that, which is why the help and §6.10 of the console
+// contract now say only what holds.
 func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (userStatsRead, error) {
 	idx, err := runIndexReader(ctx, env)
 	if err != nil {

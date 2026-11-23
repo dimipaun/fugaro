@@ -1716,8 +1716,7 @@ the figures come from the run index, one page of entries for the window and no
 run object read at all (IR6, F32) — or, while the index has never finished a
 walk, from the run records themselves (`launch.json`'s `launched_by`, and
 `result.json`'s outcome and settled cost), which is the read this command made
-before the index existed and the same figures over the same window; `index_complete`
-says which of the two it was. Never from the budget database, so there is no
+before the index existed; `index_complete` says which of the two it was. Never from the budget database, so there is no
 write path behind it and no counter a screen has to reconcile.
 
 | Field | Type | omitempty | Availability state |
@@ -1732,7 +1731,7 @@ write path behind it and no counter a screen has to reconcile.
 | `until` | string | no | the window's last UTC day. Both are UTC days, like `runs ls`'s window |
 | `max_runs` | int | no | the bound the read ran under (`--max-runs`, default 5000) |
 | `truncated` | bool | no | **the window held more runs than `max_runs`**: every figure is over its newest `max_runs` alone. The bound is on the read and not on a person: it is applied before the view is, so a private view can be over fewer of the caller's own runs than `max_runs` suggests. A console must show this the way it shows a gap, never as the window's own total |
-| `index_complete` | bool | no | whether the figures are the **run index**'s own page: `true` when they are, read as one page of entries for the window with no run object read at all (F32), and `false` while the index has never finished a walk, when the run records are read instead — the same figures over the same window, one object read per run. It is the one field this document gained for the index (IR6), and it is the whole of the difference a consumer sees: the rows, the totals and the counts are the same figures whichever read produced them, so a screen renders them the same way and reads this only to know which one it is looking at |
+| `index_complete` | bool | no | whether the figures are the **run index**'s own page: `true` when they are, read as one page of entries for the window with no run object read at all (F32), and `false` while the index has never finished a walk, when the run records are read instead, one object read per run. It is the one field this document gained for the index (IR6), and the whole of the difference a consumer sees is which read answered: both build this document the same way — the same fields, through the same aggregation, from the same run records — so a screen renders either the same way and reads this only to know which one it is looking at |
 | `rows` | `[]userstats.Row` | no | `[]` when none. One row per (user, currency) — dollars are never added across currencies |
 | `totals` | `[]userstats.Row` | no | one per currency, in currency order, with `user` `""` |
 | `unlaunched` | int | no | runs in the window that **never started**: neither a launch nor a record, and no status settled for them (never launched, cancelled before launch, or a stale claim). A run the overlay lists with a status and no records yet — in flight, or finished inside the fold gap — started, so it is not one of these: it is a row with no record, under the unknown launcher. They are in no row and no total. It is the window's count, over everyone's runs, so it is **not** the caller's own in the `"own"` view any more than `truncated` is |
