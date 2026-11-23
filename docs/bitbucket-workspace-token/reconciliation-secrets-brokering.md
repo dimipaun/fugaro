@@ -65,7 +65,7 @@ runner's `/proc` away, even though the run's own git traffic carries none.
 | **T2.4** `fugaro doctor` warns about an own copy a shared job ignores | **Kept — waiting on B5.1** | Its subject is a **shared** job's use of the project token, which the proxy does not change until B5.1 admits shared jobs. The secrets-brokering plan's "moot for proxied repositories" reads a per-repository proxied job, which T2.4 was never about: on such a repository the runner spends no token, though the job still mounts one until the flip. **D1982 (2026-11-10): kept for S5**, with the one sentence it still needs — the warning is about shared jobs only. |
 | **T2.5** folded into T2.9 | **Superseded by B1.4 and B1.5** | It went with T2.9, and T2.9 is replaced. |
 | **T2.6** docs: phase 3 serves Bitbucket too | **Kept in part — the sliver landed 2026-11-10** | The phase-3 half waits for S5 with T2.2. Three corrections did not wait: the `FUGARO_BITBUCKET_API_URL` variables-table row does not name `bitbucket_api_roots`; the section still says the root lock "is 0.13.0's (D474, T2.8)" when BW-T2.8 shipped it in 0.14.0; and "Bitbucket stays on the per-repository path" says each Bitbucket repository "keeps its own job and its own `bitbucket-token`", which the flip makes false. **D1983 (2026-11-10): all three landed in `docs/git-providers.md`**; the phase-3 half waits for S5. |
-| **T2.7** Check 181, OWNER-RUN | **Kept** | The register has no row 181 and no `## Check 181:` section; `internal/cli/docs_checks_180_181_test.go` says 181 joins them with T2.6's section. It waits for T2.6 and S5. |
+| **T2.7** Check 181, OWNER-RUN | **Kept** | **Amended 2026-11-23:** the register now carries its row 181 and its `## Check 181:` section, and the check ships in the script form the owner checks use — `scripts/live-checks/check181.sh` with its hermetic `check181_test.sh`. What is left is the run, and it waits for T2.6 and S5. |
 | **T2.8** a cloud run pins the Bitbucket API root | **Done** | Built by **BW-T2.8**: `internal/runner/runner.go`'s `checkBitbucketAPIRoot`, called from `openProvider` for every Bitbucket provider, proxied or not. On a proxied repository the runner has no token to send, so the runs it still protects are the non-proxied ones, whose runner spends the job's token. Its operator step is missing from the shipped notes — **D1984 (2026-11-10): it is now a dated amendment to that draft.** |
 | **T2.9** the runner enforces the block on a shared job | **Superseded by B1.4 and B1.5** | Verified absent: `internal/runner/projectjob.go` has `checkProjectJobAccount` and no Bitbucket check, and its test file is not in the tree. The boundary is now `internal/gitproxy/rules.go`'s `Decide` and `CheckPRWrite`, behind `internal/credsvc/bitbucketproxy.go` — a place a runner-side check cannot be, because a check in the job binds nothing the agent cannot bypass (F5). **D1981 (2026-11-10): closed as replaced, the number closing with T2.5.** |
 | **T2.10** OFF (D476) | **off** | Unchanged, and the proxy does not revive it: the subject was a review-only run refusing a pull request its own token opened, and a proxied run's git traffic carries no token. |
@@ -75,8 +75,8 @@ runner's `/proc` away, even though the run's own git traffic carries none.
 **One consequence worth stating plainly.** The owner's D460 ruling — that Bitbucket repositories
 also run in shared project jobs — is not what the proxy chain delivers. The chain delivers the
 opposite for the per-repository job: the job keeps its own job and loses its token. A shared
-Bitbucket job still needs B5.1, and until then T2.2, T2.4, T2.6's phase-3 half and T2.7 stay where
-they are.
+Bitbucket job still needs B5.1, and until then T2.2, T2.4, T2.6's phase-3 half and T2.7's run stay
+where they are.
 
 ## 3. Decisions
 
@@ -100,7 +100,7 @@ takes in the same reading.
 | Block | Use |
 | --- | --- |
 | **D460–D489** | Unchanged: **D460–D477** written (all ruled 2026-10-27; D469–D472 are resolutions); **D478–D489** reserved and unused. |
-| **Checks 180–189** | Unchanged: **180** is written and registered (T1.3); **181** is proposed and waits for T2.6 and S5; **182–189** reserved and unused. |
+| **Checks 180–189** | Unchanged: **180** is written and registered (T1.3); **181** is written and registered too (T2.7, in the script form, 2026-11-23) but not run — its run waits for T2.6 and S5; **182–189** reserved and unused. |
 | **D1980–D1999** | **This reconciliation's block**: D1980–D1984 were answered 2026-11-10, all five as recommended; D1985–D1999 reserved and unused. It sits above D1959, the highest decision on `main`, and above the credentials folder's D1960–D1979. |
 
 ## 5. UNVERIFIED

@@ -44,8 +44,8 @@ references decisions by `D#` and findings by `F#`.
     across the token's reach.
   - **D477 = bump the policy version (3 → 4).** This was not the recommendation. 0.13.0 ships as a
     lockstep upgrade, and T2.11 writes its release notes.
-  - Check 180 stays owner-run and comes later: no Premium sandbox workspace is known (U6) —
-    **settled 2026-11-23: it is the owner's `dimi_bmb`**.
+  - Check 180 stays owner-run and comes later — **U6 was open then, and it is settled 2026-11-23:
+    the Premium sandbox workspace is the owner's `dimi_bmb`**.
 - **Answered in the next round, also 2026-10-27:**
   - **D464 = yes, in 0.12.1** (not the recommendation). `*` is allowed within one path segment of
     `allow_data_to`, at most two of them, never in the owner or workspace segment, never bare or
@@ -355,9 +355,9 @@ registration. The text below is kept as written.*
 ### T1.4: Check 180, OWNER-RUN
 
 *Verdict 2026-11-10: **Kept.** Nothing in the proxy chain changes it: the register's row reads
-USER-RUN, NOT RUN, and no Premium sandbox workspace is known (U6).* **U6 is settled
-(2026-11-23)**: the Premium sandbox workspace is the owner's own **`dimi_bmb`**, and
-`check180.sh`'s `--workspace` defaults to it, so what the check waits on is the owner running it.
+USER-RUN, NOT RUN, and the one thing it waited on was U6, the Premium sandbox workspace — **settled
+2026-11-23: it is the owner's own `dimi_bmb`**, which `check180.sh`'s `--workspace` defaults to, so
+what the check waits on is the owner running it.*
 
 - **OWNER-RUN.** The owner follows T1.3's section on the sandbox only. No agent performs any step.
   The owner types the commands the section gives, which are the
