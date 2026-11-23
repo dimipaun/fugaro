@@ -3,11 +3,14 @@
 // directory, and composes the one-line stderr nag and the comparison
 // fugaro doctor's cli-version check reports.
 //
-// Every read here is best effort: a network failure, an oversized or
-// malformed response, or a corrupt cache file is treated as "nothing to
-// say", never an error a caller must handle. Nothing sent carries any
-// identifying data: a plain GET to GitHub's "latest release" endpoint,
-// which never returns a draft or a pre-release.
+// Every read here is best effort, Published excepted: a network failure, an
+// oversized or malformed response, or a corrupt cache file is treated as
+// "nothing to say", never an error a caller must handle, while Published
+// reports why it could not answer — the one caller that acts on a true is
+// writing a version stamp, and a stamp it cannot confirm must not be
+// written. Nothing sent carries any identifying data: a plain GET to
+// GitHub's releases API, whose "latest" endpoint never returns a draft or a
+// pre-release.
 package updatecheck
 
 import (
@@ -46,7 +49,7 @@ const CheckTTL = 24 * time.Hour
 // version, stays silent before it may print again for that same version.
 const WarnTTL = 24 * time.Hour
 
-// FetchTimeout bounds the HTTP round trip Refresh makes.
+// FetchTimeout bounds the HTTP round trip Refresh and Published make.
 const FetchTimeout = time.Second
 
 // maxBody bounds the response GitHub might send: a real release object is a
