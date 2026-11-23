@@ -9057,20 +9057,25 @@ sanitises to the same text is never counted in it and your own row can be
 smaller than that key's row in the full table.
 
 A window can hold every run of every repository in the bucket, so the read is
-bounded: at most --max-runs records are read per call, newest first, and a window
+bounded: at most --max-runs runs are read per call, newest first, and a window
 holding more says so in the output rather than publishing figures over a part of
 itself silently. The bound is on the read, not on a person: the newest --max-runs
 runs are taken before any view is applied, so a private view can be over fewer of
 the caller's own runs than --max-runs suggests. A run with neither a launch nor a
-record -- never launched, cancelled before launch, or a stale claim -- never
-started and is counted in no figure. The count of those is the window's, over
-everyone's runs, and is no more the caller's own than the truncation is.
+record, and no status settled for it -- never launched, cancelled before launch,
+or a stale claim -- never started and is counted in no figure. The count of those
+is the window's, over everyone's runs, and is no more the caller's own than the
+truncation is. The rows come from the run index -- one page of entries for the
+window, and no run object read at all -- which index_complete reports: it is false
+while the index has not finished a walk, when the run records are read instead,
+over the same window and with the same figures.
 
 --json prints {version, project, by, view, you, admin, since, until, max_runs,
-truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,
-currency, runs, succeeded, failed, halted, infra_error, other, no_record,
-counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the counts add up:
-runs == succeeded + failed + halted + infra_error + other + no_record.
+truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals
+carry {user, currency, runs, succeeded, failed, halted, infra_error, other,
+no_record, counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the
+counts add up: runs == succeeded + failed + halted + infra_error + other +
+no_record.
 
 Usage: `fugaro runs stats`
 
