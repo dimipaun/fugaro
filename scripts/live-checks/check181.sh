@@ -32,7 +32,16 @@
 #             and DEFAULTS TO `bitbucket-shared`. The check defines it if the
 #             config has no such profile, and leaves it behind (the register's
 #             Restore says so): the profile and its `fugaro-p-…` job stay until
-#             you remove them.
+#             you remove them. A config with no `standard` profile cannot take a
+#             second one — the publisher refuses a profiles: block without it —
+#             so this check stops and names that command if the add is refused.
+#             --installation names the installation whose OWN config the
+#             allow-list and the profile are written into. `fugaro project
+#             profile` and `fugaro secrets allow` edit the project config this
+#             machine selects and take no `--project`, so this check sets
+#             FUGARO_PROJECT to the name you gave and reads the file back before
+#             it writes anything, refusing a run from a checkout whose
+#             fugaro.yaml names another project.
 #             --token-file holds the project access token and nothing else — one
 #             line, no quotes, no JSON — at mode 0600. It is the ONE place the
 #             value lives: this script never holds it in a variable, never puts
@@ -437,6 +446,34 @@ stop_call() {
   CALL_PID=""
 }
 
+# aimed SECONDS OUT LOG cmd... — the same call, on the INSTALLATION's own config.
+# `fugaro project profile` and `fugaro secrets allow` edit the project config the
+# machine selects and take no `--project` (the CLI refuses it by name), so the
+# selector this check can set is the environment: $FUGARO_PROJECT is one of the
+# ways localcfg.Select names, and it is the one the CLI's own refusal prints.
+# What this does NOT settle is a checkout outranking it — a fugaro.yaml naming
+# another project is a higher step of that same selection — which is why
+# step_config reads back the file these commands act on before anything is
+# written.
+aimed() { # aimed SECONDS OUT LOG cmd...
+  local secs=$1 out=$2 log=$3
+  shift 3
+  run_call "$secs" "$out" "$log" /dev/null env "FUGARO_PROJECT=$INSTALLATION" "$@"
+}
+
+# profile_allow REPO... — an allow_repos VALUE: the publisher holds that list to
+# patterns that name a PROVIDER, an owner and a repository, so the two-segment
+# owner/name this check is given is qualified with the provider here rather than
+# at every call site. The token's own allow_data_to is the other shape
+# (owner/name), which is why `fugaro secrets allow` below is given the bare one.
+profile_allow() {
+  local out="" r
+  for r in "$@"; do
+    out="${out:+$out,}bitbucket/$r"
+  done
+  printf '%s' "$out"
+}
+
 # ------------------------------------------------------------- the reader
 reader() { python3 "$SCRATCH/reader.py" "$@"; }
 
@@ -456,8 +493,9 @@ tokenfile argv: the token file. Prints its mode and its byte count and NOTHING
 doctor   argv: a `fugaro doctor --json` document. Prints the installation's own
        project: the name the local config carries, its GCP project and region.
 profile  argv: a `fugaro project profile ls --json` document, a profile name.
-       Prints whether that profile is defined, its provider, the NAMES of the
-       secrets it mounts and the repositories its allow_repos names.
+       Prints the config FILE the document was read from, whether that profile
+       is defined, its provider, the NAMES of the secrets it mounts and the
+       repositories its allow_repos names.
 runid    argv: a `fugaro run --json` document. Prints the run id it named.
 run      argv: a runs listing, a run id. Prints that run's row field by field,
        `found=no` when the listing does not hold it, and the JOB its execution
@@ -480,7 +518,10 @@ import sys
 # repository's owner/name, a profile's name and a secret's name are all this
 # shape, and a value that is not is dropped rather than copied into the block.
 VALUE = re.compile(r"[\x21-\x7e]+")
-REPO = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
+# A profile's allow_repos entry names a PROVIDER, an owner and a repository
+# (`bitbucket/myworkspace/api`), which is the shape the publisher holds the list
+# to; the token's own allow_data_to is the two-segment owner/name beside it.
+REPO = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
 RUNID = re.compile(r"[A-Za-z0-9._-]{1,80}")
 
 
@@ -598,6 +639,7 @@ elif cmd == "doctor":
 elif cmd == "profile":
     doc = load(sys.argv[2]) or {}
     want = sys.argv[3] if len(sys.argv) > 3 else ""
+    print("path=%s" % word(doc.get("path"), 400))
     found = None
     for pr in doc.get("profiles") or []:
         if isinstance(pr, dict) and pr.get("name") == want:
@@ -716,6 +758,31 @@ step_installation() {
 # step_token: the token's allow-list, the switch that hands it to the service,
 # and the store. The value never leaves the file the owner named: it is handed
 # to the one command that stores it, on stdin.
+# step_config: WHICH config this check is about to edit, read before the first
+# write. The three commands that carry the allow-list and the profile —
+# `fugaro secrets allow`, `fugaro project profile add/set` — edit the project
+# config the machine selects and take no `--project` at all, so this check aims
+# them with FUGARO_PROJECT (see `aimed`) and then proves the aim landed: the
+# document names the file it was read from, and every edit below is an edit of
+# that same file. A checkout whose fugaro.yaml names another project outranks
+# the variable, and this is what catches it before a write rather than after.
+step_config() {
+  local rc=0
+  aimed "$CLI_SECONDS" "$SCRATCH/profiles.json" "$SCRATCH/profiles.err" \
+    fugaro project profile ls --json || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    stop "fugaro project profile ls was REFUSED (exit ${rc}): $(first_error "$SCRATCH/profiles.err"). This check reads the installation's own project config before it writes anything into it — the allow-list and the profile a shared job is deployed for — and it needs that config to be the one FUGARO_PROJECT=${INSTALLATION} selects"
+  fi
+  local facts cfgpath
+  facts=$(reader profile "$SCRATCH/profiles.json" "$PROFILE" 2>/dev/null || true)
+  cfgpath=$(field_of path "$facts")
+  case "$cfgpath" in
+  */"$INSTALLATION".yaml) ;;
+  *) stop "fugaro project profile acts on the project config this machine selects, and it read ${cfgpath:-no file}, not the installation's own ${INSTALLATION}.yaml: this check edits the config of the installation it names and of nothing else. It sets FUGARO_PROJECT=${INSTALLATION} for these commands, and a checkout whose fugaro.yaml names another project outranks that name (localcfg.Select). Run this check from a directory that is not a checkout of another project. Nothing was written" ;;
+  esac
+  fact config PASS "the config this check edits is ${cfgpath} — the installation '${INSTALLATION}'s own, selected with FUGARO_PROJECT=${INSTALLATION} (fugaro project profile and fugaro secrets allow edit the selected config and take no --project). Every write below is a write to this file, and the profile it carries stays on it after this check (the register's Restore)"
+}
+
 step_token() {
   local facts
   facts=$(reader tokenfile "$TOKEN_FILE" 2>"$SCRATCH/reader.err" || true)
@@ -733,8 +800,8 @@ step_token() {
   fact token PASS "the token file ${TOKEN_FILE} is mode ${mode} and ${bytes} byte(s), read for its shape and nothing else: no value from it is printed, and the only command that ever sees it is the store below, which reads it from the file on stdin"
 
   local rc=0
-  call_q "$CLI_SECONDS" "$SCRATCH/allow.out" "$SCRATCH/allow.err" \
-    fugaro secrets allow bitbucket-token "$REPO_A" "$REPO_B" --proxy --project "$INSTALLATION" || rc=$?
+  aimed "$CLI_SECONDS" "$SCRATCH/allow.out" "$SCRATCH/allow.err" \
+    fugaro secrets allow bitbucket-token "$REPO_A" "$REPO_B" --proxy || rc=$?
   if [ "$rc" -eq 0 ]; then
     fact allow-list PASS "fugaro secrets allow bitbucket-token ${REPO_A} ${REPO_B} --proxy accepted (exit 0), so the local config's project_secrets.bitbucket-token.allow_data_to names exactly these two repositories and the token's proxy switch is on — which is what makes the block this check's allow-list, and the job's git traffic the credentials service's rather than the job's own (D2302). No value is read or printed by this command"
   else
@@ -756,8 +823,8 @@ step_token() {
 # secrets (D2302, projectpolicy.CheckSharedJobProfile).
 step_profile() {
   local rc=0
-  call_q "$CLI_SECONDS" "$SCRATCH/profiles.json" "$SCRATCH/profiles.err" \
-    fugaro project profile ls --project "$INSTALLATION" --json || rc=$?
+  aimed "$CLI_SECONDS" "$SCRATCH/profiles.json" "$SCRATCH/profiles.err" \
+    fugaro project profile ls --json || rc=$?
   if [ "$rc" -ne 0 ]; then
     stop "fugaro project profile ls was REFUSED (exit ${rc}): $(first_error "$SCRATCH/profiles.err"). This check reads the profile it deploys the shared job for before it publishes anything, and it needs the installation's own local config"
   fi
@@ -767,15 +834,14 @@ step_profile() {
   if [ "$defined" != yes ]; then
     say "the profile '${PROFILE}' is not defined in this installation's config; defining it as a bitbucket profile"
     rc=0
-    call_q "$CLI_SECONDS" "$SCRATCH/add.out" "$SCRATCH/add.err" \
-      fugaro project profile add "$PROFILE" --provider bitbucket --cpu 2 --memory 4Gi --timeout-class 6h \
-      --project "$INSTALLATION" || rc=$?
+    aimed "$CLI_SECONDS" "$SCRATCH/add.out" "$SCRATCH/add.err" \
+      fugaro project profile add "$PROFILE" --provider bitbucket --cpu 2 --memory 4Gi --timeout-class 6h || rc=$?
     if [ "$rc" -ne 0 ]; then
-      stop "fugaro project profile add ${PROFILE} --provider bitbucket was REFUSED (exit ${rc}): $(first_error "$SCRATCH/add.err"). The profile a shared job is deployed from is this check's whole subject, and a config that carries a profiles: block must define 'standard' as well — define the profile yourself (fugaro project profile add ${PROFILE} --provider bitbucket --cpu 2 --memory 4Gi --timeout-class 6h) and run this check again"
+      stop "fugaro project profile add ${PROFILE} --provider bitbucket was REFUSED (exit ${rc}): $(first_error "$SCRATCH/add.err"). The profile a shared job is deployed from is this check's whole subject. A config that carries a profiles: block must define 'standard' too — it is the profile every workflow that names none runs on, and the publisher refuses the block without it, which is what refuses this add when the config has no standard yet. Define one yourself (fugaro project profile add standard --provider github --cpu 2 --memory 4Gi --timeout-class 6h), then run this check again"
     fi
     rc=0
-    call_q "$CLI_SECONDS" "$SCRATCH/profiles.json" "$SCRATCH/profiles.err" \
-      fugaro project profile ls --project "$INSTALLATION" --json || rc=$?
+    aimed "$CLI_SECONDS" "$SCRATCH/profiles.json" "$SCRATCH/profiles.err" \
+      fugaro project profile ls --json || rc=$?
     facts=$(reader profile "$SCRATCH/profiles.json" "$PROFILE" 2>/dev/null || true)
     defined=$(field_of defined "$facts")
   fi
@@ -796,8 +862,8 @@ step_profile() {
   case ",$secrets," in
   *,bitbucket-token,*)
     rc=0
-    call_q "$CLI_SECONDS" "$SCRATCH/set.out" "$SCRATCH/set.err" \
-      fugaro project profile set "$PROFILE" secrets "" --project "$INSTALLATION" || rc=$?
+    aimed "$CLI_SECONDS" "$SCRATCH/set.out" "$SCRATCH/set.err" \
+      fugaro project profile set "$PROFILE" secrets "" || rc=$?
     if [ "$rc" -ne 0 ]; then
       fact profile FAIL "the profile '${PROFILE}' mounts ${secrets} and taking the entry off was REFUSED (exit ${rc}): $(first_error "$SCRATCH/set.err"). A profile a shared job is deployed for holds no credential of the provider it serves (D2302, projectpolicy.CheckSharedJobProfile)"
       return 0
@@ -806,13 +872,13 @@ step_profile() {
     ;;
   esac
   rc=0
-  call_q "$CLI_SECONDS" "$SCRATCH/set.out" "$SCRATCH/set.err" \
-    fugaro project profile set "$PROFILE" allow_repos "$REPO_A,$REPO_B" --project "$INSTALLATION" || rc=$?
+  aimed "$CLI_SECONDS" "$SCRATCH/set.out" "$SCRATCH/set.err" \
+    fugaro project profile set "$PROFILE" allow_repos "$(profile_allow "$REPO_A" "$REPO_B")" || rc=$?
   if [ "$rc" -ne 0 ]; then
     fact profile FAIL "the profile '${PROFILE}' could not be given the two allow-listed repositories as its allow_repos (exit ${rc}): $(first_error "$SCRATCH/set.err"). The profile's list is which repositories this one shared job is deployed for, and without it a run of either repository resolves no shared job"
     return 0
   fi
-  fact profile PASS "the profile '${PROFILE}' serves provider bitbucket, names ${REPO_A} and ${REPO_B} in its allow_repos, and mounts ${secrets:-nothing} — no Bitbucket credential (D2302: the job is shared by every repository the profile admits, and this token reaches a per-repository list such a job cannot be bounded by, so the job holds no token and its git reaches bitbucket.org through the credentials service). Read back with fugaro project profile ls, and the profile stays on the installation after this check (the register's Restore)"
+  fact profile PASS "the profile '${PROFILE}' serves provider bitbucket, names $(profile_allow "$REPO_A" "$REPO_B") in its allow_repos, and mounts ${secrets:-nothing} — no Bitbucket credential (D2302: the job is shared by every repository the profile admits, and this token reaches a per-repository list such a job cannot be bounded by, so the job holds no token and its git reaches bitbucket.org through the credentials service). Read back with fugaro project profile ls, and the profile stays on the installation after this check (the register's Restore)"
 }
 
 # step_subset_refusal: the subset rule, at the door that owns it. A profile that
@@ -822,23 +888,23 @@ step_profile() {
 # repository's first refusal is read.
 step_subset_refusal() {
   local rc=0
-  call_q "$CLI_SECONDS" "$SCRATCH/set-mount.out" "$SCRATCH/set-mount.err" \
-    fugaro project profile set "$PROFILE" secrets bitbucket-token --project "$INSTALLATION" || rc=$?
+  aimed "$CLI_SECONDS" "$SCRATCH/set-mount.out" "$SCRATCH/set-mount.err" \
+    fugaro project profile set "$PROFILE" secrets bitbucket-token || rc=$?
   if [ "$rc" -ne 0 ]; then
     fact subset-refusal UNVERIFIED "the profile '${PROFILE}' could not be given the bitbucket-token entry at the profile door (exit ${rc}): $(first_error "$SCRATCH/set-mount.err"). This check reads the subset rule by putting the entry on a profile and then naming a repository the block does not admit, and without the first half the rule was NOT asked. The register's section says where to record what you see when you edit the profile by hand"
     return 0
   fi
   rc=0
-  call_q "$CLI_SECONDS" "$SCRATCH/set-narrow.out" "$SCRATCH/set-narrow.err" \
-    fugaro project profile set "$PROFILE" allow_repos "$REPO_A,$REPO_B,$THIRD_REPO" --project "$INSTALLATION" || rc=$?
+  aimed "$CLI_SECONDS" "$SCRATCH/set-narrow.out" "$SCRATCH/set-narrow.err" \
+    fugaro project profile set "$PROFILE" allow_repos "$(profile_allow "$REPO_A" "$REPO_B" "$THIRD_REPO")" || rc=$?
   local said
   said=$(first_error "$SCRATCH/set-narrow.err")
   if [ "$rc" -eq 0 ]; then
     fact subset-refusal FAIL "the profile edit adding ${THIRD_REPO} to a profile that MOUNTS bitbucket-token was ACCEPTED (exit 0), so the subset rule did not hold: a profile mounting the token may admit only what the token's block admits (projectpolicy.CheckBitbucketProfileRepos, asked by internal/cli's projectProfileCheck before it writes). ${THIRD_REPO} is not in project_secrets.bitbucket-token.allow_data_to, so this is the finding the check exists for"
     # Put the list back, so the runs below resolve one shared job over the two
     # repositories the block names.
-    call_q "$CLI_SECONDS" "$SCRATCH/set.out" "$SCRATCH/set.err" \
-      fugaro project profile set "$PROFILE" allow_repos "$REPO_A,$REPO_B" --project "$INSTALLATION" || true
+    aimed "$CLI_SECONDS" "$SCRATCH/set.out" "$SCRATCH/set.err" \
+      fugaro project profile set "$PROFILE" allow_repos "$(profile_allow "$REPO_A" "$REPO_B")" || true
   elif printf '%s' "$said" | grep -Fq -- "$THIRD_REPO"; then
     fact subset-refusal PASS "fugaro project profile set REFUSED adding ${THIRD_REPO} to a profile that mounts bitbucket-token (exit ${rc}), and its own sentence names the repository: $(printf '%s' "$said" | cut -c1-220). The token's block is the profile's ceiling and the profile's list can only narrow it (projectpolicy.CheckBitbucketProfileRepos), which is the first of the third repository's two refusals. The edit wrote nothing"
   else
@@ -847,8 +913,8 @@ step_subset_refusal() {
   # The entry comes off again: the readings below put it back on purpose, and
   # leaving it on would have the deploy refuse the profile before the job this
   # check reads is built.
-  call_q "$CLI_SECONDS" "$SCRATCH/set.out" "$SCRATCH/set.err" \
-    fugaro project profile set "$PROFILE" secrets "" --project "$INSTALLATION" || true
+  aimed "$CLI_SECONDS" "$SCRATCH/set.out" "$SCRATCH/set.err" \
+    fugaro project profile set "$PROFILE" secrets "" || true
 }
 
 # step_mount_refusal: the shared-job rule at the two doors that own it — the
@@ -857,8 +923,8 @@ step_subset_refusal() {
 # projectpolicy.CheckSharedJobProfile.
 step_mount_refusal() {
   local rc=0
-  call_q "$CLI_SECONDS" "$SCRATCH/set-mount.out" "$SCRATCH/set-mount.err" \
-    fugaro project profile set "$PROFILE" secrets bitbucket-token --project "$INSTALLATION" || rc=$?
+  aimed "$CLI_SECONDS" "$SCRATCH/set-mount.out" "$SCRATCH/set-mount.err" \
+    fugaro project profile set "$PROFILE" secrets bitbucket-token || rc=$?
   if [ "$rc" -ne 0 ]; then
     fact mount-publish UNVERIFIED "the bitbucket-token entry could not be put on the profile '${PROFILE}' at the profile door (exit ${rc}): $(first_error "$SCRATCH/set-mount.err"), so the publish that refuses it was NOT reached"
     fact mount-deploy UNVERIFIED "the same: without the entry on the profile there is no mount for the deployer to refuse"
@@ -888,8 +954,8 @@ step_mount_refusal() {
     fact mount-deploy FAIL "the update was refused (exit ${rc}) but its sentence does not name the credential, so the refusal cannot be read as the deployer's: $said"
   fi
   # Off again: everything below needs a profile a shared job may be deployed for.
-  call_q "$CLI_SECONDS" "$SCRATCH/set.out" "$SCRATCH/set.err" \
-    fugaro project profile set "$PROFILE" secrets "" --project "$INSTALLATION" || true
+  aimed "$CLI_SECONDS" "$SCRATCH/set.out" "$SCRATCH/set.err" \
+    fugaro project profile set "$PROFILE" secrets "" || true
 }
 
 # step_open_publish: the third repository added to the SHARED profile's
@@ -900,8 +966,8 @@ step_mount_refusal() {
 # run to resolve the shared job at all.
 step_open_publish() {
   local rc=0
-  call_q "$CLI_SECONDS" "$SCRATCH/set-open.out" "$SCRATCH/set-open.err" \
-    fugaro project profile set "$PROFILE" allow_repos "$REPO_A,$REPO_B,$THIRD_REPO" --project "$INSTALLATION" || rc=$?
+  aimed "$CLI_SECONDS" "$SCRATCH/set-open.out" "$SCRATCH/set-open.err" \
+    fugaro project profile set "$PROFILE" allow_repos "$(profile_allow "$REPO_A" "$REPO_B" "$THIRD_REPO")" || rc=$?
   if [ "$rc" -ne 0 ]; then
     fact open-publish FAIL "adding ${THIRD_REPO} to the tokenless profile '${PROFILE}' was REFUSED (exit ${rc}): $(first_error "$SCRATCH/set-open.err"). On a profile that mounts nothing there is no token for the subset rule to narrow, so this edit is one of the two the D2302 shape allows — and the third repository's run cannot resolve the shared job without it"
     return 0
@@ -1126,7 +1192,7 @@ TASK_EOF
 # ------------------------------------------------------------------ the block
 # BLOCK_KEYS is the criteria, in the order the owner reads them: one row each,
 # whatever the run measured.
-BLOCK_KEYS=(installation agent-session belong workspace xtrace token allow-list store
+BLOCK_KEYS=(installation agent-session belong workspace xtrace config token allow-list store
   profile subset-refusal mount-publish mount-deploy open-publish deploy job
   run-a run-b run-third restore)
 
@@ -1199,23 +1265,27 @@ secret is stored, no run is launched and no job is read.
 What the run will do, in this order:
   1. read the installation with 'fugaro doctor --project ${INSTALLATION} --json', and refuse 'belong'
      and a coding agent's session;
-  2. 'fugaro secrets allow bitbucket-token ${REPO_A} ${REPO_B} --proxy' (the allow-list and the
+  2. read the config it is about to edit with 'fugaro project profile ls --json', aimed at the
+     installation with FUGARO_PROJECT=${INSTALLATION} — the commands that edit a project's own config
+     ('fugaro project profile', 'fugaro secrets allow') take no --project, and this proves the aim
+     landed on ${INSTALLATION}.yaml before anything is written;
+  3. 'fugaro secrets allow bitbucket-token ${REPO_A} ${REPO_B} --proxy' (the allow-list and the
      service switch), then 'fugaro secrets set bitbucket-token --project-wide' with the token file
      on stdin — the only command that ever sees the value;
-  3. read the profile '${PROFILE}' with 'fugaro project profile ls --json'; define it as a bitbucket
-     profile if it is absent, give it the two allow-listed repositories, and take any Bitbucket
-     credential off it;
-  4. put bitbucket-token ON the profile and add ${THIRD_REPO} to its allow_repos: 'fugaro project
+  4. read the profile '${PROFILE}'; define it as a bitbucket profile if it is absent, give it the two
+     allow-listed repositories as 'bitbucket/${REPO_A}' and 'bitbucket/${REPO_B}' (an allow_repos
+     entry names a provider, an owner and a repository), and take any Bitbucket credential off it;
+  5. put bitbucket-token ON the profile and add ${THIRD_REPO} to its allow_repos: 'fugaro project
      profile set' must REFUSE, naming the repository (projectpolicy.CheckBitbucketProfileRepos);
-  5. put bitbucket-token ON the profile: 'fugaro project policy publish' and 'fugaro update' must
+  6. put bitbucket-token ON the profile: 'fugaro project policy publish' and 'fugaro update' must
      each REFUSE (projectpolicy.CheckSharedJobProfile);
-  6. take the entry off, add ${THIRD_REPO} to the tokenless profile's allow_repos, and publish:
+  7. take the entry off, add ${THIRD_REPO} to the tokenless profile's allow_repos, and publish:
      NOTHING must refuse — that is the D2302 rule read from the other side;
-  7. 'fugaro update': one fugaro-p-… job for the profile, with FUGARO_CREDENTIALS_SERVICE_URL on it
+  8. 'fugaro update': one fugaro-p-… job for the profile, with FUGARO_CREDENTIALS_SERVICE_URL on it
      and no FUGARO_BITBUCKET_TOKEN anywhere (read with 'gcloud run jobs list/describe');
-  8. one run of ${REPO_A} and one of ${REPO_B}: each must land on THAT job, push and open its pull
+  9. one run of ${REPO_A} and one of ${REPO_B}: each must land on THAT job, push and open its pull
      request (polled until its row is terminal, then read by run id);
-  9. one run of ${THIRD_REPO}: it must be REFUSED before any git credential, and the refusal's own
+ 10. one run of ${THIRD_REPO}: it must be REFUSED before any git credential, and the refusal's own
      words must name the repository.
 It removes its scratch directory on the way out, however it ends, and says so in the block's restore
 row. It leaves behind what the register's Restore names: the profile, its job, the two pull requests
@@ -1346,6 +1416,7 @@ main() {
   guard_agent_session
 
   step_installation
+  step_config
   step_token
   step_profile
   step_subset_refusal

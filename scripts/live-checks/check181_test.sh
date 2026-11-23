@@ -90,7 +90,7 @@ THIRD_REPO_NAME='dimi_bmb/third'
 unmark=(env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT)
 
 # Every fact key the run's block must carry, whatever it measured.
-BLOCK_KEYS=(installation agent-session belong workspace xtrace token allow-list store
+BLOCK_KEYS=(installation agent-session belong workspace xtrace config token allow-list store
   profile subset-refusal mount-publish mount-deploy open-publish deploy job
   run-a run-b run-third restore)
 
@@ -107,7 +107,12 @@ set -u
 mode=${FAKE181_MODE:-ok}
 log=${FAKE181_LOG:-/dev/null}
 state=${FAKE181_STATE:-/tmp}
-printf '%s\n' "$*" >>"$log"
+# The argv as the check ran it, and — when the check aimed the call at a project
+# with FUGARO_PROJECT — that too, because `fugaro project profile` and `fugaro
+# secrets allow` edit the config the machine selects and have no flag to name
+# one. A call with no aim logs its argv alone, so the store's line below is
+# pinned exactly.
+printf '%s%s\n' "$*" "${FUGARO_PROJECT:+ FUGARO_PROJECT=$FUGARO_PROJECT}" >>"$log"
 
 state_get() { cat "$state/$1" 2>/dev/null || true; }
 state_put() { printf '%s' "$2" >"$state/$1"; }
@@ -178,10 +183,10 @@ project)
     case "${3:-}" in
     ls)
       if [ "$(state_get profile-defined)" = yes ]; then
-        printf '{"path":"/sandbox/fugaro.yaml","profiles":[{"name":"%s","provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":%s,"allow_repos":%s,"claude_accounts":[],"jobs":""}]}\n' \
-          "$profile_name" "$(json_list "$secrets")" "$(json_list "$repos")"
+        printf '{"path":"%s","profiles":[{"name":"%s","provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":%s,"allow_repos":%s,"claude_accounts":[],"jobs":""}]}\n' \
+          "$(state_get config-path)" "$profile_name" "$(json_list "$secrets")" "$(json_list "$repos")"
       else
-        printf '{"path":"/sandbox/fugaro.yaml","profiles":[]}\n'
+        printf '{"path":"%s","profiles":[]}\n' "$(state_get config-path)"
       fi
       exit 0
       ;;
@@ -489,6 +494,11 @@ seed_state() { # dir
   printf '%s\n' "${RUN181_NAME_A:-dimi_bmb/one}" >"$dir/state/repo-a"
   printf '%s\n' "${RUN181_NAME_B:-dimi_bmb/two}" >"$dir/state/repo-b"
   printf '%s\n' "${RUN181_THIRD:-dimi_bmb/third}" >"$dir/state/third-repo"
+  # The project config file the fake's `project profile ls --json` names, which
+  # is the one check181.sh insists on before it writes anything: it has to be the
+  # installation's own, and RUN181_CONFIG_PATH replaces it so a test can point
+  # the reading at another project's.
+  printf '%s\n' "${RUN181_CONFIG_PATH:-/sandbox/.config/fugaro/projects/sandbox.yaml}" >"$dir/state/config-path"
   printf '%s\n' "${RUN181_PROFILE_DEFINED:-no}" >"$dir/state/profile-defined"
   # A profile an earlier shape left mounting the credential: the check's own
   # reading is what takes the entry off, which is a case of its own.
@@ -538,6 +548,7 @@ run181() {
   RUN181_WORKSPACE=""
   RUN181_PROFILE_DEFINED=""
   RUN181_PROFILE_SECRETS=""
+  RUN181_CONFIG_PATH=""
 }
 
 # assert_no_secret DIR WHAT — nothing the run printed, no file it left behind
@@ -766,6 +777,49 @@ test_a_repository_outside_the_workspace_is_refused() {
     bash "$script" --dry-run --installation sandbox --token-file "$work/token" --workspace other \
     --repo other/one --repo dimi_bmb/two --third-repo dimi_bmb/third 2>&1) || status2=$?
   expect_status "$status2" 2 "an override that leaves one repository out"
+}
+
+# The allow-list and the profile live in the project config the MACHINE selects:
+# `fugaro project profile` and `fugaro secrets allow` have no flag to name a
+# project, so the check aims each of them at the installation with FUGARO_PROJECT
+# and reads the file back before the first write. Both halves are pinned here — a
+# call with no aim edits whatever config the machine happens to select, and a
+# `--project` passed to a command that has no such flag is refused outright.
+test_the_config_the_check_edits_is_the_installations() {
+  run181 aimed
+  expect_status "$status" 0 "the aim"
+  expect_contains "$out" "FACT config: PASS — " "the aim: the config row"
+  expect_contains "$out" "/sandbox/.config/fugaro/projects/sandbox.yaml" "the aim: the file it read back"
+  local log="$work/aimed/fugaro.log" bad
+  bad=$(grep -E '^(project profile (ls|add|set)|secrets allow)' "$log" | grep -v 'FUGARO_PROJECT=sandbox' | tr '\n' ';' || true)
+  [ -z "$bad" ] || fail "the aim: a call that edits the selected config ran with no FUGARO_PROJECT=sandbox: $bad"
+  bad=$(grep -E '^(project profile (ls|add|set)|secrets allow)' "$log" | grep -e ' --project' -e ' --config' | tr '\n' ';' || true)
+  [ -z "$bad" ] || fail "the aim: a call named the project with a flag to a command that has none, which the CLI refuses: $bad"
+  expect_contains "$(cat "$log")" \
+    "project profile set bitbucket-shared allow_repos bitbucket/dimi_bmb/one,bitbucket/dimi_bmb/two FUGARO_PROJECT=sandbox" \
+    "the aim: the profile's list is provider-qualified, the shape the policy holds an entry to"
+  assert_no_secret "$work/aimed" "the aim"
+}
+
+# The aim is PROVED rather than trusted: a checkout whose fugaro.yaml names
+# another project outranks FUGARO_PROJECT (localcfg.Select), so the check reads
+# the config's own path back and stops before anything is written into it. An
+# allow-list granted, or a profile added, in another project's config is a change
+# to an installation this check was never pointed at.
+test_a_config_that_is_not_the_installations_is_refused() {
+  RUN181_CONFIG_PATH=/sandbox/.config/fugaro/projects/other.yaml
+  run181 other-config
+  expect_status "$status" 2 "another project's config"
+  expect_contains "$out" "FACT config: FAIL — not reached" "another project's config: the row was never written"
+  expect_contains "$out" "other.yaml" "another project's config: the file it named"
+  expect_contains "$out" "FUGARO_PROJECT=sandbox" "another project's config: the aim it named"
+  expect_contains "$out" "Nothing was written" "another project's config: the refusal says so"
+  local log="$work/other-config/fugaro.log"
+  expect_absent "$(cat "$log")" "secrets allow" "another project's config: the allow-list was not written"
+  expect_absent "$(cat "$log")" "profile set" "another project's config: the profile was not edited"
+  expect_absent "$(cat "$log")" "profile add" "another project's config: no profile was added"
+  expect_last_line "$out" "CHECK 181 RESULT: INCOMPLETE (exit 2)" "another project's config: the verdict"
+  assert_no_secret "$work/other-config" "another project's config"
 }
 
 # A coding agent's session is refused outright: every command this check runs is
@@ -1115,6 +1169,8 @@ t test_dry_run_touches_nothing
 t test_the_plan_and_the_usage_need_no_cloud_tools
 t test_belong_is_refused_everywhere
 t test_a_repository_outside_the_workspace_is_refused
+t test_the_config_the_check_edits_is_the_installations
+t test_a_config_that_is_not_the_installations_is_refused
 t test_an_agent_session_is_refused
 t test_xtrace_is_refused
 t test_token_file_complaints
