@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -24,6 +26,78 @@ import (
 	"github.com/dimipaun/fugaro/internal/secretname"
 	"github.com/dimipaun/fugaro/internal/workspace"
 )
+
+// TestPersonScopeIsImplementedByTheWorkspacesScopeAlone pins C2's acceptance
+// sentence at its strongest reading — `PersonScope` "is implemented by the
+// workspace's scope and by no other" — which is the whole of why a route of the
+// personal half can be typed at all: a second implementation would be a second
+// deployment that serves a person's token, and the plan's A3 rule says an
+// installation's service behaves exactly as it does today.
+//
+// It is a source walk rather than a type assertion because a compile-time
+// assertion only ever proves an implementation exists. Every non-test file of
+// this package is read and every method of the four the interface declares is
+// attributed to its receiver, so a type that declares any one of them is found
+// wherever it sits — and the walk's own two assertions (the one implementation,
+// and all four methods on it) fail together if the interface is ever retyped
+// without the type beside it.
+//
+// What it does not reach is a type outside this package: a scope is this
+// package's `Scope`, a struct's methods cannot be added from another package,
+// and C2 declares `PersonScope` here, so an implementation elsewhere could only
+// be one nothing could ever hand out as a scope.
+func TestPersonScopeIsImplementedByTheWorkspacesScopeAlone(t *testing.T) {
+	const alone = "workspacePersonScope"
+	methods := []string{
+		"Launchers() LauncherVerifier",
+		"Slips() creds.SlipStore",
+		"OwnsSlip(ctx context.Context, id string) (bool, error)",
+		"Personal() PersonalReader",
+	}
+	paths, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("listing the package's files: %v", err)
+	}
+	// decls is each interface method, and the receivers that declare it.
+	decls := map[string][]string{}
+	read := 0
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		read++
+		for _, line := range strings.Split(string(data), "\n") {
+			code := line
+			if i := strings.Index(code, "//"); i >= 0 {
+				code = code[:i]
+			}
+			code = strings.TrimSpace(code)
+			if !strings.HasPrefix(code, "func (") {
+				continue
+			}
+			for _, m := range methods {
+				if !strings.Contains(code, ") "+m+" {") {
+					continue
+				}
+				recv := code[len("func ("):strings.Index(code, ") "+m)]
+				decls[m] = append(decls[m], strings.TrimSpace(recv))
+			}
+		}
+	}
+	if read < 2 {
+		t.Fatalf("the walk read %d non-test files of this package, and the scope it guards lives in one of them: a walk that read nothing would pass every assertion below", read)
+	}
+	for _, m := range methods {
+		got := decls[m]
+		if len(got) != 1 || !strings.Contains(got[0], alone) {
+			t.Errorf("%s is declared by %v, want exactly the workspace's own scope (%s): C2's rule is that PersonScope is implemented by the workspace's scope and by no other, and a second type declaring one of its four methods is a second deployment that would serve a person's token", m, got, alone)
+		}
+	}
+}
 
 // wsTokens is the snapshot's bundle as a store's own test answers it: the
 // document keys the workspace's bundle holds and, behind the accessor, their
