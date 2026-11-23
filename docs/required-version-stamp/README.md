@@ -13,7 +13,7 @@ with one sentence that names `brew upgrade` and `fugaro update`. L8 waits on it.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | Assumptions A1–A6, findings F1–F25 (F20–F25 from the review rounds), decisions D3260–D3270 (D3260–D3266 are the owner's answers to Q1–Q7; D3267–D3270 were added by this reconciliation and its reviews and answered the same day, and D3267 was amended after review and confirmed), resolutions R1–R10, open items O1–O8 (O2 and O4 closed), UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | Assumptions A1–A6, findings F1–F25 (F20–F25 from the review rounds), decisions D3260–D3271 (D3260–D3266 are the owner's answers to Q1–Q7; D3267–D3270 were added by this reconciliation and its reviews and answered the same day, and D3267 was amended after review and confirmed; D3271 closes O7), resolutions R1–R10, open items O1–O8 (O1, O2, O4 and O7 closed), UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Twelve tasks in four levels: T1 (the stamp package) and T2c (the published-release lookup); T2a, T3, T4, T5, T6 and K1; T2b and K2; T8 (end to end) and T7. It has the critical path, the shared files, and Check 900. No contract: the pass breaks no edge (R10). Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it |
 
@@ -42,6 +42,8 @@ with one sentence that names `brew upgrade` and `fugaro update`. L8 waits on it.
   draft or pre-release), whatever the update-check switches say. If the lookup fails, the stamp
   stays and a line says so.
 - D3270: `fugaro budget kill`, in every form, `--workspace` included, is exempt from the fence.
+- D3271: `update`'s door read keeps the 2-second timeout every command has; Check 900 measures a
+  cold read (U1), and a follow-up raises the timeout only if the read does not fit (closes O7).
 
 **Findings that changed the design:**
 - The stage cannot sit right after `policy`, because that slot is taken by contract. It goes after
@@ -63,7 +65,7 @@ with one sentence that names `brew upgrade` and `fugaro update`. L8 waits on it.
 - Stopping spend must never be fenced (F25, D3270).
 
 **Numbers reserved:**
-- Decisions **D3260–D3289**: D3260–D3270 used, D3271–D3289 reserved and unused.
+- Decisions **D3260–D3289**: D3260–D3271 used, D3272–D3289 reserved and unused.
 - Checks **900–909**: Check 900 used, 901–909 reserved and unused.
 
 Both blocks were checked free on `main` at `0dec0bb36`. The highest decision there was the
@@ -72,7 +74,7 @@ repo-coupling audit's block (D3230–D3259), and the highest check was 892.
 **What waits on something external:**
 - the owner's go for each task;
 - Check 900, which the owner runs after the release that carries L1;
-- L8's spec, which places its migration after this stage (O1);
 - the workspace work's own spec, for which stamp a workspace write checks (O5);
-- the console's owner, for U3 (O6);
-- the owner, on a longer timeout for `update`'s door read (O7).
+- the console's owner, for U3 (O6).
+
+L8's migration placed after this stage (O1) was confirmed by the owner on 2026-11-23.
