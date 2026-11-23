@@ -8156,6 +8156,10 @@ describe('the tabs the console reads for the one it is showing', () => {
       replies: {
         subscribeLive: () => snapshotReply(liveFrame()),
         planStatus: () => plan.reply(),
+        // The run list answers, so the Graph's read of its two documents really
+        // completes after the switch: a case whose list refused would return
+        // before the check it is here for and would pass with that check gone.
+        listRuns: () => runsReply(),
       },
     })
     const document = await boot(bridge, new FakeDocument())
@@ -8179,7 +8183,42 @@ describe('the tabs the console reads for the one it is showing', () => {
 
     buttonFor(document, 'graph').click()
     await flush()
+    // The switch cached nothing: the Graph is cold when the operator gets there,
+    // and what it draws is its own read's, with no stamp on it. This is the pair
+    // that fails while `prewarmGraph`'s `still` check is gone.
     expect(reads('planStatus'), 'the switch cached the answer it dropped').toBe(2)
+    expect(stamped(document), 'a dropped answer was drawn as a cached view').toBeNull()
+  })
+
+  it('drops the report the queue read for Spend, and caches nothing of it', async () => {
+    // The other half of the check, one tab over: the report is the spend read
+    // that answers after the switch, and the answer is not cached -- so the
+    // visit reads the report itself and draws no stamp. This fails while
+    // `prewarmSpend`'s `still` check is gone.
+    const report = holding()
+    const { bridge, calls } = fakeBridge({
+      replies: {
+        subscribeLive: () => snapshotReply(liveFrame()),
+        planStatus: () => planStatusReply(),
+        listRuns: () => runsReply(),
+        runReport: () => report.reply(),
+        showBudget: () => ({ ok: true, data: { document: {} } }),
+      },
+    })
+    const document = await boot(bridge, new FakeDocument())
+    await flush()
+    const reads = (name: string): number => calls.filter((call) => call.name === name).length
+    expect(reads('runReport'), 'the queue is not on the report: the case proves nothing').toBe(1)
+
+    buttonFor(document, 'live').click()
+    await flush()
+    report.release({ ok: true, data: { document: reportDoc('2026-10-01') } })
+    await flush()
+
+    const before = reads('runReport')
+    buttonFor(document, 'spend').click()
+    await flush()
+    expect(reads('runReport'), 'the visit drew the answer the switch dropped').toBe(before + 1)
     expect(stamped(document), 'a dropped answer was drawn as a cached view').toBeNull()
   })
 
