@@ -1016,6 +1016,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// falls back to it), so the read is skipped whenever this launch has text
 	// of its own, and it never overrides a title the chain already carries.
 	title := cmp.Or(o.title, c.Title)
+	titleDefaulted := false
 	if title == "" && text == "" {
 		title = followUpPRTitle(ctx, env, repo, o.pr[0], warn)
 		if title == "" {
@@ -1023,6 +1024,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 			// GH_TOKEN or FUGARO_GIT_TOKEN on this machine, a slow forge), so
 			// the run is named by what it is rather than by nothing.
 			title = fmt.Sprintf("Follow-up of PR #%d", o.pr[0])
+			titleDefaulted = true
 			if warn != nil {
 				fmt.Fprintf(warn, "note: the title of PR #%d could not be read from its host, so this run is titled %q; pass --title to name it\n", o.pr[0], title)
 			}
@@ -1046,6 +1048,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	// recorded tier is no expectation at all.
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, BaseBranch: specBaseBranch(c.Ref), Workflow: workflow, Task: text,
 		Title:          title,
+		TitleDefaulted: titleDefaulted,
 		PlanTask:       o.planTask,
 		CompressionOff: c.CompressionOff,
 		Branch:         c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp,

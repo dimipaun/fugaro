@@ -2058,7 +2058,9 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if spec.Title != "" {
 			if err := checkCloneImageSince(env.lc, spec, titlesSince,
 				"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
-				return config.Inputs{}, err
+				if !dropDefaultedTitle(spec, warn) {
+					return config.Inputs{}, err
+				}
 			}
 		}
 		if spec.PlanTask != "" {
@@ -2324,7 +2326,9 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if spec.Title != "" {
 			if err := checkImageSince(ctx, env, slug, spec, kind, titlesSince,
 				"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
-				return config.Inputs{}, err
+				if !dropDefaultedTitle(spec, warn) {
+					return config.Inputs{}, err
+				}
 			}
 		}
 		// The plan task's own gate, for the same reason as the three
@@ -7343,4 +7347,20 @@ func gitUserName(ctx context.Context) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// dropDefaultedTitle lets a launch whose job image cannot read a title go on
+// without the one the launcher made up for a follow-up (Follow-up of PR #N):
+// the run is then listed by its own instructions, as before the default
+// existed. It answers false for a title a person or the host gave, which the
+// gate still refuses.
+func dropDefaultedTitle(spec *task.Spec, warn io.Writer) bool {
+	if !spec.TitleDefaulted {
+		return false
+	}
+	spec.Title, spec.TitleDefaulted = "", false
+	if warn != nil {
+		fmt.Fprintln(warn, "note: the job image predates job titles, so this run carries none; fugaro update rebuilds it")
+	}
+	return true
 }
