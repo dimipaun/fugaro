@@ -157,7 +157,7 @@ guard_xtrace
 guard_agent
 
 [ -n "$PROJECT" ] || stop "no Fugaro project was named (usage: check-892-iam.sh <fugaro-project> [member…])"
-printf '%s' "$PROJECT" | grep -Eq '^[a-z][a-z0-9-]{0,62}$' ||
+printf '%s' "$PROJECT" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' ||
   stop "'$PROJECT' is not a Fugaro project name"
 for m in ${MEMBERS[@]+"${MEMBERS[@]}"}; do
   printf '%s' "$m" | grep -Eq '^([A-Za-z]+:)?[!-~]+@[!-~]+$' ||
@@ -286,7 +286,7 @@ PY
 }
 
 cfg_get() { # cfg_get <key>
-  python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2],""); print(v if isinstance(v,str) else "")' "$SCRATCH/config.json" "$1"
+  python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2],""); print(v if isinstance(v,str) else "")' "$SCRATCH/config.json" "$1" </dev/null
 }
 
 mint_token() {
@@ -377,7 +377,7 @@ done <"$SCRATCH/sa-repo"
 
 # ------------------------------------------------------------- the grants node
 say "reading the grants node config/admin/access"
-code=$(curl -sS --max-time 30 --config "$AUTH_CONF" -o "$SCRATCH/grants.json" -w '%{http_code}' \
+code=$(curl -q -sS --max-time 30 --config "$AUTH_CONF" -o "$SCRATCH/grants.json" -w '%{http_code}' \
   "$RTDB/config/admin/access.json" </dev/null 2>"$SCRATCH/grants.err") || code=000
 [ "$code" = 200 ] ||
   stop "the grants node $RTDB/config/admin/access could not be read (HTTP $code$([ -s "$SCRATCH/grants.err" ] && printf ': %s' "$(first_line "$SCRATCH/grants.err")")): it is the role each principal is compared against"
@@ -444,18 +444,24 @@ else:
         raw = [raw[k] for k in sorted(raw, key=lambda s: int(s) if s.isdigit() else 0)]
     if not isinstance(raw, list):
         fact("grants", "FAIL", "the grants node holds no grants list: it is not the shape {grants: [{user, role, scope}]}")
-        raw = []
-    for g in raw:
-        if not isinstance(g, dict) or not g.get("user") or not g.get("scope"):
+        raw = None
+    for g in raw or []:
+        if not isinstance(g, dict) or not isinstance(g.get("user"), str) or not isinstance(g.get("scope"), str) or not g["scope"].strip():
             bad.append(json.dumps(g))
+            continue
+        # access.Decode refuses a member that is not "user:<address>", so one
+        # here could never match an IAM member and would hide a finding.
+        if not g["user"].lower().startswith("user:"):
+            bad.append("%s is not a user: member" % g["user"])
             continue
         if g.get("role") not in ROLES:
             bad.append("%s as %r" % (g.get("user"), g.get("role")))
             continue
         grants.append((key(g["user"]), g["role"], g["scope"].strip()))
-    fact("grants", "PASS", "%d grants read from config/admin/access" % len(grants))
+    if raw is not None:
+        fact("grants", "PASS", "%d grants read from config/admin/access" % len(grants))
 if bad:
-    fact("grant-roles", "FAIL", "the node holds grants the report names no role for (viewer, operator, admin): " + "; ".join(bad))
+    fact("grant-roles", "FAIL", "the node holds grants access.Decode would refuse or the report names no role for (viewer, operator, admin): " + "; ".join(bad))
 else:
     fact("grant-roles", "PASS", "every grant's role is viewer, operator or admin")
 

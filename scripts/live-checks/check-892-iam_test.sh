@@ -131,7 +131,7 @@ while [ $# -gt 0 ]; do
   -o | --output) out=$2; shift 2 ;;
   -w | --write-out) fmt=$2; shift 2 ;;
   --max-time | -m) shift 2 ;;
-  -s | -S | -sS | --silent | --show-error | --fail) shift ;;
+  -q | -s | -S | -sS | --silent | --show-error | --fail) shift ;;
   -*) printf 'fake curl: unexpected flag %s\n' "$1" >&2; exit 64 ;;
   *) url=$1; shift ;;
   esac
@@ -376,6 +376,53 @@ test_an_unknown_role_in_the_node_fails() {
   expect_row "$out" grant-roles FAIL "an unknown role"
 }
 
+test_a_grant_whose_user_is_not_a_user_member_fails() {
+  case_dir bare_user
+  write_grants '{"grants":[{"user":"user:ada@example.com","role":"admin","scope":"project"},{"user":"otto@example.com","role":"operator","scope":"project"}]}'
+  write_project_iam '{"role":"roles/owner","members":["user:otto@example.com"]}'
+  run892
+  expect_status "$status" 1 "a grant with a bare address"
+  expect_row "$out" grant-roles FAIL "a grant with a bare address"
+  expect_contains "$out" "otto@example.com is not a user: member" "the bare address is named"
+}
+
+test_a_malformed_node_prints_only_the_fail() {
+  case_dir malformed_node
+  write_grants '{"grants":"nobody"}'
+  run892
+  expect_status "$status" 1 "a malformed node"
+  expect_row "$out" grants FAIL "a malformed node"
+  expect_no_row_state "$out" grants PASS "a malformed node"
+}
+
+test_an_unplaced_editor_is_reported_as_implicit_admin() {
+  case_dir implicit_editor
+  write_project_iam '{"role":"roles/editor","members":["user:ed@example.com"]}'
+  run892
+  expect_status "$status" 0 "an unplaced editor"
+  expect_contains "$out" "user:ed@example.com holds roles/editor on fugaro-gcp and the node does not place it: an implicit admin (D1592)" "the implicit editor is named"
+  expect_no_row_state "$out" admin-in-name FAIL "an unplaced editor is never failed"
+}
+
+test_an_absent_node_is_unverified() {
+  case_dir absent_node
+  write_grants 'null'
+  run892
+  expect_status "$status" 3 "an absent node"
+  expect_contains "$out" "CHECK 892 RESULT: INCOMPLETE (exit 3)" "an absent node"
+  expect_row "$out" grants UNVERIFIED "an absent node"
+  expect_row "$out" implicit-admin INFO "an absent node leaves every owner an implicit admin"
+}
+
+test_an_all_repos_admin_with_owner_fails() {
+  case_dir all_repos
+  write_grants '{"grants":[{"user":"user:ada@example.com","role":"admin","scope":"project"},{"user":"user:ari@example.com","role":"admin","scope":"all-repos"}]}'
+  write_project_iam '{"role":"roles/owner","members":["user:ari@example.com"]}'
+  run892
+  expect_status "$status" 1 "an all-repos admin with owner"
+  expect_contains "$out" "user:ari@example.com is placed as admin@all-repos and holds roles/owner" "an all-repos scope is not a project admin"
+}
+
 test_an_unreadable_node_is_incomplete() {
   case_dir unreadable_node
   printf 403 >"$answers/grants-status"
@@ -396,7 +443,7 @@ test_only_reads_are_called() {
     "gcloud projects get-iam-policy "*" --format=json --quiet "*) ;;
     "gcloud iam service-accounts list --project fugaro-gcp --format=json --quiet "*) ;;
     "gcloud iam service-accounts get-iam-policy "*" --project fugaro-gcp --format=json --quiet "*) ;;
-    "curl -sS --max-time 30 --config "*" -o "*" -w %{http_code} https://fugaro-fb-default-rtdb.firebaseio.com/config/admin/access.json "*) ;;
+    "curl -q -sS --max-time 30 --config "*" -o "*" -w %{http_code} https://fugaro-fb-default-rtdb.firebaseio.com/config/admin/access.json "*) ;;
     "curl-config-mode 600") ;;
     *) bad="${bad}${line}"$'\n' ;;
     esac
@@ -473,6 +520,11 @@ t test_an_unplaced_owner_is_reported_as_implicit_admin
 t test_a_budget_admin_is_not_flagged
 t test_a_stale_local_admin_list_is_reported
 t test_an_unknown_role_in_the_node_fails
+t test_a_grant_whose_user_is_not_a_user_member_fails
+t test_a_malformed_node_prints_only_the_fail
+t test_an_unplaced_editor_is_reported_as_implicit_admin
+t test_an_absent_node_is_unverified
+t test_an_all_repos_admin_with_owner_fails
 t test_an_unreadable_node_is_incomplete
 t test_only_reads_are_called
 t test_the_token_is_never_on_argv
