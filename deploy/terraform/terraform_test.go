@@ -1411,7 +1411,10 @@ func TestNoFirestoreDatabaseResource(t *testing.T) {
 	// (google_firestore_backup_schedule, or a name Google adds) is the same
 	// mistake as the database, and an enumeration is what would let it in. The
 	// index is the one name of the service that is Terraform, and where it may
-	// be declared is the loop below.
+	// be declared is the loop below. A second one is a decision rather than a
+	// slip — the orchestrator's session TTL policy is the candidate the spec
+	// already names (docs/central-orchestrator/reconciliation.md, D11) — and
+	// this line is where it is made in the open.
 	firestoreType := regexp.MustCompile(`google_firestore_[a-z0-9_]*`)
 	walk(t, func(path string, b []byte) {
 		code := stripComments(string(b))
