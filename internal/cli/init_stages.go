@@ -717,13 +717,18 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 //
 // Nothing here may fail the run, for the reason update.go's writeAdminList may
 // not: this is a step of the upgrade, and a record that could not be written is
-// a record the next `fugaro update` writes. So every state — no local config
-// file to write (a shared selection), no cloud clients at all (a run that never
-// opened the installation), a Firebase project that could not be read, an
-// observation that came back an error, a file that refused the write — is a
-// warning or silence. It asks nothing (docs/no-prompt-policy/): a run has
-// already answered every step it was going to by the time the converge applies,
-// and a question here would be asked at the one moment nobody is looking.
+// a record the next `fugaro update` writes. Every state is therefore a warning
+// or silence, and which of the two is the state's own answer. The states a
+// recording never started in — no local config file of this machine's own (a
+// shared selection), no cloud clients at all (a run that never opened the
+// installation), no Firebase project, no Firestore client to read with — are
+// silence: nothing was read and nothing failed, and a config that cannot reach
+// its own project's cloud is the config the record would say nothing about. A
+// read that WAS made and came back an error, and a file that refused the write,
+// are warnings, because there the record is missing and a person is owed the
+// reason. It asks nothing (docs/no-prompt-policy/): a run has already answered
+// every step it was going to by the time the converge applies, and a question
+// here would be asked at the one moment nobody is looking.
 func (e *initEngine) recordLocations(ctx context.Context) {
 	r, o := e.r, e.r.o
 	// A run that planned wrote nothing at all, and one whose stages left
@@ -749,9 +754,17 @@ func (e *initEngine) recordLocations(ctx context.Context) {
 	// Clients' (internal/infra's ObserveInputs), so it is built the way the
 	// Firebase stage builds it — one construction, so a fake endpoint and a
 	// real credential resolve here exactly as they do there.
+	//
+	// Not building it is silence and not a warning, for the reason the guard
+	// above is: this step's whole input is a read of the installation's cloud,
+	// and a client Fugaro cannot build at all is a config with no Firestore to
+	// read (a machine whose config carries no endpoint for it, or no
+	// credential) — a run with nothing to say about where anything is rather
+	// than a run whose recording failed. A converge that could not reach
+	// Google's APIs fails long before this step, and doctor's own row says this
+	// machine has no record yet, which is what is true of it.
 	fs, err := r.firestoreStep(ctx, e.lc, fp)
 	if err != nil {
-		r.warn(fmt.Sprintf("the locations record was not written: the Firebase project %s could not be read (%s), so the config keeps the record it has", fp, safetext.FieldErr(err)))
 		return
 	}
 	obs, err := infra.ObserveLocations(ctx, infra.ObserveInputs{Clients: e.c, Firestore: fs.FS, Spec: e.spec, FirebaseProject: fp})
