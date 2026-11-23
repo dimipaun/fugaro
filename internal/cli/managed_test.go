@@ -822,10 +822,6 @@ var inlineAgentSites = []inlineAgentSite{
 		r.o.coordinator = true
 		return r.refuseCoordinatorUnattended() == nil
 	}},
-	{"init.go refuseOrchestratorUnattended", "init.go refuseOrchestratorUnattended (the --orchestrator opt-in)", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
-		r.o.orchestrator = true
-		return r.refuseOrchestratorUnattended() == nil
-	}},
 }
 
 // propertyAgentSites are the agent-marker sites the other ManagedXxx tests
@@ -1015,7 +1011,6 @@ var initFlagCases = map[string]string{
 	"no-build":         "only drops the first image build's offer (a step only the person's own answer gives); takes nothing away from a confirmation",
 	"provision-batch":  "main's compute stage (0.9.5, init_compute.go): registered noYes, its confirmation is the person's own (no answer a run carries reaches it), so --yes never covers it; added on the merge of main into next-0.8.5, the confirm table does not drive this stage itself",
 	"coordinator":      "the coordinator's opt-in (P5): it is an apply of the installation's own roots whose steps confirm through ask (covered), but --yes is refused beside it (checkCoordinator), and a coding agent's session and a run with no terminal are refused before anything is read (refuseCoordinatorUnattended, an inline site, covered)",
-	"orchestrator":     "the resident orchestrator's opt-in (P5.1b, P5.1c): it writes the installation root's orchestrator variable and re-applies that root, whose confirmation is the one --firebase-project's own row names (covered); beside it --firebase-project is required (the block's token-minter row is bound on the Firebase root's signer, so only the stage with the Firebase outputs may write it), --yes is refused, and the read-only flags are excluded (checkOrchestrator); a coding agent's session and a run with no terminal are refused before anything is read (refuseOrchestratorUnattended, an inline site, covered)",
 	// Values a confirmed step carries: they change what is confirmed, never whether.
 	// bake-repos (IS7) is one of them: it answers the wizard's own question and
 	// writes the switch, and it is asked — and taken — on a first run of setup

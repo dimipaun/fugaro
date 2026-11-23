@@ -202,7 +202,6 @@ run)
   # label, so a row can be read as the run that opened it.
   case "$(flag --title "$@")" in
   *"flip ("*) kind=flip ;;
-  *"plain ("*) kind=plain ;;
   esac
   # The task the agent is handed, kept: a probe whose task asked for no change
   # would end as a run the runner FAILS ("the agent made no commits") and pushes
@@ -283,7 +282,7 @@ for line in open(path).read().splitlines() if os.path.exists(path) else []:
         # opens its pull request (a run whose agent commits nothing is failed
         # and pushed as a draft anyway).
         row.update({"status": "succeeded", "pushed": True,
-                    "pr": {"work": 41, "flip": 42, "plain": 43}.get(kind, 41)})
+                    "pr": {"work": 41, "flip": 42}.get(kind, 41)})
     runs.append(row)
 print(json.dumps({"project": "fugaro", "runs": runs, "totals": {}}))
 PY
@@ -830,7 +829,7 @@ CFG_EOF
     FAKE_FUGARO_STATE="$dir/state" FAKE_CURL_STATE="$dir/state" \
     FAKE_GIT_STATE="$dir/state" \
     CHECK191_REPO=workspace-a/repo-a CHECK191_OTHER_REPO=workspace-a/repo-b \
-    CHECK191_PLAIN_REPO=workspace-a/plain CHECK191_OTHER_PR=4 \
+    CHECK191_OTHER_PR=4 \
     CHECK191_RUN_ID="$run_base" CHECK191_WAIT_SECONDS=0 CHECK191_POLL_SECONDS=0 \
     CHECK191_LOG_WAIT_SECONDS=0 \
     CHECK191_CHECKOUT="$dir/checkout" \
@@ -1601,8 +1600,8 @@ DOCTOR_EOF
 # The block's own key list is printed whatever happened, and a key no fact
 # carries used to read `FAIL — not reached` — true of a row the run would have
 # recorded had it not stopped, and false of one this mode NEVER records: a
-# default (proxy) run reads the working run's rows and never Check 192's six
-# (`jobs`, `mount`, `accessor`, `doctor`, `run-still-works`, `plain-repo`), nor
+# default (proxy) run reads the working run's rows and never Check 192's five
+# (`jobs`, `mount`, `accessor`, `doctor`, `run-still-works`), nor
 # `dry-run`, which only a --dry-run plan writes. Seven rows read as a failed
 # check on 2026-11-17 and hid the ones that were measured, so each mode now
 # names its own rows and print_block prints those as N/A: neither a pass nor a
@@ -1684,7 +1683,7 @@ test_happy_path() {
   # the run measured read their own verdict, so the key list above is the whole
   # of it — a row the run would have recorded has to keep reading `not reached`
   # when the run stops (the case below), never N/A.
-  expect_same "$(na_of "$out")" "dry-run jobs mount accessor doctor run-still-works plain-repo " \
+  expect_same "$(na_of "$out")" "dry-run jobs mount accessor doctor run-still-works " \
     "happy path: exactly the rows this mode never records read N/A"
   expect_contains "$out" "N/A — not part of this mode (proxy)" "happy path: the N/A row names the mode it is not part of"
   expect_absent "$out" "N/A — not part of this mode (flip)" "happy path: no row claims another mode"
@@ -1709,7 +1708,7 @@ test_a_stopped_run_still_reads_not_reached() {
       "a stopped run: $key is a row this mode records and the run stopped before it"
   done
   expect_absent "$out" "FACT proxied: N/A" "a stopped run: a row this mode records never reads N/A"
-  expect_same "$(na_of "$out")" "dry-run jobs mount accessor doctor run-still-works plain-repo " \
+  expect_same "$(na_of "$out")" "dry-run jobs mount accessor doctor run-still-works " \
     "a stopped run: the N/A rows are still exactly the ones this mode never records"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a stopped run: no run was launched"
 }
@@ -2222,7 +2221,6 @@ test_after_flip_happy_path() {
     "FACT accessor: PASS" \
     "FACT doctor: PASS" \
     "FACT run-still-works: PASS" \
-    "FACT plain-repo: PASS" \
     "FACT restore: PASS" \
     "CHECK 192 RESULT END (exit 0)"; do
     expect_contains "$out" "$want" "after-flip: $want"
@@ -2233,22 +2231,17 @@ test_after_flip_happy_path() {
   # the one the jobs mounted before the flip.
   expect_contains "$out" "FACT accessor: PASS — no job account of workspace-a/repo-a holds a role on the Bitbucket token's container(s) (fugaro-project-fugaro-bitbucket-token-d874a0dfd2bd0854)" \
     "after-flip: the accessor row names the container it read"
-  expect_contains "$out" "FACT plain-repo: PASS" "after-flip: the plain row"
-  expect_contains "$out" "fugaro-project-fugaro-bitbucket-token-d874a0dfd2bd0854" "after-flip: the mount the plain repository still holds is named by its derived ID"
-  expect_contains "$(cat "$dir/logs/fugaro.calls")" "--run-id $(rid_of "$dir" plain)" "after-flip: the plain repository's run"
-  # Both of the flip's runs are real runs: their tasks ask for the one commit,
-  # the push and the pull request their rows read, for the same reason the
-  # working run's task does.
+  # The flip's run is a real run: its task asks for the one commit, the push and
+  # the pull request its row reads, for the same reason the working run's task
+  # does.
   expect_contains "$(cat "$dir/state/tasks/$(rid_of "$dir" flip).md")" \
     "commit it, push your branch and open the pull request" \
     "after-flip: the proxied repository's run is a real run"
-  expect_contains "$(cat "$dir/state/tasks/$(rid_of "$dir" plain).md")" \
-    "commit it, push your branch and open the pull request" \
-    "after-flip: the plain repository's run is a real run"
   expect_contains "$out" "opened pull request #42" "after-flip: the proxied repository's row carries its pull request"
-  expect_contains "$out" "opened pull request #43" "after-flip: the plain repository's row carries its pull request"
+  expect_absent "$out" "plain-repo" "after-flip: no row about a repository that is not proxied"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "-0005" "after-flip: one throwaway run only"
   expect_absent "$(cat "$dir/logs/curl.calls")" "PUT" "after-flip: no outcome node is written"
-  # Check 192 reads the flip's six keys and none of Check 191's: the same
+  # Check 192 reads the flip's five keys and none of Check 191's: the same
   # print_block serves both, so the rows this mode never records — Check 191's
   # measured ones and the `dry-run` marker — read N/A rather than `FAIL — not
   # reached`, which would read as a check that stopped (fourteen rows did).
@@ -2303,24 +2296,16 @@ DOCTOR_EOF
   expect_contains "$out" "still mounts bitbucket-token" "a doctor finding: the problem word is carried into the detail"
 }
 
-test_after_flip_a_plain_repository_that_lost_its_mount_is_a_failure() {
-  local dir=$work/plainlost
+# CHECK191_PLAIN_REPO was a knob of the retired plain-repository half: a value
+# left in the owner's environment is ignored, not refused, so an old command line
+# still runs and the block has no row for it.
+test_after_flip_a_leftover_plain_repo_knob_is_ignored() {
+  local dir=$work/plainleft
   prepare "$dir"
-  python3 - "$dir/state/jobs.json" <<'PY'
-import json, sys
-path = sys.argv[1]
-jobs = json.load(open(path))
-spec = jobs[1]["spec"]["template"]["spec"]["template"]["spec"]
-spec["containers"][0]["env"] = [e for e in spec["containers"][0]["env"]
-                                if e["name"] != "FUGARO_BITBUCKET_TOKEN"]
-open(path, "w").write(json.dumps(jobs))
-PY
-  run_check "$dir" "$script" -- --after-flip
-  expect_status "$status" 1 "a plain repository without its mount"
-  expect_contains "$out" "FACT plain-repo: FAIL" "a plain repository without its mount: the fact"
-  # The id the plain run would have been launched under: <base>-<4 hex>, the
-  # check's own derivation for that label.
-  expect_absent "$(cat "$dir/logs/fugaro.calls")" "--run-id $run_base-0005" "a plain repository without its mount: no run was launched in it"
+  run_check "$dir" "$script" CHECK191_PLAIN_REPO=workspace-a/plain -- --after-flip
+  expect_status "$status" 0 "a leftover CHECK191_PLAIN_REPO"
+  expect_absent "$out" "plain-repo" "a leftover CHECK191_PLAIN_REPO: no row for it"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "workspace-a/plain" "a leftover CHECK191_PLAIN_REPO: nothing is launched in it"
 }
 
 # doctor resolves the repository it answers about from the WORKING DIRECTORY: it
@@ -2328,7 +2313,7 @@ PY
 # anywhere but the proxied repository's checkout therefore prints no
 # bitbucket-direct line at all, which reads as a finding about the flip when it
 # is a finding about where the owner was standing — so the check stops before it
-# launches two runs rather than failing that row 80 minutes later.
+# launches a run rather than failing that row 80 minutes later.
 test_the_flip_needs_the_repositorys_own_checkout() {
   local dir=$work/checkout other notgit
   prepare "$dir"
@@ -2442,7 +2427,7 @@ t test_after_flip_happy_path
 t test_after_flip_a_job_that_still_mounts_the_token_is_a_failure
 t test_after_flip_an_account_that_still_has_the_accessor_is_a_failure
 t test_after_flip_a_doctor_finding_is_a_failure
-t test_after_flip_a_plain_repository_that_lost_its_mount_is_a_failure
+t test_after_flip_a_leftover_plain_repo_knob_is_ignored
 t test_the_flip_needs_the_repositorys_own_checkout
 t test_after_flip_no_labelled_container_is_unmeasured
 

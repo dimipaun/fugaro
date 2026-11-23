@@ -411,6 +411,18 @@ last_line() {
 # in a process group of its own so the deadline reaches whatever the call
 # started. `timeout(1)` is not used: it is not on macOS, where this check is also
 # run.
+#
+# The status comes from a file the call's own subshell writes before it exits,
+# and never from `wait`, and there is no second background job watching the
+# deadline. Both of those are load-bearing. With job control on bash reaps a
+# finished child by itself, and a `wait` for a pid whose record bash has let go
+# answers "No record of process" instead of the status; under `set -e` that
+# failing wait runs this script's ERR trap, and the harness that runs every live
+# check's test side by side lost that race often enough to fail this check's own
+# suite with an "internal error" that had not happened. A deadline watchdog
+# beside the call is the same hazard from the other side: the second background
+# job is one more record for bash to lose, and it lost it just as often. One
+# background job, a status file for the status, and `SECONDS` for the deadline.
 CALL_PID=""
 run_call() { # run_call SECONDS OUT LOG cmd...
   local secs=$1 out=$2 log=$3
@@ -418,31 +430,43 @@ run_call() { # run_call SECONDS OUT LOG cmd...
   # job control, so the call is a process group of its own and the deadline
   # reaches whatever the call started rather than only the call itself.
   set -m
-  "$@" </dev/null >"$out" 2>"$log" &
-  CALL_PID=$!
-  # A watchdog rather than a poll: `kill -0` cannot tell a running child from one
-  # that has exited and not been reaped, so a poll would sleep a whole tick on
-  # every call that is already done. The watchdog's marker file is what tells the
-  # two endings apart -- its own kill from the call's.
-  local fired="$SCRATCH/.watchdog.$$" watchdog="" status=0
-  rm -f "$fired"
-  # The watchdog's own descriptors are cut off from this script's: it sleeps for
-  # the whole deadline, and an output descriptor left open in it would hold a
-  # pipe open long after the call it watched has ended (which is what a caller
-  # capturing this script's output would then be waiting on). Its own process
-  # group is what makes the kill below reach the sleep it is running.
+  local st="$SCRATCH/.status.$$" start=$SECONDS status=""
+  rm -f "$st"
+  # The subshell's own sides of the traps are cut off from this script's: a call
+  # that refuses exits non-zero, which is the ordinary case this check reads, and
+  # it must neither run the check's ERR handler nor end the subshell before it
+  # has written the status down. Its descriptors are cut off too, so an output
+  # descriptor left open in it cannot hold a pipe open for a caller capturing
+  # this script's output.
   (
-    sleep "$secs"
-    : >"$fired"
-    kill -TERM -- "-$CALL_PID" 2>/dev/null || kill -TERM "$CALL_PID" 2>/dev/null || true
+    trap - ERR
+    set +e
+    "$@" </dev/null >"$out" 2>"$log"
+    printf '%s' "$?" >"$st"
   ) </dev/null >/dev/null 2>&1 &
-  watchdog=$!
-  wait "$CALL_PID" || status=$?
-  kill -TERM -- "-$watchdog" 2>/dev/null || kill -TERM "$watchdog" 2>/dev/null || true
-  wait "$watchdog" 2>/dev/null || true
-  if [ -f "$fired" ]; then status=124; fi
-  rm -f "$fired"
+  CALL_PID=$!
+  # The file is what says the call has finished -- not `kill -0`, which cannot
+  # tell a running child from one that has exited and not been reaped. The write
+  # is one short write to a file that has to be non-empty to count, and it
+  # happens before the subshell exits, so a finished call is always seen as
+  # finished within the tick.
+  while [ ! -s "$st" ] && [ $((SECONDS - start)) -lt "$secs" ]; do sleep 0.05; done
+  if [ -s "$st" ]; then
+    status=$(cat "$st" 2>/dev/null || true)
+  else
+    # The deadline, and nothing else reaches here: a call that was signalled
+    # before it did write its status, as 128 + the signal.
+    kill -TERM -- "-$CALL_PID" 2>/dev/null || kill -TERM "$CALL_PID" 2>/dev/null || true
+    sleep 0.2
+    kill -KILL -- "-$CALL_PID" 2>/dev/null || kill -KILL "$CALL_PID" 2>/dev/null || true
+    status=124
+  fi
+  # Collecting the child is bookkeeping only: the status is already in hand, so a
+  # `wait` that finds no record has nothing left to spoil.
+  wait "$CALL_PID" 2>/dev/null || true
+  rm -f "$st"
   CALL_PID=""
+  case "$status" in '' | *[!0-9]*) status=1 ;; esac
   return "$status"
 }
 

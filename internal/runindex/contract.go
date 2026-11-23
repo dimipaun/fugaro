@@ -91,7 +91,12 @@ type Entry struct {
 	Slug string `json:"slug"`
 	Repo string `json:"repo,omitempty"`
 	// UpdatedAt is when the run last changed, as the fold read it: the record's
-	// own finish where it has one, else its start, else the launch's moment.
+	// own finish where it has one, else its start, else the launch's moment,
+	// else the run id's mint time (runstore.RunTime). The last fallback is what
+	// a run that was claimed and never launched has -- a task.json and nothing
+	// else -- and it is not optional: an entry with no sort key falls outside
+	// every window, so a reader that counts such runs in a window would count
+	// none of them.
 	// It is the index's sort key, and it is the only field of the entry the
 	// writer moves forward on its own -- a run's records do not change after
 	// the run ends, so a settled run's entry is written once.

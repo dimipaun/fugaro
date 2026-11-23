@@ -149,7 +149,10 @@ func newProjectReposAddCmd() *cobra.Command {
 			"far as it can:\n" +
 			"\n" +
 			"  1. the repository's own fugaro.yaml: read, never written\n" +
-			"  2. this machine's project config: the repository's repos: entry\n" +
+			"  2. this machine's project config: the repository's repos: entry (and, when\n" +
+			"     its fugaro.yaml names a Claude account by agent.oauth_token, the\n" +
+			"     repository in that one account's allow_data_to, which the next\n" +
+			"     update's publish requires; no other account's list is touched)\n" +
 			"  3. this machine's project config: its repo-to-image mapping\n" +
 			"  4. the published policy's allow_repos\n" +
 			"  5. the publish of the policy node (fugaro update's policy stage)\n" +

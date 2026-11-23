@@ -4277,7 +4277,7 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
 		t.Errorf("%s's workflow-level permissions = %v, want exactly contents: read", consoleReleaseWorkflowPath, wf.Permissions)
 	}
-	if want := map[string]string{"contents": "read", "checks": "read"}; !reflect.DeepEqual(job.Permissions, want) {
+	if want := map[string]string{"contents": "read", "checks": "read", "actions": "read"}; !reflect.DeepEqual(job.Permissions, want) {
 		t.Errorf("%s's release job permissions = %v, want exactly %v: the job that runs the packer never holds a token that can write a release", consoleReleaseWorkflowPath, job.Permissions, want)
 	}
 	// `contents: write` to create and publish the release, and -- once the
@@ -8553,7 +8553,7 @@ func TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse(t *testing.T) {
 
 	// The linux job: the pinned runner, read-only, and nothing to keep secret.
 	linux := renderedJob(t, rawJobs, path, "linux")
-	for _, want := range []string{"runs-on: ubuntu-24.04", "contents: read", "checks: read"} {
+	for _, want := range []string{"runs-on: ubuntu-24.04", "contents: read", "checks: read", "actions: read"} {
 		if !strings.Contains(linux, want) {
 			t.Errorf("%s's linux job does not carry %q: %s", path, want, strings.TrimSpace(linux))
 		}

@@ -749,6 +749,12 @@ var notADecisionSites = map[string]string{
 	// the caller's refusal, and the bytes are the node at the revision they were
 	// read at (docs/workspace-projects-users/contract.md, C1).
 	"workspace_project_rm.go:workspaceProjectRmReadRoster": "C1's Store.Read(ctx): the workspace's own roster node, read over IAM — a document and its revision, not a person's line; WU6's command reads no terminal at all, which TestProjectRmRefusesInACodingAgentsSession holds",
+	// The two below are I1's wiring, and they are the same read the entries
+	// above are: C1's roster node, reached through WU1's node store rather than
+	// through a command's own store seam, so the site is the adapter and the
+	// helper that decodes it rather than a file of the family.
+	"workspace_wiring.go:Read":              "the roster node as the adapter onto C1's Store reads it (WU1's `workspace.RosterStore.Read(ctx)`): one argument, which is the byte-level read's shape, and what it answers is a Realtime Database document with the ETag a conditional write is made under — read with the workspace owner's own credentials over IAM, answering or failing, with no line behind it to wait for. The adapter is the only place the family's sides read a node at all, so this one entry covers every command registered through it (docs/workspace-projects-users/contract.md, C1)",
+	"workspace_wiring.go:workspaceRosterAt": "the same roster node, decoded for the commands that need the workspace's mechanism, its folder or its people: a `Store.Read(ctx)` of a database document, which answers or fails rather than waiting on anyone, and a node that is not there is refused with the command that writes it first (`fugaro workspace init`, WU24) rather than read as an empty workspace",
 }
 
 // pendingSites is every decision read the package still makes and the task of
