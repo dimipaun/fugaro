@@ -62,6 +62,11 @@ type followState struct {
 	prevAnswer string
 	// rootTask and diffStat are a fresh session's context.
 	rootTask, diffStat string
+	// resumedStage is the stage a resumed run enters, as the pause it picked
+	// up names it (prepareResume, R18, D3185): the work stage the paused run
+	// was in, and not the first one. Empty for every ordinary follow-up, which
+	// starts at implement as it always has.
+	resumedStage string
 }
 
 // followupFile is where a follow-up's agent writes its account.

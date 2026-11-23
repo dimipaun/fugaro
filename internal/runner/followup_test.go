@@ -107,9 +107,16 @@ func (h *fuHarness) followUp(t *testing.T, id, previous, text string) {
 // which is how a recipe can reach a follow-up that no one picked for it.
 func (h *fuHarness) followUpRecipe(t *testing.T, id, previous, text string, rcp *task.Recipe) {
 	t.Helper()
-	spec := &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: h.first.Workflow, Task: text,
-		Branch: "fugaro/" + runID, PR: 1, PreviousRun: previous, Recipe: rcp}
-	store := runstore.Open(h.bucket, repoSlug, id)
+	h.followUpSpec(t, &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: h.first.Workflow, Task: text,
+		Branch: "fugaro/" + runID, PR: 1, PreviousRun: previous, Recipe: rcp})
+}
+
+// followUpSpec is followUpRecipe for a task of another shape: a resumed run's
+// task is a follow-up's with the member that names the pause it picks up
+// (task.Spec.Resumes, resume_test.go), and it is stored and run the same way.
+func (h *fuHarness) followUpSpec(t *testing.T, spec *task.Spec) {
+	t.Helper()
+	store := runstore.Open(h.bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}

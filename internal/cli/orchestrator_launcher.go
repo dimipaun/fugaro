@@ -334,6 +334,16 @@ func residentRunIsTheItems(spec orchestrator.Spec, slug string, ts *task.Spec) e
 	}{
 		{ts.OwnerRuled != "", "an owner ruling"},
 		{len(ts.ContextRepos) > 0, "context repositories"},
+		// Before the follow-up entry below, which such a task always also
+		// trips: a resumed run's task is a follow-up's too (task.Spec.Resumes
+		// holds branch, pr and previous_run beside it), so the entry that
+		// fires first is the one that names what the task really is. The
+		// resume launch is not an item-driven one — what re-issues a paused
+		// run is the resident orchestrator's own path, which reads the pause
+		// the credentials service wrote and not this item's declaration
+		// (PR4, D3189) — so a task carrying `resumes` is a task no launch of
+		// THIS item wrote, exactly as the follow-up fields above it are.
+		{ts.Resumes != "", "a resumed run's pause"},
 		{ts.Branch != "" || ts.PR != 0 || ts.PreviousRun != "", "the pull request of a follow-up"},
 		{len(ts.ReviewPRs) > 0, "review pull requests"},
 		{ts.ChangeSet != nil, "a change set"},
