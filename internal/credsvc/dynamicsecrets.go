@@ -24,10 +24,15 @@ package credsvc
 // land together; until then a per-secret name behaves exactly as it did before
 // this file existed (G7, G12).
 //
-// R6: nothing moves. `fugaro update` cannot read the bundle's values (they were
-// written by hand, and the people who wrote them cannot read them back), so a
-// rotation is never a migration and no value is ever copied from one store to
-// the other. What the service does instead is resolve in order: the per-secret
+// R6: what THIS SERVICE does moves nothing. It resolves a credential in order —
+// it reads, it never writes, and no value it reads is carried anywhere but into
+// the call it was read for — so a rotation is never a migration here, and the
+// bundle's values stay the ones their owners wrote by hand (who cannot read them
+// back, which is why nothing in this tree may rewrite one). That is the rule the
+// exception below is an exception TO, and it is stated as this file's own rather
+// than as a law of the two stores because it no longer is one: one command
+// outside the service moves a value between them, deliberately and once, and it
+// is named below. What the service does instead is resolve in order: the per-secret
 // container FIRST, and the bundle's entry for the same credential second. A
 // container that is not there — none, or one with no version — is R7's fall to
 // the bundle, which is why an installation that has rotated nothing behaves
@@ -38,9 +43,11 @@ package credsvc
 // **The one exception is KS12's copy** (internal/cli/update_keys.go, D3001,
 // R4), and it is an exception to the rule above in the direction the rule is
 // about and not around it: the same project owner, with the IAM that already
-// reads both containers, reads a container of this installation's OWN and
-// writes the value into the bundle entry the service serves, once, behind the
-// confirmation of their own `fugaro update`. Nothing a rotation does is that —
+// reads both containers, reads each model key this installation holds outside the
+// bundle — a provider's, for every repository that may send code to it, and a
+// repository's own Anthropic key — out of its container and writes the value into
+// the bundle entry the service serves that repository, once, in one version,
+// behind the confirmation of their own `fugaro update`. Nothing a rotation does is that —
 // a rotation is a person's new value landing in the container the intake
 // writes, and this file's read is what serves it, unchanged. What the copy
 // exists for is the end of the mount: a key that is only in a container is a

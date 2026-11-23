@@ -85,7 +85,7 @@ func copyFixtureWithBlocks(t *testing.T, providers, extra string) (*projectFixtu
 // copyPair is the one pair this file puts in front of the machinery: a model
 // provider's key, held in a container of this installation's own, for the
 // repository the fixture declares on GitHub. It is the shape the enumeration
-// the next chunks write will produce — the provider's name as the credential,
+// produces for a provider — the provider's name as the credential,
 // the logical name `providers.openrouter.secret` spells as the container with
 // the two scopes that name has, and the two routing facts the provider's own
 // declaration in the fixture's config states. newCopyRig seeds the repository's
@@ -109,6 +109,32 @@ func copyPair(t *testing.T) keyCopy {
 	}
 }
 
+// copyOwnPair is the other pair the enumeration answers for the same repository:
+// the key it holds as ITS OWN, under an entry carrying the repository
+// (config.AnthropicKeyAccount, D3008). It is the same machinery over a
+// different container — the repository's own, and never the project-wide copy of
+// the same logical name, which holds the PROJECT's key — and the two routing
+// facts are the platform's rather than a declaration's, because an Anthropic key
+// is no provider the owner declares (anthropicAPIURL).
+func copyOwnPair(t *testing.T) keyCopy {
+	t.Helper()
+	slug := mustSlug("github", "acme/app")
+	entry, err := credsvc.RepoCredentialKey(slug, config.AnthropicKeyAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return keyCopy{
+		container:  config.AnthropicSecret,
+		repoID:     copyRepoContainerID(slug, config.AnthropicSecret),
+		entry:      entry,
+		baseURL:    anthropicAPIURL,
+		auth:       providerAuthXAPIKey,
+		repo:       "acme/app",
+		credential: config.AnthropicKeyAccount,
+		own:        true,
+	}
+}
+
 // copyRig is the stage, its engine, the command a run's options were taken from
 // and the fakes its read goes through.
 type copyRig struct {
@@ -128,12 +154,21 @@ type copyRig struct {
 // newCopyRig is one run of the stage over a bundle whose newest version is doc
 // (nil is the container with no version at all, the state the first copy starts
 // from) and a container holding value. copySources is put in front of the
-// machinery with pair for the length of the test, which is how this chunk
-// proves the mechanics before the enumeration exists.
+// machinery with pair for the length of the test, which is how the marker's
+// rules are pinned on ONE pair: what the config really answers for an
+// installation is the enumeration's own tests' business (newEnumRig).
 func newCopyRig(t *testing.T, doc []byte, value string) *copyRig {
 	t.Helper()
+	return newCopyRigFor(t, copyPair(t), doc, value)
+}
+
+// newCopyRigFor is newCopyRig over a stated pair: the marker's rules are the
+// same over both halves of the enumeration — a provider's key and the key a
+// repository holds as its own — and the tests that pin one of them on both run
+// one rig per pair.
+func newCopyRigFor(t *testing.T, pair keyCopy, doc []byte, value string) *copyRig {
+	t.Helper()
 	f, sm, svc := copyFixture(t)
-	pair := copyPair(t)
 	bundle := bundleFixtureFor(t, sm, initProjectName, doc)
 	sm.Seed(pair.repoID, nil, []byte(value))
 	// The container read and the bundle read go through the one allowance: the
@@ -157,8 +192,9 @@ func newCopyRig(t *testing.T, doc []byte, value string) *copyRig {
 }
 
 // withCopySources puts one pair in front of the machinery, in place of the
-// enumeration the next chunks write, and restores the real one when the test
-// ends: the seam is a package variable and the tests of this package share it.
+// installation's own enumeration (copySources, which newEnumRig drives for
+// real), and restores it when the test ends: the seam is a package variable and
+// the tests of this package share it.
 func withCopySources(t *testing.T, pairs ...keyCopy) {
 	t.Helper()
 	real := copySources
@@ -518,6 +554,51 @@ func TestTheCopyNamesAContainerWhoseNewerVersionItCopied(t *testing.T) {
 	}
 }
 
+// TestTheCopyFollowsANewerVersion is D3014's rule pinned on the other half of
+// the enumeration: the entry a copy wrote for a repository's OWN Anthropic key,
+// whose container has moved on since — an operator added a version to it, which
+// is their right until the container is deleted (F43) — is copied again, and the
+// line names the container and the version the entry now holds. A run that left
+// it there would leave the service serving a key its owner retired, for every
+// run of that repository at once. TestTheCopyNamesAContainerWhoseNewerVersionItCopied
+// is the same rule over a provider's key.
+func TestTheCopyFollowsANewerVersion(t *testing.T) {
+	firstValue, secondValue := credsValue(t, "older"), credsValue(t, "newer")
+	h := newCopyRigFor(t, copyOwnPair(t), copyBundleSeed(t), firstValue)
+
+	if _, _, err := h.apply(t); err != nil {
+		t.Fatalf("the first copy of a repository's own key failed: %v", err)
+	}
+	// The rotation, as another terminal's `fugaro secrets set` leaves it: one
+	// more version of the repository's OWN container, and nothing else changed.
+	h.sm.AddVersion(h.pair.repoID, []byte(secondValue))
+
+	oc, out, err := h.apply(t)
+	if err != nil {
+		t.Fatalf("the copy of a repository's own key whose container moved on failed: %v", err)
+	}
+	assertNoValue(t, out, firstValue, secondValue)
+	if !oc.Changed {
+		t.Errorf("the copy followed the repository's own container to a newer version and reports no change: %+v", oc)
+	}
+	if n := h.adds(); n != 2 {
+		t.Errorf("the copy added %d version(s) of the bundle in all, want two: the entry was behind the container, and a run that left it there leaves the service serving the key its owner retired\n%q", n, out)
+	}
+	if !strings.Contains(out, h.pair.container) || !strings.Contains(out, "version 2") {
+		t.Errorf("the run does not name the container (%s) and the version it copied (2), which is the line D3014 asks for: %q", h.pair.container, out)
+	}
+	entry := h.entry(t)
+	if entry.Value() != secondValue {
+		t.Errorf("the entry holds %d bytes and the repository's own container's newest version holds %d: the copy followed the marker and not the container", len(entry.Value()), len(secondValue))
+	}
+	if want := "2"; entry.Source.Version != want {
+		t.Errorf("the entry's marker names version %q, want %q: the marker is what the NEXT run compares the container against", entry.Source.Version, want)
+	}
+	if got, want := entry.Source.Container, h.pair.repoID; got != want {
+		t.Errorf("the entry's marker names the container %q, want %q: a version is a version of one container, and the repository's own is the one that answered", got, want)
+	}
+}
+
 // TestTheCopyFollowsTheKeyToTheContainerThatAnswers: the entry a copy wrote
 // names the container its value was read out of, and one logical name has a
 // container per scope — so a key that comes to be held in the repository's own
@@ -634,6 +715,52 @@ func TestTheCopyLeavesAnEntryItDidNotWrite(t *testing.T) {
 	}
 	if got := h.entry(t); got.Value() != byHand {
 		t.Errorf("the entry no longer holds the value its own writer put there (%d bytes, want %d)", len(got.Value()), len(byHand))
+	}
+}
+
+// TestTheCopyNeverOverwritesAnEntryItDidNotWrite is the same rule pinned on the
+// other half of the enumeration: the key a repository holds as its OWN
+// (copyOwnPair). An entry under that name carrying no marker and holding
+// something other than what the repository's own container does is somebody
+// else's write — `fugaro creds set`, or a hand edit — and it is left exactly as
+// it is, named in one line, with no version of the bundle added for it (R4). The
+// provider half is TestTheCopyLeavesAnEntryItDidNotWrite; what is different here
+// is only which container the run read.
+func TestTheCopyNeverOverwritesAnEntryItDidNotWrite(t *testing.T) {
+	value, byHand := credsValue(t, "container"), credsValue(t, "byhand")
+	h := newCopyRigFor(t, copyOwnPair(t), nil, value)
+	h.sm.Seed(h.bundle, map[string]string{gcp.LabelManaged: gcp.ManagedValue}, []byte(
+		copyEntryDoc(h.pair.entry, byHand, h.pair.baseURL, h.pair.auth, credsvc.ProviderKeySource{})))
+
+	status, err := h.check(t)
+	if err != nil {
+		t.Fatalf("the copy over a repository's own entry it did not write failed: %v", err)
+	}
+	if status.State != initflow.Done {
+		t.Errorf("the copy answers %v when the one entry it has is not its to write, want done: there is nothing left for a person to do about it", status.State)
+	}
+
+	oc, out, err := h.apply(t)
+	if err != nil {
+		t.Fatalf("the copy of a repository whose own entry was written by hand failed: %v", err)
+	}
+	assertNoValue(t, out, value, byHand)
+	if oc.Changed {
+		t.Errorf("the copy reports a change over an entry it did not write: %+v", oc)
+	}
+	if n := h.adds(); n != 0 {
+		t.Errorf("the copy added %d version(s) of the bundle over a repository's own entry it did not write, want none", n)
+	}
+	for _, want := range []string{status.Detail, oc.Detail} {
+		if !strings.Contains(want, h.pair.entry) || !strings.Contains(want, "does not overwrite an entry it did not write") {
+			t.Errorf("the line does not name the entry %s and the rule that leaves it alone: %q", h.pair.entry, want)
+		}
+		if strings.Contains(want, "already in the credentials service's bundle") {
+			t.Errorf("the line says the bundle already holds the copy's own entries while the one entry it holds is not the copy's, which reads as a copy that happened: %q", want)
+		}
+	}
+	if got := h.entry(t); got.Value() != byHand {
+		t.Errorf("the repository's own entry no longer holds the value its own writer put there (%d bytes, want %d)", len(got.Value()), len(byHand))
 	}
 }
 
@@ -1116,18 +1243,25 @@ func TestTheCopyIsWrittenOnlyWhereTheServiceReadsWhatItWrites(t *testing.T) {
 }
 
 // TestTheCopyWritesEveryModelKey: the pairs are the installation's own config
-// and not a test's (KS12b): every provider credential a repository the
+// and not a test's (KS12b, KS12c): every provider credential a repository the
 // installation serves may send code to is one entry per repository, holding
 // what the container that repository's own runs are served the key from holds
 // (its own while that holds a version, the project-wide copy otherwise, and the
 // derived container of a runner-path key credential where one serves the
-// provider), with the two routing facts the provider's own declaration states.
-// Five things are asserted over one run, because they are one answer read from
+// provider), with the two routing facts the provider's own declaration states —
+// and the key a repository holds as its OWN (config.AnthropicKeyAccount) is one
+// entry for the repository whose own container holds one, under the platform's
+// own address and auth and never the project's key (D3008).
+//
+// Seven things are asserted over one run, because they are one answer read from
 // one document — the entries the config asks for, the facts each carries, the
 // container each value came out of, the superseded provider secret whose value
-// reaches no entry, and the provider whose container nobody has filled, which is
+// reaches no entry, the provider whose container nobody has filled, which is
 // skipped in one line naming the provider and the repository rather than
-// failing the run or disappearing.
+// failing the run or disappearing, the repository that holds no key of its own
+// and is therefore served the project's, which is no entry and no line, and the
+// account's OAuth token, whose entry is the person's own and is not this copy's
+// to write (D3015).
 func TestTheCopyWritesEveryModelKey(t *testing.T) {
 	openrouterValue, moonshotValue := credsValue(t, "openrouter"), credsValue(t, "moonshot")
 	// The same provider key stored for one repository alone. Two homes hold the
@@ -1140,6 +1274,14 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 	// superseded — a value sitting there is not what any run is served, and the
 	// copy may not enter it.
 	teamOrValue, supersededValue := credsValue(t, "team-or"), credsValue(t, "team-or-provider-secret")
+	// The key acme/app holds as its own, in its OWN container: the other
+	// repository's Anthropic container holds nothing, which is the ordinary
+	// state of a repository that has no key of its own.
+	ownAnthropicValue := credsValue(t, "own-anthropic")
+	// An account's OAuth token, in the container of the account it belongs to:
+	// the copy may not enter it, because its bundle entry is the person's own
+	// scalar under the account's name (D3015).
+	accountToken := credsValue(t, "account-token")
 	// The bundle holds no version: the first copy starts from the containers
 	// Terraform created, which is the state a fresh installation is in.
 	h := newEnumRigWith(t, copyRunnerKeyYAML, copyRunnerKeyBlocks, nil)
@@ -1152,14 +1294,16 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 	h.sm.Seed(copyContainerID("moonshot-key"), nil, []byte(moonshotValue))
 	h.sm.Seed(copyContainerID(config.CredentialSecret("team-or")), nil, []byte(teamOrValue))
 	h.sm.Seed(copyContainerID("team-or-api-key"), nil, []byte(supersededValue))
+	h.sm.Seed(copyRepoContainerID(mustSlug("github", "acme/app"), config.AnthropicSecret), nil, []byte(ownAnthropicValue))
+	h.sm.Seed(copyContainerID(config.ClaudeOAuthToken), nil, []byte(accountToken))
 
 	oc, out, err := h.apply(t)
 	if err != nil {
 		t.Fatalf("the copy of an installation's provider keys failed: %v", err)
 	}
-	assertNoValue(t, out, openrouterValue, moonshotValue, ownValue, teamOrValue, supersededValue)
+	assertNoValue(t, out, openrouterValue, moonshotValue, ownValue, teamOrValue, supersededValue, ownAnthropicValue, accountToken)
 	if !oc.Changed {
-		t.Fatalf("the copy wrote the installation's provider keys into an empty bundle and reports no change: %+v", oc)
+		t.Fatalf("the copy wrote the installation's model keys into an empty bundle and reports no change: %+v", oc)
 	}
 	// One version for the whole document, however many entries it holds.
 	if n := h.adds(); n != 1 {
@@ -1182,6 +1326,7 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 		{"moonshot", "acme/app", mustSlug("github", "acme/app"), copyContainerID("moonshot-key"), moonshotValue, "https://api.moonshot.ai/anthropic", providerAuthXAPIKey},
 		{"team-or", "acme/app", mustSlug("github", "acme/app"), copyContainerID(config.CredentialSecret("team-or")), teamOrValue, "https://openrouter.example/api", providerAuthBearer},
 		{"team-or", "acme/other", mustSlug("bitbucket", "acme/other"), copyContainerID("team-or-api-key"), supersededValue, "https://openrouter.example/api", providerAuthBearer},
+		{config.AnthropicKeyAccount, "acme/app", mustSlug("github", "acme/app"), copyRepoContainerID(mustSlug("github", "acme/app"), config.AnthropicSecret), ownAnthropicValue, anthropicAPIURL, providerAuthXAPIKey},
 	}
 	for _, w := range want {
 		entry := bundleEntry(t, h.sm, h.bundle, w.slug, w.credential)
@@ -1221,6 +1366,30 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the run does not say %q, and a provider the installation holds no key for is a state a person has to be able to find: %q", want, out)
 		}
+	}
+
+	// The repository that holds no key of its own: no entry — the PROJECT's key
+	// is exactly what its runs are served, before this copy and after it
+	// (D3008) — and no line either. A run that named every repository of the
+	// installation without an Anthropic key of its own would bury the states a
+	// person can act on under a list of the ones they cannot.
+	otherOwn, err := credsvc.RepoCredentialKey(mustSlug("bitbucket", "acme/other"), config.AnthropicKeyAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := credsvc.ReadProviderKey(bundleOf(t, h.sm, h.bundle), mustSlug("bitbucket", "acme/other"), config.AnthropicKeyAccount); found {
+		t.Errorf("the copy wrote an entry for the Anthropic key acme/other holds none of its own: the entry would hold the PROJECT's key under a repository's name")
+	}
+	if strings.Contains(out, otherOwn) {
+		t.Errorf("the run names %s, the entry of a repository with no Anthropic key of its own: that is the ordinary state of most repositories and not a line (copyRow.reports)\n%q", otherOwn, out)
+	}
+
+	// An account's OAuth token is not this copy's to write: its entry is the
+	// account's own, a plain scalar under the account's name, entered by the
+	// person who holds it — so a container holding one is no pair, and the
+	// document is left without an entry for it (D3015).
+	if _, found := bundleOf(t, h.sm, h.bundle).Lookup(config.ClaudeOAuthToken); found {
+		t.Errorf("the copy entered %s into the bundle: an account's token stays under its account's name, entered once by the person who holds it (D3015)", config.ClaudeOAuthToken)
 	}
 }
 

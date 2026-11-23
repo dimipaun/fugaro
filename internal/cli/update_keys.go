@@ -63,6 +63,16 @@ import (
 // pair per repository (D3008): the slug is what makes them different entries,
 // and no member of the family names two repositories.
 //
+// **What it enumerates is the two kinds of key the bundle's family holds**
+// (copySources): a provider's key for each repository that may send code to that
+// provider, and the key a repository holds as its own — its Anthropic key, under
+// an entry carrying the repository. The project's own Anthropic key and every
+// account's OAuth token are NOT enumerated and cannot be: their entries are
+// plain scalars under their own names, written by the person who holds the
+// value, so there is no container version to follow and nowhere to record a
+// marker — and an entry the copy cannot mark is one it would never write, since
+// it may not overwrite what it did not write (D3015, copyDecide).
+//
 // **The write goes through the guard every writer of the family goes through**
 // (refuseAnEntryTheServiceCannotRead, F22): a document holding an entry the
 // deployed credentials service cannot read is a document that service refuses
@@ -129,6 +139,18 @@ type keyCopy struct {
 	// reads them — the repository and the credential the value is entered for —
 	// for the lines this stage prints. Neither is a value.
 	repo, credential string
+	// own marks the pair of a key the CONFIG does not declare: a repository's
+	// own Anthropic key, which a repository has only where somebody stored one
+	// of its own (copyRepositoryKeys). A container holding nothing is therefore
+	// the ordinary state of this pair rather than a key this installation lost,
+	// and the run does not say so (copyRow.reports): the line naming every
+	// repository of an installation that never stored one would name the whole
+	// installation, and a person reading it would go looking for a key nobody
+	// ever had. The provider half is the other way round — its pair exists
+	// because the owner declared that the repository sends code to that
+	// provider, so a container holding nothing is a key a run of it is served
+	// none of.
+	own bool
 }
 
 // name is the pair as one of this stage's lines names it.
@@ -174,13 +196,27 @@ func (c keyCopy) homeScope(id string) string {
 // It is the half of the copy that reads the installation's own config, and it
 // is a variable so that the machinery the rest of this file is — the read, the
 // marker, the decision, the guard and the write — can be put in front of pairs
-// a test builds. What it answers today is the provider keys
-// (copyProviderKeys); a repository's own Anthropic key and its OAuth token are
-// the repository-key task of KS12 and are not enumerated here yet, so an
-// installation whose only model keys are those is copied nothing and the stage
-// says so rather than pretending otherwise.
+// a test builds.
+//
+// It answers the two families of key this copy moves, and they are the whole of
+// it: the provider keys a repository may send code to (copyProviderKeys) and the
+// key a repository holds as its own (copyRepositoryKeys). What is deliberately
+// NOT enumerated is anything whose bundle entry is a plain scalar: the project's
+// own Anthropic key and every Claude account's OAuth token are entered under
+// their own names by the person who holds them (`fugaro creds set`), so there is
+// no marker to carry and no container version to follow — the copy could not
+// tell its own entry from a person's, and an entry it may not overwrite is one
+// it never writes (copyDecide, D3015).
 var copySources = func(ctx context.Context, lc *localcfg.Config) ([]keyCopy, error) {
-	return copyProviderKeys(lc)
+	providers, err := copyProviderKeys(lc)
+	if err != nil {
+		return nil, err
+	}
+	own, err := copyRepositoryKeys(lc)
+	if err != nil {
+		return nil, err
+	}
+	return append(providers, own...), nil
 }
 
 // copyProviderKeys is the provider-key half of the enumeration (KS12b): every
@@ -263,6 +299,70 @@ func copyProviderKeys(lc *localcfg.Config) ([]keyCopy, error) {
 	return out, nil
 }
 
+// anthropicAPIURL is where an Anthropic key's calls go, for the one pair whose
+// routing facts are the platform's rather than a declaration's: a repository's
+// own Anthropic key is the credential of no provider the owner declares, so
+// there is no providers.<name>.base_url to take and no auth to read beside it
+// (F45, D1418 is about a caller never stating either — this is the entry
+// stating both, from the platform's own knowledge of the API the key is for).
+// It is the address the gateway's own route falls back to when a call names
+// none (gateway's anthropicBase), written out here as internal/cli's other
+// table-derived addresses are (githubAPIURL, bitbucketAPIURL): the gateway is
+// the reader that sends a call with this key, and an entry that named another
+// address would be a call the gateway's own rule for Anthropic refuses.
+var anthropicAPIURL = "https://api.anthropic.com"
+
+// copyRepositoryKeys is the other half of the enumeration (KS12c): the model key
+// a repository holds as its OWN, entered under an entry that carries the
+// repository (config.AnthropicKeyAccount, D3008).
+//
+// One pair per repository, and its one home is the repository's OWN container
+// (gcp.SecretID of that repository's slug). The project's own Anthropic key is
+// deliberately not read here and its project-wide container is deliberately not
+// a second home: the project's key is already an entry of its own under the
+// project's name (config.AnthropicSecret, tier B), served to every repository
+// the copy wrote none for — and where a repository has a key of its own, that
+// key is what its runs are served INSTEAD of the project's (D3008; the offering
+// is cascade.go's ownKeyBeforeTheProjects). A pair that read the project-wide
+// copy of the same logical name would enter the project's key under every
+// repository's name, which is neither "a repository's own" nor a copy that
+// leaves the project's entry serving anybody.
+//
+// The entry therefore exists for a repository that really holds a key of its
+// own, and a container holding nothing is the ordinary answer for one that does
+// not (keyCopy.own). The marker, the idempotence and the newer-version line are
+// the provider half's machinery unchanged: what makes this pair different is
+// only which container it reads and what it says when there is nothing there.
+//
+// An account's OAuth token is not here and cannot be: its entry is the
+// account's, a plain scalar under the account's name, which is the one shape
+// this copy's marker cannot be written into (D3015, and the family's own arm in
+// bundle.go says the same). It stays entered once, by the person who holds it.
+func copyRepositoryKeys(lc *localcfg.Config) ([]keyCopy, error) {
+	var out []keyCopy
+	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
+		slug, err := providerKeyRepoSlug(lc, repo)
+		if err != nil {
+			return nil, err
+		}
+		entry, err := credsvc.RepoCredentialKey(slug, config.AnthropicKeyAccount)
+		if err != nil {
+			return nil, userErr("%s: %v; nothing was copied", pluginwire.Printable(repo), err)
+		}
+		out = append(out, keyCopy{
+			container:  config.AnthropicSecret,
+			repoID:     gcp.SecretID(slug, config.AnthropicSecret),
+			entry:      entry,
+			baseURL:    anthropicAPIURL,
+			auth:       providerAuthXAPIKey,
+			repo:       repo,
+			credential: config.AnthropicKeyAccount,
+			own:        true,
+		})
+	}
+	return out, nil
+}
+
 // copyNoServiceReason is the stage's skip on an installation whose config
 // carries no credentials service at all. The block's presence is the opt-in
 // (localcfg.CredentialsService), so an installation without it has no bundle
@@ -275,14 +375,14 @@ const copyNoServiceReason = "the project's config carries no credentials_service
 // work on. It is not the same answer as the one above: the service is here, and
 // the copy looked.
 //
-// It says what the RUN did — nothing was copied — and not what the installation
-// holds, and the difference is the half of this stage that is still to come:
-// the pairs are enumerated by copySources, which the provider-key and
-// repository-key chunks of KS12 complete, so a sentence claiming the
-// installation holds no model key outside the bundle would be a statement about
-// a read this release does not make. An owner who believed it would stop
-// looking for the key a run is no longer served.
-const copyNothingReason = "nothing was copied: this release does not enumerate this installation's model keys yet, so the copy had nothing to move into the credentials service's bundle"
+// The enumeration is now the whole of what this copy moves (copySources), so
+// the sentence can say what the config really is: every pair a copy writes is a
+// key entered for a repository, and an installation with none onboarded has
+// nothing for it to move. That is a state a person can act on — the repository
+// that is not in the config is the repository whose runs the service is not
+// being prepared for — which the enumeration's own incompleteness, said here
+// while the chunks of KS12 landed one at a time, could not be.
+const copyNothingReason = "nothing was copied: this installation's config lists no repository, and every model key the copy moves is one entered for a repository, so there is nothing for it to move into the credentials service's bundle"
 
 // copyNotOwnerReason is the skip of a run that is not a project owner (D3006).
 //
@@ -559,8 +659,17 @@ func (p *copyPlan) read(ctx context.Context, e *initEngine, pair keyCopy, held *
 		// is. It names the provider and the repository and not only the
 		// container, because that is the state a person acts on: which
 		// repository of the installation is served no key.
+		//
+		// A repository's own key says the other thing, because it is the other
+		// state: a repository with none of its own is not a repository served
+		// no key — the project's key is what its runs are served, exactly as
+		// they were before this copy existed (D3008, copyRepositoryKeys).
 		row.state = copyAbsent
-		row.why = fmt.Sprintf("%s holds no version this run can read, so %s is served no key", safetext.Field(pair.container), pair.name())
+		if pair.own {
+			row.why = fmt.Sprintf("%s holds no version this run can read, so %s holds no key of its own and the project's key is what its runs are served", safetext.Field(pair.container), pair.name())
+		} else {
+			row.why = fmt.Sprintf("%s holds no version this run can read, so %s is served no key", safetext.Field(pair.container), pair.name())
+		}
 		return row, nil
 	}
 	row.held = h
@@ -765,6 +874,17 @@ func (p *copyPlan) count(state copyRowState) int {
 	return n
 }
 
+// reports is whether a row this run found nothing to copy out of is a state the
+// run says out loud. A pair the CONFIG declares is: the owner said this
+// repository sends code to that provider, so a container holding nothing is a
+// key a run of it is served none of, and the run names the provider and the
+// repository (absentClause). A pair the config does not declare — a repository's
+// own Anthropic key (keyCopy.own) — is not: the container holds nothing for
+// every repository that never stored a key of its own, which is most of them,
+// and naming each would be a list of repositories a person has nothing to do
+// about standing in the line that says what the run wrote.
+func (r copyRow) reports() bool { return !(r.state == copyAbsent && r.pair.own) }
+
 // rest is the parenthetical the counts after the first one are said in.
 func (p *copyPlan) rest() string {
 	var parts []string
@@ -774,8 +894,14 @@ func (p *copyPlan) rest() string {
 	if n := p.count(copyLeft); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d left as they are", n))
 	}
-	if n := p.count(copyAbsent); n > 0 {
-		parts = append(parts, fmt.Sprintf("%d with no version to copy", n))
+	absences := 0
+	for _, row := range p.rows {
+		if row.reports() && row.state == copyAbsent {
+			absences++
+		}
+	}
+	if absences > 0 {
+		parts = append(parts, fmt.Sprintf("%d with no version to copy", absences))
 	}
 	if len(parts) == 0 {
 		return ""
@@ -844,7 +970,7 @@ func (p *copyPlan) leftClause() string {
 func (p *copyPlan) absentClause() string {
 	var names []string
 	for _, row := range p.rows {
-		if row.state == copyAbsent {
+		if row.reports() && row.state == copyAbsent {
 			names = append(names, row.pair.name())
 		}
 	}
@@ -940,10 +1066,19 @@ func (p *copyPlan) what() string {
 
 // print is the one confirmation diff: each pair and what this run does with it.
 // It carries entry names, container names and versions, and never a value.
+//
+// A row the run does not report is not in it (copyRow.reports): the diff is what
+// the confirmation is made against, and "this repository holds no Anthropic key
+// of its own" is not a state anybody decides anything about — it is what most
+// repositories of an installation are in, and a diff that listed them would bury
+// the rows the person is reading it for.
 func (p *copyPlan) print(w io.Writer) {
 	fmt.Fprintf(w, "%s: this run copies this installation's model keys into the credentials service's bundle at %s\n",
 		safetext.Field(p.store.id), versionWord(p.before.version))
 	for _, row := range p.rows {
+		if !row.reports() {
+			continue
+		}
 		fmt.Fprintf(w, "  %s: %s\n", safetext.Field(row.pair.entry), row.line())
 	}
 }
