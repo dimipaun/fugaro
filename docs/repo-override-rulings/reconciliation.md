@@ -5,10 +5,8 @@ Checked against `origin/main` at `0dec0bb36` on 2026-11-23. **Where this documen
 ([report.md](../repo-coupling-audit/report.md) §7): it applies the owner's rulings D3237 on the
 benign candidates B1–B19, and it proposes to carry lift L13 as well (its §9).
 
-The owner answered the spec's own questions Q1–Q9 on 2026-11-23 (D3290–D3298). Six decisions this
-reconciliation raises are **PENDING** (D3299–D3304): each has a recommendation, the alternative and
-its cost, and the plan is written on the recommendation, with every task one of them would change
-marked "depends on D… (pending)".
+The owner answered the spec's own questions Q1–Q9 on 2026-11-23 (D3290–D3298). The six decisions this
+reconciliation raised (D3299–D3304) were answered the same day, each as recommended.
 
 ## 1. Assumptions
 
@@ -30,14 +28,14 @@ marked "depends on D… (pending)".
 - A7. "Refused" in the spec means the strict-decode style refusal of `validate` and the launch, with
   one sentence naming the fix, never a prompt (`docs/no-prompt-policy/`).
 
-## 2. Scope check and capability map — PENDING (D3299)
+## 2. Scope check and capability map — approved (D3299)
 
 The spec bundles capabilities that ship and are verified separately: B18's cap ceiling touches only
 the budget package and the database rules; B4's tighten rule needs no migration; L13 needs no
 migration and has its own consumers. They share one choke point (`config.Resolve` and the scope
 table) and one `update` stage, so they stay one spec, split into modules. The map below is proposed
 for the owner's approval; the plan is written on it, and every finding, decision and task names a
-module id. **Not approved yet (D3299).**
+module id. **Approved by the owner on 2026-11-23 (D3299).**
 
 | Module id | Responsibility | Depends on |
 | --- | --- | --- |
@@ -226,16 +224,16 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
 | D3297 | Q8. `ab.repos` values | Any rate in `[0, ab.rate]` | **As recommended** |
 | D3298 | Q9. Release B timing | The release after A, behind the image-age gate | **As recommended** |
 
-### Raised by this reconciliation — PENDING the owner
+### Raised by this reconciliation — answered 2026-11-23
 
 | # | Question | Recommendation, and why | Alternative, and its cost | Answer |
 | --- | --- | --- | --- | --- |
-| D3299 | Approve the capability map of §2, with L13 inside L8 as module `dead-keys` (spec §9)? | **Approve.** L13 edits the same scope rows, schema, `Resolve` and refusal wording, needs no migration and waits on L1 too; two plans would write one table twice | L13 stays its own small spec in wave 2 (D3238 as it stands): the `dead-keys` tasks DK1–DK2 leave this plan; cost: a second plan over `scope.go`, `resolve.go` and the schema, and two refusal styles | **PENDING** |
-| D3300 | May release A ride L1's own release? (F14, T1) | **No: release A is cut at least one release after the release that carries L1.** That is what spec §4's "must have shipped" says, and it is what makes the stamp fence the CLIs of L1's release against L8 | Release A rides L1's release; cost: no CLI is fenced against L8 at all, and the lift rests wholly on the runner, the clamp and the image gates (F18, F19) | **PENDING** |
-| D3301 | Under D3295, what is a clash? (F21) | **A name some other repository of the project already resolves to different text: another repository's file, an existing project recipe, or a catalog recipe.** Each clashing copy is renamed `<name>.<owner-repo>`; a name nothing else answers is published flat. This keeps every run where it was (spec §2) | Only two repositories' files (the follow-up's words); cost: a repository's `default.yaml` or a catalog-named file published flat becomes every other repository's recipe of that name on the next launch | **PENDING** |
-| D3302 | How is the renamed copy spelled, given `recipe.NameRE`? (F5) | **The owner's spelling, `<name>.<owner-repo>`**: `recipe` gains a second grammar for a project copy (a recipe name, one dot, the readable slug; up to 81 characters), the launcher and the runner accept it, and a launch that embeds one is gated on the image (`recipeCopySince`) | `<name>--<owner>-<repo>` inside today's grammar; cost: not the owner's words, and the 40-character limit forces a truncation with a hash for most real slugs | **PENDING** |
-| D3303 | How is each repository "pointed at its own copy"? (F7) | **A lookup rule, no new data:** for repository R, the launcher resolves `<name>.<owner-repo of R>` in the store before `<name>`, then the catalog. Nothing in the layer changes, so no strict-decode skew (F15) and no new writer | A map in the project layer (`recipes.repos.<owner/name>.<name>: <copy>`); cost: a new layer member every pre-L8 reader refuses, a gate of its own, and a writer | **PENDING** |
-| D3304 | What does a release-A runner do with a task that leaves the recipe to the repository's folder (`Source: repo` by name, or no recipe on a ref that holds `.fugaro/recipes/<name>.yaml`)? (F9, F18) | **Refuse at bootstrap with the fix** ("the recipe is the project's now (D3237): launch with fugaro 0.X or later"): acceptance 7 says a repository recipe reaches a run only from the store, and a pre-L1 CLI is the accepted gap, which fails closed this way | Read the folder as today until release B, record `source: repo`; cost: any pre-L8 launcher, including the unfenced pre-L1 ones, keeps bringing repository recipes for a whole release | **PENDING** |
+| D3299 | Approve the capability map of §2, with L13 inside L8 as module `dead-keys` (spec §9)? | **Approve.** L13 edits the same scope rows, schema, `Resolve` and refusal wording, needs no migration and waits on L1 too; two plans would write one table twice | L13 stays its own small spec in wave 2 (D3238 as it stands): the `dead-keys` tasks DK1–DK2 leave this plan; cost: a second plan over `scope.go`, `resolve.go` and the schema, and two refusal styles | **As recommended (2026-11-23).** The capability map is approved and L13 is module `dead-keys`, because one plan then writes the scope table and the refusal wording once; amends D3238's wave-2 placement of L13 |
+| D3300 | May release A ride L1's own release? (F14, T1) | **No: release A is cut at least one release after the release that carries L1.** That is what spec §4's "must have shipped" says, and it is what makes the stamp fence the CLIs of L1's release against L8 | Release A rides L1's release; cost: no CLI is fenced against L8 at all, and the lift rests wholly on the runner, the clamp and the image gates (F18, F19) | **As recommended (2026-11-23).** Release A is cut at least one release after L1's, so the stamp fences the CLIs of L1's release against L8; settles T1 |
+| D3301 | Under D3295, what is a clash? (F21) | **A name some other repository of the project already resolves to different text: another repository's file, an existing project recipe, or a catalog recipe.** Each clashing copy is renamed `<name>.<owner-repo>`; a name nothing else answers is published flat. This keeps every run where it was (spec §2) | Only two repositories' files (the follow-up's words); cost: a repository's `default.yaml` or a catalog-named file published flat becomes every other repository's recipe of that name on the next launch | **As recommended (2026-11-23).** A clash is any name another repository already resolves to different text (its file, a project recipe or a catalog recipe), so no other repository's runs move |
+| D3302 | How is the renamed copy spelled, given `recipe.NameRE`? (F5) | **The owner's spelling, `<name>.<owner-repo>`**: `recipe` gains a second grammar for a project copy (a recipe name, one dot, the readable slug; up to 81 characters), the launcher and the runner accept it, and a launch that embeds one is gated on the image (`recipeCopySince`) | `<name>--<owner>-<repo>` inside today's grammar; cost: not the owner's words, and the 40-character limit forces a truncation with a hash for most real slugs | **As recommended (2026-11-23).** `<name>.<owner-repo>` stays, with the copy-name grammar (one dot, at most 81 characters) and the `recipeCopySince` gate, because it is the owner's own spelling |
+| D3303 | How is each repository "pointed at its own copy"? (F7) | **A lookup rule, no new data:** for repository R, the launcher resolves `<name>.<owner-repo of R>` in the store before `<name>`, then the catalog. Nothing in the layer changes, so no strict-decode skew (F15) and no new writer | A map in the project layer (`recipes.repos.<owner/name>.<name>: <copy>`); cost: a new layer member every pre-L8 reader refuses, a gate of its own, and a writer | **As recommended (2026-11-23).** The lookup rule, no new data, so no new layer member, gate or writer |
+| D3304 | What does a release-A runner do with a task that leaves the recipe to the repository's folder (`Source: repo` by name, or no recipe on a ref that holds `.fugaro/recipes/<name>.yaml`)? (F9, F18) | **Refuse at bootstrap with the fix** ("the recipe is the project's now (D3237): launch with fugaro 0.X or later"): acceptance 7 says a repository recipe reaches a run only from the store, and a pre-L1 CLI is the accepted gap, which fails closed this way | Read the folder as today until release B, record `source: repo`; cost: any pre-L8 launcher, including the unfenced pre-L1 ones, keeps bringing repository recipes for a whole release | **As recommended (2026-11-23).** Refuse at bootstrap with the fix, so a repository recipe reaches a run only from the store (acceptance 7) |
 
 ### Resolutions (one defensible answer)
 
@@ -292,8 +290,8 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
 
 ## 6. Open tensions and open items
 
-- **T1 (open).** Spec §4 ("L1 must have shipped") against L1 Q2's answer (the recommendation of "one
-  release after" was not taken). → D3300, pending.
+- **T1 (settled 2026-11-23 by D3300).** Spec §4 ("L1 must have shipped") against L1 Q2's answer (the recommendation of "one
+  release after" was not taken). → D3300: release A is cut at least one release after L1's.
 - **O1.** L5's plan (not written yet) needs the same enrolled-repository reader. Contract C2 is
   shaped for it; whichever plan lands second calls the first one's reader instead of writing one.
 - **O2.** Model-credentials-routing's open tasks MG5, X2 and MG6 write `scope.go`, `config.go`,

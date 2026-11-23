@@ -16,22 +16,21 @@ key), D3292 (`agent.recipe` may name any project or catalog recipe), D3293 (`wor
 keeps the replace rule), D3294 (a member area naming the repository ranks above `rigor.repos`),
 D3295 (**one flat recipe namespace, not the recommendation**, with the owner's rename-on-clash
 rule), D3296 (the cleanup diff in `doctor`, `validate` and the launch), D3297 (`ab.repos` in
-`[0, ab.rate]`), D3298 (release B is the release after A, behind the image gate). Six decisions
-are **pending** (D3299–D3304); the plan is written on each recommendation, and every task one of
-them would change says "depends on D… (pending)":
+`[0, ab.rate]`), D3298 (release B is the release after A, behind the image gate), and, answered
+the same day as recommended, the six this reconciliation raised:
 
-| Pending | What changes if the owner answers the alternative |
+| Decision | What it settles in this plan |
 | --- | --- |
-| D3299 (capability map, L13 inside) | DK1 and DK2 leave the plan; XB4 then waits on S5, and XB1 on RT1 |
-| D3300 (release A one release after L1) | The release gate on the behaviour tasks loosens to "L1 merged" |
-| D3301 (what a clash is) | PR4's clash rule narrows to two repositories' files |
-| D3302 (the copy's spelling) | PR0's grammar and S5's copy gate change; no gate is needed for the other spelling |
-| D3303 (the pointer is a lookup rule) | PR0 and PR1 change, AB1's sibling task writes a layer map, and S5 gates on it |
-| D3304 (a pre-L8 task naming a repository recipe is refused) | PR3 reads the folder until release B instead |
+| D3299 (capability map, L13 inside) | The nine modules; DK1 and DK2 are in the plan |
+| D3300 (release A one release after L1) | The release gate below |
+| D3301 (a clash is any name another repository already resolves to different text) | PR4's clash rule |
+| D3302 (`<name>.<owner-repo>`, one dot, at most 81 characters) | PR0's grammar and S5's `recipeCopySince` gate |
+| D3303 (the pointer is a lookup rule, no new data) | PR0's lookup order, PR1 and PR2 |
+| D3304 (a pre-L8 task naming a repository recipe is refused at bootstrap) | PR3 |
 
 **External edges, not tasks.** L1, the required-version stamp (`docs/required-version-stamp/`,
 D3260–D3289, being planned beside this one): release A is cut only after the release that carries
-L1 has shipped (D3300, pending). Model-credentials-routing: its open MG5, MG6 and X2 write some of
+L1 has shipped (D3300). Model-credentials-routing: its open MG5, MG6 and X2 write some of
 the same files (reconciliation O2); a task that finds one merged first rebases on it, and none
 waits. L5 (not yet specced): it needs M1's reader (O1).
 
@@ -78,7 +77,7 @@ waits. L5 (not yet specced): it needs M1's reader (O1).
 
 ## Modules and slices
 
-The modules are the capability map of reconciliation §2 (D3299, pending): `lift-keys`, `migrate`,
+The modules are the capability map of reconciliation §2 (D3299, approved): `lift-keys`, `migrate`,
 `model-choice`, `review-tighten`, `ab-repos`, `rigor-repos`, `project-recipes`, `repo-caps`,
 `dead-keys`. The slices:
 
@@ -94,7 +93,7 @@ The modules are the capability map of reconciliation §2 (D3299, pending): `lift
 caller reaches them before I2 registers the planners. Every task that changes what a command or a
 run does — S1, RT1, RT2, S2, S4, S5, AB2, RG1, RG3, PR1, PR2, PR3, RC1, RC2, RC3, M2, I2, DK1,
 DK2 — is **not launched before L1's implementation has merged**, and release A is not cut before
-the release carrying L1 has shipped (D3300, pending).
+the release carrying L1 has shipped (D3300).
 
 ## Tasks
 
@@ -117,7 +116,7 @@ the release carrying L1 has shipped (D3300, pending).
 - Module: `lift-keys`. Kind: contract.
 - Acceptance: `internal/config/lifted.go` holds `LiftedKeys` (every B3 key including
   `agent.levels.l1–l3.model` (D3291), `ab.rate`, `rigor.default`, `rigor.areas`, and the L13 keys
-  `model_grades.*` and `agent.compression` marked refuse-now (depends on D3299, pending)), each with
+  `model_grades.*` and `agent.compression` marked refuse-now (D3299)), each with
   its new home and its fix sentence, and `LiftedKeyNotes(data []byte) []RetiredKeyNote`, which names
   every lifted key a repository's file writes; no model-credentials-routing retired key is on the
   list (R1). `contract-lift-keys.md` says what each side may rely on: the list is the only
@@ -165,7 +164,7 @@ the release carrying L1 has shipped (D3300, pending).
 - Tests: `TestCopyName`, `TestLookupOrder`, `TestNameREStillRefusesADot`.
 - Command: `go test ./internal/recipe/ -run 'TestCopyName|TestLookupOrder|TestNameREStillRefusesADot' -count=1`
 - Red step: `TestCopyName` fails before the file exists.
-- Depends on: none. **Depends on D3302 and D3303 (pending).** Kept as a task, not a contract: the
+- Depends on: none. Implements D3302 and D3303. Kept as a task, not a contract: the
   functions are the interface, and a contract would equal them.
 - Commit: `repo-override-rulings PR0: a recipe's project copy, its name and its lookup order`
 - Reviewer tier: standard.
@@ -273,7 +272,7 @@ the release carrying L1 has shipped (D3300, pending).
 - Acceptance: a launch prints each lifted key its default branch writes, once; it refuses a job
   image before `l8Since` where the default branch writes a lifted key, holds `.fugaro/recipes/`
   (R16), or the layer writes `ab.repos` (`abReposSince`), and where the task embeds a copy name
-  (`recipeCopySince`, D3302 pending), each with `fugaro update` as the fix.
+  (`recipeCopySince`, D3302), each with `fugaro update` as the fix.
 - Files: `internal/cli/recipes_skew.go`, `internal/cli/l8_skew_test.go` (new).
 - Interfaces: Consumes C1, AB1's `Layer.SetsABRepos`, PR0's `IsCopyName`. Produces the gate XB4 extends.
 - Tests: `TestL8GateRefusesAnOlderImage` (one case per trigger), `TestLaunchNamesLiftedKeys`.
@@ -401,7 +400,7 @@ the release carrying L1 has shipped (D3300, pending).
 - Tests: `TestResolveRecipeOwnCopyFirst`, `TestResolveRecipeIgnoresTheFolder`, `TestRecipesLsSaysTheFolderIsNotRead`.
 - Command: `go test ./internal/cli/ -run 'TestResolveRecipeOwnCopyFirst|TestResolveRecipeIgnoresTheFolder|TestRecipesLsSaysTheFolderIsNotRead' -count=1`
 - Red step: `TestResolveRecipeIgnoresTheFolder` fails: the checkout's file wins.
-- Depends on: PR0 (kept). **Depends on D3303 (pending).** Release gate.
+- Depends on: PR0 (kept). Implements D3303. Release gate.
 - Commit: `repo-override-rulings PR1: the launcher resolves a repository's own copy first`
 - Reviewer tier: standard.
 
@@ -431,7 +430,7 @@ the release carrying L1 has shipped (D3300, pending).
 - Tests: `TestLaunchEmbedsTheCopy` (outside a checkout, follow-up, default fallback), `TestNoTaskCarriesARepoRecipe`.
 - Command: `go test ./internal/cli/ -run 'TestLaunchEmbedsTheCopy|TestNoTaskCarriesARepoRecipe' -count=1`
 - Red step: `TestNoTaskCarriesARepoRecipe/follow-up` fails: the name travels alone.
-- Depends on: PR0 (kept); PR5 (kept). **Depends on D3303 (pending).** Release gate.
+- Depends on: PR0 (kept); PR5 (kept). Implements D3303. Release gate.
 - Commit: `repo-override-rulings PR2: every launch path embeds the project copy`
 - Reviewer tier: standard.
 
@@ -445,7 +444,7 @@ the release carrying L1 has shipped (D3300, pending).
 - Tests: `TestRunnerNeverReadsTheFolder`, `TestRepoSourcedTaskIsRefused`.
 - Command: `go test ./internal/runner/ -run 'TestRunnerNeverReadsTheFolder|TestRepoSourcedTaskIsRefused' -count=1`
 - Red step: `TestRunnerNeverReadsTheFolder` fails: `readRepoRecipe` reads it.
-- Depends on: none. **Depends on D3304 (pending).** Release gate.
+- Depends on: none. Implements D3304. Release gate.
 - Commit: `repo-override-rulings PR3: the runner stops reading .fugaro/recipes/`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -462,7 +461,7 @@ the release carrying L1 has shipped (D3300, pending).
 - Tests: `TestPlanRecipes` (unique, two repositories clash, project clash, catalog clash, same text, invalid file, idempotent).
 - Command: `go test ./internal/lift/ -run 'TestPlanRecipes' -count=1`
 - Red step: `TestPlanRecipes/catalog-clash` fails before the file exists.
-- Depends on: C2; PR0 (kept). **Depends on D3301 (pending).**
+- Depends on: C2; PR0 (kept). Implements D3301.
 - Commit: `repo-override-rulings PR4: the planner that publishes repository recipes`
 - Reviewer tier: standard.
 
@@ -607,7 +606,7 @@ the release carrying L1 has shipped (D3300, pending).
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
 ### DK1: model_grades in a repository's file and agent.compression refused; RepoModelGradesSet goes
-- Module: `dead-keys`. **Depends on D3299 (pending).**
+- Module: `dead-keys` (D3299).
 - Acceptance: `model_grades.*` in a repository's file is refused at decode with the fix naming the
   project layer, in the sentence model-credentials-routing X2 uses for `model_grades.*.access`
   (R11); `agent.compression`'s row loses `InRepo` (it is refused already, F16);
@@ -623,7 +622,7 @@ the release carrying L1 has shipped (D3300, pending).
 - Reviewer tier: standard.
 
 ### DK2: the merge's repository half of the grades and its skew gates go
-- Module: `dead-keys`. **Depends on D3299 (pending).**
+- Module: `dead-keys` (D3299).
 - Acceptance: `policy.tightenGrades` loses its repository half; `refuseModelGradesSkew` and the
   `recipes_skew.go` readers of `RepoModelGradesSet` read the layer alone; the build and the skew
   tests pass.
@@ -718,7 +717,7 @@ the release carrying L1 has shipped (D3300, pending).
 - Tests: `TestReleaseBGate`.
 - Command: `go test ./internal/cli/ -run 'TestReleaseBGate' -count=1`
 - Red step: the test fails: the launch goes through.
-- Depends on: DK2 (kept: `recipes_skew.go`; S5 if D3299 is declined); I1, I3 (kept, behaviour:
+- Depends on: DK2 (kept: `recipes_skew.go`); I1, I3 (kept, behaviour:
   release B follows the whole of release A).
 - Commit: `repo-override-rulings XB4: release B's launch gate`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
@@ -733,7 +732,7 @@ the release carrying L1 has shipped (D3300, pending).
 - Tests: `TestLiftedKeyRefusedOnTheDefaultBranch`, `TestLiftedKeyIgnoredOnAnOlderRef`, `TestScopeTableMatchesDocs`.
 - Command: `go test ./internal/config/ -run 'TestLiftedKey|TestScopeTableMatchesDocs' -count=1 && go test ./internal/cli/ -run Docs -count=1`
 - Red step: `TestLiftedKeyRefusedOnTheDefaultBranch` fails: the key is dropped.
-- Depends on: XB4 (kept, behaviour); DK1 (kept: two files; RT1 if D3299 is declined); D1 (kept: `project-layer.md`).
+- Depends on: XB4 (kept, behaviour); DK1 (kept: two files); D1 (kept: `project-layer.md`).
 - Commit: `repo-override-rulings XB1: release B refuses a lifted key on the default branch`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 

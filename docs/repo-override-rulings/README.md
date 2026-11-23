@@ -14,7 +14,7 @@ proposes to carry lift L13 (the dead repository keys) as a module.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved by the owner on 2026-11-23. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A7, the proposed capability map (nine modules, pending D3299), findings F1–F24, decisions D3290–D3304 (D3290–D3298 the owner's answers to the spec's Q1–Q9; D3299–D3304 **pending**), resolutions R1–R16, tension T1, open items O1–O3, UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A7, the capability map (nine modules, approved as D3299), findings F1–F24, decisions D3290–D3304 (D3290–D3298 the owner's answers to the spec's Q1–Q9; D3299–D3304 the owner's answers to the questions it raised), resolutions R1–R16, tension T1 (settled by D3300), open items O1–O3, UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Contracts C1 and C2, 39 tasks and integrations I1 and I2 over two releases (43 runs, and two contract changes that run only if raised), eight levels, the critical path, the shared files, the edges broken and kept, Checks 910–912 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
@@ -24,11 +24,12 @@ per-repository prefix; on a clash `update` renames the clashing copies `<name>.<
 keeps each repository pointed at its own copy and prints one line per rename, with no admin step.
 The reconciliation follows that through everywhere the spec assumed the prefix.
 
-**Pending the owner (D3299–D3304):** the capability map with L13 inside (D3299); whether release
-A must ship at least one release after L1 (D3300, tension T1); what counts as a clash (D3301); the
-copy's spelling against `recipe.NameRE` (D3302); how a repository is pointed at its copy (D3303);
-and what a release-A runner does with a pre-L8 task naming a repository recipe (D3304). The plan
-is written on each recommendation and marks the tasks each would change.
+**Answered the same day, each as recommended (D3299–D3304):** the capability map with L13 inside
+as module `dead-keys` (D3299); release A at least one release after L1's (D3300, which settles
+tension T1); a clash is any name another repository already resolves to different text (D3301);
+the copy is spelled `<name>.<owner-repo>` with its own grammar and the `recipeCopySince` gate
+(D3302); each repository is pointed at its copy by a lookup rule, with no new data (D3303); and a
+release-A runner refuses at bootstrap a pre-L8 task naming a repository recipe (D3304).
 
 **Headline findings:**
 
@@ -53,5 +54,5 @@ the highest check on `main` was 892 (repo-coupling-audit's block 890–899). No 
 D3290–D3319 and no Check 910–919 is on `main`.
 
 **What waits on something external:** the release that carries L1 (`docs/required-version-stamp/`,
-not on `main` yet) before release A is cut (D3300); the owner's answers to D3299–D3304; release A
+not on `main` yet), shipped at least one release before release A is cut (D3300); release A
 before release B (D3298); and the owner's runs of Checks 910–912.
