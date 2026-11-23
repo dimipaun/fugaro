@@ -13,8 +13,11 @@ document records what the spec assumed, what the code says instead, and the owne
   `config/admin/access` (`internal/access/store.go` `PathNode`) holds as admin. `fugaro update`
   derives `terraform.admins` from that node (`internal/cli/update_access.go` `syncAccess`; a run's
   own `--admin` is folded into the node by `foldFlagLists`), so the local list may be one admin's
-  stale copy. The Firebase grant follows the derived list
-  (`deploy/terraform/gcp/modules/firebase/iam.tf`, `admins = concat(var.admins, var.budget_admins)`).
+  stale copy. The Firebase grant does not follow the grants node: `roles/firebasedatabase.admin`
+  goes to the GCP project's `roles/owner` and `roles/editor` members (`init_firebase.go`, from
+  `infra.ProjectAdmins`) plus the budget admins (`modules/firebase/iam.tf`,
+  `admins = concat(var.admins, var.budget_admins)`). A project owner who is not in the grants node
+  is an implicit admin (D1592, `internal/access/store.go`).
 - A3. "Member" is anyone the project has placed who is not an admin: an operator (`RoleOperator`)
   or a viewer (`RoleViewer`) in `internal/access/access.go`.
 - A4. "Repo level" means three places: a repository's own `fugaro.yaml` and `.fugaro/` files, the
@@ -52,7 +55,7 @@ document records what the spec assumed, what the code says instead, and the owne
   and `project repos add` (one `confirmTyped`, then stages Policy, Installation and Repository).
   Report rows RC7 and RC8.
 - **F2 (Wrong).** Per-repo jobs remain (F-table above). Shared-jobs-default M2 owns their
-  retirement; the report cites it rather than re-planning it. Report rows RC60–RC67, RC76–RC78.
+  retirement; the report cites it rather than re-planning it. Report rows RC60, RC61, RC64, RC67 and RC76–RC78.
 - **F3 (Wrong, premise of the images question).** The build context is already fetched from git
   inside Cloud Build. What ties a catalog build to a checkout is the per-repo build service account
   (`modules/repo` `google_service_account.build`) and the per-repo assignment of catalog entries
@@ -82,11 +85,13 @@ document records what the spec assumed, what the code says instead, and the owne
     `workspace` writers (`chainApply`), `models provider` (`models_provider.go`, providers and
     prices), `project binaries` (`project_binaries.go`) and the secrets-expiry writer
     (`secrets_expiry.go`), all through `runAfterWrite`.
-  - **Gated writers that also run stages**: `settings set|unset` (`settingsAccessWrite`), the
-    `accounts` cascade, craft and pool writers and `models use` (`accessGateProject`), and
-    `image add` (`accessGate`).
+  - **Gated writers that also run stages**: `settings set|unset` and `models use`
+    (`settingsAccessWrite`); the `accounts` writers (`add`, `rm`, `switch`, `alias`, cascade, craft
+    and pool; `accessGateProject`); `image add|rm` (`accessGateProject`); and `project repos add`
+    (RC7).
 
-  `rigor`, `workflow add|rm`, `project repos set`, `project profile` and `project clone-url` write
+  `rigor` (with `rigor floor` and `rigor security`), `workflow add|rm`, `project repos set`,
+  `project routing set`, `project profile` and `project clone-url` write
   through `applySettingsEdit` (`settings_write.go`), call no role gate and run no stage: they print
   the next `fugaro update`. The comment in `settings_access.go` that lists `accounts` and `secrets`
   as ungated is stale. Cloud IAM is the only stop for the ungated stage-running writers. The
@@ -115,11 +120,15 @@ document records what the spec assumed, what the code says instead, and the owne
   - the runner's default-branch and run-branch reads (`internal/runner/policy.go`, `rigor.go`,
     `followup.go`)
 
-  Report §5 lists each one with what it can override.
+  Report §5 lists each one with what it can override, and the five readers round 3 of the review
+  added (`security.go` `securityBaseFile`, `project_job.go` `checkoutFugaroYAMLAtRef`,
+  `config_show.go` `configLayerAnchor`, `cloud.go` `refuseSharedCheckout`, and the images stage's
+  `kinds` with the policy stage's `checkoutWorkflows`).
 - **F10 (Gap, monorepos and shared repos).** A repository belongs to one project at a time: the
   runner refuses a repository whose default-branch `project:` is not the job's project
-  (`internal/runner/project.go` `sameProject`). The check is skipped for follow-up runs, and with
-  `FUGARO_PROJECT` unset only for a local run: a cloud job without it fails (`checkProject`,
+  (`internal/runner/project.go` `sameProject`). A follow-up run is checked against the pull
+  request's base instead (`readBaseConfig`), and with `FUGARO_PROJECT` unset the check is skipped
+  only for a local run: a cloud job without it fails (`checkProject`,
   "job environment lacks FUGARO_PROJECT", unless `r.d.Local`). Two projects never share a store (per-project bucket, RTDB marker
   `/fugaro/project`, bucket marker `fugaro/project.json`). Within one project, `image_map` keys
   drop the provider (`projectpolicy.ImageMap`), so GitHub `acme/app` and Bitbucket `acme/app`
@@ -175,7 +184,8 @@ Resolutions (one defensible answer, stated rather than asked):
 - R3. The report's "permissions needed today" column names the IAM set from the code:
   - `TF-admin` (an admin in the grants node `config/admin/access`, from which `update` derives
     `terraform.admins`)
-  - `DB-admin` (`roles/firebasedatabase.admin`: admins and budget admins)
+  - `DB-admin` (`roles/firebasedatabase.admin`: the GCP project's owners and editors, and the
+    budget admins; see A2)
   - `operator` (`terraform.operators`)
   - `repo-write` (push to the default branch)
   - `local` (the owner's machine only)

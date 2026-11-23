@@ -13,7 +13,8 @@ and this report disagree, the reconciliation wins.
   (identity only), `Dead` (dead or vestigial).
 - **Surface.** Each section heading names the surface; the rows below it share it.
 - **Perms today.** `TF-admin` (an admin in the grants node `config/admin/access`, from which
-  `update` derives `terraform.admins`: apply Terraform), `DB-admin` (`roles/firebasedatabase.admin`),
+  `update` derives `terraform.admins`: apply Terraform), `DB-admin` (`roles/firebasedatabase.admin`: the GCP project's owners and editors, and the budget
+  admins),
   `operator` (start runs; also submits a repository's builds and acts as its job and build service
   accounts, by design: `modules/repo/build.tf` `operator_build`), `repo-write` (push to the default
   branch), `local` (the owner's machine), `none`.
@@ -258,6 +259,11 @@ undone, or do differently depending on the directory it runs in?
 | `internal/cli/settings_set.go` `settingsRepoFile` | a remembered checkout | where a write lands |
 | `config.EffectiveBaseBranch` | file, then `localcfg repos.<r>.base_branch` | the base branch |
 | `internal/runner/policy.go`, `rigor.go`, `followup.go` | default and run branch | policy, rigor, followup trust |
+| `internal/cli/security.go` `securityBaseFile` | the default branch (`readFugaroYAMLAtRef`) | security patterns |
+| `internal/cli/project_job.go` `checkoutFugaroYAMLAtRef` | a ref of the checkout | what `accounts rm` keeps |
+| `internal/cli/config_show.go` `configLayerAnchor` | checkout | which layer `config show` reads |
+| `internal/cli/cloud.go` `refuseSharedCheckout` | checkout | refuses a shared checkout |
+| `internal/cli/init_images.go` `imagesStage.kinds`; `init_policy_migrate.go` `checkoutWorkflows` | working tree | base kinds and the default catalog entry (RC75) |
 
 A key the owner rejects under D3235 must be refused by every one of these readers. A reader that
 silently ignores a rejected key re-creates the stale-config problem.
@@ -267,8 +273,8 @@ silently ignores a rejected key re-creates the stale-config problem.
 - **Mixed CLI versions.** An older CLI writes any repo key and the repo cap node unchecked. Only
   the policy schema version refuses (`VersionError`). The fence is lift L1.
 - **Monorepos and shared repos.** One project per repo is enforced by `runner` `sameProject`,
-  except for follow-up runs and, with `FUGARO_PROJECT` unset, a local run (a cloud job without it
-  fails). A monorepo shares one slug, so B-rows
+  except a local run with `FUGARO_PROJECT` unset (a cloud job without it fails); a follow-up run is
+  checked against its pull request's base instead. A monorepo shares one slug, so B-rows
   apply to all its services. `image_map` collides across providers (RC51).
 - **Hidden admin dependencies.** RC87 and RC88. `fugaro run` itself triggers no Terraform or
   Cloud Build.
@@ -300,7 +306,7 @@ own spec when the owner picks it (D3236); "owned" items need none.
 | L6 | Workflow-secret records and the GitHub App from project data | RC70, RC71 | new spec | U2 |
 | L7 | Admin-only infra stages: `update` and the after-write hook refuse a non-admin by name before any infra stage | RC87, RC88 | new spec | — |
 | L8 | Apply the benign rulings: migrate once, then reject the keys not kept, in every §5 reader | RC9, B1–B19 | new spec | D3235 rulings, L1 |
-| L9 | A no-catalog project gets a default catalog entry, so no derived image is built in `update` (T1) | RC32, RC73, RC74 | new spec (T1, answered 2026-11-22; D1900 stands) | — |
+| L9 | A no-catalog project gets a default catalog entry, so no derived image is built in `update` (T1) | RC32, RC73, RC74 | new spec (T1, answered 2026-11-22; D1900 stands) | L3, unless the default entry names no source repository |
 | L10 | Docs and skills: fix the missing `fugaro upgrade` now (README, `docs/release.md`, the website's install page); rewrite per-checkout steps as each lift lands | RC90–RC94, RC96, RC97 | docs runs (D1 for RC93, RC96, RC97) | D1 none; the rest follow L2–L5 |
 | L11 | `image_map` keyed by provider | RC51 | small spec | — |
 | L12 | The console's repo-layer write names its target | RC80 | console task | — |

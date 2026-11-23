@@ -33,13 +33,14 @@ Answers that shaped the plan, all 2026-11-22:
   - `gcloud auth print-access-token`
   - `curl` GET on the RTDB REST API (with `shallow=true`, except the grants node, below)
   - `curl` POST to Firestore's `documents:listCollectionIds`, which reads (it is a POST only by the
-    API's shape)
+    API's shape), and a Firestore `documents` list GET with a `mask` that reads no field
   - `fugaro update --plan-only --json --events --project <p>` (`--events` is a bool) and
     `fugaro doctor --json`
 
   Two side effects of `update --plan-only` are accepted and documented in Check 891's section:
   Terraform's plan takes the state lock (it writes, then deletes, a `.tflock` object in the state
-  bucket, once for the installation root and once more for a checkout's repo root;
+  bucket, once for each root the run plans: the installation, Firebase, compute where Batch is
+  provisioned, and a checkout's repo root;
   `internal/infra` passes no `-lock=false`), and the root pre-run records remembered checkouts in
   the local config.
 - **Tokens and values.** The access token never reaches an argv. It goes into a 0600 curl config
@@ -60,7 +61,7 @@ Answers that shaped the plan, all 2026-11-22:
 
 | Constraint | Pinned by |
 | --- | --- |
-| A check never writes: every cloud verb it calls is in the call set | each script's test lists the fake binaries' received arguments and fails on any verb outside the set (K1–K3) |
+| A check never writes: every cloud verb it calls is in the call set. The one documented exception is the state lock that `fugaro update --plan-only` takes inside itself (Conventions), which a fake `fugaro` cannot observe | each script's test lists the fake binaries' received arguments and fails on any verb outside the set (K1–K3) |
 | A check prints no secret value, and no token reaches an argv | K1–K3's tests feed a fake secret and a fake token, then grep the output and the fakes' recorded argv for both |
 | A check waits for nothing | each test runs the script with stdin closed and a timeout |
 | A path, a stage or a role the report does not name is a FAIL, not a silent pass | K1–K3, a case each |
@@ -74,10 +75,13 @@ Answers that shaped the plan, all 2026-11-22:
     slug segment (`config/caps/repos`, `config/kill/repos`, `config/policy/repos`,
     `config/policy/voice/repos`, `config/policy/route`, `creds/repoauth`, `creds/repoaccess`,
     `runs`, `spend/<today>/repos`, `agents`, `outcomes/<today>`, `buildleases`,
-    `coordinator/repos`), plus one level under every other top-level key and `config/`'s children;
+    `coordinator/repos`, `spend/<today>/runs`), plus one level under every other top-level key
+    and `config/`'s children;
   - in GCS, the prefixes two levels under `runs/`, `builds/`, `cache/`, `locks/`, `tokens/` and
     `reports/`;
-  - in Firestore, the collection ids.
+  - in Firestore, the collection ids and the first page of document ids in `spendDaily` (RC50's
+    `<day>_<slug>`), through `listCollectionIds` and a `documents` list GET with `mask` so no field
+    is read.
 
   A listing at a per-repo or per-run level samples at most `--sample N` keys (default 3), so `runs/`
   does not enumerate every run. It marks every path with a slug segment and prints FAIL naming any
@@ -137,25 +141,20 @@ Answers that shaped the plan, all 2026-11-22:
   It prints, for each member named, which of `TF-admin`, `DB-admin` and `operator` it holds, and
   which report rows (by the Perms column) it can therefore exercise. Each principal's role comes
   from the grants node `config/admin/access` (`{grants: [{user, role, scope}]}`, read with its
-  values; the local `terraform.admins` is printed beside it, and a difference is reported). The
-  script holds a data block of the grants each role is expected to hold, taken from the Terraform
-  modules:
-  - an operator: `roles/iam.serviceAccountUser` on the shared job SA (`modules/project/sa.tf`
-    `operator`) and on each per-repo build SA (`modules/repo/build.tf` `operator_build`),
-    `roles/storage.objectAdmin` on the state bucket (`modules/installation/iam.tf` `state`), and
-    the build submission those imply;
-  - a budget admin: `roles/firebasedatabase.admin`;
-  - an admin: anything.
-
-  It prints FAIL when a principal holds a grant outside its role's expected set: for example a
-  viewer or an unplaced principal with `roles/owner`, `roles/editor`,
-  `roles/resourcemanager.projectIamAdmin`, `roles/run.admin` or `roles/secretmanager.admin`, or an
-  operator with any of those. This settles U3.
+  values; the local `terraform.admins` is printed beside it, and a difference is reported). It
+  prints the whole matrix (principal, role in the node, project and resource roles held) for R1.
+  Operators and viewers legitimately hold many grants (custom roles, actAs on several accounts,
+  secret version adders), so the check does not try to list them. It FAILs on one unambiguous
+  rule: a principal the node places as `operator` or `viewer` (or scopes to repositories) holds
+  `roles/owner`, `roles/editor` or `roles/resourcemanager.projectIamAdmin` on the GCP project,
+  which makes it an admin in all but name. A project owner or editor the node does not place is
+  reported as an implicit admin (D1592), never failed. This settles U3.
 - Files: `scripts/live-checks/check-892-iam.sh` (new), `scripts/live-checks/check-892-iam_test.sh` (new).
 - Interfaces: Consumes nothing. Produces the output R1 records.
-- Tests: `test_an_admin_maps_to_tf_admin`, `test_a_correct_operator_passes` (the three
-  by-design grants), `test_an_operator_with_owner_fails`, `test_a_viewer_with_apply_rights_fails`,
-  `test_a_budget_admin_is_not_flagged`, `test_a_stale_local_admin_list_is_reported`,
+- Tests: `test_an_admin_maps_to_tf_admin`, `test_an_operator_with_many_grants_passes`,
+  `test_an_operator_with_owner_fails`, `test_a_viewer_with_editor_fails`,
+  `test_an_unplaced_owner_is_reported_as_implicit_admin`, `test_a_budget_admin_is_not_flagged`,
+  `test_a_stale_local_admin_list_is_reported`,
   `test_only_reads_are_called`, `test_the_token_is_never_on_argv`, `test_stdin_is_closed`.
 - Command: `bash scripts/live-checks/check-892-iam_test.sh`
 - Red step: `test_an_admin_maps_to_tf_admin` fails before the script exists.
@@ -214,8 +213,8 @@ Answers that shaped the plan, all 2026-11-22:
 - Acceptance: `README.md` (Getting started, Upgrading), the whole of `docs/release.md` (the
   maintainers' migrator bullet, the plugin paragraph and the users' step 3) and
   `website/data/install.yaml` say `brew upgrade`, then one
-  `fugaro update`. None names `fugaro upgrade` (no such command), committing the retired plugin
-  pin, or the `/fugaro:upgrade` skill (the skill is `/fugaro:update`). Any test that pinned the old
+  `fugaro update`. None names `fugaro upgrade` or `fugaro update-skills` (no such commands),
+  committing the retired plugin pin, or the `/fugaro:upgrade` skill (the skill is `/fugaro:update`). Any test that pinned the old
   wording pins the new one. These are report rows RC93, RC96 and RC97, and the first half of lift
   L10. It changes no behaviour. README's per-repository `fugaro update --repo` in Providers step 6
   stays until lift L2.

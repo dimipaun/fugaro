@@ -1,7 +1,7 @@
 # Repo-coupling audit
 
 **Status: plan only; nothing is implemented; no task approved.** The static report is written. The
-live checks, two loose ends and a README fix are planned and wait for the owner's go. See
+live checks, two loose ends (U1/U2 and a docs fix) and the report's live columns are planned and wait for the owner's go. See
 [docs/status.md](../status.md) for the current table.
 
 Spec owner: Dimi Paun (the owner). Received and reconciled on 2026-11-22, checked against
