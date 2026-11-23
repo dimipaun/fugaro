@@ -161,7 +161,7 @@ type Diagnosis struct {
 	// reviews, and when there is no record at all.
 	Reviews []runstore.ReviewSummary `json:"reviews,omitempty"`
 	// ReviewLevels is what each review level's loop spent against the cap the
-	// run's plan resolved for it (docs/review-levels-abjobmax
+	// run's plan resolved for it (docs/review-levels-ab-jobmax
 	// implementation-plan.md V1.3): one entry per level the run's plan holds or
 	// whose tier its reviews carry, in level order, each with the rounds that
 	// level's own loop reached and its cap.
