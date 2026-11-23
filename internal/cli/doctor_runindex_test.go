@@ -57,6 +57,14 @@ func runIndexSummaryDoc(complete bool, folded time.Time) map[string]any {
 // summary doctor could not read is neither silence nor a finding: it is a
 // counted line saying the fact is unknown.
 func TestDoctorNamesReindexWhenIncomplete(t *testing.T) {
+	// The two stamps are relative to the clock doctor reads, not to the wall
+	// clock: the rig pins the command to a day inside the shipped catalog's own
+	// window (newDoctorRig), so a stamp taken from time.Now is judged against a
+	// clock it did not come from. The two agree only on the day the catalog
+	// pins to; on the days after it the "older than the retention" stamp is one
+	// day nearer the pinned clock than this test means it to be, and the state
+	// the case is named for reads as silence.
+	pinCatalogClock(t, shippedCatalog(t), 24*time.Hour)
 	now := budgetNow()
 	stale := now.Add(-(budget.PruneAfter + 1) * 24 * time.Hour)
 	for _, tc := range []struct {
