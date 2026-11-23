@@ -7842,6 +7842,8 @@
         "scripts/live-checks/check130.sh",
         "scripts/live-checks/check130_test.sh",
         "scripts/live-checks/check180_test.sh",
+        "scripts/live-checks/check181.sh",
+        "scripts/live-checks/check181_test.sh",
         "scripts/live-checks/check301.sh",
         "scripts/live-checks/check301_test.sh",
         "scripts/live-checks/check302.sh",
