@@ -26,7 +26,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	infraTF "github.com/dimipaun/fugaro/internal/infra/tf"
-	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/workspace"
 )
@@ -1954,25 +1953,26 @@ func TestWorkspaceModeIsHandedTheRosterAndItsSlips(t *testing.T) {
 		// this process was handed and never a member's (R3): the grant writes
 		// here and the claim reads here, and a slip of a member's is another
 		// service's (WC8).
-		slip := creds.Slip{
-			ID:              "slip-wc14",
-			Owner:           "1122334455",
-			Launcher:        routing.Principal{Kind: routing.PrincipalPerson, ID: "1122334455"},
-			Slug:            "acme-webapp",
-			Run:             "run-1",
-			ExpectedAccount: workspaceServiceAccount,
-			Allowed:         []string{"anthropic-api-key"},
-			MaxRuntime:      time.Hour,
+		//
+		// What is asked of the store is only that it is a working store over
+		// THIS database, and neither question needs the slip half's own names:
+		// internal/creds' boundary test keeps `creds.Slip` and the rest out of
+		// every file of this package but the service's, and it is right to —
+		// no operator command grants, claims or ends a slip (G10). So the store
+		// is read through the interface the process handed the scope, and the
+		// database it reached is the one that answers: a read of an id nothing
+		// wrote answers "no such slip" out of the workspace's own fake, and the
+		// same read fails when that fake refuses every call.
+		if _, found, err := person.Slips.Slip(context.Background(), "slip-wc14"); err != nil {
+			t.Fatalf("the slip store the process handed the scope could not read the workspace's own database: %v", err)
+		} else if found {
+			t.Fatal("the slip store found a slip at an id nothing has written, and this workspace's database holds none")
 		}
-		if err := person.Slips.Create(context.Background(), slip); err != nil {
-			t.Fatalf("the slip store the process handed the scope: %v", err)
+		fake.Refuse(http.StatusServiceUnavailable, "UNAVAILABLE", "", "the workspace's own database is out")
+		if _, _, err := person.Slips.Slip(context.Background(), "slip-wc14"); err == nil {
+			t.Error("the slip store answered while the workspace's own database refused every call: the store the process handed the scope is not this database's, and the workspace's slips are the workspace's own (R3)")
 		}
-		if fake.Value(creds.PathSlip(slip.ID)) == nil {
-			t.Errorf("the slip the process's store wrote is not at %s in the workspace's own database: the store is the workspace's, and the path is C1's own", creds.PathSlip(slip.ID))
-		}
-		if _, found, err := person.Slips.Slip(context.Background(), slip.ID); err != nil || !found {
-			t.Errorf("the slip store could not read back the slip it wrote: found=%v err=%v", found, err)
-		}
+		fake.Refuse(0, "", "", "")
 
 		// ... and the workspace's deployment is still the one Server (D2980):
 		// the personal half is additive and changes nothing about the
