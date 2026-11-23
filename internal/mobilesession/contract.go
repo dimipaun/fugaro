@@ -359,7 +359,9 @@ type SessionPolicy struct {
 	// fail-safe and not the member's default on: a session assembled by a
 	// release behind is a phone that was told nothing, and nothing is sent
 	// before the switch has been read (D734). The Go reader is
-	// projectpolicy.MobileCrashReportsOn, and this field is filled from it.
+	// projectpolicy.MobileCrashReportsOn, and this member is filled from Policy's
+	// CrashReports, which is asked by the pairing and refresh routes (P3, P4) and
+	// is the only writer of this member there is.
 	CrashReports bool `json:"crash_reports"`
 }
 
@@ -764,6 +766,24 @@ type Verdict struct {
 // three handlers.
 type Policy interface {
 	Allow(ctx context.Context, project string, claims Claims) (Verdict, error)
+
+	// CrashReports is the project's published crash-report switch, read through
+	// projectpolicy.MobileCrashReportsOn (D731, D738): true only when the
+	// published policy states the key on, and false when it states it off **or
+	// does not carry it at all** — an absent key is the fail-safe off and not
+	// the member's default on, because a phone told nothing must collect nothing
+	// (D734, G7).
+	//
+	// It sits on this interface, beside Allow, because it is what fills
+	// SessionPolicy.CrashReports, and the pairing and refresh routes (P3, P4)
+	// fill their answers from an implementation of this interface: a `Policy`
+	// that did not answer the switch would not compile, so no route can be
+	// written against a policy that has no way to state it. An implementation
+	// that cannot read the published policy answers false with the error, and
+	// the route fills the session with that false rather than refusing the
+	// session — the same fail-safe as a key the node does not carry, which is
+	// the reading D738 records.
+	CrashReports(ctx context.Context, project string) (bool, error)
 }
 
 // InviteStore reads the invitations `fugaro pair` wrote and spends one (P2
