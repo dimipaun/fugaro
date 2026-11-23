@@ -30,12 +30,13 @@ and this report disagree, the reconciliation wins.
 | 6 Secrets | 3 | 0 | 0 | 1 | 4 |
 | 7–8 Images, jobs | 7 | 0 | 0 | 0 | 7 |
 | 10 Console, mobile, MCP | 0 | 1 | 7 | 0 | 8 |
-| 11 Update and writers | 2 | 0 | 1 | 0 | 3 |
-| 12 Skills and docs | 5 | 0 | 0 | 0 | 5 |
-| **Total** | **34** | **21** | **29** | **10** | **94** |
+| 11 Update and writers | 2 | 0 | 2 | 0 | 4 |
+| 12 Skills and docs | 7 | 0 | 0 | 0 | 7 |
+| **Total** | **36** | **21** | **30** | **10** | **97** |
 
 Benign counts 21 rows: the 19 candidates B1–B19 of §3, plus two writers of repo-level config
-(RC9, RC80) that follow whatever the owner keeps.
+(RC9, RC80) that follow whatever the owner keeps. RC40 and RC41 are admin-written yet Benign;
+reconciliation A5 says why.
 
 Scope item 9 (caps, rigor, recipes, routing) has no rows of its own: its rows sit under surfaces 2
 and 3, where the setting lives.
@@ -47,7 +48,7 @@ and 3, where the setting lives.
 | ID | Location | Tied to the repo | Class | Perms | Update | Home | Migration | Eff | Risk |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | RC1 | `internal/cli/retired.go` `newRetiredInitCmd` | `fugaro init` tombstone | Dead | none | none | none (already retired) | none | S | S |
-| RC2 | `internal/cli/cloud.go` `originRepo`, `checkoutRoot`; `repo_arg.go` `repoArg` | the cwd's origin is the default target of ~30 commands | Identity | none | none | keep | none | S | S |
+| RC2 | `internal/cli/cloud.go` `originRepo`, `checkoutRoot`; `repo_arg.go` `repoArg` | the cwd's origin is the default target of ~30 commands, among them `run` (job launch), `runs ls` and the recipe commands (`recipes.go` `localRoot` adds a checkout's recipes); each also takes `--repo` | Identity | none | none | keep | none | S | S |
 | RC3 | `internal/cli/project.go` `resolveCheckout`, `selectedProjectErr` | the checkout's `fugaro.yaml` `project:` picks the project when no `--project` is given | Identity | none | none | keep; see F10 for monorepos | none | S | M |
 | RC4 | `internal/cli/review.go` (calls `originRepo`) | `review` needs a checkout without `--repo` | Identity | operator | none | keep | none | S | S |
 | RC5 | `internal/cli/orchestrator_import.go` | `orchestrator import` needs a checkout | Identity | operator | none | keep | none | S | S |
@@ -148,7 +149,7 @@ No `google_cloudbuild_trigger` exists. The only per-repo Scheduler is the check 
 | ID | Location | Tied to the repo | Class | Perms | Update | Home | Migration | Eff | Risk |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | RC72 | `internal/cli/init_images_catalog.go` `imagesStage.staleCatalog` (`here` and `elsewhere` via `sameRepo`) | builds only the entries the cwd checkout owns | Infra | TF-admin | blocks | project build identity (D3232, L3) | none | M | M |
-| RC73 | `internal/cli/image_refresh.go` `refreshBuilds` (run by `update`) | derived image for a no-catalog project | Infra | TF-admin | blocks | L9 | none | M | M |
+| RC73 | `internal/cli/image_refresh_steps.go` `refreshBuilds` (run by `update`) | derived image for a no-catalog project | Infra | TF-admin | blocks | L9 | none | M | M |
 | RC74 | `internal/cli/init_checkout_upgrade.go` `checkoutSteps` (`cloudStep`) | the checkout's job images refresh | Infra | TF-admin | blocks | goes with RC73 | none | S | S |
 | RC75 | `internal/cli/init_images.go` `imagesStage.kinds`; `init_policy_migrate.go` `checkoutWorkflows` | base kinds and the default entry read the cwd's workflows | Infra | TF-admin | varies | read every enrolled repo's default branch, or the published layer (L5) | none | M | M |
 | RC76 | `internal/backend/gcp/run.go` `jobFor`, `TaskTimeout` | falls back to the per-repo `JobPath(slug, wf)` | Infra | operator | none | shared job only | Owned: M2 | S | M |
@@ -178,6 +179,7 @@ setting lives.
 | RC87 | `internal/cli/settings_access.go` (comment); `internal/access` gate | `update` asks no role; the gate is lenient by design | Infra (hidden admin dependency) | IAM only | none | admin-only stages refuse a non-admin by name (L7) | none | M | L |
 | RC88 | `internal/cli/write_publish.go` `publishAfterWrite`; `internal/apply/steps.go` | writers that are not role-gated trigger Terraform and Cloud Build stages after the write | Infra (hidden admin dependency) | IAM only | none | the after-write hook runs infra stages for admins only (L7) | none | M | L |
 | RC89 | `internal/cli/init_stages.go` `initStages` | update's stage list | Identity | TF-admin | none | the order L2–L6 empties its checkout stages | none | S | S |
+| RC95 | `internal/access/scope.go` `ScopeRepos`; `internal/cli/access_gate.go` `accessGateRepo`; node `config/admin/access` | a role can be scoped to a list of repository patterns | Identity (project-owned grants scoped by repo) | DB-admin | none | keep | none | S | S |
 
 ### Surface 12: skills, docs and templates
 
@@ -186,8 +188,10 @@ setting lives.
 | RC90 | `plugin/skills/update/SKILL.md` ("Update a checkout", "in each checkout") | run update per checkout | Infra (docs) | — | blocks | one admin run (after L2–L6) | rewrite | S | S |
 | RC91 | `plugin/skills/setup/SKILL.md` §9 | "run setup from the merged checkout" adds the repo's job | Infra (docs) | — | blocks | `repos add` | rewrite after M7 | S | S |
 | RC92 | `plugin/skills/images/SKILL.md` §1, §7 | doctor from a checkout; `update --repo --plan-only` | Infra (docs) | — | varies | project-wide | rewrite after L3 | S | S |
-| RC93 | `README.md` Getting started and Upgrading | `fugaro upgrade` (no such command), "in each checkout", commit the pin (retired) (F12) | Infra (docs, wrong) | — | blocks | `brew upgrade` then one `fugaro update` | fix now (L10) | S | M |
+| RC93 | `README.md` Getting started, Upgrading and Providers step 6 | `fugaro upgrade` (no such command), "in each checkout", commit the pin (retired), the stale `/fugaro:upgrade` skill name (F12); `fugaro update --repo` in each listed repository | Infra (docs, wrong) | — | blocks | `brew upgrade` then one `fugaro update` | fix now (L10) | S | M |
 | RC94 | `docs/how-to/budgets.md`, `registry-cleanup.md`, `retiring-a-workflow.md`, `offboarding.md`, `teammates.md` | `fugaro update --repo` in each checkout | Infra (docs) | — | blocks | follows L2, L5 | rewrite | S | S |
+| RC96 | `docs/release.md` (the users' step 3, and the plugin paragraph) | "For each repository, in its checkout … `fugaro upgrade`" (no such command) | Infra (docs, wrong) | — | blocks | one `fugaro update` | fix with D1 | S | S |
+| RC97 | `website/data/install.yaml` | `fugaro upgrade --local` (no such command) | Infra (docs, wrong) | — | blocks | `fugaro update` | fix with D1 | S | S |
 
 ## 3. Benign override candidates, for the owner's review (D3235)
 
@@ -221,19 +225,21 @@ the auditor's. "Can loosen" means the repo can make the project less strict toda
 The question for each item: run from anywhere by one admin, what does `update` still leave
 undone, or do differently depending on the directory it runs in?
 
-1. **The per-repo root of every repository not on a shared job** (RC8, RC60, RC64, RC34, RC77).
-   Lift L2, owned by shared-jobs M2.
+1. **The per-repo root of every repository not on a shared job** (RC8, RC60, RC64, RC34, RC77),
+   with its per-slug bucket conditions (RC57) and the per-repo infra facts in the owner's local
+   config (RC39). Lift L2, owned by shared-jobs M2, and L5 for RC39.
 2. **Catalog entries owned by another repository** (RC72, RC6, RC55, RC61, RC65). Lift L3.
 3. **Credential records written from the checkout's auth** (RC17, RC48). Lift L4, owned by MCR.
 4. **Stages that read the working directory**: base kinds and the default catalog entry (RC75),
    the `gcp_project` anchor edit (RC13), the plugin pin removal (RC38), `update --check` (RC12).
    Lift L5.
 5. **Workflow-secret records from the checkout** (RC70) and the GitHub App per repo (RC71,
-   pending U2). Lift L6.
+   pending U2). Lift L6. The per-repo Bitbucket token (RC69) is lift L4b, owned by
+   bitbucket-token-types.
 6. **Derived images of a no-catalog project** (RC73, RC74, RC32). These are kept by D1900; L9
    offers the alternative.
-7. **The docs that tell a person to run update per checkout** (RC90–RC94). Lift L10, after the
-   lifts they describe.
+7. **The docs that tell a person to run update per checkout** (RC90–RC94, RC96, RC97). Lift
+   L10, after the lifts they describe.
 
 ## 5. Stale local config: every reader of a repo's file
 
@@ -264,10 +270,15 @@ silently ignores a rejected key re-creates the stale-config problem.
   Cloud Build.
 - **Required-version entry points (for L1).** The CLI's one startup hook is the root
   `PersistentPreRun` in `internal/cli/root.go`, which already resolves the selected project read-only
-  (`updateCheckDisabled`, then `selectedProjectConfigReadOnly`). Exempt from refusal: `update`
-  itself, `version`, `help`, `doctor` and the retired tombstones. A post-run hook is skipped when
-  `RunE` fails, which is why `WarnUpdateAvailable` lives in `cmd/fugaro/main.go`. The check goes in
-  the pre-run.
+  (`updateCheckDisabled`, then `selectedProjectConfigReadOnly`). It is a `PersistentPreRun`,
+  which cannot return an error, so a refusal needs the root's hook to become `PersistentPreRunE`
+  or the check to sit in `cmd/fugaro/main.go` before `ExecuteContextC`; L1's spec picks one. Exempt
+  from refusal: `update` and `setup` themselves, `version` and the `--version` flag, `help`,
+  `doctor`, the retired tombstones, and the console's read-only paths (`consoleReadPaths` in
+  `internal/cli/project.go`), which must not fail on a stamp they only display. A post-run hook is
+  skipped when `RunE` fails, which is why `WarnUpdateAvailable` lives in `cmd/fugaro/main.go`. An
+  RTDB read at every command start costs latency and fails offline. L1's spec settles a cache
+  (the `internal/updatecheck` cache is the pattern) and what an unreadable stamp does.
 
 ## 7. Lift order
 
@@ -278,13 +289,14 @@ own spec when the owner picks it (D3236); "owned" items need none.
 | --- | --- | --- | --- | --- |
 | L1 | Required-version stamp: `update` writes the minimum CLI release beside `config/policy/shared`; the root pre-run refuses project commands below it, naming `brew upgrade` and `fugaro update` | §6 | new spec | — (first, because every "migrate once, then reject" below needs old CLIs fenced) |
 | L2 | Retire the per-repo roots and jobs | RC8, RC34, RC60, RC64, RC67, RC76–RC78, RC57 | shared-jobs-default M2 | Check 580 |
-| L3 | One project build identity; catalog records and leases keyed by entry | RC6, RC44, RC55, RC61, RC65, RC72, RC82 | new spec (D3232) | L2 |
+| L3 | One project build identity; catalog records and leases keyed by entry | RC6, RC44, RC55, RC56, RC61, RC65, RC72, RC82 | new spec (D3232) | L2 |
 | L4 | Credential type out of the repo | RC17, RC47, RC48 | model-credentials-routing MG1–MG6, X4 | its plan edges |
+| L4b | Bitbucket tokens at project or workspace level, not per repository | RC69 | bitbucket-token-types | its plan |
 | L5 | `update` reads no working directory: kinds and default entry from every enrolled repo's default branch; the anchor edit in `repos add`; the pin removal as a doctor notice | RC12, RC13, RC38, RC39, RC75 | new spec | L2 |
 | L6 | Workflow-secret records and the GitHub App from project data | RC70, RC71 | new spec | U2 |
 | L7 | Admin-only infra stages: `update` and the after-write hook refuse a non-admin by name before any infra stage | RC87, RC88 | new spec | — |
 | L8 | Apply the benign rulings: migrate once, then reject the keys not kept, in every §5 reader | RC9, B1–B19 | new spec | D3235 rulings, L1 |
 | L9 | A no-catalog project gets a default catalog entry, so no derived image is built in `update` (T1) | RC32, RC73, RC74 | new spec (T1, answered 2026-11-22; D1900 stands) | — |
-| L10 | Docs and skills: fix README's `fugaro upgrade` now; rewrite per-checkout steps as each lift lands | RC90–RC94 | docs runs | RC93 none; the rest follow L2–L5 |
+| L10 | Docs and skills: fix the missing `fugaro upgrade` now (README, `docs/release.md`, the website's install page); rewrite per-checkout steps as each lift lands | RC90–RC94, RC96, RC97 | docs runs (D1 for RC93, RC96, RC97) | D1 none; the rest follow L2–L5 |
 | L11 | `image_map` keyed by provider | RC51 | small spec | — |
 | L12 | The console's repo-layer write names its target | RC80 | console task | — |

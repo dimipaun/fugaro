@@ -15,9 +15,9 @@ ordered lift plan. It changes no behaviour.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | Assumptions A1–A6, the spec-against-repository table, findings F1–F17, decisions D3230–D3236 with the owner's answers, resolutions R1–R3, tension T1 (settled), open items O1–O2, UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
-| [report.md](report.md) | The inventory: 94 coupling points (RC1–RC94) by surface, the summary count, the benign candidates B1–B19 for the owner's review, what blocks a single admin-run `fugaro update`, every reader of a repo's config, the corner cases, the version-stamp entry point, and the lift order L1–L12 |
-| [implementation-plan.md](implementation-plan.md) | Seven tasks (K1–K4, V1, D1, R1) in three levels: three read-only check scripts and their registration, U1/U2 settled from the code, a README fix, and the report's live columns once the owner runs Checks 890–892. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | Assumptions A1–A6, the spec-against-repository table, findings F1–F17, decisions D3230–D3236 with the owner's answers, resolutions R1–R3, tension T1 (settled), open items O1–O3, UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
+| [report.md](report.md) | The inventory: 97 coupling points (RC1–RC97) by surface, the summary count, the benign candidates B1–B19 for the owner's review, what blocks a single admin-run `fugaro update`, every reader of a repo's config, the corner cases, the version-stamp entry point, and the lift order L1–L12 (with L4b) |
+| [implementation-plan.md](implementation-plan.md) | Seven tasks (K1–K4, V1, D1, R1) in three levels: three read-only check scripts and their registration, U1/U2 settled from the code, a fix of the missing `fugaro upgrade` in README, `docs/release.md` and the website, and the report's live columns once the owner runs Checks 890–892. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
 **Headline findings:**
@@ -33,7 +33,8 @@ ordered lift plan. It changes no behaviour.
   directory.
 - **Members can trigger Terraform stages through writers that are not role-gated**, and `update`
   asks no role.
-- **README tells users to run a `fugaro upgrade` command that does not exist.**
+- **README, `docs/release.md` and the website tell users to run a `fugaro upgrade` command that does
+  not exist.**
 
 **Numbers reserved:** decisions **D3230–D3259** (D3230–D3236 used), checks **890–899** (890–892
 used). They were read on 2026-11-22. The highest decision on `main` was D3229 (console-fixes'

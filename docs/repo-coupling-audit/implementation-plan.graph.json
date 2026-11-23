@@ -74,13 +74,14 @@
         "prediction": true,
         "paths": [
           "docs/repo-coupling-audit/reconciliation.md",
-          "docs/repo-coupling-audit/report.md"
+          "docs/repo-coupling-audit/report.md",
+          "docs/repo-coupling-audit/README.md"
         ]
       }
     },
     {
       "id": "D1",
-      "title": "README names fugaro update, not the missing fugaro upgrade",
+      "title": "The docs name fugaro update, not the missing fugaro upgrade",
       "run": null,
       "version": null,
       "tier": "small",
@@ -89,6 +90,8 @@
         "prediction": true,
         "paths": [
           "README.md",
+          "docs/release.md",
+          "website/data/install.yaml",
           "internal/cli/docs_upgrade_test.go"
         ]
       }
@@ -104,7 +107,8 @@
         "prediction": true,
         "paths": [
           "docs/repo-coupling-audit/report.md",
-          "docs/repo-coupling-audit/reconciliation.md"
+          "docs/repo-coupling-audit/reconciliation.md",
+          "docs/repo-coupling-audit/README.md"
         ]
       }
     }
@@ -133,7 +137,7 @@
     {
       "task": "R1",
       "needs": "V1",
-      "reason": "kept: one file, report.md, and R1 fills the columns V1's answers change"
+      "reason": "kept: three shared files (report.md, reconciliation.md, README.md), and R1 fills the columns V1 answers change"
     }
   ],
   "decoupling": [],

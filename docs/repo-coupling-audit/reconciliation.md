@@ -9,8 +9,11 @@ document records what the spec assumed, what the code says instead, and the owne
 - A1. "All Fugaro repos" means this repository, `ee/` included. The console, mobile app, shared
   packages, plugin and website all live in it, and no other Fugaro source repository exists.
 - A2. "Project" is a Fugaro project: one installation in one GCP project, with its own runs bucket,
-  RTDB and Firestore (memory: project terminology). "Admin" is a person in `terraform.admins`, the
-  set `fugaro update --admin` writes, with `roles/firebasedatabase.admin` on the Firebase project
+  RTDB and Firestore (memory: project terminology). "Admin" is a person the grants node
+  `config/admin/access` (`internal/access/store.go` `PathNode`) holds as admin. `fugaro update`
+  derives `terraform.admins` from that node (`internal/cli/update_access.go` `syncAccess`; a run's
+  own `--admin` is folded into the node by `foldFlagLists`), so the local list may be one admin's
+  stale copy. The Firebase grant follows the derived list
   (`deploy/terraform/gcp/modules/firebase/iam.tf`, `admins = concat(var.admins, var.budget_admins)`).
 - A3. "Member" is anyone the project has placed who is not an admin: an operator (`RoleOperator`)
   or a viewer (`RoleViewer`) in `internal/access/access.go`.
@@ -19,7 +22,10 @@ document records what the spec assumed, what the code says instead, and the owne
   cloud node or object whose key carries the repository's slug.
 - A5. A setting keyed by repository but written only by an admin into a project-owned store, such
   as `config/policy/repos/<slug>` or the project layer's `rigor.repos`, is a project setting about a
-  repository. It is classified **Identity**, not a repo-level override.
+  repository. It is classified **Identity**, not a repo-level override. Two exceptions: the RTDB
+  repo cap and kill nodes (report RC40, RC41) are admin-written, but each overrides a project
+  control for one repository (a cap above the default, a stop for one repository). They are listed
+  as benign candidates so the owner rules on them.
 - A6. The report is a static audit plus the owner-run live checks D3231 names. No agent touches a
   live project.
 
@@ -69,9 +75,14 @@ document records what the spec assumed, what the code says instead, and the owne
   on where it is run. This is the "blocks a single admin-run update" list in the report (§4).
 - **F7 (Gap, hidden admin dependency).** `fugaro update` asks no role (`settings_access.go`
   comment), and `publishAfterWrite` (`write_publish.go`, mapping in `internal/apply/steps.go`) runs
-  converge stages, Terraform and Cloud Build included, in-process after writers that are not role
-  gated: `rigor set`, `workflow add|rm`, `project repos set`, `project routing set`,
-  `project profile *`, `models add|rm`, `accounts …`, `secrets …`. Cloud IAM is the only stop. The
+  converge stages, Terraform and Cloud Build included, in-process after a write. Re-derived from
+  the call sites (no `accessGate*` call in the file), these writers are not role-gated: `rigor`
+  (`rigor.go`, `rigor_floor.go`, `rigor_security.go`), `workflow add|rm` (`workflow.go`),
+  `models add|rm` (`models_add.go`, `models_rm.go`), `project repos set`, `project routing set`,
+  `project profile`, `project clone-url` and the `workspace` commands. The `accounts` writers,
+  `secrets` and `models use` do call `accessGateProject` or `accessGateRepo`; the comment in
+  `settings_access.go` that lists them as ungated is stale. Cloud IAM is the only stop for the
+  ungated ones. The
   role gate is lenient by design: no roles means not judged, an unplaced caller is an implicit
   admin, an unreadable database is not judged. Report RC87 and RC88.
 - **F8 (Gap).** A repo can loosen the project:
@@ -99,8 +110,9 @@ document records what the spec assumed, what the code says instead, and the owne
   Report §5 lists each one with what it can override.
 - **F10 (Gap, monorepos and shared repos).** A repository belongs to one project at a time: the
   runner refuses a repository whose default-branch `project:` is not the job's project
-  (`internal/runner/project.go` `sameProject`). The check is skipped when `FUGARO_PROJECT` is unset
-  and for follow-up runs. Two projects never share a store (per-project bucket, RTDB marker
+  (`internal/runner/project.go` `sameProject`). The check is skipped for follow-up runs, and with
+  `FUGARO_PROJECT` unset only for a local run: a cloud job without it fails (`checkProject`,
+  "job environment lacks FUGARO_PROJECT", unless `r.d.Local`). Two projects never share a store (per-project bucket, RTDB marker
   `/fugaro/project`, bucket marker `fugaro/project.json`). Within one project, `image_map` keys
   drop the provider (`projectpolicy.ImageMap`), so GitHub `acme/app` and Bitbucket `acme/app`
   collide. A monorepo has one slug, so every repo-keyed setting applies to all its services.
@@ -111,7 +123,8 @@ document records what the spec assumed, what the code says instead, and the owne
   `brew upgrade … && fugaro upgrade`, "in each checkout", and says it pins the plugin in
   `.claude/settings.json`. No `upgrade` command exists, and the pin is retired: `pluginwire` only
   removes it. Getting started (line 48) also tells the user to commit the pin and run
-  `fugaro upgrade --local`. Report RC93.
+  `fugaro upgrade --local`. `docs/release.md` (the users' step 3) and `website/data/install.yaml`
+  name the same missing command. Report RC93, RC96 and RC97.
 - **F13 (Exists).** Several lifts are already owned by approved plans:
   - Credential type: model-credentials-routing MG1–MG6, plus MG3/X4 for `creds/repoauth`.
   - Per-repo job and root retirement: shared-jobs-default M2.
@@ -152,7 +165,8 @@ Resolutions (one defensible answer, stated rather than asked):
   node the CLI reads at start; Firestore holds only rollups. The spec for L1 (report §7) settles
   the details.
 - R3. The report's "permissions needed today" column names the IAM set from the code:
-  - `TF-admin` (`terraform.admins`)
+  - `TF-admin` (an admin in the grants node `config/admin/access`, from which `update` derives
+    `terraform.admins`)
   - `DB-admin` (`roles/firebasedatabase.admin`: admins and budget admins)
   - `operator` (`terraform.operators`)
   - `repo-write` (push to the default branch)
@@ -170,6 +184,8 @@ Resolutions (one defensible answer, stated rather than asked):
 - O1. The benign-candidate rulings (D3235) are owed after merge. Until then no candidate is kept
   or rejected.
 - O2. Checks 890–892's output fills the live columns. Until then those columns read "static".
+- O3. `docs/status.md` gets this spec's row when the plan merges, as for every spec folder before
+  it; this pull request does not touch it.
 
 ## 6. UNVERIFIED
 
