@@ -14,7 +14,7 @@ proposes to carry lift L13 (the dead repository keys) as a module.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved by the owner on 2026-11-23. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A7, the capability map (nine modules, approved as D3299), findings F1–F25, decisions D3290–D3307 (D3290–D3298 the owner's answers to the spec's Q1–Q9; D3299–D3304 the owner's answers to the questions it raised), resolutions R1–R22, tension T1 (settled by D3300), open items O1–O6 (O4 closed, O5 closed by D3307, O6 open for the owner), UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A7, the capability map (nine modules, approved as D3299), findings F1–F25, decisions D3290–D3308 (D3290–D3298 the owner's answers to the spec's Q1–Q9; D3299–D3304 the owner's answers to the questions it raised; D3308 closes O6), resolutions R1–R22, tension T1 (settled by D3300), open items O1–O6 (O4 closed, O5 closed by D3307, O6 closed by D3308), UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Contracts C1 and C2, 46 tasks and integrations I1 and I2 over two releases (50 runs, and two contract changes that run only if raised), nine levels, the critical path, the shared files, the edges broken and kept, Checks 910–913 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
@@ -39,8 +39,12 @@ fail open (D3306, not the recommendation)**: `update` migrates only the reposito
 one admitted only by a pattern, or unreadable, is not migrated, its lifted keys are dropped with only
 the project's values standing (an `ab.rate: 0` opt-out or a raised rigor level among them), and a
 recipe name it uses resolves to a listed repository's flat copy or to the catalog's, all of which
-`update` and release A's notes say (open item O6 records the tension with D3301 for the owner); and
-O5's residue is accepted (D3307).
+`update` and release A's notes say; and O5's residue is accepted (D3307).
+
+**The owner's answer on O6, 2026-11-23 (D3308, as recommended):** fail-open stays, except that the
+launcher refuses a launch whose recipe name an unmigrated repository's default branch still holds in
+`.fugaro/recipes/`, naming the fix (list the repository, then `fugaro update`). So no run silently
+changes recipe, which is what D3301 asks.
 
 **Headline findings:**
 
@@ -58,7 +62,7 @@ O5's residue is accepted (D3307).
 - **B4's mode baseline cannot be computed in `config.Resolve`** (F4, R3); **no command writes
   `rigor.repos` today** (F13, R6).
 
-**Numbers reserved:** decisions **D3290–D3319** (D3290–D3307 used), checks **910–919** (910–913
+**Numbers reserved:** decisions **D3290–D3319** (D3290–D3308 used), checks **910–919** (910–913
 used). The block was assigned with this spec on 2026-11-23: the highest decision on `main` was
 D3239 (repo-coupling-audit's block D3230–D3259), L1's spec beside this one holds D3260–D3289, and
 the highest check on `main` was 892 (repo-coupling-audit's block 890–899). No decision in

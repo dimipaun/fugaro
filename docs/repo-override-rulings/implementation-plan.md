@@ -30,6 +30,7 @@ the same day as recommended, the six this reconciliation raised:
 | D3305 (migrate once per repository, recorded) | C2's `Project`, M2's record, RG2, PR4, XB5 |
 | D3306 (the real list, fail open; **not the recommendation**) | M1, M2's lines, release A's notes |
 | D3307 (O5's residue accepted) | PR3; release A's notes |
+| D3308 (O6: the launcher refuses an unmigrated repository's folder recipe) | C2's `RecordPath`, PR1 |
 
 **External edges, not tasks.** L1, the required-version stamp (`docs/required-version-stamp/`,
 D3260–D3289, being planned beside this one): release A is cut only after the release that carries
@@ -162,7 +163,8 @@ costs nothing; console and mobile tags are not affected.
   store writes by key, database writes by path, the migrated records to write, and the lines to
   print before any of them), `Planner func(Project, []Repo) (Change, error)` and
   `Source func(ctx) ([]Repo, []string, error)` (the repositories, and the admit patterns it could not
-  list, D3306); `internal/lift/stubs.go` registers the stub planners, which return no change;
+  list, D3306) and `RecordPath(slug string) string` (`fugaro/lift/l8/<slug>.json`, the one name
+  M2 writes and PR1 reads, D3305, D3308); `internal/lift/stubs.go` registers the stub planners, which return no change;
   `contract-migrate.md` says a planner is pure, never writes, acts only on a repository not yet
   migrated, never overwrites a project value, names (never applies) a file value of a repository
   already migrated, and names every repository whose runs change.
@@ -456,13 +458,18 @@ costs nothing; console and mobile tags are not affected.
   recipes ls`, `publish` and `rm` accept copy names, so an admin can replace or remove a migrated
   copy, and `ls` says the folder is not read; `refuseFollowUpRepoRecipe` judges the project copy;
   `budget_preview.go`'s `repoHasRecipe` stops reading the folder and accepts a copy name (R19, R22).
+  A launch of a repository with no record at `lift.RecordPath` whose default branch holds
+  `.fugaro/recipes/<name>.yaml` for the recipe it resolves is refused before anything is written,
+  naming the repository, the recipe and the fix (list the repository in the project, then `fugaro
+  update`); it asks nothing, and a migrated repository or one with no such file launches as before
+  (D3308). The default-branch read is the one S5's gate makes (R16).
 - Files: `internal/cli/recipes_resolve.go`, `internal/cli/recipes.go`, `internal/cli/budget_preview.go`,
   `internal/cli/recipes_lift_test.go` (new).
-- Interfaces: Consumes PR0, PR6.
-- Tests: `TestResolveRecipeOwnCopyFirst`, `TestResolveRecipeIgnoresTheFolder`, `TestRecipesCommandsAcceptACopy`, `TestRecipesLsSaysTheFolderIsNotRead`.
-- Command: `go test ./internal/cli/ -run 'TestResolveRecipeOwnCopyFirst|TestResolveRecipeIgnoresTheFolder|TestRecipesCommandsAcceptACopy|TestRecipesLsSaysTheFolderIsNotRead' -count=1`
-- Red step: `TestResolveRecipeIgnoresTheFolder` fails: the checkout's file wins.
-- Depends on: PR0 (kept); PR6 (kept, behaviour: a copy must parse). Implements D3303. Release gate.
+- Interfaces: Consumes PR0, PR6, C2's `RecordPath`.
+- Tests: `TestResolveRecipeOwnCopyFirst`, `TestResolveRecipeIgnoresTheFolder`, `TestRecipesCommandsAcceptACopy`, `TestRecipesLsSaysTheFolderIsNotRead`, `TestLaunchRefusesAnUnmigratedFolderRecipe` (refused without a record; launched with one; launched with no folder file).
+- Command: `go test ./internal/cli/ -run 'TestResolveRecipeOwnCopyFirst|TestResolveRecipeIgnoresTheFolder|TestRecipesCommandsAcceptACopy|TestRecipesLsSaysTheFolderIsNotRead|TestLaunchRefusesAnUnmigratedFolderRecipe' -count=1`
+- Red step: `TestResolveRecipeIgnoresTheFolder` fails: the checkout's file wins; `TestLaunchRefusesAnUnmigratedFolderRecipe` fails: the launch runs the catalog's recipe.
+- Depends on: PR0 (kept); PR6 (kept, behaviour: a copy must parse); C2 (the record's path). Implements D3303 and D3308. Release gate.
 - Commit: `repo-override-rulings PR1: the launcher resolves a repository's own copy first`
 - Reviewer tier: standard.
 
@@ -678,11 +685,11 @@ costs nothing; console and mobile tags are not affected.
   repository cap (acceptance 8).
 - Files: `internal/lift/stubs.go` (deleted), `internal/lift/registry.go` (new),
   `internal/e2e/update_test.go`, `internal/cli/update_converge_test.go`, `internal/cli/update_in_flight_test.go`.
-- Interfaces: Consumes M1, M2, MC1, AB3, RG2, PR4, RC4, RT3.
-- Tests: `TestUpdateLiftsEveryKey`, `TestUpdateLiftKeepsEveryRunWhereItWas`, `TestUpdateLiftNeverOverwritesALaterProjectValue`, `TestUpdateLiftRefusedPublishWritesNoRecord`, `TestUpdateLeavesARunInFlightRunning`.
-- Command: `go test ./internal/cli/ -run 'TestUpdateLiftsEveryKey|TestUpdateLiftKeepsEveryRunWhereItWas|TestUpdateLiftNeverOverwritesALaterProjectValue|TestUpdateLiftRefusedPublishWritesNoRecord|TestUpdateLeavesARunInFlightRunning' -count=1 && go test ./internal/e2e/ -run 'TestUpdate' -count=1`
+- Interfaces: Consumes M1, M2, MC1, AB3, RG2, PR4, RC4, RT3, PR1.
+- Tests: `TestUpdateLiftsEveryKey`, `TestUpdateLiftKeepsEveryRunWhereItWas`, `TestUpdateLiftNeverOverwritesALaterProjectValue`, `TestUpdateLiftRefusedPublishWritesNoRecord`, `TestUpdateLeavesARunInFlightRunning`, `TestLaunchAfterUpdateFindsTheRecord` (a repository's folder-recipe launch is refused before `update` and goes through after it, D3308).
+- Command: `go test ./internal/cli/ -run 'TestUpdateLiftsEveryKey|TestUpdateLiftKeepsEveryRunWhereItWas|TestUpdateLiftNeverOverwritesALaterProjectValue|TestUpdateLiftRefusedPublishWritesNoRecord|TestUpdateLeavesARunInFlightRunning|TestLaunchAfterUpdateFindsTheRecord' -count=1 && go test ./internal/e2e/ -run 'TestUpdate' -count=1`
 - Red step: `TestUpdateLiftsEveryKey` fails while the stubs are registered.
-- Depends on: M1, M2, MC1, AB3, RG2, PR4, RC4, RT3 (the sides it wires). Release gate.
+- Depends on: M1, M2, MC1, AB3, RG2, PR4, RC4, RT3 (the sides it wires); PR1 (its read of M2's record, D3308). Release gate.
 - Commit: `repo-override-rulings I2: update converges a project whose repositories write every lifted key`
 - Reviewer tier: opus, with a mandatory independent review (`fugaro review --pr N`).
 
@@ -1025,13 +1032,15 @@ The decoupling switch is on for `dimipaun/fugaro` (`fugaro settings planning.dec
 --repo dimipaun/fugaro`: `true`, the default), and the repository's mode is `startup`
 (`rigor.default`), so the pass decoupled wherever only an interface crossed an edge.
 
-**Broken (16 edges, two contracts):**
+**Broken (17 edges, two contracts):**
 
 - C1 breaks S1, S2, S4 and S5's wait on S0: each needs only which keys are lifted, which the
   contract lists, not the scope rows S0 marks. Integration: I1.
 - C2 breaks MC1, AB3, RG2, PR4, RC4 and RT3's wait on M1 (a planner needs the shape of a repository's
   files, not the provider read that fills it) and M2's wait on each of those six (the stage needs a
-  planner's signature and its change type, not what it computes). Integration: I2.
+  planner's signature and its change type, not what it computes), and PR1's wait on M2 (the
+  launcher needs only the migration record's path, not the stage that writes it, D3308).
+  Integration: I2.
 
 **Kept (55 edges)**, each with its reason in the graph; the families: one file (`resolve.go`,
 `scope.go`, `recipes_skew.go`, `run.go`, `update_lift.go`, `project-layer.md`, the CLI reference);
@@ -1042,7 +1051,7 @@ they describe, every release-B task on release A); and four small functions a co
 **Considered and not broken:** a contract for B16's copy name (PR0 is the function itself, so it
 stays a task); a contract for `ab.repos` (the field is the whole of AB1).
 
-**The gain**, as the read reports it: 16 broken, 55 kept, 6 added; before 9 tasks, weight 20;
+**The gain**, as the read reports it: 17 broken, 55 kept, 6 added; before 10 tasks, weight 22;
 after 9 tasks, weight 19; improves. The critical path is release B's chain; the contracts widen
 level 1 (thirteen tasks run at once) rather than shorten it.
 

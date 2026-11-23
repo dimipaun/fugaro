@@ -941,6 +941,11 @@
       "reason": "kept: it calls PR0's lookup order, which a contract would equal"
     },
     {
+      "task": "PR1",
+      "needs": "C2",
+      "reason": "kept: the migration record's path (D3308)"
+    },
+    {
       "task": "S2",
       "needs": "PR5",
       "reason": "kept: doctor prints PR5's cleanup lines, a function of a few lines"
@@ -1284,6 +1289,11 @@
       "task": "XB5",
       "needs": "I2",
       "reason": "kept: one file, internal/cli/update_lift.go, through M2"
+    },
+    {
+      "task": "I2",
+      "needs": "PR1",
+      "reason": "re-joins PR1's read of the record with M2's write (D3308)"
     }
   ],
   "decoupling": [
@@ -1430,6 +1440,15 @@
       },
       "integration": "I2",
       "reason": "the stage needs the planner's signature and its change type, not what a planner computes"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "PR1",
+        "needs": "M2"
+      },
+      "integration": "I2",
+      "reason": "the launcher needs only the migration record's path, which the contract names, not the stage that writes it (D3308)"
     }
   ],
   "contract_changes": [

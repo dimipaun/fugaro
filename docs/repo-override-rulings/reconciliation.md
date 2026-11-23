@@ -259,6 +259,12 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
 | D3306 | Which repositories does `update` migrate, and what happens to one it cannot read? | Fail closed: refuse a launch of a repository that writes a lifted key and was never migrated | **The real list, fail open** | **Not the recommendation (2026-11-23).** `update` migrates the repositories it can list (the local config's, and the concrete names in the published admits); a repository admitted only by a pattern, or unreadable at update time, is not migrated and is refused nothing: its lifted keys are dropped and only the project's values stand. **Consequence, stated plainly:** such a repository can lose an `ab.rate: 0` opt-out (its runs become eligible for A/B sampling at the project's rate), a raised rigor level and its own models; and a recipe name it uses resolves to whatever a listed repository published flat under that name, or else to the catalog recipe of that name, which is the case D3301 exists to prevent (O6). `update` prints each admit pattern it could not expand and each repository it could not read; release A's `### For operators` says so in one line |
 | D3307 | O5: the pre-L8 task that embeds no recipe, its folder gone, a catalog name | Accept it, and name it in the release notes | Refuse every unembedded task; cost: every pre-L8 launcher refused outright | **As recommended (2026-11-23).** O5 is closed |
 
+### The owner's answer on O6 (2026-11-23)
+
+| # | Question | Recommendation, and why | Alternative, and its cost | Answer |
+| --- | --- | --- | --- | --- |
+| D3308 | O6: under D3306, a repository `update` cannot list resolves a recipe name to another repository's flat copy or to the catalog's. Keep, or close? | **Refuse only that case at launch.** Fail-open stays for every other lifted key. The release-A launcher refuses a launch of repository R for recipe `<name>` when R has no migrated record (`fugaro/lift/l8/<slug>.json`, D3305) and R's default branch holds `.fugaro/recipes/<name>.yaml`. The refusal names the fix: list R in the project, then run `fugaro update`. That is exactly the case where a run would silently change recipe, and the default-branch read is the one S5's gate (R16) already makes | Accept it and name it in the notes (runs change silently); publish every copy renamed whenever a pattern is unexpanded (the unlisted repository still falls to the catalog); fail closed for every lifted key (reverses D3306) | **As recommended (2026-11-23).** Closes O6. A repository with no record and no folder file for that name launches as before, and so does a migrated one. Before the first release-A `update`, every repository that still holds its folder is refused with the same fix, which is the one documented upgrade step (HARD RULE). Lands in PR1; C2 exports the record's path |
+
 - **R21 (F25, review round 2).** `config.AgentOf` drops the lifted keys too (the agent block's
   model keys), in S1, and I1 covers its four readers.
 
@@ -330,9 +336,9 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
 - **R12 (F17), amended by D3306.** The reader uses `ContentsReader` and `TreeReader` over the
   repositories it can list (A2); a host or repository it cannot read is named in one line and
   skipped, each admit pattern it cannot expand is named, and `update` still converges for the rest.
-  Such a repository is not refused anything: its lifted keys are dropped by every reader and never
-  moved, and a recipe name it uses resolves to a listed repository's flat copy of that name or to
-  the catalog's (D3306's stated cost, O6).
+  Such a repository is refused nothing except the recipe case D3308 closes: its lifted keys are
+  dropped by every reader and never moved, and a launch whose recipe name its default branch still
+  holds in `.fugaro/recipes/` is refused with the fix (D3308, O6).
   A symbolic link in `.fugaro/recipes/` is judged by the recipe's own parse and size limit.
 - **R13 (F24).** The reader is a contract (C2) shaped so L5 can call the same function.
 - **R14 (F10).** A renamed copy is the repository's file with its `name:` line rewritten and
@@ -378,11 +384,10 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
   nothing from its code; the dependency is the release order (D3300, R18).
 - **O4 (closed 2026-11-23).** D3302's amended form, `<name>.<owner-repo>-<8 hex>` (at most 96
   characters), is the owner's own answer; nothing is left to confirm.
-- **O6 (open, the owner's).** D3306 against D3301: a repository `update` cannot list keeps no
+- **O6 (closed 2026-11-23 by D3308).** D3306 against D3301: a repository `update` cannot list keeps no
   recipe of its own, and a name it uses resolves to another repository's flat copy or to the
-  catalog's — the run-changing case D3301 was answered to prevent. Fail-open was the owner's choice
-  and is not changed here; listing such a repository by name and re-running `update` closes it for
-  that repository.
+  catalog's — the run-changing case D3301 was answered to prevent. The owner kept fail-open and
+  closed this one case: the launcher refuses it (D3308).
 - **O5 (closed 2026-11-23 by D3307, accepted).** A residue of D3304: a task from a pre-L8 launcher that embeds no recipe, on a ref whose
   `.fugaro/recipes/` the repository has already removed, for a name the catalog also has (`default`
   first), runs the catalog recipe, because nothing left at the ref says a copy exists (`internal/runner/recipe.go`
