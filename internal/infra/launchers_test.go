@@ -125,9 +125,15 @@ func TestLauncherAccountsAreThePeopleOfTheList(t *testing.T) {
 //
 // Three facts, and each has a failure of its own:
 //
-//   - The roster's PEOPLE are its humans. A machine's address is a service
-//     account's, the one spelling internal/credsvc's foldLauncherAccounts
-//     refuses outright, so listing it would be an entry no token can match.
+//   - The roster's PEOPLE are its humans, and a service account's address is
+//     nobody's. A machine's address is a service account's — the one spelling
+//     internal/credsvc's foldLauncherAccounts refuses outright, so listing it
+//     would be an entry no token can match — and the SAME address on a roster
+//     entry whose kind says `human` is refused the same way, which is worse:
+//     `workspace user add` defaults to human and neither validatePerson nor
+//     CanonicalAddress refuses the suffix, so a roster carrying one would make
+//     the intake's new revision exit on start, fail the apply that wrote it and
+//     fail every later `fugaro update` of that workspace.
 //   - The class the installation's launchers make is untouched by the roster:
 //     it names the launchers' own people and nobody from the workspace.
 //   - The intake's block carries the roster's people as the list of its own,
@@ -142,11 +148,12 @@ func TestRosterPeopleAreNotLaunchersOfTheWorkspaceProject(t *testing.T) {
 			{Address: "bot@example.iam.gserviceaccount.com", Kind: workspace.KindSA},
 			{Address: "ada@example.com", Kind: workspace.KindHuman},
 			{Address: "ada@example.com", Kind: workspace.KindHuman},
+			{Address: "robot@example.iam.gserviceaccount.com", Kind: workspace.KindHuman},
 		},
 	}
 	want := []string{"ada@example.com", "zoe@example.com"}
 	if got := IntakePeople(roster); !slices.Equal(got, want) {
-		t.Errorf("IntakePeople(roster) = %v, want %v: the intake's second class is the roster's HUMANS, sorted and each once — a machine's address is a service account's and no interactive ID token carries one", got, want)
+		t.Errorf("IntakePeople(roster) = %v, want %v: the intake's second class is the roster's HUMANS, sorted and each once — a machine's address is a service account's and no interactive ID token carries one, whatever kind the roster spells beside it, and credsvc's foldLauncherAccounts refuses that shape outright (the revision would exit on start)", got, want)
 	}
 	if got := IntakePeople(nil); got == nil || len(got) != 0 {
 		t.Errorf("IntakePeople(nil) = %#v, want an empty list: a workspace with no roster names nobody, and null would make the two cases one", got)

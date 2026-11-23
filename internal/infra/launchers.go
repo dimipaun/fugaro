@@ -38,6 +38,13 @@ func launcherAccounts(members []string) []string {
 	return slices.Compact(out)
 }
 
+// serviceAccountSuffix is how a service account's address ends, as Google mints
+// it. It is internal/access's own const and internal/credsvc's own literal,
+// restated because neither package is one this file may import, and it is the
+// SAME rule in all three: an address of this shape is a job's and not a
+// person's, so no class of people may carry one.
+const serviceAccountSuffix = ".gserviceaccount.com"
+
 // IntakePeople is the intake's SECOND class list (WC3, R5): the people of a
 // workspace's roster, as the bare addresses a Google ID token's email claim
 // holds — sorted and each once, so two spellings of one roster give equal bytes.
@@ -48,7 +55,14 @@ func launcherAccounts(members []string) []string {
 // interactive ID token is minted for one. A machine is admitted to a workspace's
 // projects by its IAM bindings and never by a token of this class, so listing it
 // here would be an entry nothing can ever match (the fail-closed reading
-// launcherAccounts takes for a group or a domain).
+// launcherAccounts takes for a group or a domain), and an ENTRY it refused is
+// worse than one nothing matches: the class list is the process's, so the
+// refusal is an error the intake's new revision exits on at start, which fails
+// the apply that would have written it — a roster person the workspace added as
+// a `human` on a service account's address (neither `workspace user add` nor
+// CanonicalAddress refuses one) would break that installation's every later
+// `fugaro update`. The suffix is therefore dropped here, by the fold's own rule
+// and for it, and the module's validation refuses the shape a hand edit writes.
 //
 // Why a function of the roster and not of the launcher list. The two lists are
 // separate on purpose (F10): the same `launchers` variable is the workspace
@@ -68,9 +82,10 @@ func IntakePeople(roster *workspace.Roster) []string {
 		return out
 	}
 	for _, p := range roster.People {
-		if p.Kind == workspace.KindHuman {
-			out = append(out, p.Address)
+		if p.Kind != workspace.KindHuman || strings.HasSuffix(strings.ToLower(p.Address), serviceAccountSuffix) {
+			continue
 		}
+		out = append(out, p.Address)
 	}
 	slices.Sort(out)
 	return slices.Compact(out)

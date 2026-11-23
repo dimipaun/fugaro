@@ -3637,3 +3637,30 @@ run "a_roster_person_must_be_a_bare_address" {
 
   expect_failures = [var.intake]
 }
+
+# A service account's address is refused here too, and this is the one entry a
+# roster can carry that a person wrote: `workspace user add` defaults its kind
+# to `human` and nothing in that path refuses the suffix, so an address Google
+# minted for a job can sit on the roster under a person's kind. It reaches
+# FUGARO_LAUNCHER_ACCOUNTS through this list, and internal/credsvc's
+# foldLauncherAccounts REFUSES the shape — a configuration error, so the
+# intake's new revision exits on start and the apply that would have written it
+# fails, taking every later `fugaro update` of that workspace with it.
+run "a_roster_person_may_not_be_a_service_account" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      people     = ["robot@proj-1234.iam.gserviceaccount.com"]
+    }
+  }
+
+  expect_failures = [var.intake]
+}
