@@ -51,6 +51,24 @@ func resumeTask(h *fuHarness, text string) *task.Spec {
 		Task: text, Branch: "fugaro/" + runID, PR: 1, PreviousRun: runID, Resumes: runID}
 }
 
+// atStage is s, after checking that the run is in stage when it is called: the
+// record's own stage, written before the agent of the stage is handed its
+// request. It is what says which stage a resume entered — a resumed run that
+// ran implement where the pause named fix would have committed the same file.
+func atStage(t *testing.T, h *harness, stage string, s step) step {
+	t.Helper()
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		rec, err := h.store.ReadRecord(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Stage != stage {
+			t.Fatalf("the run is in stage %q where the pause entered %q", rec.Stage, stage)
+		}
+		return s(t, ctx, req)
+	}
+}
+
 // resumedSessionFile is where the restored session's file has to be for the
 // agent to resume it: the project directory Claude Code names after the
 // checkout's real path.
@@ -67,19 +85,33 @@ func resumedSessionFile(t *testing.T, h *harness, session string) string {
 func TestAResumedRunRestoresTheSession(t *testing.T) {
 	cases := []struct {
 		stage string
-		// steps are what the resumed run's stages do. A pause taken in the
+		// steps builds what the resumed run's stages do, and it is built from
+		// the harness because the case that proves WHICH stage the run entered
+		// reads the run's record on the way in (atStage). A pause taken in the
 		// review loop enters the loop itself — no implement stage runs, and the
 		// round is scripted to ask for a fix, which is the stage that proves
-		// the work chain is the restored session — where a pause taken in
-		// implement carries the work on from that stage.
-		steps []step
+		// the work chain is the restored session — and one taken in a fix round
+		// enters that stage, where a pause taken in implement carries the work
+		// on from that stage.
+		steps func(*fuHarness) []step
 		// wantReview is what the resumed run's first stage is.
 		wantReview bool
 	}{
-		{stage: "implement", steps: []step{implement("resumed"), review("ship", 0)}},
-		{stage: "review", wantReview: true, steps: []step{
-			reviewScored("changes", map[string]any{"summary": "fix it", "likelihood": 2, "impact": 2, "fix_cost": 1, "class": "correctness"}),
-			implement("fixed"), review("ship", 0)}},
+		{stage: "implement", steps: func(*fuHarness) []step {
+			return []step{implement("resumed"), review("ship", 0)}
+		}},
+		{stage: "fix", steps: func(h *fuHarness) []step {
+			// The stage the run is in when the step below is called is the fix
+			// stage and not implement: a pause taken in a fix round re-enters
+			// THAT stage, in the session the round was in (resumeFix), which is
+			// the whole of what separates this case from the one above it.
+			return []step{atStage(t, h.harness, "fix", implement("fixed")), review("ship", 0)}
+		}},
+		{stage: "review", wantReview: true, steps: func(*fuHarness) []step {
+			return []step{
+				reviewScored("changes", map[string]any{"summary": "fix it", "likelihood": 2, "impact": 2, "fix_cost": 1, "class": "correctness"}),
+				implement("fixed"), review("ship", 0)}
+		}},
 	}
 	for _, c := range cases {
 		t.Run("a pause in "+c.stage, func(t *testing.T) {
@@ -102,7 +134,7 @@ func TestAResumedRunRestoresTheSession(t *testing.T) {
 				t.Fatalf("parsed = resumes %q, previous_run %q; want %s", parsed.Resumes, parsed.PreviousRun, runID)
 			}
 			h.followUpSpec(t, spec)
-			rec, err := h.run(t, c.steps...)
+			rec, err := h.run(t, c.steps(h)...)
 			if err != nil {
 				t.Fatalf("run: %v", err)
 			}
@@ -154,9 +186,16 @@ func TestAResumedRunRestoresTheSession(t *testing.T) {
 
 // TestAResumeOfAnUnreadableRecordIsNamed is R18's other half: a pause this
 // image cannot act on — a format version it does not read, a session that is
-// not there, a checkpoint its checkout is not at — ends the run with a named
-// outcome, and starts nothing: no stage runs, and the work the paused run left
-// is not started afresh.
+// not there, a checkpoint its checkout is not at, a stage it cannot enter —
+// ends the run with a named outcome, and starts nothing: no stage runs, and
+// the work the paused run left is not started afresh.
+//
+// Each case is a record the resume refuses for its OWN reason and for no other:
+// the checkpoint case's session is restorable and its head is an ancestor of
+// the checkpoint, and the stage case's record is whole and this checkout is the
+// checkpoint it names — so a case fails if the rule it is about is relaxed,
+// which is what makes them pins rather than four ways to reach the same
+// refusal.
 func TestAResumeOfAnUnreadableRecordIsNamed(t *testing.T) {
 	const want = "pause.json names no usable pause"
 	cases := []struct {
@@ -188,12 +227,28 @@ func TestAResumeOfAnUnreadableRecordIsNamed(t *testing.T) {
 		},
 	}, {
 		name: "a head that is not the checkpoint",
+		breakIt: func(t *testing.T, h *fuHarness, _ string) {
+			// The branch moved on since the run was suspended: a person pushed
+			// to the pull request, and this run's checkout is their commit
+			// rather than the one the pause named as the work in progress. The
+			// saved session is the pause's own and restorable — its head is an
+			// ancestor of the checkpoint — so nothing but the checkpoint check
+			// refuses this run, which is the point: a resume that took the
+			// session onto a checkout the paused run never worked at would be
+			// carrying on work that is not there.
+			h.pushForeign(t)
+		},
+	}, {
+		name: "a stage this image cannot enter",
 		breakIt: func(t *testing.T, h *fuHarness, session string) {
-			// The branch moved on since the run was suspended — a person pushed
-			// to the pull request, or another run did — so this checkout is not
-			// the work in progress the pause names.
+			// A record this image reads whole — the version, the session whose
+			// file is saved, the checkpoint this checkout is at — naming a
+			// stage a resume cannot enter from a standing start: what that
+			// stage had half-done is in no record this release reads, and a run
+			// that entered another stage instead would be the fresh start R18
+			// refuses.
 			if err := runstore.Open(h.bucket, repoSlug, runID).PutFile(context.Background(),
-				runstore.PauseFile, []byte(`{"version": 1, "stage": "implement", "session": "`+session+`", "checkpoint": "`+strings.Repeat("a", 40)+`"}`),
+				runstore.PauseFile, []byte(`{"version": 1, "stage": "finalize", "session": "`+session+`", "checkpoint": "`+h.first.PushedHead+`"}`),
 				"application/json"); err != nil {
 				t.Fatal(err)
 			}
