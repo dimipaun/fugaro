@@ -7829,6 +7829,8 @@
         "scripts/live-checks/check-501_test.sh",
         "scripts/live-checks/check-740-run-messages.sh",
         "scripts/live-checks/check-740-run-messages_test.sh",
+        "scripts/live-checks/check-750-review-against-task.sh",
+        "scripts/live-checks/check-750-review-against-task_test.sh",
         "scripts/live-checks/check-760-runs-ls-speed.sh",
         "scripts/live-checks/check-760-runs-ls-speed_test.sh",
         "scripts/live-checks/check-c39.sh",
