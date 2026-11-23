@@ -110,6 +110,14 @@ func (c *Config) Shared() *Config {
 	s.Credentials = nil
 	s.Pools = nil
 	s.Crafts = config.Crafts{}
+	// The routing table is dropped with them and for their reason: it names
+	// which credential serves which model, and by which admissions, so a
+	// launcher who could write it into the runs bucket's shared file would be
+	// aiming every teammate's calls at a credential the owner never admitted
+	// (D3182, F12). It travels to the policy node instead, which the runner
+	// reads and fails closed on — the table's own reader, and the one document
+	// here that is not writable by a launcher.
+	s.ModelRouting = nil
 	// The cascade, the grades and the removals travel the three blocks above
 	// into the policy node, and every one of them is dropped here for the
 	// reason they are, each with its own edge. The cascade's fallback decides

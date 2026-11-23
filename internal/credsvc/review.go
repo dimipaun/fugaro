@@ -69,6 +69,16 @@ const (
 	// ClassReview is the review-only variant of a project job, per
 	// (profile, account): admitted to the mint, the sign and the model path
 	// for its own account only, and refused everywhere else (spec §2.1).
+	//
+	// Its account names the ONE credential a call of the class is offered
+	// (reviewCandidates), and that is what serves the call today: the class
+	// reads the account to CHOOSE a credential, and the class's offering is
+	// decided in cascade.go's arm and nowhere else. Reconciliation F47 is that
+	// this class reach a model the way a run does — the model path's answer for
+	// the run identity's repository, walked from the project's routing table —
+	// and that walk is CS1's, whose own arm in cascade.go replaces the one
+	// below; until it lands, a review job reaches a model no differently from
+	// today.
 	ClassReview JobClass = "review"
 )
 
@@ -118,6 +128,11 @@ func ReviewServiceAccountID(profile, provider, account string) string {
 // and the bundle's tier-B entry, and config.ProviderKeyAccount, which names the
 // project's provider key (docs/api-key-review, D1417 and AK6a). A caller cannot
 // write either.
+//
+// The row's second half is the credential and not an admission only, which is
+// where F47's shape is not yet reached: what would serve a call of the class is
+// the model path's answer for the run identity's repository, and that walk is
+// CS1's (ClassReview).
 type ReviewJobAccount struct {
 	// Email is the review job's service account, in the spelling the
 	// deployment configured (AuthConfig.ReviewJobAccounts folds it for
@@ -383,6 +398,13 @@ func (s *Server) sharedAccount(email string) (SharedJobAccount, bool) {
 // repository is the run identity's own slug, the slug is resolved through the
 // installation's table, and the caller's account must be admitted to that
 // repository by the model path's own admission check.
+//
+// The admission it resolves is the account's and so is the credential the call
+// is then offered (cascade.go's arm, reviewCandidates): this pairing is what
+// decides which account a review call may be served by, and the account is the
+// name of that credential. F47's shape — the account read for the admission
+// alone, and the credential the model path's answer for the run identity's
+// repository — arrives with CS1's walk (ClassReview).
 //
 // The admission is admittedAccounts and not a read of the repository's child
 // node: the child names the accounts an administrator admitted, and the

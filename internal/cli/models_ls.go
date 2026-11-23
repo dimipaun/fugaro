@@ -52,7 +52,7 @@ func newModelsLsCmd() *cobra.Command {
 const modelsLsDocVersion = 1
 
 // The price sources a model row may name, in the words the document prints:
-// this binary's own Claude table, the built-in provider price catalog, the
+// this binary's own embedded table, the built-in provider price catalog, the
 // owner's model_prices, and nothing at all. The schema's enum is these four
 // and nothing else, which is why they are constants rather than literals.
 const (
@@ -194,17 +194,30 @@ func modelsCatalogOf(rows []priceRow) *modelsCatalog {
 
 // directRoute is the Anthropic API itself: the route every Claude ID takes
 // unless the switch sends it elsewhere. Its claims are the embedded table's
-// models, which is every Claude ID this binary can price, and it is open to
-// every repository: no allow_data_to governs a call to Anthropic, whose
+// Claude rows, which is every Claude ID this binary can price, and it is open
+// to every repository: no allow_data_to governs a call to Anthropic, whose
 // credential the owner stores for the project rather than per repository.
+//
+// The table's Claude rows and not the whole table, because the embedded table
+// prices more than Claude now: it carries Vertex's Gemini rows (pricing/
+// vertex_gemini.go, GV3 of docs/model-credentials-routing), and the Anthropic
+// API serves no Google model. A direct route that claimed one would answer a
+// person asking where their `google/gemini-*` pin goes with "Anthropic", which
+// is a route that would refuse the call.
 func directRoute(lc *localcfg.Config) modelsRoute {
 	embedded := pricing.Embedded()
+	var models []string
+	for _, id := range slices.Sorted(maps.Keys(embedded.Models)) {
+		if isClaudeModel(id) {
+			models = append(models, id)
+		}
+	}
 	r := modelsRoute{
 		Name:        config.RouteDirect,
 		Kind:        "anthropic",
 		BaseURL:     "https://api.anthropic.com",
 		Host:        "api.anthropic.com",
-		Models:      slices.Sorted(maps.Keys(embedded.Models)),
+		Models:      models,
 		AllowDataTo: []string{"*"},
 		OpenToAll:   true,
 	}
@@ -545,9 +558,9 @@ func writeModelsLs(cmd *cobra.Command, lc *localcfg.Config, doc modelsLsDoc) err
 }
 
 // routeModelsCell is the ROUTES table's MODELS cell. The direct route claims
-// the whole embedded table, and six IDs there would set the width of the table
-// for every other route, so it is said in words; the JSON document keeps the
-// IDs themselves, which is where a consumer reads them.
+// the embedded table's Claude rows, and those IDs would set the width of the
+// table for every other route, so it is said in words; the JSON document keeps
+// the IDs themselves, which is where a consumer reads them.
 func routeModelsCell(r modelsRoute) string {
 	if r.Name == config.RouteDirect {
 		return fmt.Sprintf("every Claude model (%d in the embedded table)", len(r.Models))

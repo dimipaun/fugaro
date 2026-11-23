@@ -18,8 +18,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/firestore"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runindex"
 )
 
 // fugaro budget history is the history job's hidden entry point (design
@@ -242,7 +244,97 @@ func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string
 	if perr != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), "push: "+oneLine(perr.Error()))
 	}
+
+	// The fold (RI4, D3201): the runs that changed since the index's stamp,
+	// read out of the runs bucket and written into the run index. It is the
+	// index's only incremental writer, and it runs after the registry sweep so
+	// that a run the sweep has just removed -- a crashed one, whose outcome
+	// node the sweep writes -- is folded rather than missed.
+	//
+	// Every failure it has is a warning rather than the job's exit code, as the
+	// push's are: the sweep's own work is the registry, and a fold that cannot
+	// run must not stop the sweep that removes crashed runs and deletes their
+	// users (D12). What a failed fold leaves is the stamp where it was, so the
+	// next sweep reads the same window again.
+	if ferr := foldIndex(ctx, cmd, db, env, getenv, now, test); ferr != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "index: "+oneLine(ferr.Error()))
+	}
 	return remote(err)
+}
+
+// foldIndex folds what changed into the run index (RI4, D3201).
+//
+// The job's environment is Terraform's and carries the runs bucket and the
+// Firestore database name for the rollover's sake; a sweep without them is not
+// an error but a warning, because the sweep itself does not need them (its own
+// work is the registry) and the deployment that carries them is the same job.
+//
+// The writer lease's holder is the execution's name, so a lease a person reads
+// names a job run rather than a process. An invocation outside Cloud Run (a
+// test, a person running the job's command by hand) has no execution name and
+// takes the lease under the job's own name.
+func foldIndex(ctx context.Context, cmd *cobra.Command, db *rtdb.Client, env map[string]string, getenv func(string) string, now func() time.Time, test *historyWiring) error {
+	bucketName, fsDB := getenv(envRunsBucket), getenv(envFirestoreDB)
+	if bucketName == "" || fsDB == "" {
+		return fmt.Errorf("not folded: the job's environment carries no %s and %s", envRunsBucket, envFirestoreDB)
+	}
+	if fsDB != "(default)" {
+		return fmt.Errorf("not folded: %s must be (default): Fugaro uses the project's default database", envFirestoreDB)
+	}
+	if strings.ContainsAny(bucketName, "/: ") {
+		return fmt.Errorf("not folded: %s must be a bucket name", envRunsBucket)
+	}
+	noAuth := test != nil && test.noAuth
+	fsURL := ""
+	openBkt := func(ctx context.Context, name string) (*blobx.Bucket, error) { return blobx.Open(ctx, "gs://"+name) }
+	if test != nil {
+		fsURL = test.firestore
+		if test.bucket != nil {
+			openBkt = test.bucket
+		}
+	}
+	var fsSrc oauth2.TokenSource
+	if noAuth {
+		if fsURL == "" {
+			return fmt.Errorf("not folded: no-auth wiring without a Firestore endpoint")
+		}
+		fsSrc = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test"})
+	} else {
+		ts, err := google.DefaultTokenSource(ctx, cloudPlatform)
+		if err != nil {
+			return fmt.Errorf("no credentials for Firestore: %w", err)
+		}
+		fsSrc = ts
+	}
+	fs, err := firestore.New(fsURL, env[envFirebaseFP], fsSrc)
+	if err != nil {
+		return err
+	}
+	bucket, err := openBkt(ctx, bucketName)
+	if err != nil {
+		return err
+	}
+	defer bucket.Close()
+
+	holder := getenv("CLOUD_RUN_EXECUTION")
+	if holder == "" {
+		holder = "fugaro-history"
+	}
+	f := &runindex.Fold{
+		DB: db, FS: fs, Bucket: bucket.Bucket, Holder: holder, Now: now,
+		Warn: func(s string) { fmt.Fprintln(cmd.ErrOrStderr(), "index: "+oneLine(s)) },
+	}
+	rep, err := f.Fold(ctx)
+	if err != nil {
+		return err
+	}
+	if rep.Held {
+		fmt.Fprintf(cmd.OutOrStdout(), "index: not folded: %s holds the writer lease\n", oneLine(rep.Holder))
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "index: %d folded, %d unreadable, through %s\n",
+		rep.Folded, rep.Unreadable, rep.Through.UTC().Format(time.RFC3339))
+	return nil
 }
 
 // checkDatabaseHost refuses a database URL that is not the Firebase project's

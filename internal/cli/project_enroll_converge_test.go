@@ -28,6 +28,7 @@ import (
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/yamledit"
@@ -798,4 +799,114 @@ func (r *addRig) nodeText(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// enrolAccountLocal is enrolRigLocal with the account bmb already serving the
+// project's other repository: the shape a project is in when the next
+// repository to enrol is one the account has never been told about.
+func enrolAccountLocal() string {
+	local := strings.Replace(enrolRigLocal,
+		"  owner/repo-a: { provider: github, github_app_id: \"12345\", workflows: [web] }\n",
+		"  owner/repo-a: { provider: github, github_app_id: \"12345\", workflows: [web], claude_accounts: [bmb] }\n", 1)
+	return local + "claude_accounts:\n  bmb:\n    allow_data_to: [owner/repo-a, owner/repo-c, owner/repo-d]\n"
+}
+
+// TestReposAddLeavesAConfigTheNextPublishAccepts is the live bug of 2026-11-22:
+// `repos add` wrote claude_accounts: [bmb] onto the entry and left bmb's own
+// allow_data_to without the repository, so every later `fugaro update` was
+// refused by the validator. The repository's own file names the account
+// (agent.oauth_token), which is the one statement the command may extend the
+// trust list on.
+func TestReposAddLeavesAConfigTheNextPublishAccepts(t *testing.T) {
+	r := enrolRigOver(t, enrolAccountLocal())
+	enrolCheckout(t, strings.Replace(enrolCheckoutYAML, "agent: { auth: oauth }", "agent: { auth: oauth, oauth_token: bmb }", 1))
+	out, errOut, err := r.enrol(t, enrolRepo)
+	if err != nil {
+		t.Fatalf("project repos add %s: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
+	}
+	lc := r.addLocal(t)
+	if got := lc.Repos[enrolRepo].ClaudeAccounts; !slices.Equal(got, []string{"bmb"}) {
+		t.Fatalf("the entry's claude_accounts is %v, want [bmb]", got)
+	}
+	if !lc.ClaudeAccounts["bmb"].AllowsData(enrolRepo) {
+		t.Errorf("claude_accounts.bmb.allow_data_to is %v and does not name %s", lc.ClaudeAccounts["bmb"].AllowDataTo, enrolRepo)
+	}
+	if _, err := projectpolicy.DeriveAccounts(policyProfiles(lc), lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts()); err != nil {
+		t.Errorf("the config repos add left is one the publish refuses: %v", err)
+	}
+	if !strings.Contains(out, "claude_accounts.bmb.allow_data_to") || !strings.Contains(out, "agent.oauth_token") {
+		t.Errorf("the run does not say it widened the account's list, and why:\n%s", out)
+	}
+}
+
+// TestReposAddNeverWidensAnAccountTheRepositoryDoesNotName: an account read
+// from the project's other repositories is a guess about this one, so where
+// the repository's own file does not name it the account stays off the entry
+// and its trust list is left exactly as it was.
+func TestReposAddNeverWidensAnAccountTheRepositoryDoesNotName(t *testing.T) {
+	r := enrolRigOver(t, enrolAccountLocal())
+	out, errOut, err := r.enrol(t, enrolRepo)
+	if err != nil {
+		t.Fatalf("project repos add %s: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
+	}
+	lc := r.addLocal(t)
+	if lc.ClaudeAccounts["bmb"].AllowsData(enrolRepo) {
+		t.Errorf("the allow list of bmb was widened to %v for a repository whose file does not name the account", lc.ClaudeAccounts["bmb"].AllowDataTo)
+	}
+	if got := lc.Repos[enrolRepo].ClaudeAccounts; len(got) != 0 {
+		t.Errorf("the entry names %v, an account that does not cover it", got)
+	}
+	if _, err := projectpolicy.DeriveAccounts(policyProfiles(lc), lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts()); err != nil {
+		t.Errorf("the config repos add left is one the publish refuses: %v", err)
+	}
+	if !strings.Contains(out, "accounts allow bmb "+enrolRepo) {
+		t.Errorf("the run does not name the command that gives the account to the repository:\n%s", out)
+	}
+}
+
+// TestReposAddRefusesAnEntryThatAlreadyNamesAnUncoveredAccount: an entry the
+// file holds already names an account whose list excludes the repository, and
+// the repository's own file does not name that account. Nothing here may widen
+// the list on the entry's say-so, and nothing may be written over a config the
+// publish will refuse: the refusal comes before any write with the fix.
+func TestReposAddRefusesAnEntryThatAlreadyNamesAnUncoveredAccount(t *testing.T) {
+	local := strings.Replace(enrolAccountLocal(),
+		"  owner/repo-a:", "  "+enrolRepo+": { provider: github, base_branch: main, github_app_id: \"12345\", workflows: [web], claude_accounts: [bmb] }\n  owner/repo-a:", 1)
+	r := enrolRigOver(t, local)
+	before, node := r.addLocal(t), r.nodeText(t)
+	out, _, err := r.enrol(t, enrolRepo)
+	if err == nil {
+		t.Fatalf("repos add accepted an entry the publish refuses:\n%s", out)
+	}
+	for _, want := range []string{"nothing was written", "accounts allow bmb " + enrolRepo} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not carry %q: %v", want, err)
+		}
+	}
+	if !reflect.DeepEqual(r.addLocal(t).ClaudeAccounts, before.ClaudeAccounts) || r.nodeText(t) != node {
+		t.Errorf("a refused run wrote something")
+	}
+}
+
+// TestDoctorNamesARepositoryTheNextPublishWillRefuse: a config where an entry
+// names an account that does not cover it is reported before `fugaro update` is
+// run, with the command that closes it; one that is covered is silent.
+func TestDoctorNamesARepositoryTheNextPublishWillRefuse(t *testing.T) {
+	bad := strings.Replace(enrolAccountLocal(),
+		"  owner/repo-a:", "  "+enrolRepo+": { provider: github, github_app_id: \"12345\", workflows: [web], claude_accounts: [bmb] }\n  owner/repo-a:", 1)
+	lc, err := localcfg.Parse([]byte(bad))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := doctorRepoAccountChecks(lc)
+	if len(checks) != 1 || checks[0].Severity != "warning" || !strings.Contains(checks[0].Fix, "accounts allow bmb "+enrolRepo) {
+		t.Fatalf("doctor's answer is %+v, want one warning naming `accounts allow bmb %s`", checks, enrolRepo)
+	}
+	good, err := localcfg.Parse([]byte(enrolAccountLocal()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := doctorRepoAccountChecks(good); len(got) != 0 {
+		t.Errorf("doctor warns of a config the publish accepts: %+v", got)
+	}
 }

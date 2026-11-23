@@ -76,12 +76,16 @@ func readRunnerCIState(ci string) (runnerCIState, error) {
 	if m := runnerTestJobCapRE.FindStringSubmatch(job); m != nil {
 		st.cap, _ = strconv.Atoi(m[1])
 	}
-	// The runners that split the suite name the package in a matrix entry and
-	// run it through one `go test` line that carries the bound.
-	sharded := strings.Contains(job, "pkg: ./internal/runner")
+	// The runners that split the suite take the package from a matrix entry and
+	// run it through one `go test` line that carries the bound. The matrix is
+	// either written out with the package named in an entry, or the
+	// selector's own output, which names the package only on the runs a change
+	// reaches it and runs every leg under the same bound.
+	sharded := strings.Contains(job, "pkg: ./internal/runner") ||
+		strings.Contains(job, "matrix: ${{ fromJSON(needs.select.outputs.legs) }}")
 	steps := 0
 	for _, line := range strings.Split(job, "\n") {
-		if !strings.Contains(line, "go test") {
+		if !strings.Contains(line, "go test") && !strings.Contains(line, "run_tests") {
 			continue
 		}
 		steps++
@@ -90,7 +94,7 @@ func readRunnerCIState(ci string) (runnerCIState, error) {
 		if strings.Contains(line, "grep -v") && strings.Contains(line, "internal/runner") {
 			continue
 		}
-		if !strings.Contains(line, "./internal/runner") && !(sharded && strings.Contains(line, `"$PKG"`)) {
+		if !strings.Contains(line, "./internal/runner") && !(sharded && strings.Contains(line, "$PKG")) {
 			continue
 		}
 		m := runnerStepBoundRE.FindStringSubmatch(line)

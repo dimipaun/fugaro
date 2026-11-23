@@ -153,6 +153,6 @@ output "project_secrets" {
 }
 
 output "orchestrator" {
-  description = "The resident orchestrator's own account email, or null on an installation the owner has not turned it on for (mobile plan task P5.1b; the design's section 4.3). P5.1c's service runs as it, and it is the account internal/infra/tf's cover reads as its own principal kind rather than as a launcher — the design's eleventh never-rule is that it is never a member of var.launchers. The variable this reads is written by `fugaro update --firebase-project <gcp-project-id> --orchestrator`, at the stage that has the Firebase outputs, which is what orchestrator.tf's stated ordering requires."
+  description = "The resident orchestrator's own account email, or null on an installation that has no block yet (mobile plan task P5.1b; the design's section 4.3). P5.1c's service runs as it, and it is the account internal/infra/tf's cover reads as its own principal kind rather than as a launcher — the design's eleventh never-rule is that it is never a member of var.launchers. The variable this reads is written by `fugaro update`, once the installation records the Firebase backend, which is what orchestrator.tf's stated ordering requires."
   value       = local.orchestrator_on ? google_service_account.orchestrator[0].email : null
 }
