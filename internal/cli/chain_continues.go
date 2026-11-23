@@ -450,9 +450,18 @@ func chainRead(ctx context.Context, env *cloudEnv, slug, from string) (*runstore
 // *run* is minted with, not the one this read uses — a chain read is nothing
 // the run's missing identity should stop, and the launch's own gates refuse
 // that launch a few lines later anyway.
+//
+// An installation that writes no mode is the same state here as the word that
+// was a mode until this release, which is the shape the release behind gave this
+// reader: the local config now answers observe for both (AB2, D3010,
+// localcfg.BudgetMode), and reading that answer would make every existing
+// installation with a database start its chain reads against a ledger whose
+// counters the run that wrote the records never filled — a move AB4 owns ("the
+// chain's ledger reader … stop reading off") and AB2's merge moves no chain's
+// figures. AB4 drops this read.
 func launcherLedgers(ctx context.Context, env *cloudEnv) (runstore.LedgerReader, error) {
 	lc := env.lc
-	if lc.BudgetMode() == localcfg.BudgetOff || lc.Budget == nil || lc.Budget.RTDBURL == "" {
+	if lc.Budget == nil || lc.Budget.Mode == "" || lc.BudgetMode() == localcfg.BudgetOff || lc.Budget.RTDBURL == "" {
 		return nil, nil
 	}
 	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)

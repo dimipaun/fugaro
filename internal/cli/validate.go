@@ -68,13 +68,24 @@ func needsAnthropicKey(lc *localcfg.Config, cfg *config.Config, repo string) boo
 // ceilingLayer is the owner's ceiling as the runner builds it from the job
 // environment update --repo sets from the project config: an "off" mode is no
 // mode at all.
+//
+// The mode the layer carries is the one the project config *writes*: a config
+// that writes none, like the word that was a mode until this release, leaves it
+// empty, so every reader of this layer treats the installation as having no
+// budget at all, the shape the release behind gave this reader. What AB2
+// changed — the local config answers observe for a mode it does not write
+// (D3010, localcfg.BudgetMode) — must not reach here: "the rules apply in every
+// mode" is that reader's own task's move (AB3: "the ceiling layer, the vertex
+// refusal and the price rules … treat an off mode as no mode at all"), and
+// AB2's merge moves no command's behaviour. AB3 drops this read, asking
+// BudgetMode instead.
 func ceilingLayer(lc *localcfg.Config) policy.Layer {
 	var l policy.Layer
 	if b := lc.Budget; b != nil {
 		l.PerRunUSD, l.MaxRunTokens, l.AllowedModels = b.PerRunUSD, b.MaxRunTokens, b.AllowedModels
-	}
-	if m := lc.BudgetMode(); m != localcfg.BudgetOff {
-		l.Mode = m
+		if b.Mode != "" && b.Mode != localcfg.BudgetOff {
+			l.Mode = b.Mode
+		}
 	}
 	return l
 }
