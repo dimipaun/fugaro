@@ -82,7 +82,7 @@ script). What was seen and what was not:
 
 **Check 891, where `update` reads the working directory: PASS.** It planned from an empty
 directory and from three checkouts (`dimipaun/fugaro`, `edgeappinc/fugarosandbox`,
-`dimipaun/fugarosandbox`). Fifteen of nineteen stages were the same everywhere. Four differed, and
+`dimipaun/fugarosandbox`). Sixteen of nineteen stages were the same everywhere. Three differed, and
 each is a §4 blocker:
 
 - `secrets` (RC98): skipped outside a checkout; inside, done, with a different detail per

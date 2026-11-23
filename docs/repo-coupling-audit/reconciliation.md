@@ -299,6 +299,6 @@ Resolutions (one defensible answer, stated rather than asked):
   No member's IAM exists to read; a project with an operator needs the check run again.
 - U4. **Restated after Checks 891 and 892 (2026-11-23).** On `fugaro` no member exists, so no
   member-run command can trigger Terraform there today. Check 891 ran as the admin and showed
-  that only the four stages of report §4 change with the directory. Whether a member's writer runs
+  that only three stages, all blockers report §4 names, change with the directory. Whether a member's writer runs
   Terraform on a project that has members is still F7's answer from the code: the IAM allows it.
   It stays open until a project with an operator runs Check 891 as that operator.
