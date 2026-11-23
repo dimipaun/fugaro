@@ -7318,7 +7318,10 @@ will change, asks once for the project's name, and then does each step as
 far as it can:
 
   1. the repository's own fugaro.yaml: read, never written
-  2. this machine's project config: the repository's repos: entry
+  2. this machine's project config: the repository's repos: entry (and, when
+     its fugaro.yaml names a Claude account by agent.oauth_token, the
+     repository in that one account's allow_data_to, which the next
+     update's publish requires; no other account's list is touched)
   3. this machine's project config: its repo-to-image mapping
   4. the published policy's allow_repos
   5. the publish of the policy node (fugaro update's policy stage)

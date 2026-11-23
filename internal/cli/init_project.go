@@ -90,6 +90,16 @@ func (o *initOptions) checkCreateProject() error {
 		return userErr("--create-project creates a project; it excludes --forget, --config-only and --print-vars")
 	case o.cloud.gcpProject == "":
 		return userErr("fugaro setup creates a new GCP project and needs --gcp-project <id>: the new ID (fugaro setup never uses the gcloud default project)")
+	// A run that creates has no installation to carry the account from:
+	// check()'s trio rule lets an explicit --budget take the account the
+	// installation's own state records (R7), and this run's installation is
+	// what it is about to make. Refused here, at the door, and not at the
+	// state read that rule would otherwise fall back to — that read is the
+	// installation stage's, and the project, its Firebase link, its billing
+	// and its APIs are all made before it, so a run that ended there would
+	// have changed cloud and left nothing that says why.
+	case o.billingAccount == "" && o.budget > 0 && o.budgetCurrency != "":
+		return userErr("a budget needs --billing-account: this run creates the project, so there is no installation whose state records the account its alert was created with. Pass --billing-account <id> with --budget and --budget-currency")
 	}
 	// The pairing rule, read through the default (firebaseProject, D7): the
 	// project this run creates is its own Firebase project, and Fugaro uses no
