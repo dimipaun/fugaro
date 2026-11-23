@@ -109,6 +109,10 @@ if [ "${1:-}" = auth ] && [ "${2:-}" = print-access-token ]; then
   printf '%s\n' "${FAKE891_TOKEN:?}"
   exit 0
 fi
+if [ "${1:-}" = storage ] && [ -n "${FAKE891_LOGIN_EXPIRED:-}" ]; then
+  printf 'ERROR: (gcloud.storage.%s) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\n' "${2:-}" >&2
+  exit 1
+fi
 if [ "${1:-}" = storage ]; then
   url=${3:-}
   key=${url#gs://*/}
@@ -389,6 +393,17 @@ test_the_token_is_never_on_argv() {
 
 # ------------------------------------------------------------------- the footer
 
+test_an_expired_gcloud_login_is_named() {
+  case_dir login_expired
+  export FAKE891_LOGIN_EXPIRED=1
+  run891 test "$sub" "$other"
+  unset FAKE891_LOGIN_EXPIRED
+  expect_status "$status" 3 "an expired gcloud login"
+  expect_contains "$out" "gcloud storage ls gs://fugaro-runs-sbx-proj/runs/ failed (exit 1)" "an expired gcloud login: the listing's failure is named"
+  expect_contains "$out" "Reauthentication failed" "an expired gcloud login: gcloud's own message"
+  expect_not_contains "$out" "listed no repository" "an expired gcloud login: not read as an empty bucket"
+}
+
 test_index=0
 t() {
   local i=$test_index
@@ -411,6 +426,7 @@ t test_stdin_is_closed
 t test_values_and_tokens_are_never_printed
 t test_a_differing_secrets_stage_passes
 t test_the_token_is_never_on_argv
+t test_an_expired_gcloud_login_is_named
 
 if [ "$failures" -ne 0 ]; then
   echo "check-891-update-trace_test.sh: $failures failure(s)" >&2
