@@ -30,11 +30,14 @@ import (
 // exact plan and banner, and says it was covered.
 //
 // It never covers what is money, permanent, a secret or someone else's:
-// project creation, billing, the Firestore database's creation, a Cloud Build,
+// project creation, billing, a Cloud Build,
 // replacing a registry tag, an unlisted repository (confirmRepo), secrets.
 // Those never call anything here: TestRunConfirmationCallSites lists the only
 // files that may. And a step whose plan destroys, replaces or removes an IAM
-// grant is not covered either (tf.Cover): it asks its own question.
+// grant is not covered either (tf.Cover): it asks its own question. The
+// Firestore database's creation is not one of them: no step confirms its
+// location (D3090 of docs/location-preference), so it is a step of no
+// confirmation at all.
 //
 // Fugaro-owned means: the project was created by this run (fugaro setup
 // --create-project), or the runs bucket's fugaro/project.json names this
@@ -673,9 +676,6 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 		fmt.Fprintln(w, "Still asks separately, never covered by this confirmation:")
 	}
 	var sep []string
-	if o.firebase != "" {
-		sep = append(sep, "the Firestore database's creation (its location is permanent)")
-	}
 	if len(o.replaceImages) > 0 {
 		sep = append(sep, "replacing a tag in your registry (--replace-image)")
 	}

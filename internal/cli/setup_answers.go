@@ -22,7 +22,7 @@ import (
 // It is an input and never a consent. The file fills the same flags the
 // wizard's answers fill (setupQuestions, setup.go), and nothing else: the
 // steps that are a person's — creating the GCP project, linking its billing
-// account, the permanent Firestore location, every secret value — have no
+// account, every secret value — have no
 // field here, and the run that reads the file goes on to meet them exactly as
 // a run answered at a terminal does. A document that claimed one of them would
 // be a document confirming a step, which --json refuses by design

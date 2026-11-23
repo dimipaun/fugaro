@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -145,21 +144,6 @@ func TestTheStateBucketCreationNeedsARealTerminal(t *testing.T) {
 	}
 	if len(r.ran(t, "apply")) != 0 {
 		t.Errorf("calls %q", r.calls(t))
-	}
-}
-
-// The Firestore location's confirmation never reads stdin under
-// --non-interactive.
-func TestNonInteractiveNeverReadsFirestoreLocation(t *testing.T) {
-	rd := &readSpy{Reader: strings.NewReader("us-east5\n")}
-	r := &initRun{o: &initOptions{nonInteractive: true}, w: &strings.Builder{}, in: bufio.NewReader(rd)}
-	err := r.confirmLocation(fsLocation("us-east5"))
-	var ny *initflow.NeedsYouError
-	if !errors.As(err, &ny) || strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("err %v: the location is the user's, and --yes does not give it", err)
-	}
-	if rd.read {
-		t.Error("stdin was read")
 	}
 }
 

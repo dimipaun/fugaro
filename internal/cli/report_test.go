@@ -38,15 +38,22 @@ func TestReportNoAuthNeverReachesRealFirestore(t *testing.T) {
 	}
 }
 
+// The setup help keeps the Firestore step's own promises, in the words that
+// are true after LP10 (D3090 of docs/location-preference): where the database
+// goes, that its location is permanent, and that the run creates it with
+// nothing asked — not that the location has a confirmation of its own.
 func TestInitHelpMentionsFirestoreStep(t *testing.T) {
 	out, _, err := execute(t, "setup", "--help")
 	if err != nil {
 		t.Fatal(err)
 	}
 	out = strings.Join(strings.Fields(out), " ")
-	for _, want := range []string{"Firestore", "us-east5", "permanent", "the location's confirmation is the person at a real terminal"} {
+	for _, want := range []string{"Firestore", "us-east5", "permanent", "no step at all", "asking nobody"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("fugaro setup --help lacks %q", want)
 		}
+	}
+	if strings.Contains(out, "the location's confirmation") {
+		t.Errorf("fugaro setup --help still promises the location a confirmation of its own:\n%s", out)
 	}
 }

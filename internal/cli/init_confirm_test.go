@@ -165,50 +165,55 @@ func TestInitAsksNoConfirmation(t *testing.T) {
 	})
 }
 
-// TestTypedOnlyFirestoreLocationMatrix: the Firestore location is permanent,
-// and it is the ONE step W5.1 changes in a single door (D12's answer of
-// 2026-10-20): in `setup` it is the person's alone — only a run that reaches
-// their own real terminal gives it, and since T7 their being there IS the
-// confirmation, with nothing typed — and in `update` it is covered by the
-// run's own answer, because a re-converge of a database that already exists is
-// not a first-time decision. The three steps the answer never relaxes, in
-// either door, are creating the project and linking the billing account (which
-// `update` refuses by flag, so they cannot arise here at all) and this
-// location in `setup`.
-func TestTypedOnlyFirestoreLocationMatrix(t *testing.T) {
-	for _, door := range []string{setupDoor.name, updateDoor.name} {
-		for _, c := range conditions() {
-			t.Run(door+" "+c.name, func(t *testing.T) {
-				c := c.withDoor(door)
-				r, spy, out := c.run(t, fsLocation("us-east5")+"\n")
-				err := r.confirmLocation(fsLocation("us-east5"))
-				// The person's own in setup, and covered by the run's own answer
-				// in update: the same call site, and the door decides (D12).
-				can := canConfirmStep(door == updateDoor.name, *r.o, r.conditions())
-				if can {
-					if err != nil {
-						t.Fatalf("the location was not confirmed: %v", err)
-					}
-					if spy.read {
-						t.Fatalf("stdin was read: nothing is typed at a confirmation any more (T7)")
-					}
-					if c.opts.yes && !strings.Contains(out.String(), "confirmed by this run's own answer") {
-						t.Errorf("the run's own answer confirmed the location without saying so:\n%s", out)
-					}
-					return
-				}
-				var ny *initflow.NeedsYouError
-				if err == nil || !asNeedsYou(err, &ny) || spy.read {
-					t.Fatalf("err %v, stdin read %v: confirmed, or read, without a confirmation", err, spy.read)
-				}
-				if strings.Contains(err.Error()+out.String()+strings.Join(ny.Left.Commands, " "), "--yes") {
-					t.Errorf("the refusal suggests --yes: %v / %v", err, ny.Left)
-				}
-				if len(ny.Left.Commands) != 1 || strings.Contains(ny.Left.Commands[0], "\n") || !strings.Contains(ny.Left.Commands[0], "--firebase-project aurora-fp") {
-					t.Errorf("the typed route is not the one-line command: %+v", ny.Left)
-				}
-			})
-		}
+// TestNoStepConfirmsALocation is LP10 (D3090 of docs/location-preference):
+// the Firestore database's location is no confirmation at all. The step that
+// creates the database prints the line saying where — and that a database's
+// location is permanent — and creates it, in every session the stage itself
+// may run in: a person's terminal, a pipe, --json, and a coding agent's
+// session alike. Nothing is typed, no line is read, and no note is printed.
+//
+// The step is driven directly, so the arms differ in the session and in
+// nothing else: what the whole command does with those sessions (the stage's
+// own fences, D3028) is TestEnsureNeedsNoConfirm's and the converge tests'.
+//
+// Its red state was the location's note and a NeedsYouError with no terminal:
+// confirmLocation, which this test replaced the matrix of.
+func TestNoStepConfirmsALocation(t *testing.T) {
+	loc := fsLocation(defaultRegion)
+	for _, c := range conditions() {
+		t.Run(c.name, func(t *testing.T) {
+			r := newFBRig(t)
+			run, spy, out := c.run(t, "")
+			lc, err := localcfg.Parse([]byte(readFileString(t, r.cfg)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fs, err := run.firestoreStep(t.Context(), lc, fpID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := fs.Plan(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := run.deployFirestore(t.Context(), fs); err != nil {
+				t.Fatalf("the database's location was left for a person: %v\n%s", err, out)
+			}
+			if spy.read {
+				t.Errorf("the location was read: nothing is typed at it")
+			}
+			if got, _ := r.fs.Database(); got != loc {
+				t.Errorf("the database is in %q, want the mapping's answer %s\n%s", got, loc, out)
+			}
+			if n := r.dbCreates(); n != 1 {
+				t.Errorf("database creates = %d, want 1\n%s", n, out)
+			}
+			if want := "the Firestore database is created in " + loc + ", and a database's location can NEVER be changed."; !strings.Contains(out.String(), want) {
+				t.Errorf("the run does not print where the database goes, and that it is permanent (%q):\n%s", want, out)
+			}
+			if strings.Contains(out.String(), "⚠ CONFIRM") {
+				t.Errorf("a step still asks for the location:\n%s", out)
+			}
+		})
 	}
 }
 

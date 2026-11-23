@@ -8,8 +8,12 @@ import (
 // The money and permanence steps of the managed set, pinned as tests: the
 // steps the ruling of 2026-11-01 takes the prompt from are the ones the gate
 // stands in for and the ordinary steps it does not judge, and these are the
-// ones left out of both — a billable first image build, the Firestore
-// database's own location, and a registry tag replacement. What decides them is
+// ones left out of both — a billable first image build and a registry tag
+// replacement. (The third one this file used to pin, the Firestore database's
+// own location, is no such step any more: no step confirms it at all, so
+// nothing stands out of a gate for it — LP10, D3090 of docs/location-preference,
+// and the firebase stage's own ordinary confirmation is what its database is
+// created under.) What decides them is
 // D1026's rule, and it is the design's rule rather than this build's choice: a
 // step that is money or permanent is one a plan verdict cannot stand in for, so
 // it is judged by no plan gate at all (managed.ConvergeUnjudged, which refuses
@@ -87,7 +91,7 @@ func moneyWorlds() []struct {
 	}
 }
 
-// assertMoneyStep is the one assertion all three tests make, in both sessions:
+// assertMoneyStep is the one assertion both tests below make, in both sessions:
 // want says what this world's answer is, and it is the same one in the managed
 // project and in the one that is not managed. A person at their own terminal
 // confirms the step with nothing typed and nothing read (T7: the name is gone);
@@ -141,29 +145,7 @@ func TestManagedBillableFirstBuildKeepsTheOwnersTerminal(t *testing.T) {
 	}
 }
 
-// The Firestore database's location: the one step of the firebase stage that is
-// asked on its own (init_firebase.go's stepConfirmation, with the door as the
-// own-answer argument), and permanent in the way a plan cannot judge — a
-// database's location cannot be changed afterwards. It is a step the run's own
-// answer reaches in `update` and not in `setup`, and the person at the terminal
-// answers it in both; which door the run is in is what lets that answer reach
-// it in `update` and never in `setup`.
-func TestManagedFirestoreLocationKeepsTheOwnersTerminal(t *testing.T) {
-	for _, tc := range moneyWorlds() {
-		t.Run(tc.what, func(t *testing.T) {
-			_, e, out, spy := managedTerminalUpdate(t, tc.managed, tc.terminal)
-			confirmed, reachable, err := e.r.askClass(
-				"creates the Firestore database in northamerica-northeast1 for the budget backend",
-				e.r.o.door == updateDoor.name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertMoneyStep(t, out, spy, reachable, confirmed, tc.terminal)
-		})
-	}
-}
-
-// A registry tag replacement is the third, and it is structural rather than
+// A registry tag replacement is the other one, and it is structural rather than
 // judged: --replace-image is one of the flags that shape the installation
 // (initOptions.installationFlags, asked by shapesTheInstallation), so a run
 // that carries it is refused the gate before any mark is read — gateRun returns
