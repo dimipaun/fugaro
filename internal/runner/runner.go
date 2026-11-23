@@ -402,7 +402,16 @@ type run struct {
 	// D1934); nil for a run that holds none, which is every run of an
 	// installation the launcher was granted no slip for. slipMu guards it,
 	// because the beat's own goroutine runs while the run goes on.
-	slip   *slipHold
+	slip *slipHold
+	// wsSlip is the workspace's own slip, claimed at bootstrap from the id the
+	// launcher was granted (creds.PersonSlipEnv, WC8) and presented to the
+	// workspace's service alone (R4). It is a second hold rather than the same
+	// one because the two slips have two grantors and two claim secrets, and
+	// they travel under two pairs of headers exactly so that no call can carry
+	// the wrong one; nil for a run the workspace granted no slip, which is
+	// every run of a member whose launcher holds no personal token. slipMu
+	// guards it with slip above.
+	wsSlip *slipHold
 	slipMu sync.Mutex
 	// credRoute is the run's read of its own credential route record — read
 	// once for the whole run (gateway.go's credentialRoute) and asked at least
