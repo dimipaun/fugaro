@@ -248,7 +248,7 @@ func TestWorkspaceWritesChain(t *testing.T) {
 // not become a way around that — the flag saves the change FOR `fugaro apply`,
 // and a record a coding agent's session could queue would be the raise the
 // session may not make at all. The fence is the one every local write already
-// meets (applySettingsEdit, the same fence `workspace member add` meets), and
+// meets (applySettingsEdit, the same fence `workspace project add` meets), and
 // it is met before the chain: nothing is written and nothing is queued, with
 // and without the flag.
 func TestWorkspaceCapSetMonthlyRefusedInAnAgentSession(t *testing.T) {

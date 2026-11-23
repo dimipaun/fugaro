@@ -1945,7 +1945,7 @@ var (
 	// "serviceAccount:${each.value}" is the workspace root's invoker binding
 	// (WS6, D2980): the member table's job accounts arrive as bare addresses —
 	// internal/localcfg's WorkspaceMember.JobServiceAccounts holds an "IAM
-	// service account address" and `fugaro workspace member add` writes that
+	// service account address" and `fugaro workspace project add` writes that
 	// shape into the workspace's own config, which is what this root's tfvars
 	// carries — so the resource writes the prefix the table does not. It is
 	// admitted by shape for the reason each.value is: what bounds the member is

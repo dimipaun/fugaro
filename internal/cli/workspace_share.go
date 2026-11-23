@@ -174,8 +174,8 @@ func runWorkspaceShare(cmd *cobra.Command, credential string, o *workspaceShareO
 			return userErr("--projects %s: %q is not a project name", strings.Join(o.projects, ","), p)
 		}
 		if _, ok := table[p]; !ok {
-			return userErr("workspace %s declares no member %s, so %s may not be served to it: the shared list may only name projects the member table declares (fugaro workspace show %s lists them; add the member with fugaro workspace member add %s %s)",
-				o.workspace, p, credential, o.workspace, o.workspace, p)
+			return userErr("workspace %s declares no member %s, so %s may not be served to it: the shared list may only name projects the member table declares (fugaro workspace show %s lists them; add the member with fugaro workspace project add %s --workspace %s)",
+				o.workspace, p, credential, o.workspace, p, o.workspace)
 		}
 	}
 	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: path})

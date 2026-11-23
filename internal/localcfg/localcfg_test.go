@@ -2800,7 +2800,7 @@ func TestWorkspaceMemberEntryValidation(t *testing.T) {
 	// leave every command in that project — `fugaro update` among them —
 	// unable to read the file the release behind wrote. The service holds a
 	// run's verified slug to this list, so an account with none is served
-	// nothing; `fugaro workspace member add` is where writing one is refused.
+	// nothing; `fugaro workspace project add` is where writing one is refused.
 	none, err := Parse([]byte(account("")))
 	if err != nil {
 		t.Fatalf("an account that names no repos was refused: %v", err)
