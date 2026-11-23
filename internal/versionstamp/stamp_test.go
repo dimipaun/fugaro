@@ -284,6 +284,17 @@ func TestSchemaAgreesWithDecode(t *testing.T) {
 		if err := validatesAgainstStampSchema(t, sch, bad); err == nil {
 			t.Errorf("%s accepts %s, which Decode refuses", schemaPath, bad)
 		}
+		_, found, err := Decode([]byte(bad))
+		if err == nil {
+			t.Errorf("Decode(%s) = %v, nil: a document %s refuses is one Decode refuses too", bad, found, schemaPath)
+			continue
+		}
+		if !found {
+			t.Errorf("Decode(%s) = false, %v: the node is there, so a refusal keeps it", bad, err)
+		}
+		if !errors.As(err, new(*MalformedError)) {
+			t.Errorf("Decode(%s) = %v: every stamp that is there and unreadable is a *MalformedError", bad, err)
+		}
 	}
 	// A stamp the decoder reads but the schema does not is the other drift, and
 	// the one that would let a writer publish bytes an editor calls invalid.
