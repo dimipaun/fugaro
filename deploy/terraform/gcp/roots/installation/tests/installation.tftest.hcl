@@ -3664,3 +3664,28 @@ run "a_roster_person_may_not_be_a_service_account" {
 
   expect_failures = [var.intake]
 }
+
+# ... and in any case, because the process FOLDS an address before it compares
+# it: internal/credsvc's foldEmail lower cases the whole value and
+# foldLauncherAccounts refuses the suffix on the folded one. A guard that
+# matched the suffix as written would let "Robot@Proj-1234.IAM.GServiceAccount.com"
+# through and the process would refuse it all the same — the revision that
+# exits on start, from the one hand edit this validation exists for.
+run "a_roster_person_may_not_be_a_service_account_in_any_case" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      people     = ["Robot@Proj-1234.IAM.GServiceAccount.com"]
+    }
+  }
+
+  expect_failures = [var.intake]
+}

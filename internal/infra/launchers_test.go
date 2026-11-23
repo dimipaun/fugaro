@@ -149,6 +149,12 @@ func TestRosterPeopleAreNotLaunchersOfTheWorkspaceProject(t *testing.T) {
 			{Address: "ada@example.com", Kind: workspace.KindHuman},
 			{Address: "ada@example.com", Kind: workspace.KindHuman},
 			{Address: "robot@example.iam.gserviceaccount.com", Kind: workspace.KindHuman},
+			// The same address in another case: the class is compared to a
+			// FOLDED claim (credsvc's foldEmail lower cases the whole value
+			// before foldLauncherAccounts refuses the suffix), so the filter
+			// folds too and a spelling Google would never mint still cannot
+			// reach the class list.
+			{Address: "ROBOT@example.IAM.GServiceAccount.com", Kind: workspace.KindHuman},
 		},
 	}
 	want := []string{"ada@example.com", "zoe@example.com"}

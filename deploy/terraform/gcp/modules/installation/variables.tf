@@ -758,9 +758,9 @@ variable "intake" {
       can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.intake.service)) &&
       can(regex("^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$", var.intake.image)) &&
       (var.intake.url == null || can(regex("^https://[a-z0-9.-]+$", var.intake.url))) &&
-      alltrue([for p in var.intake.people : can(regex("^[^@: ]+@[^@ ]+$", p)) && !endswith(p, ".gserviceaccount.com")])
+      alltrue([for p in var.intake.people : can(regex("^[^@: ]+@[^@ ]+$", p)) && !endswith(lower(p), ".gserviceaccount.com")])
     )
-    error_message = "intake needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag), and, once the URL is known, its own URL in the https://<host> form (no path); people is a list of BARE email addresses (launcher_accounts' own rule and for its reason: the class is matched to a Google ID token's email claim, so a group or a domain entry is one no token can carry) and never a service account's address, which is a job's rather than a person's: internal/credsvc's foldLauncherAccounts REFUSES that shape, so an address of it here is a revision that exits on start (WC3)."
+    error_message = "intake needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag), and, once the URL is known, its own URL in the https://<host> form (no path); people is a list of BARE email addresses (launcher_accounts' own rule and for its reason: the class is matched to a Google ID token's email claim, so a group or a domain entry is one no token can carry) and never a service account's address, which is a job's rather than a person's, in ANY case (the test folds first, as internal/credsvc's foldLauncherAccounts does before it REFUSES that shape — an address of it here is a revision that exits on start, WC3)."
   }
 }
 
