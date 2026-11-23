@@ -63,7 +63,7 @@ package rules
 // it yet, over two members the dashboard shows and nothing decides by. What
 // differs from the cascade's children is what a run does under a document that
 // predates them: it drops the two and keeps its registry
-// (Session.dropRefusedSource), as it does for the recipe and the rigor mode,
+// (Session.dropRefusedChildren), as it does for the recipe and the rigor mode,
 // rather than halting named — a live row without a source is legible, while a
 // run whose credential is unrecorded is one nobody can account for. The
 // convergence is the deploy's own document comparison (internal/infra's

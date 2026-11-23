@@ -199,6 +199,62 @@ func TestHeartbeatDropsOnlyTheRefusedChild(t *testing.T) {
 	}
 }
 
+// TestHeartbeatDropsBothFamiliesWhenTheRulesKnowNeither: a document older than
+// both of the entry's late children — the routing table's source and the rigor
+// mode's pair — refuses every beat, and the run must still land its registry
+// entry, because the usage report travels in the same patch as the entry: a
+// beat that lands nothing is a live row that freezes for the rest of the run
+// and a grace clock the refusals run out.
+//
+// The two children are not independent refusals. Each fallback write must carry
+// what the writes before it left out: a probe that dropped only its own family
+// would send the other's refused child and be refused for it, so under this
+// document neither write lands and every beat after them is refused the same
+// way. Start meets the same document with one entry it drops from cumulatively,
+// which is what the heartbeat's write has to be.
+func TestHeartbeatDropsBothFamiliesWhenTheRulesKnowNeither(t *testing.T) {
+	f := newFixture(t)
+	logs := captureLog(f)
+	s := f.started(budget.AgentEntry{Stage: "implement", Recipe: "claude-solo", Mode: "critical", From: "area", Source: "pool:team"})
+	f.db.DenyKeys("source", "fallback", "mode", "from") // a document older than both families
+	entry := func() map[string]any {
+		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
+		return e
+	}
+	waitFor(t, "the entry to settle without either family", func() bool {
+		e := entry()
+		return e != nil && e["stage"] == "implement" && e["source"] == nil && e["mode"] == nil
+	})
+	if e := entry(); e["fallback"] != nil || e["from"] != nil {
+		t.Fatalf("a child the document refused came back: %v", e)
+	}
+	if e := entry(); e["recipe"] != "claude-solo" {
+		t.Fatalf("the recipe went with them, and the document knows it: %v", e)
+	}
+	// One line per family, once: each names the child it is about and the one
+	// command that fixes it.
+	for _, want := range []string{"predate the routing table's source", "predate the rigor mode"} {
+		if n := strings.Count(logs.String(), want); n != 1 {
+			t.Fatalf("%q logged %d times, want once:\n%s", want, n, logs.String())
+		}
+	}
+	// The run goes on: the beats after this one carry neither family and are
+	// accepted, so what the row shows keeps moving. A halt here would be the
+	// budget-unavailable the drop exists to prevent, over two facts the
+	// dashboard only ever shows.
+	s.Update(func(e *budget.AgentEntry) { e.Stage, e.Mode, e.From = "review", "hotfix", "repo" })
+	waitFor(t, "a heartbeat carrying the new stage", func() bool {
+		e := entry()
+		return e != nil && e["stage"] == "review"
+	})
+	if e := entry(); e["mode"] != nil || e["from"] != nil || e["source"] != nil {
+		t.Fatalf("a dropped family came back: %v", e)
+	}
+	if h, ok := f.nextHalt(200 * time.Millisecond); ok {
+		t.Fatalf("the run halted under the older document (%+v): the two are the dashboard's, and dropping them is what a run under older rules does", h)
+	}
+}
+
 // previousSourceDocument is the document an installation at the version before
 // CS9 holds: the generated one with the entry's two children removed. It is
 // derived rather than frozen, so it follows a change to any other rule and
