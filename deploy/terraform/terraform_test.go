@@ -1406,12 +1406,22 @@ func TestHistoryNoDatastoreAdmin(t *testing.T) {
 // Firebase root is the only place it can be declared (iam.tf). The type is
 // therefore allowed by name and nothing else of the service is.
 func TestNoFirestoreDatabaseResource(t *testing.T) {
+	// The service's names are held by their PREFIX and not by a list of the
+	// types that were Terraform at the time: a fourth declaration
+	// (google_firestore_backup_schedule, or a name Google adds) is the same
+	// mistake as the database, and an enumeration is what would let it in. The
+	// index is the one name of the service that is Terraform, and where it may
+	// be declared is the loop below.
+	firestoreType := regexp.MustCompile(`google_firestore_[a-z0-9_]*`)
 	walk(t, func(path string, b []byte) {
 		code := stripComments(string(b))
-		for _, bad := range []string{`"google_firestore_database"`, `"google_firebase_rules_`, `"google_firestore_document"`, `"google_firestore_field"`} {
-			if strings.Contains(code, bad) {
-				t.Errorf("%s declares %s: the database and its rules are fugaro update's REST steps", path, bad)
+		for _, m := range firestoreType.FindAllString(code, -1) {
+			if m != "google_firestore_index" {
+				t.Errorf("%s names %s: the Firestore database and its rules are fugaro update's REST steps, and the index is the service's only Terraform type here (RI2)", path, m)
 			}
+		}
+		if strings.Contains(code, `"google_firebase_rules_`) {
+			t.Errorf("%s declares a google_firebase_rules_ resource: the rules are fugaro update's REST step", path)
 		}
 	})
 	// A google_firestore_index anywhere but the Firebase module is a second
