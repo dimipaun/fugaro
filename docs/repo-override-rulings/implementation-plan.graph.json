@@ -100,7 +100,8 @@
           "internal/config/resolve.go",
           "internal/config/lifted_drop.go",
           "internal/config/lifted_drop_test.go",
-          "schemas/fugaro.schema.json"
+          "schemas/fugaro.schema.json",
+          "internal/config/config.go"
         ]
       }
     },
@@ -427,6 +428,21 @@
       }
     },
     {
+      "id": "RT3",
+      "title": "B4: the planner that names the repositories whose runs now stop earlier",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/lift/tighten.go",
+          "internal/lift/tighten_test.go"
+        ]
+      }
+    },
+    {
       "id": "RC1",
       "title": "B18: Caps clamps a repository cap to its ceiling",
       "run": null,
@@ -491,7 +507,7 @@
     },
     {
       "id": "M1",
-      "title": "the reader of every enrolled repository's default branch",
+      "title": "the reader of every repository update can list",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -552,7 +568,8 @@
           "internal/lift/stubs.go",
           "internal/lift/registry.go",
           "internal/e2e/update_test.go",
-          "internal/cli/update_converge_test.go"
+          "internal/cli/update_converge_test.go",
+          "internal/cli/update_in_flight_test.go"
         ]
       },
       "kind": "integration"
@@ -938,6 +955,36 @@
       "reason": "kept: one file, internal/cli/validate.go"
     },
     {
+      "task": "RT3",
+      "needs": "C2",
+      "reason": "the contract's planner and repository-file types"
+    },
+    {
+      "task": "RT3",
+      "needs": "RT1",
+      "reason": "kept, behaviour: it names what RT1's rule drops"
+    },
+    {
+      "task": "CK1",
+      "needs": "M2",
+      "reason": "kept, behaviour: Check 910 reads update --plan-only's L8 lines, which M2 defines"
+    },
+    {
+      "task": "RT2",
+      "needs": "PR1",
+      "reason": "kept: one file, internal/cli/budget_preview.go"
+    },
+    {
+      "task": "R-lift-phase",
+      "needs": "I1",
+      "reason": "kept: a change to C1's files comes after every consumer has landed, never beside the contract"
+    },
+    {
+      "task": "R-planner-change",
+      "needs": "I2",
+      "reason": "kept: a change to C2's files comes after every planner has landed, never beside the contract"
+    },
+    {
       "task": "RC3",
       "needs": "RC1",
       "reason": "kept: it refuses at the ceiling RC1 computes, a function of a few lines"
@@ -1020,6 +1067,11 @@
     {
       "task": "I2",
       "needs": "RC4",
+      "reason": "integration: the stage converges only with every planner registered and the reader wired"
+    },
+    {
+      "task": "I2",
+      "needs": "RT3",
       "reason": "integration: the stage converges only with every planner registered and the reader wired"
     },
     {
@@ -1238,6 +1290,15 @@
     {
       "contract": "C2",
       "was": {
+        "task": "RT3",
+        "needs": "M1"
+      },
+      "integration": "I2",
+      "reason": "a planner needs the shape of a repository's files, not the provider read that fills it"
+    },
+    {
+      "contract": "C2",
+      "was": {
         "task": "M2",
         "needs": "MC1"
       },
@@ -1276,6 +1337,15 @@
       "was": {
         "task": "M2",
         "needs": "RC4"
+      },
+      "integration": "I2",
+      "reason": "the stage needs the planner's signature and its change type, not what a planner computes"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "M2",
+        "needs": "RT3"
       },
       "integration": "I2",
       "reason": "the stage needs the planner's signature and its change type, not what a planner computes"

@@ -15,7 +15,11 @@ reconciliation raised (D3299–D3304) were answered the same day, each as recomm
   model a role uses, and model-credentials-routing's table (`model_routing`, `internal/routing`)
   decides which source serves that model. Nothing in L8 writes the routing table.
 - A2. An "enrolled repository" is one the published policy admits (`projectpolicy.Policy.AllowRepos`,
-  `projectpolicy.AdmitRepo`) — the set D3239 has `update` work over for L5.
+  `projectpolicy.AdmitRepo`) — the set D3239 has `update` work over for L5. **Amended by D3306:**
+  `update` can migrate only the repositories it can **list**: the local config's repositories and
+  every concrete name in the published admits. An admit that is a pattern (`*`, `github/acme/*`,
+  `github/acme/app-*`; `projectpolicy` accepts them) cannot be expanded into names, so a repository
+  admitted only by a pattern is not migrated.
 - A3. The B18 ceiling is, for daily and for per-run separately, the global cap when it is set and
   otherwise the default repository cap (spec §5.6). "Unless the global cap allows more" (D3237) is
   read as: a set global cap is the ceiling.
@@ -34,7 +38,8 @@ reconciliation raised (D3299–D3304) were answered the same day, each as recomm
 
 The spec bundles capabilities that ship and are verified separately: B18's cap ceiling touches only
 the budget package and the database rules; B4's tighten rule needs no migration; L13 needs no
-migration and has its own consumers. They share one choke point (`config.Resolve` and the scope
+migration and has its own consumers. They share one choke point (`config.Resolve`, plus
+`config.AgentOf` for the readers that bypass it, F25, and the scope
 table) and one `update` stage, so they stay one spec, split into modules. The map below is proposed
 for the owner's approval; the plan is written on it, and every finding, decision and task names a
 module id. **Approved by the owner on 2026-11-23 (D3299).**
@@ -124,6 +129,12 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
   rebuilds them every image is pre-L8, so the window is closed for keys. It is open for B16: a
   default branch that holds `.fugaro/recipes/` writes no lifted key, so the gate as specified lets
   that launch through and the release-A launcher no longer reads the folder. → R16.
+- **F25 (Wrong, review round 2).** Spec §2's "one choke point: every reader reads the file through
+  `config.Resolve` or `config.Parse`" is not true of the agent block: `config.AgentOf` decodes the
+  repository's own file strictly and bypasses `Resolve`, and four readers use it for model choice —
+  `internal/cli/craft.go` (`craft ls`'s layers), `validate.go` `validateCraftLayers`,
+  `budget_stops.go` (`config.UnpricedPins`) and `run.go` `agentAtRef`. (`accounts_rm.go` also calls
+  it, for `agent.oauth_token` alone, which is MCR's.) → R21.
 - **F22 (Exists).** `TestEveryConsumerResolvesTheSameBytes` is the home of spec §6's reader test.
   → task I1.
 - **F23 (Gap).** Spec §6 lists the writers' refusal without a release; §5.1 puts `models use
@@ -238,6 +249,17 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
 | D3303 | How is each repository "pointed at its own copy"? (F7) | **A lookup rule, no new data:** for repository R, the launcher resolves `<name>.<owner-repo of R>` in the store before `<name>`, then the catalog. Nothing in the layer changes, so no strict-decode skew (F15) and no new writer | A map in the project layer (`recipes.repos.<owner/name>.<name>: <copy>`); cost: a new layer member every pre-L8 reader refuses, a gate of its own, and a writer | **As recommended (2026-11-23).** The lookup rule, no new data, so no new layer member, gate or writer |
 | D3304 | What does a release-A runner do with a task that leaves the recipe to the repository's folder (`Source: repo` by name, or no recipe on a ref that holds `.fugaro/recipes/<name>.yaml`)? (F9, F18) | **Refuse at bootstrap with the fix** ("the recipe is the project's now (D3237): launch with fugaro 0.X or later"): acceptance 7 says a repository recipe reaches a run only from the store, and a pre-L1 CLI is the accepted gap, which fails closed this way | Read the folder as today until release B, record `source: repo`; cost: any pre-L8 launcher, including the unfenced pre-L1 ones, keeps bringing repository recipes for a whole release | **As recommended (2026-11-23).** Refuse at bootstrap with the fix, so a repository recipe reaches a run only from the store (acceptance 7) |
 
+### The owner's answers to review round 2 (2026-11-23)
+
+| # | Question | Recommendation | Alternative and its cost | Answer |
+| --- | --- | --- | --- | --- |
+| D3305 | Does `update` migrate a repository every time it runs, or once? | Once per repository, recorded: a per-repository record in the runs bucket, `fugaro/lift/l8/<slug>.json` (the release and the time), written by `update` after that repository's writes land; a planner acts only on a repository with no record, never overwrites a project value written after it, and names (never applies) a file value that appears after it; the planners retire in release B (XB5) | Every run re-migrates; cost: a project value an admin changes later is overwritten by a repository's file at the next `update` | **As recommended (2026-11-23).** RG2 loses "the file wins over an existing entry", PR4 publishes only on a first migration, M2 writes the record |
+| D3306 | Which repositories does `update` migrate, and what happens to one it cannot read? | Fail closed: refuse a launch of a repository that writes a lifted key and was never migrated | **The real list, fail open** | **Not the recommendation (2026-11-23).** `update` migrates the repositories it can list (the local config's, and the concrete names in the published admits); a repository admitted only by a pattern, or unreadable at update time, is not migrated and is refused nothing, so its lifted values are simply dropped. **Consequence, stated plainly:** such a repository can lose an `ab.rate: 0` opt-out (its runs become eligible for A/B sampling at the project's rate), a raised rigor level, its own models and its recipes. `update` prints each admit pattern it could not expand and each repository it could not read; release A's `### For operators` says so in one line |
+| D3307 | O5: the pre-L8 task that embeds no recipe, its folder gone, a catalog name | Accept it, and name it in the release notes | Refuse every unembedded task; cost: every pre-L8 launcher refused outright | **As recommended (2026-11-23).** O5 is closed |
+
+- **R21 (F25, review round 2).** `config.AgentOf` drops the lifted keys too (the agent block's
+  model keys), in S1, and I1 covers its four readers.
+
 ### Resolutions (one defensible answer)
 
 - **R1 (F1, F2). Amended after review.** A lifted key is **not** marked `Retired`: it is on its own
@@ -265,8 +287,11 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
 - **R4 (F11).** A moved area keeps its name unless the project layer already has an area of that
   name (any area); then `-<owner-repo>` is appended and the result cut to 40 characters with
   `areaNameRE`; a cut that still collides takes a short hash. Each rename is one of `update`'s lines.
-- **R5 (F12).** Before any write, `update` names each repository whose path would rise because a
-  moved area and an existing member area meet at one rank. The change only tightens.
+- **R5 (F12), amended after review round 2.** D3294's new order moves levels both ways: a moved
+  area and an existing member area at one rank can raise a path, and a member area that now
+  outranks `rigor.repos` can lower one (`rigor.repos` critical, a member area poc). Before any write,
+  `update` names every repository and path whose level changes, in either direction, with the old
+  and the new level.
 - **R6 (F13).** `fugaro rigor set <mode> --repo <owner/name>` with no `--layer` writes
   `defaults.rigor.repos.<owner/name>`, and `--area <glob> --name <n> --repo <owner/name>` writes a
   member area; `--layer repo` is refused for both keys from release A (R15). `writers_labels.go`
@@ -290,8 +315,11 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
   `Config.RepoModelGradesSet` and the skew gates that read it; `agent.compression`'s row loses
   `InRepo` and the schema says so. MCR X2 refuses `model_grades.*.access` in the same subtree:
   one refusal sentence for both.
-- **R12 (F17).** The reader uses `ContentsReader` and `TreeReader`; a host or repository it cannot
-  read is named in one line and skipped (D3239's rule), and `update` still converges for the rest.
+- **R12 (F17), amended by D3306.** The reader uses `ContentsReader` and `TreeReader` over the
+  repositories it can list (A2); a host or repository it cannot read is named in one line and
+  skipped, each admit pattern it cannot expand is named, and `update` still converges for the rest.
+  Such a repository is not refused anything: its lifted values are dropped by every reader and never
+  moved (D3306's stated cost).
   A symbolic link in `.fugaro/recipes/` is judged by the recipe's own parse and size limit.
 - **R13 (F24).** The reader is a contract (C2) shaped so L5 can call the same function.
 - **R14 (F10).** A renamed copy is the repository's file with its `name:` line rewritten and
@@ -320,7 +348,9 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
   the mode's `rigor.DefaultLevels` inside `config.ResolveLevels` for the levels (`none`, effort,
   model of a level), the mode's rounds (R3) for the round counts, and Fugaro's `applyDefaults` for a
   key no mode row holds. A repository's `l3.none: true` under a silent project leaves a critical
-  run's L3 running (RT2).
+  run's L3 running (RT2). Against `applyDefaults`, a silent project's `agent.max_budget_usd` baseline
+  is `config.DefaultMaxBudgetUSD` (25): a repository that wrote more has its runs stop at 25, so
+  `update` names each such repository (RT3) and release A's `### For operators` says so.
 
 ## 6. Open tensions and open items
 
@@ -335,12 +365,13 @@ Every other path and symbol the spec names was found on `origin/main`: `config.R
   nothing from its code; the dependency is the release order (D3300, R18).
 - **O4.** The owner confirms D3302's amended form, `<name>.<owner-repo>-<8 hex>` (at most 96
   characters).
-- **O5.** A residue of D3304: a task from a pre-L8 launcher that embeds no recipe, on a ref whose
+- **O5 (closed 2026-11-23 by D3307, accepted).** A residue of D3304: a task from a pre-L8 launcher that embeds no recipe, on a ref whose
   `.fugaro/recipes/` the repository has already removed, for a name the catalog also has (`default`
   first), runs the catalog recipe, because nothing left at the ref says a copy exists (`internal/runner/recipe.go`
   `resolveRecipe`). PR3 refuses every case it can see (the file still at the ref). Closing the rest
   means every release-A launcher embeds every recipe and the runner refuses any task that embeds
-  none, which refuses every pre-L8 launcher outright: the owner's to choose.
+  none, which refuses every pre-L8 launcher outright. The owner accepted the residue; release A's
+  notes name it.
 
 ## 7. UNVERIFIED
 
