@@ -3,14 +3,18 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/srctree"
 )
 
 // managed_require_test.go is D1541's fence's own tests: the classification of
@@ -277,19 +281,71 @@ func checkFenceRefusal(t *testing.T, err error, path string) {
 	}
 }
 
+// exemptCommandsMayWrite are the exempt paths whose own exemption says the
+// command writes: D2219's in-run commands (escalation's two readers included,
+// because the ledger they read is the run's own record) and D3160's
+// `fugaro user offboard`. The rule this arm of the fence is pinned to is zero
+// writes *apart from what those name*, so a write is tolerated for these and
+// for nothing else; a path that gains an exemption here without gaining a
+// reason that says it writes is exactly the hole the run below refuses.
+var exemptCommandsMayWrite = map[string]bool{
+	"escalation ls": true, "escalation show": true,
+	"followups": true, "mailbox": true, "tell": true,
+	"user offboard": true,
+}
+
+// exemptRunArgs is the argument list the few paths are run with whose bare name
+// never returns here: `watch` draws the project's live screen until it is
+// stopped, and --once is the mode the command itself offers for one snapshot.
+// Every other exempt path is run bare, and that is the point of running it: a
+// command with no arguments refuses in one line, and the four services, `exec`
+// and `verify` — each of which serves or runs a whole process when it has what
+// it needs — refuse for want of their environment or their argument before they
+// reach any of that.
+var exemptRunArgs = map[string][]string{
+	"watch": {"--once", "--plain"},
+}
+
+// exemptWorldCalls is every call the rig's fakes were asked, so "nothing was
+// written" is said about a listing rather than about the one call this test
+// remembered to look for. The budget database is in it: it is the project's own
+// store, and a command that wrote a cap, a counter or a kill switch shows here.
+func exemptWorldCalls(r *initRig) []gcpfake.Request {
+	var all []gcpfake.Request
+	for _, s := range []*gcpfake.Server{
+		r.gcs.Server, r.ar.Server, r.iam.Server, r.crm.Server, r.run.Server,
+		r.sm.Server, r.logs.Server, r.sched.Server, r.su.Server, r.budget.Server,
+	} {
+		all = append(all, s.Requests()...)
+	}
+	return all
+}
+
 // TestExemptCommandsWriteNothing: the other half of the classification, and the
-// half a fence with an over-broad reading gets wrong. Every exempt path is
-// asked the same question the seams ask — with its own command in the context,
-// against a world that would have answered "not managed" — and every one of
-// them is answered without a single call to either fake: an exempt command is
-// not read at all, so an installation whose marks are stale, unreadable or
-// absent never pays for a command that was never fenced.
+// half a fence with an over-broad reading gets wrong. It is answered three
+// times, because the three answers fail for different reasons.
 //
-// The read-only commands a person runs are driven as well, because the seam
-// assertion above is about the fence and not about the command: what it would
-// miss is a read-only command that refuses an unmanaged project somewhere of its
-// own, which is A5's whole point — it is the command that tells an owner their
-// project is not managed.
+// The seam first: every exempt path is asked the same question the seams ask —
+// with its own command in the context, against a world that would have answered
+// "not managed" — and every one of them is answered without a single call to
+// either fake. An exempt command is not read at all, so an installation whose
+// marks are stale, unreadable or absent never pays for a command that was never
+// fenced.
+//
+// Then the reads a person runs: a read-only command on a project that is not
+// managed is admitted, which is A5's whole point — it is the command that tells
+// an owner their project is not managed — and the assertion is about the
+// command and not about the fence, because what the seam above would miss is a
+// read that refuses an unmanaged project somewhere of its own.
+//
+// And finally every exempt path is RUN, which is what makes a misclassification
+// fail here rather than in a review: the command is executed against a world
+// that records every call its fakes answer, and anything but a read is a write
+// the exemption did not have the right to make. The world is deliberately the
+// installation's own — the rig's project carries no managed mark, no published
+// policy and no seeded rules, and the project layer's bucket cannot be reached
+// at all — so a command that would write has to get past every one of those
+// refusals to reach a fake, and one that does is reported by name.
 func TestExemptCommandsWriteNothing(t *testing.T) {
 	noAgentSession(t)
 	noRunSession(t)
@@ -305,12 +361,37 @@ func TestExemptCommandsWriteNothing(t *testing.T) {
 		t.Errorf("an exempt command was read or written through: %v", reqs)
 	}
 
+	world := newInitRig(t)
+	buildBudgetForRig(t, world)
+	// Every path is run from a directory of its own: several of them write the
+	// checkout's files (a fugaro.yaml, a docs tree, an image map), and one of
+	// those landing in this package's own directory would leave the repository
+	// changed under the test that is running.
+	t.Chdir(t.TempDir())
+	// The project layer's bucket is opened for the reads that resolve it, and
+	// the rig's runs bucket is a name, not a URL: reached for real it would go
+	// to storage.googleapis.com, so it is a bucket that cannot be reached. A
+	// write there is refused rather than silently landing in memory, and a read
+	// takes the path an offline machine takes.
+	oldLayer := layerBucketOpener
+	layerBucketOpener = func(context.Context, string) (*blobx.Bucket, error) {
+		return nil, &net.OpError{Op: "dial", Err: errors.New("no route to host")}
+	}
+	t.Cleanup(func() { layerBucketOpener = oldLayer })
+	// troubleshoot fetches the Fugaro source tree over the network
+	// (srctree.Ensure), which no test may do: it is answered with the offline
+	// path, which is the path a machine that cannot reach it takes anyway.
+	oldSource := troubleshootSource
+	troubleshootSource = func(context.Context, srctree.Options) (string, srctree.Record, error) {
+		return "", srctree.Record{}, errors.New("a test reaches no network")
+	}
+	t.Cleanup(func() { troubleshootSource = oldSource })
+
 	// And the same answer end to end, for the reads that need no project of
 	// their own: a person checking their installation on a project that is not
-	// managed is admitted, and the world's fakes stay untouched.
-	rig := newInitRig(t)
+	// managed is admitted, and the world's fakes answer nothing but reads.
 	for _, args := range [][]string{{"version"}, {"budget", "prices"}, {"config", "example"}} {
-		before := len(rig.gcs.Requests())
+		before := len(world.gcs.Requests())
 		out, errOut, err := execute(t, args...)
 		said := out + errOut
 		if err != nil {
@@ -319,11 +400,30 @@ func TestExemptCommandsWriteNothing(t *testing.T) {
 		if strings.Contains(said, "is not managed") {
 			t.Errorf("fugaro %s was refused on a project that is not managed:\n%s", strings.Join(args, " "), said)
 		}
-		for _, req := range rig.gcs.Requests()[before:] {
+		for _, req := range world.gcs.Requests()[before:] {
 			if req.Method != http.MethodGet {
 				t.Errorf("fugaro %s wrote to GCS before it was fenced: %s %s", strings.Join(args, " "), req.Method, req.Path)
 			}
 		}
+	}
+
+	for path := range managedExemptCommands {
+		t.Run(path, func(t *testing.T) {
+			before := len(exemptWorldCalls(world))
+			args := append([]string{}, strings.Fields(path)...)
+			// The error is not the assertion: most of these refuse in one line
+			// for want of an argument, a flag or an installation, and a command
+			// that failed wrote nothing either way.
+			_, _, _ = executeStdin(t, "", append(args, exemptRunArgs[path]...)...)
+			if exemptCommandsMayWrite[path] {
+				return
+			}
+			for _, req := range exemptWorldCalls(world)[before:] {
+				if req.Method != http.MethodGet {
+					t.Errorf("fugaro %s is classified exempt but wrote to the project: %s %s", path, req.Method, req.Path)
+				}
+			}
+		})
 	}
 }
 
