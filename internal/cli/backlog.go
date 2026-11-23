@@ -158,10 +158,14 @@ func runBacklogAdd(cmd *cobra.Command, o *backlogAddOptions) error {
 		defer func() { _ = sink.Close() }()
 	}
 	step := rep.Step("filed")
-	lc, node, db, err := openOrchestratorShard(ctx, o.cloudOptions, orchestrator.ShardBacklog)
+	// The standing backlog belongs to the project's own orchestrator, and this
+	// family takes no --name: a named orchestrator's backlog is filed by naming
+	// its node in a patch, and an item filed here is the default one's.
+	t, err := openOrchestratorShard(ctx, o.cloudOptions, orchestrator.ShardBacklog, "")
 	if err != nil {
 		return failStep(rep, step, err)
 	}
+	lc, node, db := t.lc, t.node, t.db
 	// The backlog node lives in the budget database, so this writer asks the one
 	// ownership question every writer into it asks (budgetDBUnadopted), before it
 	// writes anything.
@@ -425,11 +429,17 @@ func runBacklogList(cmd *cobra.Command, o *backlogListOptions) error {
 	if err != nil {
 		return err
 	}
-	backlogNode, err := orchestratorNodeShard(lc, db, orchestrator.ShardBacklog)
+	// The listing is the project's own orchestrator's: this family takes no
+	// --name, so both nodes are the default id's.
+	id, err := orchestratorID(lc)
 	if err != nil {
 		return err
 	}
-	stateNode, err := orchestratorNodeShard(lc, db, orchestrator.ShardState)
+	backlogNode, err := orchestratorNodeShard(db, id, orchestrator.ShardBacklog)
+	if err != nil {
+		return err
+	}
+	stateNode, err := orchestratorNodeShard(db, id, orchestrator.ShardState)
 	if err != nil {
 		return err
 	}
