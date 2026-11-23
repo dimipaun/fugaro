@@ -1500,7 +1500,11 @@ func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile, repo string) *
 	default:
 		return nil
 	}
-	mode := lc.BudgetMode()
+	// C1's reading of the local config's mode (AB3, D3009): an unset mode, or
+	// one a hand edit left as the old word, is observe, which is the mode the
+	// switch below admits — so no branch of this check has a mode that is
+	// neither of the two any more.
+	mode := policy.Mode(lc.BudgetMode()).Effective()
 	if runner.GatewayOn(auth, mode) {
 		return nil
 	}
@@ -1521,11 +1525,6 @@ func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile, repo string) *
 	}
 	var why string
 	switch {
-	case mode != policy.ModeObserve && mode != policy.ModeEnforce:
-		// An api-key repository reaches here only in this state — GatewayOn
-		// above is the same mode question asked of its own auth — so the mode
-		// is the reason the gateway, and the service behind it, hold nothing.
-		why = fmt.Sprintf("budget.mode is off, so neither the gateway nor the credentials service behind it holds it: the switch admits an %s repository under budget.mode observe or enforce alone, with %s in the service's bundle", auth, needs)
 	case !installed:
 		why = fmt.Sprintf("the installation has no credentials service to hold it, and the switch would need %s in its bundle", needs)
 	default:

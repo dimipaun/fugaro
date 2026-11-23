@@ -806,19 +806,9 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	if strings.Contains(out, "every run halts") {
 		t.Errorf("a warning about missing caps with caps set:\n%s", out)
 	}
-
-	// off turns the jobs' backend off in the config and leaves the database's
-	// mode as it is; it still deploys the database, and says so.
-	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "off")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.localConfig(t).BudgetMode() != localcfg.BudgetOff || mode(r) != "enforce" {
-		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
-	}
-	if !strings.Contains(out, "still deployed the database") || !strings.Contains(out, "unchanged by off") {
-		t.Errorf("off doesn't say the database is still written:\n%s", out)
-	}
+	// The case that used to stand here — --budget-mode off turning the jobs'
+	// backend off in the config while the database was still deployed — is the
+	// flag's refusal now, and TestBudgetModeOffFlagIsRefused is its case (AB3).
 }
 
 // A first run with no database yet refuses enforce before any apply.
