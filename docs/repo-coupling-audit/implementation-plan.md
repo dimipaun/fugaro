@@ -213,8 +213,10 @@ Answers that shaped the plan, all 2026-11-22:
 - Acceptance: `README.md` (Getting started, Upgrading), the whole of `docs/release.md` (the
   maintainers' migrator bullet, the plugin paragraph and the users' step 3) and
   `website/data/install.yaml` say `brew upgrade`, then one
-  `fugaro update`. None names `fugaro upgrade` or `fugaro update-skills` (no such commands),
-  committing the retired plugin pin, or the `/fugaro:upgrade` skill (the skill is `/fugaro:update`). Any test that pinned the old
+  `fugaro update`. None names `fugaro upgrade` (no such command) or `fugaro update-skills`,
+  committing the retired plugin pin, or the `/fugaro:upgrade` skill (the skill is `/fugaro:update`). `update-skills` is a registered command
+  (`internal/cli/updateskills.go`, `root.go`): the docs drop it because the one-command upgrade
+  rule allows no second command, not because it is missing. Any test that pinned the old
   wording pins the new one. These are report rows RC93, RC96 and RC97, and the first half of lift
   L10. It changes no behaviour. README's per-repository `fugaro update --repo` in Providers step 6
   stays until lift L2.
@@ -235,7 +237,7 @@ Answers that shaped the plan, all 2026-11-22:
 - Acceptance: every row of `report.md` whose Perms or Update cell reads from the code alone is
   confirmed or corrected from the checks' output. The summary counts are recomputed. U3 and U4
   are closed or restated. The reconciliation's O2 is closed. Any repo-keyed path, differing stage
-  or role the checks found that the report lacked becomes a new row, numbered after RC97. The
+  or role the checks found that the report lacked becomes a new row, numbered after RC105. The
   README's count follows.
 - Files: `docs/repo-coupling-audit/report.md`, `docs/repo-coupling-audit/reconciliation.md`,
   `docs/repo-coupling-audit/README.md`.

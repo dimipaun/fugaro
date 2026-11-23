@@ -1,7 +1,7 @@
 # Repo-coupling audit: reconciliation
 
 Checked against `origin/main` at `3de72b780` on 2026-11-22; F18 and F19 (task V1) against
-`8316578f6` on 2026-11-23. **Where this document disagrees with
+`8316578f6` on 2026-11-23; F20 against `1d4b59344` on 2026-11-23. **Where this document disagrees with
 [spec.md](spec.md), this document wins.** The inventory itself is [report.md](report.md); this
 document records what the spec assumed, what the code says instead, and the owner's answers.
 
@@ -191,6 +191,27 @@ document records what the spec assumed, what the code says instead, and the owne
   Apps work only while every GitHub repository keeps a per-repo job. The key is resolved per
   repository, from the repo copy or the project-scoped one (`catalogAppKeySecretID` →
   `resolveGitSecretID`). The home is one project-level App ID and key.
+- **F20 (Gap).** The check scripts' reviews found eight coupling points the report missed. They
+  are rows RC98–RC105, and the totals move from 97 rows to 105:
+  - **RC98 (Infra).** The `update` stage `secrets` (`initsecrets.go` `secretsStage.resolve`)
+    reads the working directory and takes the checkout's repo secrets into per-repo containers.
+    From outside a checkout it skips, so F6's three skipped stages are four. It is §4 item 4
+    and a §5 reader. Its lift is L5, not L6:
+    what ties it to the cwd is the choice of target, as for RC75, while L6 is about records
+    derived from project data and the values here come from a person's prompt.
+  - **RC99 (Infra).** `creds/workflowsecrets/<slug>`, the node RC70 writes from the checkout.
+    Lift L6, with RC70.
+  - **RC100–RC102 (Identity).** `creds/leases`, `creds/review-signs` and `creds/issuance`, each
+    keyed by slug and run, written by the credentials service. The slug names the run's repo.
+  - **RC103 (Identity).** `creds/buildpairs/<identity>/<build>`: keyed by build identity, and
+    each record names the repos a build may fetch. The names are the fence.
+  - **RC104 (Dead).** `offerBudgetModeRemoval` reads the checkout's `fugaro.yaml` and offers to
+    remove a refused `budget.mode: off`, under `--plan-only` too. It is a second §5 reader.
+  - **RC105 (Dead).** `foldBacklog` folds the checkout's `docs/backlog/` once. It does nothing
+    under `--plan-only`.
+
+  RC104 and RC105 are steps after the stage loop, not stages, so Check 891, which compares
+  stages, cannot see them. Both are §4 item 4 and lift L5.
 
 ## 4. Decisions
 
@@ -234,6 +255,8 @@ Resolutions (one defensible answer, stated rather than asked):
 - O2. Checks 890–892's output fills the live columns. Until then those columns read "static".
 - O3. `docs/status.md` gets this spec's row when the plan merges, as for every spec folder before
   it; this pull request does not touch it.
+- O4. `config.RepoCraftsNodePrefix` (`config/policy/repocrafts/<slug>`) is a constant with no
+  writer on `main` yet. Model-credentials-routing CM2 adds one; the node becomes a row then.
 
 ## 6. UNVERIFIED
 
