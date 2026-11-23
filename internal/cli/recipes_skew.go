@@ -1348,16 +1348,17 @@ const rigorRequestSince = "0.11.1"
 // checked in that order (run.go's finishLaunch): for a promote launch the
 // refusal a person can act on names the block they asked for.
 //
-// It names 0.28.0 "Yak", the release this work ships in
-// (docs/release-streams.yaml has 0.27.0 current and Yak 0.28.0 next), which is
+// It names 0.29.0 "Zander", the release that ships task.Spec.Promote, which is
 // **not tagged yet**: verify the constant against the tag actually cut, the way
 // keyCredentialSince's bullet records, and move it if the block lands in
-// another release. It is not 0.27.0, which is tagged and whose runner knows no
-// promote block: that value would admit exactly the image this gate exists to
-// refuse, and the launch would be paid for and die at bootstrap. A wrong value
+// another release. It is not 0.28.0 "Yak", which is tagged and whose runner
+// knows no promote block: that value would admit exactly the image this gate
+// exists to refuse, and the launch would be paid for and die at bootstrap — the
+// mistake a value pinned to the release a reader of this tree expected the work
+// to land in makes once that release has shipped without it. A wrong value
 // refuses too late (an older runner dies at bootstrap on the stored task) or
 // too early (an image that reads the block stays blocked).
-const promoteSince = "0.28.0"
+const promoteSince = "0.29.0"
 
 // governanceSince is the first fugaro release whose config reader knows
 // fugaro.yaml's governance: block and the project layer's governance: block
