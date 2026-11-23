@@ -135,6 +135,10 @@ func TestKnownRepoWithYesAsToday(t *testing.T) {
 // repository exactly; a mismatch is refused, known repository or not.
 func TestOnboardRepoFlag(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	// The machine's installed plugin is this test's and not the host's: a machine
+	// whose plugin is newer than this release reads the plugin stage as nothing to
+	// do, and the stage this test expects Changed never runs there.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(dir)
 	e, _ := stageEngine(t, "", &initOptions{yes: true, nonInteractive: true, onboardRepo: "acme/app", githubAppID: "12345"})
