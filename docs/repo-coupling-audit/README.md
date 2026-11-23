@@ -1,8 +1,17 @@
 # Repo-coupling audit
 
 **Status: all seven tasks approved 2026-11-23 and done with R1.** The report has its live columns
-from the owner's runs of Checks 890–892 on `fugaro` (2026-11-23). What is left is the owner's
-rulings on B1–B19 and the lifts. See [docs/status.md](../status.md) for the current table.
+from the owner's runs of Checks 890–892 on `fugaro` (2026-11-23). The owner ruled on B1–B19 on
+2026-11-23 (D3237: thirteen kept, B4 and B18 kept tight, B3 rejected, B9, B11 and B16 lifted to the
+project), on the lift order (D3238, amended the same day) and on L5's scope (D3239). Nothing of the lift is implemented. See
+[docs/status.md](../status.md) for the current table.
+
+**Lift waves (D3238, amended).** Wave 1: L1 (the version stamp), L5 and L8 (apply D3237's
+rulings; needs L1), each its own spec, next. L5 as D3239 rescopes it: `update` may take the project
+from the checkout it runs in, but from any directory it works over every enrolled repository, each
+read from its default branch, and names any repository whose value it could not take. Wave 2: L3
+(waits on L2), L9 (waits on L3), L11, L12 and L13. L6 and L7 wait for the owner's next pick; L2, L4
+and L4b stay with their plans; L10's first half is done (D1, #3693).
 
 Spec owner: Dimi Paun (the owner). Received and reconciled on 2026-11-22, checked against
 `origin/main` at `3de72b780`.
@@ -15,8 +24,8 @@ ordered lift plan. It changes no behaviour.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | Assumptions A1–A6, the spec-against-repository table, findings F1–F21, decisions D3230–D3236 with the owner's answers, resolutions R1–R3, tension T1 (settled), open items O1–O5 (O2 closed), UNVERIFIED U1–U4 (U1 and U2 settled by V1, U3 by Check 892, U4 restated). **Where it disagrees with the spec, it wins** |
-| [report.md](report.md) | The inventory: 107 coupling points (RC1–RC107) by surface, the summary count, the live result of Checks 890–892 on `fugaro`, the benign candidates B1–B19 for the owner's review, what blocks a single admin-run `fugaro update`, every reader of a repo's config, the corner cases, the version-stamp entry point, and the lift order L1–L13 (with L4b) |
+| [reconciliation.md](reconciliation.md) | Assumptions A1–A6, the spec-against-repository table, findings F1–F21, decisions D3230–D3239 with the owner's answers, resolutions R1–R3, tension T1 (settled), open items O1–O5 (O1 and O2 closed), UNVERIFIED U1–U4 (U1 and U2 settled by V1, U3 by Check 892, U4 restated). **Where it disagrees with the spec, it wins** |
+| [report.md](report.md) | The inventory: 107 coupling points (RC1–RC107) by surface, the summary count, the live result of Checks 890–892 on `fugaro`, the benign candidates B1–B19 with the owner's rulings (D3237), what blocks a single admin-run `fugaro update`, every reader of a repo's config, the corner cases, the version-stamp entry point, and the lift order L1–L13 (with L4b) in the owner's waves (D3238) |
 | [implementation-plan.md](implementation-plan.md) | Seven tasks (K1–K4, V1, D1, R1) in three levels: three read-only check scripts and their registration, U1/U2 settled from the code, a fix of the missing `fugaro upgrade` in README, `docs/release.md` and the website, and the report's live columns once the owner runs Checks 890–892. All seven approved 2026-11-23 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
@@ -39,11 +48,11 @@ ordered lift plan. It changes no behaviour.
   every per-repo blocker is real there. Per-repo records outlive their repos, and the Batch compute
   root's grants to per-repo job accounts drift, because only `setup --provision-batch` applies them.
 
-**Numbers reserved:** decisions **D3230–D3259** (D3230–D3236 used), checks **890–899** (890–892
+**Numbers reserved:** decisions **D3230–D3259** (D3230–D3239 used), checks **890–899** (890–892
 used). They were read on 2026-11-22. The highest decision on `main` was D3229 (console-fixes'
 block D3200–D3229), and the highest decision in any open pull request's diff was D3220. The
 highest check on `main` was 886 (model-credentials-routing's block 880–889), and no open pull
 request's diff named a higher one.
 
-**What waits on something external:** the owner's rulings on B1–B19 (D3235, after merge),
-and shared-jobs-default M2 (owner Check 580) for lift L2.
+**What waits on something external:** the lift specs L1, L5 and L8 (wave 1, D3238), the owner's next
+pick between L6 and L7, and shared-jobs-default M2 (owner Check 580) for lift L2.

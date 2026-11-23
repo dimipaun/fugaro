@@ -125,6 +125,20 @@ Perms `operator` and Update `none` for RC76 (891's launches). No cell was correc
 token` and `repo-write` rows, `local`, and the two steps of §4 item 4 that are not stages (RC104,
 RC105).
 
+**Clean-up, 2026-11-23, at the owner's request.** After the checks, on `fugaro` (GCP `fugaro-dev`):
+
+- The deleted job account's two bindings (`roles/batch.agentReporter` and
+  `roles/logging.logWriter` for `deleted:serviceAccount:fugaro-dimipaun-fugar-70110b74@…`) were
+  removed from the project's IAM policy, and none remains. That fixes RC107's drift by hand; the
+  compute root's snapshot still needs L2's fix (RC107).
+- `config/policy/repos/dimipaun-fugaro-c2eb03dd3bfcd195` and
+  `config/policy/repos/dimipaun-fugarosandbox-9b0fc60610974836` (the Bitbucket-provider slugs of
+  two GitHub repositories, since `task.Slug` hashes the provider: RC51's case) and
+  `gs://fugaro-runs-fugaro-dev/builds/dimipaun-fugarosandbox-9b0fc60610974836/` were deleted after
+  a backup.
+- `creds/repoauth` and `creds/workflowsecrets` for `dimi-bmb-billmybanktests-41aa52e538568a87`
+  were **kept** by the owner's ruling, for the Bitbucket workspace-token Checks 180 and 181.
+
 ## 2. Inventory
 
 ### Surface 1: CLI commands and flags
@@ -139,7 +153,7 @@ RC105).
 | RC6 | `internal/cli/image_build_catalog.go`, `image_refresh.go` | `image build <entry>` runs as the cwd checkout's build SA; `image refresh --repo` must match the checkout | Infra | TF-admin or operator | blocks | project build identity (D3232) | build SA per repo retired | M | M |
 | RC7 | `internal/cli/project_enroll_converge.go` `runProjectReposEnroll` | `project repos add` needs a checkout unless `--allow-list-only`, then runs stages Policy, Installation, Repository | Infra | TF-admin (admin gate) | none (a separate command) | an allow-list write only, once M2 lands | none | M | M |
 | RC8 | `internal/cli/init.go` `initRun.repoEngine` | `setup\|update --repo [PATH]`: typed authorization, per-repo root apply, first builds | Infra | TF-admin | blocks | Owned: shared-jobs M2 and M7 (a shared repo already skips it) | retire roots (M2) | L | M |
-| RC9 | `internal/cli/settings_set.go` `settingsRepoFile`; `rigor` `--layer repo` | writes a repo's `fugaro.yaml`, possibly through a remembered checkout | Benign (writer) | repo-write | none | keep for approved Bn only | refuse keys not approved (D3235) | S | S |
+| RC9 | `internal/cli/settings_set.go` `settingsRepoFile`; `rigor` `--layer repo` | writes a repo's `fugaro.yaml`, possibly through a remembered checkout | Benign (writer) | repo-write | none | keep for the kept Bn only | refuse the lifted keys (D3237, L8) | S | S |
 | RC10 | `internal/cli/plan_status.go` | best-effort `originRepo` | Identity | none | none | keep | none | S | S |
 | RC11 | `internal/cli/budget.go` repo scope | `budget set --repo` writes `config/caps/repos/<slug>` | Identity (writer of RC40) | DB-admin | none | see RC40 | see RC40 | S | S |
 | RC12 | `internal/cli/update_check.go` `runUpdateCheck` | `update --check [PATH]` reads the checkout's files | Identity | none | varies | read project data only (L5) | none | S | S |
@@ -156,7 +170,7 @@ RC105).
 | RC15 | `git.base_branch` (+ `localcfg repos.<r>.base_branch`) | overrides the project's; read by builds in `infra/spec.go` | Benign B1 | repo-write / local | none | project default, repo override if approved | migrate localcfg value into the layer | S | S |
 | RC16 | `git.author`, `git.pr.reviewers`, `git.pr.labels`, `early_draft`, `checkpoints` | PR shape | Benign B2 | repo-write | none | keep if approved | none | S | S |
 | RC17 | `agent.auth`, `agent.oauth_token`, `agent.crafts.*.access` | credential type per repo; drives mounts, job variant, Vertex, `creds/repoauth` (F5) | Infra | repo-write, then TF-admin to deploy | blocks | Owned: model-credentials-routing MG1–MG6 | migrate once, then reject (MG) | L | L |
-| RC18 | `agent.model`, `agent.models.*`, `agent.crafts.*.model` | overlay; the repo replaces the project | Benign B3 | repo-write | none | project routing table; repo pick if approved | none | S | M |
+| RC18 | `agent.model`, `agent.models.*`, `agent.crafts.*.model` | overlay; the repo replaces the project | Benign B3 | repo-write | none | project routing table (D3237: rejected) | migrate once, then refuse (L8) | S | M |
 | RC19 | `agent.levels.*`, `review_rounds`, `max_budget_usd`, `first_line_*`, `adversarial_rounds`, `review_stop_fraction`, `workspace_beat`, `recipe` | overlay: **can loosen** | Benign B4 | repo-write | none | project; repo tighten-only if approved | none | M | M |
 | RC20 | `model_grades.*` (repo entry) | dropped at merge (`policy.tightenGrades`) | Dead | repo-write | none | project only | reject the key | S | S |
 | RC21 | `agent.max_output_tokens.*`, `max_run_tokens` | tighten-only | Benign B5 | repo-write | none | keep if approved | none | S | S |
@@ -164,9 +178,9 @@ RC105).
 | RC23 | `agent.triage`, `agent.review_against_task` | tighten through `policy.Merge` | Benign B6 | repo-write | none | keep if approved | none | S | S |
 | RC24 | `budget.*` | tighten-only; `mode: off` refused, removal offered (`update_budget_off.go`) | Benign B7 | repo-write | none | keep if approved | live already | S | S |
 | RC25 | `governance.*` | repo tightens | Benign B8 | repo-write | none | keep if approved | none | S | S |
-| RC26 | `ab.rate` | may only be lowered to 0 (`validateRepoAB`) | Benign B9 | repo-write | none | keep if approved | none | S | S |
+| RC26 | `ab.rate` | may only be lowered to 0 (`validateRepoAB`) | Benign B9 | repo-write | none | project layer (D3237: lifted) | migrate once, then refuse (L8) | S | S |
 | RC27 | `followup.trusted`, `followup.allow_public` | who may follow up a PR | Benign B10 | repo-write | none | keep if approved (security-relevant) | none | S | M |
-| RC28 | `rigor.default`, `rigor.areas` | precedence: **can lower** the project level (`rigor.Resolve`) | Benign B11 | repo-write | none | project `rigor.repos`; repo tighten-only if approved | none | M | M |
+| RC28 | `rigor.default`, `rigor.areas` | precedence: **can lower** the project level (`rigor.Resolve`) | Benign B11 | repo-write | none | project `rigor.repos` (D3237: lifted) | migrate once, then refuse (L8) | M | M |
 | RC29 | `planning.decoupling` | the repo replaces the project | Benign B12 | repo-write | none | keep if approved | none | S | S |
 | RC30 | `security.patterns` | union with the project | Benign B13 | repo-write | none | keep if approved | none | S | S |
 | RC31 | `workflows.*.job_profile`, `needs`, `ab.reviewer_arm` | picks among admin-made profiles | Benign B14 | repo-write | none | keep if approved | none | S | M |
@@ -174,7 +188,7 @@ RC105).
 | RC33 | `workflows.*.commands.*`, `cache`, `inputs.*`, `checkout` | how the repo builds and tests | Benign B15 | repo-write | none | keep if approved | none | S | S |
 | RC34 | `workflows.*.resources`, `timeouts.*` | the per-repo job's CPU, memory and `TaskTimeoutS` (`infra/spec.go`). On a shared job (F18): resources do not reach the container, but the runner prices compute and gates outputs memory by them; `timeouts.*` reach the runner, clamped down to the profile's `timeout_class` (`clampTotalToJob`) | Infra | repo-write, TF-admin | blocks | job profile | Owned: M2 | M | M |
 | RC35 | `workflows.*.secrets` | Secret Manager mounts; accepted and ignored (`RepoSecretsOff`, D2313) | Dead | repo-write | none | project secrets | Owned: shared-jobs M1 | S | S |
-| RC36 | `.fugaro/recipes/<name>.yaml` (`readRepoRecipe`) | wins over the project recipe | Benign B16 | repo-write | none | keep if approved | none | S | M |
+| RC36 | `.fugaro/recipes/<name>.yaml` (`readRepoRecipe`) | wins over the project recipe | Benign B16 | repo-write | none | project recipes (D3237: lifted) | migrate once, then refuse (L8) | S | M |
 | RC37 | `agent.instructions`, `agent.review` files | prompts per repo | Benign B17 | repo-write | none | keep if approved | none | S | S |
 | RC38 | `.claude/settings.json` plugin pin (`pluginwire.PlanRemoval`) | retired pin, removed only from a checkout | Dead | repo-write | blocks (removal per checkout) | none | offered as a diff today; move to a doctor notice (L5) | S | S |
 | RC39 | `localcfg` `Config.Repos`: `workflows`, `vertex`, `credentials_service_ready`, `provider_keys_served`, `stage_account_served`, `github_app_id` | per-repo infra facts on the owner's machine | Infra | local, TF-admin | blocks | project layer and installation state | Owned: M2 for `workflows`; the rest in L5 | M | M |
@@ -287,32 +301,35 @@ the setting lives.
 | RC96 | `docs/release.md` (the users' step 3, and the plugin paragraph) | "For each repository, in its checkout … `fugaro upgrade`" (no such command) | Infra (docs, wrong) | — | blocks | one `fugaro update` | fix with D1 | S | S |
 | RC97 | `website/data/install.yaml` | `fugaro upgrade --local` (no such command) | Infra (docs, wrong) | — | blocks | `fugaro update` | fix with D1 | S | S |
 
-## 3. Benign override candidates, for the owner's review (D3235)
+## 3. Benign override candidates, and the owner's rulings (D3235, D3237)
 
-The owner rules after this PR merges. None is kept or rejected until then. The recommendation is
-the auditor's. "Can loosen" means the repo can make the project less strict today.
+The owner ruled on each candidate on 2026-11-23, one by one, with the auditor's recommendation
+beside it (reconciliation D3237). Three rulings are not the recommendation: B9, B11 and B16 lift to
+the project. "Can loosen" means the repo can make the project less strict today. "Lift to project"
+means the setting moves to the project layer: a repo's value is migrated once, then refused (the
+spec's principle, F15). Lift L8 applies the rulings.
 
-| # | Setting (row) | Why it could differ per repo | Today | Recommendation |
-| --- | --- | --- | --- | --- |
-| B1 | `git.base_branch` (RC15) | repos branch differently | repo overrides | keep |
-| B2 | `git.author`, `pr.reviewers`, `pr.labels`, `early_draft`, `checkpoints` (RC16) | PR conventions per repo | overlay | keep |
-| B3 | `agent.model`, `models.*`, `crafts.*.model` (RC18) | a repo needs a stronger model | **can loosen** cost | reject; the routing table decides |
-| B4 | levels, rounds, `max_budget_usd`, recipe name (RC19) | review depth per repo | **can loosen** | keep tighten-only |
-| B5 | `max_output_tokens`, `max_run_tokens` (RC21) | — | tighten-only | keep |
-| B6 | `triage`, `review_against_task` (RC23) | — | tighten-only | keep |
-| B7 | `budget.*` (RC24) | a cheaper repo | tighten-only | keep |
-| B8 | `governance.*` (RC25) | — | tighten-only | keep |
-| B9 | `ab.rate` (RC26) | opt a repo out of A/B | to 0 only | keep |
-| B10 | `followup.trusted`, `allow_public` (RC27) | who may follow up | repo-only | keep; security-relevant |
-| B11 | `rigor.default`, `rigor.areas` (RC28) | critical paths differ | **can lower** the project level | keep tighten-only; project `rigor.repos` for the rest |
-| B12 | `planning.decoupling` (RC29) | — | replaces | keep |
-| B13 | `security.patterns` (RC30) | repo-specific sensitive paths | union | keep |
-| B14 | `job_profile`, `needs`, `reviewer_arm` (RC31) | a repo needs docker | picks an admin-made profile | keep |
-| B15 | `commands`, `cache`, `inputs`, `checkout` (RC33) | how the repo builds | repo-only | keep |
-| B16 | `.fugaro/recipes/` (RC36) | a repo-specific procedure | wins over the project | keep tighten-only, or project-named only |
-| B17 | `agent.instructions`, `agent.review` files (RC37) | repo context for the agent | repo-only | keep |
-| B18 | RTDB repo caps (RC40) | a repo's spend ceiling | **can exceed** the default | keep, capped at the default unless the global allows |
-| B19 | RTDB repo kill switch (RC41) | stop one repo | repo-only | keep |
+| # | Setting (row) | Why it could differ per repo | Today | Recommendation | Ruling (D3237) |
+| --- | --- | --- | --- | --- | --- |
+| B1 | `git.base_branch` (RC15) | repos branch differently | repo overrides | keep | keep |
+| B2 | `git.author`, `pr.reviewers`, `pr.labels`, `early_draft`, `checkpoints` (RC16) | PR conventions per repo | overlay | keep | keep |
+| B3 | `agent.model`, `models.*`, `crafts.*.model` (RC18) | a repo needs a stronger model | **can loosen** cost | reject; the routing table decides | **reject**, as recommended: the routing table decides; migrated once, then refused |
+| B4 | levels, rounds, `max_budget_usd`, recipe name (RC19) | review depth per repo | **can loosen** | keep tighten-only | keep, tighten-only |
+| B5 | `max_output_tokens`, `max_run_tokens` (RC21) | — | tighten-only | keep | keep |
+| B6 | `triage`, `review_against_task` (RC23) | — | tighten-only | keep | keep |
+| B7 | `budget.*` (RC24) | a cheaper repo | tighten-only | keep | keep |
+| B8 | `governance.*` (RC25) | — | tighten-only | keep | keep |
+| B9 | `ab.rate` (RC26) | opt a repo out of A/B | to 0 only | keep | **lift to project** (not the recommendation) |
+| B10 | `followup.trusted`, `allow_public` (RC27) | who may follow up | repo-only | keep; security-relevant | keep |
+| B11 | `rigor.default`, `rigor.areas` (RC28) | critical paths differ | **can lower** the project level | keep tighten-only; project `rigor.repos` for the rest | **lift to project** (not the recommendation): per-repo levels live in the project's `rigor.repos` |
+| B12 | `planning.decoupling` (RC29) | — | replaces | keep | keep |
+| B13 | `security.patterns` (RC30) | repo-specific sensitive paths | union | keep | keep |
+| B14 | `job_profile`, `needs`, `reviewer_arm` (RC31) | a repo needs docker | picks an admin-made profile | keep | keep |
+| B15 | `commands`, `cache`, `inputs`, `checkout` (RC33) | how the repo builds | repo-only | keep | keep |
+| B16 | `.fugaro/recipes/` (RC36) | a repo-specific procedure | wins over the project | keep tighten-only, or project-named only | **lift to project** (not the recommendation): repo recipe files migrated once, then refused |
+| B17 | `agent.instructions`, `agent.review` files (RC37) | repo context for the agent | repo-only | keep | keep |
+| B18 | RTDB repo caps (RC40) | a repo's spend ceiling | **can exceed** the default | keep, capped at the default unless the global allows | keep, capped at the project default unless the global cap allows more |
+| B19 | RTDB repo kill switch (RC41) | stop one repo | repo-only | keep | keep |
 
 ## 4. What blocks a single admin-run `fugaro update`
 
@@ -330,7 +347,9 @@ undone, or do differently depending on the directory it runs in?
    the `gcp_project` anchor edit (RC13), the plugin pin removal (RC38), `update --check` (RC12),
    and the secrets stage, which takes the checkout's repo secrets and skips outside one (RC98).
    Two steps that are not stages read it too: the `budget.mode` removal (RC104) and the backlog
-   fold (RC105). Check 891 sees stages only, so it cannot see these two. Lift L5.
+   fold (RC105). Check 891 sees stages only, so it cannot see these two. Lift L5, rescoped by
+   D3239: the working directory stays an optional hint (the project, and a default focus or
+   order), never what decides which work `update` does.
 5. **Workflow-secret records from the checkout** (RC70, RC99) and the GitHub App per repo (RC71,
    F19). Lift L6. The per-repo Bitbucket token (RC69) is lift L4b, owned by
    bitbucket-token-types.
@@ -361,7 +380,7 @@ undone, or do differently depending on the directory it runs in?
 | `internal/cli/initsecrets.go` `secretsStage.resolve` (`defaultBranchConfig`) | default branch | which secrets the stage takes, and for which repo (RC98) |
 | `internal/cli/update_budget_off.go` `offerBudgetModeRemoval` (`prepareBudgetModeRemoval`) | working tree | nothing; it edits the file (RC104) |
 
-A key the owner rejects under D3235 must be refused by every one of these readers. A reader that
+A key the owner rejects or lifts under D3237 must be refused by every one of these readers. A reader that
 silently ignores a rejected key re-creates the stale-config problem.
 
 ## 6. Corner cases
@@ -391,6 +410,12 @@ silently ignores a rejected key re-creates the stale-config problem.
 Ordered so the fence comes first and then each step removes one blocker of §4. Each item is its
 own spec when the owner picks it (D3236); "owned" items need none.
 
+**Waves (D3238, 2026-11-23, amended the same day).** Wave 1 is L1, L5 (as D3239 rescopes it) and
+L8, each its own spec; L8 needs L1. Wave 2 is L3 (which still waits on L2), L9 (which waits on L3)
+and the small ones L11, L12 and L13. L6 and L7 wait for the owner's next pick: L7 was offered for
+wave 1 and not chosen, L6 for wave 2 and not chosen. L2, L4 and L4b stay with the plans that own them. L10's first half is done (D1,
+#3693); its rest follows the lifts it describes.
+
 | # | Lift | Rows | Owner | Waits on |
 | --- | --- | --- | --- | --- |
 | L1 | Required-version stamp: `update` writes the minimum CLI release beside `config/policy/shared`; the root pre-run refuses project commands below it, naming `brew upgrade` and `fugaro update` | §6 | new spec | — (first, because every "migrate once, then reject" below needs old CLIs fenced) |
@@ -398,10 +423,10 @@ own spec when the owner picks it (D3236); "owned" items need none.
 | L3 | One project build identity; catalog records and leases keyed by entry | RC6, RC44, RC55, RC56, RC61, RC65, RC72, RC82 | new spec (D3232) | L2 |
 | L4 | Credential type out of the repo | RC17, RC47, RC48 | model-credentials-routing MG1–MG6, X4 | its plan edges |
 | L4b | Bitbucket tokens at project or workspace level, not per repository | RC69 | bitbucket-token-types | its plan |
-| L5 | `update` reads no working directory: kinds and default entry from every enrolled repo's default branch; the anchor edit in `repos add`; the pin removal, and the `budget.mode` removal, as doctor notices; the secrets stage and the backlog fold take their repos from the enrolled list | RC12, RC13, RC38, RC39, RC75, RC98, RC104, RC105 | new spec | L2 |
+| L5 | `update`'s work does not depend on the working directory (rescoped by D3239). The working directory is an optional hint only: inside a checkout, `update` may take the project (so `--project` is not needed there) and a default focus or order from that checkout's `fugaro.yaml`. It never decides what work is done: from any directory, the secrets, repository and checkout stages and RC104's and RC105's steps work over every enrolled repository, reading each from its default branch, not the working tree; kinds and the default entry likewise; the anchor edit in `repos add`; the pin removal as a doctor notice. A value only a person can supply for a repository (the secrets stage) is asked by the repository's name, or skipped with a line that names the repository, never skipped silently as today | RC12, RC13, RC38, RC39, RC75, RC98, RC104, RC105 | new spec | L2 |
 | L6 | Workflow-secret records and the GitHub App from project data | RC70, RC71, RC99 | new spec | — (U2 settled, F19) |
 | L7 | Admin-only infra stages: `update` and the after-write hook refuse a non-admin by name before any infra stage | RC87, RC88 | new spec | — |
-| L8 | Apply the benign rulings: migrate once, then reject the keys not kept, in every §5 reader | RC9, B1–B19 | new spec | D3235 rulings, L1 |
+| L8 | Apply the benign rulings (D3237): lift B3 (to the routing table), B9, B11 (to the project's `rigor.repos`) and B16 to the project, each migrated once, then refused in every §5 reader and by RC9's writer; make B4 tighten-only and cap B18 at the project default unless the global cap allows more. The other thirteen are kept as they are | RC9, RC18, RC19, RC26, RC28, RC36, RC40 | new spec | L1 (the rulings are in, D3237) |
 | L9 | A no-catalog project gets a default catalog entry, so no derived image is built in `update` (T1) | RC32, RC73, RC74 | new spec (T1, answered 2026-11-22; D1900 stands) | L3, unless the default entry names no source repository |
 | L10 | Docs and skills: fix the missing `fugaro upgrade` now (README, `docs/release.md`, the website's install page); rewrite per-checkout steps as each lift lands | RC90–RC94, RC96, RC97 | docs runs (D1 for RC93, RC96, RC97) | D1 none; the rest follow L2–L5 |
 | L11 | `image_map` keyed by provider | RC51 | small spec | — |
