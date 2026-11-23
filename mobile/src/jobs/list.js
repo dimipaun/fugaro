@@ -31,8 +31,10 @@
 // production files). The project's row is what is left.
 //
 // **Nothing here is a claim about a run.** No field of the row comes from a run
-// and no line names one; the feed's document cannot even carry a run, because
-// `document.js` accepts the runs-bucket fields only as empty arrays.
+// and no line names one. The feed's document can carry a run of its own since
+// VS4 -- an id, C1's fallback mark and C3's pause, and `document.js` refuses
+// every other member a runs-bucket row has -- and none of it is a figure, a
+// name or a link this list draws.
 
 import { FeedReader, LIVENESS } from '../feed/index.js';
 import { LIST_CODES } from './fields.js';

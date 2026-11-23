@@ -104,15 +104,15 @@ func TestBaseInstructionsBlockKeepsEverythingUnderTheCap(t *testing.T) {
 // priced without one that the gateway carries is the run the rule is for.
 //
 // A coder whose calls reach no gateway is neither refused nor denied — an
-// oauth run and a run with the budget off write no managed settings file at
-// all (writeManagedSettings' first rule) — so its brief must not claim an
-// enforcement that is not there, nor forbid a read it can make. The model here
-// is one the run's price table has no row for, which the gateway does serve,
-// priced at the table's maximum, and refuses an image for (forward.go's
-// modelFor): the price row alone is not the question.
+// oauth run, the one credential the gateway does not carry (D3026, R12), and
+// no mode takes a gateway away from the others any more (AB1b, D3009) — so its
+// brief must not claim an enforcement that is not there, nor forbid a read it
+// can make. The model here is one the run's price table has no row for, which
+// the gateway does serve, priced at the table's maximum, and refuses an image
+// for (forward.go's modelFor): the price row alone is not the question.
 //
-// Mutation (denyBinaryReads' price-row answer without its gatewayOn): the two
-// gateway-off cases gain the rule and their byte-for-byte assertion fails.
+// Mutation (denyBinaryReads' price-row answer without its gatewayOn): the
+// gateway-less oauth case gains the rule and its byte-for-byte assertion fails.
 func TestSystemPromptIsUnchangedWithAnImageRate(t *testing.T) {
 	mk := func(model, auth, mode string) (PromptData, string) {
 		r := &run{
@@ -137,8 +137,8 @@ func TestSystemPromptIsUnchangedWithAnImageRate(t *testing.T) {
 	}{
 		{"a coder with an image rate", "claude-sonnet-5-5", "api-key", "enforce", false},
 		{"a coder without one", "deepseek/deepseek-v4-flash", "api-key", "enforce", true},
-		{"a coder without one on oauth, where the gateway is off", "deepseek/deepseek-v4-flash", "oauth", "enforce", false},
-		{"a coder without one with the budget off", "deepseek/deepseek-v4-flash", "api-key", "off", false},
+		{"a coder without one on oauth, where there is no gateway", "deepseek/deepseek-v4-flash", "oauth", "enforce", false},
+		{"a coder without one when the job names no mode", "deepseek/deepseek-v4-flash", "api-key", "", true},
 	} {
 		pd, got := mk(c.model, c.auth, c.mode)
 		if pd.NoImageReads != c.want {

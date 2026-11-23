@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/userstats"
@@ -39,9 +40,18 @@ import (
 //     resolved for and the view itself are printed, so a table never leaves a
 //     reader guessing whose numbers they are looking at.
 //   - The read is bounded. A window can hold every run of every repository in
-//     the bucket, so at most --max-runs records are read per call, newest
-//     first, and a truncated read says so in the output rather than quietly
+//     the bucket, so at most --max-runs runs are read per call, newest first,
+//     and a truncated read says so in the output rather than quietly
 //     publishing figures over a subtree of the window.
+//
+// The rows come from the run index (F32): one page of its entries carries the
+// launcher, the outcome and the settled cost of every run in the window, so the
+// figures cost one query and no object read whatever the history behind them.
+// While the index has never finished a walk it cannot answer for a window at
+// all -- a page cut out of a history nobody has walked yet is a partial sum,
+// which is a wrong one rather than a smaller truth -- and the records are read
+// instead, exactly as they were before the index existed, with the document's
+// own `index_complete` saying which of the two reads produced it.
 
 // userStatsDefaultSince is runs stats' default window: the same seven days
 // runs ls lists by default.
@@ -50,8 +60,19 @@ const userStatsDefaultSince = "7d"
 // userStatsMaxRuns is how many runs one call reads. It bounds the read rather
 // than the window: a window holding more is truncated to its newest
 // userStatsMaxRuns runs, and the output says so. Raising it is the caller's
-// choice (--max-runs) and costs one object read per run.
+// choice (--max-runs) and costs one index entry per run -- or, while the index
+// cannot answer the window, one object read per run (readUserStatsRuns).
 const userStatsMaxRuns = 5000
+
+// runIndexReader opens the run index `runs stats` reads its window from. It is
+// the package's stub until I-INDEX wires the real Reader in
+// (internal/cli/runindex_wire.go), and tests replace it. The stub answers an
+// empty page and says the index has never finished a walk, which is what sends
+// the command to the run records (readUserStatsRuns) rather than printing an
+// empty window as the truth.
+var runIndexReader = func(context.Context, *cloudEnv) (runindex.Reader, error) {
+	return runindex.NewStub(), nil
+}
 
 // userStatsByUser is the only breakdown this command publishes. --by names
 // it, so that the day a second one exists it is a value here and not a
@@ -105,6 +126,13 @@ type userStatsDoc struct {
 	// newest MaxRuns were read.
 	MaxRuns   int  `json:"max_runs"`
 	Truncated bool `json:"truncated"`
+	// IndexComplete is whether the rows came from the run index: true when the
+	// figures are its own page, read with no run object at all (F32), and false
+	// when the index has never finished a walk and the run records were read
+	// instead -- the same figures over the same window, one object read per run
+	// (readUserStatsRuns). It is the one field this document gained for the
+	// index, and it says which of the two reads a consumer is looking at.
+	IndexComplete bool `json:"index_complete"`
 	// Rows are the groups, one per (user, currency); Totals one per currency
 	// with an empty user. Dollars are never added across currencies.
 	Rows   []userstats.Row `json:"rows"`
@@ -182,19 +210,24 @@ func newRunsStatsCmd() *cobra.Command {
 			"sanitises to the same text is never counted in it and your own row can be\n" +
 			"smaller than that key's row in the full table.\n\n" +
 			"A window can hold every run of every repository in the bucket, so the read is\n" +
-			"bounded: at most --max-runs records are read per call, newest first, and a window\n" +
+			"bounded: at most --max-runs runs are read per call, newest first, and a window\n" +
 			"holding more says so in the output rather than publishing figures over a part of\n" +
 			"itself silently. The bound is on the read, not on a person: the newest --max-runs\n" +
 			"runs are taken before any view is applied, so a private view can be over fewer of\n" +
 			"the caller's own runs than --max-runs suggests. A run with neither a launch nor a\n" +
-			"record -- never launched, cancelled before launch, or a stale claim -- never\n" +
-			"started and is counted in no figure. The count of those is the window's, over\n" +
-			"everyone's runs, and is no more the caller's own than the truncation is.\n\n" +
+			"record, and no status settled for it -- never launched, cancelled before launch,\n" +
+			"or a stale claim -- never started and is counted in no figure. The count of those\n" +
+			"is the window's, over everyone's runs, and is no more the caller's own than the\n" +
+			"truncation is. The rows come from the run index -- one page of entries for the\n" +
+			"window, and no run object read at all -- which index_complete reports: it is false\n" +
+			"while the index has not finished a walk, when the run records are read instead,\n" +
+			"over the same window and with the same figures.\n\n" +
 			"--json prints {version, project, by, view, you, admin, since, until, max_runs,\n" +
-			"truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,\n" +
-			"currency, runs, succeeded, failed, halted, infra_error, other, no_record,\n" +
-			"counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the counts add up:\n" +
-			"runs == succeeded + failed + halted + infra_error + other + no_record.",
+			"truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals\n" +
+			"carry {user, currency, runs, succeeded, failed, halted, infra_error, other,\n" +
+			"no_record, counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the\n" +
+			"counts add up: runs == succeeded + failed + halted + infra_error + other +\n" +
+			"no_record.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runRunsStats(cmd, &o) },
 	}
@@ -302,19 +335,22 @@ func runRunsStats(cmd *cobra.Command, o *userStatsOptions) error {
 	}
 	res := userstats.Aggregate(userStatsRuns(read.runs))
 	return writeUserStats(cmd.OutOrStdout(), userStatsDoc{
-		Version:    userStatsDocVersion,
-		Project:    env.lc.Name,
-		By:         userStatsByUser,
-		View:       view,
-		You:        you,
-		Admin:      admin,
-		Since:      dateOrEmpty(from),
-		Until:      until.Format("2006-01-02"),
-		MaxRuns:    o.maxRuns,
-		Truncated:  read.truncated,
-		Rows:       res.Rows,
-		Totals:     res.Totals,
-		Unlaunched: read.unlaunched,
+		Version:   userStatsDocVersion,
+		Project:   env.lc.Name,
+		By:        userStatsByUser,
+		View:      view,
+		You:       you,
+		Admin:     admin,
+		Since:     dateOrEmpty(from),
+		Until:     until.Format("2006-01-02"),
+		MaxRuns:   o.maxRuns,
+		Truncated: read.truncated,
+		// The index's own answer, so a consumer knows which read these figures
+		// are (readUserStatsRuns).
+		IndexComplete: read.indexComplete,
+		Rows:          res.Rows,
+		Totals:        res.Totals,
+		Unlaunched:    read.unlaunched,
 	}, o.since, o.asJSON)
 }
 
@@ -350,12 +386,18 @@ type userStatsRead struct {
 	// runs are the records the window held, mapped to the aggregation's own
 	// view of a run.
 	runs []userStatsRecorded
-	// unlaunched counts the runs of the window that were neither launched
-	// nor recorded: they never started and no figure counts them.
+	// unlaunched counts the runs of the window that never started: neither
+	// launched nor recorded, and -- on a page from the index, where the
+	// overlay lists a live run with neither -- no status settled for them
+	// either (readUserStatsRuns).
 	unlaunched int
 	// truncated means the window held more runs than the read was allowed, so
 	// only its newest max were read.
 	truncated bool
+	// indexComplete is whether the rows came from the run index, which is the
+	// document's `index_complete`: false means the index has never finished a
+	// walk and the records were read instead (readUserStatsRuns).
+	indexComplete bool
 }
 
 // runObject is one run's two objects as a bucket read found them, and the run
@@ -504,9 +546,66 @@ func readRunObjects(ctx context.Context, env *cloudEnv, slugs []string, since, u
 	return objs, unlaunched, truncated, nil
 }
 
-// readUserStatsRuns maps the window's run objects to the narrow view
-// internal/userstats aggregates.
+// readUserStatsRuns reads the window's rows: one page of the run index, and the
+// run records while the index cannot answer for the window.
+//
+// The index is the read (F32). One page carries everything this command
+// aggregates -- the launcher each run's own launch recorded, its settled
+// outcome and its settled cost -- so the figures cost one query and no object
+// read at all, whatever the history behind the window.
+//
+// It cannot answer while it has never finished a walk, and the summary says so
+// itself (Page.IndexComplete). A page cut out of a history nobody has walked
+// yet is a partial sum, which is a wrong answer rather than a smaller truth:
+// the runs of the window the walk has not reached would be missing from every
+// figure, and nothing in the document would say which. That is the state every
+// installation is in until the reindex `fugaro update` starts reaches the end of
+// history (RI5), and the state a caller that has wired nothing is in
+// (runindex.NewStub) -- so the command then reads the records exactly as it did
+// before the index existed: the same rows, the same money, the same count of
+// runs that never started, one object read per run. `index_complete` in the
+// document says which of the two reads produced the figures.
 func readUserStatsRuns(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (userStatsRead, error) {
+	idx, err := runIndexReader(ctx, env)
+	if err != nil {
+		return userStatsRead{}, err
+	}
+	page, err := idx.List(ctx, runindex.Filter{Slugs: slugs, Since: since, Limit: max})
+	if err != nil {
+		return userStatsRead{}, remote(err)
+	}
+	if !page.IndexComplete {
+		return readUserStatsObjects(ctx, env, slugs, since, max)
+	}
+	// The page's own continuation is this command's truncation: the reader cut
+	// the page at --max-runs and says there is more, which is exactly "the
+	// window holds more runs than the read was allowed".
+	read := userStatsRead{indexComplete: true, truncated: page.Next != nil}
+	for _, e := range page.Entries {
+		// An entry with neither record is not on its own a run that never
+		// started. The overlay lists a run the index has not folded yet -- in
+		// flight, or finished inside the fold gap -- with its run id, its slug
+		// and its status alone (contract-index.md, "The overlay"), so such a
+		// run arrives here with no launch and no record and still did start.
+		// What says a run never started is that nothing settled a status for
+		// it: the overlay always supplies one, and a run that never launched
+		// has no record to settle one. Counting the overlay's row as unlaunched
+		// would drop a live run from every figure and tell the reader it never
+		// started, which is the mistake the record read's own corrupt-launch
+		// guard makes impossible (TestRunsStatsUnreadableLaunchIsUnknownNotUnlaunched).
+		if e.Launch == nil && e.Record == nil && e.Status == "" {
+			read.unlaunched++
+			continue
+		}
+		read.runs = append(read.runs, userStatsRun(e.Launch, e.Record))
+	}
+	return read, nil
+}
+
+// readUserStatsObjects is the window read the command makes while the index
+// cannot answer it, and it is the read the command made before the index
+// existed: the run objects themselves, mapped to the same rows.
+func readUserStatsObjects(ctx context.Context, env *cloudEnv, slugs []string, since time.Time, max int) (userStatsRead, error) {
 	// runs stats has no window end: its --since is the whole window, so the
 	// read is bounded by the cap alone.
 	objs, unlaunched, truncated, err := readRunObjects(ctx, env, slugs, since, time.Time{}, max)
@@ -689,7 +788,7 @@ func userStatsNotes(doc userStatsDoc) []string {
 		notes = append(notes, fmt.Sprintf("read:    the window holds more runs than the %d this call reads: no figure below is over more than its newest %d, and none is over the whole window", doc.MaxRuns, doc.MaxRuns))
 	}
 	if doc.Unlaunched > 0 {
-		notes = append(notes, fmt.Sprintf("read:    %d %s in the window %s never launched (no launch and no record) and %s counted in no figure",
+		notes = append(notes, fmt.Sprintf("read:    %d %s in the window %s never launched (no launch, no record and no status settled for it) and %s counted in no figure",
 			doc.Unlaunched, plural(doc.Unlaunched, "run", "runs"), wasWere(doc.Unlaunched), wasWere(doc.Unlaunched)))
 	}
 	return notes

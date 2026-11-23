@@ -8,7 +8,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io/fs"
+	"math"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -135,7 +137,7 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 	// Registered after the fakes, so it runs before they close: no
 	// execution outlives the test.
 	t.Cleanup(r.wait)
-	r.remote = testutil.NewRemote(t, testutil.FixtureFiles(t))
+	r.remote = testutil.NewRemote(t, pricedFixtureFiles(t))
 	r.claude = testutil.FakeClaude(t, claudeScript)
 	dir := t.TempDir()
 	r.dir = dir
@@ -250,15 +252,21 @@ func (r *cloudRig) execute(full, run, tmp string) int {
 		"--workdir", workdir, "--remote", r.remote, "--state-dir", filepath.Join(tmp, "state"),
 		"--provider", "fake", "--provider-state", r.provider, "--claude", r.claude, "--cancel-poll", r.cancelPoll.String()}
 	var budgetEnv []string
+	// The managed settings go in a directory of the execution's own, not the
+	// real /etc/claude-code, which a developer's machine does not have; the rig
+	// keeps its Cloud Run variables.
+	managed := filepath.Join(tmp, "claude-code")
+	if err := os.MkdirAll(managed, 0o755); err != nil {
+		r.t.Errorf("creating the managed settings directory: %v", err)
+		return -1
+	}
+	args = append(args, "--managed-settings", filepath.Join(managed, "managed-settings.json"))
+	upstream := r.gatewayUpstream
+	if upstream == "" {
+		upstream = idleUpstream(r.t)
+	}
+	args = append(args, "--gateway-upstream", upstream)
 	if r.gatewayUpstream != "" {
-		// The managed settings go in a directory of the execution's own,
-		// not the real /etc/claude-code; the rig keeps its Cloud Run variables.
-		managed := filepath.Join(tmp, "claude-code")
-		if err := os.MkdirAll(managed, 0o755); err != nil {
-			r.t.Errorf("creating the managed settings directory: %v", err)
-			return -1
-		}
-		args = append(args, "--gateway-upstream", r.gatewayUpstream, "--managed-settings", filepath.Join(managed, "managed-settings.json"))
 		r.mu.Lock()
 		budgetEnv = []string{"FUGARO_BUDGET_MODE=" + r.budgetMode}
 		if r.budgetCap != "" {
@@ -569,7 +577,8 @@ func plantingImplement(t *testing.T) string {
 		`echo 'planted-b64: ` + b64 + `'; ` +
 		`printf 'planted-wrap76:\n` + strings.Join(wrap(b64, 76), `\n`) + `\n'; ` +
 		`printf 'planted-wrap64:\n` + strings.Join(wrap(b64, 64), `\n`) + `\n'`
-	call, err := json.Marshal(map[string]any{"shell": shell, "text": "done, key ${ANTHROPIC_API_KEY}", "cost": 1})
+	call, err := json.Marshal(map[string]any{"shell": shell, "text": "done, key ${ANTHROPIC_API_KEY}", "cost": 1,
+		"api": []map[string]any{{"model": "claude-sonnet-5-5", "max_tokens": 1000}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +596,8 @@ func newRunID(t *testing.T) string {
 }
 
 func TestCloudRunLsLogsDiagnose(t *testing.T) {
-	r := newCloudRig(t, `{"calls":[`+plantingImplement(t)+`,`+reviewShip+`]}`, 100*time.Millisecond)
+	r := newCloudRig(t, `{"calls":[`+plantingImplement(t)+`,`+reviewShip+`]}`, 100*time.Millisecond,
+		gatewayRig(pricedUpstream(t), "enforce", "5"))
 	id := newRunID(t)
 	run := cloudSlug + "/" + id
 	out, err := r.cli("run", "--repo", "acme/app", "--run-id", id, "--batch", "e2e", "--json", "Add a feature")
@@ -681,12 +691,12 @@ func TestCloudRunLsLogsDiagnose(t *testing.T) {
 		t.Fatalf("provider = %+v, %v", st, err)
 	}
 
-	// Cost reaches ls's totals: the agent's two calls (1 + 0.5, billed
-	// under auth: api-key) and the compute estimate.
+	// Cost reaches ls's totals: the gateway's price of the agent's one model
+	// call and the compute estimate.
 	batchRow, totals := r.lsRun(id, "--batch", "e2e")
 	model, _ := totals["model_usd"].(float64)
 	total, _ := totals["total_usd"].(float64)
-	if batchRow == nil || totals["runs"] != float64(1) || model != 1.5 || total < model {
+	if batchRow == nil || totals["runs"] != float64(1) || model <= 0 || model >= 0.1 || total < model {
 		t.Fatalf("ls --batch e2e: row %v, totals %v", batchRow, totals)
 	}
 	if _, totals := r.lsRun(id, "--batch", "other"); totals["runs"] != float64(0) {
@@ -895,11 +905,11 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	// The follow-up's agent commits, verifies and writes its summary, which
 	// quotes its model credential: followup.md must be redacted.
 	followImplement := `{"shell":"echo renamed > x.txt && git add -A && git commit -qm 'Rename x' && fugaro verify test; ` +
-		`echo \"Renamed x as asked. key $ANTHROPIC_API_KEY\" > \"$FUGARO_STATE_DIR/followup.md\"","text":"done, key ${ANTHROPIC_API_KEY}","cost":1}`
+		`echo \"Renamed x as asked. key $ANTHROPIC_API_KEY\" > \"$FUGARO_STATE_DIR/followup.md\"","text":"done, key ${ANTHROPIC_API_KEY}","cost":1,"api":[{"model":"claude-sonnet-5-5","max_tokens":1000}]}`
 	followImplement2 := `{"shell":"echo tidy > y.txt && git add -A && git commit -qm 'Tidy y' && fugaro verify test; ` +
-		`echo 'Tidied y.' > \"$FUGARO_STATE_DIR/followup.md\"","text":"done","cost":1}`
-	r := newCloudRig(t, `{"calls":[`+implementOK+`,`+reviewShip+`,`+followImplement+`,`+reviewShip+`,`+followImplement2+`,`+reviewShip+`]}`,
-		100*time.Millisecond, fixedWorkdir)
+		`echo 'Tidied y.' > \"$FUGARO_STATE_DIR/followup.md\"","text":"done","cost":1,"api":[{"model":"claude-sonnet-5-5","max_tokens":1000}]}`
+	r := newCloudRig(t, `{"calls":[`+implementCalling(t, 1)+`,`+reviewShip+`,`+followImplement+`,`+reviewShip+`,`+followImplement2+`,`+reviewShip+`]}`,
+		100*time.Millisecond, gatewayRig(pricedUpstream(t), "enforce", "5"), fixedWorkdir)
 	first := newRunID(t)
 	if _, err := r.cli("run", "--repo", "acme/app", "--run-id", first, "Add a feature"); err != nil {
 		t.Fatal(err)
@@ -1013,7 +1023,7 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	// The runs of this test start within one second of each other, so their
 	// order in ls is unspecified: compare the set.
 	if err != nil || json.Unmarshal([]byte(out), &ls) != nil || !sameRunIDs(ls.Runs, first, second) ||
-		ls.Totals["runs"] != float64(2) || ls.Totals["model_usd"] != float64(3) {
+		ls.Totals["runs"] != float64(2) || !sumsToTotal(ls.Runs, ls.Totals) {
 		t.Fatalf("ls --pr 1: %s, %v", out, err)
 	}
 	diag, err := r.cli("diagnose", "--json", second)
@@ -1080,7 +1090,7 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	}
 	out, err = r.cli("runs", "ls", "--json", "--pr", "1")
 	if err != nil || json.Unmarshal([]byte(out), &ls) != nil || !sameRunIDs(ls.Runs, first, second, third) ||
-		ls.Totals["runs"] != float64(3) || ls.Totals["model_usd"] != float64(4.5) {
+		ls.Totals["runs"] != float64(3) || !sumsToTotal(ls.Runs, ls.Totals) {
 		t.Fatalf("ls --pr 1 after the second follow-up: %s, %v", out, err)
 	}
 
@@ -1120,18 +1130,39 @@ func sameRunIDs(rows []map[string]any, ids ...string) bool {
 	return slices.Equal(got, want)
 }
 
+// idleUpstream is a loopback upstream for a run whose fake agent makes no
+// model call: the managed settings need a loopback upstream, and a call that
+// does reach it fails the test.
+func idleUpstream(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the idle upstream got %s %s: the run was not meant to call a model", r.Method, r.URL.Path)
+		http.Error(w, "no model here", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// pricedFixtureFiles is the fixture repository with priced models pinned: a
+// budget is always on, and a run whose models it cannot price stops at
+// bootstrap.
+func pricedFixtureFiles(t *testing.T) map[string]string {
+	t.Helper()
+	files := testutil.FixtureFiles(t)
+	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "  review_rounds: 2\n", `  review_rounds: 2
+  model: claude-sonnet-5-5
+  models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5, background: claude-haiku-4-5 }
+`, 1)
+	return files
+}
+
 // gatewayRig makes the rig's jobs run an api-key workflow through the
 // budget gateway, against the fake upstream at upstream: the repository
 // pins priced models, and each job gets mode and, when not empty, cap.
 func gatewayRig(upstream, mode, capUSD string) rigOption {
 	return func(r *cloudRig) {
 		r.gatewayUpstream, r.budgetMode, r.budgetCap = upstream, mode, capUSD
-		files := testutil.FixtureFiles(r.t)
-		files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "  review_rounds: 2\n", `  review_rounds: 2
-  model: claude-sonnet-5-5
-  models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5, background: claude-haiku-4-5 }
-`, 1)
-		r.remote = testutil.NewRemote(r.t, files)
+		r.remote = testutil.NewRemote(r.t, pricedFixtureFiles(r.t))
 	}
 }
 
@@ -1153,6 +1184,38 @@ func criticalRigor(r *cloudRig) {
 	}
 	testutil.Git(r.t, clone, "commit", "--quiet", "-am", "Pin the rigor mode")
 	testutil.Git(r.t, clone, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+}
+
+// pricedUpstream is a fake model upstream that answers every call as a small
+// priced sonnet message, so the gateway has a cost to record.
+func pricedUpstream(t *testing.T) string {
+	t.Helper()
+	upstream, srv := anthropicfake.New(t)
+	upstream.Func = func(*http.Request, []byte) anthropicfake.Reply {
+		return anthropicfake.MessageOK("claude-sonnet-5-5", pricing.Usage{Input: 1000, Output: 500})
+	}
+	return srv.URL
+}
+
+// modelUSD is the model cost of a record row in ls --json.
+func modelUSD(row map[string]any) float64 {
+	cost, _ := row["cost"].(map[string]any)
+	usd, _ := cost["model_usd"].(float64)
+	return usd
+}
+
+// sumsToTotal reports whether the totals' model cost is positive and the sum
+// of the runs' own: each run made one priced call through the gateway.
+func sumsToTotal(runs []map[string]any, totals map[string]any) bool {
+	var sum float64
+	for _, row := range runs {
+		if modelUSD(row) <= 0 {
+			return false
+		}
+		sum += modelUSD(row)
+	}
+	total, _ := totals["model_usd"].(float64)
+	return total > 0 && math.Abs(total-sum) < 1e-9
 }
 
 // implementCalling is implementOK's work, then n model calls of sonnet.

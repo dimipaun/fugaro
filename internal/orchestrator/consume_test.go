@@ -444,6 +444,48 @@ func TestConsumerPassAnswersNoPromptAndNoUnknownKind(t *testing.T) {
 	}
 }
 
+// TestConsumerPassAnswersAStopRequest: the phone's stop request (mobile plan
+// task P5.1g, the owner's answer Q10(c)) is a kind a phone sends, so this pass
+// carries it — it is answered, and the answer says what actually happened:
+// nothing was stopped from here, because there is nothing here to stop it with.
+//
+// The two halves both matter. A record this pass refused outright would never
+// be answered, and the phone's own at-least-once rule keeps an unanswered
+// record owing (M2), so the human's stop request would sit in the app as a
+// pending utterance with nothing to say about it; and an answer that claimed
+// something had been stopped would be the lie Q10's answer (c) exists to avoid
+// — the phone cannot write the enforcement side, and this pass holds no grant
+// for it either.
+func TestConsumerPassAnswersAStopRequest(t *testing.T) {
+	ctx := context.Background()
+	f, st := consumeFixture(t)
+	f.Set(consumeInboxPath("s-1"), consumeSigned(t, "s-1", map[string]any{
+		"kind": "stop", "text": "stop everything",
+	}, consumeAt.UnixMilli(), consumeKeyMaterial))
+
+	got, err := orchestrator.Consume(ctx, st, consumeOptions(consumeMailboxFixture(st)))
+	if err != nil {
+		t.Fatalf("Consume: %v", err)
+	}
+	if got.Read != 1 || got.Verified != 1 || got.Refused != 0 || got.Replied != 1 {
+		t.Errorf("read/verified/refused/replied = %d/%d/%d/%d, want 1/1/0/1: a stop request is a record this pass reads, verifies and answers",
+			got.Read, got.Verified, got.Refused, got.Replied)
+	}
+	reply := consumeNode(t, f, consumeOutboxPath(consumeOutboxID("s-1")))
+	if reply == nil {
+		t.Fatal("the pass left a stop request unanswered: an unanswered record is one the phone keeps owing")
+	}
+	if reply["kind"] != "answer" {
+		t.Errorf("the reply's kind = %v, want answer: the outbox answer is the kind a phone reads, and a stop request raises no prompt of this pass' own", reply["kind"])
+	}
+	text, _ := reply["text"].(string)
+	for _, want := range []string{"nothing was stopped", "no phone-writable kill switch", "revoke this device's pairing"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the reply to a stop request does not carry %q: %q", want, text)
+		}
+	}
+}
+
 // TestConsumerPassReportsARefusedWriteAndOwesTheAnswer: the two rules that
 // fence the outbox — CONSUMER's write grant and the create-only clause — are
 // enforced where the write happens, so a rules denial is a refusal this pass

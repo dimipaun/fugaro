@@ -123,9 +123,10 @@ type estimateModelRow struct {
 
 // estimateCatalog is the provenance of the rates the figure was priced at: the
 // source line and date of the row's own catalog when the built-in provider
-// price catalog priced it (its own 30-day rule, catalog.StaleAfter), and the
-// embedded Claude price table's otherwise (priceStaleAfter). Same four facts
-// `budget prices` and `models ls` state, by their own name because the rule
+// price catalog priced it (its own 30-day rule, catalog.StaleAfter), the row's
+// own publisher's when it carries one (a row Vertex prices: Model.PriceSource),
+// and the embedded Claude price table's otherwise (priceStaleAfter). Same four
+// facts `budget prices` and `models ls` state, by their own name because the rule
 // that decides staleness is the row's.
 type estimateCatalog struct {
 	Source    string `json:"source"`
@@ -312,9 +313,13 @@ func estimateKnownModels(table *pricing.Table) []string {
 
 // estimateCatalogOf reads the provenance of the row that priced the figure:
 // the row's own catalog source and date when the built-in provider price
-// catalog priced it, the embedded Claude table's otherwise. An unreadable date
-// leaves the age at 0 and nothing stale, as `budget prices` leaves it rather
-// than failing the surface over a line of its own output.
+// catalog priced it, the row's own publisher's when the table carries those for
+// it (a row another publisher prices: Model.PriceSource), and the embedded
+// Claude table's own otherwise. A row that answered to the table's Source and
+// CheckedAt while carrying its publisher's would print Vertex's figure under the
+// Claude page's date, which is what `budget prices` states per row. An
+// unreadable date leaves the age at 0 and nothing stale, as `budget prices`
+// leaves it rather than failing the surface over a line of its own output.
 func estimateCatalogOf(table *pricing.Table, m pricing.Model, now time.Time) estimateCatalog {
 	if c := m.Catalog; c != nil {
 		out := estimateCatalog{Source: c.Source, CheckedAt: c.CheckedAt, Stale: c.Stale}
@@ -323,8 +328,18 @@ func estimateCatalogOf(table *pricing.Table, m pricing.Model, now time.Time) est
 		}
 		return out
 	}
-	out := estimateCatalog{Source: table.Source, CheckedAt: table.CheckedAt}
-	if t, err := time.Parse("2006-01-02", table.CheckedAt); err == nil {
+	// A row carries its publisher's source and date together (pricing's rule for
+	// the pair), so an empty one means the row is one the table's own Source and
+	// CheckedAt cover.
+	source, checked := table.Source, table.CheckedAt
+	if m.PriceSource != "" {
+		source = m.PriceSource
+	}
+	if m.PriceCheckedAt != "" {
+		checked = m.PriceCheckedAt
+	}
+	out := estimateCatalog{Source: source, CheckedAt: checked}
+	if t, err := time.Parse("2006-01-02", checked); err == nil {
 		age := now.Sub(t)
 		out.AgeDays = int(age.Hours() / 24)
 		out.Stale = age > priceStaleAfter

@@ -80,6 +80,11 @@ type reposEnrolment struct {
 	entryNow   localcfg.Repo
 	entryKnown bool
 	entryWhy   string
+	// accountAllow is the account whose allow_data_to this run extends with
+	// the repository, and accountWhy what the plan and the write say about it
+	// (reposEnrolmentAccounts).
+	accountAllow string
+	accountWhy   string
 	// local is this machine's project config as the file holds it, path and
 	// old being the file itself: every local write below lands in that one
 	// document.
@@ -260,8 +265,12 @@ func reposEnrolmentRead(ctx context.Context, o *projectReposOptions, lc *localcf
 	if err != nil {
 		return plan, err
 	}
+	plan.entry.ClaudeAccounts = reposEnrolmentInherited(ctx, lc, plan, plan.entry.ClaudeAccounts)
 	plan.entry = reposEntryMerge(plan.entryNow, plan.entry, plan.entryKnown)
-	plan.entryWhy = reposEntryWhy(plan.entryNow, plan.entry, plan.entryKnown, plan.localKey)
+	if err := reposEnrolmentAccounts(ctx, lc, &plan); err != nil {
+		return plan, err
+	}
+	plan.entryWhy = reposEntryWhy(plan.entryNow, plan.entry, plan.entryKnown, plan.localKey) + plan.accountWhy
 	if allow.State != "" {
 		return plan, userErr("%s: this command writes the published allow-list, so publish one first ('fugaro project policy publish')", allow.State)
 	}
@@ -429,6 +438,108 @@ func reposEnrolmentEntry(lc *localcfg.Config, ownerName string, row reposViewRep
 	}
 	next.ClaudeAccounts = projectClaudeAccounts(lc, ownerName)
 	return next, nil
+}
+
+// accountUncovered reports whether account is a named Claude account this
+// machine's config defines whose own allow_data_to does not name the
+// repository: the one state the publish refuses (projectpolicy's
+// repoAccountCovers). The default account, the axis's non-account values and
+// an account nothing defines are other refusals with other fixes and are not
+// this one.
+func accountUncovered(lc *localcfg.Config, account, ownerName string) bool {
+	if account == config.DefaultClaudeAccount || config.AxisNonAccountValue(account) {
+		return false
+	}
+	acct, defined := lc.ClaudeAccounts[account]
+	return defined && !acct.AllowsData(ownerName)
+}
+
+// repoAccountGap is one repository entry that names a named account whose own
+// allow_data_to does not name it: what the publish refuses, found before it is
+// run.
+type repoAccountGap struct{ repo, account string }
+
+// repoAccountGaps lists every such entry of this machine's project config, in
+// the order of the repositories and of each entry's accounts.
+func repoAccountGaps(lc *localcfg.Config) []repoAccountGap {
+	var gaps []repoAccountGap
+	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
+		for _, a := range lc.Repos[repo].ClaudeAccounts {
+			if accountUncovered(lc, a, repo) {
+				gaps = append(gaps, repoAccountGap{repo, a})
+			}
+		}
+	}
+	return gaps
+}
+
+// fix is the one command that closes a gap, and the
+// alternative, named so the person chooses where the token may go.
+func (g repoAccountGap) fix() string {
+	return fmt.Sprintf("`%s` lets the account serve it; or take %s out of repos.%s.claude_accounts in this machine's project config",
+		accountsAllowCommand(g.account, []string{g.repo}, true), pluginwire.Printable(g.account), pluginwire.Printable(g.repo))
+}
+
+// repoDeclaredAccount is the named account the repository's own fugaro.yaml
+// asks for (agent.oauth_token), which is the repository owner's own statement
+// of the account its runs use and the only thing that lets this command
+// extend an account's trust list. "" when the checkout names none.
+func repoDeclaredAccount(ctx context.Context, plan reposEnrolment) string {
+	if cfg := checkoutConfig(ctx, plan.localKey); cfg != nil {
+		return cfg.Agent.OAuthToken
+	}
+	return ""
+}
+
+// reposEnrolmentInherited drops, from the accounts read off the project's other
+// repositories, the ones that do not cover this repository and that its own
+// file does not name. That read is a guess about a repository the account's
+// list was never told about, and an entry carrying it is one the next publish
+// refuses; the list is a credentials trust list, so the guess is dropped and
+// never turned into a widening. An account the entry already holds is not a
+// guess and is judged by reposEnrolmentAccounts.
+func reposEnrolmentInherited(ctx context.Context, lc *localcfg.Config, plan reposEnrolment, accounts []string) []string {
+	declared := repoDeclaredAccount(ctx, plan)
+	return slices.DeleteFunc(slices.Clone(accounts), func(a string) bool {
+		return accountUncovered(lc, a, plan.ownerName) && a != declared && !slices.Contains(plan.entryNow.ClaudeAccounts, a)
+	})
+}
+
+// reposEnrolmentAccounts decides, for the entry the file will hold, whether
+// every named account it lists covers the repository, so that this command
+// never leaves a config the next `fugaro update` refuses.
+//
+// An account the repository's own file names (agent.oauth_token) is the
+// repository owner's statement, and the person running this command is the
+// project's own, past the same gate `fugaro accounts allow` stands behind, so
+// the repository is added to that one account's allow_data_to in the same
+// write. Any other uncovered account is refused with nothing written and the
+// one command that grants it: this command does not decide where a token may
+// go on a guess.
+func reposEnrolmentAccounts(ctx context.Context, lc *localcfg.Config, plan *reposEnrolment) error {
+	declared := repoDeclaredAccount(ctx, *plan)
+	for _, a := range plan.entry.ClaudeAccounts {
+		if !accountUncovered(lc, a, plan.ownerName) {
+			continue
+		}
+		if a != declared {
+			return userErr("nothing was written: repos.%s.claude_accounts names the account %s, whose allow_data_to does not name the repository, and the repository's own fugaro.yaml does not ask for it, so the next `fugaro update` would refuse the config. Give the account to the repository with `%s`, or take it out of repos.%s.claude_accounts in this machine's project config, then run this again",
+				pluginwire.Printable(plan.ownerName), pluginwire.Printable(a),
+				accountsAllowCommand(a, []string{plan.ownerName}, true), pluginwire.Printable(plan.ownerName))
+		}
+		plan.accountAllow = a
+		plan.accountWhy = fmt.Sprintf(", and adds %s to claude_accounts.%s.allow_data_to, because its fugaro.yaml names that account (agent.oauth_token)",
+			pluginwire.Printable(plan.ownerName), pluginwire.Printable(a))
+	}
+	if plan.accountAllow == "" {
+		for _, a := range projectClaudeAccounts(lc, plan.ownerName) {
+			if accountUncovered(lc, a, plan.ownerName) && !slices.Contains(plan.entry.ClaudeAccounts, a) {
+				plan.accountWhy = fmt.Sprintf("; the account %s the project's other repositories name is left off it: its allow_data_to does not name this repository and its fugaro.yaml does not ask for it (`%s` grants it)",
+					pluginwire.Printable(a), accountsAllowCommand(a, []string{plan.ownerName}, true))
+			}
+		}
+	}
+	return nil
 }
 
 // projectGitHubAppID is the App ID the project's other GitHub repositories
@@ -759,18 +870,27 @@ func reposEnrolmentChanges() []apply.Change {
 // that write (reposEnrolmentApply).
 func reposEnrolmentWriteLocal(out io.Writer, plan reposEnrolment) error {
 	cur, old := plan.local, plan.old
-	if !reposEntryEqual(plan.entryNow, plan.entry) {
+	if !reposEntryEqual(plan.entryNow, plan.entry) || plan.accountAllow != "" {
 		next := *cur
 		next.Repos = maps.Clone(cur.Repos)
 		if next.Repos == nil {
 			next.Repos = map[string]localcfg.Repo{}
 		}
 		next.Repos[plan.localKey] = plan.entry
+		if a := plan.accountAllow; a != "" {
+			next.ClaudeAccounts = maps.Clone(cur.ClaudeAccounts)
+			acct := next.ClaudeAccounts[a]
+			acct.AllowDataTo = append(slices.Clone(acct.AllowDataTo), plan.ownerName)
+			next.ClaudeAccounts[a] = acct
+		}
 		if err := userSave(out, plan.path, old, &next); err != nil {
 			return err
 		}
 		cur = &next
 		fmt.Fprintf(out, "repos.%s: %s\n", plan.localKey, reposEntryLine(plan.entry))
+		if a := plan.accountAllow; a != "" {
+			fmt.Fprintf(out, "claude_accounts.%s.allow_data_to: + %s (its fugaro.yaml names the account, agent.oauth_token)\n", pluginwire.Printable(a), pluginwire.Printable(plan.ownerName))
+		}
 	} else {
 		fmt.Fprintf(out, "%s is already as this enrolment wants it\n", safetext.Field(plan.path))
 	}

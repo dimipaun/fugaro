@@ -83,9 +83,10 @@
 #
 # Knobs, all read with a default so an unset shell runs it as written:
 # CHECK572_PROJECT, CHECK572_TOKEN_FILE, CHECK572_API (the portal's origin; the
-# staging default is the `fugaro-portal` hosting site's own Firebase domain,
-# P9.2 — an origin typed from memory is how a check measures the wrong
-# deployment), CHECK572_PRODUCTION, CHECK572_DRY_RUN, CHECK572_KEEP_SCRATCH and
+# staging default is the staging site's own domain, `app.staging.fugaro.dev`,
+# and the production one is `app.fugaro.dev` — P0.1, P9.2 — an origin typed from
+# memory is how a check measures the wrong deployment), CHECK572_PRODUCTION,
+# CHECK572_DRY_RUN, CHECK572_KEEP_SCRATCH and
 # CHECK572_CURL_SECONDS (60: the bound on each call).
 set -Eeuo pipefail
 
@@ -635,11 +636,14 @@ PRODUCTION=${CHECK572_PRODUCTION:-${PRODUCTION:-}}
 DRY_RUN=${CHECK572_DRY_RUN:-${DRY_RUN_CLI:-}}
 KEEP_SCRATCH=${CHECK572_KEEP_SCRATCH:-}
 API=${CHECK572_API:-${API_CLI:-}}
+# The portal's origin, per project (P0.1): `fugaro-portal-staging` serves
+# app.staging.fugaro.dev and `fugaro-portal` serves app.fugaro.dev, each site's
+# custom domain being the host the owner attached to it.
 if [ -z "$API" ]; then
   if [ "$PRODUCTION" = 1 ]; then
     API=https://app.fugaro.dev
   else
-    API=https://fugaro-portal.web.app
+    API=https://app.staging.fugaro.dev
   fi
 fi
 case "$API" in

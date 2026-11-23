@@ -1699,6 +1699,19 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// fixed words -- so this list spells the whole argv back with nothing
 		// an operation's schema fills.
 		"coordinator intents --all --json",
+		// The orchestrator map (the console-fixes plan's CG7a, the
+		// `orchestrator.map` operation, D3221; C-ORCH's document,
+		// `internal/orchestrator/mapdoc.go`): the project's **active**
+		// orchestrators, the connections between them and the coordinator's own
+		// heartbeat. It has no argument of its own -- `--json` is the row's fixed
+		// word, and the read is one project's whole active set -- so this list
+		// spells the whole argv back with the two project flags of §3.4 rule 3
+		// and nothing an operation's schema fills. The command is registered from
+		// `ee/` and no release carries it yet, which is why the console's own read
+		// sits behind `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`); the
+		// row is on this table because the allow-list's entry is this task's, the
+		// way `settings set`'s `--no-apply` was before its release shipped.
+		"orchestrator map --json --project <name> [--config <path>]",
 		// The settings read (the settings-edit plan's C1, the `settings.read`
 		// operation, D1102): the selected project's settings, each with the
 		// layer that won, the value it gives and the writability facts the
@@ -2206,9 +2219,15 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// dry run (`image add --no-apply --dry-run --json …`) and the write itself
 	// (`image add --no-apply …`) -- a write too, so `fugaro image add` is named
 	// in consoleLaunchPaths rather than here, and the group's other writers stay
-	// on the never table below.
-	if len(allowed) != 36 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 36 (logs and apply have two argvs each, `settings` and `settings set` are one command's two rows, `models add` and `image add` are the same for the two writes, and each of the console improvements' three streams is a second row on a command the table already carries)", path, argvs, len(allowed))
+	// on the never table below. The console-fixes plan's CG7a adds the
+	// thirty-seventh, and the first of its own this list has carried: `fugaro
+	// orchestrator map --json`, the Coordinator tab's map of the project's active
+	// orchestrators (C-ORCH's document, D3221). It is a read -- one document,
+	// assembled from the caller's own database node, needing no checkout -- so it
+	// is named here, and the command lives under `ee/` until a release carries it
+	// (which is why the console's own read is behind a version floor).
+	if len(allowed) != 37 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 37 (logs and apply have two argvs each, `settings` and `settings set` are one command's two rows, `models add` and `image add` are the same for the two writes, and each of the console improvements' three streams is a second row on a command the table already carries)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -2396,7 +2415,11 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     `models.add.plan` and `models.add`, the second of which is the console's
 //     fifth write -- to the fifty-four, and the same plan's MW2 -- the image
 //     write's two halves, `image.add.plan` and `image.add`, the second of which
-//     is the console's sixth write -- to the fifty-six rule 5 carries today.
+//     is the console's sixth write -- to the fifty-six, and the console-fixes
+//     plan's CG7a -- the Coordinator tab's map read, `orchestrator.map`, the
+//     first operation here whose command the table had not carried and the one
+//     whose read sits behind a CLI version floor because no release carries the
+//     command yet -- to the fifty-seven rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
@@ -4254,7 +4277,7 @@ func TestDocsConsoleReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
 		t.Errorf("%s's workflow-level permissions = %v, want exactly contents: read", consoleReleaseWorkflowPath, wf.Permissions)
 	}
-	if want := map[string]string{"contents": "read", "checks": "read"}; !reflect.DeepEqual(job.Permissions, want) {
+	if want := map[string]string{"contents": "read", "checks": "read", "actions": "read"}; !reflect.DeepEqual(job.Permissions, want) {
 		t.Errorf("%s's release job permissions = %v, want exactly %v: the job that runs the packer never holds a token that can write a release", consoleReleaseWorkflowPath, job.Permissions, want)
 	}
 	// `contents: write` to create and publish the release, and -- once the
@@ -8530,7 +8553,7 @@ func TestConsoleReleaseLinuxAddsTheLinuxLegAndMovesNothingElse(t *testing.T) {
 
 	// The linux job: the pinned runner, read-only, and nothing to keep secret.
 	linux := renderedJob(t, rawJobs, path, "linux")
-	for _, want := range []string{"runs-on: ubuntu-24.04", "contents: read", "checks: read"} {
+	for _, want := range []string{"runs-on: ubuntu-24.04", "contents: read", "checks: read", "actions: read"} {
 		if !strings.Contains(linux, want) {
 			t.Errorf("%s's linux job does not carry %q: %s", path, want, strings.TrimSpace(linux))
 		}

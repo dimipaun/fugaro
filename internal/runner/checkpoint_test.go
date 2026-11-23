@@ -614,6 +614,17 @@ func TestFailedPushRetriedByTheFallback(t *testing.T) {
 	}
 }
 
+// noCost is a step whose agent reports no model cost of its own: the figure a
+// scripted step carries is a stand-in for what a call spent, and a step that
+// makes no call spends nothing (AB1b, D3009, C1.16).
+func noCost(s step) step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := s(t, ctx, req)
+		res.CostUSD = 0
+		return res, err
+	}
+}
+
 // TestIdlePollsNeverTouchTheRemote: once the tip is pushed, polls read
 // only the checkout: with the remote gone, nothing fails and the provider
 // is not called.
@@ -638,9 +649,11 @@ func TestIdlePollsNeverTouchTheRemote(t *testing.T) {
 		if n := len(g.provider.Snapshot().Calls); n != calls || pushes() != 1 {
 			t.Errorf("idle polls: provider calls %d -> %d, pushes %d", calls, n, pushes())
 		}
-		return implement("feature")(t, ctx, req)
+		res, err := implement("feature")(t, ctx, req)
+		res.CostUSD = 0 // noCost, as the review step below is wrapped
+		return res, err
 	}
-	if _, err := g.run(t, long, review("ship", 0)); err != nil {
+	if _, err := g.run(t, long, noCost(review("ship", 0))); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(g.logs.String(), "level=WARN") {

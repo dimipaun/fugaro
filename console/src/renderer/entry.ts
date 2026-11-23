@@ -130,7 +130,8 @@ import {
   fillSpendCaps,
   fillSpendReport,
   personView,
-  readSpend,
+  readCapsStream,
+  readReportStream,
   renderSpendFrame,
 } from './screens/spend'
 import type {
@@ -230,6 +231,7 @@ import {
   fillProjects,
   fillProjectsModels,
   fillProjectsSettings,
+  readBudgetStream,
   renderProjectsFrame,
 } from './screens/projects'
 import type { DrawnProjectsFrame, ProjectsModel } from './screens/projects'
@@ -5320,15 +5322,59 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
 
   // ---- Spend ------------------------------------------------------------
 
-  /** spendBudget and spendCapsSentence are what `budget show` last answered for
-   * this installation: the document the caps section reads its figures out of,
-   * or the CLI's own words when it refused. They are held for the installation
-   * and dropped by `forgetLive` -- the caps are a fact about the installation
-   * and not about the window the operator chose, so a control change re-reads
-   * the report and never the budget (`readSpend`'s own division, kept here) --
-   * and they are what a visit draws while its own caps read is in flight. */
+  /** railBudget makes the console's own budget read where the caps of a screen
+   * came from the feed, and answers the document it read.
+   *
+   * **The rail's spend is this read and never the feed's.** The design says so
+   * in as many words (console-styling spec, "What the rail draws": "the spend is
+   * the console's own budget read -- `budget.show` on the dashboard's channel --
+   * ... and no field is added to it for the rail"), and the feed could not fill
+   * it anyway: its rows are the repositories and the project's kill switch, and
+   * neither the project's counted dollars the rail draws nor the counters the
+   * gauge does are among them. So both figures are filled here or not at all.
+   *
+   * **It is one read for both screens** -- the Spend caps section and the Project
+   * tab, the two RS5 gave the feed to -- because the two figures are one
+   * document's, and it is exactly the read those screens made before the feed
+   * existed. It draws no panel: the table a screen is looking at is the feed's,
+   * and a document landing behind it does not undo it.
+   *
+   * **It is a read of the installation and not of a visit**, which is the same
+   * division the rail's spend has always had: it is not tied to a section's
+   * token, so a read that lands after the operator moved on still fills the rail,
+   * and it draws no sentence of its own -- the sentence a section draws is the
+   * read that section made. A read the console cannot make answers `null` and
+   * leaves both figures as they are. */
+  const railBudget = async (): Promise<Readonly<Record<string, unknown>> | null> => {
+    const answer = documentOf(await bridge.showBudget({}))
+    if (!answer.ok) return null
+    rail.setSpend(railSpend(answer.data))
+    setGauge(gaugeFromBudget(answer.data))
+    return answer.data
+  }
+
+  /** spendCaps, spendCapsSentence and spendCapsWithheld are what the caps read
+   * of this installation last answered, in the three states the section draws: a
+   * panel of figures, the CLI's own words for a read it refused (drawn with
+   * R1's Retry), or the reduced mode's word for a view it withholds (drawn
+   * without one -- there is nothing to read again). They are held for the
+   * installation and dropped by `forgetLive` -- the caps are a fact about the
+   * installation and not about the window the operator chose, so a control
+   * change re-reads the report and never the budget (`readSpend`'s own division,
+   * kept here) -- and they are what a visit draws while its own caps read is in
+   * flight.
+   *
+   * **spendBudget is the document and only a document read has one** (RS5): the
+   * `budget show --stream` feed carries the repositories' rows and the project's
+   * kill switch and neither the project's own figures nor the counters the rail
+   * and the gauge read, so where the feed answered the section holds no document
+   * of its own and the report model's own `caps` field is built from what the
+   * session already holds -- until the console's own budget read, made for the
+   * rail and the gauge beside the feed, lands with one (`railBudget`). */
   let spendBudget: Readonly<Record<string, unknown>> | null = null
+  let spendCaps: SpendCaps | null = null
   let spendCapsSentence: string | null = null
+  let spendCapsWithheld: string | null = null
 
   /** spendViews is what this session already read, one entry per view the three
    * controls can name: the installation, the window, the breakdown and the
@@ -5395,7 +5441,30 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * being read is worse than the placeholder that names the tab. */
     let frame: DrawnSpendFrame | null = null
     let reportPending = true
-    let capsPending = spendBudget === null && spendCapsSentence === null
+    /** holdingCaps is whether this session has an answer to draw while its own
+     * caps read is out, in any of the three states `paintCaps` draws. */
+    const holdingCaps = (): boolean =>
+      spendCaps !== null || spendCapsSentence !== null || spendCapsWithheld !== null
+    let capsPending = !holdingCaps()
+    /** capsPartial is the caps feed's rows read **so far** by the read that is
+     * out, and `paintCaps` draws it ahead of the session's held answer (RS5: the
+     * table one line longer each time the feed writes one).
+     *
+     * **It is this visit's and never the session's.** Only a read that finished
+     * is a view this session has read, so the rows of a feed still arriving --
+     * or of one the operator left mid-feed, which `readStream` answers `dropped`
+     * -- are never written to `spendCaps`: a partial list held as the caps would
+     * be drawn as the caps on the next visit, which is the reading R1 forbids
+     * (never a partial list as a complete one). It is cleared when this read
+     * settles, whatever it settled as, and when a new read starts. */
+    let capsPartial: SpendCaps | null = null
+    /** capsWithheld is the reduced mode's answer for the caps view, asked once
+     * per visit through `hidesView` and handed to the read itself: a mode that
+     * withholds the caps must not have the console spawn the read whose answer it
+     * may not draw (`readStream`'s `withheld`). The same gate withholds the
+     * report below. */
+    const capsWithheld = hidesView(gate.compatibility, 'caps')
+    const reportWithheld = hidesView(gate.compatibility, 'spend')
     /** reportToken and capsToken are the sequence tokens of the reads that are
      * out. They are held here and not only inside the readers because `mount`
      * marks a section that is still pending, and the mark has to belong to the
@@ -5471,7 +5540,22 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       capsPending = false
       const drawn = mount()
       clearSection(drawn.caps, drawn.capsSlot)
-      if (spendCapsSentence !== null) {
+      if (capsPartial !== null) {
+        // The feed's rows read so far, and they are drawn ahead of the
+        // session's held answer **and** of a sentence an earlier read left: this
+        // section is being read again now, and the rows arriving are this read's
+        // -- which is what the report section's own partial paint does with its
+        // refusal, one section over.
+        fillSpendCaps(factory, capsPartial, drawn.caps)
+      } else if (spendCapsWithheld !== null) {
+        // A withheld view is not a refused read: there is nothing to ask again,
+        // so the section carries the console's own word and no Retry.
+        refusedInto(
+          drawn.capsSlot,
+          refusedScreen(factory, 'budget.show', spendCapsWithheld, theme),
+          null,
+        )
+      } else if (spendCapsSentence !== null) {
         // The Retry is this section's own read and not the report's: the two
         // reads of this screen are independent, and a control that re-read a
         // report the operator was not refused would answer the caps' sentence
@@ -5482,7 +5566,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           () => startCaps(),
         )
       } else {
-        fillSpendCaps(factory, capsOf(spendBudget), drawn.caps)
+        fillSpendCaps(factory, spendCaps ?? capsOf(spendBudget), drawn.caps)
       }
       if (still) spendCapsRead.mark(capsToken, drawn.caps, drawn.capsSlot, SPEND_CAPS_BUSY)
     }
@@ -5520,6 +5604,23 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       wireSpendControls(drawn.root, readWith, change)
     }
 
+    /** paintPartial draws the report section from the rows read **so far**
+     * (RS5): the table one line longer each time the feed writes one, with the
+     * controls drawn from the first row rather than from the last.
+     *
+     * It is `paintReport` without the stamp and without a cache write: a list
+     * that is still arriving is not a view this session has read, and nothing
+     * else may be drawn from it (`readStream`'s rule that only a `complete`
+     * read's rows are the list -- the totals line and the section's own landing
+     * are the `end` line's). */
+    const paintPartial = (model: SpendModel, readWith: SpendControls): void => {
+      reportPending = false
+      const drawn = mount()
+      clearSection(drawn.report, drawn.reportSlot)
+      fillSpendReport(factory, model, theme, readWith, drawn.report)
+      wireSpendControls(drawn.root, readWith, change)
+    }
+
     /**
      * refresh starts the report read for one set of controls.
      *
@@ -5538,12 +5639,39 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
 
     /** loadReport makes one report read and draws it when it is still the
-     * latest. */
+     * latest.
+     *
+     * **The read is RS5's streamed one** (D2906/O3): `report --stream --json`
+     * where the operation can be asked, which hands the rows over one paint at a
+     * time, and the whole `report --json` document where it cannot -- no
+     * handler, a CLI below the feed's floor, a refusal. What each chunk draws is
+     * the table it has (`paintPartial`), the `end` line completes the section,
+     * and a feed that stopped without one is R1's interrupted read: the sentence
+     * and a Retry, never the rows that happened to arrive drawn as the list. */
     const loadReport = async (readWith: SpendControls, token: number): Promise<void> => {
-      // The caps are handed over for the model's own `caps` field, which the
-      // report section does not draw: the caps are their own section, and this
-      // read starts before that one may have answered.
-      const outcome = await readSpend(reader, readWith, spendBudget, peopleReader)
+      const outcome = await readReportStream({
+        stream: (args) => ops.streamSpend(args),
+        report: (args) => reader(args),
+        controls: readWith,
+        // The caps are handed over for the model's own `caps` field, which the
+        // report section does not draw: the caps are their own section, and this
+        // read starts before that one may have answered.
+        caps: spendBudget,
+        project,
+        withheld: reportWithheld,
+        // The by-person read is `runs stats` and is made only while the knob is
+        // on, exactly as it was before the report's read grew a stream.
+        people: peopleReader,
+        onRows: (model) => {
+          if (stale(mine)) return
+          if (!spendReportRead.current(token)) return
+          paintPartial(model, readWith)
+        },
+        // The section's own token decides which answer stays, and it is asked
+        // between the chunks as well as after them: a read the operator has
+        // replaced stops drawing rather than drawing under the newer answer.
+        current: () => !stale(mine) && spendReportRead.current(token),
+      })
       // The token is checked **before** anything is taken down. The busy state
       // belongs to the helper rather than to this read, so a read from an earlier
       // visit that landed after the operator came back would end the *current*
@@ -5551,7 +5679,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // fifteen-second line -- for a read nobody is waiting for any more.
       if (!spendReportRead.settle(token)) return
       if (stale(mine)) return
-      if (!outcome.ok) {
+      if (outcome.status !== 'complete') {
+        // A read the section moved on from answers no sentence at all and is
+        // already accounted for above (`settle` is the same token `current`
+        // asks), so only a read this visit still owns draws here.
+        if (outcome.sentence === null) return
         // The report's refusal is **this section's own**, exactly as the caps'
         // is: the caps read may still be out, and a refusal drawn over the whole
         // panel would be replaced the moment it landed -- leaving the report
@@ -5562,11 +5694,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         clearSection(drawn.report, drawn.reportSlot)
         // The view is read again as the operator asked for it, which is the
         // controls on screen: a Retry that re-read a range the operator had
-        // moved off would answer one refusal with another view's figures.
+        // moved off would answer one refusal with another view's figures. A
+        // withheld view is the one state drawn without it: there is nothing to
+        // ask again.
         refusedInto(
           drawn.reportSlot,
-          refusedScreen(factory, 'spend.report', outcome.reason, theme),
-          () => refresh(readWith),
+          refusedScreen(factory, 'spend.report', outcome.sentence, theme),
+          outcome.status === 'withheld' ? null : () => refresh(readWith),
         )
         return
       }
@@ -5579,27 +5713,81 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * started together with the report's read and never waits for it, and it is
      * told which token it is: the section's read is made on every visit, so two
      * of them can be out at once and the one that answers is not necessarily the
-     * one this call started. */
+     * one this call started.
+     *
+     * **It is RS5's streamed read too** (`budget show --stream --json`, with the
+     * whole `budget show --json` document as the fallback): the repositories'
+     * rows fill the table one line at a time, the `end` line completes the
+     * section, and a feed that stopped without one is R1's interrupted read.
+     * What the feed does not carry -- the project's own figures, the counters
+     * the rail and the gauge read -- is left to the whole-document read rather
+     * than invented from the rows: where that is the read that answered, it fills
+     * them itself, and where the feed answered they are read for on their own
+     * (`railBudget`). */
     const loadCaps = async (token: number): Promise<void> => {
-      const reply = documentOf(await bridge.showBudget({}))
-      // The rail's spend is the console's own budget read -- this one, the read
-      // the caps section makes -- and the rail makes none of its own (design
-      // section 4.1). It is filled before the staleness check below: the spend
-      // is a fact about the installation rather than about the view the
-      // operator chose, so a read that landed after they moved on still fills
-      // the rail.
-      if (reply.ok) {
-        rail.setSpend(railSpend(reply.data))
-        setGauge(gaugeFromBudget(reply.data))
-        spendBudget = reply.data
-        // The sentence and the document are one answer between them, and
-        // `paintCaps` reads the sentence first: a refusal left standing here is
-        // the section refusing for the rest of the session, whatever the reads
-        // that follow say (only `forgetLive` used to clear it).
+      const outcome = await readCapsStream({
+        stream: () => ops.streamBudget({}),
+        budget: async () => {
+          const answer = documentOf(await bridge.showBudget({}))
+          // The sentence travels on the thrown value, `reader`'s own shape: a
+          // read the console could not make at all must be drawn with that
+          // sentence and not as a CLI refusal that printed nothing.
+          if (!answer.ok) throw { sentence: answer.sentence }
+          return answer.data
+        },
+        withheld: capsWithheld,
+        onRows: (caps) => {
+          if (stale(mine)) return
+          if (!spendCapsRead.current(token)) return
+          // The rows are drawn from `capsPartial` and nowhere else: this read
+          // has not answered yet, and a feed still arriving is not a view the
+          // session holds (`capsPartial`'s own note).
+          capsPartial = caps
+          paintCaps()
+        },
+        current: () => !stale(mine) && spendCapsRead.current(token),
+      })
+      // The feed's rows are the section's while its read is out and not after
+      // it: whatever this read answered is the whole of what the section holds.
+      capsPartial = null
+      // The rail's spend and the gauge are the console's own budget read -- this
+      // one, the read the caps section makes -- and the rail makes none of its
+      // own (design section 4.1). They are filled before the staleness check
+      // below: the spend is a fact about the installation rather than about the
+      // view the operator chose, so a read that landed after they moved on still
+      // fills the rail.
+      if (outcome.status === 'complete') {
+        if (outcome.document !== null) {
+          rail.setSpend(railSpend(outcome.document))
+          setGauge(gaugeFromBudget(outcome.document))
+          spendBudget = outcome.document
+        } else {
+          // The feed answered, and it carries neither figure: they are read for
+          // on their own, and the document that read answers becomes the one the
+          // report model's own `caps` field draws on.
+          void railBudget().then((document) => {
+            if (document !== null) spendBudget = document
+          })
+        }
+      }
+      // The three states are one answer between them, and `paintCaps` reads the
+      // withheld word first and the sentence second: a refusal left standing
+      // here is the section refusing for the rest of the session, whatever the
+      // reads that follow say (only `forgetLive` used to clear it).
+      if (outcome.status === 'complete') {
+        spendCaps = outcome.caps
         spendCapsSentence = null
-      } else {
-        spendCapsSentence = reply.sentence
+        spendCapsWithheld = null
+      } else if (outcome.status === 'withheld') {
+        spendCaps = null
         spendBudget = null
+        spendCapsSentence = null
+        spendCapsWithheld = outcome.sentence
+      } else if (outcome.sentence !== null) {
+        spendCaps = null
+        spendBudget = null
+        spendCapsSentence = outcome.sentence
+        spendCapsWithheld = null
       }
       // The token goes first, for the report's own reason: the mark this section
       // wears may belong to a later read, and `end` would take it down with it.
@@ -5615,6 +5803,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * read in flight must not look as though it has answered.
      */
     const startCaps = (): void => {
+      // A new read starts from what the session holds: rows an earlier feed was
+      // still writing when the operator left it are that read's and not this
+      // one's (`capsPartial`'s own note).
+      capsPartial = null
       capsToken = spendCapsRead.start()
       if (frame === null) capsPending = true
       else spendCapsRead.mark(capsToken, frame.caps, frame.capsSlot, SPEND_CAPS_BUSY)
@@ -5667,7 +5859,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // cache -- and a view older than `CACHE_FRESH_MS` is stamped and re-read at
     // once rather than served silently.
     const cached = spendViews.get(spendViewKey(project, controls))
-    const heldCaps = spendBudget !== null || spendCapsSentence !== null
+    const heldCaps = holdingCaps()
     capsPending = !heldCaps
     if (cached === null) placeReading('spend', mine)
     else paintReport(cached.value, controls, cached.at, true)
@@ -5904,6 +6096,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * read -- a failure the operator can do nothing about. The floor is asked
      * **before** the read goes out, like the models panel's. */
     const seatsTooOld = !seatsSupported(gate.compatibility.cliVersion ?? '')
+    /** capsWithheld is the reduced mode's answer for this tab's own view
+     * (`hidesView`), asked once per visit and handed to the body's read: a mode
+     * that withholds the caps must not have the console spawn the read whose
+     * answer it may not draw (`readStream`'s `withheld`), and the body then
+     * draws the console's own word for the view instead of its figures. */
+    const capsWithheld = hidesView(gate.compatibility, 'caps')
     /** model and modelsSentence are what `models ls` last answered on this
      * visit, and `modelsOut` says a read of it is in flight. */
     let models: ModelsListView | null = null
@@ -6019,6 +6217,14 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     let budgetDoc: Readonly<Record<string, unknown>> | null = null
     let budgetAt = 0
     let budgetOut = false
+    /** budgetStreamed says the document the body is drawn from came out of a
+     * `budget show --stream` feed rather than from the whole document (RS5):
+     * the feed carries the repositories' rows and the project's kill switch and
+     * no other member, so the panels that read one -- the project's own caps,
+     * the defaults, the mode, the reserve -- must say the read did not carry
+     * them instead of drawing the `n/a` a whole document's own absence means
+     * (`ProjectsInputs.streamed`). */
+    let budgetStreamed = false
     /** cachedAt is the console clock the body's budget figures were read at, or
      * null when they came out of a read made now. It is held rather than passed,
      * because the body is repainted by three different landings and only the
@@ -6029,7 +6235,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * policy panel is a member of that model, so the two later reads
      * (`policy.show` and `doctor --json`) are handed here, along with the CLI's
      * own sentence for whichever of them was refused. */
-    const modelNow = (budget: unknown): ProjectsModel => {
+    const modelNow = (budget: unknown, streamed: boolean): ProjectsModel => {
       const sentences: Partial<Record<OperationName, string>> = {}
       if (policySentence !== null) sentences['policy.show'] = policySentence
       return buildProjectsModel({
@@ -6039,6 +6245,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         policy,
         doctor,
         sentences,
+        streamed,
       })
     }
 
@@ -6130,20 +6337,30 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * doctor's checks). A caller would have to hold every document the model is
      * a function of; the body holds them itself.
      */
-    const paint = (budget: Readonly<Record<string, unknown>>, at: number, cached: boolean): void => {
-      const model = modelNow(budget)
+    const paint = (
+      budget: Readonly<Record<string, unknown>>,
+      at: number,
+      cached: boolean,
+      streamed = false,
+    ): void => {
+      const model = modelNow(budget, streamed)
       bodyModel = model
       budgetDoc = budget
       budgetAt = at
       cachedAt = cached ? at : null
+      budgetStreamed = streamed
       const drawn = mount(false)
       clearSection(drawn.body, drawn.slot)
       fillProjects(factory, model, drawn.body)
       // The cache is rolled forward with what the repaint drew, so a visit that
       // comes back to this tab draws the fuller view rather than the one the
       // budget's own read built. A cached view is never written back: its stamp
-      // would then say the figures are newer than they are.
-      if (!cached) projectsViews.put(key, budget, at)
+      // would then say the figures are newer than they are. **A streamed view is
+      // never cached either** (RS5): what the feed assembled is not the document
+      // the next visit would draw, and a cache hit is drawn as a whole document
+      // -- the members the feed does not carry would come back as absences the
+      // console could not account for.
+      if (!cached && !streamed) projectsViews.put(key, budget, at)
       if (cachedAt !== null) {
         const stamp = renderStamp(factory, cachedAt)
         appendTo(drawn.body, stamp.root)
@@ -6151,6 +6368,22 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
           start()
         })
       }
+    }
+
+    /** paintPartial draws the body from the rows read **so far** (RS5): the caps
+     * table one line longer each time the feed writes one, drawn before the `end`
+     * line's own landing.
+     *
+     * It is `paint` without the state a landing owns: no cache write, no clock
+     * and no `budgetDoc` (`repaintBody` is guarded by `budgetOut` while this
+     * read is out, and the landing below replaces all of it). What it draws is
+     * the feed's own read, so the model is built `streamed`, and the members the
+     * feed does not carry are drawn as this read not having them rather than as
+     * a figure. */
+    const paintPartial = (document: Readonly<Record<string, unknown>>): void => {
+      const drawn = mount(false)
+      clearSection(drawn.body, drawn.slot)
+      fillProjects(factory, modelNow(document, true), drawn.body)
     }
 
     /** repaintBody draws the body again from the documents this visit holds now,
@@ -6168,8 +6401,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // The stamp's clock is the one the budget's own read was made at, and it
       // is passed back unchanged: a repaint is not a fresh reading of the caps,
       // and moving the stamp forward would say the figures are newer than they
-      // are.
-      paint(budgetDoc, budgetAt, cachedAt !== null)
+      // are. `budgetStreamed` travels with the document, so a body drawn from a
+      // feed is repainted as the feed's own read (`ProjectsInputs.streamed`).
+      paint(budgetDoc, budgetAt, cachedAt !== null, budgetStreamed)
     }
 
     /**
@@ -6481,17 +6715,53 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       })
     }
 
-    /** load makes the one read and draws it when it is still the latest. */
+    /** load makes the one read and draws it when it is still the latest.
+     *
+     * **It is RS5's streamed read** (`budget show --stream --json`, D2906/O3):
+     * the repositories' rows are drawn as the feed writes them (`paintPartial`),
+     * the `end` line completes the body, and the whole `budget show --json`
+     * document is the fallback where the operation cannot be asked -- no
+     * handler, a CLI below the feed's floor, a refusal. A feed that stopped
+     * without its `end` line is R1's interrupted read: the sentence and a Retry,
+     * never the rows that arrived drawn as the table. */
     const load = async (readToken: number): Promise<void> => {
       budgetOut = true
-      const answer = documentOf(await bridge.showBudget({}))
-      // The rail's spend and the fleet gauge are this read's too (design section
-      // 4.1): they are filled before the staleness check, because the spend is a
-      // fact about the installation rather than about the panel the operator is
-      // on, and a read that landed after they moved on still fills them.
-      if (answer.ok) {
-        rail.setSpend(railSpend(answer.data))
-        setGauge(gaugeFromBudget(answer.data))
+      const outcome = await readBudgetStream({
+        stream: () => ops.streamBudget({}),
+        budget: async () => {
+          const answer = documentOf(await bridge.showBudget({}))
+          // The sentence travels on the thrown value, which is how
+          // `readBudgetStream` reads a refusal (`refusalSentence` takes
+          // `cause.sentence`, the shape `CliSource` throws).
+          if (!answer.ok) throw { sentence: answer.sentence }
+          return answer.data
+        },
+        withheld: capsWithheld,
+        onRows: (document) => {
+          if (stale(mine)) return
+          if (!projectsRead.current(readToken)) return
+          paintPartial(document)
+        },
+        current: () => !stale(mine) && projectsRead.current(readToken),
+      })
+      // The rail's spend and the fleet gauge are the console's own budget read
+      // (design section 4.1) and never the feed's: a whole-document answer fills
+      // them itself, and where the feed answered -- the feed carries neither the
+      // project's counted dollars nor the counters these two draw -- they are
+      // read for on their own (`railBudget`). Both are filled before the
+      // staleness check, because the spend is a fact about the installation
+      // rather than about the panel the operator is on, and a read that landed
+      // after they moved on still fills them. The document that read answers is
+      // **not** held as `budgetDoc`: that one travels with `budgetStreamed`, and
+      // a whole document drawn as the feed's would put back the members the feed
+      // does not carry as figures (`paint`'s own note).
+      if (outcome.status === 'complete') {
+        if (outcome.source === 'whole') {
+          rail.setSpend(railSpend(outcome.document))
+          setGauge(gaugeFromBudget(outcome.document))
+        } else {
+          void railBudget()
+        }
       }
       // The token is checked before anything is taken down, so a read from an
       // earlier visit cannot end the *current* visit's mark -- **and it is
@@ -6505,7 +6775,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       if (!mineNow) return
       budgetOut = false
       if (stale(mine)) return
-      if (!answer.ok) {
+      if (outcome.status !== 'complete') {
+        // A read the section moved on from answers no sentence and is accounted
+        // for above, for the report section's reason (`settle` asks the token
+        // `current` asks).
+        if (outcome.sentence === null) return
         budgetDoc = null
         bodyModel = null
         const drawn = mount(false)
@@ -6513,18 +6787,25 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         // The Retry is the budget read this section is drawn from and not the
         // whole visit: `start` would take every other section of the tab down to
         // read it again, and the six sections either side of the body answered
-        // for themselves.
-        refusedInto(drawn.body, refusedScreen(factory, 'budget.show', answer.sentence, theme), () => {
-          token = projectsRead.start()
-          const retry = mount(false)
-          projectsRead.mark(token, retry.body, retry.slot, PROJECTS_BUSY)
-          void load(token)
-        })
+        // for themselves. A withheld view is drawn without one: there is no read
+        // to ask again.
+        refusedInto(
+          drawn.body,
+          refusedScreen(factory, 'budget.show', outcome.sentence, theme),
+          outcome.status === 'withheld'
+            ? null
+            : () => {
+                token = projectsRead.start()
+                const retry = mount(false)
+                projectsRead.mark(token, retry.body, retry.slot, PROJECTS_BUSY)
+                void load(token)
+              },
+        )
         return
       }
-      budgetDoc = answer.data
+      budgetDoc = outcome.document
       const at = Date.now()
-      paint(budgetDoc, at, false)
+      paint(budgetDoc, at, false, outcome.source === 'stream')
     }
 
     /** loadModels makes the second section's read, `models ls --json`. The
@@ -9004,7 +9285,9 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     // figures. The next installation is read afresh rather than drawn from
     // another one's spend.
     spendBudget = null
+    spendCaps = null
     spendCapsSentence = null
+    spendCapsWithheld = null
     // **Every cache goes through the invalidator** (R2's other half): the four
     // session caches and the Live join are the scopes the tabs registered, and
     // `forget` is the installation switch -- nothing is read here, because the

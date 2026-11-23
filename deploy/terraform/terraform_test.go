@@ -2397,6 +2397,12 @@ func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T
 			account: `"projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com"`,
 			forEach: "local.credentials_service_on ? toset(var.operators) : toset([])",
 		},
+		{
+			file:    "gcp/modules/installation/orchestrator.tf",
+			block:   "google_service_account_iam_member.fugaro_orchestrator_token_creator",
+			account: `"projects/${var.project}/serviceAccounts/fugaro-orch@${var.project}.iam.gserviceaccount.com"`,
+			forEach: "local.orchestrator_on ? toset(var.operators) : toset([])",
+		},
 	}
 	want := make([]string, 0, len(sites))
 	for _, s := range sites {
@@ -2423,7 +2429,7 @@ func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T
 		}
 	})
 	if !slices.Equal(found, want) {
-		t.Errorf("the literal %s appears in %v; want exactly %v — the deployer's impersonation (D75) and the verifier account's (CSR14), and nothing else in the tree", role, found, want)
+		t.Errorf("the literal %s appears in %v; want exactly %v — the deployer's impersonation (D75), the verifier account's (CSR14) and the resident orchestrator's, and nothing else in the tree", role, found, want)
 	}
 
 	for _, s := range sites {
