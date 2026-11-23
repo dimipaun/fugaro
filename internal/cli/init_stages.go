@@ -2056,9 +2056,10 @@ func (e *initEngine) budgetBackendOn() bool {
 // The skip is the one that reads (Check and not skip): the run index's
 // composite indexes are the Firebase root's and only its apply creates them
 // (RI2, F10), so a converged installation is still this stage's while the
-// root's state does not carry them.
+// root's state does not carry them — and while the credential may make the
+// IAM changes that root's apply makes, which is F34's own operator case.
 //
-// firebaseSkip answers it. Everything it cannot read leaves F34's line
+// firebaseSkip answers it, and everything it cannot read leaves F34's line
 // standing, because the update of a converged installation must not fail over
 // a read the stage does not need to run: the indexes it does not create this
 // time are created by the update that can read them.
@@ -2073,12 +2074,9 @@ func (e *initEngine) firebaseSkip(ctx context.Context) string {
 		if err := e.setup(ctx); err != nil {
 			return known
 		}
-		managed, ok := e.r.firebaseIndexesInState(ctx, e.c, e.bin, e.spec.StateBucket, cmp.Or(e.r.o.firebaseProject(), e.lc.GCPProject))
-		if !ok {
-			return known + " (the Firebase root's state could not be read, so the run index's composite indexes wait for the update that can)"
-		}
-		if managed {
-			return known + " (and the state already carries the run index's composite indexes)"
+		wait, why := e.r.runIndexIndexesWait(ctx, e.c, e.bin, e.spec.StateBucket, cmp.Or(e.r.o.firebaseProject(), e.lc.GCPProject))
+		if !wait {
+			return known + why
 		}
 		return ""
 	}

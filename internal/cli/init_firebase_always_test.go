@@ -418,9 +418,15 @@ func convergedFirebase(t *testing.T, r *fbRig) {
 // skipped, "the project config already records the budget database", and no
 // apply in that root at all — only `fugaro update --firebase-project` reached
 // it, which is a different invocation from the one the release note names.
+//
+// The credential is the owner's (mayCreate): the apply that creates the indexes
+// is the Firebase root's, and that apply makes the project's IAM changes, so a
+// run that may not make them keeps F34's skip instead
+// (TestAnOperatorsPlainUpdateSkipsTheStageAndConverges).
 func TestAPlainUpdateCreatesTheRunIndexesOfAConvergedInstallation(t *testing.T) {
 	r := alwaysRig(t)
 	convergedFirebase(t, r)
+	mayCreate(t, r)
 	// The state manages nothing of the run index, and the plan the apply is made
 	// from is a create in that root. The eleven themselves are the module's and
 	// are pinned by the terraform-tagged TestFirebaseModulePlansRunIndexes: what
@@ -441,6 +447,42 @@ func TestAPlainUpdateCreatesTheRunIndexesOfAConvergedInstallation(t *testing.T) 
 	}
 	if v := r.fbVars(t)["firestore_database_exists"]; v != true {
 		t.Errorf("the Firebase root is applied with firestore_database_exists = %v, want true: the database the indexes are created under is there (RI2)", v)
+	}
+}
+
+// TestAnOperatorsPlainUpdateSkipsTheStageAndConverges is F34's own run, and the
+// one the state read must not turn into a failure: the credential is an
+// operator's, which the fake answers by holding none of the permissions the
+// Firebase root's apply makes the project's IAM changes with (mayCreate is what
+// a project owner holds). The indexes are therefore not this run's to create —
+// the same installation as the test above, with a credential that may not apply
+// that root — and it says so in one line and converges, exactly as the skip it
+// has always taken did.
+//
+// Red before the skip asked this: the state read answered "no index" and the run
+// took the whole Firebase flow, whose apply is the one this credential may not
+// make, so an operator's update failed instead of converging.
+func TestAnOperatorsPlainUpdateSkipsTheStageAndConverges(t *testing.T) {
+	r := alwaysRig(t)
+	convergedFirebase(t, r)
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r.initRig, "update")
+	if err != nil {
+		t.Fatalf("an operator's plain update did not converge: %v\n%s", err, out)
+	}
+	l := stepLineOf(reportLines(out), initflow.Firebase)
+	if !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) || !strings.Contains(l, "already records the budget database") {
+		t.Errorf("the Firebase stage is %q, want the skip that says the database is known\n%s", l, out)
+	}
+	if !strings.Contains(l+newestLog(t, "update"), "may make project") {
+		t.Errorf("the run does not say the indexes wait for a credential that may make the project's IAM changes:\n%s", l+newestLog(t, "update"))
+	}
+	if got := r.applies(t); slices.Contains(got, "firebase") {
+		t.Errorf("the Firebase root was applied by a credential that may not make the project's IAM changes: %v", got)
+	}
+	if plan := tfRan(t, r.initRig, "firebase", "plan"); len(plan) != 0 {
+		t.Errorf("a skipped stage planned the Firebase root: %v", plan)
 	}
 }
 

@@ -254,7 +254,10 @@ Amended by console-fixes RI2 (2026-11-22): the skip holds only while the Firebas
 already carries a run index composite index — the one thing such an installation can still owe,
 and which nothing but an apply of that root creates (console-fixes F10) — and the state's own read
 decides it, so where that read answers nothing (no state, or one that cannot be read) the skip
-stands as written here and the installation is left exactly as it was.
+stands as written here and the installation is left exactly as it was. The run this finding is
+about is the one it stands for in full: an operator's update, whose credential may not make the
+project's IAM changes an apply of that root makes, keeps the skip and converges, and a project
+owner's update creates the indexes.
 
 ## 4. Decisions
 

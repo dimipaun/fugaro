@@ -275,15 +275,14 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		// root's state does not carry the run index's composite indexes, which
 		// nothing but this stage's apply creates (F10) — that is the one case
 		// the stage's check lets through with the database recorded
-		// (init_stages.go's firebaseSkip). There is nothing to adopt or create
-		// then, because the database is this machine's, so the arm below is left
-		// out and the flag's own flow runs: the same discovery, the same apply
-		// of the root, the same database steps.
+		// (init_stages.go's firebaseSkip, and this call is the same question
+		// asked again at the arm it decides). There is nothing to adopt or
+		// create then, because the database is this machine's, so the arm below
+		// is left out and the flag's own flow runs: the same discovery, the same
+		// apply of the root, the same database steps.
 		indexesMissing := false
 		if lc.Budget != nil && lc.Budget.RTDBURL != "" {
-			if managed, ok := r.firebaseIndexesInState(ctx, c, bin, spec.StateBucket, fp); ok && !managed {
-				indexesMissing = true
-			}
+			indexesMissing, _ = r.runIndexIndexesWait(ctx, c, bin, spec.StateBucket, fp)
 		}
 		done := false
 		if !indexesMissing {
@@ -600,6 +599,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 // address: the module's resources are a for_each keyed by the contract's rows,
 // and any of them is an installation that has been through an apply that
 // created them, whatever the rows are called.
+//
 // firebaseIndexesInState reports whether the Firebase root's state manages a
 // run index composite index (RI2) yet, and whether that could be read at all.
 // It is the read the plain update's Firebase stage is decided by — in front of
@@ -643,6 +643,39 @@ func (r *initRun) firebaseIndexesInState(ctx context.Context, c *infra.Clients, 
 		addresses[a] = true
 	}
 	return runIndexIndexesManaged(addresses), true
+}
+
+// runIndexIndexesWait is RI2's question at the plain update's own door, and the
+// reason it is answered no. The eleven composite indexes are the Firebase
+// root's and only an apply of that root creates them (F10), so a converged
+// installation — F34's skip, and its caller has already read that this machine's
+// config records the database — owes that apply while its root's state is
+// readable, manages none of them, and this credential may make the project's IAM
+// changes.
+//
+// The last of those is F34's own reason for the skip, and it is the run
+// that skip was written for: an operator's update, whose credential may not
+// make the project's IAM changes an apply of that root makes, would fail there
+// instead of converging. So such a run keeps the skip — with the reason, which
+// firebaseSkip prints as its line — and a project owner's update creates the
+// indexes.
+//
+// Every way it can fail answers no, and every such run is left exactly as it
+// was: an update that cannot read the state, or cannot ask about the
+// credential, does not fail over it — the indexes it does not create are created
+// by the update that can.
+func (r *initRun) runIndexIndexesWait(ctx context.Context, c *infra.Clients, bin, stateBucket, fp string) (wait bool, why string) {
+	managed, ok := r.firebaseIndexesInState(ctx, c, bin, stateBucket, fp)
+	if !ok {
+		return false, " (the Firebase root's state could not be read, so the run index's composite indexes wait for the update that can)"
+	}
+	if managed {
+		return false, " (and the state already carries the run index's composite indexes)"
+	}
+	if may, err := infra.CanMakeIAMChanges(ctx, c, fp); err != nil || !may {
+		return false, " (and the run index's composite indexes wait for an update that may make project " + fp + "'s IAM changes, which an apply of the Firebase root does)"
+	}
+	return true, ""
 }
 
 func runIndexIndexesManaged(managed map[string]bool) bool {
