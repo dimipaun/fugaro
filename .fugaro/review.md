@@ -51,10 +51,26 @@ any input reaches an argv, a path or a URL.
   never changes meaning, `fugaro update` is the whole upgrade, and no edit under
   `.github/workflows/`.
 
+## Count the remote calls against the size of the history
+
+- For every loop over runs, records, objects, jobs or executions that the change
+  writes or newly reaches, find the remote call inside it: a backend read, a bucket
+  read, an API request. A call per item of something that grows with time (every run
+  of a 90-day window, every run a repository has had) is a blocking finding unless a
+  test pins the number of calls as bounded however long the history is.
+- "It is the same read as the existing command" is not evidence. Say how many items
+  production holds (a window of runs is thousands) and what the call costs there.
+- The Cloud Run read quota is per minute and per region, shared by every launch,
+  listing and watch of the project, and a refused read stops a launch. A new read on
+  the launch path, or in a listing a launch calls (`loadRows`), needs a test that
+  seeds a long history and asserts a bounded number of backend requests, as
+  `TestRunPlanTaskLaunchReadsNoExecutionPerRun` does.
+
 ## Report blocking findings only
 
 - Report only what must change before this is merged: a correctness bug, a security
-  hole, a broken pin, a missing test for a new guard. Give the `file:line` evidence and
+  hole, a broken pin, a missing test for a new guard, a remote call per item of a
+  growing history. Give the `file:line` evidence and
   the fix you want.
 - Never report style, and never pad the list: a finding you cannot point at is not a
   finding.
