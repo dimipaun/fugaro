@@ -62,6 +62,11 @@ type followState struct {
 	prevAnswer string
 	// rootTask and diffStat are a fresh session's context.
 	rootTask, diffStat string
+	// resumedStage is the stage a resumed run enters, as the pause it picked
+	// up names it (prepareResume, R18, D3185): the work stage the paused run
+	// was in, and not the first one. Empty for every ordinary follow-up, which
+	// starts at implement as it always has.
+	resumedStage string
 }
 
 // followupFile is where a follow-up's agent writes its account.
@@ -240,30 +245,30 @@ func (r *run) checkPullRequest(ctx context.Context) error {
 	return nil
 }
 
-// prepareFollowUp reads the pull request's comments, refuses a stale
-// follow-up, selects what the agent gets, stores comments.json, and puts
-// the previous run's session in place. It runs after agent.BuildEnv, so
-// every secret is registered before any comment is redacted.
-func (r *run) prepareFollowUp(ctx context.Context) error {
-	n, prevID := r.spec.PR, r.spec.PreviousRun
-	prev := r.d.Store.Sibling(prevID)
-	prevRec, err := prev.ReadRecord(ctx)
-	if err != nil {
-		r.d.Log.Warn("reading the previous run's record failed", "previous_run", prevID, "err", r.redact(err.Error()))
-		return fmt.Errorf("previous run %s has no readable record", prevID)
-	}
-	// What that run left the repository's owner (OD1), bounded as the launcher
+// inheritRulings reads what the run this one continues leaves it (OD1): the
+// decisions that run left waiting for the owner, and the rulings that run
+// worked from, each with the decisions it answered. A follow-up reads them off
+// the run before it (prepareFollowUp), and a resumed run reads them off the
+// paused run's record (prepareResume) — the same pair either way, because what
+// a run works from is not what suspending ends: a run launched with
+// `--owner-ruled` that paused mid-stage has an answer the owner has given, and
+// a resumed run whose reviewers were told nothing would mark the same finding
+// needs_owner again and stop on a question already settled. What it sets is
+// what workingRulings hands the briefs and what recordRuling writes onto the
+// resumed run's own record, so the chain keeps the rulings past this run too.
+func (r *run) inheritRulings(prevRec *runstore.Record, prevID string) {
+	// What that run left the repository's owner, bounded as the launcher
 	// bounded it before it accepted the ruling this launch carries: the review
 	// briefs list these beside the ruling (ownerRuling).
 	r.follow.prevOwner = prevRec.OwnerDecisions.Bounded()
 	// And the rulings that run itself worked from, each with the decisions it
-	// answered: this follow-up inherits them when its own launch carries no
-	// ruling, and carries them behind its own otherwise, so a question the
-	// owner has already settled is not raised and halted on again however many
-	// rulings ago it was answered (workingRulings). The record's own pair comes
-	// first, then the pairs it held behind it, and the whole chain is bounded
-	// and validated again on read (runstore.BoundedRulings): a record is an
-	// object the job's service account writes, so text a brief cannot carry — a
+	// answered: this run inherits them when its own launch carries no ruling,
+	// and carries them behind its own otherwise, so a question the owner has
+	// already settled is not raised and halted on again however many rulings
+	// ago it was answered (workingRulings). The record's own pair comes first,
+	// then the pairs it held behind it, and the whole chain is bounded and
+	// validated again on read (runstore.BoundedRulings): a record is an object
+	// the job's service account writes, so text a brief cannot carry — a
 	// control character, a length no task may state — is no ruling at all, and
 	// a ruling with nothing to answer, or answers no ruling settles, is dropped
 	// the way it is everywhere else. What is dropped is logged: the chain is
@@ -279,6 +284,21 @@ func (r *run) prepareFollowUp(ctx context.Context) error {
 		r.d.Log.Warn("the record of the run before this one holds rulings this run does not inherit: no brief may hold them, or the chain is longer than a record carries; this run works from the rest",
 			"previous_run", prevID, "dropped", n, "of", len(chain))
 	}
+}
+
+// prepareFollowUp reads the pull request's comments, refuses a stale
+// follow-up, selects what the agent gets, stores comments.json, and puts
+// the previous run's session in place. It runs after agent.BuildEnv, so
+// every secret is registered before any comment is redacted.
+func (r *run) prepareFollowUp(ctx context.Context) error {
+	n, prevID := r.spec.PR, r.spec.PreviousRun
+	prev := r.d.Store.Sibling(prevID)
+	prevRec, err := prev.ReadRecord(ctx)
+	if err != nil {
+		r.d.Log.Warn("reading the previous run's record failed", "previous_run", prevID, "err", r.redact(err.Error()))
+		return fmt.Errorf("previous run %s has no readable record", prevID)
+	}
+	r.inheritRulings(prevRec, prevID)
 	prevTask, err := prev.ReadTask(ctx)
 	if err != nil {
 		prevTask = nil
