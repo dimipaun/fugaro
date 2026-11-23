@@ -4,43 +4,37 @@
   "stream": "cli",
   "nodes": [
     {
-      "id": "C1",
-      "title": "the stamp contract",
+      "id": "T1",
+      "title": "the stamp package",
       "run": null,
       "version": null,
-      "tier": "small",
-      "size": 0.5,
+      "tier": "large",
+      "size": 2,
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/versionstamp/stamp.go",
+          "internal/versionstamp/source.go",
           "internal/versionstamp/stamp_test.go",
-          "internal/versionstamp/stub.go",
+          "internal/versionstamp/source_test.go",
           "schemas/required-cli.schema.json",
-          "docs/required-version-stamp/contract.md",
-          "internal/cli/required_cli_source.go"
+          "internal/cli/required_cli_source.go",
+          "docs/ci-affected-tests/read-map.json"
         ]
-      },
-      "kind": "contract",
-      "stubs": [
-        "internal/versionstamp/stub.go"
-      ]
+      }
     },
     {
-      "id": "T1",
-      "title": "the reader: cache, timeout, fail-open",
+      "id": "T2c",
+      "title": "the published-release lookup",
       "run": null,
       "version": null,
-      "tier": "medium",
-      "size": 1.5,
+      "tier": "small",
+      "size": 1,
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/versionstamp/source.go",
-          "internal/versionstamp/cache.go",
-          "internal/versionstamp/source_test.go",
-          "internal/versionstamp/schema_test.go",
-          "docs/ci-affected-tests/read-map.json"
+          "internal/updatecheck/published.go",
+          "internal/updatecheck/published_test.go"
         ]
       }
     },
@@ -55,7 +49,6 @@
         "prediction": true,
         "paths": [
           "internal/initflow/stage.go",
-          "internal/initflow/loop.go",
           "internal/cli/update_version_stamp.go",
           "internal/cli/update_version_stamp_test.go",
           "internal/cli/init_stages.go",
@@ -65,11 +58,11 @@
     },
     {
       "id": "T2b",
-      "title": "the stamp under the gate, in the in-flight note and beside the policy delete",
+      "title": "the gate, the release bound, the in-flight note and the policy delete",
       "run": null,
       "version": null,
-      "tier": "small",
-      "size": 1,
+      "tier": "medium",
+      "size": 1.5,
       "footprint": {
         "prediction": true,
         "paths": [
@@ -180,8 +173,8 @@
       }
     },
     {
-      "id": "I1",
-      "title": "integration",
+      "id": "T8",
+      "title": "end to end, and the release notes",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -189,17 +182,14 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/versionstamp/stub.go",
-          "internal/versionstamp/source.go",
           "internal/cli/required_cli_e2e_test.go",
           "docs/releases/v0.29.0.md"
         ]
-      },
-      "kind": "integration"
+      }
     },
     {
       "id": "T7",
-      "title": "the required-CLI refusal in the working skill, and its last-resort recovery",
+      "title": "the refusal in the working skill, and the last-resort recovery",
       "run": null,
       "version": null,
       "tier": "trivial",
@@ -211,60 +201,48 @@
           "docs/release.md"
         ]
       }
-    },
-    {
-      "id": "R-stamp-shape",
-      "title": "amend the stamp contract: the node's shape",
-      "run": null,
-      "version": null,
-      "tier": "trivial",
-      "size": 0.5,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/versionstamp/stamp.go",
-          "schemas/required-cli.schema.json",
-          "docs/required-version-stamp/contract.md"
-        ]
-      },
-      "kind": "contract_change"
     }
   ],
   "edges": [
     {
       "task": "T2a",
-      "needs": "C1",
+      "needs": "T1",
       "reason": "the node's shape it writes"
     },
     {
       "task": "T3",
-      "needs": "C1",
-      "reason": "the Source interface and the refusal error"
+      "needs": "T1",
+      "reason": "the reader and the refusal error"
     },
     {
       "task": "T4",
-      "needs": "C1",
-      "reason": "the Source interface and the refusal error"
+      "needs": "T1",
+      "reason": "the reader and the refusal error"
     },
     {
       "task": "T5",
-      "needs": "C1",
-      "reason": "the Source interface"
+      "needs": "T1",
+      "reason": "the reader it reports from"
     },
     {
       "task": "T6",
-      "needs": "C1",
-      "reason": "the Source interface"
+      "needs": "T1",
+      "reason": "the reader"
     },
     {
       "task": "K1",
-      "needs": "C1",
-      "reason": "the node's shape it checks"
+      "needs": "T1",
+      "reason": "the node's shape and the schema it checks against"
     },
     {
       "task": "T2b",
       "needs": "T2a",
-      "reason": "it gates, documents and tests the stage T2a writes"
+      "reason": "it gates, wires and documents the stage, and edits its file"
+    },
+    {
+      "task": "T2b",
+      "needs": "T2c",
+      "reason": "the release lookup it wires in"
     },
     {
       "task": "K2",
@@ -272,113 +250,34 @@
       "reason": "it registers the script K1 writes"
     },
     {
-      "task": "I1",
-      "needs": "T1",
-      "reason": "it is a side of an edge a contract broke, re-joined here"
+      "task": "T8",
+      "needs": "T2b",
+      "reason": "the stage raises only once the release lookup is wired in"
     },
     {
-      "task": "I1",
-      "needs": "T2a",
-      "reason": "the end-to-end test needs the stage to write the stamp"
-    },
-    {
-      "task": "I1",
+      "task": "T8",
       "needs": "T3",
-      "reason": "it is a side of an edge a contract broke, re-joined here"
+      "reason": "the end-to-end test walks the fence"
     },
     {
-      "task": "I1",
+      "task": "T8",
       "needs": "T4",
-      "reason": "it is a side of an edge a contract broke, re-joined here"
+      "reason": "the end-to-end test walks the door's refusal"
     },
     {
-      "task": "I1",
+      "task": "T8",
       "needs": "T5",
-      "reason": "it is a side of an edge a contract broke, re-joined here"
+      "reason": "the end-to-end test reads doctor's row"
     },
     {
-      "task": "I1",
+      "task": "T8",
       "needs": "T6",
-      "reason": "it is a side of an edge a contract broke, re-joined here"
-    },
-    {
-      "task": "I1",
-      "needs": "K1",
-      "reason": "it is a side of an edge a contract broke, re-joined here"
+      "reason": "the daemon's hold is part of the behaviour the release note states"
     },
     {
       "task": "T7",
-      "needs": "I1",
-      "reason": "the sentence becomes true only then"
-    }
-  ],
-  "decoupling": [
-    {
-      "contract": "C1",
-      "was": {
-        "task": "T3",
-        "needs": "T1"
-      },
-      "integration": "I1",
-      "reason": "the fence needs the Source interface and the error, not the cache"
-    },
-    {
-      "contract": "C1",
-      "was": {
-        "task": "T4",
-        "needs": "T1"
-      },
-      "integration": "I1",
-      "reason": "the door check needs a fresh read's interface, not the reader's code"
-    },
-    {
-      "contract": "C1",
-      "was": {
-        "task": "T5",
-        "needs": "T1"
-      },
-      "integration": "I1",
-      "reason": "doctor needs the Source interface, not the reader's code"
-    },
-    {
-      "contract": "C1",
-      "was": {
-        "task": "T6",
-        "needs": "T1"
-      },
-      "integration": "I1",
-      "reason": "the daemon needs the Source interface, not the reader's code"
-    },
-    {
-      "contract": "C1",
-      "was": {
-        "task": "T2a",
-        "needs": "T1"
-      },
-      "integration": "I1",
-      "reason": "the writer needs the node's shape, not the reader"
-    },
-    {
-      "contract": "C1",
-      "was": {
-        "task": "K1",
-        "needs": "T2a"
-      },
-      "integration": "I1",
-      "reason": "the script needs the node's shape, not its writer"
-    }
-  ],
-  "contract_changes": [
-    {
-      "change": "R-stamp-shape",
-      "contract": "C1",
-      "raised_by": "T2a",
-      "reason": "if the node needs a field the contract does not carry",
-      "affects": [
-        "T3",
-        "T5",
-        "K1"
-      ]
+      "needs": "T8",
+      "reason": "the sentences become true only then"
     }
   ]
 }

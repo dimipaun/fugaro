@@ -1,6 +1,6 @@
 # Required-version stamp
 
-**Status: plan only; nothing is implemented; no task approved.** Every decision is answered. The owner is to confirm D3267 as amended after review (O4).
+**Status: plan only; nothing is implemented; no task approved.** Every decision is answered, and the owner confirmed D3267 as amended after review.
 
 **Spec owner:** Dimi Paun. The spec was approved on 2026-11-23. It was reconciled and planned on
 2026-11-23, against `origin/main` at `0dec0bb36`.
@@ -13,8 +13,8 @@ with one sentence that names `brew upgrade` and `fugaro update`. L8 waits on it.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | Assumptions A1–A6, findings F1–F23 (F20–F23 from the first review round), decisions D3260–D3268 (D3260–D3266 are the owner's answers to Q1–Q7; D3267 and D3268 were added by this reconciliation and its review and answered the same day, and D3267 was amended after review), resolutions R1–R10, open items O1–O4, UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Twelve tasks in four levels: contract C1; T1, T2a, T3, T4, T5, T6 and K1; T2b, K2 and I1; then T7. It has the critical path, the shared files, and Check 900. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | Assumptions A1–A6, findings F1–F25 (F20–F25 from the review rounds), decisions D3260–D3270 (D3260–D3266 are the owner's answers to Q1–Q7; D3267–D3270 were added by this reconciliation and its reviews and answered the same day, and D3267 was amended after review and confirmed), resolutions R1–R10, open items O1–O6 (O2 and O4 closed), UNVERIFIED U1–U4. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Twelve tasks in five levels: T1 (the stamp package) and T2c (the published-release lookup); T2a, T3, T4, T5, T6 and K1; T2b and K2; T8 (end to end); then T7. It has the critical path, the shared files, and Check 900. No contract: the pass breaks no edge (R10). Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it |
 
 **The owner's answers (2026-11-23):**
@@ -27,13 +27,21 @@ with one sentence that names `brew upgrade` and `fugaro update`. L8 waits on it.
 - D3265: console read paths are exempt and print one stderr line.
 - D3266: an older `update` refuses before its first write.
 - D3267: in a coding agent's session on a managed project, `update` raises the stamp under the
-  managed gate, like the `rules` stage (as recommended). **Amended after review (F20, F21):** only
-  once the installation has converged, so the stage holds while an earlier stage skipped with its
-  work undone or the credentials service is behind, and only through its own `gateStep` and audit
-  record. The owner is to confirm the amendment (O4).
+  managed gate, like the `rules` stage (as recommended). **Amended after review (F20, F21) and
+  confirmed by the owner, "keep it, raise when converged":**
+  - The stage raises only through its own `gateStep` and audit record.
+  - It holds while `credentialsMoveHeld` holds the policy node, or while `servicesImageStale` says
+    the credentials service is behind.
+  - In a session, `credentialsMoveHeld` holds on every installation with a credentials block. So in
+    practice the owner's own `update` raises the stamp, and an agent session raises it only when
+    nothing is held.
 - D3268: "Bound it". `update` writes only a published release, and a cached value above the binary
   refuses on its own for only 15 minutes. Nothing lowers the stamp (D3262); the last-resort recovery
   is a hand edit of the node in the Firebase console.
+- D3269: the release bound is a live check that the tag `v<Version>` is a published release (not a
+  draft or pre-release), whatever the update-check switches say. If the lookup fails, the stamp
+  stays and a line says so.
+- D3270: `fugaro budget kill`, in every form, `--workspace` included, is exempt from the fence.
 
 **Findings that changed the design:**
 - The stage cannot sit right after `policy`, because that slot is taken by contract. It goes after
@@ -48,17 +56,22 @@ with one sentence that names `brew upgrade` and `fugaro update`. L8 waits on it.
 - An earlier stage can skip with its work undone and the run goes on, so the stamp holds until the
   installation has really converged (F20). A gated write needs its own `gateStep` (F21) and the
   adoption check (F22).
-- A stamp that only rises makes a bad value permanent, so D3268 bounds the ways one gets in (F23).
+- A stamp that only rises makes a bad value permanent, so D3268 and D3269 bound the ways one gets in
+  (F23).
+- `update`'s `--forget` and `--config-only` bypass the converge, so `update` refuses at the top of its
+  `RunE` (F24, R8).
+- Stopping spend must never be fenced (F25, D3270).
 
 **Numbers reserved:**
-- Decisions **D3260–D3289**: D3260–D3268 used, D3269–D3289 reserved and unused.
+- Decisions **D3260–D3289**: D3260–D3270 used, D3271–D3289 reserved and unused.
 - Checks **900–909**: Check 900 used, 901–909 reserved and unused.
 
 Both blocks were checked free on `main` at `0dec0bb36`. The highest decision there was the
 repo-coupling audit's block (D3230–D3259), and the highest check was 892.
 
 **What waits on something external:**
-- the owner's confirmation of D3267 as amended (O4);
 - the owner's go for each task;
 - Check 900, which the owner runs after the release that carries L1;
-- L8's spec, which places its migration after this stage (O1).
+- L8's spec, which places its migration after this stage (O1);
+- the workspace work's own spec, for which stamp a workspace write checks (O5);
+- the console's owner, for U3 (O6).
