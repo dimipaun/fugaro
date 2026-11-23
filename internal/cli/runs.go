@@ -66,11 +66,18 @@ type lsOptions struct {
 // They are the vocabulary a row's `status` carries, never the decorated cell
 // statusCell prints -- `failed (preempted)` is --state failed, as a reader
 // switching on status has always seen it.
+//
+// `paused` is the run's own status word (R15) and belongs here with the
+// others: a run that suspended itself is a state a reader asks a listing for,
+// and it is a scan rather than a live query, because a pause ends the run's
+// execution and releases its lease (R12, runs_live.go). It is also the state
+// of the pull request such a run is on, and it is deliberately not one of the
+// three in lsPRStates -- that list's own note says why.
 var lsStates = []string{
 	string(runstore.StatusCancelled), runview.StatusError, string(runstore.StatusFailed),
 	string(runstore.StatusHalted), string(runstore.StatusInfraError), runview.StatusLaunching,
-	runview.StatusPending, string(runstore.StatusRunning), string(runstore.StatusSucceeded),
-	runview.StatusUnlaunched, string(runstore.StatusUnreviewed),
+	string(runstore.StatusPaused), runview.StatusPending, string(runstore.StatusRunning),
+	string(runstore.StatusSucceeded), runview.StatusUnlaunched, string(runstore.StatusUnreviewed),
 }
 
 // prLookback is runs ls --pr's default --since: run --pr's window
