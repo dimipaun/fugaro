@@ -91,7 +91,12 @@ const credsServeMemberDatabase = "https://member-one-fp-default-rtdb.firebaseio.
 // published node — encoded by C3's own writer, so the document the process
 // decodes is the one a `fugaro update` publishes (WS4) — and answers a client
 // of it, the way the process builds one at its own database's URL.
-func fakeWorkspaceDatabase(t *testing.T, name string) *rtdb.Client {
+//
+// The fake comes back beside the client because the workspace's database is
+// where more than the published node lives: a test of the personal half
+// (credentials_serve_test.go, WC14) writes the workspace's ROSTER into the same
+// database, and a fake nobody can reach is a database a test can only read.
+func fakeWorkspaceDatabase(t *testing.T, name string) (*gcpfake.RTDB, *rtdb.Client) {
 	t.Helper()
 	fake := gcpfake.NewRTDB(t)
 	raw, err := projectpolicy.WorkspaceCredentialsNode(workspaceNode(name))
@@ -103,7 +108,7 @@ func fakeWorkspaceDatabase(t *testing.T, name string) *rtdb.Client {
 	if err != nil {
 		t.Fatalf("the fake database's client: %v", err)
 	}
-	return client
+	return fake, client
 }
 
 // TestServeWorkspaceModeBuildsTheWorkspaceResolver is WS5's acceptance: with
@@ -132,7 +137,7 @@ func TestServeWorkspaceModeBuildsTheWorkspaceResolver(t *testing.T) {
 		t.Setenv(n, v)
 	}
 	fakeCredentialsService(t)
-	client := fakeWorkspaceDatabase(t, workspace)
+	_, client := fakeWorkspaceDatabase(t, workspace)
 	var opened []string
 	credentialsTest.database = func(_ context.Context, url string, _ oauth2.TokenSource) (*rtdb.Client, error) {
 		opened = append(opened, url)
