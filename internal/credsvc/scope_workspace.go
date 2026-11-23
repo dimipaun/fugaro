@@ -694,7 +694,21 @@ func (sc workspaceScope) Serves(path string) bool {
 	if sc.unserved {
 		return false
 	}
-	return servesWorkspaceRoute(path)
+	if !servesWorkspaceRoute(path) {
+		return false
+	}
+	switch path {
+	case SlipPath, SlipClaimPath:
+		// The two routes of the workspace's OWN half are served only by a
+		// deployment that has that half wired (R3): a workspace-mode process
+		// with no roster serves neither, and its refusal is the audited "this
+		// deployment does not serve the route" every other unserved route gets
+		// — which is exactly what it answered before WC4 existed, and what WC14
+		// answers for a process that was handed no roster.
+		_, serves := sc.Persons()
+		return serves
+	}
+	return true
 }
 
 // AcceptsSlip answers whether a call to this service carries a slip at all, and
