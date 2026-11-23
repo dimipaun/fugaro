@@ -239,6 +239,17 @@ document records what the spec assumed, what the code says instead, and the owne
     is a bundle entry per repository (`internal/credsvc/provider_wire.go` `RepoCredentialKey`,
     D3008). It is a credential, so its lift is L4's (model-credentials-routing) to name; it is not
     a row here because no check listed the bundle. Open item O5.
+  - **Clean-up (2026-11-23, at the owner's request).** The deleted account's two bindings
+    (`roles/batch.agentReporter`, `roles/logging.logWriter` for
+    `deleted:serviceAccount:fugaro-dimipaun-fugar-70110b74@…`) were removed from `fugaro-dev`'s IAM
+    policy, and none remains: RC107's drift fixed by hand, while the compute root's snapshot still
+    needs L2's fix. `config/policy/repos/dimipaun-fugaro-c2eb03dd3bfcd195`,
+    `config/policy/repos/dimipaun-fugarosandbox-9b0fc60610974836` (the Bitbucket-provider slugs of
+    two GitHub repositories: RC51's case) and
+    `gs://fugaro-runs-fugaro-dev/builds/dimipaun-fugarosandbox-9b0fc60610974836/` were deleted
+    after a backup. `creds/repoauth` and `creds/workflowsecrets` for
+    `dimi-bmb-billmybanktests-41aa52e538568a87` were kept by the owner's ruling, for the Bitbucket
+    workspace-token Checks 180 and 181.
 
 ## 4. Decisions
 
@@ -251,6 +262,9 @@ document records what the spec assumed, what the code says instead, and the owne
 | D3234 | Dead per-repo image code: recommend removal? | Recommend unparking repo-image-removal R2–R10 after M2 | **Keep D1900. Not the recommendation.** The report classifies it Dead, records that D1900 keeps it, and the lift list recommends nothing for it |
 | D3235 | When does the owner rule on the benign candidates? | After this PR merges, in a follow-up session | **As recommended.** The report holds the list with a recommendation per row |
 | D3236 | Shape of the lift work | An ordered list; each item cites its owning plan or becomes its own spec when picked | **As recommended** |
+| D3237 | The owner's ruling on each benign candidate B1–B19 (D3235; asked one by one on 2026-11-23, a recommendation each) | Per row, report §3 | **Answered 2026-11-23.** Keep, as recommended: B1, B2, B5, B6, B7, B8, B10, B12, B13, B14, B15, B17, B19. B3 rejected, as recommended: the routing table decides; `agent.model`, `models.*` and `crafts.*.model` are migrated once, then refused. B4 kept tighten-only, as recommended. B18 kept, capped at the project default unless the global cap allows more, as recommended. **Not the recommendation:** B9 `ab.rate` lifts to the project (keep was recommended); B11 `rigor.default` and `rigor.areas` lift to the project, with per-repo levels in the project's `rigor.repos` (keep tighten-only was recommended); B16 `.fugaro/recipes/` lifts to the project, the repo recipe files migrated once, then refused (keep tighten-only was recommended). Report §3 has the column; L8 applies them |
+| D3238 | Which lifts go first (D3236)? | Report §7's order | **Answered 2026-11-23; amended 2026-11-23 (L5 added by the owner).** Wave 1: L1 (the version stamp), L5 (as D3239 rescopes it) and L8 (apply D3237; needs L1), each its own spec. Wave 2: L3 (the project build identity; still waits on L2), L9 (the default catalog entry; waits on L3), and L11, L12 and L13. L6 and L7 wait for the owner's next pick (L7 was offered for wave 1 and not chosen, L6 for wave 2 and not chosen). L2, L4 and L4b stay with the plans that own them; L10's first half is done (D1, #3693) |
+| D3239 | L5's scope (the owner's own, 2026-11-23, amending L5 as report §7 first stated it) | — (raised by the owner) | **The working directory is an optional hint, never what decides the work.** Inside a checkout, `update` may take the project (so `--project` is not needed there) and a default focus or order from that checkout's `fugaro.yaml`. From any directory, the secrets, repository and checkout stages, and RC104's and RC105's steps, work over every enrolled repository, reading each from its default branch, not the working tree. A value only a person can supply for a repository (the secrets stage) is asked by the repository's name, or skipped with a line that names the repository, never skipped silently as today. Report §4 item 4 and §7's L5 row follow it |
 
 Resolutions (one defensible answer, stated rather than asked):
 
@@ -277,8 +291,7 @@ Resolutions (one defensible answer, stated rather than asked):
   so such a project keeps a per-checkout step. **Answer (as recommended): lift item L9.** Recommend
   giving a no-catalog project a default catalog entry, so `update` never builds a derived image.
   The code stays, as D1900 rules.
-- O1. The benign-candidate rulings (D3235) are owed after merge. Until then no candidate is kept
-  or rejected.
+- O1. **Closed 2026-11-23.** The owner ruled on B1–B19 (D3237) and on the lift order (D3238, amended), and rescoped L5 (D3239).
 - O2. **Closed 2026-11-23.** The owner ran Checks 890–892 on `fugaro`; report §1's "Live result"
   records them, and F21 what they found.
 - O3. `docs/status.md` gets this spec's row when the plan merges, as for every spec folder before
