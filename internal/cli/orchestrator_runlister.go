@@ -166,6 +166,19 @@ func (l *orchestratorRunLister) runInFlight(ctx context.Context, repo, slug, run
 	if done, _ := orchestratorOutcome(rec); done {
 		return orchestrator.RunInFlight{}, false
 	}
+	// A run that ended paused is in flight too, and for the same reason the
+	// daemon's own view counts it: the chain is suspended and this daemon
+	// resumes it (D3185, R15), so it is work the project has running and an item
+	// adoption must write. The execution below is deliberately not asked about
+	// it — ending the execution is what a pause is (R12), so the platform's word
+	// would drop every suspended run. A pause its launcher cancelled is the
+	// exception (D3197): the chain is over and there is nothing to adopt.
+	if rec != nil && rec.Status == runstore.StatusPaused {
+		if pauseStands(pauseFactsFor(ctx, l.env, func(format string, a ...any) { l.warnf(format, a...) }), slug, runID) {
+			return runOfRecord(spec, launch, runID), true
+		}
+		return orchestrator.RunInFlight{}, false
+	}
 	if over, known := l.executionOver(ctx, slug, runID, launch); known && over {
 		return orchestrator.RunInFlight{}, false
 	}

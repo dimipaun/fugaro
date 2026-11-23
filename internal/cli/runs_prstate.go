@@ -255,21 +255,12 @@ type pauseLookup func(slug, run string) (pauseFact, bool)
 // cannot be read, and the state of one pull request is worth less than the
 // listing.
 func pauseFactsFor(ctx context.Context, env *cloudEnv, warn func(string, ...any)) pauseLookup {
+	warn = warnOnce(warn)
 	var (
 		db     *rtdb.Client
 		opened bool
 		fail   error
-		warned bool
 	)
-	if warn == nil {
-		warn = func(string, ...any) {}
-	}
-	say := func(format string, a ...any) {
-		if !warned {
-			warned = true
-			warn(format, a...)
-		}
-	}
 	return func(slug, run string) (pauseFact, bool) {
 		if !opened {
 			opened = true
@@ -280,34 +271,73 @@ func pauseFactsFor(ctx context.Context, env *cloudEnv, warn func(string, ...any)
 			}
 		}
 		if fail != nil {
-			say("warning: run %s/%s ended paused and the pause could not be read (%s); it is counted as paused until the database says otherwise\n",
+			warn("warning: run %s/%s ended paused and the pause could not be read (%s); it is counted as paused until the database says otherwise\n",
 				safetext.Field(slug), task.ShortRun(oneLine(run)), safetext.OneLine(fail.Error()))
 			return pauseFact{}, false
 		}
-		var raw json.RawMessage
-		found, err := db.Get(ctx, runstore.PauseNodePath(slug, run), &raw)
-		if err != nil {
-			say("warning: run %s/%s ended paused and the pause could not be read (%s); it is counted as paused until the database says otherwise\n",
-				safetext.Field(slug), task.ShortRun(oneLine(run)), safetext.OneLine(err.Error()))
-			return pauseFact{}, false
+		return pauseNode(ctx, db, slug, run, warn)
+	}
+}
+
+// pauseLookupWith is pauseFactsFor over a client the caller already holds: the
+// daemon's own, which is the same database the state node lives in
+// (orchestrator_cmd.openBudget), so the orchestrator's view reads a pause
+// through the connection it already opened this cycle rather than making a
+// second one.
+func pauseLookupWith(ctx context.Context, db *rtdb.Client, warn func(string, ...any)) pauseLookup {
+	if db == nil {
+		return nil
+	}
+	warn = warnOnce(warn)
+	return func(slug, run string) (pauseFact, bool) { return pauseNode(ctx, db, slug, run, warn) }
+}
+
+// pauseNode reads one paused node and holds it to the pause contract's own
+// reader (runstore.ParsePauseNode): a node this release does not know is a pause
+// this reader cannot answer for, and it answers with the standing pause every
+// failure answers with.
+func pauseNode(ctx context.Context, db *rtdb.Client, slug, run string, warn func(string, ...any)) (pauseFact, bool) {
+	var raw json.RawMessage
+	found, err := db.Get(ctx, runstore.PauseNodePath(slug, run), &raw)
+	if err != nil {
+		warn("warning: run %s/%s ended paused and the pause could not be read (%s); it is counted as paused until the database says otherwise\n",
+			safetext.Field(slug), task.ShortRun(oneLine(run)), safetext.OneLine(err.Error()))
+		return pauseFact{}, false
+	}
+	if !found {
+		// The service writes the node before the run ends paused (C3, R19), so
+		// a row saying paused with no node under it is a pause nothing will
+		// resume. The line is the whole of what this reader can do about it,
+		// and the pause is counted as standing so no second run is launched on
+		// the chain meanwhile.
+		warn("warning: run %s/%s ended paused and no pause of it is recorded; nothing will resume it\n",
+			safetext.Field(slug), task.ShortRun(oneLine(run)))
+		return pauseFact{}, false
+	}
+	node, err := runstore.ParsePauseNode(raw)
+	if err != nil {
+		warn("warning: run %s/%s ended paused and its pause is not one this release can read (%s); nothing will resume it\n",
+			safetext.Field(slug), task.ShortRun(oneLine(run)), safetext.OneLine(err.Error()))
+		return pauseFact{}, false
+	}
+	return pauseFact{cancelled: node.Cancelled, resumeAt: time.UnixMilli(node.ResumeAt).UTC()}, true
+}
+
+// warnOnce wraps a warning function so a reader that meets the same trouble on
+// every row of a listing says it once: the listing is the thing the caller
+// reads, and one line about a database this machine may not have beats one per
+// paused row of it.
+func warnOnce(warn func(string, ...any)) func(string, ...any) {
+	if warn == nil {
+		return func(string, ...any) {}
+	}
+	var said bool
+	return func(format string, a ...any) {
+		if said {
+			return
 		}
-		if !found {
-			// The service writes the node before the run ends paused (C3, R19),
-			// so a row saying paused with no node under it is a pause nothing
-			// will resume. The line is the whole of what this reader can do
-			// about it, and the pause is counted as standing so no second run
-			// is launched on the chain meanwhile.
-			say("warning: run %s/%s ended paused and no pause of it is recorded; nothing will resume it\n",
-				safetext.Field(slug), task.ShortRun(oneLine(run)))
-			return pauseFact{}, false
-		}
-		node, err := runstore.ParsePauseNode(raw)
-		if err != nil {
-			say("warning: run %s/%s ended paused and its pause is not one this release can read (%s); nothing will resume it\n",
-				safetext.Field(slug), task.ShortRun(oneLine(run)), safetext.OneLine(err.Error()))
-			return pauseFact{}, false
-		}
-		return pauseFact{cancelled: node.Cancelled, resumeAt: time.UnixMilli(node.ResumeAt).UTC()}, true
+		said = true
+		warn(format, a...)
 	}
 }
 
