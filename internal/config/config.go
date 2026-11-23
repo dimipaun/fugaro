@@ -398,7 +398,7 @@ const (
 // out sets no policy. The model prices are not settable here (a repository
 // that could set prices could set them to zero).
 type Budget struct {
-	Mode      string  `yaml:"mode"`        // off | observe | enforce; "" sets none
+	Mode      string  `yaml:"mode"`        // observe | enforce; "" sets none, which the run reads as observe
 	PerRunUSD float64 `yaml:"per_run_usd"` // 0 sets none; enforce needs a cap only after the merge
 	// AllowedModels bounds the models the run may choose, explicit IDs
 	// only; nil sets none, and an empty list is invalid.

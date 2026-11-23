@@ -13,16 +13,19 @@ import (
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
 
+// modeRank orders the two live modes, loosest to strictest. The word that was
+// a mode until this release ranks nothing: it is not a value a layer may carry
+// any more, so a layer that says it (a document written before the release,
+// read by the update's own listing and never by a run) tightens nothing, the
+// way any other string this vocabulary does not know does (AB2, D3009).
 func modeRank(m string) int {
 	switch m {
-	case ModeOff:
-		return 1
 	case ModeObserve:
-		return 2
+		return 1
 	case ModeEnforce:
-		return 3
+		return 2
 	}
-	return 0 // unset or unknown: carries no value
+	return 0 // unset, the removed word, or unknown: carries no value
 }
 
 // layerName names the i-th layer: 0 is the ceiling, 1 the default branch, 2
@@ -45,8 +48,8 @@ func layerName(i int) string {
 
 // Merge applies layers in order (the ceiling first, then tighten[0] as the
 // default branch, tighten[1] as the run's branch). A later layer may only
-// tighten: the smaller positive cap, the stricter mode (enforce > observe >
-// off), the intersection of allow-lists, a craft that selects among the
+// tighten: the smaller positive cap, the stricter mode (enforce > observe),
+// the intersection of allow-lists, a craft that selects among the
 // project's credentials and pools and narrows a pool. A grade of the escalation
 // ladder is the one block a later layer may not write at all: the project owns
 // the model choice, so its entry is dropped and recorded (tightenGrades). A key a layer leaves

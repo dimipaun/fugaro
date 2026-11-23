@@ -41,7 +41,7 @@ agent:
 # budget:                     # optional; the repository's cost and model policy. It can only tighten the
 #                             # project's ceiling (fugaro update); the runner reads it from the default branch,
 #                             # a branch's looser value is ignored with a warning
-#   mode: enforce             # off | observe | enforce; the strictest of the layers wins
+#   mode: enforce             # observe | enforce; the strictest of the layers wins, and a mode left out is observe
 #   per_run_usd: 5            # a dollar cap per run; the lowest of the layers wins
 #   per_day_usd: 20           # this repository's dollars per UTC day, enforced by the runner; the lowest of the layers wins,
 #                             # and a lower cap the owner set with `fugaro budget set` wins over it

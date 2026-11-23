@@ -1040,8 +1040,18 @@ func validateBudget(b *Budget) []Problem {
 	add := func(path, format string, args ...any) {
 		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
 	}
+	// The word that was a budget mode is refused at once, with the one text
+	// every door refuses it with (D3022, policy.ModeOffRefusal): a repository
+	// committed it, so the file has to be fixed before its runs start, and the
+	// sentence says what to write instead. An unset mode is not refused — it
+	// is the observe every layer reads it as (R3, D3010) — and any other word
+	// is refused as the mode it is not.
 	if b.Mode != "" && !policy.ValidMode(b.Mode) {
-		add("budget.mode", "%q must be off, observe or enforce", b.Mode)
+		if policy.Mode(b.Mode).Removed() {
+			add("budget.mode", "%s", policy.ModeOffRefusal)
+		} else {
+			add("budget.mode", "%q must be observe or enforce; leave the key out for observe", b.Mode)
+		}
 	}
 	if m, err := pricing.FromUSD(b.PerRunUSD); err != nil {
 		add("budget.per_run_usd", "%v: it must be a number from 0 to %d US dollars", b.PerRunUSD, pricing.MaxUSD)
