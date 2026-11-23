@@ -203,16 +203,18 @@ func TestADatastoreModeDatabaseIsStillRefused(t *testing.T) {
 	}
 }
 
-// TestACreateRaceAdoptsOnlyTheConfirmedLocation: the database the person
-// confirmed is the one in the step's own location (D3085). One that appears
-// there between the plan and the write is adopted as ours, and the step says
-// where it is, because this run did not create it; one that appears anywhere
-// else is a state nothing confirmed — a location is permanent — so Apply
-// refuses, names where the database is and what to run, and writes nothing.
-func TestACreateRaceAdoptsOnlyTheConfirmedLocation(t *testing.T) {
+// TestACreateRaceAdoptsOnlyThePlannedLocation: the database this run said it
+// would create is the one in the step's own location (D3085), which the plan
+// names and the run prints with nothing asked (D3090 of docs/location-preference).
+// One that appears there between the plan and the write is adopted as ours, and
+// the step says where it is, because this run did not create it; one that
+// appears anywhere else is a state nothing announced — a location is permanent —
+// so Apply refuses, names where the database is and what to run, and writes
+// nothing.
+func TestACreateRaceAdoptsOnlyThePlannedLocation(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("the confirmed location", func(t *testing.T) {
+	t.Run("the planned location", func(t *testing.T) {
 		s, fs := fsStep(t, "us-east5")
 		fs.RemoveDatabase()
 		if _, _, err := s.Plan(ctx); err != nil {
@@ -220,7 +222,7 @@ func TestACreateRaceAdoptsOnlyTheConfirmedLocation(t *testing.T) {
 		}
 		fs.RaceCreate("us-east5")
 		if err := s.Apply(ctx); err != nil {
-			t.Fatalf("a database that appeared in the confirmed location was not adopted: %v", err)
+			t.Fatalf("a database that appeared in the planned location was not adopted: %v", err)
 		}
 		if got := s.AdoptedLocation(); got != "us-east5" {
 			t.Errorf("the step says the adopted database is in %q, want us-east5", got)
