@@ -80,7 +80,16 @@ import (
 // no stricter rule, and the deploy is what refuses the job that can see one and
 // cannot read it.
 func budgetBackendOn(lc *localcfg.Config) (bool, error) {
-	if lc.BudgetMode() == localcfg.BudgetOff || lc.Budget == nil || lc.Budget.RTDBURL == "" {
+	// A mode left unwritten, and the word that was a mode until this release,
+	// are the installation behind the vocabulary: the local config answers
+	// observe for both now (AB2, D3010), and reading that answer here would
+	// make every installed config — `fugaro setup` writes no mode — demand a
+	// signer at its next launch, which is a move AB2's own merge must not make.
+	// What makes a launch mint is AB4's task (F7): it drops this read, mints
+	// for every launch whose installation has a database, and refuses one that
+	// cannot be given an identity. Until it lands, a config that writes no mode
+	// keeps the shape the release behind gave it.
+	if lc.Budget == nil || lc.Budget.Mode == "" || lc.BudgetMode() == localcfg.BudgetOff || lc.Budget.RTDBURL == "" {
 		return false, nil
 	}
 	return true, budgetSignerOn(lc)
