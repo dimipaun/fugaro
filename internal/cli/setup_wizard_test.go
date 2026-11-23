@@ -136,6 +136,9 @@ func optionsFor(flags ...string) *initOptions {
 			// the flag is one answer, and the pair is what the installation's
 			// alert is created with.
 			o.budget, o.budgetCurrency = managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+			// A creating run with a budget needs the account the alert is
+			// created with, and these fixtures have no installation state.
+			o.billingAccount = "000000-000000-000000"
 		case "--bake-repos":
 			// The value the flag names, and the fact that it was passed: a run that
 			// answers the question with the flag is the run whose answer the local
@@ -557,6 +560,7 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 	only := func() *initOptions {
 		o := &initOptions{name: initProjectName, cloud: cloudOptions{gcpProject: initProject, region: defaultRegion}, rigor: string(rigor.Pro)}
 		o.budget, o.budgetCurrency = managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+		o.billingAccount = "000000-000000-000000"
 		return o
 	}
 	ask := func(stdin string) (*initRun, *strings.Builder) {
