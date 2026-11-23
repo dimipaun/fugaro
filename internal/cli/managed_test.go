@@ -1225,6 +1225,12 @@ func TestManagedEveryAgentSiteInInitHasACase(t *testing.T) {
 // update_managed_test.go — and the plugin stage no longer reads it at all.
 func TestManagedPluginStageThroughTheLoopAppliesUnderEachMarker(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	// Claude Code's record of installed plugins is read from the host's own
+	// config directory unless it is pointed elsewhere, and a machine whose
+	// plugin is NEWER than this test's release reads the stage as "No changes"
+	// and fails the test on that machine alone. An empty directory is a machine
+	// with no plugin installed, which is the state every arm here installs into.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	for _, how := range []struct {
 		name     string
 		stdin    string

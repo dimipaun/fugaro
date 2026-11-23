@@ -77,6 +77,11 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 // comes out of it byte for byte: the merge that wrote it is gone (U2, D949).
 func TestPtyPluginConfirmationAtATerminal(t *testing.T) {
 	releaseBuild(t, "0.2.0")
+	// An empty config directory, so the plugin record the stage's own read
+	// consults is this test's and not the host's: a machine whose plugin is
+	// newer than this release would read the install half as nothing to do and
+	// fail the test on that machine alone.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	settings := wiringCheckout(t, settingsWithOthers)
 	e, out, _ := ttyEngine(t, &initOptions{})
 	// After the engine: the rig takes claude off PATH itself.
