@@ -375,10 +375,10 @@ Four answers shape the plan most:
 #### CG4: a claim per plan task
 - Acceptance:
   - Before launching a plan task or a backlog item, an orchestrator claims it with an ETag-conditioned RTDB write at `ClaimPath`. The path is under `orchestrator/` at a key no orchestrator id can take (`~claims`); CG1a makes `NodeIDs` skip it.
-  - A held claim makes the others skip the item. The claim is released when the item is done or cancelled, or when its holder's lease has lapsed past the grace period.
+  - A held claim makes the others skip the item. The claim is released when the item is done or cancelled, and at no other time: nothing about its holder's lease releases it, because a daemon deletes its lease node on every clean exit (`--once`, a restart, a stop) while the runs it started are still going, so a rival that freed a claim on a lapsed beat would start a second run of one plan task (the owner's ruling of 2026-11-23). The holder's own cycle releases it — the beat re-stamps what it holds — and a release that failed, or a cycle that died after the item's own write landed, is retried by the next cycle's read of the same nodes.
   - The node keeps `orchestrator/`'s `.write: false` for every token the rules evaluate. IAM is the fence, as for the state itself (F33). No rules change.
-- Files: `internal/orchestrator/claim.go` (new), `internal/orchestrator/claim_test.go` (new), `internal/orchestrator/launch.go`.
-- Tests: `TestClaimFirstWins`, `TestLaunchSkipsClaimed`, `TestClaimReleasedOnLapse` (against `gcpfake`'s RTDB, which honours ETags).
+- Files: `internal/orchestrator/claim.go` (new), `internal/orchestrator/claim_test.go` (new), `internal/orchestrator/launch.go`, `internal/orchestrator/tick.go` (the cycle re-stamps and releases what it holds), `internal/cli/orchestrator_run.go` (the daemon's beat).
+- Tests: `TestClaimFirstWins`, `TestLaunchSkipsClaimed`, `TestClaimHeldWhileTheItemIsUnfinished`, `TestClaimReleasedWhenTheItemSettles`, `TestOnePlanTaskOneLaunchAcrossTwoTicks`, `TestCycleReleasesTheClaimOfAnItemThatFinished`, `TestBeatRestampsTheClaimsTheDaemonHolds` (against `gcpfake`'s RTDB, which honours ETags).
 - Command: `go test ./internal/orchestrator/ -run 'TestClaim|TestLaunchSkipsClaimed' -count=1`
 - Red step: two orchestrators both launch the task.
 - Depends on: C-ORCH (`ClaimPath`).

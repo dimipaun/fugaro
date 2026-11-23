@@ -66,11 +66,11 @@ type Tick struct {
 	// already recorded.
 	Launcher Launcher
 	// Claims is the project's claims (claim.go, D3209): what a cycle takes on
-	// an item before its work starts and releases once it is finished, so that
-	// two orchestrators of one project never start a run for one plan task or
-	// one backlog item. Nil is a cycle that claims nothing — a process that
-	// makes no write to this subtree — and then every item is this daemon's as
-	// it was before there were claims.
+	// an item before its work starts, re-stamps while it holds it and releases
+	// once the item is finished, so that two orchestrators of one project never
+	// start a run for one plan task or one backlog item. Nil is a cycle that
+	// claims nothing — a process that makes no write to this subtree — and then
+	// every item is this daemon's as it was before there were claims.
 	Claims ClaimGuard
 	// Mint mints that run id. It is the daemon's (internal/task in O8): this
 	// package knows no run ids of its own.
@@ -372,10 +372,6 @@ type cycle struct {
 	// find no pause and start work into the refusal the pause was raised for
 	// (O19, D2022 (a)).
 	paused bool
-	// loaded is each node as this cycle read it, in the order of nodes: what the
-	// cycle's last step compares the node against to release the claims of the
-	// items it moved into a finished phase (SettledClaims, D3209).
-	loaded []State
 }
 
 // bind makes the node at i the one this cycle is working on.
@@ -575,14 +571,12 @@ func (c *cycle) load(ctx context.Context) error {
 	stores := make([]Store, 0, 1+len(c.tick.Nodes))
 	stores = append(append(stores, c.tick.Store), c.tick.Nodes...)
 	c.nodes = make([]node, 0, len(stores))
-	c.loaded = make([]State, 0, len(stores))
 	for _, st := range stores {
 		s, etag, err := st.Load(ctx)
 		if err != nil {
 			return err
 		}
 		c.nodes = append(c.nodes, node{store: st, state: s, etag: etag, fresh: true})
-		c.loaded = append(c.loaded, s)
 	}
 	// The state node is the one the cycle starts on, and the one a step that
 	// reads every node — the run ids and the counts — settles first.
@@ -717,13 +711,14 @@ func (c *cycle) run(ctx context.Context) error {
 		c.settle()
 	}
 
-	// The claims of the items this cycle finished come off last, once every
-	// write that finished them has landed (D3209): an item the fold's own
-	// reading of a run, the merge read or a split moved to done or cancelled is
-	// work nobody is on any more, and the project's other orchestrators may take
-	// it the next time one of them has it in front of them. It is last because
-	// it is about what landed, and only the items that moved are released: a
-	// node that finished its work in an earlier cycle released its claims then.
+	// The claims of the finished items come off last, once every write that
+	// finished them has landed (D3209): an item the fold's own reading of a run,
+	// the merge read or a split moved to done or cancelled is work nobody is on
+	// any more, and the project's other orchestrators may take it the next time
+	// one of them has it in front of them. It is last because it is about what
+	// landed — and it is every finished item the nodes carry and not only what
+	// moved in this cycle, which is what releases a claim this daemon's earlier
+	// cycle failed to release or died before releasing.
 	if err := c.releaseClaims(ctx); err != nil {
 		return err
 	}
@@ -731,23 +726,25 @@ func (c *cycle) run(ctx context.Context) error {
 	return nil
 }
 
-// releaseClaims releases this orchestrator's claim on every item a node moved
-// into a finished phase in this cycle, over the nodes as they now stand against
-// the states the cycle loaded them as. A claim that cannot be released fails
-// the cycle: the item is finished and its claim is stale, so the next cycle
-// reads the same nodes and releases it then, and a daemon that swallowed the
-// refusal would leave the item blocked for every other orchestrator of the
-// project with nothing said.
+// releaseClaims releases this orchestrator's claim on every item a node of this
+// project has finished, over the nodes as they now stand, and re-stamps the
+// claims it still holds (Claim.Refresh, D3209). Every finished item and not
+// only the ones this cycle moved, so that a release that failed, and one a
+// cycle that died after the item's own write had landed never made, are made by
+// the next cycle that reads the node. A claim that cannot be released fails the
+// cycle: the item is finished and its claim is stale, so the next cycle reads
+// the same nodes and releases it then, and a daemon that swallowed the refusal
+// would leave the item blocked for every other orchestrator of the project with
+// nothing said.
 func (c *cycle) releaseClaims(ctx context.Context) error {
 	if c.tick.Claims == nil {
 		return nil
 	}
-	for i, n := range c.nodes {
-		if _, err := SettledClaims(ctx, c.tick.Claims, c.loaded[i], n.state); err != nil {
-			return err
-		}
+	settled, err := settledClaimPaths(c.states())
+	if err != nil {
+		return err
 	}
-	return nil
+	return c.tick.Claims.Refresh(ctx, settled)
 }
 
 // fold writes what the finished runs mean into the items, and says so once the

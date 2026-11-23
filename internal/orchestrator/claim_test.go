@@ -23,9 +23,11 @@ import (
 // (Starter) and read by every other orchestrator of the project the same way —
 // and the fence is the store's if-match, as it is for the lease: of two
 // orchestrators that both read one absent claim node exactly one write lands,
-// and the loser re-reads and re-decides. A claim is held while its holder's
-// lease beats and for ClaimGrace past its last beat, and it comes off when the
-// item is done or cancelled.
+// and the loser re-reads and re-decides. A claim is held until the item it
+// stands on is done or cancelled, and never taken over before that — the
+// owner's ruling of 2026-11-23, which dropped the lease grace this task was
+// first written with, because a daemon deletes its lease node on every clean
+// exit while the runs it started are still going.
 //
 // **The red step that was run and watched fail** (CG4's, and the one this file
 // exists for): with the take rewritten to write after a lost race — re-read the
@@ -48,14 +50,21 @@ const (
 	cg4First = "fugaro"
 	cg4Rival = "fugaro~night"
 
+	// cg4Second is the project's other orchestrator where a cycle is driven
+	// rather than a take: an id a node path can carry (agentRE), which the `~`
+	// of cg4Rival cannot until CG1a. The plan task is what the claim is keyed
+	// by, so the two cycles of the test hold it under the same node whatever
+	// their own ids are.
+	cg4Second = "orchestrator-b"
+
 	// cg4PlanTask is one node of a plan both orchestrators imported: the
 	// identity two of them share (D2704), which is what makes a claim on it one
 	// node for the whole project (D3209).
 	cg4PlanTask = "demo/A"
 
-	// cg4Beat is the daemon a seeded lease node names. A lease's holder is a
-	// daemon and not an orchestrator id (Lease), and a test that stages a live
-	// holder needs one that is a holder.
+	// cg4Beat is the daemon a staged lease node names. A lease's holder is a
+	// daemon and not an orchestrator id (Lease), so a test that stages a lease
+	// node beside a claim names one.
 	cg4Beat = "20261107-120000-aaaa"
 )
 
@@ -97,22 +106,6 @@ func cg4Claim(t *testing.T, db orchestrator.ClaimStore, agentID string, now orch
 	return claim
 }
 
-// cg4Lease seeds an orchestrator's lease node with one beat at at: a claim's
-// liveness is its holder's lease, so a test stages a live holder by writing one
-// and a gone one by writing none at all.
-//
-// The path is spelled from the subtree's own constants because PathLease still
-// holds every id to agentRE, which carries no `~`, so a named orchestrator's
-// lease has no builder until CG1a — claim.go's claimLeasePath says the same.
-func cg4Lease(t *testing.T, f *gcpfake.RTDB, holder string, at time.Time) {
-	t.Helper()
-	if !orchestrator.ValidOrchestratorID(holder) {
-		t.Fatalf("%q is not an orchestrator id, so it has no lease node", holder)
-	}
-	path := orchestrator.SubtreeRoot + "/" + budget.Key(holder) + "/" + orchestrator.LeaseNode
-	f.Set(path, map[string]any{"holder": cg4Beat, "at": at.UTC().Format(time.RFC3339)})
-}
-
 // cg4Held is what the claim node carries: the holder it names and the server
 // time it was written at.
 func cg4Held(t *testing.T, f *gcpfake.RTDB, path string) (string, string) {
@@ -129,9 +122,8 @@ func cg4Held(t *testing.T, f *gcpfake.RTDB, path string) (string, string) {
 // both formed their decision from the same absent node and the same ETag —
 // which is the race that matters — and both then ask for the claim. Exactly one
 // write lands: the loser's is refused rtdb.ErrPrecondition, it re-reads, finds
-// a holder that is still driving and answers false without writing again. An
-// orchestrator that forced its write past the 412 would put two runs on one
-// plan task.
+// the winner's claim and answers false without writing again. An orchestrator
+// that forced its write past the 412 would put two runs on one plan task.
 //
 // Mutation: drop the if-match from Take (write after a lost race without
 // re-deciding) and both orchestrators report the item theirs.
@@ -150,11 +142,6 @@ func TestClaimFirstWins(t *testing.T) {
 	if orchestrator.ValidOrchestratorID(orchestrator.ClaimsKey) {
 		t.Errorf("%q is an orchestrator id, so a reader listing the subtree's ids cannot tell the claims node from one", orchestrator.ClaimsKey)
 	}
-
-	// Both are driving: what this test is about is the claim and not a dead
-	// holder, which is the case the next test stages.
-	cg4Lease(t, f, cg4First, now)
-	cg4Lease(t, f, cg4Rival, now)
 
 	read := make(chan struct{})
 	hold := make(chan struct{})
@@ -227,16 +214,16 @@ func TestClaimFirstWins(t *testing.T) {
 		t.Fatalf("the loser's second take: %v", err)
 	}
 	if again {
-		t.Error("the loser took the claim a live holder is still working under")
+		t.Error("the loser took the claim of an item another orchestrator holds")
 	}
 	if loserDB.puts != 1 {
-		t.Errorf("the loser wrote %d time(s) in total; a live holder's claim is never written over", loserDB.puts)
+		t.Errorf("the loser wrote %d time(s) in total; another orchestrator's claim is never written over", loserDB.puts)
 	}
 
 	// An orchestrator that already holds the item is given it back without a
-	// write: a claim is kept alive by its holder's lease, not by rewriting its
-	// node, so a daemon that asks for its own claim every cycle moves no ETag
-	// the project's other readers would have to re-read.
+	// write: a claim is kept alive by its holder's own beat, not by rewriting
+	// its node, so a daemon that asks for its own claim every cycle moves no
+	// ETag the project's other readers would have to re-read.
 	mine, err := winner.Take(ctx, cg4Ref(t, cg4First))
 	if err != nil {
 		t.Fatalf("the winner's second take: %v", err)
@@ -245,7 +232,7 @@ func TestClaimFirstWins(t *testing.T) {
 		t.Error("the holder of a claim was not given its own claim back")
 	}
 	if winnerDB.puts != 1 {
-		t.Errorf("the winner wrote %d time(s); its own claim is kept alive by its lease", winnerDB.puts)
+		t.Errorf("the winner wrote %d time(s); its own claim is kept alive by its own beat", winnerDB.puts)
 	}
 	if holder, _ := cg4Held(t, f, path); holder != cg4First {
 		t.Errorf("the claim names %q after the holder asked for it again", holder)
@@ -259,6 +246,9 @@ func TestClaimFirstWins(t *testing.T) {
 // The plan is the same in both halves — one approved plan item, one launch —
 // so what changes between them is the claim alone, and the launch that does
 // happen proves the skip was the claim rather than a plan that held nothing.
+// The rival has no lease node at all, which is the clean exit this rule exists
+// for: a daemon that stopped driving while its run is still going keeps the
+// item, and the claim comes off only once the item is finished.
 //
 // Mutation: have Starter.claim answer that every claim is this daemon's (or
 // drop the call) and the second half's run is started while another
@@ -279,9 +269,8 @@ func TestLaunchSkipsClaimed(t *testing.T) {
 		t.Fatalf("the plan holds %s for %q, not the launch of the item", a.Kind, a.ItemID)
 	}
 
-	// The rival took the item before this daemon planned it, and it is driving:
-	// the item is the rival's work and not this daemon's.
-	cg4Lease(t, f, cg4Rival, now)
+	// The rival took the item before this daemon planned it: the item is the
+	// rival's work and not this daemon's.
 	rival := cg4Claim(t, rtdbClient(t, f), cg4Rival, clockAt(now))
 	if took, err := rival.Take(ctx, orchestrator.ClaimRef(cg4Rival, item)); err != nil || !took {
 		t.Fatalf("the rival's take: took=%v, err=%v", took, err)
@@ -310,10 +299,15 @@ func TestLaunchSkipsClaimed(t *testing.T) {
 		t.Errorf("the claim names %q after a daemon skipped it, not the rival", holder)
 	}
 
-	// The rival finishes the item and releases its claim: the same plan, the
-	// same daemon, and now the launch happens.
-	if freed, err := rival.Release(ctx, orchestrator.ClaimRef(cg4Rival, item)); err != nil || !freed {
-		t.Fatalf("the rival's release: freed=%v, err=%v", freed, err)
+	// The rival finishes the item and releases its claim — the release a
+	// cycle's own read of the node makes (Refresh) — and then the same plan and
+	// the same daemon launch.
+	settled := map[string]bool{cg4PathOf(t, orchestrator.ClaimRef(cg4Rival, item)): true}
+	if err := rival.Refresh(ctx, settled); err != nil {
+		t.Fatalf("the rival's release: %v", err)
+	}
+	if v := f.Value(cg4Path(t, cg4Rival)); v != nil {
+		t.Fatalf("the rival's claim is still on the node as %#v after the item finished", v)
 	}
 	if _, err := d.Start(ctx, s, a, now); err != nil {
 		t.Fatalf("the launch of an item no orchestrator holds: %v", err)
@@ -326,6 +320,181 @@ func TestLaunchSkipsClaimed(t *testing.T) {
 	}
 }
 
+// TestOnePlanTaskOneLaunchAcrossTwoTicks is the claim at the level a daemon
+// really meets it: two orchestrators of one project each run a cycle over their
+// own copy of one imported plan, and one plan task is one run between them.
+//
+// It is the whole path and not the take alone: the second cycle reads its own
+// node, plans the same launch from it and hands it to its own starter, and the
+// claim the first cycle left standing is what stops it there — the second cycle
+// starts no run, mints no run id and carries nothing, and the item in its own
+// node stands exactly where it did. The first cycle's run proves the skip was
+// the claim rather than a plan that held nothing.
+//
+// Mutation (run, restored): take `Claims: c.tick.Claims` out of the starter the
+// cycle builds (tick.go, carry) and both cycles start a run for one plan task,
+// which is the two pull requests for one piece of work D3209 exists to stop.
+// Nothing else in the cycle fences it: the two orchestrators hold two nodes and
+// two revisions, so their states' own compare-and-swaps never meet.
+func TestOnePlanTaskOneLaunchAcrossTwoTicks(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Minute)
+	item := cg4PlanItem("wi-1", approvedAt)
+
+	f := gcpfake.NewRTDB(t)
+	first := cg4OrchestratorAt(t, f, cg4First, "demo", now, item, "20261107-120000-aaaa")
+	second := cg4OrchestratorAt(t, f, cg4Second, "demo", now, item, "20261107-120000-bbbb")
+
+	if rep := first.step(); rep.Carried != 1 {
+		t.Fatalf("the first cycle carried %d action(s) for the plan's one approved item", rep.Carried)
+	}
+	if got := first.launcher.started; len(got) != 1 {
+		t.Fatalf("the first cycle started %v, want the one run for the plan task", got)
+	}
+
+	rep := second.step()
+	if rep.Carried != 0 {
+		t.Fatalf("the second cycle carried %d action(s) for the plan task the first orchestration holds: one claim is one run for one plan task, and this is the second (D3209)", rep.Carried)
+	}
+	if asked := second.launcher.asked; len(asked) != 0 {
+		t.Errorf("the second cycle asked its launcher to start %v for an item another orchestration holds", asked)
+	}
+	if second.mint.calls != 0 {
+		t.Errorf("the second cycle minted %d run id(s) for an item it does not hold", second.mint.calls)
+	}
+	if holder, _ := cg4Held(t, f, cg4Path(t, cg4First)); holder != cg4First {
+		t.Errorf("the claim names %q after both cycles, not the orchestration that took it", holder)
+	}
+	if s := second.planState(); len(s.Intents) != 0 {
+		t.Errorf("the second cycle's node records %d attempt(s), and an item held elsewhere is nothing this node writes", len(s.Intents))
+	} else if w, ok := s.Item(item.ID); !ok || w.Phase != orchestrator.PhaseQueued {
+		t.Errorf("the second cycle's item reads back as %+v, and an item another orchestration holds is left where it stands", w)
+	}
+}
+
+// TestCycleReleasesTheClaimOfAnItemThatFinished: the release is the cycle's own
+// read of its nodes and not a step that must follow the run's own report, which
+// is what makes it survive the two ways a release is missed — a cycle that died
+// after the write that finished the item had landed, and a release whose own
+// write was refused by a moved ETag. Either leaves a claim standing on an item
+// nobody is on, and the first cycle that reads the node afterwards takes it off
+// (Refresh, settledClaimPaths).
+func TestCycleReleasesTheClaimOfAnItemThatFinished(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Minute)
+	item := cg4PlanItem("wi-1", approvedAt)
+	const runID = "20261107-120000-aaaa"
+
+	f := gcpfake.NewRTDB(t)
+	o := cg4OrchestratorAt(t, f, cg4First, "demo", now, item, runID)
+	if rep := o.step(); rep.Carried != 1 {
+		t.Fatalf("the first cycle carried %d action(s) for the plan's one approved item", rep.Carried)
+	}
+	if v := f.Value(cg4Path(t, cg4First)); v == nil {
+		t.Fatal("the claim node is empty after the launch it was taken for")
+	}
+
+	// The run finished, and the cycle that reads that report folds the item done
+	// and releases the claim on the same pass: the item is the only thing that
+	// releases a claim, and nothing has to have moved for this cycle to release
+	// it.
+	o.reader.reports = []orchestrator.RunReport{{RunID: runID, Started: true, Finished: true, Outcome: orchestrator.OutcomeSucceeded}}
+	if rep := o.step(); rep.Folded != 1 {
+		t.Fatalf("the cycle folded %d finished runs where the item's own reported", rep.Folded)
+	}
+	if w, ok := o.planState().Item(item.ID); !ok || w.Phase != orchestrator.PhaseDone {
+		t.Fatalf("the item reads back as %+v after its run reported", w)
+	}
+	if v := f.Value(cg4Path(t, cg4First)); v != nil {
+		t.Errorf("the claim is still on the node as %#v after the item finished: a plan task is released when its item is done or cancelled and at no other time (D3209)", v)
+	}
+}
+
+// cg4Orchestrator is one orchestrator of one project at a cycle: the state node
+// and the plan's node beside it, both its own, and the claims, launcher and
+// mint its cycle acts through. Two of these over one database are the two
+// orchestrators CG4 is about, and neither shares a node with the other.
+type cg4Orchestrator struct {
+	t        *testing.T
+	tick     *orchestrator.Tick
+	launcher *o6Launcher
+	mint     *o6Mint
+	reader   *tickReader
+	plan     *orchestrator.Node
+}
+
+// cg4OrchestratorAt builds one orchestrator of the test's project over the
+// fake: its state node, the plan's node, and one tick over the two. Its claims
+// are its own, the way a daemon's are (the daemon builds one guard and hands it
+// to the tick), so a test can read the node a cycle that skips an item was
+// refused by.
+func cg4OrchestratorAt(t *testing.T, f *gcpfake.RTDB, agentID, plan string, now time.Time, item orchestrator.WorkItem, run string) *cg4Orchestrator {
+	t.Helper()
+	db := rtdbClient(t, f)
+	o := &cg4Orchestrator{
+		t:        t,
+		launcher: &o6Launcher{},
+		mint:     &o6Mint{t: t, runs: []string{run}},
+		reader:   &tickReader{},
+	}
+	state := cg4SeedNode(t, db, agentID, orchestrator.ShardState, o6Node(t, now))
+	o.plan = cg4SeedNode(t, db, agentID, orchestrator.PlanShard(plan), o6Node(t, now, item))
+	o.tick = &orchestrator.Tick{
+		Store:    state,
+		Nodes:    []orchestrator.Store{o.plan},
+		Runs:     o.reader,
+		Launcher: o.launcher,
+		Mint:     o.mint.mint,
+		Caps:     o6Caps(),
+		Claims:   cg4Claim(t, db, agentID, clockAt(now)),
+		Now:      clockAt(now),
+		Notifier: &tickSink{},
+	}
+	return o
+}
+
+// cg4SeedNode builds one node of an orchestrator id and writes the test's state
+// into it. The state carries the id whose node it is, which is what the node's
+// own save holds it to (owns).
+func cg4SeedNode(t *testing.T, db orchestrator.CAS, agentID string, shard orchestrator.Shard, s orchestrator.State) *orchestrator.Node {
+	t.Helper()
+	node, err := orchestrator.NewNode(orchestrator.NodeOptions{DB: db, AgentID: agentID, Role: orchestrator.RoleOrchestrator, Shard: shard})
+	if err != nil {
+		t.Fatalf("building the %q node of %q: %v", shard, agentID, err)
+	}
+	s.AgentID = agentID
+	_, etag, err := node.Load(context.Background())
+	if err != nil {
+		t.Fatalf("reading the empty %q node of %q: %v", shard, agentID, err)
+	}
+	if err := node.Save(context.Background(), s, etag); err != nil {
+		t.Fatalf("seeding the %q node of %q: %v", shard, agentID, err)
+	}
+	return node
+}
+
+// step runs one cycle of this orchestrator. A cycle these tests did not set up
+// to fail is one that failed for a reason the test is about to name.
+func (o *cg4Orchestrator) step() orchestrator.Report {
+	o.t.Helper()
+	rep, err := o.tick.Step(context.Background())
+	if err != nil {
+		o.t.Fatalf("the cycle ended as %v", err)
+	}
+	return rep
+}
+
+// planState is the plan's node as it now stands, read back through its own
+// store rather than remembered from what the cycle returned.
+func (o *cg4Orchestrator) planState() orchestrator.State {
+	o.t.Helper()
+	s, _, err := o.plan.Load(context.Background())
+	if err != nil {
+		o.t.Fatalf("reading the plan's node back: %v", err)
+	}
+	return s
+}
+
 // cg4PlanItem is a work item standing for one node of a plan: the declaration
 // the O6 helpers give, with the plan task two orchestrators of a project name
 // alike, approved as it now stands.
@@ -335,108 +504,73 @@ func cg4PlanItem(id string, approvedAt time.Time) orchestrator.WorkItem {
 	return o6ApprovedBy(w, approvedAt)
 }
 
-// TestClaimReleasedOnLapse is the other half of a claim's life: a claim outlives
-// its holder's last beat by ClaimGrace and no longer, so an orchestrator whose
-// laptop lid closed does not keep an item from the project for ever.
+// TestClaimHeldWhileTheItemIsUnfinished is the other half of a claim's life:
+// nothing about its holder's lease frees it, and no stamp on the node is stale
+// enough to hand the item to a rival — a plan task is released when its item is
+// done or cancelled and at no other time (the owner's ruling of 2026-11-23).
 //
-// Each case is one beat on the holder's lease node, read against the same
-// server clock. The cases with no lease node are the clean exit: a daemon
-// releases its lease on the way out (Lease.Release) while the runs it started
-// are still going, so what the grace is measured from there is the claim's own
-// stamp — the last time the holder was known to be driving, which its beat
-// re-writes for as long as it drives (Refresh). Reading that node as "gone at
-// once" is what hands a restarted daemon's in-flight item to a rival.
+// Each case is one claim another orchestrator holds, read against the same
+// server clock, with the lease node the case names: nothing, a beat a moment
+// ago, a beat an hour stale, a beat the server could not have written yet, and a
+// node this release cannot read at all. In every one of them the take answers
+// false and writes nothing, which is the whole of the rule — a closed laptop
+// lid, a clean `--once` exit and a daemon gone for good all leave the item with
+// the orchestrator that holds it.
 //
-// Mutation: read every claim that is not this daemon's as free (drop the
-// holder-live read) and the first two cases take a holder that is still
-// driving; read a claim whose holder is inside the grace as free — the absent
-// lease node measured from nothing, or from the day the item was taken — and a
-// rival starts a second run of a task whose run is still going.
-func TestClaimReleasedOnLapse(t *testing.T) {
+// Mutation: answer the take from the holder's lease — free the claim when the
+// beat has lapsed, or when there is no lease node at all — and every case below
+// takes an item whose run is still going, which is how two orchestrators end up
+// starting two runs for one plan task.
+func TestClaimHeldWhileTheItemIsUnfinished(t *testing.T) {
 	ctx := context.Background()
 	now := o6Now()
 
-	// cg4StaleClaim is a claim taken long before the reading, which is what a
-	// claim whose holder went away for good looks like.
-	cg4StaleClaim := now.Add(-time.Hour)
-
 	for _, tc := range []struct {
 		name string
-		// beat is the holder's last beat, on a lease node the case has.
-		beat time.Time
-		// claimedAt is the claim's own stamp, which is what the absent-lease
-		// cases are measured against.
-		claimedAt time.Time
-		lease     bool
-		live      bool
+		// lease is the holder's lease node as the case stages it: a beat, a
+		// value that is not a lease, or nothing at all.
+		lease any
 	}{
-		{name: "a beat inside the ttl", beat: now.Add(-orchestrator.LeaseTTL / 2), claimedAt: cg4StaleClaim, lease: true, live: true},
-		{name: "a beat lapsed inside the grace", beat: now.Add(-orchestrator.LeaseTTL - orchestrator.ClaimGrace/2), claimedAt: cg4StaleClaim, lease: true, live: true},
-		{name: "a beat lapsed by exactly a lease and a grace", beat: now.Add(-orchestrator.LeaseTTL - orchestrator.ClaimGrace), claimedAt: now, lease: true, live: false},
-		{name: "a beat lapsed past the grace", beat: now.Add(-orchestrator.LeaseTTL - orchestrator.ClaimGrace - time.Second), claimedAt: now, lease: true, live: false},
-		{name: "a beat the server could not have written yet", beat: now.Add(orchestrator.LeaseSkew + time.Second), claimedAt: now, lease: true, live: false},
-		// The clean exit: no lease node, and the claim's own stamp decides. A
-		// claim stamped a moment ago is a daemon that has just stopped driving —
-		// an upgrade restart or a stop while its runs are in flight — and the
-		// item stays its own until the grace has passed.
-		{name: "no lease node, a claim stamped a moment ago", claimedAt: now.Add(-2 * time.Second), live: true},
-		{name: "no lease node, a claim stamped inside the grace", claimedAt: now.Add(-orchestrator.ClaimGrace / 2), live: true},
-		{name: "no lease node, a claim stamped by exactly the grace", claimedAt: now.Add(-orchestrator.ClaimGrace), live: false},
-		{name: "no lease node, a claim stamped past the grace", claimedAt: now.Add(-orchestrator.ClaimGrace - time.Second), live: false},
-		{name: "no lease node, a claim stamped before the holder went", claimedAt: cg4StaleClaim, live: false},
-		{name: "no lease node, a claim the server could not have written yet", claimedAt: now.Add(orchestrator.LeaseSkew + time.Second), live: false},
+		{name: "a beat inside the ttl", lease: map[string]any{"holder": cg4Beat, "at": now.Add(-orchestrator.LeaseTTL / 2).UTC().Format(time.RFC3339)}},
+		{name: "a beat lapsed past the ttl", lease: map[string]any{"holder": cg4Beat, "at": now.Add(-orchestrator.LeaseTTL - time.Second).UTC().Format(time.RFC3339)}},
+		{name: "a beat lapsed by an hour", lease: map[string]any{"holder": cg4Beat, "at": now.Add(-time.Hour).UTC().Format(time.RFC3339)}},
+		{name: "a beat the server could not have written yet", lease: map[string]any{"holder": cg4Beat, "at": now.Add(orchestrator.LeaseSkew + time.Second).UTC().Format(time.RFC3339)}},
+		{name: "a lease node this release cannot read", lease: "not a lease"},
+		// The clean exit: the daemon deleted its lease node on the way out
+		// (Lease.Release) while the runs it started are still in flight. The
+		// item is still its own, and the claim's own stamp — an hour old here,
+		// because a daemon that is gone never re-stamps it — decides nothing.
+		{name: "no lease node at all"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := gcpfake.NewRTDB(t)
 			path := cg4Path(t, cg4First)
-			f.Set(path, map[string]any{"holder": cg4Rival, "at": tc.claimedAt.UTC().Format(time.RFC3339)})
-			if tc.lease {
-				cg4Lease(t, f, cg4Rival, tc.beat)
+			claimAt := now.Add(-time.Hour)
+			f.Set(path, map[string]any{"holder": cg4Rival, "at": claimAt.UTC().Format(time.RFC3339)})
+			if tc.lease != nil {
+				leasePath := orchestrator.SubtreeRoot + "/" + budget.Key(cg4Rival) + "/" + orchestrator.LeaseNode
+				f.Set(leasePath, tc.lease)
 			}
-			rivalAt := nodeObject(t, f.Value(path), "the claim")
+			before := f.Value(path)
 
 			db := &countingCAS{inner: rtdbClient(t, f)}
 			claims := cg4Claim(t, db, cg4First, clockAt(now))
 
 			taken, err := claims.Take(ctx, cg4Ref(t, cg4First))
 			if err != nil {
-				t.Fatalf("the take over a lapsed claim: %v", err)
+				t.Fatalf("the take over a held claim: %v", err)
 			}
-			if taken != !tc.live {
-				t.Fatalf("the take answered %v for a holder that is live=%v", taken, tc.live)
+			if taken {
+				t.Fatal("the take took an item whose holder's lease says nothing about whether its run is going")
 			}
-			holder, at := cg4Held(t, f, path)
-			if tc.live {
-				if db.puts != 0 {
-					t.Errorf("a claim a live holder is working under was written %d time(s)", db.puts)
-				}
-				if holder != cg4Rival || nodeText(t, rivalAt, "at") != at {
-					t.Errorf("the claim now names %q at %q, and the live holder's own claim is %q at %q", holder, at, cg4Rival, nodeText(t, rivalAt, "at"))
-				}
-				return
+			if db.puts != 0 {
+				t.Errorf("another orchestrator's claim was written %d time(s)", db.puts)
 			}
-			if db.puts != 1 {
-				t.Errorf("the take over a gone holder wrote %d time(s), not once", db.puts)
+			if got := f.Value(path); !reflect.DeepEqual(got, before) {
+				t.Errorf("the claim node now carries %#v, and a claim that is not this daemon's is left as it stands", got)
 			}
-			if holder != cg4First {
-				t.Errorf("the claim names %q after the takeover, not the orchestrator that took it", holder)
-			}
-			if at != now.Format(time.RFC3339) {
-				t.Errorf("the taken-over claim is stamped %q, not the server time of the takeover (%s)", at, now.Format(time.RFC3339))
-			}
-
-			// The item has moved to the taker, and the orchestrator that held it
-			// is the one that skips it now.
-			cg4Lease(t, f, cg4First, now)
-			held, err := cg4Claim(t, rtdbClient(t, f), cg4Rival, clockAt(now)).Take(ctx, cg4Ref(t, cg4Rival))
-			if err != nil {
-				t.Fatalf("the gone holder's next take: %v", err)
-			}
-			if held {
-				t.Error("the orchestrator whose claim was taken over still holds the item")
-			}
-			if holder, _ := cg4Held(t, f, path); holder != cg4First {
-				t.Errorf("the claim names %q after the loser asked for it again, not the taker", holder)
+			if holder, at := cg4Held(t, f, path); holder != cg4Rival || at != claimAt.UTC().Format(time.RFC3339) {
+				t.Errorf("the claim now names %q at %q, not the holder that took it", holder, at)
 			}
 		})
 	}
@@ -458,10 +592,10 @@ func (k cg4NoStrayKeys) Keys(ctx context.Context, path string) ([]string, error)
 	return k.countingCAS.Keys(ctx, path)
 }
 
-// TestClaimRefresh is the other half of the lapse above: the stamp a rival
-// measures a missing lease node against is the claim's own, and the holder is
-// what re-writes it — on the beat, so that a daemon that is driving keeps its
-// items through the clean exit that deletes its lease node.
+// TestClaimRefresh is the holder's own half of a claim's life: the node records
+// the server time its holder last confirmed the item was still its own, and the
+// beat is what re-writes that stamp (Refresh with nothing settled), so a daemon
+// that is driving never looks like one that stopped.
 //
 // What it re-stamps is only its own. A claim a rival holds is left alone (a
 // refresh is not a takeover), a claim node this release cannot read is left for
@@ -515,11 +649,11 @@ func TestClaimRefresh(t *testing.T) {
 	rivalPlanPath := cg4PathOf(t, orchestrator.ClaimRef(cg4Rival, rivalPlan))
 	rivalItemPath := cg4PathOf(t, orchestrator.ClaimRef(cg4Rival, rivalItem))
 
-	// The refresh runs on a daemon whose clock has moved on: what it writes is
-	// the server time of the beat, which is what the next rival reads.
+	// The refresh runs on a daemon whose clock has moved on, and with nothing
+	// settled: what it writes is the server time of the beat.
 	beat := cg4Claim(t, db, cg4First, clockAt(later))
 	writes := db.puts
-	if err := beat.Refresh(ctx); err != nil {
+	if err := beat.Refresh(ctx, nil); err != nil {
 		t.Fatalf("the refresh of the claims this daemon holds: %v", err)
 	}
 	if got := db.puts - writes; got != 2 {
@@ -572,16 +706,17 @@ func cg4PathOf(t *testing.T, ref orchestrator.ItemRef) string {
 
 // TestClaimReleasedWhenTheItemSettles is the claim coming off the item that is
 // finished: a plan task or a backlog item that is done or cancelled is work
-// nobody is on, and the claim on it is what would keep another orchestrator
-// from taking the item the next time one of them has it in front of them.
+// nobody is on, and the claim on it is what would keep another orchestrator from
+// taking the item the next time one of them has it in front of them.
 //
-// Only what moved is released: a node that finished its work in an earlier
-// cycle released its claims then, and a claim left standing by a cycle that died
-// is released by the holder's lease lapsing (Take) rather than by a read of
-// every item a plan has ever finished.
+// The release is the cycle's own read of the nodes (Refresh with what they
+// say), so a node that finished its work in an earlier cycle releases the claim
+// on its next read rather than on the write that finished it: a cycle that died
+// between the two, or a release the server refused, is retried — and the item
+// is the only thing that releases a claim (the owner's ruling of 2026-11-23).
 //
-// Mutation: release every finished item the node carries (drop the before-read)
-// and the third case below writes over a claim nothing this cycle settled.
+// Mutation: release only what the caller says moved, and the second half below
+// leaves the claim of an item that settled before the read standing for ever.
 func TestClaimReleasedWhenTheItemSettles(t *testing.T) {
 	ctx := context.Background()
 	f := gcpfake.NewRTDB(t)
@@ -605,54 +740,62 @@ func TestClaimReleasedWhenTheItemSettles(t *testing.T) {
 		t.Fatalf("building the claim path: %v", err)
 	}
 
+	// What a cycle reads at its own last step: the claim path of every item its
+	// nodes carry finished.
 	done := orchestrator.PhaseDone
 	after := o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{ID: item.ID, Phase: &done}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
-
-	released, err := orchestrator.SettledClaims(ctx, claims, s, after)
-	if err != nil {
-		t.Fatalf("releasing the claims of what settled: %v", err)
+	settled := map[string]bool{}
+	for _, w := range after.WorkItems {
+		if !w.Phase.Done() {
+			continue
+		}
+		p, err := orchestrator.ClaimPath(orchestrator.ClaimRef(after.AgentID, w))
+		if err != nil {
+			t.Fatalf("building the claim path of %q: %v", w.ID, err)
+		}
+		settled[p] = true
 	}
-	if released != 1 {
-		t.Errorf("the cycle released %d claim(s) for one item that settled", released)
+	if !settled[path] {
+		t.Fatalf("the node's finished item is claimed at %v, and the cycle's own reading does not name it", settled)
+	}
+
+	if err := claims.Refresh(ctx, settled); err != nil {
+		t.Fatalf("releasing the claims of what settled: %v", err)
 	}
 	if v := f.Value(path); v != nil {
 		t.Errorf("the claim is still on the node as %#v after the item settled", v)
 	}
 
-	// The same pair again releases nothing: what settled in an earlier cycle is
-	// not this cycle's to release.
-	again, err := orchestrator.SettledClaims(ctx, claims, s, after)
-	if err != nil {
+	// The same read again releases nothing and fails nothing: the node is gone,
+	// which is the state a release that already landed left behind.
+	if err := claims.Refresh(ctx, settled); err != nil {
 		t.Fatalf("the second release pass: %v", err)
 	}
-	if again != 0 {
-		t.Errorf("the pass released %d claim(s) for an item that had already settled", again)
+	if v := f.Value(path); v != nil {
+		t.Errorf("the claim came back as %#v on a second pass over the same finished item", v)
 	}
 
-	// A claim on an item that settled before this cycle is not released by it:
-	// the node finished that work in an earlier cycle, which is where its claim
-	// came off.
+	// And a claim taken on an item that settled before the read is released by
+	// it: the item is finished whatever cycle wrote it, so the claim of a holder
+	// that died after the write landed does not stand for ever.
 	if took, err := claims.Take(ctx, ref); err != nil || !took {
 		t.Fatalf("the take of a settled item: took=%v, err=%v", took, err)
 	}
-	settled := o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{ID: item.ID, Phase: &done}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
-	left, err := orchestrator.SettledClaims(ctx, claims, settled, settled)
-	if err != nil {
-		t.Fatalf("the pass over a node whose item had already settled: %v", err)
+	if err := claims.Refresh(ctx, settled); err != nil {
+		t.Fatalf("the pass over a node whose item had already settled when the cycle read it: %v", err)
 	}
-	if left != 0 {
-		t.Errorf("the pass released %d claim(s) for an item that was already settled when the cycle read the node", left)
-	}
-	if holder, _ := cg4Held(t, f, path); holder != cg4First {
-		t.Errorf("the claim names %q, and the pass over what had already settled is not what releases it", holder)
+	if v := f.Value(path); v != nil {
+		t.Errorf("the claim is still on the node as %#v, and the item was finished before the read that releases it", v)
 	}
 }
 
 // TestClaimFailsClosedOnWhatItCannotRead is the state node's own rule on the
-// claim: a node this release cannot read is a refusal, never a claim of nobody,
-// and a holder it cannot read is a live one rather than a gone one. Reading a
-// broken claim as free — or a holder it could not model as a dead one — is
-// exactly how two orchestrators end up on one plan task.
+// claim: a node this release cannot read is a refusal, never a claim of nobody.
+// Reading a broken claim as free is exactly how two orchestrators end up on one
+// plan task — and with the claim's release owned by the item rather than by the
+// holder's lease (the owner's ruling of 2026-11-23), an unreadable node is the
+// only reading left that could be answered the wrong way: a claim stands until
+// its item finishes, whatever its holder's lease node says.
 //
 // Mutation: treat an undecodable claim node as absent, and every case below
 // takes an item that may be another orchestrator's.
@@ -691,8 +834,8 @@ func TestClaimFailsClosedOnWhatItCannotRead(t *testing.T) {
 		})
 	}
 
-	// A holder whose lease node this release cannot read is a live holder: it
-	// must not be taken for a dead one and its item taken from it.
+	// The claim node itself is the only node the take reads: a holder's lease
+	// node beside a readable claim changes nothing, whatever it carries.
 	for _, tc := range []struct {
 		name string
 		doc  any
@@ -714,13 +857,13 @@ func TestClaimFailsClosedOnWhatItCannotRead(t *testing.T) {
 				t.Fatalf("the take over a holder whose lease cannot be read: %v", err)
 			}
 			if taken {
-				t.Error("an item was taken from a holder this release could not read")
+				t.Error("an item was taken from a holder, and the claim's release is its item's and not its lease's")
 			}
 			if db.puts != 0 {
-				t.Errorf("the claim of a holder this release could not read was written %d time(s)", db.puts)
+				t.Errorf("the claim of another orchestrator was written %d time(s)", db.puts)
 			}
 			if holder, _ := cg4Held(t, f, path); holder != cg4Rival {
-				t.Errorf("the claim names %q, and a holder this release cannot read keeps it", holder)
+				t.Errorf("the claim names %q, and another orchestrator's claim is never written over", holder)
 			}
 		})
 	}

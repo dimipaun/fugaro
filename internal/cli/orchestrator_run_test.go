@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -725,6 +726,104 @@ func TestWaitBeatsTheLeaseWhileTheIntervalRuns(t *testing.T) {
 		t.Errorf("the lease was stamped %s before a %s wait and %s after it, so the claim went the whole interval without a beat and a daemon waiting longer than its own lease would have it taken",
 			before.At, d.interval, after.At)
 	}
+}
+
+// claimNode is one claim node as the database carries it: which orchestrator
+// holds it and the server time it was last written at, in the spelling the fake
+// stores.
+func claimNode(t *testing.T, db *gcpfake.RTDB, ref orchestrator.ItemRef) (string, string) {
+	t.Helper()
+	path, err := orchestrator.ClaimPath(ref)
+	if err != nil {
+		t.Fatalf("building the claim path of %q: %v", ref.Item, err)
+	}
+	v := db.Value(path)
+	doc, ok := v.(map[string]any)
+	if !ok {
+		t.Fatalf("the claim node at %s is %#v, not a document", path, v)
+	}
+	holder, _ := doc["holder"].(string)
+	at, _ := doc["at"].(string)
+	return holder, at
+}
+
+// TestBeatRestampsTheClaimsTheDaemonHolds: the beat writes this daemon's own
+// claims beside the lease it holds (beatAndRefresh), and writes nothing else.
+//
+// The claim node records the server time its holder last confirmed an item was
+// still its own, so a daemon that beat only its lease would leave that stamp on
+// the day the item was taken — and a claim another orchestrator holds is never
+// written: a claim is released by its item finishing and by nothing else (the
+// owner's ruling of 2026-11-23), so a beat that re-stamped a rival's node would
+// be taking an item whose run is still going.
+func TestBeatRestampsTheClaimsTheDaemonHolds(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.running(t, "")
+	ctx := context.Background()
+
+	mine := orchestrator.ItemRef{Orchestrator: d.id, Item: "demo/A"}
+	other := orchestrator.ItemRef{Orchestrator: "aurora~night", Item: "demo/B"}
+	rival, err := orchestrator.NewClaim(d.db, other.Orchestrator, d.db.ServerNow)
+	if err != nil {
+		t.Fatalf("building the other orchestrator's claims: %v", err)
+	}
+	for _, c := range []struct {
+		claims *orchestrator.Claim
+		ref    orchestrator.ItemRef
+	}{{d.claims, mine}, {rival, other}} {
+		if c.claims == nil {
+			t.Fatal("the daemon has no claims to beat: running it built no guard")
+		}
+		if took, err := c.claims.Take(ctx, c.ref); err != nil || !took {
+			t.Fatalf("the take of %q: took=%v, err=%v", c.ref.Item, took, err)
+		}
+	}
+	holder, takenAt := claimNode(t, f.db, mine)
+	if holder != d.id {
+		t.Fatalf("the claim names %q after the take, not this daemon (%q)", holder, d.id)
+	}
+	otherBefore := f.db.Value(claimPathOf(t, other))
+
+	// The clock moves on, and the beat is the only thing that writes: the stamp
+	// this daemon's claim carries afterwards is the server's time at the beat.
+	stampAt, err := time.Parse(time.RFC3339, takenAt)
+	if err != nil {
+		t.Fatalf("the claim's own stamp %q: %v", takenAt, err)
+	}
+	later := stampAt.Add(5 * time.Second)
+	f.db.SetClock(func() time.Time { return later })
+
+	if err := d.beatAndRefresh(ctx); err != nil {
+		t.Fatalf("the daemon's beat: %v", err)
+	}
+	holder, at := claimNode(t, f.db, mine)
+	if holder != d.id {
+		t.Errorf("the claim names %q after the beat, not this daemon (%q)", holder, d.id)
+	}
+	if want := later.UTC().Truncate(time.Second).Format(time.RFC3339); at != want {
+		t.Errorf("the claim is stamped %q after the beat, not the server time the beat was made at (%s)", at, want)
+	}
+	if after := f.db.Value(claimPathOf(t, other)); !reflect.DeepEqual(otherBefore, after) {
+		t.Errorf("the other orchestrator's claim changed under a beat:\nafter  %#v\nbefore %#v", after, otherBefore)
+	}
+	lease, err := d.lease.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading the lease node after the beat: %v", err)
+	}
+	if want := later.UTC().Truncate(time.Second); !lease.At.Equal(want) {
+		t.Errorf("the lease is stamped %s after the beat, not the server time the beat was made at (%s)", lease.At, want)
+	}
+}
+
+// claimPathOf is one claim node's path, through the package's own builder: a
+// path a test spelled itself could name a node the package never writes.
+func claimPathOf(t *testing.T, ref orchestrator.ItemRef) string {
+	t.Helper()
+	path, err := orchestrator.ClaimPath(ref)
+	if err != nil {
+		t.Fatalf("building the claim path of %q: %v", ref.Item, err)
+	}
+	return path
 }
 
 // TestRunRefusesAnIntervalLongerThanTheLease: the flag is bounded by the claim

@@ -183,12 +183,12 @@ type orchestratorDaemon struct {
 	decide bool
 	tick   *orchestrator.Tick
 	cache  *orchestrator.BriefCacheWriter
-	// claims is the guard the tick takes and releases this daemon's claims
-	// through (D3209), kept here as well because the beat re-stamps them beside
-	// the lease (orchestrator.Claim.Refresh): a claim's liveness is its holder's
-	// lease, and the stamp a rival measures a missing lease node against is
-	// refreshed on the beat's own cadence, so a clean exit does not free an item
-	// whose run is still going.
+	// claims is the guard the tick takes this daemon's claims through and
+	// releases the finished ones on (D3209), kept here as well because the beat
+	// re-stamps them beside the lease (orchestrator.Claim.Refresh): what the
+	// node records is when its holder last confirmed an item was still its own,
+	// and a daemon that beats only its lease would leave that stamp on the day
+	// the item was taken.
 	claims   *orchestrator.Claim
 	launched *launchInFlight
 	// launcher is the launcher the tick starts runs through, kept here because
@@ -1109,21 +1109,19 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 // beatAndRefresh is the daemon's beat: the lease it holds, and the claims it
 // holds beside it.
 //
-// The two lapse together and are refreshed together. A claim is held while its
-// holder's lease beats and for ClaimGrace past the last time its holder was
-// known to be driving, and the stamp a rival measures a missing lease node
-// against is the claim's own (orchestrator.Claim.Refresh, holderLive) — so a
-// daemon that beats only its lease would let every claim it holds go stale, and
-// lose the items whose runs are in flight to a rival the moment its lease node
-// went away (a clean exit: an upgrade restart, --once, a stop).
+// The claims are re-stamped here and not released here: what releases a claim is
+// its item, and only the cycle that reads the nodes knows which items are
+// finished (orchestrator.Claim.Refresh, and the tick's last step). What the beat
+// adds is the stamp the node carries — the server time its holder last confirmed
+// the item was still its own — kept inside the beat's own cadence rather than
+// left on the day the item was taken.
 //
 // A refresh that failed is not the lease's failure, and this does not answer it
 // the way the loop answers a beat that failed: a lease failure has one answer
 // (the loop's own comment), while a claim whose stamp could not be written is a
-// stamp that goes stale — a rival may take the item a grace after this
-// daemon's last refresh — and stopping the daemon over it would cost the
-// project every other item it drives. It is said instead, once per failed beat,
-// and the beat goes on.
+// stamp that goes stale — and stopping the daemon over it would cost the project
+// every other item it drives. It is said instead, once per failed beat, and the
+// beat goes on.
 func (d *orchestratorDaemon) beatAndRefresh(ctx context.Context) error {
 	if err := d.lease.Beat(ctx); err != nil {
 		return err
@@ -1131,8 +1129,8 @@ func (d *orchestratorDaemon) beatAndRefresh(ctx context.Context) error {
 	if d.claims == nil {
 		return nil
 	}
-	if err := d.claims.Refresh(ctx); err != nil {
-		fmt.Fprintf(d.warn, "orchestrator %s: the claims this daemon holds could not be re-stamped, so another orchestrator may take an item it is still working on once the grace is past: %s\n",
+	if err := d.claims.Refresh(ctx, nil); err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the claims this daemon holds could not be re-stamped, so the node says this daemon confirmed an item it holds as long ago as it took it: %s\n",
 			safetext.Field(d.id), safetext.OneLine(err.Error()))
 	}
 	return nil
