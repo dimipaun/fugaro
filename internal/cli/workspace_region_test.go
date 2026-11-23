@@ -25,7 +25,8 @@ func workspaceMemberDatabase(t *testing.T, memberPath, rtdbURL string) {
 }
 
 // workspaceOwnerRegion is the region the workspace's table records for member
-// aurora after one `member add`, read back through the loader the command writes
+// aurora after one `workspace project add`, read back through the loader the
+// command writes
 // through.
 func workspaceOwnerRegion(t *testing.T, owner string) string {
 	t.Helper()
@@ -50,7 +51,7 @@ func TestAMembersDatabaseRegionIsReadFromTheMember(t *testing.T) {
 			_, aurora, owner := workspaceOwnerHome(t)
 			workspaceMemberDatabase(t, aurora, "https://aurora-fb-default-rtdb."+region+".firebasedatabase.app")
 
-			out, _, chainErr := execute(t, workspaceMemberAddArgs()...)
+			_, out, chainErr := workspaceProjectAddRun(t)
 			if got := workspaceOwnerRegion(t, owner); got != region {
 				t.Errorf("database region = %q, want %q, the region of the member's own database", got, region)
 			}
@@ -63,13 +64,13 @@ func TestAMembersDatabaseRegionIsReadFromTheMember(t *testing.T) {
 			// again reads the same region out of the same config, so the entry
 			// is what it was and the file is not rewritten.
 			before := readFileString(t, owner)
-			if again, _, _ := execute(t, workspaceMemberAddArgs()...); !strings.Contains(again, "no change") {
+			if _, again, _ := workspaceProjectAddRun(t); !strings.Contains(again, "no change") {
 				t.Errorf("a repeated declaration is not a no-op:\n%s", again)
 			}
 			if readFileString(t, owner) != before {
 				t.Errorf("a repeated declaration rewrote the member's entry:\n%s", readFileString(t, owner))
 			}
-			workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+			workspaceAssertSavedNotLive(t, "workspace project add", out, chainErr)
 		})
 	}
 }
@@ -81,11 +82,11 @@ func TestTheFlagStillWins(t *testing.T) {
 	_, aurora, owner := workspaceOwnerHome(t)
 	workspaceMemberDatabase(t, aurora, "https://aurora-fb-default-rtdb.asia-southeast1.firebasedatabase.app")
 
-	out, _, chainErr := execute(t, workspaceMemberAddArgs("--database-region", "europe-west1")...)
+	_, out, chainErr := workspaceProjectAddRun(t, "--database-region", "europe-west1")
 	if got := workspaceOwnerRegion(t, owner); got != "europe-west1" {
 		t.Errorf("database region = %q, want europe-west1, the value the flag gave", got)
 	}
-	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+	workspaceAssertSavedNotLive(t, "workspace project add", out, chainErr)
 }
 
 // TestARegionThatIsNoDatabaseLocationIsRefused: a member's URL names a region
@@ -97,7 +98,7 @@ func TestARegionThatIsNoDatabaseLocationIsRefused(t *testing.T) {
 	workspaceMemberDatabase(t, aurora, "https://aurora-fb-default-rtdb.us-east1.firebasedatabase.app")
 	before := readFileString(t, owner)
 
-	out, _, err := execute(t, workspaceMemberAddArgs()...)
+	out, _, err := execute(t, workspaceProjectAddArgs()...)
 	if err == nil || !strings.Contains(err.Error(), "us-east1, which is not a Realtime Database location") {
 		t.Fatalf("a member whose database names us-east1 was linked: %v\n%s", err, out)
 	}
@@ -109,11 +110,11 @@ func TestARegionThatIsNoDatabaseLocationIsRefused(t *testing.T) {
 	}
 	// The fix the refusal names is one: the same member, declared with the
 	// region its database is in, is linked.
-	out, _, chainErr := execute(t, workspaceMemberAddArgs("--database-region", "europe-west1")...)
+	_, out, chainErr := workspaceProjectAddRun(t, "--database-region", "europe-west1")
 	if got := workspaceOwnerRegion(t, owner); got != "europe-west1" {
 		t.Errorf("database region = %q, want the one the flag gave", got)
 	}
-	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+	workspaceAssertSavedNotLive(t, "workspace project add", out, chainErr)
 }
 
 // TestAConfigFromAnotherFirebaseProjectIsRefused: the config a region is read
@@ -147,7 +148,7 @@ func TestAConfigFromAnotherFirebaseProjectIsRefused(t *testing.T) {
 			workspaceAppend(t, aurora, tc.budget)
 			before := readFileString(t, owner)
 
-			out, _, err := execute(t, workspaceMemberAddArgs()...)
+			out, _, err := execute(t, workspaceProjectAddArgs()...)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("a config that is not the member's was read to place its database: %v\n%s", err, out)
 			}
@@ -159,11 +160,11 @@ func TestAConfigFromAnotherFirebaseProjectIsRefused(t *testing.T) {
 			}
 			// The fix the refusal names is one: the same member, declared with
 			// the region its database is in, is linked.
-			out, _, chainErr := execute(t, workspaceMemberAddArgs("--database-region", "europe-west1")...)
+			_, out, chainErr := workspaceProjectAddRun(t, "--database-region", "europe-west1")
 			if got := workspaceOwnerRegion(t, owner); got != "europe-west1" {
 				t.Errorf("database region = %q, want the one the flag gave", got)
 			}
-			workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+			workspaceAssertSavedNotLive(t, "workspace project add", out, chainErr)
 		})
 	}
 }
@@ -196,14 +197,14 @@ func TestAMemberWhoseConfigIsNotHereRecordsNoRegion(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		out, _, chainErr := execute(t, workspaceMemberAddArgs()...)
+		_, out, chainErr := workspaceProjectAddRun(t)
 		if got := workspaceOwnerRegion(t, owner); got != "" {
 			t.Errorf("database region = %q, want none: this machine holds no config for the member, so its database URL was not read", got)
 		}
 		if strings.Contains(readFileString(t, owner), "database_region") {
 			t.Errorf("the write spelled an absent region as a key:\n%s", readFileString(t, owner))
 		}
-		workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+		workspaceAssertSavedNotLive(t, "workspace project add", out, chainErr)
 	})
 
 	t.Run("a member already linked", func(t *testing.T) {
@@ -213,16 +214,16 @@ func TestAMemberWhoseConfigIsNotHereRecordsNoRegion(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		out, _, chainErr := execute(t, workspaceMemberAddArgs()...)
+		_, out, chainErr := workspaceProjectAddRun(t)
 		if got := workspaceOwnerRegion(t, owner); got != "europe-west1" {
 			t.Errorf("database region = %q, want europe-west1: the entry already records where the member's database is, and this declaration cannot read it", got)
 		}
 		// And the flag is how the owner says otherwise.
-		out, _, chainErr = execute(t, workspaceMemberAddArgs("--database-region", "asia-southeast1")...)
+		_, out, chainErr = workspaceProjectAddRun(t, "--database-region", "asia-southeast1")
 		if got := workspaceOwnerRegion(t, owner); got != "asia-southeast1" {
 			t.Errorf("database region = %q, want asia-southeast1, the value the flag gave", got)
 		}
-		workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+		workspaceAssertSavedNotLive(t, "workspace project add", out, chainErr)
 	})
 }
 
@@ -238,11 +239,11 @@ func TestAMemberWhoseConfigNamesNoDatabaseKeepsTheRegionItRecords(t *testing.T) 
 	workspaceAppend(t, owner, workspaceLinkedEntry)
 	workspaceAppend(t, aurora, "budget: { mode: observe, per_run_usd: 5 }\n")
 
-	out, _, chainErr := execute(t, workspaceMemberAddArgs()...)
+	_, out, chainErr := workspaceProjectAddRun(t)
 	if got := workspaceOwnerRegion(t, owner); got != "europe-west1" {
 		t.Errorf("database region = %q, want europe-west1: the member's own config names no database, so nothing says the region the entry records is wrong", got)
 	}
-	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+	workspaceAssertSavedNotLive(t, "workspace project add", out, chainErr)
 }
 
 // TestALegacyHostRecordsNoRegion: a member whose database URL names no region —
@@ -264,7 +265,7 @@ func TestALegacyHostRecordsNoRegion(t *testing.T) {
 			workspaceAppend(t, aurora, tc.extra)
 			workspaceMemberDatabase(t, aurora, tc.url)
 
-			out, _, chainErr := execute(t, workspaceMemberAddArgs()...)
+			_, out, chainErr := workspaceProjectAddRun(t)
 			if got := workspaceOwnerRegion(t, owner); got != "" {
 				t.Errorf("database region = %q, want none: %s names no region, and recording one would derive the member's database from it", got, tc.url)
 			}
@@ -274,7 +275,7 @@ func TestALegacyHostRecordsNoRegion(t *testing.T) {
 			if strings.Contains(readFileString(t, owner), "database_region") {
 				t.Errorf("the write spelled an absent region as a key:\n%s", readFileString(t, owner))
 			}
-			workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
+			workspaceAssertSavedNotLive(t, "workspace project add", out, chainErr)
 		})
 	}
 }

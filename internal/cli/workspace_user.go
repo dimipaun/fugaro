@@ -97,11 +97,19 @@ type workspaceRosterDeps struct {
 	// Authority is the workspace's mechanism (C2): the live admin binding, and
 	// the binding list the admin gate is read against (D2823).
 	Authority workspace.Authority
-	// Linked are the member projects the workspace holds now, which are the ones
-	// a stored grant reaches. Resolving them is the wiring's business: it is the
-	// same list `Authority.Holds` answers for, and reading that here would be a
-	// call per member for a list the caller already has.
-	Linked []workspace.MemberTarget
+	// Linked answers the member projects the workspace holds now, which are the
+	// ones a stored grant reaches. Resolving them is the wiring's business, and
+	// it is a CALL and not a list the opener already holds: the same list is
+	// what `Authority.Holds` answers for, and it costs a read of the roster
+	// node plus one call per member.
+	//
+	// Deferred to the first use inside the body, because that is A7's order
+	// (D1590): a command of this family may not make one of those calls before
+	// its own agent-session refusal, and a command that never needs the list at
+	// all -- `workspace domains add|rm` edits the node and nothing else, and an
+	// `add` that sets no admin reaches no member — may not make one at all. A
+	// nil Linked is a build that wired no list, and it is no members.
+	Linked func(ctx context.Context) ([]workspace.MemberTarget, error)
 	// getenv is the environment the agent-session fence reads, and now and rand
 	// mint an audit event's id. A nil getenv is the process environment, a nil
 	// now is the clock and a nil rand is the system's randomness: they are seams
@@ -153,10 +161,24 @@ rewrite it cannot set a binding.
 Every write here refuses in a coding agent's session and asks nothing: a change
 that cannot be made is refused with the flag or the command that can make it.`,
 	}
+	// grant and revoke take the MEMBER side (C2) rather than the workspace's own
+	// roster: the member is named by the command's own argument, and its database
+	// is reached with the caller's own credentials, so what they are given is the
+	// selected config's side (WU8's own doc, D2801).
+	//
+	// One side each, and not one between them: the side carries the sentence it
+	// refuses an unreadable selection with, and that sentence names the command
+	// that ran -- a shared side would hand a revoke the grant command's words.
+	memberSide := func(what string) workspaceSides {
+		return workspaceSides{side: workspaceAmbientSide(what)}
+	}
+	grant, revoke := memberSide("fugaro workspace user grant"), memberSide("fugaro workspace user revoke")
 	cmd.AddCommand(
-		newWorkspaceUserAddCmd(open),
-		newWorkspaceUserRmCmd(open),
+		workspaceReported(newWorkspaceUserAddCmd(open), "workspace-user-add"),
+		workspaceReported(newWorkspaceUserRmCmd(open), "workspace-user-rm"),
 		newWorkspaceUserLsCmd(open),
+		workspaceReported(newWorkspaceUserGrantCmd(grant), "workspace-user-grant"),
+		workspaceReported(newWorkspaceUserRevokeCmd(revoke), "workspace-user-revoke"),
 	)
 	return cmd
 }
@@ -331,6 +353,16 @@ func (d workspaceRosterDeps) env() func(string) string {
 // clause says what was not done, and the refusal says where to run it instead.
 func (d workspaceRosterDeps) refuseAgent(clause string) error {
 	return AgentSessionRefusal(d.env(), clause)
+}
+
+// linkedMembers resolves the list of members the workspace holds now, and it is
+// called from the point in the body that needs it and from nowhere earlier: the
+// resolution reads the cloud, and the fence above comes first (A7).
+func (d workspaceRosterDeps) linkedMembers(ctx context.Context) ([]workspace.MemberTarget, error) {
+	if d.Linked == nil {
+		return nil, nil
+	}
+	return d.Linked(ctx)
 }
 
 // readRoster reads the roster node once and decodes it, answering the revision
@@ -606,6 +638,16 @@ func runWorkspaceUserAdd(cmd *cobra.Command, open workspaceRosterOpen, o *worksp
 			return err
 		}
 	}
+	// The members the workspace holds are read HERE and only for an admin: it is
+	// the list D2818's stored grant is written into, the fence above has already
+	// refused a coding agent's session (A7), and every refusal this command makes
+	// about its own arguments is made before the read.
+	var linked []workspace.MemberTarget
+	if o.admin {
+		if linked, err = d.linkedMembers(ctx); err != nil {
+			return err
+		}
+	}
 
 	// The change is judged and written first, and the authority's and the
 	// members' half of an admin comes after it: a record whose binding failed is
@@ -624,7 +666,7 @@ func runWorkspaceUserAdd(cmd *cobra.Command, open workspaceRosterOpen, o *worksp
 			external: o.external,
 			admin:    o.admin,
 			roles:    roles,
-			linked:   d.Linked,
+			linked:   linked,
 		})
 		if err != nil {
 			return nil, err
@@ -648,7 +690,7 @@ func runWorkspaceUserAdd(cmd *cobra.Command, open workspaceRosterOpen, o *worksp
 		if err := d.Authority.AddAdmin(ctx, address); err != nil {
 			return fmt.Errorf("making %s a workspace admin: %w", safetext.FieldErr(err), err)
 		}
-		for _, m := range d.Linked {
+		for _, m := range linked {
 			if err := d.writeMemberAdminGrant(ctx, m, address); err != nil {
 				return err
 			}
@@ -657,7 +699,7 @@ func runWorkspaceUserAdd(cmd *cobra.Command, open workspaceRosterOpen, o *worksp
 			return err
 		}
 	}
-	return workspaceUserAddSay(cmd.OutOrStdout(), d, next, address, o.admin, len(d.Linked))
+	return workspaceUserAddSay(cmd.OutOrStdout(), d, next, address, o.admin, len(linked))
 }
 
 // workspaceAddWant is the change `add` judges: one person or machine, and
@@ -876,6 +918,19 @@ func runWorkspaceUserRm(cmd *cobra.Command, open workspaceRosterOpen, o *workspa
 	}
 	person := workspacePersonOf(roster, address)
 
+	// The members the workspace holds are read HERE, once, for the two things
+	// that need them -- the offboarding a person's removal runs and the count the
+	// report prints — and not by a removal that needs neither, which is a
+	// machine's. The fence above has already refused a coding agent's session
+	// (A7) and the gate reads that come before this one touch the workspace's
+	// own node, not a member's.
+	var linked []workspace.MemberTarget
+	if person.Kind == workspace.KindHuman || o.admin {
+		if linked, err = d.linkedMembers(ctx); err != nil {
+			return err
+		}
+	}
+
 	// The member- and authority-side effects come first, and the node last: a
 	// person who is offboarded and still recorded is a command to re-run, and a
 	// person out of the roster whose authority still stands is one no command of
@@ -884,7 +939,7 @@ func runWorkspaceUserRm(cmd *cobra.Command, open workspaceRosterOpen, o *workspa
 		if d.Members == nil {
 			return userErr("workspace %s has no member operations this machine can read: removing a person sweeps them out of every member the workspace holds (C2's Offboard), and this machine's wiring supplies it", safetext.Field(d.Workspace))
 		}
-		for _, m := range d.Linked {
+		for _, m := range linked {
 			if err := d.Members.Offboard(ctx, m, address); err != nil {
 				return fmt.Errorf("offboarding %s from %s: %w", safetext.Field(address), safetext.Field(m.Project), err)
 			}
@@ -908,7 +963,7 @@ func runWorkspaceUserRm(cmd *cobra.Command, open workspaceRosterOpen, o *workspa
 			return err
 		}
 	}
-	return workspaceUserRmSay(cmd.OutOrStdout(), d, address, o.admin, len(d.Linked))
+	return workspaceUserRmSay(cmd.OutOrStdout(), d, address, o.admin, len(linked))
 }
 
 // workspaceRmJudged is a removal as a pure function of the roster the node
@@ -1027,11 +1082,15 @@ func runWorkspaceUserLs(cmd *cobra.Command, open workspaceRosterOpen, o *workspa
 // A read that FAILS is an error, and the command refuses on it: a listing that
 // silently dropped a member would read as a member whose people hold nothing.
 func (d workspaceRosterDeps) memberGrants(ctx context.Context) (map[string][]accesslib.Grant, error) {
-	out := make(map[string][]accesslib.Grant, len(d.Linked))
+	linked, err := d.linkedMembers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]accesslib.Grant, len(linked))
 	if d.Members == nil {
 		return out, nil
 	}
-	for _, m := range d.Linked {
+	for _, m := range linked {
 		doc, err := d.Members.ReadGrants(ctx, m)
 		if err != nil {
 			return nil, fmt.Errorf("reading %s's own roster: %w", safetext.Field(m.Project), err)

@@ -143,7 +143,15 @@ func (e *initEngine) foldBacklog(ctx context.Context) {
 		r.warn(why)
 		return
 	}
-	node, err := orchestratorNodeShard(e.lc, db, orchestrator.ShardBacklog)
+	// The fold is the project's own orchestrator's backlog: `fugaro update` knows
+	// no names, and the node it writes is the one the login unit it installs
+	// drives.
+	id, err := orchestratorID(e.lc)
+	if err != nil {
+		r.warn(fmt.Sprintf("%s was not folded into the backlog: %s", backlog.Dir, safetext.FieldErr(err)))
+		return
+	}
+	node, err := orchestratorNodeShard(db, id, orchestrator.ShardBacklog)
 	if err != nil {
 		r.warn(fmt.Sprintf("%s was not folded into the backlog: %s", backlog.Dir, safetext.FieldErr(err)))
 		return

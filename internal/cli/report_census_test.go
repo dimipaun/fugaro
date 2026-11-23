@@ -405,7 +405,14 @@ func reporterConstructorCalls(t *testing.T, src *censusSource) reporterCalls {
 // reporterConstructors are the calls that build a run through the reporter:
 // reporterFor and convergeReporter in report_flags.go, stepRunFor in
 // report_step.go, and openReporter, which is what all of them end in.
-var reporterConstructors = []string{"reporterFor", "convergeReporter", "stepRunFor", "openReporter"}
+//
+// workspaceReported and workspaceReportedWith are the workspace family's own two
+// (workspace_wiring.go): its commands are built by the level-2 tasks as bare
+// constructors and wrapped when I1 registers them, so the name they are filed
+// under is an argument of the wrapper rather than of a reporter call. They are
+// named here rather than in builtLogNames because nothing is built at those call
+// sites: the name is a literal, which is the whole reason the wrapper takes one.
+var reporterConstructors = []string{"reporterFor", "convergeReporter", "stepRunFor", "openReporter", "workspaceReported", "workspaceReportedWith"}
 
 // callsTo is every call to name inside n, where name is spelled the way the
 // census spells it: `openReporter` for a call this package makes, and

@@ -24,6 +24,17 @@ patch_of() {
   git diff-tree --no-commit-id -p -U0 -r "$1" | git patch-id --stable | awk '{print $1}'
 }
 
+# previous_patch_tag TAG prints the newest tag of TAG's own line below it
+# (v0.28.2 -> v0.28.1, or v0.28.0 when that is all the line has), or nothing.
+previous_patch_tag() {
+  local v=${1#v} base z
+  base=${v%.*}
+  z=${v##*.}
+  git tag --list "v$base.*" | sed 's/^v//' \
+    | awk -F. -v z="$z" 'NF == 3 && $3 ~ /^[0-9]+$/ && $3 + 0 < z + 0 { print $3, $0 }' \
+    | sort -n | tail -n 1 | awk '{ print "v" $2 }'
+}
+
 # hotfix_commits_check TAG TIP prints the number of cherry-picked commits the tag
 # carries and origin/main does not, and returns 0, when every commit TIP carries
 # that origin/main does not is one of exactly two things: a cherry-pick of a
@@ -31,8 +42,20 @@ patch_of() {
 # touches the release's own text and nothing else. Otherwise it prints the
 # refusal to stderr and returns 1. A TIP origin/main already carries has nothing
 # of its own and prints 0.
+#
+# What the tag's own commits are is what TIP carries beyond origin/main AND beyond
+# the line's previous patch tag when TIP descends from it: that tag's commits were
+# held to this same rule when it was tagged, and its tag cannot be moved, so a
+# second patch on a line is judged on what it adds. Without that exclusion the
+# branch's first patch text (docs/releases/v0.28.1.md, on no commit of main by
+# design) refused every later patch of the line.
 hotfix_commits_check() {
   local tag=$1 tip=$2
+  local prev excl=()
+  prev=$(previous_patch_tag "$tag")
+  if [ -n "$prev" ] && git merge-base --is-ancestor "refs/tags/$prev" "$tip" 2>/dev/null; then
+    excl=("refs/tags/$prev")
+  fi
   if [ "$(printf '%s\n%s\n' "$tip" "$(git rev-parse refs/remotes/origin/main)" | sort -u | wc -l)" = 1 ] \
     || git merge-base --is-ancestor "$tip" refs/remotes/origin/main; then
     echo 0
@@ -42,14 +65,14 @@ hotfix_commits_check() {
   # patch release carries the plugin bump main holds, so a branch whose own
   # commits are all hand-written is a branch nothing holds to main.
   local trailers
-  trailers=$(git log --format=%B "$tip" --not refs/remotes/origin/main \
+  trailers=$(git log --format=%B "$tip" --not refs/remotes/origin/main ${excl[@]+"${excl[@]}"} \
     | sed -n 's/.*(cherry picked from commit \([0-9a-f]\{7,40\}\)).*/\1/p' | sort -u)
   if [ -z "$trailers" ]; then
     echo "$tag is not on main and none of its own commits carries a \"(cherry picked from commit <sha>)\" trailer: a patch release cherry-picks its fixes onto release/X.Y with -x (git cherry-pick -x), and without one there is nothing to hold the release to main (docs/release.md, \"Hotfix releases\")" >&2
     return 1
   fi
   local n=0 commit picked sha path
-  for commit in $(git log --format=%H "$tip" --not refs/remotes/origin/main); do
+  for commit in $(git log --format=%H "$tip" --not refs/remotes/origin/main ${excl[@]+"${excl[@]}"}); do
     picked=$(git log -1 --format=%B "$commit" \
       | sed -n 's/.*(cherry picked from commit \([0-9a-f]\{7,40\}\)).*/\1/p')
     if [ -n "$picked" ]; then

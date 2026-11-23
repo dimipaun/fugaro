@@ -46,6 +46,7 @@ import { describe, expect, it } from 'vitest'
 
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
+import { gateFrom } from '../../src/renderer/gating'
 import {
   BUSY_CLASS,
   BUSY_LABEL_CLASS,
@@ -317,6 +318,10 @@ class Handles {
       openView: (view) => {
         this.views.push(view)
       },
+      // These cases are about the shell's own tree and read no role: the gate
+      // they hand it is `gating.ts`'s no-answer value, which allows everything
+      // (`ManageDeps.can` is required).
+      can: gateFrom(null).can,
       now: () => AT,
       timers: this.timers,
     }

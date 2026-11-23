@@ -114,11 +114,11 @@ paths:
     source: README.md
     platforms: [darwin, linux]
     note: >-
-      The agent's skills; fugaro setup wires them into the checkout.
+      The agent's skills; fugaro setup and fugaro update install them in your own Claude Code.
     commands:
       - |-
         fugaro setup
       - |-
         /fugaro:setup
       - |-
-        fugaro upgrade --local
+        fugaro update

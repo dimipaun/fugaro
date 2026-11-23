@@ -103,7 +103,7 @@ func (c *wu5Cloud) seams(t *testing.T) workspaceProjectAddSeams {
 			c.opened++
 			return c.auth, nil
 		},
-		member: func(ctx context.Context, m workspace.MemberTarget, region string) (workspace.MemberOps, error) {
+		member: func(ctx context.Context, _ *localcfg.Config, m workspace.MemberTarget, region string) (workspace.MemberOps, error) {
 			c.opened++
 			c.targets = append(c.targets, m)
 			c.regions = append(c.regions, region)
@@ -172,18 +172,29 @@ func (a *wu5Audit) Create(ctx context.Context, id string, event []byte) error {
 	return nil
 }
 
-// wu5Authority is the mechanism that holds a member (C2's Authority), with the
-// empty truth of the contract's own stub everywhere this command does not read
-// it: Holds answers what the test set, and AdminBindings answers the live
-// bindings D2823 trusts an admin entry by -- in the spelling the contract's own
-// two mechanisms answer in, the `user:` member a grant names (WU2's folder
-// owners, WU20's token creators), because a fixture that answers the node's bare
-// spelling is a fixture that hides a comparison of two spellings of nobody.
+// wu5Authority is the mechanism that holds a member (C2's Authority): Holds
+// answers what the test set, and AdminBindings answers the live bindings D2823
+// trusts an admin entry by -- in the spelling the contract's own two mechanisms
+// answer in, the `user:` member a grant names (WU2's folder owners, WU20's token
+// creators), because a fixture that answers the node's bare spelling is a
+// fixture that hides a comparison of two spellings of nobody. The methods this
+// command does not read answer the empty truth, declared here rather than taken
+// from the contract's stub, which I1 deleted (the plan's own rule: a task's
+// fakes are declared in its own _test.go).
 type wu5Authority struct {
-	workspace.StubAuthority
 	holds    bool
 	bindings []string
 }
+
+// Kind is the empty kind: the contract names no value for an authority with no
+// mechanism, and this command reads no kind off it.
+func (a *wu5Authority) Kind() workspace.AuthorityKind { return "" }
+
+func (a *wu5Authority) Link(context.Context, workspace.MemberTarget) error   { return nil }
+func (a *wu5Authority) Unlink(context.Context, workspace.MemberTarget) error { return nil }
+
+func (a *wu5Authority) AddAdmin(context.Context, string) error    { return nil }
+func (a *wu5Authority) RemoveAdmin(context.Context, string) error { return nil }
 
 func (a *wu5Authority) Holds(ctx context.Context, m workspace.MemberTarget) (bool, error) {
 	return a.holds, nil
@@ -194,10 +205,11 @@ func (a *wu5Authority) AdminBindings(ctx context.Context) ([]string, error) {
 }
 
 // wu5Member is the member's own database (C2's MemberOps): its grants node, its
-// mirror, and what was written into them. Everything else is the contract's own
-// stub.
+// mirror, and what was written into them. The four methods this command never
+// calls answer the empty truth, declared here rather than taken from the
+// contract's stub, which I1 deleted (the plan's own rule: a task's fakes are
+// declared in its own _test.go).
 type wu5Member struct {
-	workspace.StubMemberOps
 	cloud  *wu5Cloud
 	grants wu5Node
 	mirror wu5Node
@@ -229,6 +241,20 @@ func (m *wu5Member) WriteMirror(ctx context.Context, target workspace.MemberTarg
 	m.mirrorWrite = raw
 	m.writes = append(m.writes, "mirror")
 	m.cloud.wrote("mirror")
+	return nil
+}
+
+func (m *wu5Member) Bindings(context.Context, workspace.MemberTarget) ([]workspace.MemberBinding, error) {
+	return nil, nil
+}
+
+func (m *wu5Member) PendingApply(context.Context, workspace.MemberTarget, workspace.ApplyWant) (workspace.Pending, error) {
+	return workspace.Pending{}, nil
+}
+
+func (m *wu5Member) Offboard(context.Context, workspace.MemberTarget, string) error { return nil }
+
+func (m *wu5Member) Audit(context.Context, workspace.MemberTarget, string, []byte) error {
 	return nil
 }
 
@@ -595,28 +621,42 @@ func TestProjectAddNeedsExternalFlag(t *testing.T) {
 	}
 }
 
-// TestProjectAddKeepsMemberFlags holds this command to D2802: it carries
-// `workspace member add`'s flags with their own help and types, unchanged, and
-// the only two it adds are --workspace and --external.
+// TestProjectAddKeepsMemberFlags holds this command to D2802: `workspace member
+// add`'s flags are carried here unchanged, and the only two this command adds of
+// its own are --workspace and --external.
+//
+// The list is written out because there is no longer a command to compare
+// against: `workspace member add` was removed when this command took its place
+// (I1, D2802), so this test is the copy D2802's claim is kept against, and a
+// flag renamed or retyped here is a diff rather than a silent change. The usage
+// lines are not spelled out: they are help text, the CLI reference renders them
+// for the reader, and a second copy here would drift from it with nothing to
+// hold it.
 func TestProjectAddKeepsMemberFlags(t *testing.T) {
 	mine := newWorkspaceProjectAddCmd(workspaceProjectAddSeams{})
-	theirs := newWorkspaceMemberAddCmd()
-	theirs.Flags().VisitAll(func(f *pflag.Flag) {
-		mineFlag := mine.Flags().Lookup(f.Name)
-		if mineFlag == nil {
-			t.Errorf("workspace project add does not carry --%s, which workspace member add has", f.Name)
-			return
+	carried := map[string]string{
+		"job-service-account": "stringArray",
+		"job-repos":           "stringArray",
+		"database-region":     "string",
+		"firebase-project":    "string",
+		"fp":                  "string",
+		"exchange-url":        "string",
+		"repo":                "stringArray",
+		"no-apply":            "bool",
+	}
+	for name, kind := range carried {
+		f := mine.Flags().Lookup(name)
+		if f == nil {
+			t.Errorf("workspace project add does not carry --%s, which workspace member add had", name)
+			continue
 		}
-		if mineFlag.Usage != f.Usage {
-			t.Errorf("--%s reads %q, and workspace member add's reads %q", f.Name, mineFlag.Usage, f.Usage)
+		if f.Value.Type() != kind {
+			t.Errorf("--%s is a %s, and workspace member add's was a %s", name, f.Value.Type(), kind)
 		}
-		if mineFlag.Value.Type() != f.Value.Type() {
-			t.Errorf("--%s is a %s, and workspace member add's is a %s", f.Name, mineFlag.Value.Type(), f.Value.Type())
-		}
-	})
+	}
 	var added []string
 	mine.Flags().VisitAll(func(f *pflag.Flag) {
-		if theirs.Flags().Lookup(f.Name) == nil {
+		if _, ok := carried[f.Name]; !ok {
 			added = append(added, f.Name)
 		}
 	})

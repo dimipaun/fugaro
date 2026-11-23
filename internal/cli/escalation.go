@@ -45,6 +45,9 @@ const escalationDocVersion = 1
 // escalationOptions are the two subcommands' flags.
 type escalationOptions struct {
 	cloudOptions
+	// name is --name: whose orchestrator's state the ladder's ledger is read
+	// out of (D3206, D3207). Empty is the project's own.
+	name string
 	json bool
 }
 
@@ -79,11 +82,14 @@ func newEscalationLsCmd() *cobra.Command {
 			"have cost.\n\n" +
 			"--json prints a versioned document (schemas/escalation.schema.json). An item\n" +
 			"whose runs this machine cannot all read has no age and no cost, which the\n" +
-			"document writes as null and the table as unknown.",
+			"document writes as null and the table as unknown.\n\n" +
+			"--name reads one of the project's named orchestrators instead of the project's\n" +
+			"own: `--name night` reads the ledger of `<project>~night`'s items.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runEscalationLs(cmd, &o) },
 	}
 	f := cmd.Flags()
+	addOrchestratorNameFlag(cmd, &o.name)
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloudOptions)
 	return cmd
@@ -101,11 +107,14 @@ func newEscalationShowCmd() *cobra.Command {
 			"the head each one was decided at.\n\n" +
 			"--json prints a versioned document (schemas/escalation.schema.json). An item\n" +
 			"whose runs this machine cannot all read has no age and no cost, which the\n" +
-			"document writes as null and the table as unknown.",
+			"document writes as null and the table as unknown.\n\n" +
+			"--name reads one of the project's named orchestrators instead of the project's\n" +
+			"own: `--name night` reads an item of `<project>~night`.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runEscalationShow(cmd, &o, args[0]) },
 	}
 	f := cmd.Flags()
+	addOrchestratorNameFlag(cmd, &o.name)
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloudOptions)
 	return cmd
@@ -176,10 +185,11 @@ type escalationShowDoc struct {
 	Item    escalationItem `json:"item"`
 }
 
-// escalationView is what both subcommands read before they print: the project's
-// state node, the server's clock and the runs bucket the item figures come from.
+// escalationView is what both subcommands read before they print: the
+// orchestrator id `--name` resolved to, that id's state node, the server's clock
+// and the runs bucket the item figures come from.
 type escalationView struct {
-	lc     string
+	id     string
 	state  orchestrator.State
 	now    time.Time
 	bucket *blob.Bucket
@@ -193,12 +203,12 @@ func (v *escalationView) close() { v.env.Close() }
 
 func runEscalationLs(cmd *cobra.Command, o *escalationOptions) error {
 	ctx := cmd.Context()
-	v, err := openEscalation(ctx, o.cloudOptions)
+	v, err := openEscalation(ctx, o.cloudOptions, o.name)
 	if err != nil {
 		return err
 	}
 	defer v.close()
-	doc := escalationLsDoc{Version: escalationDocVersion, Kind: "ls", Project: v.lc, Now: escalationStamp(v.now),
+	doc := escalationLsDoc{Version: escalationDocVersion, Kind: "ls", Project: v.id, Now: escalationStamp(v.now),
 		Items: []escalationItem{}}
 	for _, w := range v.state.WorkItems {
 		if w.Escalation == nil {
@@ -230,7 +240,7 @@ func runEscalationLs(cmd *cobra.Command, o *escalationOptions) error {
 
 func runEscalationShow(cmd *cobra.Command, o *escalationOptions, id string) error {
 	ctx := cmd.Context()
-	v, err := openEscalation(ctx, o.cloudOptions)
+	v, err := openEscalation(ctx, o.cloudOptions, o.name)
 	if err != nil {
 		return err
 	}
@@ -246,7 +256,7 @@ func runEscalationShow(cmd *cobra.Command, o *escalationOptions, id string) erro
 	if err != nil {
 		return err
 	}
-	doc := escalationShowDoc{Version: escalationDocVersion, Kind: "show", Project: v.lc, Now: escalationStamp(v.now), Item: item}
+	doc := escalationShowDoc{Version: escalationDocVersion, Kind: "show", Project: v.id, Now: escalationStamp(v.now), Item: item}
 	out := cmd.OutOrStdout()
 	if o.json {
 		return writeJSON(out, doc)
@@ -272,18 +282,19 @@ func runEscalationShow(cmd *cobra.Command, o *escalationOptions, id string) erro
 }
 
 // openEscalation reads the three things both subcommands print from: the
-// project's config, its orchestrator's state node and the database's own clock.
+// project's config, the state node of the orchestrator `--name` resolved to, and
+// the database's own clock.
 //
 // The node is read through orchestrator.ReadState, which holds no ETag and no
 // lease: the reader has no write to make even if a later change here wanted
 // one, which is what "read-only" means at this surface rather than a promise in
 // a comment (D1241's reader, O16b's).
-func openEscalation(ctx context.Context, o cloudOptions) (*escalationView, error) {
+func openEscalation(ctx context.Context, o cloudOptions, name string) (*escalationView, error) {
 	lc, db, err := openBudget(ctx, o)
 	if err != nil {
 		return nil, err
 	}
-	id, err := orchestratorID(lc)
+	id, err := orchestratorIDFor(lc, name)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +314,7 @@ func openEscalation(ctx context.Context, o cloudOptions) (*escalationView, error
 	if err != nil {
 		return nil, err
 	}
-	return &escalationView{lc: lc.Name, state: state, now: now.UTC(), bucket: env.bucket.Bucket, env: env}, nil
+	return &escalationView{id: id, state: state, now: now.UTC(), bucket: env.bucket.Bucket, env: env}, nil
 }
 
 // item is one work item's ledger as the documents carry it.

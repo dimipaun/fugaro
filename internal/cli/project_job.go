@@ -124,7 +124,6 @@ var sharedJobProvider = infra.SharedJobProvider
 // baked half admits the workflow the way S10's own test will
 // (admitSharedJobBaked), and what a test admits there is what production does
 // the day the image ships.
-var sharedJobBaked = false
 
 // launchConfigWhereTheTreeGivesNone is the repository's own document for a
 // launch whose working tree could not answer with one: checkoutParse answers
@@ -370,7 +369,7 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, slug string, spec *t
 	// long before a launch reaches this (config.SharedCheckoutRefusal, while
 	// sharedCheckoutShipped is false), so clone and baked are the modes a
 	// document in hand can carry.
-	if w.Checkout != config.CheckoutClone && !sharedJobBaked {
+	if w.Checkout != config.CheckoutClone && !infra.SharedJobBaked {
 		return nil, nil
 	}
 	p, found, err := e.policy.read(ctx, e.lc)

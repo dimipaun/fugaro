@@ -243,8 +243,13 @@ describe('the models kind', () => {
     expect(rows(MODELS_KIND, { routes: [] })).toEqual([])
   })
 
-  it('offers no action: every models write is a task of its own', () => {
-    expect(MODELS_KIND.actions).toEqual([])
+  it('offers the write’s Copy-command when the floor is unset, and no models add of its own', () => {
+    // `MODELS_ADD_CLI_FLOOR` is `null` today, so every version is below it and
+    // the kind offers the command instead of the write. The write itself is
+    // `manage-writes.test.ts`'s case, where the floor is handed in.
+    expect(copyActions(MODELS_KIND).map((action) => copyCommandText(action))).toEqual([
+      'fugaro models add',
+    ])
   })
 })
 

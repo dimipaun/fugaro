@@ -727,6 +727,30 @@ func (o resolveRunOptions) pickRun(ref string, cands []runCandidate) (string, st
 	return c.slug, c.runID, nil
 }
 
+// checkExecutionName refuses an execution name the selected backend's codec does
+// not parse in the configured region, and names the region it is in when that
+// is the mismatch. It reads nothing.
+func (e *cloudEnv) checkExecutionName(name string) error {
+	// The name is parsed by the codec of the backend this command selected,
+	// never by Cloud Run's own: the two backends spell a run's identity
+	// differently (eight fields with an execution in them against six with
+	// none), so a project whose backend is not Cloud Run would otherwise be
+	// checked against the wrong shape (design compute-backend.md §2.5, §8.1
+	// Task 8, C12). This is ParseInRegion rather than ValidateRun: the job
+	// binding a name would need is the run's own, and it is checked below by
+	// gcp.CheckRunExecution, which reads the FUGARO_RUN the execution itself
+	// reports (internal/backend/codec.go's ValidateRun has no production
+	// caller for that reason).
+	if _, err := e.be.Codec().ParseInRegion(name, e.lc.Region); err != nil {
+		var wr *backend.WrongRegionError
+		if errors.As(err, &wr) {
+			return fmt.Errorf("the run's execution is in region %s, not %s; pass --region %s to follow it", wr.Region, wr.Want, wr.Region)
+		}
+		return err
+	}
+	return nil
+}
+
 // checkExecution refuses name, an execution name read from the bucket
 // objects of run slug/<runID>, unless it is that run's own execution: the
 // FUGARO_RUN the execution itself reports is the run's (gcp.CheckRunExecution).
@@ -755,21 +779,7 @@ func (o resolveRunOptions) pickRun(ref string, cands []runCandidate) (string, st
 // the caller asked about, which the caller knows from the reference it
 // resolved (and not from an object the run itself can write).
 func (e *cloudEnv) checkExecution(ctx context.Context, x *backend.Execution, name, slug, runID string) (*backend.Execution, error) {
-	// The name is parsed by the codec of the backend this command selected,
-	// never by Cloud Run's own: the two backends spell a run's identity
-	// differently (eight fields with an execution in them against six with
-	// none), so a project whose backend is not Cloud Run would otherwise be
-	// checked against the wrong shape (design compute-backend.md §2.5, §8.1
-	// Task 8, C12). This is ParseInRegion rather than ValidateRun: the job
-	// binding a name would need is the run's own, and it is checked below by
-	// gcp.CheckRunExecution, which reads the FUGARO_RUN the execution itself
-	// reports (internal/backend/codec.go's ValidateRun has no production
-	// caller for that reason).
-	if _, err := e.be.Codec().ParseInRegion(name, e.lc.Region); err != nil {
-		var wr *backend.WrongRegionError
-		if errors.As(err, &wr) {
-			return nil, fmt.Errorf("the run's execution is in region %s, not %s; pass --region %s to follow it", wr.Region, wr.Want, wr.Region)
-		}
+	if err := e.checkExecutionName(name); err != nil {
 		return nil, err
 	}
 	if x == nil {

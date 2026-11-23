@@ -1377,6 +1377,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// first call and presents the two identities every other run call does,
 		// so it goes through the shared parse below and is branched on after the
 		// stop switches, exactly as the mint is.
+		//
+		// A WORKSPACE's service serves this route for ITSELF (R3, D2970): a
+		// person's launch is the workspace's own grant, admitted by the
+		// workspace's launcher class and held to the workspace's roster, and the
+		// scope says which of the two the deployment is (personScopeOf). A
+		// workspace whose own half is not wired has no person scope, and the
+		// scope it resolved is the uncalled one — Serves is false and the call
+		// never reaches here (servesWorkspaceRoute).
+		if ps, person := personScopeOf(sc); person {
+			s.personGrant(ctx, w, r, ps)
+			return
+		}
 		s.slipGrant(ctx, w, r)
 		return
 	}
@@ -1493,12 +1505,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// what this service served before the slips existed and what it goes on
 		// serving (R9).
 		if !sc.AcceptsSlip() {
-			if presentsSlip(r) {
+			if presentsSlip(r) || presentsPersonSlip(r) {
 				s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnverified, ErrorUnverifiedRunIdentity,
 					"a call to this service carries no slip, and this one presented one")
 				return
 			}
-		} else if binding, refused := s.verifyCallSlip(ctx, r, id); refused != nil {
+		} else if binding, refused := s.verifySlipOfCall(ctx, r, id, sc); refused != nil {
 			// The refusal names the read it was taken on when it was taken on
 			// one (slipRefusal.cause): the slip's own record could not be read
 			// is the one of these that is a failed read rather than an answer
@@ -1526,6 +1538,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// bundle and no cascade: a slip is a grant, not a credential, and no
 		// tier or admission has anything to say about it. Which of those names a
 		// run is later served is DS1.6's call.
+		//
+		// A workspace's service serves this route too, for its own slips and out
+		// of its own store (personClaim).
+		if ps, person := personScopeOf(sc); person {
+			s.personClaim(ctx, w, r, id, req, ps)
+			return
+		}
 		s.slipClaim(ctx, w, r, id, req)
 		return
 	}
@@ -1743,7 +1762,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			BundleRefusal(err), labelRead(readBundle, err))
 		return
 	}
-	cands, strategy, notAdmitted, err := s.candidates(ctx, id, canonical, shared, b)
+	cands, strategy, exclusive, notAdmitted, err := s.candidates(ctx, id, canonical, shared, b)
 	if err != nil {
 		// Two refusals share this branch and they are not the same answer. A
 		// state the caller cannot fix — the admissions or the crafts could not
@@ -1764,6 +1783,32 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// person or to the project is served only under a slip that names it.
 	binding, _ := callSlipOf(ctx)
 	cands, notAdmitted = slipOffering(binding, cands, notAdmitted)
+	// C2's own rule on the offering (R7), read last and only for a call that
+	// was admitted under a WORKSPACE slip: the person's own token is offered
+	// FIRST, ahead of the shared entries the call is admitted to, so a run that
+	// holds a slip naming a personal credential spends the person's token and
+	// not the workspace's paid one. The reader is the scope's (C2's Personal),
+	// the candidate it answers is the cascade's own shape, and an answered
+	// error REFUSES the call rather than falling to the shared entries —
+	// D2974's whole point, and the reason the reader's three classes are three
+	// (PersonalReader). A call with no workspace slip, and one whose slip names
+	// no personal credential (found=false), is served exactly what it was
+	// admitted to, which is the state every call is in until the personal half
+	// is wired.
+	if binding != nil && binding.slip != nil {
+		if ps, person := personScopeOf(sc); person {
+			c, found, err := ps.Personal().Personal(ctx, *binding.slip)
+			switch {
+			case err != nil:
+				s.log.Error("credsvc: the call's personal credential could not be offered", "slip", binding.id, "error", err)
+				s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable,
+					"the call's personal credential could not be offered")
+				return
+			case found:
+				cands = append([]creds.Credential{c}, cands...)
+			}
+		}
+	}
 	// The strategy travels with the candidate list it was answered for
 	// (candidates, roundrobin.go; MC7): a pool asking for round-robin is served
 	// by the rotation, and every other list by the cascade's own rule. It is
@@ -1789,7 +1834,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// repository's recorded auth — lands in the database of the scope that
 	// answered the caller, which for a workspace's member is the workspace's
 	// own and never the member's machine or the installation's.
-	sel := &creds.Selector{Store: sc.State(), Settings: settingsOf(shared), Now: s.now, Strategy: strategy}
+	// Exclusive is R7's candidate when this call has one — the person's own
+	// token their slip entitles them to — and it is the SELECTION that is told
+	// so rather than the list that is marked: serving a candidate outright is a
+	// fact about this call and not about the credential, so the name the
+	// offering read once travels here (candidates, creds.Selector.Exclusive).
+	sel := &creds.Selector{
+		Store: sc.State(), Settings: settingsOf(shared), Now: s.now,
+		Strategy: strategy, Exclusive: exclusive,
+	}
 	s.forward(ctx, w, cl, sel, id, b, cands, notAdmitted)
 }
 
@@ -1917,6 +1970,43 @@ func (s *Server) jobRow(id Identity, canonical string) JobAccount {
 // the call rather than parsing what it presented.
 func presentsSlip(r *http.Request) bool {
 	return r.Header.Get(HeaderSlip) != "" || r.Header.Get(HeaderSlipClaim) != ""
+}
+
+// presentsPersonSlip answers the same question for the WORKSPACE's two headers
+// (creds.PersonSlipHeader, creds.PersonSlipClaimHeader). It is a separate
+// function and not a fourth arm of presentsSlip because the two are read in
+// different places: a call to the workspace's service is refused when it
+// presents a MEMBER's slip, and a call to an installation's when it presents a
+// workspace's (F13 — each slip is presented to the service that granted it).
+func presentsPersonSlip(r *http.Request) bool {
+	return r.Header.Get(creds.PersonSlipHeader) != "" || r.Header.Get(creds.PersonSlipClaimHeader) != ""
+}
+
+// verifySlipOfCall reads and verifies the slip a call presents, whichever of
+// the two classes the scope serves (DS1.6, R3, R4, F13).
+//
+// **The two slips are told apart by their headers and by nothing else**, which
+// is what keeps one route serving one deployment: a scope that serves people
+// reads the workspace's two headers, a scope that does not reads the member's
+// two, and a call that presents the OTHER class's is refused rather than served
+// slip-less — a run that presented the wrong slip is a run whose calls would
+// otherwise be served by the shared entries while the slip it holds names a
+// credential it means to use, which is the silent fall D2974 refuses.
+func (s *Server) verifySlipOfCall(ctx context.Context, r *http.Request, id Identity, sc Scope) (*slipBinding, *slipRefusal) {
+	ps, person := personScopeOf(sc)
+	switch {
+	case person && presentsPersonSlip(r):
+		return s.verifyPersonCallSlip(ctx, r, id, ps)
+	case person && presentsSlip(r):
+		return nil, &slipRefusal{StatusUnverified, ErrorUnverifiedRunIdentity,
+			"a call to this service carries the workspace's own slip and no member's, and this one presented a member's", nil}
+	case person:
+		return nil, nil
+	case presentsPersonSlip(r):
+		return nil, &slipRefusal{StatusUnverified, ErrorUnverifiedRunIdentity,
+			"a call to this service carries this installation's slip and no workspace's, and this one presented a workspace's", nil}
+	}
+	return s.verifyCallSlip(ctx, r, id)
 }
 
 // refuseIdentity answers a Verify refusal, and does the one piece of work a
@@ -2073,6 +2163,14 @@ type slipBinding struct {
 	id      string
 	owner   string
 	allowed []string
+	// slip is the WHOLE record the binding was verified from, and it is
+	// carried only by a call admitted under a WORKSPACE slip (C2, R7): the
+	// personal reader is handed the record and answers the candidate the call
+	// is served first from it (Personal's own signature), and a member's slip
+	// has no such reader on its path. A nil here is therefore "this call was
+	// not admitted under a workspace slip", and it is what keeps the two
+	// halves apart without a second flag.
+	slip *creds.Slip
 	// secret is the claim secret the call presented. It is held for ONE thing:
 	// registering it with the call's scrub (callScrubs), so a value the run
 	// pasted into its own body reaches no upstream log. Nothing writes it
@@ -2237,6 +2335,102 @@ func (s *Server) verifyCallSlip(ctx context.Context, r *http.Request, id Identit
 		s.slips.put(slipID, sl, now)
 	}
 	return &slipBinding{id: slipID, owner: sl.Owner, allowed: slices.Clone(sl.Allowed), secret: secret}, nil
+}
+
+// verifyPersonCallSlip reads and verifies the slip a WORKSPACE's call presents
+// (R3, R4, R7): verifyCallSlip for the workspace's own two headers, its own
+// store and its own roster.
+//
+// The reading and the record's own questions are the installation's, one
+// service over and for the same reasons: a value sent twice, an id this service
+// could not have minted, an id with no claim secret and a secret with no id are
+// requests this service does not read (refused before the database is asked
+// anything), a call that presents neither header is the slip-less path and not
+// a refusal (R9), and what a record must be is this run's and this account's,
+// claimed with the secret presented and still inside its runtime — ONE sentence
+// and one status, so the route cannot be used to learn which slips exist.
+//
+// **The one question this path adds is the roster, and it is added to every
+// call and not only to the claim** (R3): a slip whose owner is no longer a
+// `human` of the workspace's roster is refused exactly as any other slip this
+// service does not serve is, because a person taken off a workspace keeps no
+// reach into it — and the whole point of re-reading the roster as the node is
+// re-read is that the window between the removal and the refusal is one minute
+// (workspaceNodeTTL) rather than the length of a run. The address is read from
+// the RECORD (creds.Slip.OwnerAddress, F11): the call holds a run identity and
+// not a person's, so the record is the only thing that can say whose slip this
+// is, and a slip written before that field existed carries the empty address
+// and matches no roster — refused, which is the fail-closed reading (a record
+// this service cannot place a person for is not one it may serve under).
+//
+// A roster that could not be read is NOT that refusal: it is the state class
+// (D143, D2983), because a run whose person is still there must not be stopped
+// by a roster nobody could read.
+func (s *Server) verifyPersonCallSlip(ctx context.Context, r *http.Request, id Identity, ps personScope) (*slipBinding, *slipRefusal) {
+	secret, presented, err := personSlipSecretFromHTTP(r)
+	if err != nil {
+		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused, requestRefused + err.Error(), nil}
+	}
+	if len(r.Header.Values(creds.PersonSlipHeader)) == 0 {
+		if presented {
+			return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused,
+				requestRefused + "the call carries a " + creds.PersonSlipClaimHeader + " header and no " + creds.PersonSlipHeader + " header", nil}
+		}
+		return nil, nil
+	}
+	slipID, err := oneHeader(r, creds.PersonSlipHeader)
+	if err != nil {
+		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused, requestRefused + err.Error(), nil}
+	}
+	if !printableHeaderValue(slipID, maxSlipIDBytes) {
+		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused,
+			requestRefused + "the " + creds.PersonSlipHeader + " header is not one slip id", nil}
+	}
+	if !presented {
+		return nil, &slipRefusal{StatusRequestRefused, ErrorRequestRefused,
+			requestRefused + "the call carries a " + creds.PersonSlipHeader + " header and no " + creds.PersonSlipClaimHeader + " header", nil}
+	}
+	now := s.now()
+	sl, held := s.slips.get(slipID, now)
+	if !held {
+		read, found, err := ps.Slips().Slip(ctx, slipID)
+		if err != nil {
+			return nil, &slipRefusal{StatusUnavailable, ErrorStateUnavailable, "the slip could not be read", labelRead(readSlip, err)}
+		}
+		if !found {
+			return nil, slipNotThisRunsRefusal()
+		}
+		sl = read
+	}
+	if !slipIsThisRuns(sl, id) || !sl.ClaimMatches(secret) {
+		return nil, slipNotThisRunsRefusal()
+	}
+	if !sl.Live(now) {
+		s.endPersonSlip(ctx, ps, slipID, "its runtime has passed")
+		return nil, slipNotThisRunsRefusal()
+	}
+	roster, _, err := ps.Roster(ctx)
+	if err != nil {
+		return nil, &slipRefusal{StatusUnavailable, ErrorStateUnavailable, "the workspace's roster could not be read", labelRead(readSlip, err)}
+	}
+	if !rosterListsHuman(roster, sl.OwnerAddress) {
+		return nil, slipNotThisRunsRefusal()
+	}
+	if !held {
+		s.slips.put(slipID, sl, now)
+	}
+	record := sl
+	return &slipBinding{id: slipID, owner: sl.Owner, allowed: slices.Clone(sl.Allowed), secret: secret, slip: &record}, nil
+}
+
+// endPersonSlip ends one WORKSPACE slip and forgets the body held for it:
+// endSlip over the workspace's own store (C2's Slips), which is the store the
+// record was read from. It is best-effort for endSlip's own reason.
+func (s *Server) endPersonSlip(ctx context.Context, ps personScope, id, why string) {
+	s.slips.forget(id)
+	if err := ps.Slips().End(ctx, id); err != nil {
+		s.log.Warn("credsvc: a workspace slip could not be ended", "slip", id, "why", why, "error", err)
+	}
 }
 
 // slipNotThisRunsRefusal is the one answer every refusal the RECORD makes is

@@ -403,7 +403,7 @@ func (s *svc) candidatesFromPool(t *testing.T, pool poolOfferingWithout, id Iden
 		t.Fatalf("loading the fixture's own bundle: %v", err)
 	}
 	sc := scopeWithout{Scope: installationScope{s: s.server}, offering: pool}
-	cands, _, skipped, err := s.server.candidates(withScope(context.Background(), sc), id, testRepo, s.policy.shared, b)
+	cands, _, _, skipped, err := s.server.candidates(withScope(context.Background(), sc), id, testRepo, s.policy.shared, b)
 	return cands, skipped, err
 }
 

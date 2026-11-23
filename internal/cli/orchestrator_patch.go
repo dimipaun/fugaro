@@ -25,6 +25,9 @@ const maxPatchDocumentBytes = 1 << 20
 // orchestratorPatchOptions are `fugaro orchestrator patch`'s flags.
 type orchestratorPatchOptions struct {
 	cloudOptions
+	// name is --name: which of the project's orchestrators the document lands
+	// on (D3206, D3207). Empty is the project's own.
+	name string
 	file string
 	json bool
 }
@@ -47,11 +50,14 @@ func newOrchestratorPatchCmd() *cobra.Command {
 			"session, --json, a pipe and a coding agent's environment are refused and write\n" +
 			"nothing, and no flag covers them.\n" +
 			"No flag, environment variable or field of the document makes this command the\n" +
-			"daemon or the decision agent: the daemon's bookkeeping is the daemon's.",
+			"daemon or the decision agent: the daemon's bookkeeping is the daemon's.\n\n" +
+			"--name lands the document on one of the project's named orchestrators instead of\n" +
+			"the project's own: `--name night` writes `<project>~night`'s nodes.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorPatch(cmd, &o) },
 	}
 	f := cmd.Flags()
+	addOrchestratorNameFlag(cmd, &o.name)
 	f.StringVarP(&o.file, "file", "f", "", "the patch document to apply, or - to read it from stdin")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloudOptions)
@@ -127,7 +133,7 @@ func personOnlyOps(before orchestrator.State, p orchestrator.Patch) int {
 // with both named. The names are compared as the paths they build, so a plan
 // written in two cases is one node here as it is everywhere else (PathPlan,
 // specName).
-func patchShard(lc *localcfg.Config, p orchestrator.Patch) (orchestrator.Shard, error) {
+func patchShard(id string, p orchestrator.Patch) (orchestrator.Shard, error) {
 	shard := orchestrator.ShardState
 	named, namedPath, others := "", "", 0
 	for _, op := range p.Ops {
@@ -136,7 +142,7 @@ func patchShard(lc *localcfg.Config, p orchestrator.Patch) (orchestrator.Shard, 
 			continue
 		}
 		name := op.PlanApprove.Node
-		s, path, err := patchShardOf(lc, name)
+		s, path, err := patchShardOf(id, name)
 		if err != nil {
 			return "", err
 		}
@@ -158,15 +164,14 @@ func patchShard(lc *localcfg.Config, p orchestrator.Patch) (orchestrator.Shard, 
 }
 
 // patchShardOf is one node name as the shard it is and the path that shard
-// stands at: the standing backlog's, or a plan's. The name is checked here
-// rather than by the node's construction so that a document naming something
-// that is neither is refused with the fix printed and nothing read — the same
-// refusal Apply gives an approval op, one step earlier.
-func patchShardOf(lc *localcfg.Config, name string) (orchestrator.Shard, string, error) {
-	id, err := orchestratorID(lc)
-	if err != nil {
-		return "", "", err
-	}
+// stands at, inside the orchestrator id the command resolved: the standing
+// backlog's, or a plan's. The name is checked here rather than by the node's
+// construction so that a document naming something that is neither is refused
+// with the fix printed and nothing read — the same refusal Apply gives an
+// approval op, one step earlier. The id is the command's own resolution and
+// never rebuilt here, so an approval of a named orchestrator's plan lands under
+// the id the rest of the run acts on and not under the project's own.
+func patchShardOf(id, name string) (orchestrator.Shard, string, error) {
 	if name == orchestrator.BacklogNode {
 		path, err := orchestrator.PathBacklog(id)
 		if err != nil {
@@ -424,11 +429,18 @@ func runOrchestratorPatch(cmd *cobra.Command, o *orchestratorPatchOptions) error
 	if err := requireOwnBudgetDB(ctx, lc, db, "nothing was written"); err != nil {
 		return err
 	}
-	shard, err := patchShard(lc, p)
+	// The id is resolved once, before the shard is chosen: the shard's paths are
+	// built from it (patchShardOf), the node is built from it, and it is what the
+	// run prints, so all three are one answer to which orchestrator this is.
+	id, err := orchestratorIDFor(lc, o.name)
 	if err != nil {
 		return err
 	}
-	node, err := orchestratorNodeShard(lc, db, shard)
+	shard, err := patchShard(id, p)
+	if err != nil {
+		return err
+	}
+	node, err := orchestratorNodeShard(db, id, shard)
 	if err != nil {
 		return err
 	}
@@ -458,7 +470,7 @@ func runOrchestratorPatch(cmd *cobra.Command, o *orchestratorPatchOptions) error
 	next, err := orchestrator.Apply(s, p, actor)
 	if err != nil {
 		if errors.Is(err, orchestrator.ErrStaleRev) {
-			return userErr("%v: read the state again with fugaro orchestrator state and build the patch from the revision it prints", err)
+			return userErr("%v: read the state again with %s and build the patch from the revision it prints", err, orchestratorStateCommand(o.name))
 		}
 		return userErr("%v: nothing was written", err)
 	}
@@ -473,19 +485,19 @@ func runOrchestratorPatch(cmd *cobra.Command, o *orchestratorPatchOptions) error
 	}
 	if err := node.Save(ctx, next, etag); err != nil {
 		if errors.Is(err, orchestrator.ErrStateMoved) {
-			return userErr("the state node moved since this run read it (rev %d), so the patch was not written: read the state again with fugaro orchestrator state and build the patch from the revision it prints", s.Rev)
+			return userErr("the state node moved since this run read it (rev %d), so the patch was not written: read the state again with %s and build the patch from the revision it prints", s.Rev, orchestratorStateCommand(o.name))
 		}
 		return dbErr(lc, err, true)
 	}
 	w := cmd.OutOrStdout()
 	if o.json {
 		return writeJSON(w, orchestratorPatchDoc{
-			Version: orchestratorOutputVersion, Kind: "patch", ID: lc.Name,
+			Version: orchestratorOutputVersion, Kind: "patch", ID: id,
 			Rev: next.Rev, Actor: string(actor.Class), Ops: len(p.Ops),
 		})
 	}
 	fmt.Fprintf(w, "wrote %d %s as a %s: orchestrator %s is at rev %d\n",
-		len(p.Ops), plural(len(p.Ops), "op", "ops"), actor.Class, safetext.Field(lc.Name), next.Rev)
+		len(p.Ops), plural(len(p.Ops), "op", "ops"), actor.Class, safetext.Field(id), next.Rev)
 	return nil
 }
 

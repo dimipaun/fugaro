@@ -673,8 +673,8 @@ func TestFollowUpBriefBeatsThePRTitle(t *testing.T) {
 // A pull request whose title cannot be read is not a follow-up that cannot be
 // launched: a machine holding no credential for the repository, a host that
 // fails the read, an empty title and a title that is nothing once sanitised
-// all leave the run with the empty title such a launch had before this
-// existed, and the launch succeeds.
+// all leave the run titled "Follow-up of PR #N" (never untitled), and the
+// launch succeeds.
 //
 // Mutation (return an error from newFollowUpSpec when the read fails): the
 // first three rows refuse a follow-up nobody can get past.
@@ -698,11 +698,10 @@ func TestFollowUpWithoutAReadablePRTitle(t *testing.T) {
 				tc.host(h)
 			}
 			spec := launchFollowUp(t, f, nil, "")
-			if spec.Title != "" {
-				t.Fatalf("title = %q, want none", spec.Title)
+			if spec.Title != "Follow-up of PR #7" {
+				t.Fatalf("title = %q, want the fallback that names the run: a run is never untitled", spec.Title)
 			}
-			// The follow-up is the one it always was: no title, and the run
-			// named by its own instructions.
+			// The follow-up is the one it always was, now named.
 			if spec.RunID != fuID || !spec.IsFollowUp() || spec.PR != 7 {
 				t.Fatalf("task = %+v, want the follow-up of PR 7", spec)
 			}
@@ -786,5 +785,25 @@ func TestRunTitleGatesOnAFollowUpThatTookItFromThePR(t *testing.T) {
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// A job image too old to read a title does not make a follow-up unlaunchable
+// over the name the launcher made up: the default is dropped with a note and
+// the run goes on, listed by its own instructions as before. A title a person
+// wrote is still refused there (TestRunTitleGatesOnTheImageThatKnowsIt).
+//
+// Mutation (return the gate's error for a defaulted title too): the launch is
+// refused and this test fails on the first call.
+func TestFollowUpDefaultTitleIsDroppedOnAnOldImage(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	followUpTitleStub(t).noHost = true
+	writeBuildRecord(t, f, appSlug, "web", release060)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
+		t.Fatalf("a follow-up on an old image with a defaulted title: %v", err)
+	}
+	if got := readSpec(t, f, fuID).Title; got != "" {
+		t.Fatalf("title = %q, want none: the image cannot read one", got)
 	}
 }

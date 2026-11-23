@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // The workspace's scope (WS2, R1, R5, R8, R13, R14, R17, R18, R19): one
@@ -133,7 +134,66 @@ func newWorkspaceScopeResolver(cfg WorkspaceScopeConfig) (ScopeResolver, error) 
 	if now == nil {
 		now = time.Now
 	}
-	return &workspaceResolver{w: cfg.Workspace, node: cfg.Node, meter: cfg.Meter, now: now}, nil
+	// The workspace's OWN half (C2, R3), built here and once: the configuration
+	// travels in a package-level value rather than through C1's
+	// WorkspaceScopeConfig (scope_person.go says why), and the resolver is what
+	// reads it — never a call and never a route.
+	people, err := newWorkspacePeople(PersonScopeConfigForServe, now)
+	if err != nil {
+		return nil, err
+	}
+	return &workspaceResolver{w: cfg.Workspace, node: cfg.Node, meter: cfg.Meter, now: now, people: people}, nil
+}
+
+// newWorkspacePeople builds the workspace's own half of the scope, or answers
+// nil for a deployment whose own half is not wired: a grant, a claim and a
+// personal candidate are all served out of this value, and a process that was
+// handed none of it — every installation, a workspace-mode process with no
+// roster, and every test of this file that is not about the personal half —
+// serves none of them rather than failing to start (C2's zero value is exactly
+// that state).
+//
+// **A partial configuration is refused, and that is the difference between the
+// zero value and a mistake.** Half-wired — a roster and no launcher list, a
+// slip store and no roster — is a deployment that would answer a grant it could
+// not hold anyone to, and the refusal is at the constructor rather than at the
+// first call for ErrWorkspaceConfig's own reason.
+func newWorkspacePeople(cfg PersonScopeConfig, now func() time.Time) (*workspacePeople, error) {
+	switch {
+	case cfg.Roster == nil && cfg.Launchers == nil && cfg.Slips == nil:
+		return nil, nil
+	case cfg.Roster == nil || cfg.Launchers == nil || cfg.Slips == nil:
+		return nil, fmt.Errorf("%w: the workspace's own half is wired in part, so a grant it wrote could not be held to the roster, the launcher class or the workspace's own slips", ErrWorkspaceConfig)
+	}
+	reader, err := NewPersonalReader(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("%w: the workspace's personal reader: %v", ErrWorkspaceConfig, err)
+	}
+	if reader == nil {
+		return nil, fmt.Errorf("%w: the workspace's personal reader was built as nothing, and a scope that offered no candidate would refuse every call of a slip it granted", ErrWorkspaceConfig)
+	}
+	return &workspacePeople{cfg: cfg, reader: reader, now: now}, nil
+}
+
+// workspacePeople is the workspace's own half: C2's configuration, the personal
+// reader built from it, and the two reads the workspace's grant and its call
+// check make of the workspace's own state — the roster, which is re-read as the
+// published node is, and the node's own rows.
+//
+// It lives on the RESOLVER and not on a scope for nodeFor's reason exactly:
+// the roster's minute (R3) is the deployment's staleness, and a copy per call
+// would re-read it on every call the service answers.
+type workspacePeople struct {
+	cfg    PersonScopeConfig
+	reader PersonalReader
+	now    func() time.Time
+
+	// mu guards the copy held, and it is held ACROSS the read for nodeFor's
+	// reason: two calls arriving on a stale copy would otherwise both re-read
+	// the roster.
+	mu       sync.Mutex
+	roster   *workspace.Roster
+	rosterAt time.Time
 }
 
 // workspaceResolver is the workspace's ScopeResolver: the deployment's three
@@ -150,6 +210,12 @@ type workspaceResolver struct {
 	node  WorkspaceNodeReader
 	meter *WorkspaceMeter
 	now   func() time.Time
+
+	// people is the workspace's OWN half (C2, R3), or nil for a deployment that
+	// was handed none of its configuration: it is what a grant, a claim and the
+	// check on every call under a workspace slip are answered out of, and nil is
+	// a workspace that serves none of the three (newWorkspacePeople).
+	people *workspacePeople
 
 	// mu guards held and heldAt, and it is held ACROSS the read: two calls
 	// arriving on a stale copy would otherwise both re-read the node, and the
@@ -180,6 +246,23 @@ type workspaceResolver struct {
 // could not be built for a reason that is not the caller's — which is the
 // node's own failure, and a member the node no longer names.
 func (res *workspaceResolver) Resolve(ctx context.Context, r *http.Request) (Scope, error) {
+	if r.URL.Path == SlipPath {
+		// The workspace's OWN grant (R3, D2970): asked for by a person who holds
+		// no run identity — the run it is for does not exist yet — so it is
+		// answered before the shared parse like every other route of that
+		// class, and its scope is the person half's with no identity read at
+		// all.
+		//
+		// A deployment whose own half is not wired answers the uncalled scope,
+		// which is what this route got before WC4 existed and what a
+		// workspace-mode process without a roster must go on getting: `fugaro
+		// credentials serve` refuses the route rather than serving it a grant
+		// nobody holds it to (WC14).
+		if res.people == nil {
+			return unservedWorkspaceScope(Identity{}, res.meter), nil
+		}
+		return res.personScope(Identity{}, res.meter), nil
+	}
 	if aheadOfTheSharedParse(r) {
 		return unservedWorkspaceScope(Identity{}, res.meter), nil
 	}
@@ -277,6 +360,60 @@ func (res *workspaceResolver) nodeFor(ctx context.Context) (*projectpolicy.Works
 	return node, nil
 }
 
+// rosterFor answers the workspace's own roster, re-read as the published node
+// is (R3): the copy held is served for workspaceNodeTTL and a re-read that
+// failed is REPORTED rather than served.
+//
+// **The minute is the node's own, and it is the same constant on purpose.** R3
+// asks for a roster "re-read as the node is re-read", and the two are read
+// together on the paths that read both: a person removed from the roster is
+// refused at the workspace's service within the same minute the published node
+// is re-read in, so a person's reach and their member's reach move on one clock
+// rather than two an operator would have to reason about. A failed re-read
+// drops the copy held rather than serving it, for nodeFor's reason read again:
+// a roster that cannot be re-read is not one that still lists what it said, and
+// a roster that lists somebody who has left is the very thing the re-read is
+// for (D2983's unreadable-roster rule, which the grant and the call check both
+// answer as available rather than as a refusal of the person).
+//
+// found=false is a workspace whose roster has never been written: the state the
+// first write creates, and not an empty roster and not an error. Every reader
+// above answers it as a workspace that lists nobody.
+func (res *workspaceResolver) rosterFor(ctx context.Context) (*workspace.Roster, bool, error) {
+	if res.people == nil {
+		return nil, false, nil
+	}
+	return res.people.rosterFor(ctx)
+}
+
+func (p *workspacePeople) rosterFor(ctx context.Context) (*workspace.Roster, bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.now()
+	if p.roster != nil && now.Sub(p.rosterAt) < workspaceNodeTTL {
+		return p.roster, true, nil
+	}
+	raw, found, err := p.cfg.Roster.Read(ctx)
+	if err != nil {
+		p.roster, p.rosterAt = nil, time.Time{}
+		return nil, false, err
+	}
+	if !found {
+		p.roster, p.rosterAt = nil, now
+		return nil, false, nil
+	}
+	decoded, err := workspace.DecodeRoster(raw.Raw)
+	if err != nil {
+		// A node this build cannot read is a roster it does not act on: the
+		// copy held is dropped and the failure is reported, exactly as a read
+		// that failed is (D2983).
+		p.roster, p.rosterAt = nil, time.Time{}
+		return nil, false, err
+	}
+	p.roster, p.rosterAt = decoded, now
+	return decoded, true, nil
+}
+
 // scopeFor builds the scope of a verified member's call over the node.
 //
 // The member's own database, the account's repositories and the pool's
@@ -294,8 +431,9 @@ func (res *workspaceResolver) scopeFor(call MemberCall, node *projectpolicy.Work
 	}
 	repos := workspaceAccountRepos(node, call)
 	return workspaceScope{
-		id:    call.Identity,
-		meter: res.meter,
+		id:     call.Identity,
+		meter:  res.meter,
+		person: res.personHalf(),
 		readers: workspaceReaders{
 			policy:   RTDBPolicy{DB: db},
 			kills:    workspaceKills{workspace: res.w.Kills(), member: db},
@@ -455,6 +593,13 @@ type workspaceScope struct {
 	// the scope this deployment exists to put in front of it. An unserved scope
 	// therefore refuses every path.
 	unserved bool
+	// person is the workspace's OWN half of this call (C2, R3), or nil for a
+	// call of a deployment whose own half is not wired. It is what Persons hands
+	// out and what the grant, the claim and the check on every call under a
+	// workspace slip are answered out of, and it is a field of the scope rather
+	// than of the readers because it is not one member's database's answer: it
+	// is the workspace's own.
+	person *workspacePersonScope
 }
 
 // unservedWorkspaceScope is the scope a call gets that the workspace does not
@@ -549,16 +694,41 @@ func (sc workspaceScope) Serves(path string) bool {
 	if sc.unserved {
 		return false
 	}
-	return servesWorkspaceRoute(path)
+	if !servesWorkspaceRoute(path) {
+		return false
+	}
+	switch path {
+	case SlipPath, SlipClaimPath:
+		// The two routes of the workspace's OWN half are served only by a
+		// deployment that has that half wired (R3): a workspace-mode process
+		// with no roster serves neither, and its refusal is the audited "this
+		// deployment does not serve the route" every other unserved route gets
+		// — which is exactly what it answered before WC4 existed, and what WC14
+		// answers for a process that was handed no roster.
+		_, serves := sc.Persons()
+		return serves
+	}
+	return true
 }
 
-// AcceptsSlip answers false: a call to the workspace's service carries the
-// job's identity and the run's token and NOTHING else of the member's — no slip
-// id, no claim secret, no auth-mode or account header — so a call that presents
-// a slip is refused rather than served (R18, F40). A call that presents none is
-// unaffected: the slip-less path is what this service served before the slips
-// existed.
-func (sc workspaceScope) AcceptsSlip() bool { return false }
+// AcceptsSlip answers whether a call to this service carries a slip at all, and
+// the answer is the workspace's own half: a deployment whose half is wired
+// serves the call under the WORKSPACE's slip (R3, R4, D2970), and one whose half
+// is not serves the slip-less path it always served.
+//
+// **What it is NOT is a licence for the member's slip.** R18 stands: a call to
+// the workspace's service carries the job's identity and the run's token and
+// NOTHING of the member's — no member slip id, no member claim secret, no
+// auth-mode or account header — so a call presenting a member's slip is refused
+// rather than served (F40), and the two slips are told apart by their HEADERS
+// and by nothing else (F13: the workspace slip travels under C1's
+// PersonSlipHeader, the member's under HeaderSlip). The gate asks both
+// questions, in that order: whether a slip this service accepts is presented,
+// and whether the one it carries is this service's own.
+func (sc workspaceScope) AcceptsSlip() bool {
+	_, serves := sc.Persons()
+	return serves
+}
 
 // servesWorkspaceRoute is R14's route set, and it is one function because the
 // front door's gate and this file's tests have to agree about it.
@@ -571,6 +741,21 @@ func servesWorkspaceRoute(path string) bool {
 	}
 	switch path {
 	case MessagesPath, CountTokensPath, MintPath, ContextTokenPath, WorkspaceKeepWarmPath:
+		return true
+	case SlipPath, SlipClaimPath:
+		// The workspace's OWN grant and claim (WC4, R3, D2970). They are in R14's
+		// set because they are the two routes a workspace-mode deployment serves
+		// for ITSELF rather than on a member's behalf: a grant is asked for over
+		// the workspace's own paid entries and a claim is the run that is to
+		// draw on them taking its slip (WC7, WC8), so a workspace that refused
+		// them would refuse the whole personal half — and the member's own
+		// service is not the answer for either, because the slip the workspace
+		// grants is one no member's admins can forge (F13).
+		//
+		// A deployment whose own half is not wired never reaches this set for
+		// them: the resolver answers SlipPath with the uncalled scope, and the
+		// claim's scope carries no half, so Serves is asked of a scope that
+		// refuses the path anyway (Resolve, Persons).
 		return true
 	}
 	return false
@@ -803,22 +988,8 @@ func workspaceNodeAdmits(node *projectpolicy.WorkspaceCredentials, call MemberCa
 	if node == nil {
 		return false
 	}
-	account, ok := foldEmail(call.Account)
-	if !ok {
-		return false
-	}
-	for _, m := range node.Members {
-		if m.Project != call.Member.Project {
-			continue
-		}
-		for _, held := range m.JobAccounts {
-			if folded, ok := foldEmail(held); ok && folded == account {
-				return true
-			}
-		}
-		return false
-	}
-	return false
+	m, _, found := workspaceAccountMember(node, call.Account)
+	return found && m.Project == call.Member.Project
 }
 
 // workspaceAccountRepos is the repository table of one verified member's call:
@@ -835,31 +1006,11 @@ func workspaceNodeAdmits(node *projectpolicy.WorkspaceCredentials, call MemberCa
 // that names a repository no repository can be is a row that neither matches nor
 // stops the others from being asked.
 func workspaceAccountRepos(node *projectpolicy.WorkspaceCredentials, call MemberCall) map[string]string {
-	account, ok := foldEmail(call.Account)
-	if !ok || node == nil {
+	m, repos, found := workspaceAccountMember(node, call.Account)
+	if !found || m.Project != call.Member.Project {
 		return map[string]string{}
 	}
-	for _, m := range node.Members {
-		if m.Project != call.Member.Project {
-			continue
-		}
-		out := map[string]string{}
-		for _, ja := range m.JobAccountRepos {
-			folded, ok := foldEmail(ja.Account)
-			if !ok || folded != account {
-				continue
-			}
-			for _, canonical := range ja.Repos {
-				slug, ok := slugOfCanonical(canonical)
-				if !ok {
-					continue
-				}
-				out[slug] = canonical
-			}
-		}
-		return out
-	}
-	return map[string]string{}
+	return repos
 }
 
 // slugOfCanonical is the slug a canonical repository name hashes to, which is
@@ -868,6 +1019,167 @@ func workspaceAccountRepos(node *projectpolicy.WorkspaceCredentials, call Member
 // general — a slug cannot be turned back into a name (F18) — so the direction is
 // written where it is used and the search that needs the other one is
 // canonicalOfSlug's.
+// workspaceAccountMember answers the member whose row holds one job account,
+// and the account's own repository table, keyed by the slug a run identity
+// carries. It is the one place the node's account lookup is made, so the two
+// readers above cannot come to different answers about whose account an address
+// is: one account belongs to one member of one workspace (the node's Validate
+// refuses one in two rows), and a lookup that walked rows twice could answer a
+// second member's list for the same caller.
+//
+// The account is matched folded, by foldEmail — the launcher class's own fold —
+// because a node is operator text and an address is compared in one shape.
+// found=false is an account no row names, which admits nobody and holds no
+// repository.
+func workspaceAccountMember(node *projectpolicy.WorkspaceCredentials, account string) (projectpolicy.WorkspaceCredentialMember, map[string]string, bool) {
+	folded, ok := foldEmail(account)
+	if !ok || node == nil {
+		return projectpolicy.WorkspaceCredentialMember{}, nil, false
+	}
+	for _, m := range node.Members {
+		for _, held := range m.JobAccounts {
+			if heldFolded, ok := foldEmail(held); !ok || heldFolded != folded {
+				continue
+			}
+			repos := map[string]string{}
+			for _, ja := range m.JobAccountRepos {
+				jaFolded, ok := foldEmail(ja.Account)
+				if !ok || jaFolded != folded {
+					continue
+				}
+				for _, canonical := range ja.Repos {
+					if slug, ok := slugOfCanonical(canonical); ok {
+						repos[slug] = canonical
+					}
+				}
+			}
+			return m, repos, true
+		}
+	}
+	return projectpolicy.WorkspaceCredentialMember{}, nil, false
+}
+
+// personScope is the workspace's own half as a ROUTE reaches it: C2's
+// PersonScope — the four questions a route of the personal half asks — with the
+// two reads the workspace's grant and its call check make of the workspace's own
+// state beside it.
+//
+// **It is reached from the scope and from no other place, and a scope that
+// serves no grant answers none of it** (Persons): C2's rule that PersonScope "is
+// implemented by the workspace's scope and by no other" is kept as a property of
+// what a scope hands out rather than as four methods on every scope, because a
+// member's call and an installation's have no person half at all and a method
+// that answered one would be a scope that could serve one.
+type personScope interface {
+	PersonScope
+	// Roster answers the workspace's own roster, re-read as the published node
+	// is (R3), and whether it is there. It is what the grant reads to admit a
+	// `human` and to hold the person to the members they launch for, and what
+	// the check on every call under a slip reads to say the person is still on
+	// it.
+	Roster(ctx context.Context) (*workspace.Roster, bool, error)
+	// Member answers the node's row for one job service account and the
+	// repositories that account is a job of (R6, D2992), read from the node the
+	// resolver has admitted callers against rather than from a second copy.
+	Member(ctx context.Context, account string) (*projectpolicy.WorkspaceCredentialMember, map[string]string, error)
+}
+
+// workspacePersonScope is C2's implementation: the workspace's own half for one
+// call, over the resolver's people value.
+type workspacePersonScope struct {
+	people *workspacePeople
+	res    *workspaceResolver
+}
+
+var _ PersonScope = (*workspacePersonScope)(nil)
+var _ personScope = (*workspacePersonScope)(nil)
+
+func (p *workspacePersonScope) Launchers() LauncherVerifier { return p.people.cfg.Launchers }
+
+func (p *workspacePersonScope) Slips() creds.SlipStore { return p.people.cfg.Slips }
+
+// OwnsSlip answers whether a presented slip id is this service's own (R4, F13),
+// and it is asked of the workspace's OWN store: found-of-its-own-store is the
+// mechanism C2 leaves to this side, and it is the whole of what R4's fence can
+// mean here — a workspace slip is one the workspace's service wrote into the
+// workspace's database, so a member's slip, another workspace's, and this
+// workspace's own slip that has since been ended are all one answer: not this
+// service's.
+//
+// A read that failed is an error and never a false, and the call refuses on it
+// (C2's own rule): an id whose ownership could not be established is not one
+// this service may serve under. The read is asked BEFORE the record is read for
+// its binding, its claim or its allowance, which is why it is its own question
+// and not a by-product of Slip.
+func (p *workspacePersonScope) OwnsSlip(ctx context.Context, id string) (bool, error) {
+	if _, found, err := p.people.cfg.Slips.Slip(ctx, id); err != nil {
+		return false, err
+	} else if !found {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (p *workspacePersonScope) Personal() PersonalReader { return p.people.reader }
+
+func (p *workspacePersonScope) Roster(ctx context.Context) (*workspace.Roster, bool, error) {
+	return p.res.rosterFor(ctx)
+}
+
+// Member answers the node's row for one account. The node is the resolver's
+// cached copy (nodeFor), so the row a grant is held to is the row the workspace
+// has admitted callers against within its own minute — one copy, and not a
+// second read that could disagree with it.
+func (p *workspacePersonScope) Member(ctx context.Context, account string) (*projectpolicy.WorkspaceCredentialMember, map[string]string, error) {
+	node, err := p.res.nodeFor(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	m, repos, found := workspaceAccountMember(node, account)
+	if !found {
+		return nil, nil, nil
+	}
+	return &m, repos, nil
+}
+
+// Persons answers the workspace's own half of this scope, and whether this scope
+// serves one at all. A scope built for a deployment whose own half is not wired,
+// and the uncalled scope of a route nobody's call reached, answer false — which
+// is C2's "refuses where the scope does not implement it" read at the one place
+// a route asks.
+func (sc workspaceScope) Persons() (personScope, bool) {
+	if sc.person == nil || sc.unserved {
+		return nil, false
+	}
+	return sc.person, true
+}
+
+// personScopeOf answers the workspace's own half of one call's scope, for the
+// routes of the personal half (server.go's SlipPath branch, the claim's, and
+// the check every call under a slip is admitted by).
+func personScopeOf(sc Scope) (personScope, bool) {
+	withPersons, ok := sc.(interface{ Persons() (personScope, bool) })
+	if !ok {
+		return nil, false
+	}
+	return withPersons.Persons()
+}
+
+// personScope builds the scope of one call of the personal half: the half's own
+// reads, and the identity and address a call that verified a person carries.
+func (res *workspaceResolver) personScope(id Identity, meter *WorkspaceMeter) workspaceScope {
+	return workspaceScope{id: id, meter: meter, person: res.personHalf()}
+}
+
+// personHalf is the workspace's own half as a scope carries it, or nil for a
+// deployment whose own half is not wired.
+func (res *workspaceResolver) personHalf() *workspacePersonScope {
+	if res.people == nil {
+		return nil
+	}
+	return &workspacePersonScope{people: res.people, res: res}
+}
+
 func slugOfCanonical(canonical string) (string, bool) {
 	provider, repo, ok := strings.Cut(canonical, "/")
 	if !ok || provider == "" || repo == "" {

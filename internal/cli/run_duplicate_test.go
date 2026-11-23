@@ -10,12 +10,15 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -611,5 +614,48 @@ func TestRunDuplicateIgnoresItsOwnRunID(t *testing.T) {
 	}
 	if n := len(f.run.Executions()); n != 1 {
 		t.Fatalf("%d executions, want the first launch's one", n)
+	}
+}
+
+// TestRunPlanTaskLaunchReadsNoExecutionPerRun: a launch with --plan-task reads
+// the history to find a duplicate, and what it asks the compute platform must
+// not grow with that history. Every run whose execution the platform has since
+// deleted used to cost a request of its own, which on a 90-day window was
+// thousands per launch, against a read quota the launches themselves share.
+//
+// Mutation caught: following each run the executions listing lacks with a read
+// of its own.
+func TestRunPlanTaskLaunchReadsNoExecutionPerRun(t *testing.T) {
+	f := duplicateRig(t)
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	const history = 60
+	at := time.Now().Add(-48 * time.Hour)
+	for i := range history {
+		id := at.Add(time.Duration(i)*time.Minute).Format("20060102-150405") + fmt.Sprintf("-%04x", i)
+		s := runstore.Open(b, appSlug, id)
+		if err := s.CreateTask(ctx, firstRunSpec(id)); err != nil {
+			t.Fatal(err)
+		}
+		gone := backend.ExecID{GCPProject: "proj-1234", Region: "us-east5", Job: gcp.JobName(appSlug, "web"), Name: fmt.Sprintf("gone-%04x", i)}.String()
+		if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Execution: gone, LaunchedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature"); err != nil {
+		t.Fatalf("launch: %v (%s)", err, errOut)
+	}
+	gets := 0
+	for _, r := range f.run.Requests() {
+		if r.Method == "GET" && strings.Contains(r.Path, "/executions/") {
+			gets++
+		}
+	}
+	if gets != 0 {
+		t.Fatalf("a launch over %d past runs read %d executions one by one, want none: the cost of a launch must not grow with the history", history, gets)
 	}
 }

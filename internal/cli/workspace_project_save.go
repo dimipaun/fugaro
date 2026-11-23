@@ -41,7 +41,7 @@ package cli
 //
 // The member list is the owner's own member table (D2821), which is the table
 // in the config of the project the workspace is NAMED AFTER -- the same file
-// `workspace member add` writes and the same document the record is published
+// `workspace project add` writes and the same document the record is published
 // from -- and each member's Firebase project is read beside its name, because a
 // member's two projects travel together on every call that reaches one (F2,
 // R10). An entry is named by the project name the table keys it by; a save by
@@ -107,7 +107,7 @@ pushed. The writer refuses a public repository, because a snapshot carries the
 member's addresses, and names the --repo override that designates another one.
 
 The members are the ones the member table of this workspace's own project
-declares -- the file fugaro workspace member add writes -- and each is saved
+declares -- the file fugaro workspace project add writes -- and each is saved
 under its own name. ` + projectSaveAuditFlag + ` saves the workspace's audit trail, which is
 not any member's state, so it takes no project.
 
@@ -190,7 +190,7 @@ func runWorkspaceProjectSave(cmd *cobra.Command, deps workspaceProjectSaveDeps, 
 
 // workspaceSaveTargets reads the workspace's name and its member table from the
 // owner's own config: the name is the config's own, which is what makes this
-// read and `workspace member add`'s write agree about which workspace a member
+// read and `workspace project add`'s write agree about which workspace a member
 // belongs to, and the table is D2821's, on the machine that holds it.
 //
 // A config that declares none of the owner's half is not a workspace's own and
@@ -204,7 +204,7 @@ func workspaceSaveTargets(lc *localcfg.Config) (string, []workspace.MemberTarget
 		return "", nil, userErr("no project is selected, so there is no workspace to save: the members of a workspace are declared in the config of the project the workspace is named after, and fugaro workspace project save is run from it")
 	}
 	if lc.WorkspaceMembers == nil && lc.WorkspaceCap == nil && lc.WorkspaceShared == nil {
-		return "", nil, userErr("project %s declares no member table, no cap and no shared credential, so it is not a workspace's own project: the members of a workspace are declared in the config of the project the workspace is named after, by fugaro workspace member add (spec §5); a member's own machine holds that file's other half instead", lc.Name)
+		return "", nil, userErr("project %s declares no member table, no cap and no shared credential, so it is not a workspace's own project: the members of a workspace are declared in the config of the project the workspace is named after, by fugaro workspace project add (spec §5); a member's own machine holds that file's other half instead", lc.Name)
 	}
 	table := workspaceTable(lc)
 	members := make([]workspace.MemberTarget, 0, len(table))
