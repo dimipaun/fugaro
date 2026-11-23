@@ -673,8 +673,8 @@ func TestFollowUpBriefBeatsThePRTitle(t *testing.T) {
 // A pull request whose title cannot be read is not a follow-up that cannot be
 // launched: a machine holding no credential for the repository, a host that
 // fails the read, an empty title and a title that is nothing once sanitised
-// all leave the run with the empty title such a launch had before this
-// existed, and the launch succeeds.
+// all leave the run titled "Follow-up of PR #N" (never untitled), and the
+// launch succeeds.
 //
 // Mutation (return an error from newFollowUpSpec when the read fails): the
 // first three rows refuse a follow-up nobody can get past.
@@ -698,11 +698,10 @@ func TestFollowUpWithoutAReadablePRTitle(t *testing.T) {
 				tc.host(h)
 			}
 			spec := launchFollowUp(t, f, nil, "")
-			if spec.Title != "" {
-				t.Fatalf("title = %q, want none", spec.Title)
+			if spec.Title != "Follow-up of PR #7" {
+				t.Fatalf("title = %q, want the fallback that names the run: a run is never untitled", spec.Title)
 			}
-			// The follow-up is the one it always was: no title, and the run
-			// named by its own instructions.
+			// The follow-up is the one it always was, now named.
 			if spec.RunID != fuID || !spec.IsFollowUp() || spec.PR != 7 {
 				t.Fatalf("task = %+v, want the follow-up of PR 7", spec)
 			}

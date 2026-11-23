@@ -1018,6 +1018,15 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 	title := cmp.Or(o.title, c.Title)
 	if title == "" && text == "" {
 		title = followUpPRTitle(ctx, env, repo, o.pr[0], warn)
+		if title == "" {
+			// A run is never listed by "-": the host could not be read (no
+			// GH_TOKEN or FUGARO_GIT_TOKEN on this machine, a slow forge), so
+			// the run is named by what it is rather than by nothing.
+			title = fmt.Sprintf("Follow-up of PR #%d", o.pr[0])
+			if warn != nil {
+				fmt.Fprintf(warn, "note: the title of PR #%d could not be read from its host, so this run is titled %q; pass --title to name it\n", o.pr[0], title)
+			}
+		}
 	}
 	// The follow-up's plan task is the flag's alone, never the run's it
 	// continues: a follow-up is joined to the graph through its pull request
