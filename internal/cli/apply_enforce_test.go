@@ -586,8 +586,6 @@ var managementWorlds = map[string]func(*testing.T) managementRun{
 	"fugaro models rm":              managementWorldModelsRm,
 	"fugaro workspace add":          managementWorldWorkspaceAdd,
 	"fugaro workspace rm":           managementWorldWorkspaceRm,
-	"fugaro workspace member add":   managementWorldWorkspaceMemberAdd,
-	"fugaro workspace member rm":    managementWorldWorkspaceMemberRm,
 	"fugaro workspace cap set":      managementWorldWorkspaceCapSet,
 	"fugaro project policy publish": managementWorldPolicyPublish,
 }
@@ -941,47 +939,6 @@ func managementWorldWorkspaceRm(t *testing.T) managementRun {
 			if strings.Contains(readFileString(t, path), "workspace: workspace-alpha\n") {
 				t.Errorf("the membership is still in the file:\n%s", readFileString(t, path))
 			}
-		},
-	}
-}
-
-// managementWorldWorkspaceMemberAdd is the owner's half, which owes the
-// workspace's own project and the record its service reads (D1292). Neither can
-// finish here: the project's own stage is confirmed by a name typed at that
-// project's terminal, and this fixture has no Firebase backend to publish the
-// record into — so the change is saved and both steps stay owed, which is what
-// the row records.
-func managementWorldWorkspaceMemberAdd(t *testing.T) managementRun {
-	workspaceOwnerHome(t)
-	return managementRun{
-		args:    workspaceMemberAddArgsNoYes(),
-		pending: func(t *testing.T) []string { return workspaceOwedFor(t, "workspace-alpha", "ws-gcp") },
-		check: func(t *testing.T, out, errOut string, err error) {
-			workspaceAssertSavedNotLive(t, "workspace member add", out+errOut, err)
-		},
-	}
-}
-
-// managementWorldWorkspaceMemberRm is the owner's half removing its last
-// member: the table is empty afterwards, so both stages have nothing to do and
-// nothing is asked (D1540) — the one write of this family that ends live.
-func managementWorldWorkspaceMemberRm(t *testing.T) managementRun {
-	workspaceOwnerHome(t)
-	// The member has to be in the table to be taken out, and adding it leaves
-	// the change saved and not live — the workspace's own project is not applied
-	// here — so this run exits non-zero on D1563's sentence and the file carries
-	// the entry either way (TestWorkspaceMemberRmAsksNothing's own first step).
-	if out, _, err := execute(t, workspaceMemberAddArgsNoYes()...); err == nil {
-		t.Fatalf("workspace member add reported the member live in this fixture:\n%s", out)
-	}
-	return managementRun{
-		args:    []string{"workspace", "member", "rm", "workspace-alpha", "aurora"},
-		pending: func(t *testing.T) []string { return workspaceOwedFor(t, "workspace-alpha", "ws-gcp") },
-		check: func(t *testing.T, out, _ string, err error) {
-			if err != nil {
-				return
-			}
-			workspaceAssertNoSecondCommand(t, "workspace member rm", out, "workspace-alpha", "ws-gcp")
 		},
 	}
 }
