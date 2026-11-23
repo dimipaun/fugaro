@@ -3,10 +3,12 @@
 A static audit of `origin/main` at `3de72b780`, 2026-11-22: five read-only code surveys, one per
 group of surfaces. Each cited symbol was then re-checked by hand. Rows RC98–RC105, which the
 check scripts' reviews found, were checked against `1d4b59344` on 2026-11-23 (reconciliation F20).
-Locations name a path and a symbol, never a line, because lines drift. The live columns (data layout on a real project,
-runtime trace, IAM a member really holds) are **static** until owner Checks 890–892 run
-([implementation-plan.md](implementation-plan.md)). Where [reconciliation.md](reconciliation.md)
-and this report disagree, the reconciliation wins.
+Rows RC106 and RC107, which the live checks found, were checked against `d8f1ae007` on 2026-11-23
+(reconciliation F21). Locations name a path and a symbol, never a line, because lines drift. The live
+columns (data layout on a real project, runtime trace, IAM a member really holds) come from the
+owner's runs of Checks 890–892 on the project `fugaro` on 2026-11-23; §1's "Live result" says what
+each check saw. Where [reconciliation.md](reconciliation.md) and this report disagree, the
+reconciliation wins.
 
 **Legend**
 
@@ -30,14 +32,14 @@ and this report disagree, the reconciliation wins.
 | --- | --- | --- | --- | --- | --- |
 | 1 CLI commands | 3 | 1 | 7 | 1 | 12 |
 | 2 Repo-local config | 3 | 17 | 2 | 5 | 27 |
-| 3–4 Data model, GCS | 7 | 2 | 15 | 1 | 25 |
-| 5 Terraform | 5 | 0 | 1 | 2 | 8 |
+| 3–4 Data model, GCS | 7 | 2 | 16 | 1 | 26 |
+| 5 Terraform | 6 | 0 | 1 | 2 | 9 |
 | 6 Secrets | 4 | 0 | 0 | 1 | 5 |
 | 7–8 Images, jobs | 7 | 0 | 0 | 0 | 7 |
 | 10 Console, mobile, MCP | 0 | 1 | 7 | 0 | 8 |
 | 11 Update and writers | 2 | 0 | 2 | 2 | 6 |
 | 12 Skills and docs | 7 | 0 | 0 | 0 | 7 |
-| **Total** | **38** | **21** | **34** | **12** | **105** |
+| **Total** | **39** | **21** | **35** | **12** | **107** |
 
 Benign counts 21 rows: the 19 candidates B1–B19 of §3, plus two writers of repo-level config
 (RC9, RC80) that follow whatever the owner keeps. RC40 and RC41 are admin-written yet Benign;
@@ -45,6 +47,83 @@ reconciliation A5 says why.
 
 Scope item 9 (caps, rigor, recipes, routing) has no rows of its own: its rows sit under surfaces 2
 and 3, where the setting lives.
+
+### Live result (2026-11-23, project `fugaro`)
+
+The owner ran Checks 890–892 on `fugaro` (GCP `fugaro-dev`). Each read only. They print keys,
+stage lines, job names and IAM members, never a value, and so does this section.
+
+**Check 890, the data layout: FAIL on one path, now a row.** Every repo-keyed path it listed is a
+row of this report except `creds/current/<slug>/<run>`, which is RC106 now (#3700 named it in the
+script). What was seen and what was not:
+
+- **Seen live**: RC40 (one slug), RC41 (one), RC42 (`runs/`, `outcomes/<day>`,
+  `spend/<day>/runs`), RC43, RC44 (two), RC45 (four), RC48 (`creds/repoauth` only), RC49, RC50
+  (`spendDaily` only), RC52 (run records and `pr-index`), RC53 (`cache`, `locks`, `tokens`), RC54,
+  RC55, RC56 (three slugs), RC99 (four), RC100 (one), RC106 (one).
+- **Not seen (no data on `fugaro`)**: RC42 `agents/`, RC46, RC47, RC48 `creds/repoaccess`, RC50
+  `runIndex` (Firestore holds only `meta` and `spendDaily`), RC53 `reports/`, RC101, RC102 and
+  RC103 (`creds/` holds only `current`, `leases`, `repoauth`, `tokens` and `workflowsecrets`).
+- **Retired paths still hold data.** RC54's derived image records (`builds/<slug>/go`, `web`), a
+  Dead row, are there, and so are RC56's layer copies. A lift that retires them has data to
+  remove.
+- **The catalog's two homes both exist.** The copied definitions sit at the project-level
+  `builds/catalog/<entry>/` (`gcp.CatalogBucketPrefix`); the records still sit under the building
+  repo's slug (RC55). L3 moves only the records.
+- **Stale per-repo data.** Only two slugs have runs (`runs/` in RTDB and GCS). `creds/repoauth`
+  and `creds/workflowsecrets` hold four slugs each, among them `dimi-bmb-billmybanktests-…`, which
+  has no runs, no builds and no checkout. `config/policy/repos` holds four slugs, among them two
+  different slugs for `dimipaun/fugarosandbox` and one for `dimipaun/fugaro` that its runs do not
+  use. `task.Slug` hashes the provider with the name, so two slugs for one name are two providers
+  (or two spellings): the case RC51 says `image_map` cannot tell apart. `project repos rm` leaves
+  the `creds/` records behind (reconciliation F21).
+- **Volume.** One repo holds 4,715 run prefixes in GCS, 144 token prefixes and 23 locks. The other
+  holds 78 runs.
+
+**Check 891, where `update` reads the working directory: PASS.** It planned from an empty
+directory and from three checkouts (`dimipaun/fugaro`, `edgeappinc/fugarosandbox`,
+`dimipaun/fugarosandbox`). Fifteen of nineteen stages were the same everywhere. Four differed, and
+each is a §4 blocker:
+
+- `secrets` (RC98): skipped outside a checkout; inside, done, with a different detail per
+  checkout. Two name a per-repo command for the model provider's key
+  (`fugaro secrets set … --repo <repo>`, one entry per repository); the third says its repo-level
+  secret is ignored (D2313).
+- `repository` (RC8, RC13, RC17, RC39, RC48, RC60, RC64, RC70, RC71, RC77): skipped outside a
+  checkout; inside, "onboards `<repo>`; plans when applied" in each. That is the stage's plain
+  to-do line (`init_repo_stage.go` `Check`): `--plan-only` never plans the per-repo root, so the
+  check cannot say whether a root has drift.
+- `checkout` (RC73, RC74): skipped outside; "up to date: cloud" inside.
+- `images` and `policy` (RC72, RC75) were the same everywhere on `fugaro`: nothing was stale, and
+  the policy was already published. Their "varies" stays from the code. So does `plugin` (RC38):
+  none of the three checkouts holds a pin.
+
+Both repos' newest launches went to the repo's own job (RC76): `fugaro-dimipaun-fugaro-go-…` and
+`fugaro-edgeappinc-fugarosandbox-web-…`. None went to a shared `fugaro-p-…` job. **Shared jobs are
+not in use on `fugaro`**, so every L2 blocker is live there today.
+
+**Check 892, the IAM: PASS.** The grants node holds one grant: one human principal, an admin.
+There is no operator and no viewer, so no member's IAM could be read.
+
+- The admin maps as the legend says. It is a node admin and the local `terraform.admins` names
+  exactly it (TF-admin). It holds `roles/firebasedatabase.admin` and `roles/owner` (DB-admin). It
+  holds the launcher, build-submitter and `batch.jobsEditor` roles, and `iam.serviceAccountUser` on
+  all ten per-repo build and job accounts (operator).
+- Ten per-repo accounts exist: four build accounts and six job accounts. Three of the ten are for
+  `dimi-bmb-billmybanktests`, the repo with no runs.
+- The project policy still binds `roles/batch.agentReporter` and `roles/logging.logWriter` to a
+  **deleted** per-repo job account (`deleted:serviceaccount:fugaro-dimipaun-fugar-70110b74…`). Three
+  live job accounts hold the same pair and three do not. The pair comes from the Batch compute root,
+  which only `setup --provision-batch` applies. That is RC107.
+- The services' own grants match the service rows: `fugaro-credentials` holds the custom
+  `fugaroCredentialsDatabase` role (the writer of RC100 and RC106).
+
+**Cells confirmed.** Perms: TF-admin, DB-admin and operator as the legend defines them (892, for
+the one admin; the operator-only case has no principal on `fugaro`). Update: `varies` for RC98,
+and `blocks` for RC8, RC13, RC17, RC39, RC48, RC60, RC64, RC70, RC71, RC73, RC74 and RC77 (891).
+Perms `operator` and Update `none` for RC76 (891's launches). No cell was corrected. Rows the checks cannot reach keep their static cells: the `run
+token` and `repo-write` rows, `local`, and the two steps of §4 item 4 that are not stages (RC104,
+RC105).
 
 ## 2. Inventory
 
@@ -129,6 +208,7 @@ and 3, where the setting lives.
 | RC101 | RTDB `creds/review-signs/<slug>/<run>` (`internal/credsvc/verdict.go` `pathReviewSigns`) | one run's one-signature mark on its verdict, written by the service. Identity, as RC100 | Identity | service | none | keep | none | S | S |
 | RC102 | RTDB `creds/issuance/<slug>/<run>` (`internal/identitywire/wire.go` `pathRecords`) | the record of the ticket the service issued one run. Identity, as RC100 | Identity | service | none | keep | none | S | S |
 | RC103 | RTDB `creds/buildpairs/<identity>/<build>` (`internal/creds/buildpairs.go` `pathBuildPairs`) | keyed by build identity, not by slug; each record names the repos the build may fetch, by canonical name. Identity: the names are the fence, and the key follows whatever build identity L3 leaves | Identity | service | none | keep | none (records expire) | S | S |
+| RC106 | RTDB `creds/current/<slug>/<run>` (`internal/creds/state.go` `pathCurrent`, `PathCurrent`) | the credential one run is on, written by the credentials service with the run's lease as one patch (`SetPlacement`) and removed with it when the run has ended (`internal/credsvc/server.go` `forgetRun`). Identity, as RC100. Found by Check 890 | Identity | service | none | keep | none | S | S |
 
 ### Surface 5: Terraform
 
@@ -142,6 +222,7 @@ and 3, where the setting lives.
 | RC65 | `modules/installation/catalogcheck.tf`, `build_identity.tf` (`for_each` by slug) | catalog entries assigned to repos | Infra | TF-admin | blocks | one project build identity (L3) | re-key per entry | M | M |
 | RC66 | `modules/installation/coordinator.tf` `var.coordinator.repos` | a list in the job env | Identity | TF-admin | none | keep | none | S | S |
 | RC67 | `modules/project/iam.tf` repo grant ("until the per-repository jobs are dropped") | a transitional grant | Infra | TF-admin | none | remove after M2 | Owned: M2 follow-up | S | S |
+| RC107 | `roots/compute`, `modules/compute/iam.tf` `run_agent_reporter`, `run_log_writer` (`for_each = var.run_accounts`, from `infra.JobRunAccounts`) | the Batch compute root grants every per-repo job account `roles/batch.agentReporter` and `roles/logging.logWriter` on the project. The list is a snapshot of the job accounts the repo roots had made when `setup --provision-batch` last ran; `update` never runs that stage (`init_stages.go`). Found by Check 892: three of fugaro's six job accounts hold the pair, three do not, and a deleted account's pair remains | Infra | TF-admin | none (a separate command, `setup --provision-batch`) | the shared jobs' accounts (L2) | re-derive with L2 | M | M |
 
 No `google_cloudbuild_trigger` exists. The only per-repo Scheduler is the check job in RC63.
 
@@ -240,7 +321,9 @@ undone, or do differently depending on the directory it runs in?
 
 1. **The per-repo root of every repository not on a shared job** (RC8, RC60, RC64, RC34, RC77),
    with its per-slug bucket conditions (RC57) and the per-repo infra facts in the owner's local
-   config (RC39). Lift L2, owned by shared-jobs M2, and L5 for RC39.
+   config (RC39). Lift L2, owned by shared-jobs M2, and L5 for RC39. The Batch compute root's
+   grants to those jobs' accounts (RC107) are not `update`'s at all: only
+   `setup --provision-batch` applies them.
 2. **Catalog entries owned by another repository** (RC72, RC6, RC55, RC61, RC65). Lift L3.
 3. **Credential records written from the checkout's auth** (RC17, RC48). Lift L4, owned by MCR.
 4. **Stages that read the working directory**: base kinds and the default catalog entry (RC75),
@@ -311,7 +394,7 @@ own spec when the owner picks it (D3236); "owned" items need none.
 | # | Lift | Rows | Owner | Waits on |
 | --- | --- | --- | --- | --- |
 | L1 | Required-version stamp: `update` writes the minimum CLI release beside `config/policy/shared`; the root pre-run refuses project commands below it, naming `brew upgrade` and `fugaro update` | §6 | new spec | — (first, because every "migrate once, then reject" below needs old CLIs fenced) |
-| L2 | Retire the per-repo roots and jobs | RC7, RC8, RC34, RC60, RC64, RC67, RC76–RC78, RC57 | shared-jobs-default M2 | Check 580 |
+| L2 | Retire the per-repo roots and jobs | RC7, RC8, RC34, RC60, RC64, RC67, RC76–RC78, RC57, RC107 | shared-jobs-default M2 (RC107 is not in M2's brief: it needs a line in M2's follow-up or its own task) | Check 580 |
 | L3 | One project build identity; catalog records and leases keyed by entry | RC6, RC44, RC55, RC56, RC61, RC65, RC72, RC82 | new spec (D3232) | L2 |
 | L4 | Credential type out of the repo | RC17, RC47, RC48 | model-credentials-routing MG1–MG6, X4 | its plan edges |
 | L4b | Bitbucket tokens at project or workspace level, not per repository | RC69 | bitbucket-token-types | its plan |
