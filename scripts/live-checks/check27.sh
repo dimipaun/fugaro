@@ -17,7 +17,10 @@
 #     observe --firebase-project <project> --link-billing <account>
 #     --bake-repos --rigor pro`, at a real terminal, with the ONE question a
 #     person has to answer — the GCP project's ID — typed at the pty this script
-#     gives it (readValueIn's "Type the GCP project's ID: "). The project's own
+#     gives it (the question's own line, "GCP project ID [<suggestion>]: ",
+#     whose label is drawn bold and whose suggestion is dimmed at a terminal:
+#     this script matches the label, which is the part no escape sequence
+#     interrupts). The project's own
 #     confirmation banner, the billing banner and the Firestore location's
 #     banner are read and nothing is typed under them (T7, D1540: being at the
 #     terminal is what confirms those), which is exactly what a person sees.
@@ -1006,7 +1009,7 @@ step_create() {
   # failure can end it between the two.
   CREATE_STARTED=yes
   run_pty create "$CREATE_SECONDS" "$WIZARD_DIR" \
-    "Type the GCP project's ID" "$P" -- \
+    "GCP project ID [" "$P" -- \
     fugaro setup --name "$N" --region "$REGION" --budget-mode observe \
     --firebase-project "$P" --link-billing "$A" --bake-repos --rigor pro
   CREATE_STATUS=$LAST_STATUS
@@ -1025,8 +1028,13 @@ step_create() {
     stop "the create run exited $CREATE_STATUS (transcript $CREATE_LOG). The project may be half-created, and the Restore below does NOT delete that one: it reads $P back and, when it is there, records the one command that deletes it — this check deletes a project only once its create run has finished and been read back"
   fi
   CREATED=yes
-  local suggested
-  suggested=$(grep -m1 -o "the GCP project's ID \[[^]]*\]" "$CREATE_LOG" 2>/dev/null || true)
+  # The question's line is drawn at a terminal, so the suggestion comes out of
+  # the transcript with the escape sequences the colour puts around the label
+  # and the brackets taken off first: the entry is a reading of what the run
+  # printed, and a reading that could only ever be empty is not one.
+  local suggested esc
+  esc=$(printf '\033')
+  suggested=$(sed "s/${esc}\[[0-9;]*m//g" "$CREATE_LOG" 2>/dev/null | grep -m1 -o "GCP project ID \[[^]]*\]" || true)
   fact wizard PASS "exit 0, with the project's ID typed at a real terminal and the id it proposed recorded: $(one_line "${suggested:-the run printed no suggestion line — read $CREATE_LOG}")"
 }
 
@@ -1435,7 +1443,7 @@ print_plan() {
   say "  [network, reads] gcloud projects describe $P — the guard that says the throwaway project does not exist yet, and again in the Restore and after each create"
   say "  [network, reads+writes] the whole create path, run at a REAL TERMINAL (a pty) in a directory that is NOT a checkout, with ONE answer typed by this script:"
   say "      fugaro setup --name $N --region $REGION --budget-mode observe --firebase-project $P --link-billing <the account you gave> --bake-repos --rigor pro"
-  say "    which asks 'Type the GCP project's ID: ' and is answered '$P'; the project's confirmation banner, the billing banner and the Firestore location's banner are read and nothing is typed under them. --rigor pro answers the wizard's other question, the project's rigor mode, which proposes nothing: nothing types Enter under it"
+  say "    which asks 'GCP project ID [<the id it proposes>]: ' and is answered '$P'; the project's confirmation banner, the billing banner and the Firestore location's banner are read and nothing is typed under them. --rigor pro answers the wizard's other question, the project's rigor mode, which proposes nothing: nothing types Enter under it"
   say "  [network, reads] gcloud projects describe $P --format='value(projectId,lifecycleState)' (must read $P ACTIVE)"
   say "  [network, reads] gcloud billing projects describe $P --format='value(billingAccountName,billingEnabled)' (must name the account you gave, enabled True)"
   say "  [network, reads] gcloud firestore databases describe --database='(default)' --project=$P --format='value(locationId)' (must read $FIRESTORE_LOCATION, where the mapping puts a $REGION installation's history database)"

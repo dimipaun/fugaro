@@ -79,7 +79,7 @@
 
 ### IS7: the `setup` prompt
 - **Files:** `internal/cli/setup.go`, `internal/cli/setup_wizard_test.go`, a no-prompt path for a managed project (the owner's rule: no prompts there; the value comes from a flag or the policy), `docs/setup-wizard/` page naming prompts if pinned.
-- **Interfaces:** asks "Bake your repos into the Docker images? This makes jobs start faster." default yes, writes `bake_repos` through IS5; `fugaro settings` change followed by a rebuild notice. **Tests:** `TestSetupAsksBakeDefaultYes`, `TestSetupUpdateConvergesBake`. **Command:** `go test ./internal/cli/ -run 'SetupAsksBake|SetupUpdateConvergesBake' -count=1`.
+- **Interfaces:** asks "Bake repos into the images for faster job starts?" default yes, writes `bake_repos` through IS5; `fugaro settings` change followed by a rebuild notice. **Tests:** `TestSetupAsksBakeDefaultYes`, `TestSetupUpdateConvergesBake`. **Command:** `go test ./internal/cli/ -run 'SetupAsksBake|SetupUpdateConvergesBake' -count=1`.
 - **Depends on:** IS5. **Commit:** `setup: ask whether to bake repos, default yes`.
 - **Red step:** the wizard has no such prompt. **Tier:** standard.
 

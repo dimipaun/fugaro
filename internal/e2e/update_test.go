@@ -1496,11 +1496,11 @@ func TestUpdateStorageDisabledIsRemote(t *testing.T) {
 	}
 }
 
-// logNamedIn reads the run log a stage's failure names ("full output: PATH")
-// when the terminal shows only its first line.
+// logNamedIn reads the run log a stage's failure names ("Log:  PATH", two
+// spaces after the label) when the terminal shows only its first line.
 func logNamedIn(t *testing.T, stdout string) string {
 	t.Helper()
-	_, rest, ok := strings.Cut(stdout, "full output: ")
+	_, rest, ok := strings.Cut(stdout, "Log:  ")
 	if !ok {
 		return ""
 	}
