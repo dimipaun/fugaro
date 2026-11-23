@@ -271,9 +271,27 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	// BEFORE this stage's first apply, so a run that may not create a database
 	// leaves the installation exactly as it found it.
 	if r.o.firebase == "" {
-		done, err := r.noFlagBudgetDatabase(ctx, c, t, wd, bin, lc, spec, path, old, fp)
-		if err != nil {
-			return err
+		// RI2: a converged installation is still this stage's while the Firebase
+		// root's state does not carry the run index's composite indexes, which
+		// nothing but this stage's apply creates (F10) — that is the one case
+		// the stage's check lets through with the database recorded
+		// (init_stages.go's firebaseSkip). There is nothing to adopt or create
+		// then, because the database is this machine's, so the arm below is left
+		// out and the flag's own flow runs: the same discovery, the same apply
+		// of the root, the same database steps.
+		indexesMissing := false
+		if lc.Budget != nil && lc.Budget.RTDBURL != "" {
+			if managed, ok := r.firebaseIndexesInState(ctx, c, bin, spec.StateBucket, fp); ok && !managed {
+				indexesMissing = true
+			}
+		}
+		done := false
+		if !indexesMissing {
+			var err error
+			done, err = r.noFlagBudgetDatabase(ctx, c, t, wd, bin, lc, spec, path, old, fp)
+			if err != nil {
+				return err
+			}
 		}
 		// r.declined is the whole of what a run that changed nothing has to say
 		// (R2), and its spec stays the engine's own: it has no database here, so
@@ -582,6 +600,51 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 // address: the module's resources are a for_each keyed by the contract's rows,
 // and any of them is an installation that has been through an apply that
 // created them, whatever the rows are called.
+// firebaseIndexesInState reports whether the Firebase root's state manages a
+// run index composite index (RI2) yet, and whether that could be read at all.
+// It is the read the plain update's Firebase stage is decided by — in front of
+// the stage (init_stages.go's firebaseSkip) and again in its no-flag arm, so
+// that a converged installation whose state does not carry them gets the apply
+// that creates them.
+//
+// Every way it can fail answers "could not read", and the caller then leaves
+// the installation exactly as it is. That direction is the whole of the safety:
+// the update of a converged installation must not fail over a read the stage
+// did not have to make, and it must not hand the root a state nobody could read
+// either, because what a root plans under a state it never saw is the resources
+// that are already there. The indexes such an update does not create are
+// created by the update that can read.
+func (r *initRun) firebaseIndexesInState(ctx context.Context, c *infra.Clients, bin, stateBucket, gcpProject string) (managed, ok bool) {
+	has, err := infra.StateExists(ctx, c, stateBucket, infra.StatePrefixFirebase)
+	if err != nil || !has {
+		return false, false
+	}
+	fdir, err := infra.FirebaseWorkdir(os.Getenv, gcpProject)
+	if err != nil {
+		return false, false
+	}
+	fwd, ft, err := r.terraform(bin, fdir, "firebase")
+	if err != nil {
+		return false, false
+	}
+	backend, err := fwd.WriteBackend(stateBucket, infra.StatePrefixFirebase)
+	if err != nil {
+		return false, false
+	}
+	if err := ft.Init(ctx, backend); err != nil {
+		return false, false
+	}
+	st, err := ft.ShowState(ctx)
+	if err != nil {
+		return false, false
+	}
+	addresses := make(map[string]bool)
+	for _, a := range st.Addresses() {
+		addresses[a] = true
+	}
+	return runIndexIndexesManaged(addresses), true
+}
+
 func runIndexIndexesManaged(managed map[string]bool) bool {
 	for a := range managed {
 		if strings.HasPrefix(a, "module.firebase.google_firestore_index.") {

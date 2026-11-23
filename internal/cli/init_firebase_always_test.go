@@ -378,6 +378,99 @@ func TestAKnownDatabaseSkipsTheStageAsToday(t *testing.T) {
 	// This rig has no Firebase project's clients at all (no Cloud Billing, no
 	// Realtime Database fake): a stage that ran would fail rather than end 0,
 	// which is what makes the exit 0 an assertion of its own.
+	//
+	// The state bucket holds no Firebase state here, so the check's own read
+	// (RI2) answers "not read" and F34's line stands: the two states that skip
+	// this stage with a database recorded are this one and the indexed one, and
+	// TestAConvergedInstallationWithTheIndexesSkipsTheStage is the other. The
+	// one that does NOT skip it is an installation whose state manages no run
+	// index (TestAPlainUpdateCreatesTheRunIndexesOfAConvergedInstallation).
+}
+
+// convergedFirebase puts the rig in the state a converged installation is in
+// as RI2 found it: the machine's local config records the budget database (F34,
+// so this stage has been skipped since AB7), the Firebase root's state object
+// is in the state bucket, the Realtime Database holds the nodes an apply left
+// in it, and the Firestore database — the one the run index's composite indexes
+// are created under — is there.
+func convergedFirebase(t *testing.T, r *fbRig) {
+	t.Helper()
+	r.firebaseState(t)
+	r.fs.SetDatabase("us-east5")
+	r.db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	r.db.Set(budget.PathProject, initProjectName)
+	r.db.Set(budget.PathMode, budget.ModeEnforce)
+	r.db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5_000_000})
+	r.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 100000, rtdb_url: "+r.db.URL+", firebase_project: \""+fpID+"\" }\n")
+}
+
+// TestAPlainUpdateCreatesTheRunIndexesOfAConvergedInstallation is RI2 at the
+// door the release note names. The eleven composite indexes of the run index
+// are the Firebase root's — no job and no other root creates them (F10) — and a
+// plain `fugaro update` has skipped that root on every installation whose
+// config records the budget database since AB7 (F34). The skip is the stage's
+// own check, and it holds only while the root's state already carries one of
+// them: this installation's does not, so one plain update is what applies the
+// root that creates them, with the gate the module needs (the database is
+// there, so its for_each is the eleven and not an empty set).
+//
+// Red before the check read the state: the run ended with the Firebase stage
+// skipped, "the project config already records the budget database", and no
+// apply in that root at all — only `fugaro update --firebase-project` reached
+// it, which is a different invocation from the one the release note names.
+func TestAPlainUpdateCreatesTheRunIndexesOfAConvergedInstallation(t *testing.T) {
+	r := alwaysRig(t)
+	convergedFirebase(t, r)
+	// The state manages nothing of the run index, and the plan the apply is made
+	// from is a create in that root. The eleven themselves are the module's and
+	// are pinned by the terraform-tagged TestFirebaseModulePlansRunIndexes: what
+	// this test is about is that a plain update reaches the root at all.
+	r.fbPlan(t, nil, nil, nil)
+	r.script["plan@firebase"] = map[string]any{"exit": 2, "stdout": planJSON(t, planChange{
+		"address": `module.firebase.google_firestore_index.run["role_updated_at"]`, "type": "google_firestore_index",
+		"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{}}})}
+	r.save(t)
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r.initRig, "update")
+	if err != nil {
+		t.Fatalf("a plain update of a converged installation did not converge: %v\n%s", err, out)
+	}
+	if got := r.applies(t); !slices.Contains(got, "firebase") {
+		t.Errorf("the Firebase root was applied in none of %v, so the run index's composite indexes were never created (F10)\n%s", got, out)
+	}
+	if v := r.fbVars(t)["firestore_database_exists"]; v != true {
+		t.Errorf("the Firebase root is applied with firestore_database_exists = %v, want true: the database the indexes are created under is there (RI2)", v)
+	}
+}
+
+// TestAConvergedInstallationWithTheIndexesSkipsTheStage is F34 kept: the same
+// installation one update later, its Firebase root's state now carrying a run
+// index composite index, is what the skip has always been for. The stage says
+// its line, plans nothing in that root and applies nothing there.
+//
+// This rig has the Firebase project's fakes, so a stage that ran would be seen:
+// the assertion is not "the run survived" but "the root was never reached".
+func TestAConvergedInstallationWithTheIndexesSkipsTheStage(t *testing.T) {
+	r := alwaysRig(t)
+	convergedFirebase(t, r)
+	r.fbPlan(t, nil, nil, []string{`module.firebase.google_firestore_index.run["role_updated_at"]`})
+	fakeTerminal(t)
+
+	out, err := updateRun(t, r.initRig, "update")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	l := stepLineOf(reportLines(out), initflow.Firebase)
+	if !strings.HasPrefix(l, markSkipped+" "+initflow.Firebase) || !strings.Contains(l, "already records the budget database") {
+		t.Errorf("the Firebase stage is %q, want the skip that says the state has the indexes\n%s", l, out)
+	}
+	if got := r.applies(t); slices.Contains(got, "firebase") {
+		t.Errorf("the Firebase root was applied for an installation whose state carries its indexes: %v", got)
+	}
+	if plan := tfRan(t, r.initRig, "firebase", "plan"); len(plan) != 0 {
+		t.Errorf("a skipped stage planned the Firebase root: %v", plan)
+	}
 }
 
 // TestWithNothingToAnswerTheStageIsSkippedWithItsLine is F4 and R2: a run
