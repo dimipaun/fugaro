@@ -170,19 +170,19 @@ comes first, and a page continues from the value pair `(updated_at, run_id)`.
 **A page with a window is ordered by the run id alone.** `Filter.Since` is the
 moment a run *started* at, which is the run id's own mint time: that is what
 `--since` has always meant ("only runs started within this long") and what the
-record read beneath the index windows by (`runstore.ListRunIDs`). A bound is
-read positionally against the order, so the window's key has to be the order's
-key: a windowed page is queried and merged in the run id's order, descending,
-and the walk stops at the first run id before the window's own
-`YYYYMMDD-HHMMSS`. The index and the record read it replaces then hold **the
-same runs in the same order for the same window**, a cut set included: a run
-that started before `--since` and finished after it is in neither read, and one
-that started after it is in both however old its own last write is. Without
-that, `runs stats`'s `index_complete` would claim the two reads hold one window
-while they held two.
+record read beneath the index windows by (`runstore.ListRunIDs`). A window is
+read as the point where the ordered walk stops, and a stop has to be a position
+in the order, so the window's key and the order's key are one: a windowed page
+is queried and merged in the run id's order, descending, and the walk stops at
+the first run id before the window's own `YYYYMMDD-HHMMSS`. The index and the
+record read it replaces then hold **the same runs in the same order for the same
+window**, a cut set included: a run that started before `--since` and finished
+after it is in neither read, and one that started after it is in both however
+old its own last write is. Without that, `runs stats`'s `index_complete` would
+claim the two reads hold one window while they held two.
 
-`runindex.Cursor` is that position: `updated_at` (absent both for a windowed
-page, whose order is the run id alone, and for the reindex walk, which is the
+`runindex.Cursor` is that position: `updated_at` (absent for a windowed page,
+whose order is the run id alone, and for the reindex walk, which walks in that
 same order), `slug` (set by the reindex walk alone) and `run_id` (required).
 `Encode` renders it as an opaque token and `DecodeCursor` reads one back,
 refusing anything else — a walk that read a bad token as "start at the beginning"
@@ -203,13 +203,11 @@ index, and these are the ones the index's readers make — the closed list RI2
 declares as `google_firestore_index` resources. Firestore appends the document
 name to each as its final sort key.
 
-Every row above is declared **twice**: once as it stands, and once with the
-document name's order in place of `updated_at`'s (`slug` ASC, `__name__` DESC,
-and so on). A windowed page reads its equalities in the name's order, and the
-order is half of each composite index, so `--since` is RI2's list doubled rather
-than a list of its own. `--since` alone, with no equality filter, needs no index
-either way: Firestore indexes every single field automatically and an order by
-`updated_at` or by the document name alone is served by that.
+Each row above is made **twice**: once as it stands, and once with the document
+name's order where its `updated_at` order is (`slug` ASC, `__name__` DESC, and
+so on). The order is half of each composite index and a window reads the name's,
+so RI2's list carries both halves of every row. A window with no equality filter
+beside it is served by the automatic single-field indexes and adds nothing.
 
 | Fields (in order) | The query it serves |
 | --- | --- |

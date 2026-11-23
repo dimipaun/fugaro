@@ -304,8 +304,9 @@ type Filter struct {
 // the position is written down rather than recomputed.
 type Cursor struct {
 	// UpdatedAt is the run's sort key in the index: the entry's own UpdatedAt,
-	// which the page continuation carries. It is absent for a cursor that
-	// names a position in the reindex's walk, whose order is the run id alone.
+	// which the page continuation carries. It is absent for a page with a
+	// window (Filter.Since), whose order is the run id alone, and for a cursor
+	// that names a position in the reindex's walk, which is the same order.
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 	// Slug is the repository the run belongs to, set by the reindex walk
 	// alone, which walks one repository's runs at a time and resumes inside
