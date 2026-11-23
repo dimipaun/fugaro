@@ -240,9 +240,10 @@ func (p Provider) allowsData(repo string) bool {
 	})
 }
 
-// Pool is one pool the installation already carries. The migration keeps it,
-// resolves the rule it is served by and decides whether it is inert today; it
-// writes no member into it, because a pool a person wrote is a person's.
+// Pool is one pool the installation already carries, as its own config holds
+// it. The migration keeps it, resolves the rule it is served by and decides
+// whether it is inert today; it writes no member into it, because a pool a
+// person wrote is a person's.
 type Pool struct {
 	Name string
 	// Members are the pool's members in the order its owner listed them.
@@ -250,7 +251,24 @@ type Pool struct {
 	// Strategy is the pool's own `strategy` member, which the rule falls back
 	// to (Rule.RuleOrDefault) for a pool written before `rule` existed.
 	Strategy string
-	// Principal is whose pool it is.
+	// Owner and AllowedUsers are the pool's own members (D1936, R10): the person
+	// a slip naming this pool is served to, and the others it is served to beside
+	// them. They are carried through unchanged — an owner is the roster's key and
+	// a write that dropped it would hand a person's pool to the project — and an
+	// empty Owner is the state a pool written before owners is in, which
+	// LegacyOpen records.
+	Owner        string
+	AllowedUsers []string
+	// LegacyOpen is D1942's marker: a pool that existed before pools carried an
+	// owner, which the migration of a published node writes. It is carried
+	// through unchanged, because a write that dropped it would read such a pool
+	// as one whose owner is still to be named (F37).
+	LegacyOpen bool
+	// Principal is the `principal` member the installation's own config states
+	// for this pool, which PL1 adds to config.Pool. The migration writes back
+	// exactly what the config holds and states none where it holds none — which
+	// is every pool written before PL1 — because a principal is an identity (R7)
+	// and this migration is not the side that knows it.
 	Principal Principal
 	// Cascade records the marker D3064 gave the cascade's pool. Such a pool is
 	// the shared pool: the migration keeps its members and order and adds every
@@ -374,10 +392,32 @@ type Move struct {
 // member's state, usage and headroom, none of which a migration knows or may
 // invent. This is the shape the config is written with.
 type PoolSpec struct {
-	Name      string    `json:"name"`
-	Rule      Rule      `json:"rule"`
-	Principal Principal `json:"principal"`
-	Members   []string  `json:"members"`
+	Name string `json:"name"`
+	Rule Rule   `json:"rule"`
+	// Principal is the pool's principal where one is written: the project's for
+	// every pool the migration creates (D3183's shared pool, D3181's project
+	// pool), and for a pool the installation already carries exactly the
+	// principal its own config states — nil where it states none, which is every
+	// pool written before PL1 added the member.
+	//
+	// The migration invents no principal for a carried pool, and the two answers
+	// available to it are both wrong. A person's principal is the Google subject
+	// the service verified, which no owner's email address supplies, so writing
+	// the owner would put display text in the enforcing half (R7, R21). And the
+	// project would make a pool a person wrote the project's, which a
+	// service-account launcher may then be served from — where a project pool is
+	// one an admin fills and a person's pool is a person's (D3181, D2976). An
+	// installation's own config is where that identity is stated.
+	Principal *Principal `json:"principal,omitempty"`
+	Members   []string   `json:"members"`
+	// Owner, AllowedUsers and LegacyOpen are carried through from the pool's own
+	// config unchanged (D1936, D1942, F37): an owner is the roster's key — who a
+	// slip naming this pool is served to — and a write that dropped it, or the
+	// legacy marker that says a pool is still to be given one, would hand a
+	// person's pool to the project.
+	Owner        string   `json:"owner,omitempty"`
+	AllowedUsers []string `json:"allowed_users,omitempty"`
+	LegacyOpen   bool     `json:"legacy_open,omitempty"`
 }
 
 // BridgeEntry is one thing the migration could not write as a table the checks
@@ -474,7 +514,7 @@ func (m *migrator) buildPools() {
 		m.pools = append(m.pools, PoolSpec{
 			Name:      SharedPool,
 			Rule:      RuleFailover,
-			Principal: Principal{Kind: PrincipalProject, ID: m.in.Project},
+			Principal: &Principal{Kind: PrincipalProject, ID: m.in.Project},
 			Members:   shared,
 		})
 		m.poolOf[SharedPool] = true
@@ -500,7 +540,7 @@ func (m *migrator) buildPools() {
 		m.pools = append(m.pools, PoolSpec{
 			Name:      a,
 			Rule:      RuleFailover,
-			Principal: Principal{Kind: PrincipalProject, ID: m.in.Project},
+			Principal: &Principal{Kind: PrincipalProject, ID: m.in.Project},
 			Members:   []string{a},
 		})
 		m.poolOf[a] = true
@@ -513,13 +553,28 @@ func (m *migrator) buildPools() {
 			continue
 		}
 		m.pools = append(m.pools, PoolSpec{
-			Name:      p.Name,
-			Rule:      Rule("").RuleOrDefault(p.Strategy),
-			Principal: p.Principal,
-			Members:   slices.Clone(p.Members),
+			Name:         p.Name,
+			Rule:         Rule("").RuleOrDefault(p.Strategy),
+			Principal:    carriedPrincipal(p.Principal),
+			Members:      slices.Clone(p.Members),
+			Owner:        p.Owner,
+			AllowedUsers: slices.Clone(p.AllowedUsers),
+			LegacyOpen:   p.LegacyOpen,
 		})
 		m.poolOf[p.Name] = true
 	}
+}
+
+// carriedPrincipal is the principal a pool the installation already carries is
+// written with: the one its own config states, or none where it states none or
+// states a half one (Principal.Valid). A config that states a half principal is
+// a written mistake PL1 refuses before a migration reads it, and writing it back
+// would put a pool nothing can resolve in the file.
+func carriedPrincipal(p Principal) *Principal {
+	if !p.Valid() {
+		return nil
+	}
+	return &p
 }
 
 // buildTable writes one entry per model the configuration names, and the bridge
@@ -553,6 +608,25 @@ func (m *migrator) buildTable() {
 // addCall adds to one entry's chain what one repository's call of one model
 // reaches.
 func (m *migrator) addCall(c *chain, repo Repo, model Model, name string) {
+	// A craft or a grade that goes out on a credential of its own (D3062) is a
+	// fact the table cannot keep: one chain per model holds no credential per
+	// craft (D3171), so the whole call stays on the release-1 bridge, which
+	// serves that craft the credential it has today. An access that names the
+	// very auth the repository already answers adds nothing, and an account is
+	// not in this list at all — the shared pool is what serves it.
+	//
+	// It is checked before the model's provider, because it holds whichever route
+	// the model takes: a call written into the table from a provider's branch
+	// would change the credential that craft goes out on with neither a bridge
+	// entry nor a move, and where the provider claims the model without admitting
+	// this repository the bridge leaves the call reaching nothing, exactly as it
+	// does today.
+	for _, access := range repo.Accesses {
+		if access != "" && access != repo.Auth {
+			m.bridgeCall(name, model.ID, BridgeCraftAccess)
+			return
+		}
+	}
 	switch {
 	case model.Provider == "":
 		m.addAuthSource(c, repo, model, name)
@@ -580,19 +654,6 @@ func (m *migrator) addCall(c *chain, repo Repo, model Model, name string) {
 
 // addAuthSource adds the source the repository's own `agent.auth` gives it.
 func (m *migrator) addAuthSource(c *chain, repo Repo, model Model, name string) {
-	// A craft or a grade that goes out on a credential of its own (D3062) is the
-	// narrower fact of the two, and the table cannot keep it: one chain per model
-	// holds no credential per craft (D3171), so the whole call stays on the
-	// release-1 bridge, which serves the craft the credential it has today. An
-	// access that names the very auth the repository already answers adds
-	// nothing, and an account is not in this list at all — the shared pool below
-	// is what serves it.
-	for _, access := range repo.Accesses {
-		if access != "" && access != repo.Auth {
-			m.bridgeCall(name, model.ID, BridgeCraftAccess)
-			return
-		}
-	}
 	// A Vertex model the checked-in map spells for no Vertex source cannot be
 	// written as an entry RT3 accepts, and F65/D3196 keeps the whole of such a
 	// call on the release-1 bridge: nothing of it reaches the table, the pool
@@ -756,12 +817,21 @@ func (m *migrator) ownSource(repo, model string, src SourceName) {
 // reported: the run that was refused would go out on a credential after the
 // migration.
 func (m *migrator) buildMoves() {
+	// Repo.Models is every model the repository's file names — `agent.model`,
+	// `agent.models.*` and `agent.crafts.*.model` alike — so two lines can name
+	// the same call. A call is one pair of repository and model however many
+	// lines name it, and it is reported once: one move, one line MG2 prints.
+	seen := map[string]bool{}
 	for _, repo := range m.in.Repos {
 		for _, model := range repo.Models {
 			if model.ID == "" {
 				continue
 			}
 			key := repo.Name + "\x00" + model.ID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
 			// A call the migration left on the release-1 bridge is not a move,
 			// whatever the entry another repository's call of the same model
 			// carries: what serves it is the bridge, and MG2 reports it by that

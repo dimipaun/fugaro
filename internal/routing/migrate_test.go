@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -360,6 +361,15 @@ func TestMigrate(t *testing.T) {
 			}},
 		},
 	}, {
+		// A pool the installation's own configuration holds is written back as
+		// that configuration holds it, with only its rule resolved: its name wins
+		// over an account's of the same name (D3176), its members keep their
+		// owner's order, and the members a person wrote beside them — the owner,
+		// the users it is served to besides them (D1936, R10) and the principal,
+		// which is the identity the pool belongs to and never display text (R7,
+		// R21) — are carried through rather than dropped. A pool a person wrote is
+		// a person's, so the migration states no principal of its own here: it
+		// writes back the one the config states, and none where it states none.
 		name: "a pool the installation carries keeps its name against an account's",
 		in: Installation{
 			Project: "acme/widgets",
@@ -368,10 +378,12 @@ func TestMigrate(t *testing.T) {
 				{Name: "grace", AllowDataTo: []string{"acme/web"}},
 			},
 			Pools: []Pool{{
-				Name:      "grace",
-				Members:   []string{"ada", "grace"},
-				Strategy:  "round-robin",
-				Principal: Principal{Kind: PrincipalProject, ID: "acme/widgets"},
+				Name:         "grace",
+				Members:      []string{"ada", "grace"},
+				Strategy:     "round-robin",
+				Owner:        "ada@example.test",
+				AllowedUsers: []string{"grace@example.test"},
+				Principal:    Principal{Kind: PrincipalPerson, ID: "ada-subject"},
 			}},
 			Repos: []Repo{{
 				Name:     "acme/web",
@@ -385,9 +397,43 @@ func TestMigrate(t *testing.T) {
 			Chain: []Source{{Kind: KindPool, Pool: SharedPool}},
 		}},
 		carried: []PoolSpec{{
-			Name:    "grace",
-			Rule:    RuleRoundRobin,
-			Members: []string{"ada", "grace"},
+			Name:         "grace",
+			Rule:         RuleRoundRobin,
+			Members:      []string{"ada", "grace"},
+			Owner:        "ada@example.test",
+			AllowedUsers: []string{"grace@example.test"},
+			Principal:    &Principal{Kind: PrincipalPerson, ID: "ada-subject"},
+		}},
+	}, {
+		// The other side of that: the migration states no principal for a pool
+		// whose config states none, which is every pool written before PL1 added
+		// the member, and a half-stated one (a kind and no id) is no statement —
+		// Principal.Valid refuses it, and writing it back would put a pool nothing
+		// can resolve in the config. The legacy marker is carried too: a pool
+		// written before pools carried an owner keeps saying so (D1942, F37).
+		name: "a carried pool whose config states no principal is written with none",
+		in: Installation{
+			Project:  "acme/widgets",
+			Accounts: []Account{{Name: "ada"}},
+			Pools: []Pool{{
+				Name:       "older",
+				Members:    []string{"ada"},
+				LegacyOpen: true,
+			}, {
+				Name:      "half",
+				Members:   []string{"ada"},
+				Principal: Principal{Kind: PrincipalPerson},
+			}},
+		},
+		carried: []PoolSpec{{
+			Name:       "older",
+			Rule:       RuleFailover,
+			Members:    []string{"ada"},
+			LegacyOpen: true,
+		}, {
+			Name:    "half",
+			Rule:    RuleFailover,
+			Members: []string{"ada"},
 		}},
 	}, {
 		name: "two repositories that differ",
@@ -606,6 +652,59 @@ func TestMigrate(t *testing.T) {
 			Chain: []Source{{Kind: KindAnthropic, Admit: []string{"acme/api"}}},
 		}},
 	}, {
+		// The rule above holds for a model a provider claims as well, and this is
+		// the repository whose craft goes out on another provider's key: the craft
+		// reaches openrouter where the call would be written as dashscope's, so
+		// writing the entry from the provider's branch would change the credential
+		// that craft goes out on with neither a bridge entry nor a move. The whole
+		// call stays on the release-1 bridge, dashscope and all.
+		name: "a craft that goes out on another provider leaves a claimed model on the bridge",
+		in: Installation{
+			Project:  "acme/widgets",
+			Accounts: []Account{{Name: "ada", AllowDataTo: []string{"acme/web"}}},
+			Providers: []Provider{{
+				Name:        "dashscope",
+				AllowDataTo: []string{"acme/web"},
+			}},
+			Repos: []Repo{{
+				Name:     "acme/web",
+				Auth:     testAuthOAuth,
+				Accesses: []string{"openrouter"},
+				Models:   []Model{viaProvider(Model{ID: "gpt-5"}, "dashscope")},
+			}},
+		},
+		bridge: []string{"acme/web\x00gpt-5"},
+	}, {
+		// One call, two lines: a repository's file names every model it calls by
+		// `agent.model`, `agent.models.*` and `agent.crafts.*.model`, and two of
+		// them can name the same one. A call is one pair of repository and model
+		// however many lines name it, so it is one move and one line MG2 prints,
+		// not two identical ones.
+		name: "a call two lines name is one move",
+		in: Installation{
+			Project:  "acme/widgets",
+			Accounts: []Account{{Name: "ada", AllowDataTo: []string{"acme/api"}}},
+			Repos: []Repo{{
+				Name:     "acme/api",
+				Auth:     testAuthAPIKey,
+				Accounts: []string{"ada"},
+				Models:   []Model{claude("claude-haiku-4-5"), claude("claude-haiku-4-5")},
+			}},
+		},
+		want: Table{{
+			Match: "claude-haiku-4-5",
+			Chain: []Source{
+				{Kind: KindPool, Pool: SharedPool},
+				{Kind: KindAnthropic, Admit: []string{"acme/api"}},
+			},
+		}},
+		moves: []Move{{
+			Repo:  "acme/api",
+			Model: "claude-haiku-4-5",
+			From:  SourceName{Kind: KindAnthropic},
+			To:    SourceName{Kind: KindPool, Name: SharedPool},
+		}},
+	}, {
 		// The guard on the shared pool (m.shared): an installation with no
 		// account at all writes no pool, because the config refuses a pool with
 		// no members, and no chain may name one either — a table naming a pool
@@ -663,8 +762,8 @@ func TestMigrate(t *testing.T) {
 				t.Errorf("an installation with no account has no shared pool to write, and this one was written: %+v", got.Pools)
 			}
 			for _, want := range tc.carried {
-				if p := pool(t, got, want.Name); !slices.Equal(p.Members, want.Members) || p.Rule != want.Rule {
-					t.Errorf("the pool %s the installation carries is %+v, want %+v", want.Name, p, want)
+				if p := pool(t, got, want.Name); !samePool(p, want) {
+					t.Errorf("the pool %s the installation carries is %s, want %s", want.Name, poolString(p), poolString(want))
 				}
 			}
 			for _, a := range accountsOf(tc.in) {
@@ -675,7 +774,7 @@ func TestMigrate(t *testing.T) {
 					continue
 				}
 				if p := pool(t, got, a); !slices.Equal(p.Members, []string{a}) || p.Rule != RuleFailover {
-					t.Errorf("the pool of one for %s is %+v, want one member served by failover (D3176)", a, p)
+					t.Errorf("the pool of one for %s is %s, want one member served by failover (D3176)", a, poolString(p))
 				}
 			}
 		})
@@ -708,6 +807,36 @@ func sameSource(a, b Source) bool {
 	slices.Sort(x)
 	slices.Sort(y)
 	return slices.Equal(x, y)
+}
+
+// poolString renders a pool for a failure message: the principal's own kind and
+// id rather than the address of the one the migration returned.
+func poolString(p PoolSpec) string {
+	principal := "no principal"
+	if p.Principal != nil {
+		principal = string(p.Principal.Kind) + " " + p.Principal.ID
+	}
+	return fmt.Sprintf("{name:%s rule:%s principal:%s members:%v owner:%s allowed_users:%v legacy_open:%t}",
+		p.Name, p.Rule, principal, p.Members, p.Owner, p.AllowedUsers, p.LegacyOpen)
+}
+
+// samePool compares two pools as the migration writes them: the members are a
+// list — a pool's order is its owner's — and the principal is the pool's own,
+// where one is written at all (a nil and a stated principal are different
+// answers, not a missing value).
+func samePool(a, b PoolSpec) bool {
+	if a.Name != b.Name || a.Rule != b.Rule || a.Owner != b.Owner || a.LegacyOpen != b.LegacyOpen {
+		return false
+	}
+	if !slices.Equal(a.Members, b.Members) || !slices.Equal(a.AllowedUsers, b.AllowedUsers) {
+		return false
+	}
+	switch {
+	case a.Principal == nil || b.Principal == nil:
+		return a.Principal == nil && b.Principal == nil
+	default:
+		return *a.Principal == *b.Principal
+	}
 }
 
 // sameCredential compares the credential two sources name. An admission list is
@@ -819,10 +948,16 @@ func TestMigrateMovesNoRepository(t *testing.T) {
 		t.Errorf("the shared pool holds %v, want %v", members(t, got, SharedPool), want)
 	}
 	if p := pool(t, got, "grace"); !slices.Equal(p.Members, []string{"grace"}) || p.Rule != RuleFailover {
-		t.Errorf("the pool of one for grace is %+v, want one member served by failover", p)
+		t.Errorf("the pool of one for grace is %s, want one member served by failover", poolString(p))
 	}
-	if p := pool(t, got, "pair"); !slices.Equal(p.Members, []string{"ada", "grace"}) || p.Rule != RuleRoundRobin {
-		t.Errorf("the carried pool pair is %+v, want its own members served by its strategy's rule", p)
+	if p, want := pool(t, got, "pair"), (PoolSpec{
+		Name:         "pair",
+		Rule:         RuleRoundRobin,
+		Members:      []string{"ada", "grace"},
+		Owner:        "ada@example.test",
+		AllowedUsers: []string{"grace@example.test"},
+	}); !samePool(p, want) {
+		t.Errorf("the carried pool pair is %s, want %s: its own members, served by its strategy's rule, with its owner and the users beside them", poolString(p), poolString(want))
 	}
 	// D3177: the spread switch is off, the shared pool is what the cascade
 	// already rotates (acme/batch is on it), and pair rotates once migrated.
@@ -912,11 +1047,14 @@ type fxProvider struct {
 }
 
 type fxPool struct {
-	Name      string      `yaml:"name"`
-	Members   []string    `yaml:"members"`
-	Strategy  string      `yaml:"strategy"`
-	Principal fxPrincipal `yaml:"principal"`
-	Cascade   bool        `yaml:"cascade"`
+	Name         string      `yaml:"name"`
+	Members      []string    `yaml:"members"`
+	Strategy     string      `yaml:"strategy"`
+	Owner        string      `yaml:"owner"`
+	AllowedUsers []string    `yaml:"allowed_users"`
+	LegacyOpen   bool        `yaml:"legacy_open"`
+	Principal    fxPrincipal `yaml:"principal"`
+	Cascade      bool        `yaml:"cascade"`
 }
 
 type fxPrincipal struct {
@@ -965,11 +1103,14 @@ func readFixture(t *testing.T) Installation {
 	}
 	for _, p := range f.Pools {
 		in.Pools = append(in.Pools, Pool{
-			Name:      p.Name,
-			Members:   p.Members,
-			Strategy:  p.Strategy,
-			Principal: Principal{Kind: PrincipalKind(p.Principal.Kind), ID: p.Principal.ID},
-			Cascade:   p.Cascade,
+			Name:         p.Name,
+			Members:      p.Members,
+			Strategy:     p.Strategy,
+			Owner:        p.Owner,
+			AllowedUsers: p.AllowedUsers,
+			LegacyOpen:   p.LegacyOpen,
+			Principal:    Principal{Kind: PrincipalKind(p.Principal.Kind), ID: p.Principal.ID},
+			Cascade:      p.Cascade,
 		})
 	}
 	names, err := filepath.Glob(filepath.Join(dir, "repos", "*", "*.yaml"))

@@ -28,13 +28,16 @@ providers:
   - name: dashscope
 pools:
   # A pool the installation already carries: kept as it is, served by the rule
-  # its strategy means.
+  # its strategy means, with every member a person wrote beside them carried
+  # through — here the owner and the users it is served to besides them (D1936,
+  # R10). It states no `principal` (PL1's member): a pool written before that
+  # member existed has none, and the migration states none for it rather than
+  # answering the project, which would make a pool a person wrote the project's.
   - name: pair
     members: [ada, grace]
     strategy: round-robin
-    principal:
-      kind: project
-      id: acme/widgets
+    owner: ada@example.test
+    allowed_users: [grace@example.test]
 subscription_spread: false
 fallback_auto: true
 via: openrouter
