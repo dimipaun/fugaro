@@ -1,6 +1,7 @@
 # Repo-coupling audit: reconciliation
 
-Checked against `origin/main` at `3de72b780` on 2026-11-22. **Where this document disagrees with
+Checked against `origin/main` at `3de72b780` on 2026-11-22; F18 and F19 (task V1) against
+`8316578f6` on 2026-11-23. **Where this document disagrees with
 [spec.md](spec.md), this document wins.** The inventory itself is [report.md](report.md); this
 document records what the spec assumed, what the code says instead, and the owner's answers.
 
@@ -161,6 +162,35 @@ document records what the spec assumed, what the code says instead, and the owne
   whose `target_layer` is `repo` it writes the `fugaro.yaml` in the child's working directory, the
   installation's recorded checkout, without checking it is one. `console/src/main/ipc.ts` records
   this as an open question.
+- **F18 (Gap, settles U1).** On a shared job a repository's `workflows.*.resources` does not reach
+  the container, and its `timeouts.*` reach the runner but cannot lengthen the job:
+  - **Resources.** The shared job's CPU and memory are the profile's (`infra/projectjobs.go`
+    `ProjectJobs`, `CPU: pr.CPU`, `Memory: pr.Memory`; `modules/project/job.tf`). The launch
+    overrides only the environment and the timeout (`internal/backend/gcp/run.go` `Launch`). Only
+    the per-repo job takes the repository's numbers (`infra/spec.go` `repoCtx.workflow`). The
+    runner still reads the repository's numbers: it prices compute with them
+    (`internal/runner/cost.go` `updateCost`) and judges the outputs memory gate by them
+    (`internal/runner/gate.go` `outputsMemoryProblem`). So on a shared job the cost record and
+    that gate use a size the container does not have.
+  - **Timeouts.** The shared job's task timeout is the profile's `timeout_class` plus the slack
+    (`ProjectJobs`, `TaskTimeoutS`). The runner reads `timeouts.*` from the repository's config,
+    then holds `timeouts.total` to the class and cuts the stage, verify, render and reserve caps
+    with it (`internal/runner/projectjob.go` `clampTotalToJob`, called from `runner.go`). A
+    repository can shorten its run, never lengthen it. Only a task's `--total-timeout`
+    (`internal/cli/run.go` `launchTimeoutOf`, not a `fugaro.yaml` key) becomes the execution's
+    own timeout, and it skips the clamp.
+- **F19 (Gap, settles U2).** `localcfg repos.<r>.github_app_id` is stored per repository
+  (`localcfg.Repo.GitHubAppID`) but means one App per project wherever a shared job is involved.
+  The per-repo path reads each repository's own ID: the job environment (`infra/spec.go`
+  `resolve`, then `repoCtx.workflow` sets `EnvGitHubAppID`), the build's `_GITHUB_APP_ID`
+  (`internal/backend/gcp/build.go` `BuildRequest`, from `infra.RepoSpec.GitHubAppID` through
+  `internal/cli/image.go` `cloudBuildSpec`), and
+  `repoGitHubAppID` (`internal/cli/catalog_provider.go`) for catalog builds and `followups`. The
+  shared job, the coordinator and the Firebase stage read one ID for the whole config
+  (`infra/projectjobs.go` `recordedGitHubAppID`), and refuse a config that records two. So two
+  Apps work only while every GitHub repository keeps a per-repo job. The key is resolved per
+  repository, from the repo copy or the project-scoped one (`catalogAppKeySecretID` →
+  `resolveGitSecretID`). The home is one project-level App ID and key.
 
 ## 4. Decisions
 
@@ -207,13 +237,10 @@ Resolutions (one defensible answer, stated rather than asked):
 
 ## 6. UNVERIFIED
 
-- U1. Under shared jobs, whether `workflows.*.resources` and `timeouts.*` still reach the shared
-  job or only the per-repo one. `infra/spec.go` writes `TaskTimeoutS` for the per-repo job; the
-  shared job takes the profile's `timeout_class`. Check 891 or a reading of
-  `internal/sharedjob` settles it.
-- U2. Whether `localcfg repos.<r>.github_app_id` still mints per repository, or the project's App
-  covers every repository. Settled from the code by task V1 (leads: `internal/cli/catalog_provider.go`
-  `repoGitHubAppID`, `internal/backend/gcp/build.go`).
-- U3. The real IAM a member holds on `belong`. Settled by Check 892.
-- U4. Whether any member-run command triggers Terraform on `belong` today. F7 says the code allows
+- U1. **Settled by V1 (F18).** Resources do not reach a shared job; timeouts reach the runner,
+  which holds the total to the profile's `timeout_class`.
+- U2. **Settled by V1 (F19).** Stored per repository; one App per project wherever a shared job
+  is involved, several Apps only on per-repo jobs.
+- U3. The real IAM a member holds on `fugaro`. Settled by Check 892.
+- U4. Whether any member-run command triggers Terraform on `fugaro` today. F7 says the code allows
   it under IAM; Check 891's trace settles what actually happens.

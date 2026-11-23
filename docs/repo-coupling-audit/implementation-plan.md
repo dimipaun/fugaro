@@ -181,10 +181,10 @@ Answers that shaped the plan, all 2026-11-22:
 - Depends on: K1, K2, K3 (kept, data: the list test runs every file it names).
 - Commit: `repo-coupling-audit K4: Checks 890 to 892 registered`
 - Reviewer tier: standard.
-- Owner-run, after merge, on `belong`:
-  - `bash scripts/live-checks/check-890-data-layout.sh belong`
-  - `bash scripts/live-checks/check-891-update-trace.sh belong <each checkout>`
-  - `bash scripts/live-checks/check-892-iam.sh belong <a member's address>`
+- Owner-run, after merge, on `fugaro`:
+  - `bash scripts/live-checks/check-890-data-layout.sh fugaro`
+  - `bash scripts/live-checks/check-891-update-trace.sh fugaro <each checkout>`
+  - `bash scripts/live-checks/check-892-iam.sh fugaro <a member's address>`
 
   Paste each output into R1's brief.
 
@@ -300,7 +300,7 @@ Reserved: **890–899**. Used:
   checkout.
 - **892**: the IAM each member holds, against the Perms column.
 
-All three are owner-run on `belong` after K4 merges. They are read-only and need no confirmation.
+All three are owner-run on `fugaro` after K4 merges. They are read-only and need no confirmation.
 
 ## After deploy
 
