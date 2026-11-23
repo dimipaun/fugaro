@@ -2305,6 +2305,78 @@ func TestARemovedPersonsSlipIsRefused(t *testing.T) {
 	}
 }
 
+// TestARemovedPersonsSlipIsRefusedAtTheClaim: the claim asks the roster about
+// the person the RECORD names before it writes anything (R3, personClaim's
+// first-claim form). A slip whose owner has left is refused with the record's
+// own sentence, and the refusal spends nothing of it: the same slip is
+// claimable again once the person is back on the roster.
+func TestARemovedPersonsSlipIsRefusedAtTheClaim(t *testing.T) {
+	p := newWSPerson(t)
+	svc := p.service(t)
+	slip := p.granted(t, svc, p.grantBody(t, wsAccountA, creds.PersonTokenName))
+
+	p.roster.publish(t, wsRosterRaw(t, []workspace.Person{wsHuman("other@example.com")}, "other@example.com"))
+	p.now = p.now.Add(2 * time.Minute)
+	resp, ans, body := p.claim(t, svc, slip)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the claim of a removed person's slip = %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedRunIdentity || e.Message != slipNotThisRuns {
+		t.Errorf("the refusal is %q/%q, want %q/%q", e.Error, e.Message, ErrorUnverifiedRunIdentity, slipNotThisRuns)
+	}
+	if ans.ClaimSecret != "" {
+		t.Error("the refused claim answered a claim secret")
+	}
+	if sl := p.slip(t, slip); sl.Claimed != (creds.Claim{}) || sl.ClaimHash != "" {
+		t.Errorf("the refused claim took the slip: %+v", sl.Claimed)
+	}
+
+	p.roster.publish(t, wsRosterWithOwner(t))
+	p.now = p.now.Add(2 * time.Minute)
+	if secret := p.claimed(t, svc, slip); secret == "" {
+		t.Fatal("the slip is not claimable after the person came back")
+	}
+}
+
+// TestARemovedPersonsSlipIsRefusedWhenItIsReadBack is the claim's read-back
+// form, the one a run makes with the secret it already holds: the roster is
+// asked there too (R3), so a person removed after their run claimed is refused
+// on the call that would have read the slip back, and the run is answered the
+// record's sentence rather than a second claim secret.
+func TestARemovedPersonsSlipIsRefusedWhenItIsReadBack(t *testing.T) {
+	p := newWSPerson(t)
+	svc := p.service(t)
+	slip := p.granted(t, svc, p.grantBody(t, wsAccountA, creds.PersonTokenName))
+	secret := p.claimed(t, svc, slip)
+	// The control: with the person on the roster the read-back is served.
+	if resp, _, body := p.readBack(t, svc, slip, secret); resp.StatusCode != http.StatusOK {
+		t.Fatalf("the read-back with the person on the roster = %d, want 200: %s", resp.StatusCode, body)
+	}
+
+	p.roster.publish(t, wsRosterRaw(t, []workspace.Person{wsHuman("other@example.com")}, "other@example.com"))
+	p.now = p.now.Add(2 * time.Minute)
+	resp, ans, body := p.readBack(t, svc, slip, secret)
+	if resp.StatusCode != StatusUnverified {
+		t.Fatalf("the read-back under a removed person's slip = %d, want %d: %s", resp.StatusCode, StatusUnverified, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorUnverifiedRunIdentity || e.Message != slipNotThisRuns {
+		t.Errorf("the refusal is %q/%q, want %q/%q", e.Error, e.Message, ErrorUnverifiedRunIdentity, slipNotThisRuns)
+	}
+	if ans.ClaimSecret != "" {
+		t.Error("the refused read-back answered a claim secret")
+	}
+}
+
+// readBack makes the claim's reading form: the run presents the slip AND the
+// claim secret it was answered, and is answered the slip's own times rather
+// than a second secret.
+func (p *wsPerson) readBack(t *testing.T, svc *svc, slip, secret string) (*http.Response, SlipClaimResponse, []byte) {
+	t.Helper()
+	return p.claim(t, svc, slip, func(r *http.Request) {
+		r.Header.Set(creds.PersonSlipClaimHeader, secret)
+	})
+}
+
 // TestAnUnreadableRosterRefuses: a roster that cannot be read is not a roster
 // that lists nobody (D2983): the grant is refused as this service's own state
 // and not as a refusal of the caller, so a launcher can tell "the workspace
@@ -2440,11 +2512,44 @@ func TestAGrantRefusalNamesNothing(t *testing.T) {
 	}
 }
 
-// TestEveryGrantIsAudited: once a caller IS verified, every refusal of the
-// grant writes exactly one line and the GRANTED call writes none — the rule
-// audit.go holds every route to, with the one exception a grant is: a StatusOK
-// line requires a credential and a grant issues none, so the grant's own record
-// is the service's line and not an audit line.
+// TestTheGrantRefusesARunIdentityHeader: the grant route sees no run identity
+// (C1's own shape for it, R3) — a call that carries one is refused as the
+// route's ONE class, written the same as a refusal of the roster, and no slip
+// is written for it. The refusal names no header either: which header it was is
+// the one thing this route never says (D3147's "and nothing finer").
+func TestTheGrantRefusesARunIdentityHeader(t *testing.T) {
+	p := newWSPerson(t)
+	svc := p.service(t)
+	withRunIdentity := func(r *http.Request) { r.Header.Set(HeaderRunIdentity, "a-run-token-nobody-verified") }
+	resp, body := p.grant(t, svc, wsLauncherBearer, p.grantBody(t, wsAccountA, creds.PersonTokenName), withRunIdentity)
+	if resp.StatusCode != StatusRequestRefused {
+		t.Fatalf("a grant carrying a run identity = %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
+	}
+	e := refusal(t, resp.StatusCode, body)
+	if e.Error != ErrorRequestRefused || e.Message != personGrantRefused {
+		t.Errorf("the refusal is %q/%q, want the route's one class %q/%q", e.Error, e.Message, ErrorRequestRefused, personGrantRefused)
+	}
+	if strings.Contains(e.Message, HeaderRunIdentity) || strings.Contains(e.Message, wsAccountA) {
+		t.Errorf("the refusal %q names what it refused", e.Message)
+	}
+	if ids := p.slipIDs(t); len(ids) != 0 {
+		t.Errorf("a refused grant wrote the slips %v, want none", ids)
+	}
+	got := lines(svc.audit)
+	if len(got) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly 1: %v", len(got), got)
+	}
+	if got[0]["caller"] != wsOwner || got[0]["status"] != ErrorRequestRefused || got[0]["purpose"] != PurposeSlipGrant {
+		t.Errorf("the line is %v, want the verified launcher %q, status %q and the grant's purpose", got[0], wsOwner, ErrorRequestRefused)
+	}
+}
+
+// TestEveryGrantIsAudited: once a caller IS verified, each grant and each
+// refusal of the grant writes exactly one line (R3, WC4). The granted call's
+// line is written with no credential, because a grant issues none and reads no
+// bundle entry (audit.go's credentiallessPurpose); it names the verified
+// launcher, and nothing the launcher asked for — the account, the repository
+// and the run are the caller's own bytes.
 func TestEveryGrantIsAudited(t *testing.T) {
 	p := newWSPerson(t)
 	svc := p.service(t)
@@ -2452,24 +2557,44 @@ func TestEveryGrantIsAudited(t *testing.T) {
 		t.Fatalf("the fixture starts with %d audit lines, want none", len(got))
 	}
 	p.granted(t, svc, p.grantBody(t, wsAccountA, creds.PersonTokenName))
-	if got := lines(svc.audit); len(got) != 0 {
-		t.Errorf("a granted call wrote %d audit lines, want none: a grant issues no credential, so its record is the service's own line", len(got))
+	granted := lines(svc.audit)
+	if len(granted) != 1 {
+		t.Fatalf("a granted call wrote %d audit lines, want exactly 1: %v", len(granted), granted)
+	}
+	if got, want := granted[0]["caller"], wsOwner; got != want {
+		t.Errorf("the granted line names the caller %v, want the verified launcher %q", got, want)
+	}
+	for field, want := range map[string]any{
+		"purpose":    PurposeSlipGrant,
+		"status":     StatusOK,
+		"credential": "",
+		"tier":       "",
+	} {
+		if got := granted[0][field]; got != want {
+			t.Errorf("the granted line's %s is %v, want %q: a grant issues no credential", field, got, want)
+		}
+	}
+	for key, value := range granted[0] {
+		if text, ok := value.(string); ok && strings.Contains(text, wsAccountA) {
+			t.Errorf("the granted line's %q carries the account %q", key, text)
+		}
 	}
 	resp, body := p.grant(t, svc, wsLauncherBearer, p.grantBody(t, wsAccountA, "a-name-this-plan-does-not-serve"))
 	if resp.StatusCode != StatusRequestRefused {
 		t.Fatalf("the refused grant = %d, want %d: %s", resp.StatusCode, StatusRequestRefused, body)
 	}
 	got := lines(svc.audit)
-	if len(got) != 1 {
-		t.Fatalf("the refused grant wrote %d audit lines, want exactly 1", len(got))
+	if len(got) != 2 {
+		t.Fatalf("the grant and its refusal wrote %d audit lines, want exactly 1 each: %v", len(got), got)
 	}
-	if got[0]["caller"] != wsOwner {
-		t.Errorf("the line names the caller %v, want the verified launcher %q", got[0]["caller"], wsOwner)
+	refused := got[len(got)-1]
+	if refused["caller"] != wsOwner {
+		t.Errorf("the line names the caller %v, want the verified launcher %q", refused["caller"], wsOwner)
 	}
-	if got[0]["status"] != ErrorRequestRefused {
-		t.Errorf("the line's status is %v, want %q", got[0]["status"], ErrorRequestRefused)
+	if refused["status"] != ErrorRequestRefused {
+		t.Errorf("the line's status is %v, want %q", refused["status"], ErrorRequestRefused)
 	}
-	for key, value := range got[0] {
+	for key, value := range refused {
 		if text, ok := value.(string); ok && strings.Contains(text, wsAccountA) {
 			t.Errorf("the audit line's %q carries the account %q", key, text)
 		}

@@ -1457,10 +1457,23 @@ func (s *Server) personGrant(ctx context.Context, w http.ResponseWriter, r *http
 		s.refusePersonGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "no slip could be written for this call")
 		return
 	}
-	// The grant is recorded on the service's own line and not as an audit line,
-	// for the installation's own reason (audit.go: a StatusOK line requires a
-	// credential, and a grant issues none). This line is where an operator reads
-	// which person asked for which run.
+	// The grant is recorded as one audit line (R3, WC4): the launcher's own act,
+	// written with the purpose routeAct gives the path and no credential, because
+	// a grant issues none and reads no bundle entry (audit.go's
+	// credentiallessPurpose). The line names the verified launcher and nothing
+	// of what the launcher asked for — the account, the repository and the run
+	// are the caller's own bytes — which is the shape every refusal of this route
+	// is written in, so the grant and its refusals are one class of line.
+	if err := s.auditGrant(ctx, caller.Account, StatusOK); err != nil {
+		// A line that cannot be recorded is not an answer the launcher gets:
+		// refuseGrant's rule (D143), and the refusal it answers is the state
+		// class, because the service's own record of the act is what failed.
+		s.log.Error("credsvc: a workspace grant could not be audited", "error", err)
+		s.refusePersonGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "the grant could not be recorded")
+		return
+	}
+	// The service's own line beside it is where an operator reads which person
+	// asked for which run, and the slip's id.
 	s.log.Info("credsvc: a workspace slip was granted",
 		"slip", id, "run", req.Run, "repository", req.Slug, "account", req.Account,
 		"launcher", caller.Account, "deadline", deadline)
