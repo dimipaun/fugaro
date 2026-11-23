@@ -1164,7 +1164,12 @@ func exhaustedAnswer(e serviceRefusal) (Exhausted, error) {
 // refusal is never relayed: it is fugaro's own answer, it names the project's
 // credentials, and the agent has no business seeing the set of them (D143).
 func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needTier, servedRoute bool) (status int, done bool, tier string, probed []string) {
-	s.noteServiceReached()
+	// What this answer cleared, because an answer of the service's own is not
+	// always the service being back: a workspace's service that REFUSES a call
+	// as unable to read its roster answered and is still not serving this run,
+	// and that refusal is the outage the wait is for (workspaceUnavailable,
+	// keepUnreachable).
+	outage := s.noteServiceReached()
 	if resp.StatusCode/100 == 2 {
 		// The room the workspace's service has left arrives on the answer
 		// itself, so it is read here, before any of it reaches the agent
@@ -1325,7 +1330,7 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			"fugaro: the credentials service has no credential available before "+ex.ResetAt.UTC().Format(time.RFC3339))
 		return http.StatusServiceUnavailable, true, "", nil
 	case ErrorStateUnavailable:
-		if s.wsModel {
+		if s.wsModel && s.workspaceSlipHeld() {
 			// R3, D2983: the workspace's service re-reads its roster on every
 			// call under its slip, and a roster it could not read is refused as
 			// the service being unable to read the state it must read — never as
@@ -1333,6 +1338,17 @@ func (s *Server) serviceAnswer(w http.ResponseWriter, resp *http.Response, needT
 			// waits for a workspace service it cannot reach, and moves to no
 			// other credential meanwhile. The run's own project's service is
 			// unchanged: its "cannot read the state" is D143's halt, as it was.
+			//
+			// The re-read is the slip's (F13, R4): a run routed to the
+			// workspace that holds no slip made no roster read for this call to
+			// fail, so its refusal is the state the service could not read, the
+			// halt it always was, and the wait is not extended to it.
+			//
+			// The clock is put back, because this refusal is the outage itself
+			// and not an answer that ends it: a bound re-armed by every refusal
+			// is a wait that never spends it, and the halt below — the roster,
+			// named — would never be reached (noteUnreachable, R3).
+			s.keepUnreachable(outage)
 			s.workspaceUnavailable(w)
 			return http.StatusServiceUnavailable, true, "", nil
 		}
@@ -1724,10 +1740,44 @@ func (s *Server) noteUnreachable() time.Time {
 // being reachable, and the next call that cannot reach it starts a bound of its
 // own (D2983). It is called from serviceAnswer, the one place an answer of the
 // service's own is read.
-func (s *Server) noteServiceReached() {
+//
+// It answers the clock it cleared, because one answer is not always the service
+// being back: a workspace's service that refuses a call as unable to read its
+// roster answered and is still not serving this run, and that refusal puts the
+// clock back where it was (keepUnreachable, R3).
+func (s *Server) noteServiceReached() time.Time {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	since := s.unreachableSince
 	s.unreachableSince = time.Time{}
-	s.mu.Unlock()
+	return since
+}
+
+// keepUnreachable puts an outage clock back where an answer found it: the
+// workspace's service REFUSED a call as unable to read its roster rather than
+// serving one, and R3's wait is measured from the first call of the outage, so
+// a bound re-armed by every such refusal is a wait that never spends it and a
+// halt (stateDetailWorkspaceRoster) that is never reached. A clock that was not
+// running stays cleared: the outage of these refusals begins with the one that
+// meets it.
+func (s *Server) keepUnreachable(since time.Time) {
+	if since.IsZero() {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.unreachableSince.IsZero() {
+		s.unreachableSince = since
+	}
+}
+
+// workspaceSlipHeld reports whether the calls this gateway makes to the
+// workspace's service travel under the workspace's own slip: the roster R3's
+// refusal is about is re-read under that slip and nowhere else (F13, R4), so a
+// call holding none has no roster read to wait for.
+func (s *Server) workspaceSlipHeld() bool {
+	sv := s.o.Upstream.Service
+	return sv != nil && sv.WorkspaceSlipID != ""
 }
 
 // serviceUnreachableBound is how long a run waits for a credentials service it
