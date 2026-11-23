@@ -95,10 +95,48 @@ func TestMigrate(t *testing.T) {
 			Chain: []Source{{Kind: KindAnthropic, Admit: []string{"acme/api"}}},
 		}},
 	}, {
+		// The mix's account beside an api-key repository's key (D1848): the
+		// account serves the senior review, the adversarial review and the triage,
+		// and the key every other stage — so the key is the credential this call
+		// has (its auth), and the pool the account is folded into is where the
+		// whole call goes after the migration. That is a move, and the migration
+		// reports it rather than taking it quietly.
 		name: "api-key with the mix's account beside it",
 		in: Installation{
 			Project:  "acme/widgets",
 			Accounts: []Account{{Name: "hopper", AllowDataTo: []string{"acme/api"}}},
+			Repos: []Repo{{
+				Name:     "acme/api",
+				Auth:     testAuthAPIKey,
+				Accounts: []string{"hopper"},
+				Models:   []Model{claude("claude-haiku-4-5")},
+			}},
+		},
+		want: Table{{
+			Match: "claude-haiku-4-5",
+			Chain: []Source{
+				{Kind: KindPool, Pool: SharedPool},
+				{Kind: KindAnthropic, Admit: []string{"acme/api"}},
+			},
+		}},
+		moves: []Move{{
+			Repo:  "acme/api",
+			Model: "claude-haiku-4-5",
+			From:  SourceName{Kind: KindAnthropic},
+			To:    SourceName{Kind: KindPool, Name: SharedPool},
+		}},
+	}, {
+		// The other side of the pair above, and the reason the key is what the
+		// migration reads for an api-key repository: an account the file names
+		// and that consents to nobody does not put the call on the pool — a pool
+		// reaches a repository through its members' own allow_data_to alone
+		// (D3182, R20) — so the call stays on the key and there is no move to
+		// report. Reading the account as the credential rather than the key would
+		// report one that does not happen.
+		name: "an account that consents to nobody leaves a key's call where it is",
+		in: Installation{
+			Project:  "acme/widgets",
+			Accounts: []Account{{Name: "hopper"}},
 			Repos: []Repo{{
 				Name:     "acme/api",
 				Auth:     testAuthAPIKey,
@@ -385,6 +423,16 @@ func TestMigrate(t *testing.T) {
 			Match: "deepseek-v4-flash",
 			Chain: []Source{{Kind: KindProvider, Provider: "dashscope", Admit: []string{"acme/api"}}},
 		}},
+		// acme/api calls its model on the key while ada, whose pool the entry
+		// names for acme/web, consents to acme/api too: the call reaches the pool
+		// after the migration where it reached the key before, and the migration
+		// reports the pair rather than moving it quietly.
+		moves: []Move{{
+			Repo:  "acme/api",
+			Model: "claude-haiku-4-5",
+			From:  SourceName{Kind: KindAnthropic},
+			To:    SourceName{Kind: KindPool, Name: SharedPool},
+		}},
 	}, {
 		name: "two accounts that land in the one shared pool",
 		in: Installation{
@@ -455,8 +503,11 @@ func TestMigrate(t *testing.T) {
 		// A call the migration leaves on the release-1 bridge is not a move,
 		// whatever the entry another repository's call of the same model
 		// carries: the bridge is what serves it, and MG2 reports it by the
-		// bridge entry's own name (D3196). Without that, the pool this
-		// repository's account consents to would look like its new source.
+		// bridge entry's own name (D3196). Without that skip, the pool
+		// acme/vertex's account consents to — acme/web's call is what names the
+		// pool in this entry — would look like the Vertex repository's new
+		// source, where its own configuration reaches Vertex, a source the table
+		// holds for no unspelled model.
 		name: "a bridged call is not a move, even where the pool consents to its repository",
 		in: Installation{
 			Project: "acme/widgets",
@@ -468,19 +519,92 @@ func TestMigrate(t *testing.T) {
 			Repos: []Repo{{
 				Name:   "acme/vertex",
 				Auth:   testAuthVertex,
-				Models: []Model{{ID: "gemini-9-ultra"}},
+				Models: []Model{claude("claude-haiku-4-5")},
 			}, {
 				Name:     "acme/web",
 				Auth:     testAuthOAuth,
 				Accounts: []string{"ada"},
-				Models:   []Model{{ID: "gemini-9-ultra"}},
+				Models:   []Model{claude("claude-haiku-4-5")},
 			}},
 		},
 		want: Table{{
-			Match: "gemini-9-ultra",
+			Match: "claude-haiku-4-5",
 			Chain: []Source{{Kind: KindPool, Pool: SharedPool}},
 		}},
-		bridge: []string{"acme/vertex\x00gemini-9-ultra"},
+		bridge: []string{"acme/vertex\x00claude-haiku-4-5"},
+	}, {
+		// The shared pool's members are Claude subscriptions, so a chain names
+		// the pool for a Claude model alone: an account a Vertex repository
+		// names beside its own auth is not what serves a Vertex model, and a
+		// chain naming the pool for one would send that call out on the
+		// subscription the bridge above exists to keep it off.
+		name: "an account beside a Vertex repository does not put its model on the pool",
+		in: Installation{
+			Project:        "acme/widgets",
+			Accounts:       []Account{{Name: "ada", AllowDataTo: []string{"acme/vertex"}}},
+			DefaultAccount: "ada",
+			VertexSpelled:  []string{"gemini-3-pro"},
+			Repos: []Repo{{
+				Name:     "acme/vertex",
+				Auth:     testAuthVertex,
+				Accounts: []string{"ada"},
+				Models:   []Model{{ID: "gemini-3-pro"}},
+			}},
+		},
+		want: Table{{
+			Match: "gemini-3-pro",
+			Chain: []Source{{Kind: KindVertex, Admit: []string{"acme/vertex"}}},
+		}},
+	}, {
+		// A craft or a grade that goes out on a credential of its own (D3062)
+		// cannot be written: the table has one chain per model and none per craft
+		// (D3171), and the credential such a craft names is not the repository's
+		// own. The call stays on the release-1 bridge, which serves the craft what
+		// it has today, where the entry below would otherwise move it onto the
+		// pool acme/api's account consents to.
+		name: "a craft that goes out on Vertex leaves the call on the release-1 bridge",
+		in: Installation{
+			Project: "acme/widgets",
+			Accounts: []Account{{
+				Name:        "ada",
+				AllowDataTo: []string{"acme/api", "acme/web"},
+			}},
+			DefaultAccount: "ada",
+			Repos: []Repo{{
+				Name:     "acme/api",
+				Auth:     testAuthAPIKey,
+				Accesses: []string{"vertex"},
+				Models:   []Model{claude("claude-haiku-4-5")},
+			}, {
+				Name:     "acme/web",
+				Auth:     testAuthOAuth,
+				Accounts: []string{"ada"},
+				Models:   []Model{claude("claude-haiku-4-5")},
+			}},
+		},
+		want: Table{{
+			Match: "claude-haiku-4-5",
+			Chain: []Source{{Kind: KindPool, Pool: SharedPool}},
+		}},
+		bridge: []string{"acme/api\x00claude-haiku-4-5"},
+	}, {
+		// The boundary of the rule above: a craft's access that names the auth
+		// the repository already answers is not a credential of its own, and the
+		// call goes to the table like any other.
+		name: "a craft that names the repository's own auth adds nothing",
+		in: Installation{
+			Project: "acme/widgets",
+			Repos: []Repo{{
+				Name:     "acme/api",
+				Auth:     testAuthAPIKey,
+				Accesses: []string{"api-key"},
+				Models:   []Model{claude("claude-haiku-4-5")},
+			}},
+		},
+		want: Table{{
+			Match: "claude-haiku-4-5",
+			Chain: []Source{{Kind: KindAnthropic, Admit: []string{"acme/api"}}},
+		}},
 	}, {
 		// The guard on the shared pool (m.shared): an installation with no
 		// account at all writes no pool, because the config refuses a pool with
@@ -606,10 +730,11 @@ func members(t *testing.T, m Migration, pool string) []string {
 }
 
 // TestMigrateMovesNoRepository runs the migration over a whole installation
-// under testdata/migrate — an installation's own config and five repository
-// files, one per retired auth mode and the two-account shape — and checks the
+// under testdata/migrate — an installation's own config and a repository file
+// each, one per retired auth mode and the shapes beside it — and checks the
 // claim the migration exists for: every repository still goes out on the
-// credential its own configuration gives it.
+// credential its own configuration gives it, and the calls an account's own
+// consent moves are reported rather than taken quietly.
 func TestMigrateMovesNoRepository(t *testing.T) {
 	in := readFixture(t)
 	got := Migrate(in)
@@ -634,6 +759,10 @@ func TestMigrateMovesNoRepository(t *testing.T) {
 		"acme/web\x00claude-sonnet-5-5": true,
 		// The checked-in map spells no Vertex source for it.
 		"acme/vertex\x00gemini-9-ultra": true,
+		// A craft goes out on Vertex while the repository's own auth is the key:
+		// one chain per model holds no credential per craft (D3171), so the call
+		// keeps the release-1 walk rather than moving the craft onto the key.
+		"acme/crafted\x00claude-haiku-4-5": true,
 	}
 	for _, b := range got.Bridge {
 		if !bridged[b.Repo+"\x00"+b.Model] {
@@ -666,13 +795,21 @@ func TestMigrateMovesNoRepository(t *testing.T) {
 		}
 	}
 
-	// And nothing moves: the accounts consent to the repositories that go out
-	// on them and to no other, so no call's first reachable source changes. A
-	// consent that named acme/api — the key's repository — would move that call
-	// onto the pool, and the migration has to report it rather than let it
-	// happen quietly (D3182, R20).
-	if len(got.Moves) != 0 {
-		t.Errorf("the migration reports the moves %+v, and this fixture's accounts consent to no repository that does not go out on them", got.Moves)
+	// And exactly one call moves, and it is reported: acme/mixed-key goes out on
+	// the key, and hopper — the mix's account beside it (D1848), which serves the
+	// senior review, the adversarial review and the triage alone — consents to
+	// acme/mixed-key, so folding hopper into the shared pool puts that whole call
+	// on the pool. The migration names the pair rather than taking the move
+	// quietly, and the consent is a person's to change (D3182, R20). Every other
+	// repository keeps the source its own configuration gives it, which the loop
+	// above has checked one by one.
+	if want := []Move{{
+		Repo:  "acme/mixed-key",
+		Model: "claude-haiku-4-5",
+		From:  SourceName{Kind: KindAnthropic},
+		To:    SourceName{Kind: KindPool, Name: SharedPool},
+	}}; !slices.Equal(got.Moves, want) {
+		t.Errorf("the migration reports the moves %+v, want %+v: the accounts' consent to a repository on another credential is a move, and the migration names it", got.Moves, want)
 	}
 
 	// The pools: the shared pool holds every account in the installation's own
@@ -790,6 +927,7 @@ type fxPrincipal struct {
 type fxRepo struct {
 	Auth     string    `yaml:"auth"`
 	Accounts []string  `yaml:"accounts"`
+	Accesses []string  `yaml:"accesses"`
 	Models   []fxModel `yaml:"models"`
 }
 
@@ -851,6 +989,7 @@ func readFixture(t *testing.T) Installation {
 			Name:     filepath.ToSlash(filepath.Join(filepath.Base(filepath.Dir(name)), strings.TrimSuffix(filepath.Base(name), ".yaml"))),
 			Auth:     r.Auth,
 			Accounts: r.Accounts,
+			Accesses: r.Accesses,
 		}
 		for _, m := range r.Models {
 			repo.Models = append(repo.Models, Model{ID: m.ID, Claude: m.Claude, Provider: m.Provider})

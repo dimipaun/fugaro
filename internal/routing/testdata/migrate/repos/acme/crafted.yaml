@@ -1,0 +1,9 @@
+# The paid key with a craft of its own: the senior review goes out on Vertex
+# (D3062: a craft's access is moved as written), and every other stage on the
+# key. One chain per model holds no credential per craft (D3171), so the call
+# keeps the release-1 walk rather than moving that craft onto the key.
+auth: api-key
+accesses: [vertex]
+models:
+  - id: claude-haiku-4-5
+    claude: true

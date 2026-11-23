@@ -130,6 +130,14 @@ const (
 	// as an entry RT3 accepts; it stays on the release-1 bridge, which is what
 	// sends the call the way the repository's configuration does today.
 	BridgeVertexUnspelled = "vertex-unspelled"
+	// BridgeCraftAccess is a call one of whose crafts or grades goes out on a
+	// credential the repository's own `agent.auth` does not answer — a craft's
+	// `access` naming Vertex, a pool, a provider key or another credential
+	// (D3062: moved as written). The table has one chain per model and none per
+	// craft (D3171), so no entry keeps such a craft where it is; the whole call
+	// stays on the release-1 bridge, which serves it the credential it has
+	// today rather than moving the craft onto the repository's own.
+	BridgeCraftAccess = "craft-access"
 )
 
 // Installation is one installation's own configuration, as the migration reads
@@ -274,6 +282,18 @@ type Repo struct {
 	// retiring them means (D3171, F46), and the repository's own accounts
 	// narrow the walk through their own allow_data_to (R20).
 	Accounts []string
+	// Accesses are the credentials the repository's crafts and grades go out on
+	// that are not accounts: `agent.crafts.<craft>.access` and
+	// `model_grades.<grade>.access`, resolved by the caller the way the retired
+	// walk resolves them (craft.LegacyAccess's first two rungs, D3062: moved as
+	// written). An access naming an account is in Accounts instead, because the
+	// shared pool is what serves an account (D3183); what reaches the migration
+	// here is every other name — the built-in Vertex, a pool, a provider key, one
+	// of the retired `agent.auth` values — and a call one of them serves cannot be
+	// written as an entry that keeps it, so it goes on the release-1 bridge
+	// rather than moving that craft onto the repository's own credential
+	// (D3171, D3196).
+	Accesses []string
 	// Models are the models a run of this repository can call: every model its
 	// file names — `agent.model`, `agent.models.*`, `agent.crafts.*.model`, a
 	// grade's model — resolved by the caller.
@@ -368,7 +388,7 @@ type BridgeEntry struct {
 	Repo string `json:"repo"`
 	// Model is the model it is about.
 	Model string `json:"model"`
-	// Reason is one of the two bridge constants above.
+	// Reason is one of the bridge constants above.
 	Reason string `json:"reason"`
 }
 
@@ -535,7 +555,7 @@ func (m *migrator) buildTable() {
 func (m *migrator) addCall(c *chain, repo Repo, model Model, name string) {
 	switch {
 	case model.Provider == "":
-		m.addAuthSource(c, repo, model.ID, name)
+		m.addAuthSource(c, repo, model, name)
 	case !m.providerAllows(model.Provider, name):
 		// The provider claims the model and does not admit this repository: it
 		// reaches nothing here, exactly as today, and admitting it would be the
@@ -551,7 +571,7 @@ func (m *migrator) addCall(c *chain, repo Repo, model Model, name string) {
 		// even where a provider entry claims it: the switch's list is the
 		// opt-in, and a Claude ID the operator did not write is untouched
 		// (D1a, RoutingClaudeFor).
-		m.addAuthSource(c, repo, model.ID, name)
+		m.addAuthSource(c, repo, model, name)
 	default:
 		c.addProvider(model.Provider, name)
 		m.ownSource(name, model.ID, SourceName{Kind: KindProvider, Name: model.Provider})
@@ -559,14 +579,27 @@ func (m *migrator) addCall(c *chain, repo Repo, model Model, name string) {
 }
 
 // addAuthSource adds the source the repository's own `agent.auth` gives it.
-func (m *migrator) addAuthSource(c *chain, repo Repo, model, name string) {
+func (m *migrator) addAuthSource(c *chain, repo Repo, model Model, name string) {
+	// A craft or a grade that goes out on a credential of its own (D3062) is the
+	// narrower fact of the two, and the table cannot keep it: one chain per model
+	// holds no credential per craft (D3171), so the whole call stays on the
+	// release-1 bridge, which serves the craft the credential it has today. An
+	// access that names the very auth the repository already answers adds
+	// nothing, and an account is not in this list at all — the shared pool below
+	// is what serves it.
+	for _, access := range repo.Accesses {
+		if access != "" && access != repo.Auth {
+			m.bridgeCall(name, model.ID, BridgeCraftAccess)
+			return
+		}
+	}
 	// A Vertex model the checked-in map spells for no Vertex source cannot be
 	// written as an entry RT3 accepts, and F65/D3196 keeps the whole of such a
 	// call on the release-1 bridge: nothing of it reaches the table, the pool
 	// below included — a chain carrying that pool would send a Vertex model out
 	// on a Claude subscription.
-	if repo.Auth == authVertex && !slices.Contains(m.in.VertexSpelled, model) {
-		m.bridgeCall(name, model, BridgeVertexUnspelled)
+	if repo.Auth == authVertex && !slices.Contains(m.in.VertexSpelled, model.ID) {
+		m.bridgeCall(name, model.ID, BridgeVertexUnspelled)
 		return
 	}
 	// The accounts this repository's file names — a stage's `claude_account`,
@@ -576,42 +609,63 @@ func (m *migrator) addAuthSource(c *chain, repo Repo, model, name string) {
 	// exactly the runs those keys are for. An `oauth` or `cascade` repository
 	// always names one, if only the installation's default account.
 	//
-	// It is named only where it was written: an installation with no account at
+	// It is named for a Claude model alone, because a Claude subscription is what
+	// its members are: naming it for a Vertex model would write the very chain
+	// the bridge above exists to prevent, whichever auth the repository has. And
+	// it is named only where it was written: an installation with no account at
 	// all has no shared pool to send a call to, and a chain naming one the config
 	// does not hold would be refused whole. Such a repository then reaches
 	// nothing, which is what it reaches today.
-	if m.shared && (len(repo.Accounts) > 0 || repo.Auth == authOAuth || repo.Auth == authCascade) {
+	pool := m.shared && model.Claude &&
+		(len(repo.Accounts) > 0 || repo.Auth == authOAuth || repo.Auth == authCascade)
+	if pool {
 		c.addPool(SharedPool)
-		m.ownSource(name, model, SourceName{Kind: KindPool, Name: SharedPool})
 	}
 	switch repo.Auth {
 	case authOAuth:
 		// Which member of the shared pool serves this repository is the
 		// accounts' own allow_data_to, untouched here: a member a repository is
-		// not admitted to is skipped (D3182, R20).
+		// not admitted to is skipped (D3182, R20). The accounts are the
+		// credential this repository's own calls have today.
+		m.ownPool(name, model.ID, pool)
 	case authCascade:
+		m.ownPool(name, model.ID, pool)
 		if m.in.FallbackAuto {
 			// D3064 as amended: the paid key is in the cascade's chain only
 			// where the policy's fallback is auto today.
 			c.anthropic = appendUnique(c.anthropic, name)
-			m.ownSource(name, model, SourceName{Kind: KindAnthropic})
+			m.ownSource(name, model.ID, SourceName{Kind: KindAnthropic})
 		}
 	case authAPIKey:
-		// The key is what the repository's stages go out on beside the
+		// The key is what the repository's own stages go out on beside the
 		// accounts, and the walk falls to it when the pool holds nothing it
-		// may use — the tier order the retired walk used.
+		// may use — the tier order the retired walk used. An account the file
+		// names beside it is the mix's, and it serves the three mix stages
+		// alone (D1848): the key is the credential this call has, so what the
+		// pool does with the call is a move the migration reports.
 		c.anthropic = appendUnique(c.anthropic, name)
-		m.ownSource(name, model, SourceName{Kind: KindAnthropic})
+		m.ownSource(name, model.ID, SourceName{Kind: KindAnthropic})
 	case authVertex:
 		// The map spells this model for Vertex, or the guard above would have
 		// bridged the call.
 		c.vertex = appendUnique(c.vertex, name)
-		m.ownSource(name, model, SourceName{Kind: KindVertex})
+		m.ownSource(name, model.ID, SourceName{Kind: KindVertex})
 	default:
 		// Nothing answers: an auth this release does not know — fail closed, as
 		// the config's own validation refuses such a file before a run sees it —
 		// and the empty value a file and the project layer both leave unwritten,
 		// which C1's rule answers ok=false for and which is never Vertex (F49).
+	}
+}
+
+// ownPool records the shared pool as a call's own source where the chain named
+// it: an `oauth` or `cascade` repository goes out on its accounts, which the
+// pool is. It is not recorded for an api-key repository's mix account (D1848)
+// or a Vertex repository's, which sit beside the credential the auth gives
+// rather than in place of it.
+func (m *migrator) ownPool(repo, model string, named bool) {
+	if named {
+		m.ownSource(repo, model, SourceName{Kind: KindPool, Name: SharedPool})
 	}
 }
 
