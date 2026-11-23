@@ -1806,8 +1806,16 @@ body, and not as a `div`.
 | `tr.manage-row` | a row | one row the kind's `decode` answered with, `data-row` naming the row's own key. No rule selects it: the cells carry the density, and a rule against a row itself would be a rule about one kind's rows |
 | `div.manage-actions` | a kind's actions | the wrapping row of the controls a kind offers, drawn under the table whenever the kind's read landed — an empty list included, because an empty list is exactly when a person reaches for "add" — and never over a refusal |
 | `button.manage-copy` | a copy-command action | a `type="button"` whose label **is** the exact argv (`copyCommandText`, out of the action's parts), copying that text on click. Mono (§3.7), because its whole value is that a person compares it character by character with the command they are about to run |
+| `div.manage-copy-box` | a copy-command that states a consequence | the button of the row below and its sentence, drawn as one control in the `manage-actions` line — and **only** for a command whose `consequence` is not empty: a command that destroys nothing keeps the bare button (`CopyCommandAction` in `manage/types.ts`) |
+| `p.manage-copy-consequence` | that command's sentence | what the command does that has to be read before it is run, muted. It is the below-floor state's whole meaning: a kind under its CLI floor offers no write button, and this sentence is where the operator reads why, and what their CLI still needs (`manage/kinds/models.ts`, `manage/kinds/images.ts`). The console's own words, with only a named document value interpolated by the kind — never a document's sentence |
 | `button.manage-view` | an open-view action | a `type="button"` asking the console to show a view of the rail (D2909: the Budget kind opens Spend). Its label names the view it opens, and it is not mono — the words are this console's own |
-| `p.manage-refusal` | a refused read | the CLI's own sentence for that kind's read (`sanitizeRefusal` keeps the role, project and path words and drops the rest), with the helper's Retry drawn beside it. It is the one place CLI text is drawn as prose |
+| `button.manage-write` | a write action's control, and its submit | a `type="button"` drawn for a kind's write action (`WriteAction` in `manage/types.ts`): the control's label is the action's own words, and the same hook is the form's `Continue` once the form is open — the two presses are the two steps of one write, so they are one hook. The control is drawn through `disabledWrite` when the caller's role may not use it (RB4's sentence is its `title`), and a control drawn that way binds nothing: no listener, no form. The submit is `disabled` while a required box is empty |
+| `div.manage-write-box` | a write action's own box | the control and, once it is pressed, the form that replaces it — the write's whole drawing, so `Cancel` has somewhere to put the control back. It sits in the `manage-actions` line beside the copy and view controls |
+| `div.manage-write-form` | the values a write collects | a grid of one field per `WriteField` the action declared, revealed under the control. Nothing here decides anything: the values go to the action's **plan** operation, and the window that follows is main's |
+| `label.manage-write-field` | one field of that form | the console's own label for the box (`Model ID`, `Route`), wrapping the box so the two are one target. A field's label is not a document's string and passes no `TEXT_CLASSES` class: the operator reads what they are about to type |
+| `input.manage-write-input` | one value of that form | a `type="text"` box the operator types into. Every value is text this console sends to main, which holds each to its own grammar before any child exists; a value a document sent never reaches this element |
+| `button.manage-write-cancel` | a form's way out | the `Cancel` beside the submit, in the confirmation window's own word (`confirm.ts`'s `CANCEL_LABEL`), because it is the same fact: a form the operator has decided not to submit. It puts the control back exactly as it was drawn |
+| `p.manage-refusal` | a refused read, and a refused write's plan | the CLI's own sentence for that kind's read (`sanitizeRefusal` keeps the role, project and path words and drops the rest), with the helper's Retry drawn beside it. A **plan** that refused is the same hook inside the write's own box — the operation named rather than the kind, "no plan arrived for the write `models.add.plan`" when the refusal carried no sentence — and the values stay typed under it. It is the one place CLI text is drawn as prose |
 | `p.manage-empty` | a read that answered with nothing | the console's own single sentence (`Nothing listed yet`), muted, in the console's voice and never the CLI's: an empty answer is not a refusal, so it gets no CLI sentence and no reason to retry |
 
 - **The attributes are the shell's own bookkeeping.** `data-kind`, `data-operation`,
@@ -1821,6 +1829,17 @@ body, and not as a `div`.
   row's copy and no row's command a table could name — a per-row action is a descriptor member
   (the plan's MG0) and then a shell change, in that order. A kind whose rows need their own
   control draws it from its own `decode` today.
+- **A write action is the one action that opens a window, and its floor is the kind's.** A
+  `WriteAction` is drawn as a control and a form, and what the form submits is the kind's
+  **plan** operation (`models.add.plan`, `image.add.plan`): the dry run's document is main's,
+  the window that shows it is §2.13's, and the write that follows is main's on that window's
+  own yes — `manage.css` therefore draws no window and no document, and the section redraws
+  nothing when a plan lands. The **role** is asked here, once per control (`manage-write`'s
+  row above), and the **CLI version** is not: whether this console may show the write at all
+  is decided where the kind is built (`manage/kinds/models.ts`, `manage/kinds/images.ts`, and
+  `src/main/modelsadd.ts` on its own side), and a kind below its floor hands this shell a
+  copy-command instead of the write — so the two controls are never drawn for one kind at
+  once, and no rule of the theme is about a choice this shell does not make.
 - **The empty sentence is the shell's, and it is one sentence for every kind.** The console's
   own `renderEmpty` takes a closed union of sentences (`EMPTY_RUNS` today), so the shell draws
   its own line rather than widen a helper that belongs to the screens. A kind that wants its
