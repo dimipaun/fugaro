@@ -66,6 +66,7 @@ read needs no slug beside it.
 | `status` | string | `result.json`'s `status`, one of `runstore.Statuses`; absent when the record settled none | `--state`, the active set, `runs stats`, the estimate table |
 | `plan_task` | string | `launch.json`'s `plan_task` | `plan status`, `graph` (the join) |
 | `pr` | integer | the record's `pr.number`, else the task's pull request | `--pr` |
+| `branch` | string | the record's `branch`, else the task's branch (`runview.Row.Branch`) | the row's branch and, through it, its release |
 | `requested_by` | string | the task's `requested_by` | `--mine` |
 | `launched_by` | string | `launch.json`'s `launched_by` | `runs stats` (its per-user rows) |
 | `batch` | string | the task's `batch` | `--batch` |

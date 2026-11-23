@@ -1019,19 +1019,28 @@ func indexBuildingLine(folded *time.Time) string {
 // the same reduction coordinatorRun makes of a run's objects, from the two
 // records the entry carries whole.
 //
-// **One fact comes from the entry and not from those records**: the pull
-// request a run's *task* names. A run that has opened none of its own carries
-// the number in its task and not in its record — coordinatorRun's own fallback
-// — and a task is not in the index, whose whole reason for not carrying one is
-// that its prompt is the largest thing about a run. The fold writes the number
-// both of them agree on into the entry (Entry.PR), which is what keeps such a
-// run filed under its pull request in the view rather than in the in-flight
-// set; a run the entry names no pull request for keeps the record's own
-// reading.
+// **Two facts come from the entry and not from those records**: the pull
+// request a run's *task* names, and the branch it names. A run that has opened
+// none of its own carries the number in its task and not in its record —
+// coordinatorRun's own fallback — and a task is not in the index, whose whole
+// reason for not carrying one is that its prompt is the largest thing about a
+// run. The fold writes the pair both of them agree on into the entry
+// (Entry.PR, Entry.Branch), which is what keeps such a run filed under its pull
+// request in the view rather than in the in-flight set; a run the entry names
+// neither for keeps the record's own reading.
+//
+// The branch is here for the same reason and one of its own: a run whose record
+// is absent or unreadable still runs on the branch its task named, and the view
+// derives a record's release from it (coordinator.finish), so a reader of the
+// index that took the branch from the record alone would draw that run on no
+// branch and under no release while the bucket read draws it on both.
 func indexRun(e runindex.Entry) coordinator.Run {
 	run := coordinatorRun(runview.Input{RunID: e.RunID, Launch: e.Launch, Record: e.Record})
 	if e.PR != 0 {
 		run.PR = e.PR
+	}
+	if e.Branch != "" {
+		run.Branch = e.Branch
 	}
 	return run
 }
