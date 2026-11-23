@@ -746,7 +746,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// below pick the page: a state is the pull request's, read from every run
 	// of it the listing read, so it is the same on every row of a page as on
 	// the rows the filters below dropped.
-	markPRStates(rows, reviewing)
+	markPRStates(rows, reviewing, pauseFactsFor(ctx, env, warnf))
 	// A review run --pr kept for the fold alone is not a row it prints: the
 	// state every row of the pull request carries is read from it, and the
 	// review itself is not one of the pull request's own runs. rows is runs

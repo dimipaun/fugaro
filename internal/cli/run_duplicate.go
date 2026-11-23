@@ -58,12 +58,21 @@ import (
 // duplicate, and a run in flight may carry a pull request of its own (a
 // follow-up the task's own chain is on).
 type duplicateOf struct {
-	// live is the run in flight, as the records name it (the full
-	// <repo-slug>/<run-id>); "" when none is. The prose shortens it to its
-	// ending (task.ShortRun), which is how every listing shows a run.
+	// live is the run of the task that is in flight, as the records name it
+	// (the full <repo-slug>/<run-id>); "" when none is. A run a standing pause
+	// suspended is one of these: it is not going, but the chain is in flight
+	// and this launch would be its second run (F64). The prose shortens it to
+	// its ending (task.ShortRun), which is how every listing shows a run.
 	live string
-	// status is that run's own word: launching, pending or running.
+	// status is that run's own word: launching, pending, running, or paused for
+	// a suspended chain.
 	status string
+	// pauseAt is the instant the run's pause resumes at, when the run is one a
+	// pause suspended and the node could be read (C3). It is the whole of what
+	// tells the caller how long the wait it is offered is; the zero time is a
+	// pause this machine could not read, which the refusal says by naming no
+	// instant.
+	pauseAt time.Time
 	// pr is the pull request found on the task, 0 when none is: the run in
 	// flight's own, or one a run that ended left behind.
 	pr int
@@ -71,15 +80,30 @@ type duplicateOf struct {
 	// when it is not the run in flight.
 	prRun string
 	// prState is that pull request as the records fold it (markPRStates):
-	// runview's live, ready or stalled, the words `fugaro runs ls --state`
-	// matches. "" when no pull request was found.
+	// runview's live, paused, ready or stalled, the words `fugaro runs ls
+	// --state` matches. "" when no pull request was found.
 	prState string
+}
+
+// statusWord is the state the run in flight is named by, with the instant a
+// pause comes back when it is one: a run that is going reads as its own status
+// word, and a run a pause suspended reads "paused until <t>", which is what
+// tells the caller whether the wait the refusal offers is minutes or hours (R15
+// bounds a pause at pause.max_pause, six hours by default).
+func (d duplicateOf) statusWord() string {
+	if d.status != string(runstore.StatusPaused) {
+		return d.status
+	}
+	if d.pauseAt.IsZero() {
+		return "paused"
+	}
+	return "paused until " + d.pauseAt.Format(time.RFC3339)
 }
 
 // prWord is the pull request's state as a reader of the refusal meets it: the
 // listing's own word where it is a fact about the pull request after its runs
-// ended, and the sentence for live, where the row of the task is not itself
-// the run that is going.
+// ended, and the sentence for live and paused, where the row of the task is not
+// itself the run that is going or suspended.
 func (d duplicateOf) prWord() string {
 	switch d.prState {
 	case prStateReady, prStateStalled:
@@ -98,9 +122,9 @@ func (d duplicateOf) prWord() string {
 func (d duplicateOf) what(planTask, repo string) string {
 	switch {
 	case d.live != "" && d.pr != 0:
-		return fmt.Sprintf("plan task %s is already being worked on (run %s is still %s, on pull request #%d of %s)", planTask, task.ShortRun(d.live), d.status, d.pr, repo)
+		return fmt.Sprintf("plan task %s is already being worked on (run %s is still %s, on pull request #%d of %s)", planTask, task.ShortRun(d.live), d.statusWord(), d.pr, repo)
 	case d.live != "":
-		return fmt.Sprintf("plan task %s is already being worked on (run %s is still %s)", planTask, task.ShortRun(d.live), d.status)
+		return fmt.Sprintf("plan task %s is already being worked on (run %s is still %s)", planTask, task.ShortRun(d.live), d.statusWord())
 	default:
 		return fmt.Sprintf("plan task %s is already being worked on (run %s left pull request #%d of %s, %s)", planTask, task.ShortRun(d.prRun), d.pr, repo, d.prWord())
 	}
@@ -147,6 +171,16 @@ func (d duplicateOf) refusal(planTask, repo string) string {
 	second := "launch a deliberate second attempt of the same task with --allow-duplicate"
 	var ways string
 	switch {
+	case d.status == string(runstore.StatusPaused):
+		// A chain a pause suspended comes back on its own: the orchestrator
+		// resumes it at the instant named above, and nothing the CLI takes
+		// continues it from here -- --pr would meet resolvePR's own refusal and
+		// --retry and --continues are the dead ends the note above sets out.
+		// So waiting is the whole of what the caller may do, beside the
+		// deliberate second attempt, and it is read over the repository rather
+		// than over a pull request: a run that opened none is suspended just
+		// the same.
+		ways = fmt.Sprintf("wait for the chain to resume it (fugaro runs ls --repo %s), or %s", repo, second)
 	case d.live != "":
 		// A run in flight is waited for, and the deliberate second attempt is
 		// the other thing the caller may do. Nothing else is named: --pr does
@@ -226,8 +260,12 @@ func findPlanTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, sl
 	// The pull request's state comes from the rows themselves, exactly as a
 	// listing computes it: the records' own word, and no code host read. The
 	// guard is a launch decision, so it makes the call every launch-time read
-	// makes and asks nothing of the network its environment may not have.
-	markPRStates(rows, nil)
+	// makes and asks nothing of the network its environment may not have. The
+	// one read beyond the bucket is the pause node of a run that ended paused
+	// (pauseFactsFor): the cancellation that ends a chain's flight is written
+	// there and nowhere the rows hold.
+	pauses := pauseFactsFor(ctx, env, func(format string, a ...any) { fmt.Fprintf(warn, format, a...) })
+	markPRStates(rows, nil, pauses)
 	var (
 		found  duplicateOf
 		newest time.Time
@@ -238,11 +276,18 @@ func findPlanTaskDuplicate(ctx context.Context, env *cloudEnv, o *runOptions, sl
 		if r.PlanTask != o.planTask || r.RunID == runID {
 			continue
 		}
-		if liveStatus(r.Status) {
+		// A run in flight, or one that suspended itself into a pause that still
+		// stands (pauseStands): both are the chain being worked on, which is
+		// what F64 found the guard blind to — a run that ended paused is a
+		// terminal record the words below read as a finished run, and the
+		// second launch of the task was admitted between the pause and its
+		// resume.
+		if f, paused := pauseInFlight(r, pauses); liveStatus(r.Status) || paused {
 			// The newest one is named, so a task whose runs piled up is
 			// answered with the run a reader would look at.
 			if found.live == "" || r.Created.After(newest) {
 				found.live, found.status, found.pr, newest = oneLine(r.Run), r.Status, r.PR, r.Created
+				found.pauseAt = f.resumeAt
 			}
 			continue
 		}
