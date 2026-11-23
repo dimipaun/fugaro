@@ -106,11 +106,15 @@ const SCOPE_PLACEHOLDER = 'SCOPE'
  * could get wrong, and the class each of them takes is a fact about the column
  * rather than a preference:
  *
- * - A **member** is `label`, not `person`. The grants node, this machine's own
- *   lists and this document all spell a member `user:<address>`, `group:<address>`,
- *   `domain:<domain>` or `serviceAccount:<address>`, and a `person` column refuses
- *   every one of those spellings -- it holds a bare address. The whole point of
- *   the column is that an installation's roster is not only people.
+ * - A **member** is `person`. The grants node, this machine's own lists and this
+ *   document all spell a member `user:<address>`, `group:<address>`,
+ *   `domain:<domain>` or `serviceAccount:<address>`, and the column says who a
+ *   row is -- so the class that draws an identity is the one that belongs here,
+ *   and it draws any of those spellings as the read wrote it (D3213,
+ *   2026-11-21: the console masks secrets only, so the class no longer refuses a
+ *   value that is not a bare login and no longer marks an address). `label`,
+ *   which held this column while that class refused those spellings, is left to
+ *   the columns that are not a person.
  * - A **role** is `label`: one word out of a closed set, which is what a label is.
  * - A **scope** is `scope`, and no other class of the set holds it: a stored
  *   scope is one string that may be the word `project`, the word `all-repos`, or
@@ -122,7 +126,7 @@ const SCOPE_PLACEHOLDER = 'SCOPE'
  *   the only place the value appears at all. So `sanitize.ts` gained the class,
  *   and it holds `ParseScope`'s grammar.
  */
-const MEMBER_COLUMN: ManageColumn = { key: 'member', title: 'Member', class: 'label' }
+const MEMBER_COLUMN: ManageColumn = { key: 'member', title: 'Member', class: 'person' }
 const ROLES_COLUMN: ManageColumn = { key: 'roles', title: 'Roles', class: 'label' }
 const STATUS_COLUMN: ManageColumn = { key: 'status', title: 'Status', class: 'label' }
 const ROLE_COLUMN: ManageColumn = { key: 'role', title: 'Role', class: 'label' }
