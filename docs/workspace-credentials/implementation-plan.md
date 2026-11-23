@@ -438,17 +438,27 @@ WC5, WC14.
 - Reviewer tier: opus, mandatory independent review (it edits a plugin skill).
 
 ### I1: integration
-- Acceptance: the two stub files are deleted and the real sides are wired; one end-to-end test,
-  over the fakes, has a roster person store a token, launch in a member with the switch on and be
-  served it; a second person's run in the same member is served the shared entry; the switch off
-  serves no personal token; a deleted container refuses; an exhausted token moves to the shared
-  entry and that call is reserved.
+- Acceptance: the two stub files are deleted and the real sides are wired; **the workspace-mode
+  serve path sets `credsvc.PersonSwitchForServe` to WC6's real reader**, a scope-aware read of the
+  calling member's published policy (the switch is asked per call of the member the caller's own
+  verified project names, so the read is the call's own `Scope.Policy` and not a reader built at
+  startup). Without it a workspace-mode process whose half WC14 wired refuses every call whose slip
+  names a personal token with `personalSwitchOff`, which is what the stub WC5's file defaults to
+  answers for every project (WC5's comment on the variable records the gap, and why the wiring is
+  this task's and not WC14's). One end-to-end test, over the fakes, has a roster person store a
+  token, launch in a member with the switch on and be served it; a second person's run in the same
+  member is served the shared entry; the switch off serves no personal token; a deleted container
+  refuses; an exhausted token moves to the shared entry and that call is reserved.
 - Files: `internal/creds/person_stub.go` (deleted), `internal/credsvc/scope_person_stub.go`
-  (deleted), `internal/cli/workspace_personal_end_to_end_test.go` (new).
+  (deleted), `internal/credsvc/personal_workspace.go` (the scope-aware switch reader),
+  `internal/cli/credentials_serve.go` (the assignment),
+  `internal/cli/workspace_personal_end_to_end_test.go` (new).
 - Interfaces: consumes the tasks it depends on.
-- Tests: `TestAPersonsTokenEndToEnd`.
-- Command: `go test ./internal/cli/ -run APersonsTokenEndToEnd -count=1 && go build ./... && go vet ./...`.
-- Red step: the build fails on the stubs' duplicate symbols until they are deleted.
+- Tests: `TestAPersonsTokenEndToEnd`, `TestWorkspaceModeAnswersTheSwitchThroughTheRealReader`.
+- Command: `go test ./internal/cli/ -run 'APersonsTokenEndToEnd|WorkspaceModeAnswersTheSwitch' -count=1 && go build ./... && go vet ./...`.
+- Red step: the build fails on the stubs' duplicate symbols until they are deleted, and
+  `TestWorkspaceModeAnswersTheSwitchThroughTheRealReader` is answered `personalSwitchOff` by the stub
+  switch WC5's file defaults to until the assignment is written.
 - Depends on: C1, C2, WC2, WC3, WC4, WC5, WC6, WC7, WC8, WC9, WC14.
 - Commit: `workspace: a person's token, wired end to end (I1)`.
 - Reviewer tier: opus, mandatory independent review.
@@ -513,8 +523,9 @@ the environment name; that name is in C1, so the edge is gone without a break of
 | `deploy/terraform/gcp/roots/workspace/*`, `internal/infra/tf/workspace.go`, `internal/cli/workspace_create.go` | WC2 (1) |
 | `deploy/terraform/gcp/modules/installation/*`, `internal/infra/launchers.go`, `internal/infra/tfvars.go`, `internal/cli/intake_serve.go`, `internal/intake/server.go` | WC3 (1) |
 | `internal/credsvc/scope_workspace.go`, `workspace.go`, `slip.go`, `server.go`, `scope_installation_test.go` | WC4 (1) |
-| `internal/cli/credentials_serve.go` | WC14 (1) |
-| `internal/credsvc/personal_workspace.go`, `cascade.go`, `dynamicsecrets.go` | WC5 (1) |
+| `internal/cli/credentials_serve.go` | WC14 (1), I1 (3) |
+| `internal/credsvc/personal_workspace.go` | WC5 (1), I1 (3) |
+| `internal/credsvc/cascade.go`, `dynamicsecrets.go` | WC5 (1) |
 | `internal/projectpolicy/policy.go`, `internal/settings/registry.go`, `schemas/settings.schema.json`, `internal/cli/init_policy_publish.go`, `internal/localcfg/localcfg.go` | WC6 (1) |
 | `internal/gateway/service.go`, `internal/gateway/gateway.go`, `internal/runner/gateway.go`, `internal/runner/budget_session.go` | WC8 (1) |
 | `internal/cli/secrets_intake.go` | WC9 (1) |
