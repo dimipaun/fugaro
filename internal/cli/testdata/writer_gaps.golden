@@ -352,6 +352,7 @@ workspace_pin.firebase_project	open:no-writer
 workspace_pin.issuer	open:no-writer
 workspace_pin.service_account	open:no-writer
 workspace_pin.service_address	open:no-writer
+workspace_shared.conformance.all_members	open:no-writer
 workspace_shared.conformance.covers	open:no-writer
 workspace_shared.conformance.kind	open:no-writer
 workspace_shared.conformance.projects	open:no-writer
