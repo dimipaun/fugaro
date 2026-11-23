@@ -253,16 +253,15 @@ type Pool struct {
 	Strategy string
 	// Owner and AllowedUsers are the pool's own members (D1936, R10): the person
 	// a slip naming this pool is served to, and the others it is served to beside
-	// them. They are carried through unchanged — an owner is the roster's key and
-	// a write that dropped it would hand a person's pool to the project — and an
-	// empty Owner is the state a pool written before owners is in, which
-	// LegacyOpen records.
+	// them. They are carried through unchanged, because a write that dropped them
+	// would leave a pool that serves nobody. An empty Owner is the state a pool
+	// written before owners is in, which LegacyOpen records.
 	Owner        string
 	AllowedUsers []string
 	// LegacyOpen is D1942's marker: a pool that existed before pools carried an
 	// owner, which the migration of a published node writes. It is carried
-	// through unchanged, because a write that dropped it would read such a pool
-	// as one whose owner is still to be named (F37).
+	// through unchanged, because dropped, an open pool — one served to whoever
+	// asks — would read as one whose owner is still to be named (F37).
 	LegacyOpen bool
 	// Principal is the `principal` member the installation's own config states
 	// for this pool, which PL1 adds to config.Pool. The migration writes back
@@ -411,10 +410,13 @@ type PoolSpec struct {
 	Principal *Principal `json:"principal,omitempty"`
 	Members   []string   `json:"members"`
 	// Owner, AllowedUsers and LegacyOpen are carried through from the pool's own
-	// config unchanged (D1936, D1942, F37): an owner is the roster's key — who a
-	// slip naming this pool is served to — and a write that dropped it, or the
-	// legacy marker that says a pool is still to be given one, would hand a
-	// person's pool to the project.
+	// config unchanged (D1936, R10, D1942, F37). The owner and the allowed users
+	// are the roster — which slips this pool's tokens are served to (Pool.Serves)
+	// — and a write that dropped them would leave a pool that serves nobody.
+	// LegacyOpen is the marker that a pool predated owners and is served to
+	// whoever asks: dropped, an open pool would read as one whose owner is still
+	// to be named, and "no owner" and "open to everyone" would be one piece of
+	// text (F37).
 	Owner        string   `json:"owner,omitempty"`
 	AllowedUsers []string `json:"allowed_users,omitempty"`
 	LegacyOpen   bool     `json:"legacy_open,omitempty"`
