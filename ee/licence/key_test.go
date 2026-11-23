@@ -532,9 +532,9 @@ func TestStagingKeyIDIsRefused(t *testing.T) {
 }
 
 // publishedProductionKeyPath is the file the owner's production public half is
-// published in, relative to this package. The ring a released build trusts is
-// compiled from these bytes, and the console's suite and the app's read the same
-// file, so one file holds the three verifiers to one key.
+// published in, relative to this package. The production ring is compiled from
+// these bytes, and the console's suite and the app's read the same file, so one
+// file holds the three verifiers to one key.
 const publishedProductionKeyPath = "keys/production.pub"
 
 // publishedProductionKeyID is the id a production key carries, written out here
@@ -543,7 +543,7 @@ const publishedProductionKeyPath = "keys/production.pub"
 // to it is a decision a reviewer reads here and not a rename.
 const publishedProductionKeyID = "fugaro-licence-production"
 
-// TestKeyringMatchesThePublishedKey holds the ring a released build trusts to
+// TestKeyringMatchesThePublishedKey holds the ring the build compiles in to
 // the file the public half is published in (S2.9): one entry, under the id a
 // production key carries, holding exactly the key that file spells. A ring that
 // drifted from its file -- a second copy of the bytes, a key re-generated under
@@ -555,7 +555,7 @@ func TestKeyringMatchesThePublishedKey(t *testing.T) {
 		t.Errorf("the compiled ring is keyed by %q, want %q: a key is looked up by the text its `kid` claim carries", productionKeyID, publishedProductionKeyID)
 	}
 	if len(productionKeyring) != 1 {
-		t.Fatalf("the production keyring holds %d keys, want the one published production key alone: a second entry is a second key a released build would trust", len(productionKeyring))
+		t.Fatalf("the production keyring holds %d keys, want the one published production key alone: a second entry is a second key a build would trust the day a command reads this ring", len(productionKeyring))
 	}
 
 	published, err := os.ReadFile(publishedProductionKeyPath)

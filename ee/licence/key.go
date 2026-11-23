@@ -143,11 +143,15 @@ const productionKeyID = "fugaro-licence-production"
 //go:embed keys/production.pub
 var productionPublicPEM []byte
 
-// productionKeyring is the ring a released build trusts: exactly one key, the
-// production public half above, under the id its keys are signed with. A test
-// or staging key never lands here: TestStagingKeyIDIsRefused is the half that
-// holds the fixture's ids out, and TestAKeyUnderTheProductionIDIsRefused holds
-// that naming the id buys nothing without the key itself.
+// productionKeyring is the published production ring: exactly one key, the
+// production public half above, under the id its keys are signed with. No
+// command reads it yet, and that is not an omission — the ring a command
+// verifies against is `ee/register`'s licenceRing, which becomes this same list
+// with K4.2's release, so a build trusts a key only where the renewal secret
+// container that key's renewal needs already exists. A test or staging key
+// never lands here: TestStagingKeyIDIsRefused is the half that holds the
+// fixture's ids out, and TestAKeyUnderTheProductionIDIsRefused holds that naming
+// the id buys nothing without the key itself.
 var productionKeyring = Keyring{productionKeyID: publicKeyOf(productionPublicPEM)}
 
 // publicKeyOf reads one PEM-encoded public half as a keyring holds it. The

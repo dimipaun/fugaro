@@ -92,10 +92,11 @@ const licenceMaxAnswerBytes = 16 << 10
 // key-signing-service.md: the site's own host's keys. subdomain).
 var licenceServerURL = "https://keys.fugaro.dev"
 
-// licenceRing is the keyring these commands verify a key against. It is empty
-// here and holds the published production ring once a release may: the halves
-// belong in ee/licence's own table, and this variable becomes that same ring,
-// which is what keeps one build's trusted keys one list.
+// licenceRing is the keyring these commands verify a key against, and empty
+// here means the build trusts no key at all: ee/licence's own productionKeyring
+// is published but unread, so this variable is the one that carries it into a
+// command, and it takes that same list over in the release below — which is
+// what keeps one build's trusted keys one list.
 //
 // **What holds it empty is the order the publication owes K4.2**
 // (`TestTheRenewalContainerIsCreatedBeforeTheRingIsPublished`): a valid key with
