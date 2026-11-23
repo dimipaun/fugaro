@@ -1766,11 +1766,27 @@ type wsPerson struct {
 	// about. A test that wants the empty state empties it, and one that wants a
 	// failed read fails it.
 	secrets *wsPerSecret
+	// switchOn is the process's switch, which the fixture installs ON and puts
+	// back when the test ends (newWSPerson says why ON): a test that asserts the
+	// member the switch was asked about reads it here.
+	switchOn *scriptedSwitch
 }
 
 // newWSPerson wires C2's configuration, builds the resolver over it and serves
 // the member's own policy — which is what makes a call under a slip reach the
 // model path rather than refusing for a missing allow-list.
+//
+// **The member's switch is ON, and that is this fixture's premise and not a
+// convenience.** A slip exists only because the switch was on when it was
+// granted (R11), so a fixture that grants a slip naming a personal token and
+// calls under it is a member whose switch is on: with the process's own switch
+// left at its default — C1's stub, OFF for every project — every call of this
+// file that expects 200 would be refused with personalSwitchOff instead. The
+// real reader is the deployment's (`projectpolicy.PersonSwitchReader` over the
+// member's published policy, WC6) and the workspace-mode serve path installs it
+// (I1, and WC5's comment on the variable says so); a hermetic fixture has no
+// member's policy node to read it from, so it stands in for that wiring here the
+// way the assignment below stands in for WC14's.
 func newWSPerson(t *testing.T, mutate ...func(*PersonScopeConfig)) *wsPerson {
 	t.Helper()
 	db := gcpfake.NewRTDB(t)
@@ -1792,9 +1808,10 @@ func newWSPerson(t *testing.T, mutate ...func(*PersonScopeConfig)) *wsPerson {
 	was := PersonScopeConfigForServe
 	PersonScopeConfigForServe = cfg
 	t.Cleanup(func() { PersonScopeConfigForServe = was })
+	sw := personalSwitch(t, true, nil)
 	s := newWS2Scope(t, nil)
 	s.serve(wsMemberA, wsPoolName)
-	return &wsPerson{ws2Scope: s, db: db, store: store, roster: roster, launchers: launchers, secrets: secrets}
+	return &wsPerson{ws2Scope: s, db: db, store: store, roster: roster, launchers: launchers, secrets: secrets, switchOn: sw}
 }
 
 // service is wsService with the deployment's own configuration still open to the
@@ -1992,6 +2009,35 @@ func TestWorkspaceModeServesTheGrantAndTheClaim(t *testing.T) {
 	resp, body := p.personCall(t, svc, id, secret, callBody("ws4-grant-and-claim"))
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("a call under the workspace's own slip = %d, want 200: %s", resp.StatusCode, body)
+	}
+}
+
+// TestWorkspaceModeAnswersThePersonalSlipThroughTheSwitch is the test WC5's
+// finding asks for: a workspace-mode deployment whose own half is wired answers
+// a slip that names a person's token THROUGH this process's switch — and not
+// with personalSwitchOff, which is the answer every such call gets while the
+// variable sits at its default (C1's stub, OFF for every project).
+//
+// **It fails on that default and it is meant to.** Before I1's line the process
+// owns no real reader, so the stub's OFF is what a call under a personal slip
+// meets, and this test's 200 is the deployment's wiring read back: the two
+// assertions are one fact, because a served call is one whose switch was asked
+// and answered on. The member asked is the CALLER's own (wsMemberA, the project
+// its verified identity names) and not the process's or the slip's, which is
+// what makes the reader I1 installs a scope-aware one (WC5's comment on the
+// variable, WC6's read of the member's published policy).
+func TestWorkspaceModeAnswersThePersonalSlipThroughTheSwitch(t *testing.T) {
+	p := newWSPerson(t)
+	svc := p.service(t)
+	id := p.granted(t, svc, p.grantBody(t, wsAccountA, creds.PersonTokenName))
+	secret := p.claimed(t, svc, id)
+
+	resp, body := p.personCall(t, svc, id, secret, callBody("ws5-the-switch"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a call under a slip naming a person's token = %d, want 200: %s", resp.StatusCode, body)
+	}
+	if got := p.switchOn.projects(); len(got) != 1 || got[0] != wsMemberA {
+		t.Errorf("the personal switch was asked about %v, want the caller's own member %q alone: the switch is the MEMBER's, and the member is the project the caller's verified identity names", got, wsMemberA)
 	}
 }
 
