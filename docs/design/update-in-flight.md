@@ -239,8 +239,14 @@ the person is that such a run finishes. MG3's says that this release keeps
 writing the repository's old access record beside the routing table, which is
 what a run whose image predates the table resolves from (`repoAuthSources`,
 `internal/cli/update_repoauth.go`; `legacy_auth.go`, `internal/credsvc`) — and it
-names no count of its own, because nothing this machine holds records the image a
-run is running, so the count above is every run the record could be serving.
+counts those runs, because the image a run is running is a fact this machine
+does hold: the run's own record carries it (`ImageInfo`, written at bootstrap out
+of the statement the image makes about itself), so the line reads each run of the
+registry against the moment the table reached the branch (`chainIntroduced`,
+`runsOnTheOldRecord`) and says how many of the count above are its readers. A
+record that names no build time, and one that cannot be read at all, count —
+the direction the image-age gate takes for an image it cannot place — and the
+line is printed only when the number is not zero.
 Beyond those lines the note is as short as the count: the same feedback
 could not find what it was after in the paragraph this used to be, and what each
 line stands for — the question its step is gated on — is written where that
