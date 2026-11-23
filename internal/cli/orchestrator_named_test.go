@@ -65,12 +65,15 @@ func TestOrchestratorNameFlag(t *testing.T) {
 		t.Errorf("--name night resolved to %q for a project whose name is not one", id)
 	}
 
-	// The flag is on the four commands this task gives it to, and `serve` is the
-	// one command of the family that must never take it. The family's other
-	// readers — state, events, patch and import — are the next task's (CG1c), so
-	// this test says nothing about them either way.
+	// The flag is on every command of the family that acts on one orchestrator —
+	// this task gave it to run, install, uninstall and status, and CG1c gave it
+	// to the four that read and write a document — and `serve` is the one
+	// command of the family that must never take it.
 	orch := findCmd(t, NewRootCmd(), "orchestrator")
-	wantFlag := map[string]bool{"run": true, "install": true, "uninstall": true, "status": true}
+	wantFlag := map[string]bool{
+		"run": true, "install": true, "uninstall": true, "status": true,
+		"state": true, "events": true, "patch": true, "import": true,
+	}
 	for _, c := range orch.Commands() {
 		has := c.Flags().Lookup(orchestratorNameFlag) != nil
 		if c.Name() == "serve" {

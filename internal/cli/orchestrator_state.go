@@ -39,6 +39,9 @@ const orchestratorBriefCacheVersion = 1
 // orchestratorStateOptions are `fugaro orchestrator state`'s flags.
 type orchestratorStateOptions struct {
 	cloudOptions
+	// name is --name: which of the project's orchestrators is read (D3206,
+	// D3207). Empty is the project's own.
+	name    string
 	brief   bool
 	offline bool
 	json    bool
@@ -55,11 +58,14 @@ func newOrchestratorStateCmd() *cobra.Command {
 			"session-start print. --brief --offline prints that cache instead and reaches no\n" +
 			"network at all, showing the stamp the daemon wrote it with; with no cache yet it\n" +
 			"says so rather than reading the node. --json prints a versioned document\n" +
-			"(schemas/orchestrator-output.schema.json).",
+			"(schemas/orchestrator-output.schema.json).\n\n" +
+			"--name reads one of the project's named orchestrators instead of the project's\n" +
+			"own: `--name night` reads `<project>~night`, its node and its cached brief.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorState(cmd, &o) },
 	}
 	f := cmd.Flags()
+	addOrchestratorNameFlag(cmd, &o.name)
 	f.BoolVar(&o.brief, "brief", false, "print only the generated summary")
 	f.BoolVar(&o.offline, "offline", false, "print the brief the daemon cached at session start, reaching no network (goes with --brief)")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
@@ -115,25 +121,21 @@ func runOrchestratorState(cmd *cobra.Command, o *orchestratorStateOptions) error
 		return userErr("--offline prints the brief the daemon cached, so it is used with --brief: fugaro orchestrator state --brief --offline")
 	}
 	if o.offline {
-		lc, err := selectOrchestratorProject(ctx, o.cloudOptions)
-		if err != nil {
-			return err
-		}
-		id, err := orchestratorID(lc)
+		_, id, err := selectOrchestratorProject(ctx, o.cloudOptions, o.name)
 		if err != nil {
 			return err
 		}
 		return printCachedOrchestratorBrief(cmd, o, id)
 	}
-	lc, node, db, err := openOrchestrator(ctx, o.cloudOptions)
+	t, err := openOrchestrator(ctx, o.cloudOptions, o.name)
 	if err != nil {
 		return err
 	}
-	s, _, err := node.Load(ctx)
+	s, _, err := t.node.Load(ctx)
 	if err != nil {
-		return dbErr(lc, err, false)
+		return dbErr(t.lc, err, false)
 	}
-	brief, err := orchestratorBrief(ctx, lc, db, s)
+	brief, err := orchestratorBrief(ctx, t.lc, t.db, s)
 	if err != nil {
 		return err
 	}
@@ -141,7 +143,7 @@ func runOrchestratorState(cmd *cobra.Command, o *orchestratorStateOptions) error
 	w := cmd.OutOrStdout()
 	if o.json {
 		return writeJSON(w, orchestratorStateDoc{
-			Version: orchestratorOutputVersion, Kind: "state", ID: lc.Name, Source: "node",
+			Version: orchestratorOutputVersion, Kind: "state", ID: t.id, Source: "node",
 			Rev: &s.Rev, SchemaVersion: s.SchemaVersion, Brief: text, Items: orchestratorStateItems(s),
 		})
 	}
@@ -149,7 +151,7 @@ func runOrchestratorState(cmd *cobra.Command, o *orchestratorStateOptions) error
 	// write one is told it; --brief is the summary alone, because that is the
 	// form the daemon caches and the session-start print shows.
 	if !o.brief {
-		fmt.Fprintf(w, "orchestrator %s: rev %d, schema_version %d\n", safetext.Field(lc.Name), s.Rev, s.SchemaVersion)
+		fmt.Fprintf(w, "orchestrator %s: rev %d, schema_version %d\n", safetext.Field(t.id), s.Rev, s.SchemaVersion)
 	}
 	fmt.Fprint(w, text)
 	return nil
@@ -361,6 +363,9 @@ func printCachedOrchestratorBrief(cmd *cobra.Command, o *orchestratorStateOption
 // orchestratorEventsOptions are `fugaro orchestrator events`'s flags.
 type orchestratorEventsOptions struct {
 	cloudOptions
+	// name is --name: whose audit log is read (D3206, D3207). Empty is the
+	// project's own orchestrator's.
+	name  string
 	since string
 	json  bool
 }
@@ -373,11 +378,15 @@ func newOrchestratorEventsCmd() *cobra.Command {
 		Long: "Read the project's orchestrator audit log in the order the server stamped it,\n" +
 			"oldest first. --since takes a duration (1h, 30m) and keeps the entries the\n" +
 			"database's own clock puts inside it. --json prints a versioned document\n" +
-			"(schemas/orchestrator-output.schema.json).",
+			"(schemas/orchestrator-output.schema.json).\n\n" +
+			"--name reads one of the project's named orchestrators instead of the project's\n" +
+			"own: `--name night` reads `<project>~night`'s log, which is the log its own\n" +
+			"daemon writes.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorEvents(cmd, &o) },
 	}
 	f := cmd.Flags()
+	addOrchestratorNameFlag(cmd, &o.name)
 	f.StringVar(&o.since, "since", "", "only entries newer than this duration, such as 1h or 30m")
 	f.BoolVar(&o.json, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloudOptions)
@@ -403,7 +412,7 @@ func runOrchestratorEvents(cmd *cobra.Command, o *orchestratorEventsOptions) err
 		}
 		since = d
 	}
-	lc, _, db, err := openOrchestrator(ctx, o.cloudOptions)
+	t, err := openOrchestrator(ctx, o.cloudOptions, o.name)
 	if err != nil {
 		return err
 	}
@@ -411,14 +420,14 @@ func runOrchestratorEvents(cmd *cobra.Command, o *orchestratorEventsOptions) err
 	// too: the order is the server's stamp's (D1230) and --since is cut on the
 	// server's clock, and one function reads the log for both surfaces so they
 	// cannot come to answer differently.
-	read, err := orchestrator.ReadAudit(ctx, db, lc.Name, since)
+	read, err := orchestrator.ReadAudit(ctx, t.db, t.id, since)
 	if err != nil {
 		if errors.Is(err, orchestrator.ErrNoServerTime) {
 			return userErr("the database answered without its own clock, and --since cuts the log at the server's time rather than this machine's (D1230)")
 		}
-		return dbErr(lc, err, false)
+		return dbErr(t.lc, err, false)
 	}
-	doc := orchestratorEventsDoc{Version: orchestratorOutputVersion, Kind: "events", ID: lc.Name, Events: read.Entries}
+	doc := orchestratorEventsDoc{Version: orchestratorOutputVersion, Kind: "events", ID: t.id, Events: read.Entries}
 	if !read.Since.IsZero() {
 		doc.Since = read.Since.Format(time.RFC3339)
 	}

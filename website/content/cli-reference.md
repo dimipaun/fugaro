@@ -3771,6 +3771,9 @@ have cost.
 whose runs this machine cannot all read has no age and no cost, which the
 document writes as null and the table as unknown.
 
+--name reads one of the project's named orchestrators instead of the project's
+own: `--name night` reads the ledger of `<project>~night`'s items.
+
 Usage: `fugaro escalation ls`
 
 Flags:
@@ -3781,6 +3784,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -3802,6 +3806,9 @@ the head each one was decided at.
 whose runs this machine cannot all read has no age and no cost, which the
 document writes as null and the table as unknown.
 
+--name reads one of the project's named orchestrators instead of the project's
+own: `--name night` reads an item of `<project>~night`.
+
 Usage: `fugaro escalation show ITEM`
 
 Flags:
@@ -3812,6 +3819,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for show |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -6085,6 +6093,10 @@ oldest first. --since takes a duration (1h, 30m) and keeps the entries the
 database's own clock puts inside it. --json prints a versioned document
 (schemas/orchestrator-output.schema.json).
 
+--name reads one of the project's named orchestrators instead of the project's
+own: `--name night` reads `<project>~night`'s log, which is the log its own
+daemon writes.
+
 Usage: `fugaro orchestrator events`
 
 Flags:
@@ -6095,6 +6107,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for events |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--since` | string | "" | no | only entries newer than this duration, such as 1h or 30m |
@@ -6136,6 +6149,9 @@ they read (fugaro orchestrator patch). So no dump approves work and no dump
 closes a decision of the person's — not even one the dump raises and closes
 itself — and every work item the dump declares arrives unapproved.
 
+--name imports into one of the project's named orchestrators instead of the
+project's own: `--name night` writes `<project>~night`'s plan and state nodes.
+
 Usage: `fugaro orchestrator import`
 
 Flags:
@@ -6147,6 +6163,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for import |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--plan` | string | "" | no | the plan to import, as its folder under docs/ (docs/<plan>): reads its implementation-plan.graph.json into the plan's node |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -6310,6 +6327,9 @@ nothing, and no flag covers them.
 No flag, environment variable or field of the document makes this command the
 daemon or the decision agent: the daemon's bookkeeping is the daemon's.
 
+--name lands the document on one of the project's named orchestrators instead of
+the project's own: `--name night` writes `<project>~night`'s nodes.
+
 Usage: `fugaro orchestrator patch`
 
 Flags:
@@ -6321,6 +6341,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for patch |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -6382,6 +6403,9 @@ network at all, showing the stamp the daemon wrote it with; with no cache yet it
 says so rather than reading the node. --json prints a versioned document
 (schemas/orchestrator-output.schema.json).
 
+--name reads one of the project's named orchestrators instead of the project's
+own: `--name night` reads `<project>~night`, its node and its cached brief.
+
 Usage: `fugaro orchestrator state`
 
 Flags:
@@ -6393,6 +6417,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for state |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--offline` | bool | `false` | no | print the brief the daemon cached at session start, reaching no network (goes with --brief) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
