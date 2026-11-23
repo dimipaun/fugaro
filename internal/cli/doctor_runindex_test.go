@@ -57,6 +57,9 @@ func runIndexSummaryDoc(complete bool, folded time.Time) map[string]any {
 // summary doctor could not read is neither silence nor a finding: it is a
 // counted line saying the fact is unknown.
 func TestDoctorNamesReindexWhenIncomplete(t *testing.T) {
+	// The rig pins the clock to the catalog's day, so the seeds are built on
+	// that same clock and not on the wall clock the day the test runs.
+	pinCatalogClock(t, shippedCatalog(t), 24*time.Hour)
 	now := budgetNow()
 	stale := now.Add(-(budget.PruneAfter + 1) * 24 * time.Hour)
 	for _, tc := range []struct {
