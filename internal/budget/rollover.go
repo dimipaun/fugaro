@@ -71,6 +71,29 @@ type Facts interface {
 	Facts(ctx context.Context, from, to int64) (facts map[int64][]RunFact, repos map[string]string, err error)
 }
 
+// Index is the run index as the rollover asks about it (RI4, D3201): where the
+// history sweep has folded through, and how to say the index has fallen so far
+// behind that it is no longer complete.
+//
+// The rollover neither writes the index nor imports it -- internal/runindex
+// imports this package for the budget database's own shapes -- so the two
+// facts arrive as an interface the CLI wires, and a Roller with none behaves
+// as it did before the index existed: the guard below is a rule about a writer
+// that is there.
+type Index interface {
+	// FoldedThrough is the moment the index is folded through, and whether it
+	// has been folded at all: false is an index that has never folded, which
+	// prunes as it always did, because a day no fold has read is a day the
+	// reindex (RI5) reads out of the runs bucket rather than out of the
+	// database.
+	FoldedThrough(ctx context.Context) (time.Time, bool, error)
+	// Incomplete latches the index's completeness off, so every reader that
+	// prints a short list says why and `fugaro doctor` names the reindex
+	// (RI6). It is called when the stamp has fallen further behind than the
+	// days this database keeps.
+	Incomplete(ctx context.Context, now time.Time) error
+}
+
 // Roller is one rollover pass's wiring.
 type Roller struct {
 	DB      *rtdb.Client
@@ -92,6 +115,11 @@ type Roller struct {
 	StartLimit time.Time
 	// Wall is the wall clock for StartLimit (default time.Now).
 	Wall func() time.Time
+	// Index is the run index, when the installation has one wired (RI4): the
+	// rollover keeps a day the fold has not read and marks the index
+	// incomplete when its stamp has fallen behind. nil is an installation
+	// without an index, and prunes as it did before there was one.
+	Index Index
 }
 
 func (r *Roller) wall() time.Time {
@@ -249,6 +277,14 @@ func (r *Roller) Rollover(ctx context.Context, opt RolloverOptions) (RolloverRep
 	if _, err := r.DB.Get(ctx, "config/caps", &caps); err != nil {
 		return rep, err
 	}
+	// The index's fold stamp, read once for the pass (RI4, D3201). It is asked
+	// before the days are handled so that a pass with nothing to write still
+	// marks the index incomplete when the fold has stopped -- the mark is the
+	// one thing a reader of a short list needs, and it is not a day's.
+	folded, err := r.foldStamp(ctx, now, today)
+	if err != nil {
+		return rep, err
+	}
 	snap, err := r.snapshot(ctx)
 	if err != nil {
 		return rep, err
@@ -300,20 +336,31 @@ func (r *Roller) Rollover(ctx context.Context, opt RolloverOptions) (RolloverRep
 			err = r.writeDay(ctx, &dr, recs, now, dr.Final, opt.Force)
 		}
 		if err == nil && d < today-PruneAfter && dr.Final {
-			fresh := func() ([]DayRecord, *snapshot, error) {
-				fs, err := r.snapshot(ctx)
-				if err != nil {
-					return nil, nil, err
+			// A day the fold has not read is kept (RI4, D3201): the fold finds
+			// what changed through outcomes/<day>/ and agents/, so deleting a
+			// day it has not walked would leave those runs out of the index for
+			// good. It is the fold's window and not the reindex's that this
+			// guards -- a reindex reads the runs bucket -- so the guard is the
+			// stamp alone, and a day at or after it waits for a fold that has
+			// read it.
+			if folded != nil && d >= Day(*folded) {
+				dr.Note = "waits for the fold"
+			} else {
+				fresh := func() ([]DayRecord, *snapshot, error) {
+					fs, err := r.snapshot(ctx)
+					if err != nil {
+						return nil, nil, err
+					}
+					fin, err := r.input(d, fs.spend, fs.outcomes, fs.runs, fs.last, caps.Defaults, caps.Repos, dayFacts, repoNames)
+					if err != nil {
+						return nil, nil, err
+					}
+					return Rollup(fin), fs, nil
 				}
-				fin, err := r.input(d, fs.spend, fs.outcomes, fs.runs, fs.last, caps.Defaults, caps.Repos, dayFacts, repoNames)
-				if err != nil {
-					return nil, nil, err
+				err = r.prune(ctx, &dr, d, today, fresh)
+				if err == nil && dr.Pruned {
+					delete(present, d)
 				}
-				return Rollup(fin), fs, nil
-			}
-			err = r.prune(ctx, &dr, d, today, fresh)
-			if err == nil && dr.Pruned {
-				delete(present, d)
 			}
 		}
 		if err != nil {
@@ -323,6 +370,41 @@ func (r *Roller) Rollover(ctx context.Context, opt RolloverOptions) (RolloverRep
 		rep.Days = append(rep.Days, dr)
 	}
 	return rep, errors.Join(errs...)
+}
+
+// foldStamp is the index's fold stamp as this pass reads it, and the one place
+// the rollover latches the index incomplete (RI4, D3201).
+//
+// A stamp further behind than PruneAfter is an index whose writer has stopped:
+// the days this database keeps are exactly the days a fold could have read, so
+// a stamp older than them is a gap no future fold can close, and every reader
+// that prints a short list has to say so. The mark is what `fugaro doctor`
+// reads (RI6) and what the reindex (RI5) clears.
+//
+// A missing stamp is not that: an installation whose index has never folded
+// has an empty index and says so already (the summary is absent, and every
+// reader of it reads the overlay alone), so it prunes as it always did -- and
+// the runs of a day it prunes are the reindex's to fold, out of the runs
+// bucket rather than out of this database.
+func (r *Roller) foldStamp(ctx context.Context, now time.Time, today int64) (*time.Time, error) {
+	if r.Index == nil {
+		return nil, nil
+	}
+	t, ok, err := r.Index.FoldedThrough(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reading the run index's fold stamp: %w", err)
+	}
+	if !ok {
+		return nil, nil
+	}
+	t = t.UTC()
+	if today-Day(t) > PruneAfter {
+		r.warnf("the run index has not been folded since %s, more than %d days ago: it is marked incomplete, and fugaro doctor names the reindex", t.Format(time.RFC3339), PruneAfter)
+		if err := r.Index.Incomplete(ctx, now); err != nil {
+			r.warnf("the run index could not be marked incomplete: %v", err)
+		}
+	}
+	return &t, nil
 }
 
 // snapshot is what the rollover reads from the database.

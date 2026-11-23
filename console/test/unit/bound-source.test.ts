@@ -23,7 +23,7 @@
 //     stopped showing that installation. It is **not** D13's no-installation
 //     state, which says no binary can be found while one is chosen and running.
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   NoInstallation,
@@ -55,6 +55,53 @@ const SECOND: BoundInstallation = {
   id: 'b2',
   project: 'other',
   binaryPath: '/opt/fugaro/bin/fugaro',
+}
+
+/**
+ * floor is the version floor this file's map-read case sets.
+ * `ORCHESTRATOR_MAP_CLI_FLOOR` is `null` on this tree -- `orchestrator map
+ * --json` is registered from `ee/` and no release carries it -- so the map read
+ * is refused for every installation and the teaching it does could not be
+ * reached at all. The mock below changes the one thing a case cannot reach: the
+ * predicate's default, exactly as `settings-write-floor.test.ts` does for
+ * `noApplySupported`. With it unset every other case in this file reads the real
+ * constant, which is `null`, and so nothing here behaves differently.
+ */
+const floor = vi.hoisted(() => ({ value: null as string | null }))
+
+vi.mock('../../src/shared/version', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../src/shared/version')>()
+  return {
+    ...real,
+    orchestratorMapSupported: (version: string, at: string | null = floor.value) =>
+      real.orchestratorMapSupported(version, at),
+  }
+})
+
+/** MAP_FLOOR is the release that first carries `orchestrator map --json`, and
+ * MAP_VERSION the installation's own line: one patch above it, so the read is
+ * admitted. Both are spelled rather than imported -- the claim is about the
+ * comparison, not about a constant's value. */
+const MAP_FLOOR = '1.4.0'
+const MAP_VERSION = '1.4.2'
+
+afterEach(() => {
+  floor.value = null
+})
+
+/** MAP is the map document the teaching case is answered with: two active
+ * orchestrators of the project `acme`, the project's default one and one named
+ * (C-ORCH's id rule). Only `nodes[].id` is read by the surface. */
+const MAP = {
+  version: 1,
+  project: 'acme',
+  generated_at: '2026-11-07T12:00:00Z',
+  nodes: [
+    { id: 'acme', name: '', driver: 'dev@example.com', active_tasks: 1, running_jobs: 0, lease_age_seconds: 3 },
+    { id: 'acme~blue', name: 'blue', driver: '', active_tasks: 0, running_jobs: 2, lease_age_seconds: null },
+  ],
+  edges: [],
+  health: { sweep: true, started_at: null, ok_at: null, at: null, note: '' },
 }
 
 /** aSource is a `CliSource`-shaped stand-in: it answers a version and records
@@ -685,6 +732,84 @@ describe('the graph read, whose scope a previous answer taught', () => {
     // floor's: the read has no version to ask about.
     const unbound = createBoundSource({ installation: () => null, create: async (each) => aSource([], each.id) })
     expect(await refusalOf(unbound.orchestratorMap({}))).toBeInstanceOf(NoInstallation)
+  })
+
+  /** aMapSource is a `CliSource`-shaped stand-in for the two reads the
+   * Coordinator makes: `orchestratorMap` answers one document, and `graphRead`
+   * answers a document listing the one scope it was asked for -- which is what a
+   * scoped read of a real CLI does, and what keeps a later `graphRead`'s own
+   * teaching from covering for the map's. Every call is recorded, so "the
+   * refusal spawned nothing" is a count. */
+  function aMapSource(map: Record<string, unknown>, spawned: unknown[]): CliSource {
+    return {
+      version: async () => ({ text: FIRST.id, receivedAt: '2026-11-07T12:00:00Z' }),
+      close: async () => undefined,
+      orchestratorMap: async (args: unknown): Promise<Snapshot> => {
+        spawned.push(args)
+        return {
+          document: map,
+          receivedAt: '2026-11-07T12:00:00Z',
+          sequence: 1,
+          day: null,
+          rolled: false,
+          notices: [],
+        }
+      },
+      graphRead: async (args: unknown): Promise<Snapshot> => {
+        spawned.push(args)
+        const source = (args as { readonly source?: unknown }).source
+        return {
+          document: { sources: [{ source: typeof source === 'string' ? source : 'all' }] },
+          receivedAt: '2026-11-07T12:00:00Z',
+          sequence: 1,
+          day: null,
+          rolled: false,
+          notices: [],
+        }
+      },
+    } as unknown as CliSource
+  }
+
+  it('admits the scope of every box the map drew, and nothing the map did not', async () => {
+    // **The drill-down's admission, and the reason the map read teaches at all**
+    // (CG7b). The Coordinator draws one box per `nodes[].id` and the press on a
+    // box opens that orchestrator through `graph.read --source
+    // orchestrator:<id>`; the membership rule above admits a scope only once an
+    // answer of this installation named it, and C-ORCH's map carries no
+    // `sources[]` -- so the map read records its own nodes, the same union
+    // `graphRead` records. Without that, the press the drawing itself invites
+    // would be refused `NO_GRAPH_SCOPE`. An id the map did not draw is refused
+    // all the same, which is what keeps this a rule rather than a licence.
+    floor.value = MAP_FLOOR
+    const spawned: unknown[] = []
+    const source = createBoundSource({
+      installation: () => ({ ...FIRST, version: MAP_VERSION }),
+      create: async () => aMapSource(MAP, spawned),
+    })
+
+    const map = await source.orchestratorMap({})
+    expect(spawned, 'the map read spawned no child').toHaveLength(1)
+    expect(map.document['nodes']).toHaveLength(2)
+
+    // One child each, because a scope is its own cadence key: the press is a
+    // real read and not the map's own answer handed back.
+    await source.graphRead({ source: 'orchestrator:acme' })
+    await source.graphRead({ source: 'orchestrator:acme~blue' })
+    expect(spawned).toHaveLength(3)
+
+    const refused = await refusalOf(source.graphRead({ source: 'orchestrator:acme~green' }))
+    expect((refused as SourceRefusal).message).toBe(NO_GRAPH_SCOPE)
+    expect(spawned, 'the scope the map did not draw reached the source').toHaveLength(3)
+
+    // A map with no `nodes[]` teaches nothing, on `graphSourcesOf`'s terms: a
+    // malformed answer must not admit every scope rather than none.
+    const bare = createBoundSource({
+      installation: () => ({ ...FIRST, version: MAP_VERSION }),
+      create: async () => aMapSource({}, []),
+    })
+    await bare.orchestratorMap({})
+    const error = await refusalOf(bare.graphRead({ source: 'orchestrator:acme' }))
+    expect((error as SourceRefusal).message).toBe(NO_GRAPH_SCOPE)
   })
 
   /** aMoveSource is `aGraphSource` plus the record's one write: what the next

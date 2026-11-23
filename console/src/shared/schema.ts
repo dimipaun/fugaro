@@ -1709,6 +1709,9 @@ export const PLAN_STATUS_KEYS: readonly string[] = Object.freeze([
   'totals',
   'streams',
   'warnings',
+  'index_complete',
+  'folded_through',
+  'merges_read',
 ])
 
 export const PLAN_KEYS: readonly string[] = Object.freeze([

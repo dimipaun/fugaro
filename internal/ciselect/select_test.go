@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -421,7 +422,17 @@ func TestSelectAnAnyEntryRunsUnlessEveryChangedPathIsIgnored(t *testing.T) {
 			t.Fatalf("Full = true: %s", out.Reason)
 		}
 		held := 0
+		buildable := map[string]bool{}
+		for _, line := range strings.Fields(*selectBuildable(t)) {
+			if pkg, ok := repoPath(selectModule(t), line); ok {
+				buildable[pkg] = true
+			}
+		}
 		for _, p := range m.Packages {
+			// A package with no file under the default tags has no leg to run in.
+			if !buildable[p.Package] {
+				continue
+			}
 			if !p.Any || readsAny(p, []string{changed}) || ignoredBy(p, changed) {
 				continue
 			}
@@ -645,6 +656,9 @@ type fakeCommand struct {
 	// graph is the `go list -deps -test -json` output and pkgs the `-f` one.
 	graph []byte
 	pkgs  string
+	// buildable answers the default-tag `go list -f` as its lines; nil makes
+	// every package of the graph buildable.
+	buildable *string
 	// diff answers git, unless gitReal runs the real git in the checkout the
 	// input's Root names.
 	diff    string
@@ -667,6 +681,11 @@ func (f *fakeCommand) Output(ctx context.Context, dir, name string, args ...stri
 	switch {
 	case name == "go" && selectArg(args, 0) == "list" && selectArg(args, 1) == "-deps":
 		return f.graph, nil
+	case name == "go" && selectArg(args, 0) == "list" && selectArg(args, 1) == "-f" && !slices.Contains(args, "-tags"):
+		if f.buildable != nil {
+			return []byte(*f.buildable), nil
+		}
+		return graphImportPaths(f.graph), nil
 	case name == "go" && selectArg(args, 0) == "list" && selectArg(args, 1) == "-f":
 		return []byte(f.pkgs), nil
 	case name == "git" && f.gitReal:
@@ -801,8 +820,18 @@ func selectRealInput(t *testing.T, files ...string) Input {
 		Head:    "headsha",
 		Base:    "basesha",
 		GitHub:  &fakeGitHub{run: selectRun0()},
-		Command: &fakeCommand{graph: selectListing(t, BuildTags), pkgs: selectTestPackages(t, BuildTags), diff: selectDiff(files...)},
+		Command: &fakeCommand{graph: selectListing(t, BuildTags), pkgs: selectTestPackages(t, BuildTags), buildable: selectBuildable(t), diff: selectDiff(files...)},
 	}
+}
+
+func selectBuildable(t *testing.T) *string {
+	t.Helper()
+	out, err := selectRun(t, selectRoot(t), "go", "list", "-f", "{{.ImportPath}}", "./...")
+	if err != nil {
+		t.Fatalf("go list: %v", err)
+	}
+	s := string(out)
+	return &s
 }
 
 // selectFixture is a selection over this module's real map and graph, with the
@@ -973,4 +1002,94 @@ func selectDiff(files ...string) string {
 		return ""
 	}
 	return strings.Join(files, "\n") + "\n"
+}
+
+// graphImportPaths is the packages of the main module a listing names, one per
+// line, test variants left out.
+func graphImportPaths(listing []byte) []byte {
+	var out strings.Builder
+	dec := json.NewDecoder(bytes.NewReader(listing))
+	for {
+		var lp listedPkg
+		if dec.Decode(&lp) != nil {
+			break
+		}
+		if lp.Module == nil || !lp.Module.Main || lp.ForTest != "" || strings.Contains(lp.ImportPath, " [") || strings.HasSuffix(lp.ImportPath, ".test") {
+			continue
+		}
+		out.WriteString(lp.ImportPath + "\n")
+	}
+	return []byte(out.String())
+}
+
+const tagOnlyModule = "example.com/tagonly"
+
+// tagOnlyRepo is a module with a package whose only Go file, a test, is behind
+// the terraform tag, beside one with a default test.
+func tagOnlyRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":              "module " + tagOnlyModule + "\n\ngo 1.21\n",
+		"plain/plain.go":      "package plain\n",
+		"plain/plain_test.go": "package plain\n\nimport \"testing\"\n\nfunc TestPlain(t *testing.T) {}\n",
+		"gated/gated_test.go": "//go:build terraform\n\npackage gated\n\nimport \"testing\"\n\nfunc TestGated(t *testing.T) {}\n",
+	}
+	for name, body := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func TestSelectAFullRunLeavesATagGatedOnlyPackageOutOfTheLegs(t *testing.T) {
+	root := tagOnlyRepo(t)
+	legs, err := fullLegs(context.Background(), Input{Root: root}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pkgs []string
+	for _, l := range legs {
+		pkgs = append(pkgs, strings.Fields(l.Pkg)...)
+	}
+	if want := []string{"./plain"}; !slices.Equal(pkgs, want) {
+		t.Errorf("packages in legs = %q, want %q: go test names a package with no buildable file as a setup failure", pkgs, want)
+	}
+}
+
+func TestSelectATagGatedFileStillSelectsTheJobsButNoDefaultLeg(t *testing.T) {
+	const gatedListing = `{"ImportPath":"example.com/m/internal/infra/x","Name":"x",` +
+		`"Dir":"/mod/internal/infra/x","Module":{"Path":"example.com/m","Main":true,"Dir":"/mod"},` +
+		`"TestGoFiles":["x_test.go"]}` + "\n"
+	root := selectWriteRoot(t, map[string]string{
+		"go.mod":    "module example.com/m\n\ngo 1.24\n",
+		readMapPath: `{"packages":[]}` + "\n",
+	})
+	empty := ""
+	in := selectInput(root, []byte(gatedListing), "internal/infra/x/x_test.go")
+	in.Command.(*fakeCommand).buildable = &empty
+	out := selectIn(t, in)
+	if out.Full {
+		t.Fatalf("Full: %s", out.Reason)
+	}
+	if len(out.Legs) != 0 {
+		t.Errorf("legs = %v, want none: the package has no default-tag file", selectLegNames(out))
+	}
+	if !out.Terraform {
+		t.Error("Terraform = false, want the job its tree belongs to still selected")
+	}
+}
+
+func selectModule(t *testing.T) string {
+	t.Helper()
+	module, err := modulePath(selectRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return module
 }
