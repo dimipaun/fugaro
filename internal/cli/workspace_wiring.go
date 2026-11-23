@@ -42,6 +42,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -1435,19 +1436,21 @@ func (f workspaceInitFolderSide) CreateFolder(ctx context.Context, parent, owner
 
 // workspaceRosterOpenFor is WU7's opener: the four sides `workspace user` and
 // `workspace domains` act through, for the workspace the --workspace flag named,
-// plus the members the workspace holds now (R11).
+// plus the loader that answers the members the workspace holds now (R11).
 //
 // The authority and the member writer print, and the seam takes no writer of its
 // own, so they print where the command does: stdout. `workspace user rm` prints
 // its own report, and what the mechanism says about a member is part of the same
 // answer.
+//
+// The members ARE NOT READ HERE. Opening this workspace is a local config read
+// and nothing else, so the command's own fences -- an agent's session (A7, D1590),
+// a missing flag, a name that is not a project -- still run before the first
+// cloud call, and a command that never needs the list (`workspace domains
+// add|rm`) makes none.
 func workspaceRosterOpenFor() workspaceRosterOpen {
 	return func(ctx context.Context, name string) (workspaceRosterDeps, error) {
 		o, err := openWorkspaceOwner(name, os.Stdout)
-		if err != nil {
-			return workspaceRosterDeps{}, err
-		}
-		linked, err := workspaceLinkedMembers(ctx, o)
 		if err != nil {
 			return workspaceRosterDeps{}, err
 		}
@@ -1458,11 +1461,32 @@ func workspaceRosterOpenFor() workspaceRosterOpen {
 			Audit:     sides,
 			Members:   sides,
 			Authority: sides,
-			Linked:    linked,
+			Linked:    workspaceLinkedOnce(o),
 			getenv:    os.Getenv,
 			now:       time.Now,
 			rand:      crand.Reader,
 		}, nil
+	}
+}
+
+// workspaceLinkedOnce is workspaceLinkedMembers as the loader a command's
+// dependencies hold: the first call resolves the list -- the roster node's
+// member table, and one `Holds` call per member -- and every call after it
+// answers the same list, or the same error.
+//
+// Once, because a command reports the count of the members it reached and then
+// writes one stored grant per member (D2818): resolving again between those
+// would be a second read of the node and a second call per member for a list
+// that cannot have changed under a command that has not written it yet.
+func workspaceLinkedOnce(side *workspaceOwnerSide) func(context.Context) ([]workspace.MemberTarget, error) {
+	var (
+		once    sync.Once
+		members []workspace.MemberTarget
+		err     error
+	)
+	return func(ctx context.Context) ([]workspace.MemberTarget, error) {
+		once.Do(func() { members, err = workspaceLinkedMembers(ctx, side) })
+		return members, err
 	}
 }
 
