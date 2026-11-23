@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"maps"
 	"os"
 	"slices"
+	"strings"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/apply"
@@ -16,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The converge (internal/initflow) over the engines the converge already
@@ -647,6 +651,18 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// this run leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
+	// And D3087's: where the installation's located things are, read from the
+	// cloud and written down in this machine's own config (LP14 of
+	// docs/location-preference/, docs/location-preference/record.md). It is
+	// here for the reason the seven above are — the converge has applied
+	// everything it had, so what this reads is the installation this run
+	// leaves behind — and it is receptive rather than authoritative: nothing
+	// reads the block back as an input (R5), so a record that could not be
+	// written or read is a warning and never a failed upgrade (the HARD RULE),
+	// and it never asks a question. It is the one step here whose writer is
+	// both doors — `fugaro setup` creates the installation whose record this
+	// is, and `fugaro update` is the command that keeps it true.
+	e.recordLocations(ctx)
 	// And D2965's, the seventh: the runs that opened, followed or reviewed a
 	// pull request before this release wrote an entry as it came to be on one,
 	// so `runs ls --pr N` finds them in the index instead of scanning the
@@ -687,6 +703,176 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 		return &notFinished{userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))}
 	}
 	return nil
+}
+
+// recordLocations is D3087's step: the converge reads where the installation's
+// located things are and writes the answer into this machine's own project
+// config as the `locations` block (docs/location-preference/record.md).
+//
+// It is a record and never an input. Every plan asks the cloud itself for the
+// thing it is about (R5), so nothing here decides anything: a record that is
+// wrong, stale or hand-edited changes no plan, no import and no apply, and a
+// member the cloud could not be read for is left absent rather than guessed at.
+// The one reader is `fugaro doctor` (LP12), which prints where the data is.
+//
+// Nothing here may fail the run, for the reason update.go's writeAdminList may
+// not: this is a step of the upgrade, and a record that could not be written is
+// a record the next `fugaro update` writes. So every state — no local config
+// file to write (a shared selection), no cloud clients at all (a run that never
+// opened the installation), a Firebase project that could not be read, an
+// observation that came back an error, a file that refused the write — is a
+// warning or silence. It asks nothing (docs/no-prompt-policy/): a run has
+// already answered every step it was going to by the time the converge applies,
+// and a question here would be asked at the one moment nobody is looking.
+func (e *initEngine) recordLocations(ctx context.Context) {
+	r, o := e.r, e.r.o
+	// A run that planned wrote nothing at all, and one whose stages left
+	// something for the person has not converged the installation: the record
+	// is written by the run that applied everything (as writeAdminList's left
+	// guard says), and the leftovers are named above so the next run is the one
+	// that writes it.
+	if o.planOnly || len(r.res.LeftForYou) > 0 {
+		return
+	}
+	// The file this machine's own config is in, as the converge wrote it
+	// (writeLocalConfig). A shared selection has none, and an installation
+	// reached through one has no record of its own to keep.
+	path := r.res.Config
+	if path == "" || e.lc == nil || e.c == nil {
+		return
+	}
+	fp := e.firebaseProject()
+	if fp == "" {
+		return
+	}
+	// The Firestore client is the CLI's own REST client rather than one of
+	// Clients' (internal/infra's ObserveInputs), so it is built the way the
+	// Firebase stage builds it — one construction, so a fake endpoint and a
+	// real credential resolve here exactly as they do there.
+	fs, err := r.firestoreStep(ctx, e.lc, fp)
+	if err != nil {
+		r.warn(fmt.Sprintf("the locations record was not written: the Firebase project %s could not be read (%s), so the config keeps the record it has", fp, safetext.FieldErr(err)))
+		return
+	}
+	obs, err := infra.ObserveLocations(ctx, infra.ObserveInputs{Clients: e.c, Firestore: fs.FS, Spec: e.spec, FirebaseProject: fp})
+	if err != nil {
+		r.warn(fmt.Sprintf("the locations record was not written: the installation's located things could not be read (%s), so the config keeps the record it has", safetext.FieldErr(err)))
+		return
+	}
+	next := *e.lc
+	next.Locations = recordedLocations(obs)
+	changed, err := r.writeRecordedLocations(&next, path)
+	if err != nil {
+		r.warn(fmt.Sprintf("the locations record was not written: %s", safetext.FieldErr(err)))
+		return
+	}
+	// The line is the reason the file a person may open afterwards changed, so
+	// it is said exactly then: a converge that read the same installation again
+	// writes the same record, and repeating it every update would be a line
+	// about nothing happening. It goes to the run's own writer, as the admin
+	// list's line beside it does: the steps of the converge have all ended by
+	// here, so a stage's detail writer is no longer a place a person reads.
+	if changed {
+		if line := recordLine(next.Locations); line != "" {
+			fmt.Fprintf(r.w, "%s\n", line)
+		}
+	}
+}
+
+// writeRecordedLocations writes next — this machine's config carrying the
+// locations record the converge just read off the cloud — through the one
+// writer every local-config write goes through, and only when it changes the
+// file. It says whether it did, which is what the caller's line about the
+// record is owed to.
+//
+// The check is the writer's own, made here so that the ordinary case is silent:
+// an installation whose record this run rewrote with what it read is an
+// installation whose file does not change, and a converge that printed a diff
+// of the file twice for nothing would be noise on every update. It is the same
+// comparison writeLocalConfig makes, for the same reason.
+func (r *initRun) writeRecordedLocations(next *localcfg.Config, path string) (bool, error) {
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	data, err := next.Marshal()
+	if err != nil {
+		return false, err
+	}
+	if bytes.Equal(old, data) {
+		return false, nil
+	}
+	if err := r.writeLocalConfig(next, path, old, true); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// firebaseProject is the Firebase project the installation's Firestore database
+// and default Realtime Database live in: the one the config records, else the
+// one this run was pointed at (--firebase-project), else the installation's own
+// GCP project, which is the pair setup makes one project (D7). It is empty only
+// for a config that names no project at all, and a run with no Firebase project
+// is a run with no located thing to read.
+func (e *initEngine) firebaseProject() string {
+	if e.lc == nil {
+		return ""
+	}
+	var recorded string
+	if e.lc.Budget != nil {
+		recorded = e.lc.Budget.FirebaseProject
+	}
+	return cmp.Or(recorded, e.r.o.firebaseProject(), e.lc.GCPProject)
+}
+
+// recordedLocations is one observation as the record's block. Every member the
+// cloud answered for is written, and a thing that does not exist, a thing the
+// read could not be made for and a thing this installation has none of all come
+// out the same way: absent, which is what the block says for "not known yet".
+func recordedLocations(obs infra.Observed) *localcfg.Locations {
+	l := &localcfg.Locations{
+		Firestore: obs.Firestore.Location,
+		RTDB:      obs.Database.Location,
+		LogBucket: obs.LogBucket.Location,
+	}
+	// The three answers the observation gives for a set of containers are the
+	// two words the block spells and a list of regions (localcfg
+	// .SecretsReplication, whose writer and reader hold the same three).
+	switch obs.Secrets.Replication {
+	case infra.ReplicationAutomatic:
+		l.Secrets.Kind = localcfg.ReplicationAutomatic
+	case infra.ReplicationMixed:
+		l.Secrets.Kind = localcfg.ReplicationMixed
+	default:
+		l.Secrets.Regions = obs.Secrets.Regions
+	}
+	if l.IsZero() {
+		// Nothing was read: the record says nothing, which is the same
+		// statement the block absent from the file makes. A nil block is what
+		// omitempty drops, so an installation this run could read nothing of
+		// gets the file it had rather than a written `locations: {}`.
+		return nil
+	}
+	return l
+}
+
+// recordLine is the record as the one line the run says it wrote, or "" when
+// there is no record. A person who sees their config change at the end of an
+// update is owed the sentence that says why.
+func recordLine(l *localcfg.Locations) string {
+	if l.IsZero() {
+		return ""
+	}
+	var parts []string
+	for _, m := range []struct{ name, at string }{
+		{"firestore", l.Firestore}, {"rtdb", l.RTDB},
+		{"secrets", l.Secrets.String()}, {"log bucket", l.LogBucket},
+	} {
+		if m.at != "" {
+			parts = append(parts, m.name+" "+m.at)
+		}
+	}
+	return "recorded where the installation's data is: " + strings.Join(parts, ", ")
 }
 
 // notFinished is a run's own end with steps left for the user: it applied
