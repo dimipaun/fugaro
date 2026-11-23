@@ -779,6 +779,46 @@ func TestWorkspaceProjectStageNamesTheIAMAccountWhenThePlanCreatesOnlyIt(t *test
 	}
 }
 
+// TestWorkspaceApplyNamesTheRostersInvokeGrants: the sentence the owner types
+// their project's name against describes what the run is going to do (WC2's
+// review), and the invoke grants the root binds on the workspace's own service
+// are part of that — one per member job account AND one per person of the
+// workspace's roster. The clause is read from the same call the plan's own
+// document was written from, so a confirmation that named one class and not the
+// other would be a sentence about a run that is not this one.
+func TestWorkspaceApplyNamesTheRostersInvokeGrants(t *testing.T) {
+	fakeTerminal(t)
+	db := gcpfake.NewRTDB(t)
+	g := newWSCreateRig(t, wsProjectName+"\n", wsOwnerTable+wsOwnerCap+wsBudgetFor(db))
+	db.Set("workspaceRosters/"+wsProjectName, wsRosterDoc(t))
+	// The block a previous release's run deployed, so this run holds a service
+	// to name in the sentence, and the URL its own outputs assign it, so the
+	// second apply finds the audience already written back.
+	wsSeedRecorded(t, wsProjectName, oldCredentialsRef("1.0.0"), wsServiceURL)
+	g.ri.setPlanAt(t, "workspace", wsAccountChange("create"), wsGrantChange("create"))
+	g.ri.script["output@workspace"] = map[string]any{
+		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
+	g.ri.save(t)
+
+	if _, err := g.apply(t, initflow.Env{Interactive: true}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var confirmation string
+	for _, line := range strings.Split(g.out.String(), "\n") {
+		if strings.HasPrefix(line, "⚠ CONFIRM ") {
+			confirmation = line
+		}
+	}
+	if confirmation == "" {
+		t.Fatalf("the stage asked nothing: no CONFIRM line in the run's output:\n%s", g.out.String())
+	}
+	for _, want := range []string{"one invoke grant on it per member job account", "one per person of the workspace's roster"} {
+		if !strings.Contains(confirmation, want) {
+			t.Errorf("the sentence the operator types does not name %q:\n%s", want, confirmation)
+		}
+	}
+}
+
 // TestWorkspaceProjectStageVerifyRefusesARootThatStillHasChanges: the apply's
 // own re-read is a boundary and not a formality — a fresh plan that still finds
 // work names the workdir the operator reads the plan in.
@@ -1118,6 +1158,44 @@ func TestWorkspaceVarsNameTheRostersPeople(t *testing.T) {
 		out := g.out.String()
 		if !strings.Contains(out, "the workspace's roster is not read: ") {
 			t.Errorf("a run that could not read the roster said nothing about it, so an owner cannot tell a workspace with no people from a read that failed:\n%s", out)
+		}
+	})
+
+	t.Run("a read made before the workdir exists does not empty the document", func(t *testing.T) {
+		// Check answers Todo with a sentence even where its own read never
+		// reached a plan, and it reads the roster for that sentence with no
+		// workdir set — no recorded list to carry and no document in front of
+		// it. That answer decides nothing and must not be kept: the call that
+		// decides what the tfvars carry is prepare's own, made with the workdir
+		// set, and an empty list kept from before it writes `people: []` over
+		// the recorded list — the plan that deletes every person's invoke
+		// grant. The first read below is made to fail before the workdir is
+		// prepared at all (no state directory can be named), which is exactly
+		// the state Check's own sentence comes from and the only one in which
+		// the recorded document is still on disk for the next prepare.
+		recorded := []string{"zoe@example.com", wsRosterPersonA}
+		g := newWSCreateOwnerRig(t, wsProjectName+"\n")
+		wsSeedRecordedPeople(t, recorded)
+		g.noChanges(t)
+		state := os.Getenv("XDG_STATE_HOME")
+		home := os.Getenv("HOME")
+		t.Setenv("XDG_STATE_HOME", "")
+		t.Setenv("HOME", "")
+
+		if st := g.check(t); st.State != initflow.Todo {
+			t.Fatalf("check = %v, want a todo: a read that never reached a plan has not found the stage done", st.State)
+		}
+		if g.s.wd != nil {
+			t.Fatal("the workdir was set by a prepare that failed before it: this case is about the read made before the workdir exists")
+		}
+		t.Setenv("XDG_STATE_HOME", state)
+		t.Setenv("HOME", home)
+
+		if _, err := g.plan(t, initflow.Env{Interactive: true}); err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		if got := g.tfvars(t).People; !slices.Equal(got, recorded) {
+			t.Errorf("var.people = %v, want the recorded list %v: a read made before the workdir existed must not decide what the document carries, because the empty list plans the deletion of every person's invoke grant", got, recorded)
 		}
 	})
 

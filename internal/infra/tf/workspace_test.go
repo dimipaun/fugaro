@@ -505,6 +505,16 @@ func TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant(t *testing.T) {
 			wsInvokerAfter("", "fugaro-workspace-credentials-v2", "", wsMemberA), "delete", "create"), "actions delete, create"},
 		{"an invoke grant deleted for a principal that is not a service account", wsInvokerDelete("group:workspace-owners@example.com"),
 			"neither a service account address nor a person"},
+		// The class of the address, not the presence of a `:` in the member, is
+		// what says an account: these three carry no colon at all, and a reader
+		// that took the bare spelling for a service account address admitted the
+		// deletion of a grant to the whole internet (WC2's review).
+		{"an invoke grant deleted for allUsers", wsInvokerDelete("allUsers"),
+			"neither a service account address nor a person"},
+		{"an invoke grant deleted for allAuthenticatedUsers", wsInvokerDelete("allAuthenticatedUsers"),
+			"neither a service account address nor a person"},
+		{"an invoke grant deleted for a bare domain", wsInvokerDelete("example.com"),
+			"neither a service account address nor a person"},
 	}
 	for _, c := range refused {
 		t.Run(c.name, func(t *testing.T) {

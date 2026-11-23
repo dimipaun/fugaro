@@ -912,7 +912,7 @@ func workspaceInvokeGrant(ch Change, deletion bool, project string, memberAccoun
 		m := str(b["member"])
 		if _, ok := workspaceAccountOf(m); !ok {
 			if _, ok := workspacePerson(m); !ok {
-				return fmt.Sprintf("an invoke grant deleted for %s, which is neither a service account address nor a person: the TWO changes this root's cover admits beyond its own resources are a member's own job account leaving the workspace's table and a person leaving the workspace's roster, and this root binds an invoke grant to those two classes and to nothing else — a group, a domain, a principalSet or an empty member here is state this root did not write, so a deletion of it is not the table or the roster converging, and a deletion of anything else (the workspace's own service, its two accessors, its account or its role) is a repair nobody chose (F25)", safetext.Field(m))
+				return fmt.Sprintf("an invoke grant deleted for %s, which is neither a service account address nor a person: the TWO changes this root's cover admits beyond its own resources are a member's own job account leaving the workspace's table and a person leaving the workspace's roster, and this root binds an invoke grant to those two classes and to nothing else — a group, a domain, a principalSet, allUsers, allAuthenticatedUsers or an empty member here is state this root did not write, so a deletion of it is not the table or the roster converging, and a deletion of anything else (the workspace's own service, its two accessors, its account or its role) is a repair nobody chose (F25)", safetext.Field(m))
 			}
 		}
 		return ""
@@ -960,17 +960,21 @@ func workspaceIsMemberOf(got string, members []string) bool {
 }
 
 // workspaceAccountOf reads an IAM member as a service account address: the bare
-// address, or the serviceAccount:-prefixed one. Anything else — a person, a
-// group, a domain, allUsers, a principalSet — is not an account and reads as
-// not one.
+// address, or the serviceAccount:-prefixed one, and nothing else. The address
+// itself is what says so (saMember), not the absence of a prefix: a person, a
+// group, a domain, a principalSet, allUsers, allAuthenticatedUsers and an empty
+// member are all spelled without the `serviceAccount:` prefix and with no
+// account in them, and a reader that took the bare spelling on trust read every
+// one of them as an account address.
 func workspaceAccountOf(member string) (string, bool) {
-	if e, ok := strings.CutPrefix(member, "serviceAccount:"); ok {
-		return e, e != ""
+	e, ok := strings.CutPrefix(member, "serviceAccount:")
+	if !ok {
+		e = member
 	}
-	if member == "" || strings.Contains(member, ":") {
+	if !saMember.MatchString("serviceAccount:" + e) {
 		return "", false
 	}
-	return member, true
+	return e, true
 }
 
 // workspacePerson reads an IAM member as a person's address: the user:-prefixed

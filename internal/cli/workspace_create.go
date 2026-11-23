@@ -480,9 +480,18 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 	// own document carries a block: a workspace whose config names no database
 	// deploys none, and a sentence naming a service that was not deployed is the
 	// one thing a confirmation may not do.
+	//
+	// It names every grant the root binds on that service, because the sentence
+	// is what the owner types their name against: the people of the workspace's
+	// roster are read from the same call the plan's own document was written from
+	// (people, memoized by the guard above), so the confirmation cannot name
+	// grants the plan does not make.
 	service := ""
 	if s.svc != nil {
 		service = fmt.Sprintf(", and the workspace's own credentials service %s running as that account on this release's verified image, with one invoke grant on it per member job account", s.svc.Service)
+		if len(s.people(ctx)) > 0 {
+			service += " and one per person of the workspace's roster"
+		}
 	}
 	if plan == nil && !s.audienceMissing() {
 		fmt.Fprintf(s.e.r.w, "No changes: the workspace's own service account %s holds %s on %s.\n", account, tf.WorkspaceDatabaseRole(project), project)
@@ -680,7 +689,9 @@ func workspaceMemberAccounts(lc *localcfg.Config) []string {
 // service to each. It is the half of the root's document no plan and no
 // installation output carries, so the cover's own argument (guard) and the
 // tfvars are read from the same call, memoized so a plan and its sentence cannot
-// disagree with the document they describe.
+// disagree with the document they describe — where that call is made with the
+// workdir set, which is every call that decides anything. A call made before the
+// workdir exists decides nothing and is not kept (below).
 //
 // A roster that cannot be read — no database named, no credentials, a read that
 // failed, a document this reader refuses — is not the run's failure: the people
@@ -698,14 +709,20 @@ func (s *workspaceProjectStage) people(ctx context.Context) []string {
 	if s.peopleRead {
 		return s.peopleList
 	}
-	s.peopleRead = true
 	e, lc := s.e, s.e.lc
-	// s.wd is nil on a path where prepare failed before the workdir was set, so
-	// there is no recorded list to carry and the empty one is the answer.
-	recorded := []string{}
-	if s.wd != nil {
-		recorded = recordedWorkspacePeople(s.wd.PrevVars)
+	// s.wd is nil on a path where prepare failed before the workdir was set —
+	// Check answers Todo with a sentence even where its own read never reached a
+	// plan — and that call has no recorded list to carry and no document in
+	// front of it. Its answer is therefore NOT memoized: the call that decides
+	// what the tfvars carry is prepare's own vars, made with the workdir set, and
+	// an empty list kept from before it would write `people: []` over a roster
+	// this run never read — the plan that deletes every person's invoke grant,
+	// which is the one loosening this function exists to prevent.
+	if s.wd == nil {
+		return []string{}
 	}
+	s.peopleRead = true
+	recorded := recordedWorkspacePeople(s.wd.PrevVars)
 	carry := func(why string) []string {
 		s.peopleList = recorded
 		fmt.Fprintf(e.r.w, "the workspace's roster is not read: %s\n", why)
