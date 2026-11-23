@@ -44,7 +44,8 @@ references decisions by `D#` and findings by `F#`.
     across the token's reach.
   - **D477 = bump the policy version (3 → 4).** This was not the recommendation. 0.13.0 ships as a
     lockstep upgrade, and T2.11 writes its release notes.
-  - Check 180 stays owner-run and comes later: no Premium sandbox workspace is known (U6).
+  - Check 180 stays owner-run and comes later — **U6 was open then, and it is settled 2026-11-23:
+    the Premium sandbox workspace is the owner's `dimi_bmb`**.
 - **Answered in the next round, also 2026-10-27:**
   - **D464 = yes, in 0.12.1** (not the recommendation). `*` is allowed within one path segment of
     `allow_data_to`, at most two of them, never in the owner or workspace segment, never bare or
@@ -354,7 +355,9 @@ registration. The text below is kept as written.*
 ### T1.4: Check 180, OWNER-RUN
 
 *Verdict 2026-11-10: **Kept.** Nothing in the proxy chain changes it: the register's row reads
-USER-RUN, NOT RUN, and no Premium sandbox workspace is known (U6).*
+USER-RUN, NOT RUN, and the one thing it waited on was U6, the Premium sandbox workspace — **settled
+2026-11-23: it is the owner's own `dimi_bmb`**, which `check180.sh`'s `--workspace` defaults to, so
+what the check waits on is the owner running it.*
 
 - **OWNER-RUN.** The owner follows T1.3's section on the sandbox only. No agent performs any step.
   The owner types the commands the section gives, which are the
@@ -608,7 +611,14 @@ T2.6 and S5.*
      - added to the profile, it makes `fugaro project policy publish` and `fugaro update` refuse;
      - launched by hand against the job, it is refused by the runner (T2.9).
 - The owner types the commands T2.6's section gives. No agent performs any step.
-- **Depends on:** T2.6, released or a dev build, plus U6.
+- **Delivered as one script (2026-11-23)**, the way Check 180 is: the steps above are what
+  `scripts/live-checks/check181.sh` runs — `fugaro project policy publish`, `fugaro update` and
+  `fugaro run --repo <owner/name>`, with `--dry-run` printing them and calling nothing — its
+  hermetic test is `scripts/live-checks/check181_test.sh`, and the register's row and section name
+  both. The token file is handed to `fugaro secrets set` on stdin and is never on a command line or
+  in the block.
+- **Depends on:** T2.6, released or a dev build, plus U6 — **settled**: the Premium sandbox
+  workspace is the owner's `dimi_bmb`, which is the script's `--workspace` default.
 
 ### T2.8: A cloud run pins the Bitbucket API root (0.13.0, on: D474 = yes)
 
