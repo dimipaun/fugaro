@@ -10,7 +10,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
+
+// The database the CLI reads this node through is *rtdb.Client (stampOpen in
+// internal/cli), so the narrow surface above has to stay one it satisfies. The
+// CLI's own use is the compile-time pin; this says which type that is.
+var _ Reader = (*rtdb.Client)(nil)
 
 // The clock every test in this file works against, and the two databases they
 // act on: the stamp is per installation, so a persona with two projects has two

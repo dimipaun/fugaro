@@ -271,7 +271,7 @@ func (s *source) load(url string) (cacheEntry, bool) {
 	if err := dec.Decode(&e); err != nil {
 		return cacheEntry{}, false
 	}
-	if !updatecheck.Valid(e.Min) || e.SetAt.IsZero() || e.ReadAt.IsZero() {
+	if e.Schema != SchemaVersion || !updatecheck.Valid(e.Min) || e.SetAt.IsZero() || e.ReadAt.IsZero() {
 		return cacheEntry{}, false
 	}
 	return cacheEntry{stampWire: e.stampWire, ReadAt: e.ReadAt}, true
