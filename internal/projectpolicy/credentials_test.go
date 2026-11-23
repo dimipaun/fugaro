@@ -113,16 +113,20 @@ func TestPolicyCredentialsDefaults(t *testing.T) {
 // needs the policy's budget to be enforcing with a per-run ceiling, and the
 // refusal names both.
 //
-// The three refused states are each a way for the spend to be unbounded or
+// The refused states are each a way for the spend to be unbounded or
 // unobserved: no budget block at all (today's behaviour is the ceiling each
 // job's environment carries, which this node cannot see), mode observe (the
-// ceiling is recorded, not enforced), and enforce with per_run_usd 0 (nothing
-// is charged against a cap of zero). The last case is the one a careless
-// reading of "mode: enforce" would let through.
+// ceiling is recorded, not enforced), enforce with no ceiling, and enforce with
+// per_run_usd 0 (nothing is charged against a cap of zero). The last case is the
+// one a careless reading of "mode: enforce" would let through.
+//
+// The word that was a mode until AB2 is not one of these states any more: the
+// node's own decoder refuses it with C1's one text before this rule is asked
+// anything (D3009, D3022, AB8a), so there is no budget mode off for `auto` to
+// be refused under.
 func TestPolicyFallbackAutoRefusedWithoutEnforceCap(t *testing.T) {
 	for _, tc := range []struct{ name, node string }{
 		{"no budget block", `{"version": 9, "credentials": {"fallback": "auto"}}`},
-		{"budget off", `{"version": 9, "budget": {"mode": "off"}, "credentials": {"fallback": "auto"}}`},
 		{"budget observe", `{"version": 9, "budget": {"mode": "observe", "per_run_usd": 5}, "credentials": {"fallback": "auto"}}`},
 		{"enforce with no ceiling", `{"version": 9, "budget": {"mode": "enforce"}, "credentials": {"fallback": "auto"}}`},
 		{"enforce with a zero ceiling", `{"version": 9, "budget": {"mode": "enforce", "per_run_usd": 0}, "credentials": {"fallback": "auto"}}`},
@@ -301,7 +305,7 @@ func TestPolicyCredentialsCarryNoVersionBump(t *testing.T) {
 	}
 	p, found, err := Decode([]byte(`{
 		"version": 10,
-		"budget": {"mode": "off"},
+		"budget": {"mode": "observe"},
 		"credentials": {"fallback": "oauth-only", "wait_threshold": "15m"}
 	}`))
 	if err != nil || !found || p == nil {

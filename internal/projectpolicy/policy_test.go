@@ -359,7 +359,6 @@ func TestDecodeRefusesABadBudgetValue(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{
-		`{"version": 9, "budget": {"mode": "off"}}`,
 		`{"version": 9, "budget": {"mode": "observe", "per_run_usd": 12.5, "max_run_tokens": 250000, "allowed_models": ["claude-sonnet-5"]}}`,
 		`{"version": 9, "budget": {"mode": "enforce", "per_run_usd": 0.000001}}`,
 		`{"version": 9}`,
@@ -367,6 +366,15 @@ func TestDecodeRefusesABadBudgetValue(t *testing.T) {
 		if _, _, err := Decode([]byte(raw)); err != nil {
 			t.Errorf("Decode(%s) = %v, want a valid budget", raw, err)
 		}
+	}
+	// The word that was a mode until this release is refused here rather than
+	// accepted as the third value, and the node it sits on is *found*: it
+	// exists, and what is wrong is its mode (AB8a, D3009, D3022 — every reader
+	// of this release refuses it, and the migration reads the node's own bytes
+	// for the rewrite that removes it, F22).
+	p, found, err := Decode([]byte(`{"version": 9, "budget": {"mode": "off"}}`))
+	if err == nil || p != nil || !found || !strings.Contains(err.Error(), policy.ModeOffRefusal) {
+		t.Errorf(`Decode({"version": 9, "budget": {"mode": "off"}}) = (%v, %v, %v), want the node found and refused with C1's one text`, p, found, err)
 	}
 }
 

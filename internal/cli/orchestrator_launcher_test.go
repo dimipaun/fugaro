@@ -639,7 +639,7 @@ func TestRunLauncherGatesAReIssueOnTheStoredProjectLayer(t *testing.T) {
 	}
 
 	// The project layer is republished before the next tick.
-	withNone := strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+	withNone := strings.Replace(testProjectLayer, layerAgentLine,
 		"  agent: { auth: api-key, levels: { l2: { model: none } } }\n", 1)
 	if withNone == testProjectLayer {
 		t.Fatal("the project layer fixture no longer carries the agent line this test rewrites")
