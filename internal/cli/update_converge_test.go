@@ -29,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // The convergence of an installation that is one release behind: the whole of
@@ -2157,5 +2158,78 @@ func TestUpdateConvergesAWorkspaceWhoseServiceHasNoAudienceAndPlansNothing(t *te
 	// with changes creates (audienceTodo).
 	if !strings.Contains(out, "unassigned audience") {
 		t.Errorf("the run's own transcript does not say the revision the workspace's service is serving carries the module's unassigned audience, so the owner confirms a write it does not name:\n%s", out)
+	}
+}
+
+// TestUpdateRendersTheRostersPeopleIntoTheWorkspaceProjectsIntake is WC3's own
+// half of the workspace owner's one command (R5, D3143): the workspace's roster
+// is rendered into the workspace's own project's intake — its invoker set and
+// the class the process reads, which the module composes into one list — and
+// nowhere else of that installation. The other half of the rule, the empty list
+// on an installation of no workspace, is
+// TestUpdateRendersNoPeoplesListOnAnInstallationOfNoWorkspace
+// (init_credentials_test.go), which needs no workspace at all.
+//
+// The roster is read from the workspace's own database at
+// workspaceRosters/<name> (C1's node, workspace.PathRoster) and is written as
+// the person's ADDRESS, never an account id: the intake is admitted by the
+// verified token's address against the class (F11) and names the container by
+// the token's own `sub`, so nothing has to map one to the other. Only the
+// HUMANS are written — a machine's entry is a service account's address, the one
+// shape the launcher class refuses outright (internal/infra.IntakePeople), and
+// an entry in the class no token can match is one nobody could ever be admitted
+// by.
+//
+// The owner is in the list like anybody else, and that is the point of the
+// fence F10 draws: the list is the INTAKE's alone (var.intake.people —
+// local.intake_people in the module), so the same person is admitted to the
+// installation's intake and granted nothing at its credentials service and
+// grant route (the Terraform test the_intake_admits_the_rosters_people holds
+// that half, root tests/installation.tftest.hcl).
+func TestUpdateRendersTheRostersPeopleIntoTheWorkspaceProjectsIntake(t *testing.T) {
+	r := wsOwnerConvergeRig(t, wsOwnerTable+wsOwnerCap)
+	r.script["plan@workspace"] = wsPlanSeq()
+	r.setPlanAt(t, "workspace", wsRootPlan(initProjectName, r.credentialsRefAt(convergeRelease), wsMemberBAccount)...)
+	r.script["output@workspace"] = map[string]any{
+		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
+	roster, err := workspace.EncodeRoster(&workspace.Roster{
+		Version:   workspace.RosterVersion,
+		Mechanism: workspace.MechanismSA,
+		People: []workspace.Person{
+			{Address: "ada@example.com", Kind: workspace.KindHuman, External: true},
+			{Address: "bot@member-b-gcp.iam.gserviceaccount.com", Kind: workspace.KindSA},
+			{Address: "owner@example.com", Kind: workspace.KindHuman, External: true},
+			{Address: "zoe@example.com", Kind: workspace.KindHuman, External: true},
+		},
+		Admins: []string{"owner@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("encoding the roster: %v", err)
+	}
+	path, err := workspace.PathRoster(initProjectName)
+	if err != nil {
+		t.Fatalf("workspace.PathRoster: %v", err)
+	}
+	r.db.Set(path, json.RawMessage(roster))
+	r.save(t)
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	block, _ := r.tfvars(t)["intake"].(map[string]any)
+	if block == nil {
+		t.Fatalf("the installation's tfvars carry no intake: %v", r.tfvars(t))
+	}
+	raw, ok := block["people"].([]any)
+	if !ok {
+		t.Fatalf("the intake's block carries no people after the workspace owner's own update (R5): %v", block)
+	}
+	got := make([]string, 0, len(raw))
+	for _, p := range raw {
+		s, _ := p.(string)
+		got = append(got, s)
+	}
+	want := []string{"ada@example.com", "owner@example.com", "zoe@example.com"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("the intake's people are %v, want %v: the roster's humans, sorted and each once, and no machine — a service account's address is the one shape the launcher class refuses", got, want)
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // TestLaunchersVariableDerivedFromRoster holds the whole of launchers.go: the
@@ -111,5 +113,101 @@ func TestLauncherAccountsAreThePeopleOfTheList(t *testing.T) {
 				t.Errorf("launcherAccounts(%v) returned nil, want an empty list", tt.in)
 			}
 		})
+	}
+}
+
+// TestRosterPeopleAreNotLaunchersOfTheWorkspaceProject is WC3's own rule at the
+// derivation that would break it (F10, R5): the people of a workspace's roster
+// are the intake's SECOND class list and never a member of the installation's
+// launchers, because that one list is also the workspace project's credentials
+// service invoker set (iam.tf) — a roster person written there would be admitted
+// to a service this task does not widen.
+//
+// Three facts, and each has a failure of its own:
+//
+//   - The roster's PEOPLE are its humans. A machine's address is a service
+//     account's, the one spelling internal/credsvc's foldLauncherAccounts
+//     refuses outright, so listing it would be an entry no token can match.
+//   - The class the installation's launchers make is untouched by the roster:
+//     it names the launchers' own people and nobody from the workspace.
+//   - The intake's block carries the roster's people as the list of its own,
+//     through IntakeOf, and writes NO key when there are none — which is every
+//     installation that is not a workspace's project.
+func TestRosterPeopleAreNotLaunchersOfTheWorkspaceProject(t *testing.T) {
+	image := "europe-west4-docker.pkg.dev/p/r/fugaro@sha256:" + strings.Repeat("a", 64)
+	roster := &workspace.Roster{
+		Version: workspace.RosterVersion,
+		People: []workspace.Person{
+			{Address: "zoe@example.com", Kind: workspace.KindHuman},
+			{Address: "bot@example.iam.gserviceaccount.com", Kind: workspace.KindSA},
+			{Address: "ada@example.com", Kind: workspace.KindHuman},
+			{Address: "ada@example.com", Kind: workspace.KindHuman},
+		},
+	}
+	want := []string{"ada@example.com", "zoe@example.com"}
+	if got := IntakePeople(roster); !slices.Equal(got, want) {
+		t.Errorf("IntakePeople(roster) = %v, want %v: the intake's second class is the roster's HUMANS, sorted and each once — a machine's address is a service account's and no interactive ID token carries one", got, want)
+	}
+	if got := IntakePeople(nil); got == nil || len(got) != 0 {
+		t.Errorf("IntakePeople(nil) = %#v, want an empty list: a workspace with no roster names nobody, and null would make the two cases one", got)
+	}
+
+	vars, err := InstallationVars(InstallationSpec{Launchers: []string{"user:ops@example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err = SetIntake(vars, Intake(image))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, err = SetIntakePeople(vars, IntakePeople(roster))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Launchers        []string `json:"launchers"`
+		LauncherAccounts []string `json:"launcher_accounts"`
+		Intake           struct {
+			People []string `json:"people"`
+		} `json:"intake"`
+	}
+	if err := json.Unmarshal(vars, &got); err != nil {
+		t.Fatalf("the installation's tfvars do not decode: %v", err)
+	}
+	if !slices.Equal(got.LauncherAccounts, []string{"ops@example.com"}) {
+		t.Errorf("launcher_accounts = %v, want [ops@example.com]: the roster's people are the intake's own list and the class the credentials service answers to is made of the launchers' own, so a workspace person added here would be admitted to the workspace project's credentials service (F10)", got.LauncherAccounts)
+	}
+	for _, m := range got.Launchers {
+		if strings.Contains(m, "example.com") && m != "user:ops@example.com" {
+			t.Errorf("launchers = %v names a workspace person: the invoker grant it is made from is the credentials service's too", got.Launchers)
+		}
+	}
+	if !slices.Equal(got.Intake.People, want) {
+		t.Errorf("intake.people = %v, want %v: the intake's block is where the roster's people are written", got.Intake.People, want)
+	}
+	spec, have, err := IntakeOf(vars)
+	if err != nil || !have {
+		t.Fatalf("IntakeOf(vars) = %+v, %v, %v, want the block this run wrote", spec, have, err)
+	}
+	if !slices.Equal(spec.People, want) {
+		t.Errorf("IntakeOf(vars).People = %v, want %v: the block's list is read back as it was written", spec.People, want)
+	}
+
+	// And an installation that is not a workspace's project: no people at all,
+	// and NO key — the module's own default is the empty list, so a key here
+	// would be a diff in every other installation's document.
+	none, err := SetIntakePeople(vars, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(none), `"people"`) {
+		t.Errorf("an installation with nobody on the roster writes %s, want no people key", strings.TrimSpace(string(none)))
+	}
+	spec, have, err = IntakeOf(none)
+	if err != nil || !have {
+		t.Fatalf("IntakeOf(none) = %+v, %v, %v, want the block without its people", spec, have, err)
+	}
+	if len(spec.People) != 0 {
+		t.Errorf("IntakeOf(none).People = %v, want none", spec.People)
 	}
 }

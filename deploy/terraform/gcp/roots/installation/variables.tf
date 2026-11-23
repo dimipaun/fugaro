@@ -298,6 +298,13 @@ variable "intake" {
     service    = string
     image      = string
     url        = optional(string)
+    # people is the intake's second class list (WC3, R5): the workspace
+    # roster's people, for an installation that is a workspace's project, and
+    # empty for every other one (`fugaro update` renders it from the roster).
+    # The root passes this block to the module whole (main.tf), so a member
+    # added here is a member the module can read; the module's own type and
+    # validation are what hold it to its shape.
+    people = optional(list(string), [])
   })
   default = null
 }

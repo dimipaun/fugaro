@@ -1,17 +1,20 @@
 // launchers.go is the launcher class's list (D1938, F25) as the installation's
-// tfvars carry it. It sits beside the two lists it is derived from — the
-// launchers and the operators the roots grant IAM to — because the class and
-// the grant have to name the same people: Cloud Run grants the invoker per
-// service, so a launcher who may invoke the intake or the credentials service
-// passes IAM and then meets the process's own class check (F36), and a roster
-// that reached one list but not the other would be a caller IAM admits and the
-// process refuses with no explanation of its own.
+// tfvars carry it, and the intake's second list (WC3, R5), which is a list of
+// its own. It sits beside the two lists it is derived from — the launchers and
+// the operators the roots grant IAM to — because the class and the grant have
+// to name the same people: Cloud Run grants the invoker per service, so a
+// launcher who may invoke the intake or the credentials service passes IAM and
+// then meets the process's own class check (F36), and a roster that reached one
+// list but not the other would be a caller IAM admits and the process refuses
+// with no explanation of its own.
 
 package infra
 
 import (
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // launcherAccounts is the roster's people as the bare email addresses a Google
@@ -29,6 +32,44 @@ func launcherAccounts(members []string) []string {
 	for _, m := range members {
 		if email, ok := strings.CutPrefix(m, "user:"); ok {
 			out = append(out, email)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// IntakePeople is the intake's SECOND class list (WC3, R5): the people of a
+// workspace's roster, as the bare addresses a Google ID token's email claim
+// holds — sorted and each once, so two spellings of one roster give equal bytes.
+//
+// Why the roster's humans and not its machines. The class is matched against a
+// token's email claim, and a machine's address is a service account's — the one
+// spelling internal/credsvc's foldLauncherAccounts REFUSES outright, because no
+// interactive ID token is minted for one. A machine is admitted to a workspace's
+// projects by its IAM bindings and never by a token of this class, so listing it
+// here would be an entry nothing can ever match (the fail-closed reading
+// launcherAccounts takes for a group or a domain).
+//
+// Why a function of the roster and not of the launcher list. The two lists are
+// separate on purpose (F10): the same `launchers` variable is the workspace
+// project's CREDENTIALS SERVICE invoker set (iam.tf, local.launcher_invoker_members),
+// so a roster person added there would be admitted to a service this task does
+// not widen. What the roster's people are admitted to is the intake, and its own
+// block is where this list is written (IntakeSpec.People, the module's
+// var.intake.people).
+//
+// The addresses are taken as the roster holds them, which is their canonical
+// spelling: DecodeRoster refuses a node whose person is not canonical, and the
+// class is compared to the email claim of a token Google minted, which is lower
+// cased.
+func IntakePeople(roster *workspace.Roster) []string {
+	out := []string{}
+	if roster == nil {
+		return out
+	}
+	for _, p := range roster.People {
+		if p.Kind == workspace.KindHuman {
+			out = append(out, p.Address)
 		}
 	}
 	slices.Sort(out)

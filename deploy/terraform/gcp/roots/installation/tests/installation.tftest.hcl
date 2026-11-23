@@ -3504,3 +3504,136 @@ run "the_intake_is_told_the_region" {
   }
 }
 
+
+# The intake's SECOND class list (WC3, R5, D3143): the people of the workspace's
+# roster, which `fugaro update` renders on the workspace owner's own run and
+# which is empty for every installation that is not a workspace's project. Two
+# facts, and the first is the one F10 is about:
+#
+#   - The people are ADDED to the intake's own lists and to nothing else. The
+#     list the credentials service's invoker is made from is the launchers'
+#     (iam.tf's launcher_invoker_members), so the person on this run's roster is
+#     granted no invocation of the workspace project's credentials service and
+#     reaches no route of it — which is what keeps a workspace person's token
+#     out of the read mint (F10, R5).
+#   - The intake's invoker set AND the class in its environment are the same
+#     union: the launcher and the two roster people, as members IAM takes and as
+#     the bare addresses the process reads. One expression makes both, so a
+#     caller the plan admits is a caller the process admits (R5, F36).
+#
+# The environment is asserted whole for the reason the run above gives: the
+# cover holds the intake's container to the five names of
+# internal/infra/tf.intakeServiceEnv, so the second list has no name of its own
+# and cannot drift from the grant it is admitted by.
+run "the_intake_admits_the_rosters_people" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launchers         = ["user:dev@example.com"]
+    launcher_accounts = ["dev@example.com"]
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "owner/repo-a"
+        workflow = "web"
+      }]
+    }
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      people     = ["zoe@example.com", "ada@example.com"]
+    }
+  }
+
+  assert {
+    condition = toset([for e in google_cloud_run_v2_service.intake[0].template[0].containers[0].env : "${e.name}=${e.value}"]) == toset([
+      "FUGARO_GCP_PROJECT=proj-1234",
+      "FUGARO_REGION=us-east5",
+      "FUGARO_INTAKE_URL=https://intake-url-unassigned.invalid",
+      "FUGARO_RUNS_BUCKET=fugaro-runs-proj-1234",
+      "FUGARO_LAUNCHER_ACCOUNTS=[\"ada@example.com\",\"dev@example.com\",\"zoe@example.com\"]",
+    ])
+    error_message = "the intake's class is the installation's launchers AND the workspace roster's people as ONE entry, sorted, under the one name the process reads (R5): a second name would be a second list the grant and the class could drift apart in"
+  }
+  assert {
+    condition = toset([for m in google_cloud_run_v2_service_iam_member.intake_invoker : m.member]) == toset([
+      "user:ada@example.com", "user:dev@example.com", "user:zoe@example.com",
+    ])
+    error_message = "the intake's invoker set is the launchers and the roster's people (R5, F36): a person the class admits and the front end refuses would be a caller no route can serve"
+  }
+  assert {
+    condition = toset([for m in google_cloud_run_v2_service_iam_member.credentials_invoker : m.member]) == toset([
+      "user:dev@example.com",
+    ])
+    error_message = "a workspace roster's person is granted NO invocation of the credentials service (F10): that service's own read mint reaches the installing person's whole workspace, which is not what a launcher asked for and not what this task widens"
+  }
+}
+
+# ... and an installation that is not a workspace's project: `fugaro update`
+# renders no people, the class is the launchers' own, and no key is written that
+# would be a diff in every such installation's tfvars. This is the state of every
+# installation that has no workspace, so it is pinned rather than assumed.
+run "an_installation_without_a_workspace_admits_its_launchers_only" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launchers         = ["user:dev@example.com"]
+    launcher_accounts = ["dev@example.com"]
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+    }
+  }
+
+  assert {
+    condition     = one([for e in google_cloud_run_v2_service.intake[0].template[0].containers[0].env : e.value if e.name == "FUGARO_LAUNCHER_ACCOUNTS"]) == "[\"dev@example.com\"]"
+    error_message = "with no people the class is exactly the installation's launchers: this is the bytes every installation that is not a workspace's project keeps"
+  }
+  assert {
+    condition = toset([for m in google_cloud_run_v2_service_iam_member.intake_invoker : m.member]) == toset([
+      "user:dev@example.com",
+    ])
+    error_message = "with no people the intake's invoker set is the launchers' alone"
+  }
+}
+
+# A person on the second list is a bare address, and the plan refuses one that
+# is not: the class is matched against a Google ID token's email claim, so a
+# `user:` member (the spelling the invoker list takes), a group or a domain
+# would be an entry no token can match — a person `fugaro update` wrote out of
+# the roster and the intake could never admit. The refusal is at plan time, and
+# names the variable, rather than a revision that starts and refuses everybody.
+run "a_roster_person_must_be_a_bare_address" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      people     = ["user:ada@example.com"]
+    }
+  }
+
+  expect_failures = [var.intake]
+}
