@@ -865,6 +865,16 @@ func TestTheGatewayRefusesAWorkspaceUpstreamItCannotCallSafely(t *testing.T) {
 			want: "the workspace upstream reports no Cloud Run job name",
 		},
 		{
+			// The workspace's slip is what a run the workspace granted one
+			// carries for the model path (WC8), and upstream() is the one
+			// place the pair is set, so half of one is a mistake in code —
+			// refused here, where it is, rather than on every call the run
+			// makes afterwards.
+			name: "half the workspace's slip",
+			edit: func(o *gateway.Options) { o.Workspace.SlipID = "a-workspace-slip-id" },
+			want: "the workspace upstream carries half its slip",
+		},
+		{
 			name: "a route that serves the model from the workspace with no upstream for it",
 			edit: func(o *gateway.Options) { o.Workspace = nil },
 			want: "serves the model from the workspace and no workspace upstream was built for it",

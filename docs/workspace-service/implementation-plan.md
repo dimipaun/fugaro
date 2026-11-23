@@ -53,7 +53,7 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 | A node that cannot be re-read refuses rather than serve a stale table | WS2 `TestAFailedRereadRefuses` |
 | One member's job never reaches a repository covered for another member | WS16 `TestAnotherMembersRepositoryIsRefused`; WS17 `TestAnotherMembersRepositoryIsRefusedAMint` |
 | The beat carries no slip | WS13 `TestTheWorkspaceBeatCarriesNoSlip` |
-| No call to the workspace's service carries a slip id, a claim secret or an account header | WS11 `TestTheWorkspaceUpstreamCarriesNoSlip`; WS18 `TestGitToTheWorkspaceCarriesNoSlip`; WS2 `TestWorkspaceScopeRefusesACallThatPresentsASlip` |
+| No call to the workspace's service carries a **member's** slip, the project's slip or an account header (a call under a personal grant carries the workspace's own slip id and claim secret, which the workspace's service is the only grantor of, F13, R4) | WS11 `TestTheWorkspaceUpstreamCarriesNoMembersSlip`; WS18 `TestGitToTheWorkspaceCarriesNoSlip`; WS2 `TestWorkspaceScopeRefusesACallThatPresentsASlip` |
 | A repository with no project credential of a kind never calls the project for that kind | WS11 `TestARunRoutedToTheWorkspaceNeverCallsTheProject` |
 | A pin without an address converges untouched, and an address is `https` with no query | WS3 `TestAPinWithoutAnAddressIsValid`, `TestAPinAddressMustBeHTTPS`; WS7 `TestUpdateConvergesAWorkspaceFromThePreviousRelease` |
 | Version 2 of the node is published only after the service that reads it is deployed | WS4 `TestNodeIsPublishedOnlyAfterTheServiceDeploys` |
@@ -331,8 +331,9 @@ its number is not reused).
 ### WS11: the run routes each kind
 - Acceptance: at bootstrap the run reads the route record for its repository; the gateway holds a
   second upstream for the address in that record, with an ID token whose audience is that address,
-  and never takes the address from the run's environment (R3); a call to it carries no slip id,
-  no claim secret and no auth-mode or account header (R18); a model call goes to the service
+  and never takes the address from the run's environment (R3); a call to it carries no **member's**
+  slip, no project slip and no auth-mode or account header (R18) — the slip a call under a personal
+  grant carries is the workspace's own, which WC8 adds (F13, R4); a model call goes to the service
   the model route names and never to the other, exhausted or not (D2989); a platform 403 from the
   workspace's service halts the run at once with a reason naming the workspace owner's
   `fugaro update` (R16), and so does the scope's refusal of an unlisted repository (R19); a run
@@ -350,7 +351,7 @@ its number is not reused).
 - Interfaces: consumes C2, and the allow-list above; C2 edits no entry.
 - Tests: `TestARunRoutedToTheWorkspaceNeverCallsTheProject`,
   `TestAnExhaustedProjectDoesNotFallThrough`, `TestTheWorkspaceUpstreamHasItsOwnAudience`,
-  `TestTheAddressIsNeverReadFromTheEnvironment`, `TestTheWorkspaceUpstreamCarriesNoSlip`,
+  `TestTheAddressIsNeverReadFromTheEnvironment`, `TestTheWorkspaceUpstreamCarriesNoMembersSlip`,
   `TestAMissingInvokeGrantNamesTheFix`, `TestAnUnlistedRepositoryHaltsNamingTheFix`,
   `TestNoRecordIsTodaysRun`.
 - Command: `go test ./internal/gateway/ -run 'ARunRouted|AnExhaustedProject|TheWorkspaceUpstream|TheAddressIsNever|AMissingInvokeGrant|AnUnlistedRepository|NoRecordIsTodays' -count=1 && go test ./internal/runner/ -run Gateway -count=1 && go test ./internal/cli/ -run SecurityMd -count=1`.

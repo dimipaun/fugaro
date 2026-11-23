@@ -597,6 +597,16 @@ func TestNoInJobFallback(t *testing.T) {
 			// this gateway let through, so it is refused here, where the
 			// mistake is.
 			{"half a slip", func(u *Upstream) { u.Service.SlipID, u.Service.SlipClaim = "a-slip-id", "" }, "half a slip"},
+			// The workspace's own slip is held to the same rule, and the two
+			// pairs are never carried together: which pair a call travels
+			// under is which service it is made to, and a call under one slip
+			// of each is a call the two services could not be told apart by
+			// (R4).
+			{"half the workspace's slip", func(u *Upstream) { u.Service.WorkspaceSlipID, u.Service.WorkspaceSlipClaim = "a-workspace-slip-id", "" }, "half the workspace's slip"},
+			{"a member's slip beside the workspace's", func(u *Upstream) {
+				u.Service.SlipID, u.Service.SlipClaim = "a-slip-id", "a-claim-secret"
+				u.Service.WorkspaceSlipID, u.Service.WorkspaceSlipClaim = "a-workspace-slip-id", "a-workspace-claim-secret"
+			}, "a member's slip and the workspace's"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				o := Options{
