@@ -553,13 +553,33 @@ import (
 // about, and says that no message was sent into a stage that never ran. Every
 // case holds the same two things wherever it is about something else: a
 // message's own text never reaches the block, and no access token is asked for.
+// Check 670's fakes are a fake `fugaro`, a fake `git`, a fake `gcloud` and a
+// fake `gh` over one installation and the GitHub sandbox. The fake `fugaro`
+// prints the six steps of an enrolment and reads the project's name it asks for,
+// answers `doctor --json`, the credentials listing, `status` (whose screen and
+// whose document both turn green only once the case's own fill has happened, so
+// F11's empty container and the row that names its fix are read against a state
+// that really changed) and `runs ls`, which reports the run under the removal
+// terminal only once the removal has happened; it applies `secrets set` and
+// `project repos rm` as writes on the case's own files, the removal modelling
+// the CLI's own question -- with a terminal it asks for the project's name and
+// reads it, and with none it refuses in the CLI's words, which is where a case
+// reads D2407's strict confirmation. The fake `git` makes the throwaway checkout
+// and holds the branch a run pushed, the fake `gcloud` the built image, the
+// container with an enabled version and the run's objects in the runs bucket,
+// and the fake `gh` the App's installation and the pull request the run opened.
+// Every row of the block has a failing form and an unmeasurable one, and every
+// case holds that the App's private key reaches neither the block, the output
+// nor the scratch directory.
 // Checks 881 and 882 are the model-credentials routing work's owner-run checks.
 // 881's fakes are a fake `fugaro` (a routing table, a budget, a pool of
-// accounts whose members the case sets a state on, a launch and a run listing),
-// a fake `gcloud` serving the run's own record out of the runs bucket and a
-// fake `belong`, so a case says which source of the chain served the run, that
-// the fall-through was flagged and counted, and that nothing was launched where
-// the pool could still serve. 882's are a fake `fugaro` (a table that routes
+// accounts whose members the case sets a state on, a launch and a run listing)
+// and a fake `gcloud` serving the run's own record out of the runs bucket, so a
+// case says which source of the chain served the run, that the fall-through was
+// flagged and counted, and that nothing was launched where the pool could still
+// serve. Its belong refusal needs no fake: the guard is the script's own, and a
+// case exercises it by pointing the check at an installation whose name carries
+// belong. 882's are a fake `fugaro` (a table that routes
 // two Claude models to Vertex, an `enforce` project with a per-run cap, a launch
 // the case can refuse and a run listing), a fake `gcloud` that mints an
 // impersonated token per job account, serves the job list, the IAM policy, a
@@ -586,6 +606,17 @@ import (
 // is made only after the decline that proved it refused, that the config comes
 // back byte-identical with its sidecar removed, and that no value of the
 // installation's ever reaches the block.
+// Checks 890 to 892 are the repo-coupling audit's owner-run checks, and each
+// only reads. 890's fakes are a fake `gcloud` and `curl` answering out of the
+// case's own Realtime Database tree, bucket listing and Firestore ids, so a case
+// says which listed path a storage-path row of the audit's report names and
+// which it leaves UNNAMED. 891's are a fake `fugaro` whose `update --plan-only
+// --json --events` feed differs by the directory it ran in, and a fake `gcloud`
+// serving each repository's launch.json, so a case says which stage differs
+// between an empty directory and a checkout and whether that stage is a §4
+// blocker. 892's are a fake `gcloud` holding the projects' and the build and
+// job accounts' IAM policies and a fake `curl` serving the grants node, so a
+// case says which principal is an admin in all but name.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -669,6 +700,7 @@ var liveCheckScripts = []struct {
 	{"check610.sh", "check610_test.sh"},
 	{"check611.sh", "check611_test.sh"},
 	{"check640.sh", "check640_test.sh"},
+	{"check640-queue-probe.sh", "check640-queue-probe_test.sh"},
 	{"check770.sh", "check770_test.sh"},
 	{"check771.sh", "check771_test.sh"},
 	{"check772.sh", "check772_test.sh"},
@@ -695,12 +727,17 @@ var liveCheckScripts = []struct {
 	{"check-830.sh", "check-830_test.sh"},
 	{"check-840.sh", "check-840_test.sh"},
 	{"check-740-run-messages.sh", "check-740-run-messages_test.sh"},
+	{"check-750-review-against-task.sh", "check-750-review-against-task_test.sh"},
+	{"check670.sh", "check670_test.sh"},
 	{"check-881-chain-falls-through.sh", "check-881-chain-falls-through_test.sh"},
 	{"check-882-vertex-capped.sh", "check-882-vertex-capped_test.sh"},
 	{"check680.sh", "check680_test.sh"},
 	{"check-883-pause-resume.sh", "check-883-pause-resume_test.sh"},
 	{"check-884-update-migrates.sh", "check-884-update-migrates_test.sh"},
 	{"check-885-retired-keys.sh", "check-885-retired-keys_test.sh"},
+	{"check-890-data-layout.sh", "check-890-data-layout_test.sh"},
+	{"check-891-update-trace.sh", "check-891-update-trace_test.sh"},
+	{"check-892-iam.sh", "check-892-iam_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -765,10 +802,11 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 315 items on one runner (105 scripts, three shards each) and under
-// a minute each; a split that dropped one, ran one twice or fell back to
-// everything would show up as a green run that tested less, which is the failure
-// this pins.
+// The suite is one item per script per shard -- every liveCheckScripts entry on
+// each of liveCheckShards shards, and under a minute each, so the figures are
+// derived from those two lists rather than spelled here; a split that dropped
+// one, ran one twice or fell back to everything would show up as a green run
+// that tested less, which is the failure this pins.
 func TestLiveCheckCIShardCoversTheSuiteOnce(t *testing.T) {
 	var items []liveCheckShard
 	for _, c := range liveCheckScripts {

@@ -37,13 +37,25 @@ func rates(inputPerM, outputPerM, cacheRead float64) Rates {
 }
 
 // Embedded is the price table built into Fugaro, a fresh copy on every
-// call. None of these models has a long-context tier: the pricing page
+// call. None of the Claude rows has a long-context tier: the pricing page
 // says Claude 4.6 and later models bill the full 1M context window at
-// standard rates. Vertex serves the dateless models under the same ID;
+// standard rates. (Vertex's Gemini 3 Pro row carries one, because its
+// publisher charges two prices for it: vertex_gemini.go.) Vertex serves the
+// dateless models under the same ID;
 // where Vertex's own price differs (regional endpoints carry a premium),
 // owners set model_prices. Models still served but missing here (Fable 5,
 // Opus 4.6 to 4.8, Sonnet 4.6, ...) must be added through model_prices
 // before a budget can pin them.
+//
+// The Claude rows are this table's Source and CheckedAt: the API pricing page,
+// the day they were read off it. A row another publisher prices carries its own
+// provenance (Model.PriceSource, Model.PriceCheckedAt) and does not answer to
+// these — the Gemini models on Vertex (vertex_gemini.go, GV3) are in this table
+// so that a chain routing a `google/gemini-*` pin to Vertex is priced and
+// capped like any other model, and their rows name Vertex's page and Vertex's
+// own date. Both halves are priced by the same rule: a model with no row at
+// all is refused in every budget mode (D3020), which for a Gemini model is what
+// an unpriced one gets (TestAnUnpricedGeminiModelIsRefused) rather than a guess.
 func Embedded() *Table {
 	models := []Model{
 		// Claude Opus 5.5: $4 / $20; cache hits $0.20 (0.05x). Pricing page, model pricing table, footnote 2.
@@ -61,6 +73,7 @@ func Embedded() *Table {
 		// Claude Fable 5.1: $10 / $50; cache hits $0.25 (0.025x). Pricing page, model pricing table, footnote 1.
 		{ID: "claude-fable-5-1", ContextTokens: context1M, MaxOutputTokens: output128k, ImageTokens: imageHighRes, Rates: rates(10, 50, 0.025)},
 	}
+	models = append(models, vertexGeminiRows()...)
 	t := &Table{Source: source, CheckedAt: checkedAt, Models: make(map[string]Model, len(models))}
 	for _, m := range models {
 		m.flatEnds()

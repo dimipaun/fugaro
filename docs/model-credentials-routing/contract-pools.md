@@ -13,8 +13,11 @@ pretend to be able to check, and **R9** is the one rule about who may put a toke
 `internal/creds/slip_chain.go` (the grant's two new members and the picker's signature); the stubs
 it ships are `internal/credsvc/launcherpool_stub.go` ("no pool designated") and
 `internal/creds/poolrule_stub.go` (the pool's first member). The tests are
-`internal/routing/pools_test.go` (`TestPoolShapesAreStable`), which pins every name and the JSON of
-every shape, and `internal/creds/poolrule_stub_test.go` and
+`internal/routing/pools_test.go` and `internal/creds/slip_chain_test.go`
+(`TestPoolShapesAreStable` in each), which pin every name and the JSON of every shape — the pool's
+own shapes in the first, the grant's two members and the picker's signature in the second, which is
+the package that declares them and the only one the import boundary admits there
+(`internal/creds/boundary_test.go`) — and `internal/creds/poolrule_stub_test.go` and
 `internal/credsvc/launcherpool_stub_test.go`, which are the two stubs' own and go with them.
 
 **PL1** (the config's members), **PL2** (the account commands and the JSON), **PL3** (the rule),
@@ -52,8 +55,9 @@ that decodes them (`internal/config`, PL1), the selector that serves them (`inte
 the service that resolves them (`internal/credsvc`, PL4) and the commands that print them
 (`internal/cli`, PL2, PL5, PL9), so one package has to hold them and every one of those can import
 it. What that package must not do is import any of them back — a cycle is one line away, because
-`internal/creds` is already imported by `internal/config` and `internal/config` is where a pool's own
-members are written — so `internal/routing/pools.go` imports no package of this tree at all. The
+`internal/creds` already imports `internal/config` and `internal/routing`, and `internal/config` is
+where a pool's own members are written — so `internal/routing/pools.go` imports no package of this
+tree at all. The
 grant's two members are the other side of the same line: they are members of a record the service
 owns (`internal/creds/slips.go`), so they are declared in `internal/creds/slip_chain.go`, which is
 the one file of the two C2 adds there that survives I1.
@@ -256,6 +260,11 @@ The document is the project, its pools, and each pool's members:
 
 - **`name`** is a member's name — a container's, in the project's namespace or the principal's own —
   and **never its value**.
+- **`rule`** is the pool's own, as its owner wrote it, and absent where the pool names none — the
+  listing resolves nothing. An absent rule is read exactly as every pool's rule is, as the pool's
+  `strategy` and as `failover` only where it names neither (`routing.Rule.RuleOrDefault`, R21). The
+  document carries no `strategy`, so a reader that needs the resolved rule reads the pool's own
+  config, where the strategy is (PL1), rather than treating an empty `rule` as failover.
 - **`state`** is what holds the member, in `internal/creds`' own words, which `fugaro accounts ls
   --json` already prints: `available` for a member nothing holds, and otherwise the mark's state.
 - **`next_reset`** is when the member becomes usable again — a mark's own instant, or the time its

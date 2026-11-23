@@ -129,7 +129,8 @@ closed, not yours to read) the restore proceeds only on --budget and
 --budget-currency. The billing account is always yours to give: the creation
 fact is not a credential and records none.
 
-NEW_PROJECT_ID must not exist: an existing project is refused (Fugaro only starts fresh).
+NEW_PROJECT_ID must not exist: restore creates a project, and adopts nothing
+(setup is the command that adopts one that holds nothing of Fugaro's).
 If the creation fails or does not end in a project this run created and
 marked, the local project config file is put back as it was and the restore
 can be run again; what the creation did in the cloud (the project, its

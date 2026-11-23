@@ -28,9 +28,10 @@ import (
 )
 
 const (
-	// fpID is the installation's own GCP project: Fugaro only starts fresh,
-	// and the budget backend lives in the project setup created (D7), never in
-	// a Firebase project of another id.
+	// fpID is the installation's own GCP project: the budget backend lives in
+	// the project setup made Fugaro's (D7) — created, or adopted where it was
+	// already there and held nothing of Fugaro's — never in a Firebase project
+	// of another id.
 	fpID             = initProject
 	fpSigner         = "fugaro-token-signer@" + initProject + ".iam.gserviceaccount.com"
 	fpAPIKey         = "AIzaSyA0123456789abcdefghijklmnopqrstu"
@@ -249,9 +250,8 @@ func TestInitFirebaseNeverCreatesProject(t *testing.T) {
 		}
 	}
 
-	// Another project, there or not, stops before any plan: Fugaro only
-	// starts fresh, and the budget backend goes in the installation's own
-	// project and nowhere else.
+	// Another project, there or not, stops before any plan: the budget backend
+	// goes in the installation's own project and nowhere else.
 	r2 := newFBRig(t)
 	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", "aurora-missing")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not the installation's GCP project") {
@@ -351,10 +351,9 @@ func TestInitFirebaseSameProjectPlanOnly(t *testing.T) {
 	}
 }
 
-// TestInitFirebaseRefusesAnotherProject: the two-project layout is gone
-// (Fugaro only starts fresh): --firebase-project naming another project than
-// the installation's own is refused in both doors before anything is read,
-// planned or applied.
+// TestInitFirebaseRefusesAnotherProject: the two-project layout is gone:
+// --firebase-project naming another project than the installation's own is
+// refused in both doors before anything is read, planned or applied.
 func TestInitFirebaseRefusesAnotherProject(t *testing.T) {
 	for _, door := range []string{"setup", "update"} {
 		t.Run(door, func(t *testing.T) {

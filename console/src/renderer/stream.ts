@@ -55,7 +55,7 @@
 // grows with the rows) -- this module decides what the read *is*, not what it
 // looks like, which is `section.ts`'s bargain from the other side.
 
-import type { NewOpsReply, StreamEnd, StreamFeed } from '../shared/new-ops'
+import type { NewOpsDocument, NewOpsReply, StreamEnd, StreamFeed } from '../shared/new-ops'
 
 /** STREAM_INTERRUPTED_WORD is what the console says when a feed stopped without
  * an `end` line. There is no CLI sentence to draw -- the CLI wrote none, which
@@ -83,20 +83,24 @@ export const STREAM_ROWS_PER_PAINT = 1
  *     refused. `sentence` is the CLI's.
  *   - `dropped`: the section moved on while the rows were being drawn. Nothing
  *     is answered at all -- not even the rows read so far, which are a list this
- *     read may not draw. */
-export type StreamStatus = 'complete' | 'interrupted' | 'failed' | 'dropped'
+ *     read may not draw.
+ *   - `withheld`: the reduced mode withholds this view, so **neither read was
+ *     made** (`StreamRead.withheld`). It is not a refusal and not a failure:
+ *     there is nothing to retry and nothing the CLI said, and the caller draws
+ *     the console's own word for the withheld view. */
+export type StreamStatus = 'complete' | 'interrupted' | 'failed' | 'dropped' | 'withheld'
 
 /** StreamSource is which read answered: the opt-in stream, or the whole
  * document it fell back to. A screen that stamps, names or refuses a read the
  * way its operation is named needs the difference (`runs.stream` against
- * `runs.list`). */
-export type StreamSource = 'stream' | 'whole'
+ * `runs.list`). `none` is the withheld read, which asked neither. */
+export type StreamSource = 'stream' | 'whole' | 'none'
 
 /** StreamWhole is the whole-document read's answer as this module needs it: the
  * rows the caller's own reader kept, or the sentence it refused with. The caller
  * builds it from its own `documentOf` and its own decoder, because which rows a
- * screen keeps and what a refusal says are the screen's business (`coordinator
- * .ts`'s `queueRuns` is the Coordinator's). */
+ * screen keeps and what a refusal says are the screen's business (`projects
+ * .ts`'s `readBudgetStream` and `spend.ts`'s report read are the callers). */
 export type StreamWhole<Row> =
   | { readonly ok: true; readonly rows: readonly Row[] }
   | { readonly ok: false; readonly sentence: string }
@@ -146,21 +150,38 @@ export const NODE_PAINT: StreamPaint = (step: () => void) => {
  * before every chunk, so a read the operator has replaced stops drawing rather
  * than drawing under the newer answer, and it answers `dropped`.
  *
+ * `withheld` is the reduced mode's own gate, and it is asked **before anything
+ * is spawned**: a view this mode withholds (`hidesView`) is one whose figures
+ * the console may not draw, and a stream that read the rows anyway would be
+ * spawning the very read whose answer it must throw away. The caller asks
+ * `hidesView` (`shared/version.ts`) and hands the answer here rather than in
+ * each screen's own read, so both of RS5's screens reach the gate through this
+ * one door and neither has to remember it. The read answers `withheld` without
+ * asking either operation, and the caller draws its own word for the view.
+ *
  * `paint` is the clock, and only a case passes one. */
 export interface StreamRead<Row> {
   readonly stream: () => Promise<NewOpsReply<StreamFeed<Row>>>
   readonly document: () => Promise<StreamWhole<Row>>
   readonly onRows?: (rows: readonly Row[]) => void
   readonly current?: () => boolean
+  readonly withheld?: boolean
   readonly paint?: StreamPaint
 }
 
 /** readStream makes one read of the shape this file's header describes, and
  * answers what it read. It draws nothing itself: the chunks go to `onRows`, and
- * every string in the answer is either the CLI's or this file's own. */
+ * every string in the answer is either the CLI's or this file's own.
+ *
+ * A read the caller marked `withheld` asks neither operation and answers
+ * `withheld`: the reduced mode withholds the view, so there is no answer to
+ * read and no sentence of the CLI's to carry. */
 export async function readStream<Row>(options: StreamRead<Row>): Promise<StreamResult<Row>> {
   const still = options.current ?? ((): boolean => true)
   const paint = options.paint ?? NODE_PAINT
+  if (options.withheld === true) {
+    return { status: 'withheld', source: 'none', rows: [], sentence: null, end: null }
+  }
   const answer = await options.stream()
   if (!answer.ok) return wholeDocument(options)
   const feed = answer.value
@@ -201,6 +222,70 @@ async function wholeDocument<Row>(options: StreamRead<Row>): Promise<StreamResul
  * caller to draw by mistake. */
 function dropped<Row>(): StreamResult<Row> {
   return { status: 'dropped', source: 'stream', rows: [], sentence: null, end: null }
+}
+
+/** BUDGET_KILL_ROW_SLUG is the feed's own marker for the project's kill switch:
+ * the row `budget show --stream` writes in place of the document's `global`
+ * block, whose slug is the literal `kill` (`budgetKillRowSlug`,
+ * `internal/cli/budget_stream.go`). The word is a scope no repository's own slug
+ * is -- the writer says so where it defines the sentinel, and a repository's row
+ * is the document's own element, slug and all -- which is the whole of how a
+ * reader tells the two kinds of row apart, and it is why the split below is a
+ * rule of the wire and not a screen's guess. */
+export const BUDGET_KILL_ROW_SLUG = 'kill'
+
+/** BudgetFeedRows is a streamed caps feed's rows, split into the two things
+ * they are: the repositories' rows, in the feed's order, and the project's kill
+ * switch.
+ *
+ * **Why this lives here and not in either screen.** `budget.stream` is read by
+ * both of RS5's tabs -- the Spend screen's caps section and the Project tab --
+ * and the sentinel above is one rule with one spelling: a second reader that
+ * spelled `kill` itself would be a copy that drifts from the CLI's. It is *not*
+ * a document: what each screen wraps these rows in (`capsFromFeed`'s caps panel,
+ * `budgetFromFeed`'s document) is that screen's own, and this module knows no
+ * screen. `killed` is separate from `kill` because the row's presence is the
+ * fact "this is the project's switch" and its `kill: null` the fact "it is not
+ * on" (`budgetKillRow`, `internal/cli/budget_stream.go`): a feed that carried no
+ * such row leaves the switch **unknown**, which is not the same as off. */
+export interface BudgetFeedRows {
+  readonly repos: readonly NewOpsDocument[]
+  readonly kill: unknown
+  readonly killed: boolean
+}
+
+export function budgetFeedRows(rows: readonly NewOpsDocument[]): BudgetFeedRows {
+  const repos: NewOpsDocument[] = []
+  let kill: unknown = null
+  let killed = false
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object') continue
+    if (row['slug'] === BUDGET_KILL_ROW_SLUG) {
+      killed = true
+      kill = row['kill'] ?? null
+      continue
+    }
+    repos.push(row)
+  }
+  return { repos, kill, killed }
+}
+
+/** feedRows is one of a document's arrays as the feed's own row type: the
+ * elements that are JSON objects, which is every row of a document this console
+ * reads (`new-ops.ts`'s `rowOf` refuses the rest one line at a time, where the
+ * rows are drawn). It is how a fallback read answers `StreamWhole.rows`: the
+ * whole document's array is the list a feed would have written as `row` lines,
+ * and a `row` line carries an object by the contract's own reading.
+ *
+ * **Why it lives here.** Both of RS5's caps readers fall back to a document's
+ * array (`report`'s `rows` and `budget show`'s `repos`) through this module, and
+ * the filter is one rule with one spelling: a screen that kept an element the
+ * other dropped would answer a different list for the same document. */
+export function feedRows(array: unknown): readonly NewOpsDocument[] {
+  if (!Array.isArray(array)) return []
+  return array.flatMap((row) =>
+    row !== null && typeof row === 'object' && !Array.isArray(row) ? [row as NewOpsDocument] : [],
+  )
 }
 
 /** painted is one chunk's tick, as a promise the loop can await. */

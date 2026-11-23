@@ -285,7 +285,7 @@ No compatibility, in the shape the tree already uses for a removed key.
   (`image_name` with `needs`); `schemas/project-layer.schema.json:265` loses the same keys (`:338` for
   `rebuild`). **`schemas/settings.schema.json` loses the removed keys' own member rows** — the
   twenty-one at `schemas/settings.schema.json:838` through `:1187` (`:1151` is
-  `workflows.*.image.setup`), beside their rows in `internal/settings/registry.go:229`, without which
+  `workflows.*.image.setup`), beside their rows in `internal/settings/registry.go:241`, without which
   `fugaro settings set` would still offer a key the config refuses — **and keeps `base_images` and the
   flattened `image_catalog.*` rows untouched** (`schemas/settings.schema.json:550`), as
   `image_name`/`needs` keep their members (D1196).

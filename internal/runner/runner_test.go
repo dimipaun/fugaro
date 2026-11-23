@@ -19,6 +19,7 @@ import (
 
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/memblob"
+	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
@@ -170,6 +171,94 @@ func newHarness(t *testing.T, cfg string, spec *task.Spec) *harness {
 	return newHarnessFiles(t, cfg, spec, nil)
 }
 
+// oauthCfg turns a fixture's api-key auth into oauth, the credential the
+// gateway does not carry (D3026, R12): with every run behind a gateway now
+// that the mode no longer decides (AB1b, D3009), it is the one way a test gets
+// a run whose stages Claude Code serves itself.
+func oauthCfg(t *testing.T, cfg string) string {
+	t.Helper()
+	out := strings.Replace(cfg, "  auth: api-key\n", "  auth: oauth\n", 1)
+	if out == cfg {
+		t.Fatal("this config names no api-key auth to turn into oauth")
+	}
+	return out
+}
+
+// oauthHarness is newHarness for that run: the fixture's config with oauth
+// auth, and the harness's own key taken out of the environment (an api-key run
+// is the gateway's, and the two must not be half of each) with the token the
+// oauth arm mounts in its place.
+func oauthHarness(t *testing.T, cfg string, spec *task.Spec) *harness {
+	t.Helper()
+	if cfg == "" {
+		cfg = testutil.FixtureFiles(t)["fugaro.yaml"]
+	}
+	h := newHarness(t, oauthCfg(t, cfg), spec)
+	oauthEnv(h)
+	return h
+}
+
+// oauthEnv is oauthHarness's second half on its own, for a harness a test
+// builds through a hook of its own (followUpHarness's prep): the key comes out
+// of the environment and the token the oauth arm mounts goes in.
+func oauthEnv(h *harness) {
+	h.deps.Env = append(filterEnv(h.deps.Env, "ANTHROPIC_API_KEY"), "CLAUDE_CODE_OAUTH_TOKEN="+oauthToken)
+}
+
+// fixturePins is the models line withFixturePins puts under agent:, spelled
+// the way firstLineCfg and gwConfig name theirs.
+const fixturePins = "models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5, background: claude-haiku-4-5 }"
+
+// withFixturePins gives a config the fixture's own model pins when the test's
+// config names none: the coder and the first line on sonnet, the senior review
+// on opus, the background model on haiku.
+//
+// Every run has a gateway now (AB1b, D3009), and a run behind a gateway must
+// name models the price table knows (CheckPins, D3020): a configuration that
+// pins nothing is refused at bootstrap, so a test that hands the harness the
+// bare fixture — a repository, as the fixture stands in for one — would run
+// nothing at all. A real installation's pins arrive from the project layer's
+// defaults (config.ProjectLayer); the harness puts them in the file instead,
+// because a test's file is the one thing it reads.
+//
+// It inserts a line rather than re-encoding the document, so a test that reads
+// the file back and edits it by line (project_test's withProject, policy_test's
+// own replacements) still finds the lines it wrote.
+//
+// What this does not touch: a config that names a model, or names a models
+// block at all — even an empty one, which is how a test about the pin rules
+// itself asks for a run that pins nothing; a config with no agent block, which
+// is a layer or a fragment rather than a repository's own file; a config the
+// gateway does not carry — every oauth one, whose runs are the only ones with
+// no pins to price — and a config that does not parse, which is the config
+// under test in tests of their own.
+func withFixturePins(cfg string) string {
+	var doc struct {
+		Agent *struct {
+			Model  string         `yaml:"model"`
+			Models map[string]any `yaml:"models"`
+			Auth   string         `yaml:"auth"`
+		} `yaml:"agent"`
+	}
+	if err := yaml.Unmarshal([]byte(cfg), &doc); err != nil || doc.Agent == nil {
+		return cfg
+	}
+	if doc.Agent.Model != "" || doc.Agent.Models != nil {
+		return cfg
+	}
+	// One auth kind is left alone: oauth, the credential the gateway does not
+	// carry (D3026, R12), whose runs are the only ones with no pins to price.
+	// An auth the file leaves empty is vertex by default (config.
+	// DefaultAgentAuth), which is a credential the gateway carries.
+	if doc.Agent.Auth == "oauth" {
+		return cfg
+	}
+	if strings.Contains(cfg, "agent: {") {
+		return strings.Replace(cfg, "agent: {", "agent: { "+fixturePins+",", 1)
+	}
+	return strings.Replace(cfg, "agent:\n", "agent:\n  "+fixturePins+"\n", 1)
+}
+
 // newHarnessFiles is newHarness with extra files committed to the remote.
 func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string]string) *harness {
 	t.Helper()
@@ -178,6 +267,7 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 	if cfg != "" {
 		files["fugaro.yaml"] = cfg
 	}
+	files["fugaro.yaml"] = withFixturePins(files["fugaro.yaml"])
 	for k, v := range extra {
 		files[k] = v
 	}
@@ -397,7 +487,10 @@ func onlyPR(t *testing.T, p *fake.Provider) fake.PRState {
 }
 
 func TestReadyPR(t *testing.T) {
-	h := newHarness(t, "", nil)
+	// The oauth credential: this case is about the pull request, and what it
+	// says about cost is the stages' own reports, which is the run's figure
+	// only where no gateway serves them (AB1b, D3009).
+	h := oauthHarness(t, "", nil)
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
@@ -1252,7 +1345,13 @@ func TestVerifyRecordsUploaded(t *testing.T) {
 }
 
 func TestCostBreakdown(t *testing.T) {
-	h := newHarness(t, "", nil)
+	// The model figure of an api-key run is its gateway's ledger, so this case
+	// makes the one call it pins: $0.04 for 4,000 output tokens on sonnet
+	// (out4k). A stage's own report no longer reaches the record beside it
+	// (AB1b, D3009, C1.16).
+	var statuses []int
+	g := newGW(t, "", "observe", "", out4k())
+	h := g.harness
 	h.deps.Prices = &backend.Prices{VCPUSecondUSD: 0.001, GiBSecondUSD: 0}
 	// The clock moves only when a stage says so, 30s per stage, well inside
 	// the fixture's 5m total, so the budget can never run out under the test.
@@ -1269,33 +1368,39 @@ func TestCostBreakdown(t *testing.T) {
 			return s(t, ctx, req)
 		}
 	}
-	rec, err := h.run(t, tick(implement("feature")), tick(review("ship", 0)))
+	rec, err := h.run(t,
+		tick(calling(&statuses, implement("feature"), call{sonnet, 4096})),
+		tick(review("ship", 0)))
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(statuses) != 1 || statuses[0] != 200 {
+		t.Fatalf("the stage's call was answered %v", statuses)
+	}
 	c := rec.Cost
 	// 60s × 4 vCPU × $0.001 = $0.24 of compute; totals are compared to the cent.
-	if c == nil || !c.ComputeEstimated || c.ModelUSD != 1.5 || c.ModelBasis != "api-list" || math.Abs(c.ComputeUSD-0.24) > 1e-9 || math.Abs(c.TotalUSD-1.74) > 0.005 {
+	if c == nil || !c.ComputeEstimated || c.ModelUSD != 0.04 || c.ModelBasis != "api-list" || math.Abs(c.ComputeUSD-0.24) > 1e-9 || math.Abs(c.TotalUSD-0.28) > 0.005 {
 		t.Fatalf("cost = %+v", c)
 	}
 	if rec.CostUSD != c.ModelUSD {
 		t.Fatalf("cost_usd %v must equal the model sum %v", rec.CostUSD, c.ModelUSD)
 	}
-	if !strings.Contains(onlyPR(t, h.provider).Comments[0], "(model $1.50 + compute $") {
+	if !strings.Contains(onlyPR(t, h.provider).Comments[0], "(model $0.04 + compute $") {
 		t.Fatalf("report = %s", onlyPR(t, h.provider).Comments[0])
 	}
 }
 
 func TestCostWithoutPricesIsNotEstimated(t *testing.T) {
-	h := newHarness(t, "", nil)
-	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	var statuses []int
+	g := newGW(t, "", "observe", "", out4k())
+	rec, err := g.run(t, calling(&statuses, implement("feature"), call{sonnet, 4096}), review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c := rec.Cost; c == nil || c.ComputeEstimated || c.ComputeUSD != 0 || c.ModelUSD != 1.5 {
+	if c := rec.Cost; c == nil || c.ComputeEstimated || c.ComputeUSD != 0 || c.ModelUSD != 0.04 {
 		t.Fatalf("cost = %+v", rec.Cost)
 	}
-	if report := onlyPR(t, h.provider).Comments[0]; !strings.Contains(report, "**Cost:** model $1.50 (compute not estimated)") {
+	if report := onlyPR(t, g.provider).Comments[0]; !strings.Contains(report, "**Cost:** model $0.04 (compute not estimated)") {
 		t.Fatalf("report = %s", report)
 	}
 }

@@ -82,7 +82,6 @@ import {
   stageSegment,
   watchHealth,
 } from '../../src/renderer/screens/live'
-import { COORDINATOR_QUEUE_CAPS_HIDDEN_WORD } from '../../src/renderer/screens/coordinator'
 import type {
   LiveFactory,
   LiveModel,
@@ -691,17 +690,20 @@ describe('the row model', () => {
     expect(texts(renderLive(factory, model, 'light'), 'live-run-id')).toEqual(['aa01', 'aa02', 'aa03'])
   })
 
-  it('draws the BY cell, in watch’s own short form', () => {
+  it('draws the BY cell as the record wrote the launcher', () => {
     // `watch`'s runs table has a `BY` column (`internal/watch/plain.go`'s
-    // `launcherText`, from the record's `launched_by`), and the live tab follows
-    // it (D1704). The value is drawn through `shared/launcher.ts` -- the part
-    // before an address's first `@`, which is the CLI's own
-    // `runview.LauncherShort` -- and a row whose record carries no launcher
-    // draws **no element at all**, never another person's name.
+    // `launcherFull`), and the live tab follows it (D1704). The value is drawn
+    // through `shared/launcher.ts` **whole** -- the console no longer cuts at the
+    // address the way the CLI's own column still does (D3213, 2026-11-21) -- and
+    // a row whose record carries no launcher draws **no element at all**, never
+    // another person's name.
     const frame = theLastFrame()
     const runs = frame.runs.map((run) => ({ ...run, launchedBy: 'dana.person+fugaro@example.com' }))
     const tree = renderLive(factory, buildLiveModel({ ...frame, runs }, new BurnHistory()), 'light')
-    expect(texts(tree, 'live-run-started-by')).toEqual(['dana.person+fugaro', 'dana.person+fugaro'])
+    expect(texts(tree, 'live-run-started-by')).toEqual([
+      'dana.person+fugaro@example.com',
+      'dana.person+fugaro@example.com',
+    ])
     const without = renderLive(factory, modelOf(theLastFrame()), 'light')
     expect(all(without, 'live-run-started-by')).toEqual([])
   })
@@ -2467,10 +2469,6 @@ describe('the spend-rate gauge and the cap bars', () => {
     expect(runs.getAttribute('data-state')).toBe('unavailable')
     expect(runs.getAttribute('data-fill')).toBe(UNAVAILABLE_MARK)
     expect(one(reduced, 'live-fleet-cap-limit').textContent).toBe(UNAVAILABLE_MARK)
-    // One mode withholding one view in two places under two sentences would
-    // read as two modes: this is the Coordinator's own word for the same gate.
-    expect(LIVE_CAPS_HIDDEN_WORD).toBe(COORDINATOR_QUEUE_CAPS_HIDDEN_WORD)
-
     // **The money of the totals block is not withheld.** `counted_usd`,
     // `daily_cap_usd` and this bar have been read since the console's first
     // release, and taking them back is the `spend` view's question rather than

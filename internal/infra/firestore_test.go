@@ -203,6 +203,65 @@ func TestADatastoreModeDatabaseIsStillRefused(t *testing.T) {
 	}
 }
 
+// TestACreateRaceAdoptsOnlyTheConfirmedLocation: the database the person
+// confirmed is the one in the step's own location (D3085). One that appears
+// there between the plan and the write is adopted as ours, and the step says
+// where it is, because this run did not create it; one that appears anywhere
+// else is a state nothing confirmed — a location is permanent — so Apply
+// refuses, names where the database is and what to run, and writes nothing.
+func TestACreateRaceAdoptsOnlyTheConfirmedLocation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("the confirmed location", func(t *testing.T) {
+		s, fs := fsStep(t, "us-east5")
+		fs.RemoveDatabase()
+		if _, _, err := s.Plan(ctx); err != nil {
+			t.Fatal(err)
+		}
+		fs.RaceCreate("us-east5")
+		if err := s.Apply(ctx); err != nil {
+			t.Fatalf("a database that appeared in the confirmed location was not adopted: %v", err)
+		}
+		if got := s.AdoptedLocation(); got != "us-east5" {
+			t.Errorf("the step says the adopted database is in %q, want us-east5", got)
+		}
+		if loc, _ := fs.Database(); loc != "us-east5" {
+			t.Errorf("the adopted database is now in %s, want it left in us-east5", loc)
+		}
+		if _, ok := fs.Value(FirestoreMetaCollection, FirestoreMarkDoc); !ok {
+			t.Error("the adopted database was not marked")
+		}
+	})
+
+	t.Run("another location", func(t *testing.T) {
+		s, fs := fsStep(t, "us-east5")
+		fs.RemoveDatabase()
+		if _, _, err := s.Plan(ctx); err != nil {
+			t.Fatal(err)
+		}
+		fs.RaceCreate("europe-west1")
+		err := s.Apply(ctx)
+		var ue *UserError
+		if !errors.As(err, &ue) {
+			t.Fatalf("Apply err = %v, want a refusal", err)
+		}
+		for _, want := range []string{"europe-west1", "us-east5", "run it again"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal does not name %q: %v", want, err)
+			}
+		}
+		if got := s.AdoptedLocation(); got != "" {
+			t.Errorf("a refused database was reported as adopted in %q", got)
+		}
+		if loc, _ := fs.Database(); loc != "europe-west1" {
+			t.Errorf("the refused database was changed: %s", loc)
+		}
+		if _, ok := fs.Value(FirestoreMetaCollection, FirestoreMarkDoc); ok {
+			t.Error("a database that is not where the plan said was marked")
+		}
+	})
+}
+
 // containsLine reports whether one of the plan's lines is exactly want.
 func containsLine(lines []string, want string) bool {
 	for _, l := range lines {

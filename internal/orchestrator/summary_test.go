@@ -2,6 +2,7 @@ package orchestrator_test
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -321,5 +322,44 @@ func TestBriefFencesIssueTitles(t *testing.T) {
 	}
 	if !strings.Contains(out, "is the orchestrator's stored state") {
 		t.Errorf("the brief no longer says the block it prints is data:\n%s", out)
+	}
+}
+
+// TestSummaryListsRunningThenQueuedAndSaysWhatTheCapOmitted: the running item
+// is listed first whatever its place in the state, so the cap never cuts it,
+// and a cut that dropped items says how many.
+//
+// Mutation: print the items in the state's own order and the running item,
+// last of eight, falls under the cap and the first assertion fails.
+func TestSummaryListsRunningThenQueuedAndSaysWhatTheCapOmitted(t *testing.T) {
+	s := orchestrator.State{Goal: "g"}
+	for i := range 7 {
+		s.WorkItems = append(s.WorkItems, orchestrator.WorkItem{
+			ID: "done-" + strconv.Itoa(i), Title: "t", Repo: "acme/r", Recipe: "default", RigorTier: "small",
+			Brief: strings.Repeat("a long brief ", 30), Phase: orchestrator.PhaseDone,
+		})
+	}
+	s.WorkItems = append(s.WorkItems, orchestrator.WorkItem{
+		ID: "live", Title: "t", Repo: "acme/r", Recipe: "default", RigorTier: "small",
+		Phase: orchestrator.PhaseRunning, RunID: "20261122-183836-7a19",
+	})
+	got := orchestrator.Summarize(s)
+	if !strings.Contains(got, "  live [running]") || !strings.Contains(got, "run 20261122-183836-7a19") {
+		t.Fatalf("the running item is not in the capped summary:\n%s", got)
+	}
+	if strings.Index(got, "live [running]") > strings.Index(got, "done-0 [done]") {
+		t.Errorf("a running item is listed after a finished one:\n%s", got)
+	}
+	if !strings.Contains(got, "work items are not listed here") || !strings.Contains(got, "this summary is capped") {
+		t.Errorf("the cap does not say how many items it left out:\n%s", got)
+	}
+
+	s.WorkItems = append(s.WorkItems[:1:1], s.WorkItems[7:]...)
+	q := orchestrator.WorkItem{ID: "next", Title: "t", Repo: "acme/r", Recipe: "default", RigorTier: "small", Phase: orchestrator.PhaseQueued}
+	s.WorkItems = []orchestrator.WorkItem{s.WorkItems[0], q, s.WorkItems[1]}
+	got = orchestrator.Summarize(s)
+	live, next, old := strings.Index(got, "live [running]"), strings.Index(got, "next [queued]"), strings.Index(got, "done-0 [done]")
+	if !(live < next && next < old) || strings.Contains(got, "not listed here") {
+		t.Errorf("want running, queued, then the rest, with no omission note:\n%s", got)
 	}
 }

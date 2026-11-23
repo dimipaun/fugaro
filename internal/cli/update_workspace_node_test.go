@@ -227,7 +227,7 @@ func TestWriterRefusesASharedEntryNamingNoMember(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a pool entry offered to a project that is not a member was published:\n%s", out)
 	}
-	for _, want := range []string{"F13", "member-z", "fugaro workspace member add", "nothing was written"} {
+	for _, want := range []string{"F13", "member-z", "fugaro workspace project add", "nothing was written"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q, so the owner is not told what to do: %v", want, err)
 		}
@@ -273,7 +273,7 @@ func TestWriterRefusesAllMembersWithoutACap(t *testing.T) {
 }
 
 // TestWriterRefusesAJobRepoWithoutAProvider is the writer's other refusal, and
-// the one the documented path reaches: `fugaro workspace member add --job-repos`
+// the one the documented path reaches: `fugaro workspace project add --job-repos`
 // writes a job account's repositories as `owner/repo` with no forge
 // (localcfg.WorkspaceJobAccount.Repos), while the node's rows carry them
 // canonically because the workspace's own service holds the slug a run's verified

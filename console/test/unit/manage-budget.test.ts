@@ -340,10 +340,9 @@ describe('the Budget kind in the reduced mode', () => {
 
   it('says the caps with the Live screen’s own sentence, so one mode speaks with one voice', () => {
     // A second copy rather than an import -- the screens and the kinds are
-    // siblings and none owns the others -- held equal here for the reason
-    // `live.test.ts` holds the Live and Coordinator copies equal: one reduced
-    // mode withholding the caps in two places under two sentences would read as
-    // two modes.
+    // siblings and none owns the others -- held equal here so the two cannot
+    // drift: one reduced mode withholding the caps in two places under two
+    // sentences would read as two modes.
     expect(BUDGET_CAPS_HIDDEN_WORD).toBe(LIVE_CAPS_HIDDEN_WORD)
   })
 })

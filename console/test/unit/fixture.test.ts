@@ -674,6 +674,25 @@ describe('the committed synthetic fixture', () => {
       // answers with it yet: the view it is for is not built.
       'members.json',
       'members.json.license',
+      // `accounts-pool-ls.json` is the seventh invented document (the
+      // model-credentials-routing plan's VS2): one `accounts pool ls --json`
+      // document, written from the structs (`internal/routing/pools.go`'s
+      // `PoolListDoc`, which is C2's contract, and its prose
+      // `docs/model-credentials-routing/contract-pools.md`) so the Manage
+      // section's pools kind has a document to run over without a CLI. It is the
+      // fixture the task's own file list names, and it carries the three cases the
+      // kind's columns turn on: a shared pool of the project's with two members
+      // (one available and counted, one exhausted with a reset and no headroom,
+      // which is the figure the contract refuses to guess), a person's own pool
+      // whose rule the config names nowhere, and a service account's pool whose
+      // member the service counts nothing for. It is JSON and not `.ndjson`, so
+      // the sweep above never reads it, and no arm of the e2e stub answers with
+      // it: the console operation its kind names (`accounts.pools`) is not in the
+      // IPC allow-list yet -- the read belongs to the task that admits the
+      // operation, and `manage-pools.test.ts` and `manage.spec.ts` feed this
+      // document to the kind directly until it is.
+      'accounts-pool-ls.json',
+      'accounts-pool-ls.json.license',
       ...FIXTURE_CASES.map((name) => `${name}.ndjson`),
     ])
     const present = readdirSync(FIXTURE_DIRECTORY)

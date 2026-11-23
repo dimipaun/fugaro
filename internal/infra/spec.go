@@ -1059,7 +1059,28 @@ func (c *repoCtx) resolveBitbucketProxied() error {
 // and handed in as Inputs.Policy, exactly as the proxy's half is
 // (resolveBitbucketProxied, same reason: internal/infra holds no client that
 // could read one and Repo is a pure function of its Inputs).
-func (c *repoCtx) sharedRepo() bool { return SharedRepo(c.in.Policy, c.provider, c.in.Repo) }
+//
+// A repository with a workflow whose tools live in its own derived image
+// (checkout other than clone) keeps its per-repository jobs until the shared
+// job carries that image (SharedJobBaked), because fugaro run launches that
+// workflow on the per-repository job: enrolling the repository as shared would
+// leave update creating no job for the launch to find.
+func (c *repoCtx) sharedRepo() bool {
+	if !SharedJobBaked && c.in.Cfg != nil {
+		for _, w := range c.in.Cfg.Workflows {
+			if w.Checkout != config.CheckoutClone {
+				return false
+			}
+		}
+	}
+	return SharedRepo(c.in.Policy, c.provider, c.in.Repo)
+}
+
+// SharedJobBaked is whether a shared project job carries a baked workflow's
+// tools; S10 flips it in the change that deploys the catalog default image.
+// It is a variable so S4's and S10's tests admit the workflow the way
+// production will.
+var SharedJobBaked = false
 
 // buildServes is whether the credentials service serves the secrets of class
 // to this repository's BUILDS (B4.9, the S4 flip; D2076, D2077): the class
@@ -1538,6 +1559,20 @@ func runnerKeyCredential(lc *localcfg.Config, provider, repo string) (string, bo
 		return "", false
 	}
 	return secret, true
+}
+
+// RunnerKeyCredential is runnerKeyCredential for a reader outside this package:
+// the container the runner-path key credential of provider's own name holds the
+// key in, for the repositories claude_accounts.<provider>.allow_data_to names.
+//
+// The reader is internal/cli's copy of the installation's model keys into the
+// credentials service's bundle (KS12): which container a repository's runs are
+// served a provider's key from is this function's answer and nobody else's, and
+// an entry the copy wrote holding a key the repository's own job does not mount
+// is a key no released run is served (F27, R6). It is exported rather than
+// spelled a second time there so the two cannot disagree.
+func RunnerKeyCredential(lc *localcfg.Config, provider, repo string) (string, bool) {
+	return runnerKeyCredential(lc, provider, repo)
 }
 
 // runnerKeyCredentialName is the credential a logical secret is the derived

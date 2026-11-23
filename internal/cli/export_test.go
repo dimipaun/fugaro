@@ -15,6 +15,8 @@ import (
 func resetExtend() {
 	registrations = map[string]func() *cobra.Command{}
 	registeredNames = map[string]bool{}
+	registeredSub = map[string]map[string]func() *cobra.Command{}
+	registeredSubNames = map[string]bool{}
 	registrationsSealed = false
 	launchDeclarer, launchDeclarerSet = nil, false
 	launchPlanner, launchPlannerSet = nil, false

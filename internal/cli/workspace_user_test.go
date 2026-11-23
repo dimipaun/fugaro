@@ -322,6 +322,10 @@ type wu7World struct {
 	members   *wu7Members
 	authority *wu7Authority
 	linked    []workspace.MemberTarget
+	// linkedCalls counts the resolutions of the member list. The list is a
+	// loader and not a value (A7: resolving it reads the cloud), so what a
+	// command asked for is as much a part of the fixture as what it wrote.
+	linkedCalls int
 
 	// caller is the verified address userCallerLookup answers, in the
 	// "user:<address>" form access.Caller builds. empty is a session with no
@@ -393,7 +397,10 @@ func (w *wu7World) run(args ...string) (string, error) {
 			Audit:     w.audit,
 			Members:   w.members,
 			Authority: w.authority,
-			Linked:    w.linked,
+			Linked: func(context.Context) ([]workspace.MemberTarget, error) {
+				w.linkedCalls++
+				return w.linked, nil
+			},
 			getenv: func(name string) string {
 				if w.marker != "" && name == agentMarkers[0] {
 					return w.marker

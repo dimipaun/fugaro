@@ -202,6 +202,15 @@ func (r *reg) handle(w http.ResponseWriter, q *http.Request) {
 	}
 	p := strings.TrimPrefix(q.URL.Path, "/v2/")
 	switch {
+	case strings.HasSuffix(p, "/tags/list"):
+		repo := strings.TrimSuffix(p, "/tags/list")
+		var tags []string
+		for k := range r.st.tags {
+			if t, ok := strings.CutPrefix(k, repo+":"); ok {
+				tags = append(tags, t)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": repo, "tags": tags})
 	case strings.Contains(p, "/blobs/uploads/"):
 		r.upload(w, q, p)
 	case strings.Contains(p, "/blobs/"):
