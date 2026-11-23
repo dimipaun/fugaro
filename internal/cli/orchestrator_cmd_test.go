@@ -644,3 +644,60 @@ func TestCommandIsRegisteredOnce(t *testing.T) {
 		}
 	}
 }
+
+// TestStateJSONListsEveryItemAndTheBriefKeepsTheRunningOneVisible: a state of
+// eight items whose running one is last still lists that item in the brief,
+// ahead of the finished ones, and `--json` carries an `items` array so a reader
+// never parses prose.
+//
+// Mutation: print the items in the state's order and the brief's running item
+// is cut by the cap; drop the array and the document has no items.
+func TestStateJSONListsEveryItemAndTheBriefKeepsTheRunningOneVisible(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	items := make([]orchestrator.WorkItem, 0, 8)
+	for i := range 7 {
+		w := shardItem("old"+orchNum(i), "done work", "small")
+		w.Phase = orchestrator.PhaseDone
+		w.Brief = strings.Repeat("a long brief ", 30)
+		items = append(items, w)
+	}
+	live := shardItem("live", "the probe", "small")
+	live.Phase, live.RunID, live.Attempts, live.Spec = orchestrator.PhaseRunning, "20261122-183836-7a19", 1, "forge-labels"
+	items = append(items, live)
+	seedOrchestratorShard(t, f, orchestratorPath(t, orchestrator.StateNode), items...)
+
+	out, _, err := runOrchestrator(t, "", "orchestrator", "state", "--brief")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "live [running]") || !strings.Contains(out, "work items are not listed here") {
+		t.Errorf("the capped brief lost the running item or does not count what it omitted:\n%s", out)
+	}
+
+	doc, _, err := runOrchestrator(t, "", "orchestrator", "state", "--json")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, doc)
+	}
+	orchestratorDocMatchesSchema(t, doc)
+	var got struct {
+		Items []struct {
+			ID       string `json:"id"`
+			Phase    string `json:"phase"`
+			RunID    string `json:"run_id"`
+			Attempts int    `json:"attempts"`
+			Repo     string `json:"repo"`
+			Spec     string `json:"spec"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(doc), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 8 {
+		t.Fatalf("the document lists %d items, want all 8:\n%s", len(got.Items), doc)
+	}
+	last := got.Items[7]
+	if last.ID != "live" || last.Phase != "running" || last.RunID != "20261122-183836-7a19" || last.Attempts != 1 ||
+		last.Repo != "acme/repo" || last.Spec != "forge-labels" {
+		t.Errorf("the running item reads %+v", last)
+	}
+}

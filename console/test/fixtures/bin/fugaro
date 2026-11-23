@@ -76,11 +76,13 @@
 #   * `coordinator status --from-store --all --json --project P` -- the document
 #     in `coordinator-status.json` beside it, which `cliStub.ts` writes from the
 #     committed `test/fixtures/coordinator-status.json` (Bitbucket credentials
-#     T1.2, D364). This is the read the **Coordinator** view makes, and it is the
-#     read whose argv fixes the most: `--from-store` and `--all` are the spawn
-#     row's own words, because the screen has no control that turns either off,
-#     so the stub holds all three flags exactly rather than answering a question
-#     this console should never have been able to ask.
+#     T1.2, D364). **No screen makes this read any more** (D3210 retired the
+#     Coordinator tab that did), so the answer is kept only because the console's
+#     spawn row still lists it: the row, this answer and the fixture go together.
+#     It was the read whose argv fixed the most -- `--from-store` and `--all` are
+#     the spawn row's own words, because the retired screen had no control that
+#     turned either off -- so the stub still holds all three flags exactly rather
+#     than answering a question this console should never have been able to ask.
 #   * `models ls --json --project P` -- the document in `models-ls.json` beside
 #     it, which `cliStub.ts`'s `seedModels` writes. This is the read the
 #     **Project** tab's models panel makes (console 0.119.0, contract section

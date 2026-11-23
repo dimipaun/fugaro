@@ -1006,7 +1006,10 @@ func TestFollowUpCancelled(t *testing.T) {
 }
 
 func TestFollowUpCostIsOwnStagesOnly(t *testing.T) {
-	h := followUpHarness(t, "", nil)
+	// The oauth credential: the claim is about which stages' own figures add
+	// up into the run's, and a run behind a gateway takes that figure from its
+	// ledger instead of from the stages (AB1b, D3009, C1.16).
+	h := followUpHarness(t, oauthCfg(t, followUpYAML(t, "")), oauthEnv)
 	h.followUp(t, followID, runID, "Tidy up.")
 	costly := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		res, err := implement("tidy")(t, ctx, req)

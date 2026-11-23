@@ -82,7 +82,7 @@ type scenario struct {
 func runScenario(t *testing.T, sc scenario) result {
 	t.Helper()
 	testutil.IsolateGit(t)
-	files := testutil.FixtureFiles(t)
+	files := pricedFixtureFiles(t)
 	if sc.config != "" {
 		files["fugaro.yaml"] = sc.config
 	}
@@ -103,13 +103,18 @@ func runScenario(t *testing.T, sc scenario) result {
 		t.Fatal(err)
 	}
 	providerState := filepath.Join(tmp, "provider.json")
+	managed := filepath.Join(tmp, "claude-code")
+	if err := os.MkdirAll(managed, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	runCtx, cancelRun := context.WithTimeout(context.Background(), childTimeout)
 	defer cancelRun()
 	cmd := exec.CommandContext(runCtx, fugaro, "exec",
 		"--bucket", "file://"+bucket, "--task-file", taskFile,
 		"--workdir", filepath.Join(tmp, "work"), "--remote", remote, "--state-dir", filepath.Join(tmp, "state"),
-		"--provider", "fake", "--provider-state", providerState, "--claude", claude, "--cancel-poll", "100ms")
+		"--provider", "fake", "--provider-state", providerState, "--claude", claude, "--cancel-poll", "100ms",
+		"--managed-settings", filepath.Join(managed, "managed-settings.json"), "--gateway-upstream", idleUpstream(t))
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + tmp,
 		"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
@@ -187,8 +192,8 @@ func TestReadyRun(t *testing.T) {
 		t.Fatalf("calls = %+v", r.calls)
 	}
 	env := r.calls[0].Env
-	if !slices.Contains(env, "ANTHROPIC_API_KEY=test-key-1234") || !slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "FIXTURE_FAILS_FILE=") }) {
-		t.Fatalf("agent env lacks declared variables: %v", env)
+	if slices.Contains(env, "ANTHROPIC_API_KEY=test-key-1234") || !slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "ANTHROPIC_API_KEY=") }) || !slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "FIXTURE_FAILS_FILE=") }) {
+		t.Fatalf("agent env lacks the gateway token or a declared variable, or holds the model credential: %v", env)
 	}
 	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "UNDECLARED_SECRET=") }) {
 		t.Fatal("an undeclared variable reached the agent")
@@ -243,7 +248,7 @@ func TestFixRound(t *testing.T) {
 }
 
 func TestStageTimeout(t *testing.T) {
-	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"],
+	cfg := strings.Replace(pricedFixtureFiles(t)["fugaro.yaml"],
 		"timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }",
 		"timeouts: { total: 1m, stage: 2s, verify: 30s, finalize_reserve: 10s }", 1)
 	// The agent would sleep 120s; the 2s stage timeout must kill it. The
@@ -276,7 +281,7 @@ func TestCancel(t *testing.T) {
 }
 
 func TestInvalidConfigExitsTwo(t *testing.T) {
-	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "provider: github", "provider: gitlab", 1)
+	cfg := strings.Replace(pricedFixtureFiles(t)["fugaro.yaml"], "provider: github", "provider: gitlab", 1)
 	r := runScenario(t, scenario{config: cfg, script: `{"calls":[]}`})
 	if r.exitCode != 2 || r.rec.Status != runstore.StatusInfraError || len(r.provider.PRs) != 0 {
 		t.Fatalf("exit %d, record %+v", r.exitCode, r.rec)

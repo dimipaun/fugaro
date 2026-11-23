@@ -27,11 +27,14 @@
 // answers to; deriving the account from the project alone would be a daemon
 // impersonating an address no project holds, once per cycle, for ever.
 //
-// The installation deliberately grants nobody the right to mint a token for
-// that account: no `actAs` on it (orchestrator.tf's "Nothing is granted actAs
-// on it") and no `roles/iam.serviceAccountTokenCreator` for the operators — the
-// live check that measures the account's envelope adds that grant by hand and
-// removes it afterwards (docs/gcp-live-checklist.md). So a mint that is refused
+// The installation grants nobody `actAs` on that account (orchestrator.tf's
+// "Nothing is granted actAs on it"), and grants the operators — and only them —
+// `roles/iam.serviceAccountTokenCreator` on it
+// (orchestrator.tf's fugaro_orchestrator_token_creator, applied by `fugaro
+// update`): the daemon runs on an operator's machine and mints its ID token as
+// the account, which that role allows. It also lets an operator act as an
+// account holding signJwt on the budget signer (always-on-orchestrator.md
+// section 4.3). So a mint that is refused
 // is a NAMED refusal that says what to run, and never a daemon that labels
 // nothing without saying why.
 package cli
@@ -110,10 +113,10 @@ func orchestratorIdentityOf(lc *localcfg.Config) orchestratorIdentity {
 // under it. The local config is the record of the SERVICE (its URL, published
 // by `fugaro update`), and the block is the record of the ACCOUNT — the two
 // halves of one identity, each from where it is really written. The block is
-// written by P5.1b's writer (`fugaro update --firebase-project <id>
-// --orchestrator`) and by nothing else, so an installation holds it exactly when
-// its owner asked for a resident orchestrator — and every installation that did
-// not is unchanged by this identity existing.
+// written by `fugaro update` (update_orchestrator.go) and by nothing else, so
+// an installation holds it exactly when an update that could carry one has run —
+// and an installation that cannot (no credentials service, no Firebase backend)
+// is unchanged by this identity existing.
 //
 // Every way of not holding it is one answer here — a project that is not a
 // project ID, a machine that holds no workdir for it, a document this program
@@ -184,8 +187,8 @@ var orchestratorIDToken = func(ctx context.Context, id orchestratorIdentity) (st
 		"--quiet",
 	)
 	if err != nil {
-		return "", userErr("the daemon's own Google ID token could not be minted as %s for the installation's credentials service at %s, and the service admits that identity and no other: run `%s auth login` on the machine the daemon runs on, and, if the impersonation itself is what was refused, grant that account the right to mint a token for it with `%s iam service-accounts add-iam-policy-binding %s --member=user:<you> --role=roles/iam.serviceAccountTokenCreator` (this installation grants nobody that right: docs/gcp-live-checklist.md's orchestrator-identity check adds the grant by hand)",
-			pluginwire.Printable(id.account), safetext.Field(id.url), reviewGcloudBin, reviewGcloudBin, pluginwire.Printable(id.account))
+		return "", userErr("the daemon's own Google ID token could not be minted as %s for the installation's credentials service at %s, and the service admits that identity and no other: run `%s auth login` on the machine the daemon runs on, and, if the impersonation itself is what was refused, your Google account is not one of the installation's operators, who are the only members `fugaro update` grants roles/iam.serviceAccountTokenCreator on that account: add it to the operators and run `fugaro update`",
+			pluginwire.Printable(id.account), safetext.Field(id.url), reviewGcloudBin)
 	}
 	tok := strings.TrimSpace(string(out))
 	if tok == "" || len(tok) > reviewIdentityMaxBytes || !reviewPrintableToken(tok) {

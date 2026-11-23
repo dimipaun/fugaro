@@ -67,6 +67,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -559,13 +560,15 @@ func TestDocsMobileReleaseWorkflowIsStagedAndPinned(t *testing.T) {
 	if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
 		t.Errorf("%s's workflow-level permissions are %v, not exactly {contents: read}: this job reads the repository and talks to EAS, and creates no GitHub release, tag or artifact", path, wf.Permissions)
 	}
-	// A job adds one scope to the floor above: `checks: read`, which is what the
-	// release gate's `gh api …/check-runs` call needs. Nothing else -- a job
-	// block is where a widening hides, and neither job writes anything.
+	// A job adds two scopes to the floor above: `checks: read`, which is what the
+	// release gate's `gh api …/check-runs` call needs, and `actions: read`, which
+	// its listing of the tag's workflow runs needs (a `ci (full)` run is how it
+	// knows the tests ran). Nothing else -- a job block is where a widening
+	// hides, and neither job writes anything.
 	for name, job := range wf.Jobs {
-		want := map[string]string{"contents": "read", "checks": "read"}
-		if len(job.Permissions) != len(want) || job.Permissions["contents"] != want["contents"] || job.Permissions["checks"] != want["checks"] {
-			t.Errorf("job %q declares permissions %v, not exactly {contents: read, checks: read}: the release gate reads the tagged commit's check-runs and needs the second, and a job that writes nothing needs nothing else", name, job.Permissions)
+		want := map[string]string{"contents": "read", "checks": "read", "actions": "read"}
+		if !reflect.DeepEqual(job.Permissions, want) {
+			t.Errorf("job %q declares permissions %v, not exactly {contents: read, checks: read, actions: read}: the release gate reads the tagged commit's check-runs and its workflow runs and needs the second and third, and a job that writes nothing needs nothing else", name, job.Permissions)
 		}
 	}
 
@@ -1397,7 +1400,7 @@ func TestDocsMobileReleaseStagingTellsTheOwnerWhatToCopyIn(t *testing.T) {
 		{"gh variable set " + mobileReleaseDisabledPlatforms, "the command that turns a platform off, which is the whole of what \"one repository setting\" means"},
 		{mobileReleaseGateCommand, "the gate a tag push runs first, so an off-main or red commit publishes nothing"},
 		{mobileReleaseGateCondition, "the condition that keeps that gate off the manual-dispatch path, where there is no tag to check"},
-		{"checks: read", "the one scope the release gate adds beside `contents: read`"},
+		{"checks: read", "the scope the release gate adds beside `contents: read`"},
 		{"com.Fugaro.App", "the mixed case the identity scan catches as well as the lowercase spelling"},
 		{"::add-mask::", "the mechanism that keeps the identity out of the log, by name"},
 		{"first dry run", "the run whose log the owner reads for an identifier, since no test can"},

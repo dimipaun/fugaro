@@ -120,6 +120,22 @@
       "verdict": "verified"
     },
     {
+      "name": "stop request",
+      "why": "the phone asking a human to stop what it is looking at: a kind of its own, signed like every other, and never executed by anything",
+      "direction": "inbox",
+      "message": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "stop everything",
+        "at": 1700000000000,
+        "mac": "5af86cce6db08fdd2905c11206988d4d43d1a6aca49d8e057383c84965cb30cb",
+        "kind": "stop"
+      },
+      "canonical": "{\"at\":1700000000000,\"direction\":\"inbox\",\"id\":\"m-0001\",\"kind\":\"stop\",\"sender\":\"phone\",\"text\":\"stop everything\"}",
+      "mac": "5af86cce6db08fdd2905c11206988d4d43d1a6aca49d8e057383c84965cb30cb",
+      "verdict": "verified"
+    },
+    {
       "name": "heartbeat",
       "why": "O7: the consumer's liveness record, whose agent list feeds D163 — an unsigned heartbeat is offline",
       "direction": "heartbeat",
@@ -701,6 +717,20 @@
             "at": 1700000000000
           }
         }
+      },
+      "code": "missing-field",
+      "field": "mac"
+    },
+    {
+      "name": "unsigned stop",
+      "why": "a stop request is signed like every other kind: an impostor could otherwise put a stop request in the owner's name",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "run 42 finished",
+        "at": 1700000000000,
+        "kind": "stop"
       },
       "code": "missing-field",
       "field": "mac"

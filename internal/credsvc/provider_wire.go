@@ -315,14 +315,17 @@ func RepoCredentialByKey(key string) (slug, credential string, ok bool) {
 // the copy never overwrites an entry it did not write without saying so
 // (KS12's TestTheCopyNeverOverwritesAnEntryItDidNotWrite).
 //
-// It is a fact and not a credential: a container's logical name
-// (config.AnthropicSecret, a provider's ModelProvider.Secret) and a version's
-// number are names of secrets, never values, which is why they are plain
-// strings here where a value is held as `secret` below.
+// It is a fact and not a credential: a container's Secret Manager name and a
+// version's number are names of secrets, never values, which is why they are
+// plain strings here where a value is held as `secret` below.
 type ProviderKeySource struct {
-	// Container is the logical name of the container the value was read from,
-	// as the installation spells it — the name the operator's own commands and
-	// `fugaro secrets ls` use, not a Secret Manager resource id.
+	// Container is the Secret Manager name of the container the value was read
+	// from — the ID, `gcp.SecretID` or `gcp.ProjectSecretID` of the logical
+	// name — and not the logical name itself. One logical name is held in a
+	// container per scope (F8, F27), and the two number their versions
+	// independently, so the scope that ANSWERED is what a later copy has to
+	// know: a marker naming the name alone leaves it comparing a version of one
+	// container against a version of the other.
 	Container string
 	// Version is the container's version the value was read from, as the
 	// Secret Manager version number is spelled ("3"), which is what tells a

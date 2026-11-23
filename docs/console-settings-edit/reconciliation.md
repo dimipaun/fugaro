@@ -139,7 +139,7 @@ re-implements the diff (**D1103**).
 `settingsJSON.Sensitive` (`internal/cli/settings_render.go:45`, `json:"sensitive,omitempty"`), and
 the write path refuses a sensitive key outright (`settingsWriteRow`, **S5 #1525**
 `internal/cli/settings_set.go:560`). The registry marks them (`Row.Sensitive`,
-`internal/settings/registry.go:80`; `sensitiveKeys` in the same file). *Consequence:* **D1111** is
+`internal/settings/registry.go:81`; `sensitiveKeys` in the same file). *Consequence:* **D1111** is
 satisfiable from the CLI's own output, and the console keeps no list of sensitive keys — which is
 the same rule as F7's.
 
@@ -147,7 +147,7 @@ the same rule as F7's.
 each.** `settingsGenericKeys` (**S5 #1525** `internal/cli/settings_set.go:117`) is the exact key
 allow-list, `settingsGenericPrefixes` (`:248`) the blocks handed over whole, `settingsFamilyCommands`
 (`:47`) maps a registry `Owner` to the family that writes its keys, and `settingsDefaultLayer` (`:765`) picks the narrowest layer a key may be set in. `Row` carries `Owner`, `Sensitive` and
-`Layers` (`internal/settings/registry.go:80`). *Consequence:* the console's row set is the CLI's
+`Layers` (`internal/settings/registry.go:81`). *Consequence:* the console's row set is the CLI's
 answer, and **D1102** is about how it gets it.
 
 **F8: Exists. The registry's `--json` document, field by field.** `settingsJSON`

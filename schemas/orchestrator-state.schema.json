@@ -30,8 +30,8 @@
     },
     "agent_id": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
-      "description": "The orchestrator this document belongs to, which is also its node's id."
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:~[a-z0-9][a-z0-9-]{0,39})?$",
+      "description": "The orchestrator this document belongs to, which is also its node's id. The pattern is the orchestrator id rule (internal/orchestrator/naming.go, D3207): the project's name for the project's default orchestrator, or `<project>~<name>` for a named one, and no id may name a project a project cannot be. A work item's id is deliberately not this rule (F36): it admits no `~`, so an item's id and an orchestrator's can never be one string in one keyspace."
     },
     "role": {
       "type": "string",

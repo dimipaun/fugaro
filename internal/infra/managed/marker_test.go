@@ -2186,6 +2186,16 @@ var runAccountGrants = setOf(
 	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.credentials_service_on ? toset(var.operators) : toset([]) [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	`google_project_iam_member | "roles/logging.logWriter" | project=var.project | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_service_account_iam_member | "roles/iam.serviceAccountTokenCreator" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.credentials_service_on ? toset(var.operators) : toset([]) [local.credentials_service_on=var.credentials_service != null] | perms=`,
+	// Reviewed for the resident orchestrator (#3650): the operators' token
+	// creation on the orchestrator daemon's account, the verifier row's shape
+	// and the same members (the conditional keeps the for_each out of what
+	// this test resolves, so it is pinned whole). The member is var.operators
+	// and nobody else, people who already write the marker themselves, and no
+	// run, history or scheduler account is added to it. What it lets an
+	// operator do is act as the daemon's account, whose own runs-bucket grant
+	// (orchestrator_runs_launcher) is this scan's to judge on its own row, not
+	// this row's.
+	`google_service_account_iam_member | "roles/iam.serviceAccountTokenCreator" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-orch@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.orchestrator_on ? toset(var.operators) : toset([]) [local.orchestrator_on=var.orchestrator != null] | perms=`,
 	// Reviewed for M4 (the coordinator's front door): D920 makes the front
 	// door public, and this is therefore the one grant in the tree whose
 	// member is not an identity at all — everyone on the network, including
