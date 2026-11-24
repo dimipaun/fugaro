@@ -795,13 +795,19 @@ wait_for_logwriter() {
     sleep_bg "$LOGWRITER_POLL_SECONDS"
     waited=$((waited + LOGWRITER_POLL_SECONDS))
   done
-  local settle="no settle, because the binding is not in the policy to settle"
+  # What the row says about the settle, per reading: only a policy that was READ
+  # and did not name the account can be said to carry no binding to settle. A
+  # policy that could not be read says nothing either way, and the row for it may
+  # not claim the binding is absent.
+  local settle="no settle, because whether the policy names the account could not be read"
   if [ "$pol" = named ]; then
     settle="${LOGWRITER_SETTLE_SECONDS} s of settle"
     if [ "$LOGWRITER_SETTLE_SECONDS" -gt 0 ]; then
       owner "waiting ${LOGWRITER_SETTLE_SECONDS} s for the roles/logging.logWriter grant to propagate"
       sleep_bg "$LOGWRITER_SETTLE_SECONDS"
     fi
+  elif [ "$pol" = clean ]; then
+    settle="no settle, because the binding is not in the policy to settle"
   fi
   case "$pol" in
   named)
