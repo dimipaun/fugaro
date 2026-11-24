@@ -76,6 +76,21 @@ func (e *foldEnv) fold() (FoldReport, error) {
 	return e.index().Fold(context.Background())
 }
 
+// reader is the real Reader over the fixture's two fakes, for a test that reads
+// back what a fold wrote.
+func (e *foldEnv) reader() Reader {
+	e.t.Helper()
+	client, err := firestore.New(e.fs.URL, "aurora-fp", oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "tok-SECRET"}))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	live, err := rtdb.New(e.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return NewFirestore(client, live, WithClock(func() time.Time { return e.now }))
+}
+
 // agent is a run's registry heartbeat: what a live run writes, and the fold's
 // second discovery path.
 func (e *foldEnv) agent(slug, run string, at time.Time) {
@@ -351,6 +366,69 @@ func TestFoldUpsertsChangedRuns(t *testing.T) {
 	}
 	if stamp, ok := sum["folded_through"].(time.Time); !ok || !stamp.Equal(e.now) {
 		t.Fatalf("the stamp did not advance: %#v", sum["folded_through"])
+	}
+}
+
+// TestFoldStampsAClaimedNeverLaunchedRunWithItsMintTime is the sort key's last
+// fallback, the one case where the entry takes no moment from a record at all:
+// a run a launcher claimed and no execution ever picked up, so the bucket holds
+// a task.json and nothing else. The run's own id names the moment it was minted
+// (`runstore.RunTime`), and the entry is stamped with it -- an entry with no
+// sort key falls outside every `--since` window, and `runs stats`'s
+// `unlaunched`, the window's count of runs that never started, is counted off a
+// page of entries, so such a run would be on none of them and the figure would
+// be zero while the record read counts them (contract-index.md, the
+// `updated_at` row).
+//
+// The fold is handed the run the way the reindex walk hands it one (RI5); what
+// the test pins is the document that comes out of it, and that the reader
+// places that document in the window the run was minted in and in no later one.
+func TestFoldStampsAClaimedNeverLaunchedRunWithItsMintTime(t *testing.T) {
+	e := newFoldEnv(t)
+	run := "20261120-110000-e5f6"
+	minted, err := runstore.RunTime(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.objects(foldSlug, foldSpec(run), nil, nil)
+	f := e.index()
+	entry, err := f.read(context.Background(), runKey{slug: foldSlug, run: run})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry == nil {
+		t.Fatal("the fold found nothing to write for a run whose task.json is there: the run exists")
+	}
+	if entry.Status != "" || entry.Launch != nil || entry.Record != nil {
+		t.Fatalf("entry = %+v, want a run that launched nothing and settled nothing", entry)
+	}
+	if !entry.UpdatedAt.Equal(minted) {
+		t.Fatalf("updated_at = %s, want the run id's mint time %s: a run that never launched has no record and no launch to take a moment from",
+			entry.UpdatedAt, minted)
+	}
+	if err := f.write(context.Background(), entry); err != nil {
+		t.Fatal(err)
+	}
+
+	// The read end: the entry is placed by that key, so the window it was
+	// minted in carries it and a window that opens after it does not.
+	r := e.reader()
+	inside, err := r.List(context.Background(), Filter{Slugs: []string{foldSlug}, Since: minted.Add(-time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(inside); !reflect.DeepEqual(got, []string{run}) {
+		t.Fatalf("the window that opens before the run was minted lists %v, want the run alone: it is on no other read's page either", got)
+	}
+	if row := rowOf(t, inside, run); row.Status != "" || !row.UpdatedAt.Equal(minted) {
+		t.Fatalf("the row = %+v, want the run settled nothing and placed by its mint time", row)
+	}
+	after, err := r.List(context.Background(), Filter{Slugs: []string{foldSlug}, Since: minted.Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(after); len(got) != 0 {
+		t.Fatalf("a window that opens after the run was minted lists %v, want nothing", got)
 	}
 }
 
