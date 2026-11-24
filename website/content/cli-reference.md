@@ -64,6 +64,7 @@ Subcommands:
 - `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
 - `fugaro review` -- Review a pull request in a job of its own, on a named account
 - `fugaro rigor` -- Set the rigor mode a project's runs are held to
+- `fugaro routing` -- Show and edit the project's model routing table
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
 - `fugaro seats` -- Estimate how many people a subscription's seat rule would count
@@ -8541,6 +8542,154 @@ Flags:
 | `--name` | string | "" | no | the rule's name; required for a glob the layer does not carry yet, and a rename for one it does |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | the repository a --layer repo write is for, as owner/name or as a path to its checkout; without it, the checkout the command runs in |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro routing`
+
+Show and edit the project's model routing table
+
+Show and edit where this project's models are reached.
+
+The table is one list of entries. Each entry matches a model or a pattern
+(`claude-*`, an exact ID) and names an ordered chain of credential sources:
+the launcher's pool, a pool the project declares, the project's Anthropic key, a
+provider key or Vertex. A call goes out on the first usable source of the chain,
+and a model no entry matches is refused rather than served by whatever
+credential is around.
+
+The table is this project's: it lives in this machine's own config, under the
+`model_routing:` key, and a repository's `fugaro.yaml` has no such key.
+
+`fugaro routing ls` prints the table and, for every model a craft of this
+project runs, the entry that wins and why. `fugaro routing set` writes one
+entry — replacing the entry with the same pattern, where it stands — and
+`fugaro routing rm` takes one out. Both write nothing while the table they
+would leave is one the checks refuse, and every refusal names the fix.
+
+`ls` is offline: it reads this machine's files and reaches no bucket, no
+database and no host.
+
+Usage: `fugaro routing`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for routing |
+
+Subcommands:
+
+- `fugaro routing ls` -- Show the routing table, and which entry each model a craft uses goes out on
+- `fugaro routing rm` -- Take one entry out of the routing table
+- `fugaro routing set` -- Write the routing table entry for a model or pattern
+
+## `fugaro routing ls`
+
+Show the routing table, and which entry each model a craft uses goes out on
+
+Show this project's routing table, and which entry wins for each model.
+
+The table is printed entry by entry, in the order the project wrote it, with each
+entry's chain spelled the way `fugaro routing set` takes it.
+
+Below it is one row per model a run of this project can be served on — the five
+crafts' resolved models, the four models `agent.models` pins and each review
+level's `agent.levels.<level>.model` the checkout writes — with the entry that
+answers it and why that entry won: the only entry that matches, the longest of
+several patterns, or an exact ID over the patterns that also match. A model no
+entry matches is a run that cannot start, and the row says so.
+
+The read is offline: it reaches no bucket, no database and no host.
+
+Usage: `fugaro routing ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print the versioned document |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro routing rm`
+
+Take one entry out of the routing table
+
+Take one entry out of this project's routing table.
+
+PATTERN is the entry's own match, exactly as `fugaro routing ls` prints it: a
+model or a prefix ending in `*`. A pattern the table does not carry is refused
+and nothing is written.
+
+The write is refused — with nothing written — where the table it would leave is
+one the checks refuse, so removing the last entry that answers a model a run can
+call is refused until another entry answers that model, and the refusal says so.
+
+Only the `model_routing:` block of the config is rewritten: every comment and
+every other key of the file is kept. The change reaches a run through the
+published policy, which `fugaro update` publishes.
+
+Usage: `fugaro routing rm <pattern>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro routing set`
+
+Write the routing table entry for a model or pattern
+
+Write one entry of this project's routing table.
+
+PATTERN is the model or the pattern the entry answers: an exact ID, or a prefix
+ending in `*`. The most specific match wins, so `claude-*` and an exact
+`claude-sonnet-5-5` can sit beside each other.
+
+Each SOURCE is one credential source of the entry's chain, first usable one wins:
+
+  `launcher-pool`      the pool the run's launcher designated
+  `pool:NAME`         a pool this project declares
+  `anthropic`          the project's Anthropic key
+  `provider:NAME`     a provider key this project declares, by name
+  `vertex`             the project's Vertex
+
+Add `@MODEL` to any of them to write a downgrade explicitly: the source serves
+MODEL when the call asked for another one
+(`provider:openrouter@claude-sonnet-5`). Nothing is downgraded silently.
+
+The entry replaces the one this pattern already answers, where it stands; a new
+pattern is appended to the table. The write is refused — with nothing written —
+where the table it would leave is one the checks refuse, and each refusal names
+the fix. A source's own `admit` list, which says which repositories one of the
+project's credentials may serve, is not written here: it is a change of its own.
+
+Only the `model_routing:` block of the config is rewritten: every comment and
+every other key of the file is kept. The change reaches a run through the
+published policy, which `fugaro update` publishes.
+
+Usage: `fugaro routing set <pattern> <source>...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for set |
 
 Subcommands:
 
