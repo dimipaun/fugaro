@@ -388,7 +388,9 @@ run "an empty message is refused as an empty message" \
 #     applies -- so the module's own rule was enforced on a path the app does
 #     not take.
 run "an accepted message clears the refusal it followed" \
-  "    if (sent.ok) lastRefused = null;" ""
+  "    if (!sent.ok) return sent;
+    lastRefused = null;" \
+  "    if (!sent.ok) return sent;"
 run "the poll's presence goes through the same guard a caller's does" \
   "        const adopted = setPresence(report.presence);" \
   "        const adopted = Object.freeze({ ok: true });
