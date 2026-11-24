@@ -166,6 +166,7 @@ func TestPolicyFollowUpReadsDefaultBranch(t *testing.T) {
 	h.followUp(t, followID, runID, "Tidy up.")
 	spec := &task.Spec{Version: 1, RunID: followID, Repo: "acme/app", Ref: "release", Workflow: h.first.Workflow,
 		Task: "Tidy up.", Branch: "fugaro/" + runID, PR: 1, PreviousRun: runID}
+	h.taskWithLayer(spec)
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
@@ -441,6 +442,7 @@ func ref[T any](v T) *T { return &v }
 func limitTask(t *testing.T, h *harness, o task.Overrides) {
 	t.Helper()
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature", Overrides: o}
+	h.taskWithLayer(spec)
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
@@ -570,6 +572,7 @@ func followUpLimits(t *testing.T, fu *fuHarness, o task.Overrides) {
 	t.Helper()
 	spec := &task.Spec{Version: 1, RunID: followID, Repo: "acme/app", Ref: "main", Workflow: fu.first.Workflow,
 		Task: "Tidy up.", Branch: "fugaro/" + runID, PR: 1, PreviousRun: runID, Overrides: o}
+	fu.taskWithLayer(spec)
 	if err := fu.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}

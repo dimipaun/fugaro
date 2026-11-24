@@ -281,6 +281,7 @@ func TestLevelsBootstrapRefusesBelowFloor(t *testing.T) {
 		Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature",
 		ReviewLevels: &config.ReviewLevels{L2: &config.LevelSetting{Off: true}},
 	}
+	b.taskWithLayer(spec)
 	if err := b.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}

@@ -412,6 +412,7 @@ func TestCachesRestoredAndWrittenBack(t *testing.T) {
 	}
 	const run2 = "20260926-231530-bcde"
 	spec := &task.Spec{Version: 1, RunID: run2, Repo: "acme/app", Ref: "main", Task: "Again"}
+	h.taskWithLayer(spec)
 	h.deps.Store = runstore.Open(h.bucket, repoSlug, run2)
 	if err := h.deps.Store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
