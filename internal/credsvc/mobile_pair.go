@@ -394,9 +394,9 @@ func (d rtdbMobileDevices) Retire(ctx context.Context, uid string) error {
 	return nil
 }
 
-// MobileDevice is one device a Firebase ID token proved: the uid its node is
+// MobileDeviceProof is one device a Firebase ID token proved: the uid its node is
 // keyed by and the address it belongs to.
-type MobileDevice struct {
+type MobileDeviceProof struct {
 	UID   string
 	Email string
 }
@@ -412,7 +412,7 @@ type MobileDeviceTokens interface {
 	// this project did not issue, one that has expired, and one whose address it
 	// cannot read. The uid is the token's own user id, which is the key its
 	// device node lives under.
-	VerifyDevice(ctx context.Context, idToken string) (MobileDevice, error)
+	VerifyDevice(ctx context.Context, idToken string) (MobileDeviceProof, error)
 }
 
 // MobileDeviceNodes is the device node and the consumer key as the pairing route
@@ -789,7 +789,7 @@ func (s *Server) mobileCallShape(w http.ResponseWriter, r *http.Request) bool {
 // phone asked for the old pairing to end, and an answer that said the pairing
 // succeeded while the old device kept its node would be a phone that stopped
 // refreshing while the node it left behind still admitted it.
-func (s *Server) mobilePriorDevice(ctx context.Context, w http.ResponseWriter, email string, deps MobilePairDeps, token string) (*MobileDevice, bool) {
+func (s *Server) mobilePriorDevice(ctx context.Context, w http.ResponseWriter, email string, deps MobilePairDeps, token string) (*MobileDeviceProof, bool) {
 	if token == "" {
 		return nil, true
 	}

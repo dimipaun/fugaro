@@ -78,7 +78,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/mobilesession"
-	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // mobileRequestBytes bounds either route's body. A refresh is a token of a few
@@ -682,21 +681,6 @@ func (m *MobileSession) answer(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
-}
-
-// mobileSessionPolicy is C1's SessionPolicy from the published policy: the
-// costly modes and the biometric switch (P6, D2786).
-//
-// CompactThresholdPercent stays 0, which the contract reads as "this project
-// set no automatic compaction": the policy member behind it is a task of its
-// own (Z2), and a threshold this build invented would be a phone offering to
-// compact on a number the project never chose.
-func mobileSessionPolicy(p *projectpolicy.Policy) mobilesession.SessionPolicy {
-	out := mobilesession.SessionPolicy{BiometricOnCostly: p.MobileBiometricOnCostly()}
-	for _, mode := range p.MobileCostlyModes() {
-		out.CostlyModes = append(out.CostlyModes, string(mode))
-	}
-	return out
 }
 
 // mobileDevicePath is one device node: the allowlist the rules read (D166) and
