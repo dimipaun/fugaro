@@ -113,6 +113,21 @@ func TestPlanModels(t *testing.T) {
 		})
 	})
 
+	t.Run("a tie price does not settle", func(t *testing.T) {
+		// claude-sonnet-5 and claude-sonnet-5-5 are both $2/$10 in the table and
+		// claude-zzz-9 has no row at all, so no pair here is decided by price:
+		// the ID decides, which is the answer that does not move between runs.
+		app := repoAt(t, "acme/app", "agent:\n  models:\n    coder: claude-zzz-9\n")
+		web := repoAt(t, "acme/web", "agent:\n  models:\n    coder: claude-sonnet-5\n")
+		api := repoAt(t, "acme/api", "agent:\n  models:\n    coder: claude-sonnet-5-5\n")
+		c := planModels(t, Project{}, app, web, api)
+
+		checkChange(t, c, []LayerEdit{edit("defaults.agent.models.coder", "claude-sonnet-5")}, []string{
+			"acme/app: coder claude-zzz-9 -> claude-sonnet-5 (the project's)",
+			"acme/api: coder claude-sonnet-5-5 -> claude-sonnet-5 (the project's)",
+		})
+	})
+
 	t.Run("levels models", func(t *testing.T) {
 		app := repoAt(t, "acme/app", "agent:\n  levels:\n    l2:\n      model: claude-sonnet-5-5\n    l3:\n      model: none\n")
 		web := repoAt(t, "acme/web", "")
@@ -175,6 +190,35 @@ func TestPlanModels(t *testing.T) {
 				" add it there, or set the project's model to one it allows",
 		})
 		checkRecords(t, c, app, web)
+	})
+
+	t.Run("a repository named twice counts once", func(t *testing.T) {
+		// Two spellings of one repository are one repository: counting it three
+		// times would make its model the project's over the repository that
+		// wrote the cheaper one, and its record would be written three times.
+		app := repoAt(t, "acme/app", "agent:\n  models:\n    coder: claude-opus-5-5\n")
+		web := repoAt(t, "acme/web", "agent:\n  models:\n    coder: claude-haiku-4-5\n")
+		c := planModels(t, Project{}, app, web, app, app)
+
+		checkChange(t, c, []LayerEdit{edit("defaults.agent.models.coder", "claude-haiku-4-5")}, []string{
+			"acme/app: coder claude-opus-5-5 -> claude-haiku-4-5 (the project's)",
+		})
+		checkRecords(t, c, app, web)
+	})
+
+	t.Run("a repository this cannot key is named", func(t *testing.T) {
+		// No slug means no record can be written for it and no earlier update's
+		// record can be read, so it is named rather than dropped: a listing entry
+		// that is not owner/name is the one shape here that no key exists for.
+		app := repoAt(t, "acme", "agent:\n  models:\n    coder: claude-opus-5-5\n")
+		web := repoAt(t, "acme/web", "agent:\n  models:\n    coder: claude-opus-5-5\n")
+		c := planModels(t, Project{}, app, web)
+
+		checkEdits(t, c, []LayerEdit{edit("defaults.agent.models.coder", "claude-opus-5-5")})
+		if len(c.Lines) != 1 || !strings.HasPrefix(c.Lines[0], "acme: its provider and name are not a repository this can key (") {
+			t.Errorf("a repository no slug can be built for is named with why: %q", c.Lines)
+		}
+		checkRecords(t, c, web)
 	})
 
 	t.Run("a migrated repository is named and never written", func(t *testing.T) {
