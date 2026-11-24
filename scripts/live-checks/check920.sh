@@ -287,6 +287,7 @@ scratch_up() {
   RUN_ONE_JOB=""
   RUN_ONE_EXEC=""
   RUN_ONE_PR=""
+  RUN_ONE_SUCCEEDED=no
 }
 
 cleanup() {
@@ -461,20 +462,30 @@ def containers_of(doc):
     return (spec.get("containers") or []) if isinstance(spec, dict) else []
 
 
+def container_id(ref):
+    """A Secret Manager container's own name, out of any of the shapes an id
+    travels in: a bare id, a `name:version`, a resource path
+    `projects/<p>/secrets/<id>/versions/<n>`, or one with the secret's own
+    project prefix. Only the container's name comes back — a version, a project
+    prefix and a version path are dropped, because the row that compares it is
+    about WHICH container was read or mounted and never about which version."""
+    s = str(ref or "")
+    if "/secrets/" in s:
+        s = s.split("/secrets/", 1)[1]
+    s = s.split("@")[-1].split("/")[0].split(":")[0]
+    return s
+
+
 def container_of(entry):
-    """The Secret Manager container an env entry is read from, as its short id
-    (the last path segment, any version suffix dropped), or '' when the entry
-    carries a plain value or nothing at all. A mount is
+    """The Secret Manager container an env entry is read from, as its name, or
+    '' when the entry carries a plain value or nothing at all. A mount is
     valueSource.secretKeyRef.secret: the deployment mounts
-    var.secrets[env.value], a DERIVED Secret Manager ID, and the API spells a
-    version reference `name:version` and a resource path
-    `projects/<p>/secrets/<id>` — all three are this one container."""
+    var.secrets[env.value], a DERIVED Secret Manager ID, and the API may spell
+    the same container as a version reference or a resource path."""
     src = entry.get("valueSource") or {}
     ref = ((src.get("secretKeyRef") or {}).get("secret")
            or (src.get("secretKeyRef") or {}).get("name") or "")
-    if not ref:
-        return ""
-    return ref.split("@")[-1].split(":")[-1].split("/")[-1]
+    return container_id(ref)
 
 
 def job_name(doc):
@@ -622,7 +633,7 @@ elif cmd == "audit":
         if msg == "credsvc: audit":
             print("audit=%s|%s|%s|%s" % (
                 word(p.get("status"), 40),
-                word(str(p.get("credential") or "").split("@")[-1].split(":")[-1].split("/")[-1], 120),
+                word(container_id(p.get("credential")), 120),
                 word(p.get("purpose"), 40),
                 word(p.get("caller"), 120)))
         elif msg == "credsvc: refused":
@@ -641,7 +652,7 @@ elif cmd == "verify":
         if not isinstance(v, dict):
             continue
         print("verify=%d|%s|%s|%s|%s|%s" % (
-            i,
+            v.get("n", i),
             "passed" if v.get("passed") else "failed",
             "clean" if v.get("clean_tree") else "dirty",
             v.get("exit_code", "-"),
@@ -805,26 +816,27 @@ guard_inputs() {
 }
 
 guard_project() {
-  say "reading the installation's identity (fugaro doctor --project $INSTALL --all)"
+  # The project and the region are hard-coded, never read from `gcloud config`:
+  # this is a reading on ONE installation, and run anywhere else every line below
+  # is about a service, a record and repositories of another project. So a
+  # disagreement STOPS the check rather than warning about it.
+  say "reading the installation's identity (fugaro doctor --project ${INSTALL} --all)"
   local out rc=0
+  # --all, because the `project:` line is part of doctor's informational tail: the
+  # default view prints its pointer lines and stops, so a guard reading the plain
+  # view would find no project line and stop every run.
   out=$(fugaro doctor --project "$INSTALL" --all 2>"$SCRATCH/doctor.err" </dev/null) || rc=$?
-  if [ -z "$out" ]; then
-    fact project-region FAIL "fugaro doctor --project $INSTALL --all printed nothing (exit ${rc}): $(first_line "$SCRATCH/doctor.err")"
-    return 1
+  if ! printf '%s\n' "$out" | grep -q "project: .*(GCP ${P},"; then
+    stop "this is not the ${P} installation: 'fugaro doctor --project ${INSTALL} --all' printed no 'project: ... (GCP ${P},' line (exit ${rc}: $(first_line "$SCRATCH/doctor.err")). Either this is not the ${P} installation, or --project ${INSTALL} disagrees with this checkout's project:, or doctor itself failed (doctor is not offline: it needs usable credentials). Run 'fugaro doctor --project ${INSTALL} --all' here yourself before going on — this check runs on the ${P} installation only, never belong"
   fi
-  if printf '%s\n' "$out" | grep -q "project: .*(GCP ${P},"; then
-    fact project-region PASS "fugaro doctor answers that ${INSTALL} is the ${P} installation (region ${L}, hard-coded in this check)"
-  else
-    fact project-region FAIL "fugaro doctor --project ${INSTALL} --all does not name (GCP ${P}: this is not the installation this check may touch. Never run it against belong"
-    return 1
-  fi
+  fact project-region PASS "${P}/${L} (installation ${INSTALL}, sandbox repositories only; never belong)"
   rc=0
   local ver
   ver=$(fugaro version 2>"$SCRATCH/version.err" </dev/null) || rc=$?
   if [ -z "$ver" ]; then
     fact fugaro-version FAIL "fugaro version printed nothing (exit ${rc}): $(first_line "$SCRATCH/version.err")"
   elif printf '%s' "$ver" | grep -qi "dev\|dirty"; then
-    fact fugaro-version FAIL "fugaro version reads '$(printf '%s' "$ver" | head -1 | cut -c1-120)': a development build resolves no released credentials-service image, and this check is about what that image does. Run it from the release under test"
+    fact fugaro-version FAIL "$(printf '%s' "$ver" | head -1 | cut -c1-120) — a development build is not the release this check is about: a checkout build resolves no released credentials-service image to deploy, and this check is about what that image does. Install the release under test and run it again"
   else
     fact fugaro-version PASS "$(printf '%s' "$ver" | head -1 | cut -c1-120)"
   fi
@@ -883,54 +895,6 @@ audit_read() { # audit_read RID OUT
     sleep "$LOG_POLL_SECONDS"
     waited=$((waited + LOG_POLL_SECONDS))
   done
-}
-
-# run_lines_read JOB EXEC OUT: the run's OWN lines, retried the same way. The
-# file-secret row reads the marker the repository's verify command prints, and
-# the refusal row reads the sentence the runner failed the bootstrap with —
-# both are lines of the execution's own, written under resource.type
-# cloud_run_job.
-run_lines_read() { # run_lines_read JOB EXEC OUT
-  local job=$1 ex=$2 out=$3 waited=0 rc=0 filter
-  filter='resource.type="cloud_run_job" AND resource.labels.job_name="'"$job"'" AND labels."run.googleapis.com/execution_name"="'"$ex"'"'
-  while :; do
-    rc=0
-    gcloud logging read "$filter" --project="$P" --freshness="$LOG_AGE" \
-      --limit="$LOG_LIMIT" --format=json --quiet </dev/null >"$out" 2>"$SCRATCH/runlog.err" || rc=$?
-    if [ "$rc" -eq 0 ] && [ -s "$out" ]; then return 0; fi
-    if [ "$waited" -ge "$LOG_WAIT_SECONDS" ]; then
-      if [ "$rc" -ne 0 ]; then
-        printf '%s' "the run's own log lines could not be read: 'gcloud logging read' exited ${rc} and printed: $(last_lines "$SCRATCH/runlog.err")" >"$out.unread"
-        return 1
-      fi
-      return 0
-    fi
-    sleep "$LOG_POLL_SECONDS"
-    waited=$((waited + LOG_POLL_SECONDS))
-  done
-}
-
-# log_texts OUT: every line of a Cloud Logging document as flat text, so a
-# marker or a sentence can be looked for in it. It is a reading of what the
-# service or the run WROTE, and never a value this check supplies.
-log_texts() { # log_texts OUT
-  python3 - "$1" <<'PY'
-import json, sys
-try:
-    doc = json.load(open(sys.argv[1]))
-except Exception:
-    doc = []
-for entry in doc or []:
-    p = (entry or {}).get("jsonPayload") or {}
-    parts = [entry.get("textPayload") or "", p.get("msg") or "", p.get("message") or ""]
-    for k, v in p.items():
-        if k in ("run", "msg", "message"):
-            continue
-        parts.append("%s=%s" % (k, v))
-    line = " ".join(" ".join(str(x).split()) for x in parts if x)
-    if line:
-        print(line[:400])
-PY
 }
 
 # --------------------------------------------------------------------- the runs
@@ -1033,6 +997,19 @@ step_record() {
   fact record PASS "${RTDB%/}/creds/projectsecrets.json read: ${n} workflow secret(s) — $(printf '%s' "$NAMES" | cut -c1-200) — including both secrets under test"
 }
 
+# is_workflow_secret NAME: whether the project record named NAME as a workflow
+# secret. The `fugaro_p_` grammar is ALSO the dynamic-delivery grammar for an
+# admin-shared project credential (reconciliation F10), and the two classes are
+# told apart by the container's own marker label (IS4) — which is why the
+# reading below is the record's list of names and never the prefix alone: a job
+# mounting a shared credential is not a job mounting a workflow secret, and a
+# row that failed on the prefix would report the flip broken on an installation
+# where it is not.
+is_workflow_secret() {
+  [ "$RECORD_OK" = yes ] || return 1
+  printf '%s\n' "$NAMES" | tr ' ' '\n' | grep -qx "$1"
+}
+
 step_jobs() {
   if ! jobs_read "$SCRATCH/jobs.json"; then
     unmeasured jobs "'gcloud run jobs list --project=${P} --region=${L} --format=json' exited non-zero and printed: $(last_lines "$SCRATCH/jobs.err"). A read that did not answer is not an installation with no job, and that is exactly the question this row asks"
@@ -1042,21 +1019,27 @@ step_jobs() {
     unmeasured jobs "the job list could not be read"
     return 0
   }
-  local jobs mounts bad=""
+  local jobs mounts bad="" others="" job var cid name
   jobs=$(sed -n 's/^jobs=//p' "$SCRATCH/mounts" | head -n 1)
   mounts=$(sed -n 's/^mounts=//p' "$SCRATCH/mounts" | head -n 1)
-  # Every mount of a `fugaro_p_` container is a workflow secret, whatever the
-  # record happens to name: the prefix IS the class's marker, so this row does
-  # not lean on the record read above to decide what a workflow secret is.
   while IFS='|' read -r job var cid; do
     [ -n "$cid" ] || continue
     [ "${cid#fugaro_p_}" != "$cid" ] || continue
-    bad="${bad}${bad:+, }${job} mounts ${cid} as ${var}"
+    name=${cid#fugaro_p_}
+    if is_workflow_secret "$name"; then
+      bad="${bad}${bad:+, }${job} mounts ${cid} as ${var}"
+    else
+      others="${others}${others:+, }${job} mounts ${cid} as ${var}"
+    fi
   done < <(sed -n 's/^mount=//p' "$SCRATCH/mounts")
   if [ -n "$bad" ]; then
-    fact jobs FAIL "${jobs} deployed job(s), ${mounts} Secret Manager mount(s): ${bad}. After the flip no run job mounts a workflow secret — the run fetches it from the credentials service at bootstrap. A mount left behind is the plan's G6 broken: run 'fugaro update --repo' for that repository, and 'fugaro doctor' lists any job that still mounts one"
+    fact jobs FAIL "${jobs} deployed job(s), ${mounts} Secret Manager mount(s), and ${bad} — a workflow secret. After the flip no run job mounts one: the run fetches it from the credentials service at bootstrap. A mount left behind is the plan's G6 broken: run 'fugaro update --repo' for that repository, and 'fugaro doctor' lists any job that still mounts one"
+  elif [ -n "$others" ] && [ "$RECORD_OK" != yes ]; then
+    unmeasured jobs "${jobs} deployed job(s) and ${mounts} Secret Manager mount(s): ${others}. The delivery grammar is also the one an admin-shared project credential uses (F10), the record that tells the two apart could not be read (see the record row), so whether any of those is a workflow secret is NOT settled here — read the record and run this check again"
+  elif [ -n "$others" ]; then
+    fact jobs PASS "${jobs} deployed job(s) and ${mounts} Secret Manager mount(s): ${others} — and the record does NOT name any of them, so they are shared credentials of the delivery grammar and not the workflow-secret class this row is about"
   else
-    fact jobs PASS "${jobs} deployed job(s), ${mounts} Secret Manager mount(s), and none of them is a fugaro_p_ container: no run job mounts a workflow secret"
+    fact jobs PASS "${jobs} deployed job(s), ${mounts} Secret Manager mount(s), and none of them is a fugaro_p_ container at all: no run job mounts a workflow secret"
   fi
 }
 
@@ -1073,11 +1056,13 @@ step_run() {
   row=$(row_of one)
   status=$(field_of status "$row")
   pr=$(field_of pr "$row")
+  RUN_ONE_SUCCEEDED=no
   if [ "$status" != succeeded ]; then
     fact run-one FAIL "the run ${RUN_ONE_ID} of ${REPO} ended '${status}' (outcome $(field_of outcome "$row"), reason $(field_of reason "$row")): a vertex repository's run must fetch its workflow secrets at bootstrap and finish. A run that could not is the fetch failing — read its own lines and the service's"
   elif [ -z "$pr" ] || [ "$pr" = 0 ]; then
     fact run-one FAIL "the run ${RUN_ONE_ID} of ${REPO} ended succeeded with no pull request: the review half below is a review OF the run's pull request, so a run with none leaves that row unmeasured. Read the run's row yourself"
   else
+    RUN_ONE_SUCCEEDED=yes
     fact run-one PASS "the run ${RUN_ONE_ID} of the vertex repository ${REPO} succeeded on pull request #${pr} (execution $(field_of exec "$row"))"
   fi
   RUN_ONE_JOB=$(field_of job "$row")
@@ -1103,26 +1088,42 @@ step_run_mounts() { # step_run_mounts <row>
     unmeasured run-mounts "'gcloud run jobs executions describe ${RUN_ONE_EXEC} --project=${P} --region=${L} --format=json' exited non-zero and printed: $(last_lines "$SCRATCH/exec-${RUN_ONE_EXEC}.err")"
     return 0
   fi
-  local bad="" want doc file
+  local bad="" doc file account="" accounts="" cid name
   for file in job-one exec-one; do
     reader pod "$SCRATCH/$file.json" >"$SCRATCH/pod-$file" || true
+    # BOTH documents' accounts: a job's own template and the execution of it can
+    # name different accounts (Cloud Run overrides the execution's), and a row
+    # that read only the first would miss the one the run really ran as.
+    account=$(sed -n 's/^account=//p' "$SCRATCH/pod-$file" | head -n 1)
+    accounts="${accounts}${accounts:+, }${file}=${account}"
+    if [ "$account" = "${IDENTITY_ID}@${P}.iam.gserviceaccount.com" ]; then
+      bad="${bad}${bad:+, }${file} runs as the BUILD identity ${account}"
+    fi
     while IFS='|' read -r var cid; do
       [ -n "$cid" ] || continue
-      for want in "fugaro_p_${SECRET}" "fugaro_p_${FILE_SECRET}"; do
-        if [ "$cid" = "$want" ]; then
-          bad="${bad}${bad:+, }${file} feeds ${var} from ${cid}"
-        fi
-      done
+      case "$cid" in
+      "fugaro_p_${SECRET}" | "fugaro_p_${FILE_SECRET}")
+        bad="${bad}${bad:+, }${file} feeds ${var} from ${cid}"
+        continue
+        ;;
+      esac
+      [ "${cid#fugaro_p_}" != "$cid" ] || continue
+      name=${cid#fugaro_p_}
+      is_workflow_secret "$name" && bad="${bad}${bad:+, }${file} feeds ${var} from ${cid}"
     done < <(sed -n 's/^mount=//p' "$SCRATCH/pod-$file")
   done
   if [ -n "$bad" ]; then
-    fact run-mounts FAIL "${bad}. The run is served at bootstrap and its job carries no container: a spec that still names one is the mount the flip removed (G6)"
+    fact run-mounts FAIL "${bad}. The run is served at bootstrap and its job carries no container: a spec that still names one is the mount the flip removed (G6), and a run whose containers run as the build identity is a run reading the service's own store"
   else
-    fact run-mounts PASS "neither the job ${job} nor the execution ${RUN_ONE_EXEC} the run ${RUN_ONE_ID} ran on is fed from fugaro_p_${SECRET} or fugaro_p_${FILE_SECRET} in any container: the value reached the run from the service and from nowhere else"
+    fact run-mounts PASS "neither the job ${job} nor the execution ${RUN_ONE_EXEC} the run ${RUN_ONE_ID} ran on is fed from fugaro_p_${SECRET} or fugaro_p_${FILE_SECRET} in any container, and neither runs as the build identity (${accounts}): the value reached the run from the service and from nowhere else"
   fi
 }
 
 step_run_verify() {
+  if [ "$RUN_ONE_SUCCEEDED" != yes ]; then
+    unmeasured run-verify "the run ${RUN_ONE_ID} did not succeed (see the run-one row), so whether its own commands passed is not the reading this row is after: the verify record is the file row's evidence only on a run that finished its own work"
+    return 0
+  fi
   local slug rc=0
   slug=$(reader slug "$SCRATCH/jobs.json" "$REPO" 2>/dev/null | sed -n 's/^slug=//p' || true)
   if [ -z "$slug" ]; then
@@ -1134,8 +1135,12 @@ step_run_verify() {
     return 0
   fi
   reader verify "$SCRATCH/result-one.json" >"$SCRATCH/verify-one" || { unmeasured run-verify "the run's own record could not be parsed"; return 0; }
+  # `|| true` is not decoration: a `grep` with no match exits 1, and under
+  # `set -e -o pipefail` a command substitution that exits 1 inside an
+  # assignment trips the ERR trap — so without it a run whose record holds no
+  # verify at all would stop the whole check instead of failing this one row.
   local last
-  last=$(grep '^verify=' "$SCRATCH/verify-one" | tail -n 1)
+  last=$(grep '^verify=' "$SCRATCH/verify-one" | tail -n 1 || true)
   if [ -z "$last" ]; then
     fact run-verify FAIL "the run ${RUN_ONE_ID}'s record holds no verify record at all: nothing shows its own commands ran. The file row is read through that verify — the steps file makes it fail unless the file secret is a 0400, non-empty file at the path its variable names"
     return 0
@@ -1159,7 +1164,8 @@ step_run_verify() {
 # per fetch": every workflow-secret act of the run is counted, each must name
 # one of the two containers, and the count must be WANT.
 step_audited() { # step_audited RID "SECRET FILE_SECRET" WANT
-  local rid=$1 secrets=$2 want=$3 lines="$SCRATCH/audit-$rid.json" got
+  local rid=$1 secrets=$2 want=$3 lines got
+  lines="$SCRATCH/audit-$rid.json"
   if ! audit_read "$rid" "$lines"; then
     unmeasured audited "$(cat "$lines.unread" 2>/dev/null)"
     return 0
@@ -1208,7 +1214,7 @@ step_review() {
     unmeasured review "the review run (${rid}) has no terminal row after $(row_waited review)s: $(launch_err). A review that never finished is not one that was served no secret"
     return 0
   fi
-  local status bad="" job ex
+  local status bad="" job ex name
   status=$(field_of status "$row")
   if [ "$status" != succeeded ]; then
     fact review FAIL "the review of pull request #${RUN_ONE_PR} (${rid}) ended '${status}' (reason $(field_of reason "$row")): the review must run and finish with no workflow secret on it. Read its row and the service's lines for it"
@@ -1217,14 +1223,20 @@ step_review() {
   job=$(field_of job "$row"); ex=$(field_of exec "$row")
   if [ -n "$job" ] && [ -n "$ex" ]; then
     if job_describe "$job" "$SCRATCH/job-review.json" && exec_describe "$ex" "$SCRATCH/exec-review.json"; then
-      local file want
+      local file cid
       for file in job-review exec-review; do
         reader pod "$SCRATCH/$file.json" >"$SCRATCH/pod-$file" || true
         while IFS='|' read -r var cid; do
           [ -n "$cid" ] || continue
-          for want in "fugaro_p_${SECRET}" "fugaro_p_${FILE_SECRET}"; do
-            [ "$cid" = "$want" ] && bad="${bad}${bad:+, }${file} feeds ${var} from ${cid}"
-          done
+          case "$cid" in
+          "fugaro_p_${SECRET}" | "fugaro_p_${FILE_SECRET}")
+            bad="${bad}${bad:+, }${file} feeds ${var} from ${cid}"
+            continue
+            ;;
+          esac
+          [ "${cid#fugaro_p_}" != "$cid" ] || continue
+          name=${cid#fugaro_p_}
+          is_workflow_secret "$name" && bad="${bad}${bad:+, }${file} feeds ${var} from ${cid}"
         done < <(sed -n 's/^mount=//p' "$SCRATCH/pod-$file")
       done
     else
@@ -1232,12 +1244,17 @@ step_review() {
       return 0
     fi
   fi
-  local lines="$SCRATCH/audit-$rid.json" served
+  # The reader prints `audit=<status>|<container>|<purpose>|<caller>`, so the
+  # purpose is the THIRD field and the container the second: an awk keyed on a
+  # bare `audit` in the first field would match no line at all, and this row
+  # would pass a review the service had served.
+  local lines served
+  lines="$SCRATCH/audit-$rid.json"
   if ! audit_read "$rid" "$lines"; then
     unmeasured review "$(cat "$lines.unread" 2>/dev/null)"
     return 0
   fi
-  served=$(reader audit "$lines" "$rid" 2>/dev/null | awk -F'|' '$1 == "audit" && $4 == "workflow-secret" { print $2 }' | grep -c . || true)
+  served=$(reader audit "$lines" "$rid" 2>/dev/null | awk -F'|' '$1 ~ /^audit=/ && $3 == "workflow-secret" { print $2 }' | grep -c . || true)
   if [ -n "$bad" ]; then
     fact review FAIL "the review of pull request #${RUN_ONE_PR} (${rid}) carries a workflow secret: ${bad}. A review run reads an untrusted checkout and prompt, so it is served no secret and holds none — the file is absent in it (G3, R5)"
   elif [ "${served:-0}" -gt 0 ]; then
@@ -1280,16 +1297,6 @@ step_unlisted() {
 
 run_920() {
   say "Check 920: the workflow-secret class off the installation ${INSTALL} (project ${P})"
-  if ! guard_project; then
-    unmeasured record "the installation guard did not hold"
-    unmeasured jobs "the installation guard did not hold"
-    unmeasured run-one "the installation guard did not hold"
-    unmeasured run-mounts "the installation guard did not hold"
-    unmeasured run-verify "the installation guard did not hold"
-    unmeasured audited "the installation guard did not hold"
-    unmeasured unlisted "the installation guard did not hold"
-    return 0
-  fi
   step_record
   step_jobs
   step_run
@@ -1419,12 +1426,6 @@ run_921() {
   CHECK_NO=921
   MODE=catalog
   say "Check 921: the catalog build and its identity, off the installation ${INSTALL} (project ${P})"
-  if ! guard_project; then
-    unmeasured build-identity "the installation guard did not hold"
-    unmeasured identity-accessors "the installation guard did not hold"
-    unmeasured catalog-build "the installation guard did not hold"
-    return 0
-  fi
   step_identity
   [ "${IDENTITY_OK:-no}" = yes ] || {
     unmeasured identity-accessors "the build identity is not there (see the build-identity row), so nothing it holds was read"
@@ -1489,7 +1490,8 @@ main() {
   need mktemp
   need python3
   need gcloud
-  need curl  need fugaro
+  need curl
+  need fugaro
   trap 'on_error $LINENO' ERR
 
   [ -f "$CONFIG" ] || stop "no local config for ${INSTALL} at ${CONFIG}: name it with CHECK920_CONFIG"
@@ -1513,6 +1515,11 @@ main() {
     stop "$CONFIG names no runs bucket (runs_bucket or a gs:// bucket_url)"
   BUCKET_OK=yes
   fact config PASS "read ${CONFIG}: GCP project ${GCP}, runs bucket gs://${BUCKET}, database ${RTDB}"
+
+  # The installation guard runs BEFORE the token is minted: a shell pointed at
+  # another project must not have read a credential for it on the way to saying
+  # so.
+  guard_project
 
   say "minting an access token (gcloud auth print-access-token)"
   mint_token || stop "gcloud auth print-access-token did not answer ($(first_line "$SCRATCH/token.err")): run 'gcloud auth login' and this check again"
