@@ -228,6 +228,13 @@ func MintDeviceForUID(ctx context.Context, signer Signer, uid, role string, now 
 // keeps a caller-chosen uid out of a minted session (O8).
 var ErrDeviceUID = errors.New("budget token: not a device uid")
 
+// ValidDeviceUID reports whether uid is one of the device uids this package
+// mints, and it is checkDeviceUID's answer for a caller that has a uid and no
+// token: the credentials service reads a device node by a uid it took from a
+// refresh token, and a uid that is not this shape is a node this tree never
+// wrote.
+func ValidDeviceUID(uid string) bool { return checkDeviceUID(uid) == nil }
+
 // checkDeviceUID refuses anything that is not a device uid: deviceUIDPrefix and
 // deviceUIDBytes bytes in the one spelling deviceNewUID writes, so the uid a
 // minted token carries is the key of the node the pairing wrote and not a
