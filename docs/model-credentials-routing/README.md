@@ -14,10 +14,20 @@ exhausted suspends itself and is resumed at the reset. It is the fourth spec of 
 budget and [credentials belong to models](../credentials-belong-to-models/README.md), and it
 supersedes the last one's craft access (D3170).
 
+**Amended 2026-11-23 by [repo-override rulings](../repo-override-rulings/README.md) (D3237, lift
+L8):** the repository does **not** keep its model choice, reversing the half of F7 that said so
+(its amendment in [reconciliation.md](reconciliation.md), and that folder's F6, R10 and task A1).
+The project layer chooses each role's model — `agent.model`, `agent.models.*`,
+`agent.crafts.*.model` and, by D3291, `agent.levels.lN.model` — and the routing table still decides
+which source serves it, as A1 reads "the routing table decides". For one release a repository's
+value is read, dropped and named; the next release refuses it with `fugaro models use --layer
+project` as the fix. Everything else here stands: the table, the pools, the chain, the pause and
+the migration are unchanged, and `budget.allowed_models` still narrows per repository.
+
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec, as received from the owner on 2026-11-21. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: the capability map (six modules), assumptions A1–A9, findings F1–F67, decisions D3170–D3197 with the owner's answers, resolutions R1–R26, open items O1–O17 (O13 to O16 closed), UNVERIFIED U1–U8 (U2 withdrawn). **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | The amended spec: the capability map (six modules), assumptions A1–A9, findings F1–F67, decisions D3170–D3197 with the owner's answers, resolutions R1–R26, open items O1–O17 (O13 to O16 closed), UNVERIFIED U1–U8 (U2 withdrawn), and the amendment of 2026-11-23 (D3237) of F7. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Contracts C1 to C3, documents tasks A1 to A3, 75 tasks in six modules, integrations I1 and I2 (83 runs over two releases, and three contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 880 to 886 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
