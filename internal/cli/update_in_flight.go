@@ -80,6 +80,16 @@ import (
 // question, which is why they are printed beside the steps rather than among
 // them: a note saying no step reaches a run in flight is about the steps alone,
 // and these two facts stand outside that list.
+//
+// The count's line carries one more fact, and it is the paused runs (PR6): a run
+// that suspended itself has ended its execution and released its lease (R12), so
+// the registry the count otherwise reads holds no entry of it, and the one place
+// a pause is written is the credentials service's node under paused/ (C3, R26).
+// A paused chain is in flight the way a running one is (PR12, D3195), so the
+// count includes it and the line says how many of the count are paused — the
+// update rewrites nothing such a run holds either (its record, its node, its
+// saved session, its chain's ledger), and the parenthetical is where a person
+// reading the note sees the chains that will come back on their own.
 
 // announceRunsInFlight prints the update door's note about the runs in flight —
 // the count's line and the steps under it. It prints nothing at all when no run
@@ -125,7 +135,15 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 		step = r.rep.Step("Checking for runs in flight")
 	}
 	agents, err := inFlightRegistry(ctx, db, lc)
-	n := runsCount(agents)
+	// The paused runs are counted beside the registry, and for the same read's
+	// sake: a suspended run's execution has ended (R12), so the registry holds
+	// no entry of it, and the node the credentials service wrote is the one
+	// place its chain's in-flightness is written (C3, R26).
+	paused := 0
+	if err == nil {
+		paused = e.pausedRuns(ctx, db)
+	}
+	n := runsCount(agents) + paused
 	if step != nil {
 		if err != nil {
 			// A count that could not be read is silence: a step abandoned
@@ -139,7 +157,7 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 	if err != nil || n == 0 {
 		return nil
 	}
-	note := fmt.Sprintf("%s%s in flight: update waits for none and changes nothing they hold", o.programPrefix(), runsPhrase(n))
+	note := fmt.Sprintf("%s%s in flight: update waits for none and changes nothing they hold", o.programPrefix(), inflightPhrase(n, paused))
 	// The screen and the log read the same note, because it is one note: the
 	// count's line, then one short line per step (loggedOut, D1352 — and not the
 	// reporter's stream, which is the terminal under --verbose as well as the
@@ -252,6 +270,59 @@ func runsPhrase(n int) string {
 		return "1 run"
 	}
 	return fmt.Sprintf("%d runs", n)
+}
+
+// inflightPhrase is the count's own phrase: how many runs are in flight, and —
+// when any are — how many of them are paused. The parenthetical is part of the
+// count's line rather than a line of its own because a paused run is in flight
+// the same way a running one is (PR12, D3195): the count is the runs the update
+// waits for none of and changes nothing of, and paused is the one thing about a
+// member of that count the line could not otherwise say.
+//
+// It is spelled inside the count and never around it: the sentence
+// "in flight: update waits for none and changes nothing they hold" is the one
+// the live checks and the owner's own note read (`docs/gcp-live-checklist.md`,
+// Check 632), so nothing may be inserted between the count and the colon.
+func inflightPhrase(n, paused int) string {
+	if paused == 0 {
+		return runsPhrase(n)
+	}
+	return fmt.Sprintf("%s (%d paused)", runsPhrase(n), paused)
+}
+
+// pausedRuns counts the runs of this project a pause still holds: the nodes
+// under runstore.PauseNodeRoot whose pause stands (C3, R26) — the credentials
+// service wrote each and no launcher has cancelled it (D3185, D3197).
+//
+// A paused run is in flight, and the registry the count otherwise reads holds
+// no entry of it: a suspend ends the run's execution and releases its lease
+// (R12), and the node under paused/ is the one place the pause is written. Its
+// record, its saved session and its chain's ledger are the rest of what it
+// holds, and none of them is a node this door reads: the node is the service's
+// own account of the pause, and it is what a launcher's view — and this note —
+// reads.
+//
+// A cancelled node is not counted: the launcher took the chain out of flight
+// (D3197), and it is the reading every guard makes (pauseStands, runs_prstate.go).
+// A node this release cannot place answers nothing: half a node is not a pause
+// (ErrInvalidPauseNode), and the orchestrator resumes none it could not read —
+// yet the file's own rule, that a read which failed is silence, is why this is a
+// count and not an error the door returns.
+func (e *initEngine) pausedRuns(ctx context.Context, db *rtdb.Client) int {
+	var nodes map[string]map[string]json.RawMessage
+	if _, err := db.Get(ctx, runstore.PauseNodeRoot, &nodes); err != nil {
+		return 0
+	}
+	n := 0
+	for _, runs := range nodes {
+		for _, raw := range runs {
+			node, err := runstore.ParsePauseNode(raw)
+			if err == nil && !node.Cancelled {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // inFlightStep is one step of this update that can reach a run in flight: the

@@ -215,6 +215,24 @@ retype bumps the version — is what keeps an old runner's record readable by a 
 binary. A shape change is therefore a release's decision and not an update's
 hazard; adding a field is safe for both directions.
 
+**A paused run.** A run that suspends itself has ended its execution and released its lease
+(R12), so the registry the note's count otherwise reads holds no entry of it. The pause is
+written in two places instead (C3, [contract-pause.md](../model-credentials-routing/contract-pause.md)):
+the record `pause.json` in the run's own bucket prefix, which the run that resumes it reads, and
+the credentials service's node `paused/<slug>/<run>` in the Realtime Database, which says who
+launched the run, on what pool and until when (R6, R8, R26 — the node is display data to a
+launcher and an input only to the service and the orchestrator). A paused chain is in flight the
+way a running one is (PR12, D3195), so the update counts it too: it reads the nodes under
+`paused/` and the count's line says how many of the runs in flight are paused
+(`pausedRuns`, `inflightPhrase`, `internal/cli/update_in_flight.go`). A node a launcher has
+cancelled is not counted — the chain is over and no guard reads it as in flight (D3197,
+`pauseStands`, `internal/cli/runs_prstate.go`) — and one this release cannot place is no pause the
+orchestrator would resume (`ErrInvalidPauseNode`). The update rewrites nothing a paused run holds:
+its record, its node, its saved session and its chain's ledger are exactly as the suspend left
+them (F36), and the run the orchestrator resumes it with reads `pause.json`, checks out the
+checkpoint and enters the stage the paused run was in (PR5) — so the pause spans the update the
+way a running run does, on either release.
+
 ## What the update must do about it
 
 Nothing in the table asks a person to stop a run, and one row did the opposite:
@@ -228,7 +246,10 @@ other, so the wait it can cost is named while it happens — `Checking for runs 
 flight`, the CLI's own spinner and its one line per step — because the owner met
 it with fourteen runs going and no output at all (the feedback of 2026-11-15).
 What it prints after that is the count's own line: how many runs are in flight,
-that the update waits for none of them and changes nothing they hold. Then one
+how many of them are paused (a parenthetical, `inflightPhrase`, because a
+suspended run's execution has ended and left the registry the count otherwise
+reads — R12, PR6), that the update waits for none of them and changes nothing
+they hold. Then one
 short line per step that can still reach one, indented under it, or a single line
 saying no step does (`inFlightSteps`). The note is exactly as long as that count
 and no longer — plus the two lines that are not steps and carry the two facts the
@@ -314,7 +335,12 @@ The tests are `TestUpdateLeavesARunInFlightRunning` and its siblings
 converges under `fugaro update` while a run of its own repository is in flight,
 and that run's later writes — its lease, the ledger and the counters the report
 settles, the outcome it ends with, its record and its review session — still
-land under the new rules and the migrated policy.
+land under the new rules and the migrated policy. The same fixture carries a
+paused run beside the running one (PR6): the update rewrites nothing it holds —
+its record, its node, its saved session and its chain's ledger — the note counts
+it and says how many of the runs in flight are paused
+(`TestUpdateCountsPausedRuns`), and the run that resumes it picks the chain up
+afterwards.
 `TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning`
 (`internal/cli/update_review_job_test.go`) is the same fixture read against the
 one job this release adds (the row above): an installation at the previous
