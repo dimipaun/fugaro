@@ -161,6 +161,7 @@ type keySetServer struct {
 	calls  int
 	fail   bool
 	hang   bool
+	hold   chan struct{}
 }
 
 func (s *keySetServer) set(body string) {
@@ -190,17 +191,40 @@ func (s *keySetServer) reads() int {
 	return s.calls
 }
 
+// holdNext makes the next request wait until the returned function is called,
+// so that a case about what happens *while* a read is under way holds it there
+// rather than racing a sleep.
+func (s *keySetServer) holdNext() func() {
+	release := make(chan struct{})
+	s.mu.Lock()
+	s.hold = release
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		s.hold = nil
+		s.mu.Unlock()
+		close(release)
+	}
+}
+
 // RoundTrip answers from a snapshot of this server's state, so a request that
 // waits holds nothing of the server's: a hung fetch that held this mutex would
 // be a test that deadlocked rather than one that measured a hang.
 func (s *keySetServer) RoundTrip(r *http.Request) (*http.Response, error) {
 	s.mu.Lock()
 	s.calls++
-	hang, fail, status, body := s.hang, s.fail, s.status, s.body
+	hang, hold, fail, status, body := s.hang, s.hold, s.fail, s.status, s.body
 	s.mu.Unlock()
 	if hang {
 		<-r.Context().Done()
 		return nil, r.Context().Err()
+	}
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		}
 	}
 	if fail {
 		return nil, errors.New("the key endpoint is unreachable")
@@ -1308,42 +1332,47 @@ func TestSeqFloorKeepsTheHighestInTheStore(t *testing.T) {
 	} else if ok {
 		t.Fatal("a set below the sequence the store kept was accepted by the instance next door: the mark is the store's, and a floor in this process is the one the plan's O7 forbids")
 	}
-	if ok, err := two.Observe(ctx, 7); err != nil {
-		t.Fatalf("Observe(7) on the second instance: %v", err)
-	} else if ok {
-		t.Error("the sequence a set was accepted at was accepted a second time")
+	// The sequence the mark already stands at is the set the project publishes
+	// now, and the acceptance admits a set "no lower than" the highest kept: a
+	// floor is not a lock, so the instance next door keeps the current set.
+	if ok, err := two.Observe(ctx, 7); err != nil || !ok {
+		t.Errorf("Observe(7) at the mark = %v, %v; want true: a second instance, or a restart, would otherwise refuse the key set the project publishes now until the identity project published a higher one", ok, err)
 	}
 
-	// Only a higher set moves the mark, and then it is the first instance that
-	// refuses the one it kept.
+	// A restart is a new floor object over the same node: it inherits what the
+	// store holds instead of beginning again, keeping what is at the mark and
+	// refusing what is below it.
+	restarted, err := NewSeqFloor(store, path)
+	if err != nil {
+		t.Fatalf("building the restarted instance's floor: %v", err)
+	}
+	if ok, err := restarted.Observe(ctx, 6); err != nil || ok {
+		t.Errorf("Observe(6) after a restart = %v, %v; want false: a restart is not a second chance for a set the project has moved past", ok, err)
+	}
+	if ok, err := restarted.Observe(ctx, 7); err != nil || !ok {
+		t.Errorf("Observe(7) after a restart = %v, %v; want true: the mark the restart inherits is the set it is asked about", ok, err)
+	}
+
+	// Only a higher set moves the mark, and then the set it was raised from is
+	// below it.
 	if ok, err := one.Observe(ctx, 8); err != nil || !ok {
 		t.Fatalf("Observe(8) above the mark = %v, %v; want true", ok, err)
 	}
 	if ok, err := two.Observe(ctx, 7); err != nil || ok {
 		t.Errorf("Observe(7) below the raised mark = %v, %v; want false", ok, err)
 	}
-
-	// A restart is a new floor object over the same node: it inherits what the
-	// store holds instead of beginning again.
-	restarted, err := NewSeqFloor(store, path)
-	if err != nil {
-		t.Fatalf("building the restarted instance's floor: %v", err)
-	}
-	if ok, err := restarted.Observe(ctx, 8); err != nil || ok {
-		t.Errorf("Observe(8) after a restart = %v, %v; want false: a restart is not a second chance for a set the project has moved past", ok, err)
-	}
-	if ok, err := restarted.Observe(ctx, 9); err != nil || !ok {
-		t.Fatalf("Observe(9) after a restart = %v, %v; want true", ok, err)
+	if ok, err := restarted.Observe(ctx, 8); err != nil || !ok {
+		t.Errorf("Observe(8) at the raised mark = %v, %v; want true", ok, err)
 	}
 
-	// The node holds the highest sequence and not the last one written.
+	// The node holds the highest sequence any instance accepted.
 	var held int64
 	found, err := store.Get(ctx, path, &held)
 	if err != nil || !found {
 		t.Fatalf("reading the mark back: found=%v err=%v", found, err)
 	}
-	if held != 9 {
-		t.Errorf("the stored mark is %d, want 9: the node holds the highest sequence any instance accepted", held)
+	if held != 8 {
+		t.Errorf("the stored mark is %d, want 8: the node holds the highest sequence any instance accepted", held)
 	}
 
 	// Two projects are two nodes: a mark under one path says nothing about
@@ -1357,10 +1386,11 @@ func TestSeqFloorKeepsTheHighestInTheStore(t *testing.T) {
 	}
 }
 
-// Eight instances presenting one sequence that no store holds yet: exactly one
-// keeps it. It is what makes the write a compare-and-set rather than a write,
-// and the losers must not lower the mark on their way out.
-func TestSeqFloorRacesToOneWriter(t *testing.T) {
+// Eight instances presenting one sequence that no store holds yet: every one of
+// them keeps it, and the node ends up holding that one mark. A sequence is a
+// floor and not a lock, so a race for it is not a race one caller wins -- and
+// the losers must not lower the mark on their way out.
+func TestSeqFloorAcceptsOneSequenceFromEveryInstance(t *testing.T) {
 	_, store := seqFloorDB(t)
 	ctx := context.Background()
 	floor, err := NewSeqFloor(store, "assertion/raced-seq")
@@ -1396,11 +1426,22 @@ func TestSeqFloorRacesToOneWriter(t *testing.T) {
 	if failed != nil {
 		t.Fatalf("an instance racing for the mark failed: %v", failed)
 	}
-	if kept != 1 || refused != 7 {
-		t.Errorf("of eight instances presenting sequence 5 at once, %d kept it and %d were refused: a mark is raised once, and a store that let two raise it is not a compare-and-set", kept, refused)
+	if kept != 8 || refused != 0 {
+		t.Errorf("of eight instances presenting sequence 5 at once, %d kept it and %d were refused: the eight are presenting the same, current set, and the mark they leave behind is one floor rather than eight", kept, refused)
+	}
+	var held int64
+	found, err := store.Get(ctx, "assertion/raced-seq", &held)
+	if err != nil || !found || held != 5 {
+		t.Errorf("after the race the node holds %d (found=%v, err=%v), want 5: the eight raised one mark, and no instance wrote a lower one over it", held, found, err)
 	}
 	if ok, err := floor.Observe(ctx, 4); err != nil || ok {
 		t.Errorf("Observe(4) after the race = %v, %v; want false: a lost race leaves the mark where the winner put it", ok, err)
+	}
+	if ok, err := floor.Observe(ctx, 5); err != nil || !ok {
+		t.Errorf("Observe(5) after the race = %v, %v; want true", ok, err)
+	}
+	if ok, err := floor.Observe(ctx, 6); err != nil || !ok {
+		t.Errorf("Observe(6) after the race = %v, %v; want true: a set above the mark is the rotation this floor is here to admit", ok, err)
 	}
 }
 
@@ -1580,5 +1621,100 @@ func TestVerifyRefusesAKeySetBelowTheSequenceTheDurableStoreKept(t *testing.T) {
 	}
 	if field := refusalField(t, err); field != "seq" {
 		t.Errorf("the refusal names %q, want \"seq\"", field)
+	}
+}
+
+// The instance next door must keep the key set the first one kept. The
+// acceptance admits a sequence "no lower than" the highest one stored, and P8
+// pins a release's own key-set sequence as the floor -- so the document a build
+// is released against is exactly the one at the mark, on every instance and
+// after every restart. Refusing it would refuse every non-pinned key id until
+// the identity project published a higher set.
+func TestVerifyAcceptsTheCurrentKeySetInTheInstanceNextDoor(t *testing.T) {
+	rootPub, rootPriv := testKey(t)
+	signPub, signPriv := testKey(t)
+	srv := &keySetServer{}
+	_, store := seqFloorDB(t)
+	const path = "assertion/key-set-seq"
+	// The floor is the sequence of the key set this release is pinned to. The
+	// build pins one key, which is not the one this document names: the fetch
+	// path is the one this case is about.
+	buildPub, _ := testKey(t)
+	p := pins(rootPub, 8, pinned("signing-build", buildPub))
+	srv.set(keySetDoc(t, rootPriv, 8, validUntil(), jwkOf("signing-rotated", signPub)))
+
+	first, err := NewSeqFloor(store, path)
+	if err != nil {
+		t.Fatalf("building the floor: %v", err)
+	}
+	claims := goodClaims()
+	claims["jti"] = "test-jti-first-instance"
+	firstV := newTestVerifier(t, p, srv, newMemoryClaims(), first)
+	if _, err := verify(t, firstV, signAssertion(t, signPriv, "signing-rotated", claims)); err != nil {
+		t.Fatalf("the first instance refused the current key set: %v", err)
+	}
+
+	// A restart is a second verifier: its own key set cache, its own floor
+	// object, the same node -- and the same document is the current one there.
+	second, err := NewSeqFloor(store, path)
+	if err != nil {
+		t.Fatalf("building the second instance's floor: %v", err)
+	}
+	claims = goodClaims()
+	claims["jti"] = "test-jti-second-instance"
+	secondV := newTestVerifier(t, p, srv, newMemoryClaims(), second)
+	if _, err := verify(t, secondV, signAssertion(t, signPriv, "signing-rotated", claims)); err != nil {
+		t.Fatalf("the instance next door refused the key set the first one accepted: %v", err)
+	}
+}
+
+// An unauthenticated caller must not be able to park the key set for everyone
+// else. A key id is looked up before any signature is verified, so any caller
+// can name one this process has to fetch; if that fetch ran on the caller's own
+// context, a request that names one and dies would abort the read and leave the
+// failure in the cache, and every caller inside the read interval -- a minute --
+// would be refused over a document nobody ever failed to read.
+func TestVerifyACancelledCallerDoesNotEndTheKeySetRead(t *testing.T) {
+	rootPub, rootPriv := testKey(t)
+	signPub, signPriv := testKey(t)
+	srv := &keySetServer{}
+	srv.set(keySetDoc(t, rootPriv, 7, validUntil(), jwkOf("signing-rotated", signPub)))
+	// No pinned key, so the fetch path is the one that has to answer, and the
+	// read's own bound is long: the only thing in this case that could end the
+	// read is the caller.
+	buildPub, _ := testKey(t)
+	v := newTestVerifier(t, pins(rootPub, 1, pinned("signing-build", buildPub)), srv, newMemoryClaims(), &memorySeq{})
+	v.keys.fetchTimeout = 30 * time.Second
+
+	release := srv.holdNext()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	triggered := make(chan struct{})
+	go func() {
+		defer close(triggered)
+		claims := goodClaims()
+		claims["jti"] = "test-jti-cancelled"
+		_, _ = v.Verify(ctx, signAssertion(t, signPriv, "signing-rotated", claims), mobilesession.Binding{Audience: testAudience, Challenge: testChallenge})
+	}()
+
+	srv.fetchStarted(t)
+	cancel()
+	select {
+	case <-triggered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the verification of a caller that cancelled did not end: the read it triggered is the cache's and not the caller's to wait for")
+	}
+
+	// The read the caller abandoned still finishes, and its answer is the one
+	// the next caller gets -- with no second read of the endpoint, which is the
+	// interval the abandoned failure would otherwise have spent refusing.
+	release()
+	claims := goodClaims()
+	claims["jti"] = "test-jti-after-cancellation"
+	if _, err := verify(t, v, signAssertion(t, signPriv, "signing-rotated", claims)); err != nil {
+		t.Fatalf("a verification after a caller cancelled was refused: %v", err)
+	}
+	if reads := srv.reads(); reads != 1 {
+		t.Errorf("the endpoint was read %d times, want 1: the read the cancelled caller triggered is the one that answered", reads)
 	}
 }

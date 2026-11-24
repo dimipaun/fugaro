@@ -198,6 +198,11 @@ func (c *keySetCache) set(ctx context.Context) (*heldSet, error) {
 // fetch is not called from a locked section: this mutex is held by every
 // verification in the process at one moment or another, and one hung connection
 // to the identity project's endpoint must not be one that stalls them all.
+//
+// The read itself is the cache's and not the reader's: it runs on a context of
+// its own (fetch), so the caller that triggered it giving up neither ends it nor
+// makes its failure the cache's, and the caller waits for it only as long as its
+// own context allows.
 func (c *keySetCache) read(ctx context.Context, rotation bool) {
 	c.mu.Lock()
 	now := c.now()
@@ -227,17 +232,32 @@ func (c *keySetCache) read(ctx context.Context, rotation bool) {
 	done := c.reading
 	c.mu.Unlock()
 
-	set, err := c.fetch(ctx)
+	// The read runs in its own goroutine and answers to the cache's clock and
+	// not the caller's, because its answer is every caller's: a caller that goes
+	// away mid-read -- an unauthenticated request whose connection dies, and the
+	// key is looked up before any signature is checked, so that caller needs no
+	// credential at all -- must not end a read the next caller needs, and must
+	// not leave the failure of its own cancellation in c.err to refuse everyone
+	// inside the interval. This caller waits for the answer or gives up on its
+	// own clock, whichever comes first; the read carries on either way.
+	go func() {
+		set, err := c.fetch(ctx)
 
-	c.mu.Lock()
-	if err != nil {
-		c.err = err
-	} else {
-		c.held, c.err = set, nil
+		c.mu.Lock()
+		if err != nil {
+			c.err = err
+		} else {
+			c.held, c.err = set, nil
+		}
+		c.reading = nil
+		c.mu.Unlock()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
 	}
-	c.reading = nil
-	c.mu.Unlock()
-	close(done)
 }
 
 // fetch reads the pinned URL once and verifies what it finds. The error it
@@ -245,7 +265,11 @@ func (c *keySetCache) read(ctx context.Context, rotation bool) {
 // them, and an error from net/http carries a URL and a transport's text, which
 // is not what a refusal reaches a log line with.
 func (c *keySetCache) fetch(ctx context.Context) (*heldSet, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.fetchTimeout)
+	// The read is bounded by the cache's own timeout and by nothing the caller
+	// carries: a caller's cancellation would otherwise make a request that needs
+	// no credential abort a read every other caller is waiting on, and record
+	// its failure as if the endpoint had failed.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.fetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.pins.JWKSURL, nil)
 	if err != nil {
@@ -345,7 +369,7 @@ func parseKeySet(ctx context.Context, body []byte, pins Pins, now time.Time, seq
 		return nil, fmt.Errorf("%w: the key set's sequence could not be kept: %v", ErrStore, err)
 	}
 	if !seen {
-		return nil, refuseSet("seq", "a key set at or above this one's sequence has already been read")
+		return nil, refuseSet("seq", "a key set above this one's sequence has already been read")
 	}
 	if len(set.JWKS.Keys) == 0 {
 		return nil, refuseSet("keys", "the key set holds no signing key")

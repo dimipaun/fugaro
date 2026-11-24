@@ -245,8 +245,16 @@ func (f *seqFloor) Observe(ctx context.Context, seq int64) (bool, error) {
 		if err != nil {
 			return false, fmt.Errorf("%w: the key set's sequence could not be read: %v", ErrStore, err)
 		}
-		if found && held >= seq {
+		// A sequence no lower than the mark is kept, and the mark is a floor
+		// rather than a lock: the set that *is* the highest one kept is the
+		// document the project publishes now, so the instance next door and the
+		// one that restarts both accept it. Only a set below the mark is a
+		// stale document, and only it is refused.
+		if found && held > seq {
 			return false, nil
+		}
+		if found && held == seq {
+			return true, nil
 		}
 		// The write only ever raises the mark: held was below seq whenever it
 		// was found at all, and a node nothing has written yet is raised to seq
