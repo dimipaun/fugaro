@@ -321,7 +321,15 @@ workspace)
       if [ "$n" = 1 ]; then
         printf "the member's own owner runs fugaro workspace project link on the member's machine: until they do, this project is in workspace %s's table and nothing of the workspace's is written into it (D2819, R11)\n" "${FUGARO_PROJECT:-}"
       else
-        printf "adopted %s into workspace %s's roster: the member's grantees were read and the workspace's people were written into the member's own roster (D2805)\n" "$member" "${FUGARO_PROJECT:-}"
+        # The sentence the real command prints (`adopted <N person(people)> into
+        # workspace <ws>'s roster: <addresses>`, workspace_project.go). The fake
+        # used to print a form the CLI cannot print, so the check's first pattern
+        # was only ever matched here.
+        if [ -f "$dir/adopt-plural" ]; then
+          printf "adopted 3 people into workspace %s's roster: user:%s, user:b@example.com, user:c@example.com\n" "${FUGARO_PROJECT:-}" "${CHK720_GRANTEE:-the-member-owner@example.com}"
+        else
+          printf "adopted 1 person into workspace %s's roster: user:%s\n" "${FUGARO_PROJECT:-}" "${CHK720_GRANTEE:-the-member-owner@example.com}"
+        fi
       fi
       ;;
     link)
@@ -413,6 +421,15 @@ test_the_happy_path() {
   expect_row "$out" pin PASS "the happy path"
   expect_row "$out" move PASS "the happy path"
   expect_row "$out" adopt PASS "the happy path"
+  # The adoption sentence the row passes on is the one the real command prints
+  # (`adopted <N people> into workspace <ws>'s roster: <addresses>`), and the fake
+  # no longer prints a form the CLI cannot print.
+  expect_contains "$out" "adopted 1 person into workspace" "the happy path: the adoption sentence is the real one"
+  # U6's own case is a skip this check records rather than claims: one gcloud
+  # account holds the member project's owner rights and the folder's owner
+  # binding at once, so no call it can make is U6's caller.
+  expect_row "$out" u6 INFO "the happy path: U6's own case is recorded as a skip"
+  expect_contains "$out" "U6's OWN case is NOT measured here" "the happy path: the u6 row says what it did not measure"
   expect_row "$out" detach PASS "the happy path"
   expect_row "$out" return PASS "the happy path"
   expect_row "$out" noorg PASS "the happy path"
@@ -658,6 +675,15 @@ test_a_move_into_the_folder_that_does_not_happen_is_a_finding() {
   expect_row "$out" detach PASS "a move into the folder that does not happen: the rest of the check still reads"
 }
 
+test_an_adoption_of_several_people_is_the_add_the_link_hands_back() {
+  case_dir adopt_plural
+  : >"$dir/adopt-plural"
+  run720
+  expect_status "$status" 0 "an add that adopted several people"
+  expect_row "$out" adopt PASS "an add that adopted several people"
+  expect_contains "$out" "adopted 3 people into workspace" "an add that adopted several people: the count is not part of the pattern"
+}
+
 test_a_link_that_fails_stops_the_check() {
   case_dir link_fails
   printf 1 >"$dir/link-status"
@@ -841,6 +867,7 @@ t test_a_setup_that_was_killed_at_its_deadline_names_its_transcript
 t test_an_init_that_takes_the_sa_mechanism_is_a_finding
 t test_an_init_that_does_not_move_the_workspace_project_is_a_finding
 t test_a_move_into_the_folder_that_does_not_happen_is_a_finding
+t test_an_adoption_of_several_people_is_the_add_the_link_hands_back
 t test_a_link_that_fails_stops_the_check
 t test_a_move_back_that_does_not_happen_is_a_finding
 t test_a_pin_that_is_not_written_stops_the_check

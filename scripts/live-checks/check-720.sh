@@ -17,10 +17,17 @@
 #       project rm` prints it (workspaceProjectRmWarning, R3); the check asserts
 #       the exact string and prints it in its block for YOU to open. It never
 #       opens a browser and never waits for you to.
-#   U6  whether a workspace admin holding roles/owner on the folder can move a
-#       member back to its original parent without the member owner's rights
-#       there: `workspace project unlink` on the member's own machine, and the
-#       parent read after it (FolderAuthority.Unlink).
+#   U6  the return itself: `workspace project unlink` on the member's own machine
+#       moves the member back to the parent the link record named, and the parent
+#       read after it says so (FolderAuthority.Unlink, D2822). It does NOT settle
+#       U6's own case — a caller holding roles/owner on the FOLDER and no rights
+#       on the member. Both throwaway installations answer to ONE gcloud account,
+#       which holds the member project's owner rights and the folder's owner
+#       binding at once, so no call this check can make is that caller: the `u6`
+#       row records the skip rather than claiming it settled. The product holds
+#       U6 open the same way: `project rm` on the folder mechanism prints the
+#       member owner's own command, because a folder owner is not known to be
+#       able to do it for them (workspaceProjectRmAuthority).
 #   U8  whether Google lets a person be made a project's owner BY API outside an
 #       organization, or only by an invitation they accept in the console. The
 #       check creates a project with no organization (no --parent, no
@@ -95,6 +102,8 @@
 #               INCOMPLETE (exit 2)  the run stopped before it could measure
 #               INCOMPLETE (exit 3)  it measured, and a row could not be read
 #                                    (UNVERIFIED)
+#             A row that reads INFO is a reading, not a verdict: it records what
+#             this check does not measure, and it is neither of the two above.
 # Expected duration: two installations, ~20 to 40 minutes, most of it the two
 # `fugaro setup` runs and Terraform's own applies.
 set -euo pipefail
@@ -786,8 +795,14 @@ OUT2=$(cat "$SCRATCH/add2.log" 2>/dev/null || true)
 if [ "$status" != 0 ]; then
   fact adopt FAIL "the second fugaro workspace project add exited $status: $(log_tail "$SCRATCH/add2.log")"
 else
+  # The sentence the command really prints: `adopted <N person(people)> into
+  # workspace <ws>'s roster: <addresses>` (workspace_project.go's
+  # workspacePeoplePhrase). The count depends on how many of the member's
+  # grantees are new to the workspace's roster, so the pattern takes either
+  # count and the roster tail, and the second branch is the add that adopted
+  # nobody.
   case "$OUT2" in
-  *"adopted $MEMBER into workspace $WS"* | *"no grantee of project $MEMBER is new to workspace $WS"*)
+  *"adopted "*" into workspace $WS's roster"* | *"no grantee of project $MEMBER is new to workspace $WS"*)
     fact adopt PASS "the add the link hands back ran: $(log_tail "$SCRATCH/add2.log" 3) — the workspace's people are in the member's own roster and mirror, or the check read that no grantee was new"
     ;;
   *)
@@ -823,10 +838,10 @@ fi
 
 # ---------------------------------------------------------------- the move back
 
-# U6: the member owner takes its own project back out of the workspace's folder,
-# to the parent the link record names. Whether a workspace admin holding
-# roles/owner on the FOLDER could do this without rights on the member is read
-# from which credentials the command uses: this one is the member owner's own.
+# U6's return: the member owner takes its own project back out of the workspace's
+# folder, to the parent the link record names. `u6` below records what that does
+# NOT settle: U6's own case needs a caller with the folder's rights and none on
+# the member, and this check's one gcloud account holds both.
 status=$(cli "$MEMBER" "$SCRATCH/unlink.log" workspace project unlink)
 OUT=$(cat "$SCRATCH/unlink.log" 2>/dev/null || true)
 if [ "$status" != 0 ]; then
@@ -835,7 +850,7 @@ else
   back=$(parent_of "$MEMBER")
   if [ "$back" = "folders/$FOLDER_NUM" ]; then
     if printf '%s' "$OUT" | grep -q "$WS no longer holds $MEMBER"; then
-      fact return PASS "$MEMBER moved back from $WS_FOLDER to its original parent $back, and the command reported the authority gone (D2822). The credentials this took are the member owner's own, on its own machine --- which is what U6 asks about: a workspace admin holding roles/owner on the workspace's folder is not the caller here, and the member's own project carries its owner's rights"
+      fact return PASS "$MEMBER moved back from $WS_FOLDER to its original parent $back, and the command reported the authority gone (D2822). The credentials this took are the member owner's own, on the member's own machine — the return the task's acceptance names, and the command the product hands the member owner when the workspace's mechanism is the folder (workspaceProjectRmAuthority, workspace_project_rm.go)"
     else
       fact return UNVERIFIED "$MEMBER is back at $back, and the command's own sentence about the authority was not read: $(log_tail "$SCRATCH/unlink.log")"
     fi
@@ -843,6 +858,7 @@ else
     fact return FAIL "$MEMBER hangs under $back after the unlink, and this check expected folders/$FOLDER_NUM (its parent before the link): $(log_tail "$SCRATCH/unlink.log")"
   fi
 fi
+fact u6 INFO "U6's OWN case is NOT measured here, and this row is the skip: whether a caller holding roles/owner on the FOLDER and NO rights on the member's project can move it back needs a second credential, and both throwaway installations answer to the one gcloud account this check runs as — the account that created the member project and holds its owner rights, and that created the workspace's folder and holds roles/owner on it. No call this check can make is the caller U6 asks about, so U6 stays open in docs/workspace-projects-users/reconciliation.md and the product keeps printing the member owner's own command (workspaceProjectRmAuthority). To settle it: grant a second identity roles/owner on the test folder alone, give it no binding on the member's project, and run fugaro workspace project unlink as that identity on the member's own machine"
 
 # ------------------------------------------------- the no-org project: U1 and U8
 
