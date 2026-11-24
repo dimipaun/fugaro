@@ -1801,9 +1801,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			now:  s.now,
 		}
 		// tried is the chain's own record of what it dropped, and cands is the
-		// flattened members the C1.12 probe may be owed on: forward keeps its
-		// whole loop — the money, the 401 and the 429, the switch, U7 — and the
-		// chain changes only the ORDER it walks.
+		// flattened members — every member a probe may be owed on, because the
+		// plan decided which sources this call may go out on and the policy's
+		// tier gate is not asked a second time (probeCandidatesFor): the chain
+		// REPLACES the fixed tier order, so applying it here would leave a
+		// source the walk serves with a mark no probe could ever clear. forward
+		// keeps its whole loop — the money, the 401 and the 429, the switch, U7
+		// — and the chain changes only the ORDER it walks.
 		s.forward(ctx, w, cl, chainSel, id, b, chainMembers(plan), plan.skipped)
 		return
 	}

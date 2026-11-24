@@ -370,12 +370,40 @@ func (w *chainWalk) offer(ctx context.Context, src *chainSource, sent map[string
 // handed (probeDue reads a candidate list), and nothing else reads it: the walk
 // itself never consults it, because a pool's members are the picker's to choose
 // from and a flattened list would lose the rule that chose them.
+//
+// It is the PROBE's list entire — every member of it is one a probe may be made
+// on — because which sources may serve is this plan's own decision and not the
+// policy's (probeCandidatesFor): a member the policy's tier gate dropped here
+// would be a source the walk serves whose mark no probe ever clears, which is a
+// chain that can be walked into a dead end.
 func chainMembers(plan *chainPlan) []creds.Credential {
 	var out []creds.Credential
 	for _, src := range plan.sources {
 		out = append(out, src.members...)
 	}
 	return out
+}
+
+// spellingOf answers how this call's model is written on the source that holds
+// this credential, and whether any source of the chain holds it at all.
+//
+// It exists for the probe (probe.go's probeModel): a probe is made on ONE
+// credential of the chain, and the model it may ask about is the one that
+// credential's own source would serve this call with — the spelling the walk
+// writes into the body on the way out (next). The body as it stands is not that
+// answer: after an attempt it holds the LAST source's spelling, which is another
+// source's model and may be a route ID or a Vertex date this credential cannot
+// serve at all. The walk itself never has to look a credential up: it holds the
+// source it is offering.
+func (w *chainWalk) spellingOf(name string) (string, bool) {
+	for _, src := range w.plan.sources {
+		for _, c := range src.members {
+			if c.Name == name {
+				return src.spelling, true
+			}
+		}
+	}
+	return "", false
 }
 
 // isSelectionRefusal reports whether err is one of the two the walk answers by

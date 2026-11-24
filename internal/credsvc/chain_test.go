@@ -773,45 +773,104 @@ func TestABridgedRecordIsServed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 11. A probe on a chain-served call asks the model the run named
+// 11. A probe on a chain-served call asks the model the probed source serves
 // ---------------------------------------------------------------------------
 
-// TestAProbeAsksTheModelTheRunNamed: the walk rewrites the call's `model` member
-// to the served source's spelling on its way out and leaves it there
-// (chainWalk.next), so the probe owed on the retry after a 401 or a usage limit
-// finds a body carrying the LAST source's model. A probe asks whether a
-// credential works at all (C1.12), and the call it asks about is the run's own:
-// reading the model out of the rewritten body asks this credential about another
-// source's spelling — a route ID or a Vertex date this one may not serve — and a
-// credential refused there is marked broken for a question nobody asked.
+// TestAProbeAsksTheModelTheProbedSourceServes: the walk rewrites the call's
+// `model` member to each source's spelling on its way out and leaves the SERVED
+// source's there (chainWalk.next), so a body read on the retry after a 401 or a
+// usage limit carries the LAST source's model. A probe is made on ONE credential
+// of the chain (probeDue), and the model it asks about is the one THAT
+// credential's source would serve this call with (probeModel): reading the body
+// as it stands asks this credential about another source's model — a route ID or
+// a Vertex date this one may not serve at all — and reading the model the run
+// named asks it about an id its own route may not take. Either way the answer
+// would be recorded against THIS credential: a 400 from a route handed an id it
+// does not know doubles its wait and leaves it backed off.
 //
-// The fixture's one source serves a written downgrade, which is what makes the
-// two readings differ at all.
-func TestAProbeAsksTheModelTheRunNamed(t *testing.T) {
-	const downgrade = "claude-haiku-4-5"
-	src := chainKey()
-	src.Model = downgrade
-	s := chainFixture(t, routing.Table{{Match: testModel, Chain: []routing.Source{src}}})
+// The fixture's two sources serve two different written models, which is what
+// makes the readings differ at all.
+func TestAProbeAsksTheModelTheProbedSourceServes(t *testing.T) {
+	const (
+		first  = "claude-haiku-4-5"
+		second = "claude-opus-5"
+	)
+	key := chainKey()
+	key.Model = first
+	pool := routing.Source{Kind: routing.KindPool, Pool: slipTestPoolName, Model: second}
+	s := chainFixture(t, routing.Table{{Match: testModel, Chain: []routing.Source{key, pool}}}, teamPool(""))
 
-	w := s.walk(t, callBody("probe"), chainBinding(coverage(src), ""))
+	w := s.walk(t, callBody("probe"), chainBinding(coverage(key, pool), ""))
 	w.cl.path = MessagesPath
 	w.picked(t)
-	if left, _ := callModel(w.cl.body); left != downgrade {
+	if left, _ := callModel(w.cl.body); left != first {
 		t.Fatalf("the walk left the call's body naming %q, want the serving source's model %q: a probe is owed on the "+
-			"retry AFTER a source was served, and the body it finds there is the one this test is about",
-			left, downgrade)
+			"retry AFTER a source was served, and the body it finds there is the one this test is about", left, first)
+	}
+	if len(w.plan.sources) != 2 {
+		t.Fatalf("the fixture's chain holds %d sources, want the key and the pool", len(w.plan.sources))
 	}
 
-	probe, ok := probeCall(w.cl)
-	if !ok {
-		t.Fatal("a call on the Messages path is a call a probe is made on")
+	for _, tc := range []struct {
+		name string
+		who  creds.Credential
+		want string
+	}{
+		{"the key that served", w.plan.sources[0].members[0], first},
+		{"the pool's member", w.plan.sources[1].members[0], second},
+	} {
+		probe, ok := probeCall(w.cl, tc.who)
+		if !ok {
+			t.Fatalf("%s: a call on the Messages path is a call a probe is made on", tc.name)
+		}
+		model, ok := callModel(probe.body)
+		if !ok {
+			t.Fatalf("%s: the probe's own body names no model: %s", tc.name, probe.body)
+		}
+		if model != tc.want {
+			t.Errorf("%s: the probe asks for the model %q, want %q: a probe asks the model the credential's OWN source "+
+				"serves this call with, never the model the last source left in the body", tc.name, model, tc.want)
+		}
 	}
-	model, ok := callModel(probe.body)
-	if !ok {
-		t.Fatalf("the probe's own body names no model: %s", probe.body)
+}
+
+// TestAChainProbeMayAskAnySourceItServes: which credentials a probe may be made
+// on is the ORDER the call goes out on (probeCandidatesFor), so a chain-served
+// call's list is the plan's own — every member of it, whatever tier it holds —
+// where a call the cascade serves is filtered by the policy (probeCandidates).
+//
+// The difference is a dead end and not a preference. The table REPLACES the
+// fixed tier order (R4, D3170), so the walk serves the project's paid key under
+// `oauth-only` when the chain names it, and a probe is the only thing that clears
+// a backed-off mark (creds.free, Mark.NeedsProbe): a member the policy's gate
+// dropped from the probe's list would be a source this call can be served by and
+// can never come back — the walk serves nothing of the chain that is left, the
+// mark never clears, and every call of the step is answered the same wait.
+func TestAChainProbeMayAskAnySourceItServes(t *testing.T) {
+	src := chainKey()
+	s := chainFixture(t, routing.Table{{Match: testModel, Chain: []routing.Source{src}}})
+	w := s.walk(t, callBody("probe"), chainBinding(coverage(src), ""))
+	// The policy does not spend, which is what withdraws the paid tier from the
+	// cascade's own probe list. It is the fixture's own policy changed for this
+	// test's two readings rather than a second document, because what the test
+	// is about is a chain-served call's list differing from the policy's.
+	w.sel.Settings = creds.Settings{Fallback: creds.OAuthOnly}
+
+	paid := creds.Credential{Name: "paid", Tier: creds.TierB}
+	provider := creds.Credential{Name: "provider-key", Tier: creds.TierC, Provider: "openrouter"}
+	cands := []creds.Credential{{Name: "default", Tier: creds.TierA}, paid, provider}
+
+	if got := probeCandidates(cands, w.sel.Settings, w.sel.Model, w.sel.Provider); len(got) != 1 {
+		t.Fatalf("the policy's own list holds %d candidates, want the subscription one alone: this test says nothing "+
+			"about the chain's list unless the two differ", len(got))
 	}
-	if model != testModel {
-		t.Errorf("the probe asks for the model %q, want %q: the probe asks the model the run named, and the "+
-			"rewritten body carries the model the last source was served with", model, testModel)
+	if got := probeCandidatesFor(w.cl, cands, w.sel); len(got) != len(cands) {
+		t.Errorf("a chain-served call may probe %d of its %d members, want every one of them: the chain's own order is "+
+			"what says which sources it serves, and a member no probe may ask about is a source that can never come back",
+			len(got), len(cands))
+	}
+	if got := probeCandidatesFor(&call{}, cands, w.sel); len(got) != 1 {
+		t.Errorf("a call the cascade serves may probe %d candidates, want the policy's own answer (%d)",
+			len(got), 1)
 	}
 }
