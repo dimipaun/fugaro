@@ -439,7 +439,9 @@ const repo = site.facts.repository
           hands it to the relay the Fugaro project operates — the publisher holds the delivery
           credentials once, so a phone on somebody else's Firebase project can still be reached —
           and writes the token the relay answers with into your own installation, where it lives
-          only as long as the pairing.
+          only as long as the pairing. <strong>Nothing here delivers yet</strong>: no build of the
+          app registers a phone, and the sender only posts to your installation's own project
+          rather than through the relay.
         </p>
         <p>
           <strong>A notification Fugaro sends carries a category and nothing else: no run title,
