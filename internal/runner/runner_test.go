@@ -259,6 +259,30 @@ func withFixturePins(cfg string) string {
 	return strings.Replace(cfg, "agent:\n", "agent:\n  "+fixturePins+"\n", 1)
 }
 
+// liftedRecipe is the recipe a fixture's launch now embeds (PR3, D3304): a
+// run no longer reads .fugaro/recipes/ (a task that leaves its recipe there
+// is refused at bootstrap), and every fixture below was written while it
+// did — config names the recipe, the fixture commits the file. Embedding
+// that file's own text makes the task the one `fugaro run` writes today (the
+// launcher embeds the copy the project resolves), so those tests still
+// exercise the recipe they mean to. A test that wants the refusal passes a
+// spec of its own, which this never touches.
+func liftedRecipe(files map[string]string) *task.Recipe {
+	var doc struct {
+		Agent *struct {
+			Recipe string `yaml:"recipe"`
+		} `yaml:"agent"`
+	}
+	if err := yaml.Unmarshal([]byte(files["fugaro.yaml"]), &doc); err != nil || doc.Agent == nil || doc.Agent.Recipe == "" {
+		return nil
+	}
+	text, ok := files[".fugaro/recipes/"+doc.Agent.Recipe+".yaml"]
+	if !ok {
+		return nil
+	}
+	return &task.Recipe{Name: doc.Agent.Recipe, Source: string(recipe.SourceProject), SHA256: recipe.Sum([]byte(text)), YAML: text}
+}
+
 // newHarnessFiles is newHarness with extra files committed to the remote.
 func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string]string) *harness {
 	t.Helper()
@@ -283,6 +307,7 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 		// in, and every test here that gives the run a Cloud Run execution
 		// would stop on that instead of on what it is about.
 		spec = &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+		spec.Recipe = liftedRecipe(files)
 	}
 	store := runstore.Open(bucket, repoSlug, spec.RunID)
 	if err := store.WriteTask(context.Background(), spec); err != nil {
