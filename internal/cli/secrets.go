@@ -92,6 +92,14 @@ type secretsOptions struct {
 	// field here rather than a second path so both directions write through
 	// secretsSetPolicy and its sentences are the same sentences.
 	denyDataTo []string
+	// allRepos and allReposSet are `secrets allow --all-repos`: the project
+	// record's own member that admits every repository enrolled in the project,
+	// whatever its owner, which the operator-local block's owner-literal rule
+	// has no spelling for (O2). It is a member of the record alone and writes
+	// nothing to the local config, so a run that sets it makes no file edit at
+	// all (secrets_allow.go's secretsPolicyWriteAllRepos).
+	allRepos    bool
+	allReposSet bool
 	// form is the command this run was reached through when it is not `secrets
 	// set`: `secrets allow` and `secrets deny` write the same entry through this
 	// same path, and it is what makes the coding agent's refusal print the form
@@ -260,7 +268,7 @@ var optionalRepoVerbs = map[string]map[string]bool{
 // change to the command's surface, not to this scan, and is not made here.
 // What this map does is keep the scan's model of pflag true, which is the
 // invariant the doc above claims and the one a future flag addition breaks.
-var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "--proxy": true, "--dry-run": true, "--help": true}
+var secretsBoolFlags = map[string]bool{"--json": true, "--project-wide": true, "--proxy": true, "--all-repos": true, "--dry-run": true, "--help": true}
 
 // budgetBoolFlags is the same list for the budget commands whose --repo takes
 // an optional value (optionalRepoVerbs), and it exists for the same reason:
@@ -1109,6 +1117,12 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	if (len(o.allowDataTo) > 0 || len(o.denyDataTo) > 0) && proxy {
 		return userErr("--allow-data-to and --proxy are two different edits: name one, and repeat the command for the other")
 	}
+	// --all-repos is a third edit of its own: it admits every repository of the
+	// project through the record's own member, which is neither a pattern the
+	// local block can hold nor the Bitbucket token's switch.
+	if o.allReposSet && (len(o.allowDataTo) > 0 || len(o.denyDataTo) > 0 || proxy) {
+		return userErr("--all-repos admits every repository of the project, and PATTERNs name the repositories one at a time: name one, and repeat the command for the other")
+	}
 	sel, lc, err := o.aimedSelection()
 	if err != nil {
 		return err
@@ -1136,6 +1150,29 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 		// the switch.
 		return userErr("%s is the Bitbucket token's switch, and %s.%s holds no such member (D493, D1275): the credentials service forwards that token alone and reads its switch from %s.%s, so there is nothing here for --proxy to write — the member this flag writes in that block is allow_data_to",
 			pluginwire.Printable("proxy"), block, pluginwire.Printable(name), secretsBlockProject, config.BitbucketSecret)
+	}
+	if o.allReposSet && block != secretsBlockWorkflow {
+		// all_repos is a member of the workflow secret's project record: the
+		// record's names are workflow secrets (IS1), and a reserved name's reach
+		// is its own project_secrets.allow_data_to list. A switch written here
+		// would be a setting nothing reads, which is the same failure the proxy
+		// refusal above exists to prevent.
+		return userErr("%s.%s is a reserved name's own entry, whose reach is its allow_data_to list: --all-repos is a member of a workflow secret's project record, so pass it on a name your local config holds in %s, or name PATTERNs here",
+			secretsBlockProject, pluginwire.Printable(name), secretsBlockWorkflow)
+	}
+	if o.allReposSet {
+		// The record's own member, and the local block is not written at all: the
+		// block's rule is owner-literal and has no spelling for "every repository
+		// of the project, whatever its owner" (O2), so a switch that reached the
+		// file would be a setting the loader refuses and the file and the record
+		// would disagree. Refused in a coding agent's session first, with the
+		// command to run (D1552), and before the file is read, so a refusal leaves
+		// both halves untouched.
+		if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" {
+			return userErr("refusing to write %s in a coding agent's session (%s is set): it admits every repository enrolled in the project to the value, which no plan shows; run this yourself at your own terminal: %s; nothing was written",
+				pluginwire.Printable(secretsPolicyAllReposKey(name)), marker, secretsSetPolicyCommand(o, name, false))
+		}
+		return secretsPolicyWriteAllRepos(cmd, lc, name, o.allRepos)
 	}
 	key := block + "." + name + ".proxy"
 	if len(o.allowDataTo) > 0 || len(o.denyDataTo) > 0 {
@@ -1210,6 +1247,22 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	}); err != nil {
 		return err
 	}
+
+	// The record, for a workflow secret: the list the credentials service
+	// admits a version-2 fetch by, written beside the local block the same run
+	// writes (IS3, D3328). It comes after the file's own compare-and-swap, not
+	// before it: the record is the authority the service enforces, and a run
+	// that lost the file's race — refused with `changed since it was read:
+	// nothing was written` — must not have widened the record on its way there.
+	// The list written is the one the file now holds, so the two halves cannot
+	// come to say different things. The project block has no record entry — the
+	// record names workflow secrets — and a dry run writes neither half.
+	if block == secretsBlockWorkflow && !o.dryRun {
+		if err := secretsPolicyWriteRecord(cmd, lc, name, secretsPolicyEntryOf(after, block, name).AllowDataTo); err != nil {
+			return err
+		}
+	}
+
 	// `secrets allow` and `secrets deny` end on the one line every settings
 	// write ends on, and only when the write happened: a run that named a
 	// pattern the entry already holds, or one it does not hold, is the "no
@@ -1492,6 +1545,9 @@ func secretsSetPolicyCommand(o secretsOptions, name string, proxy bool) string {
 		}
 		if proxy {
 			parts = append(parts, "--proxy="+strconv.FormatBool(o.proxy))
+		}
+		if o.allReposSet {
+			parts = append(parts, "--all-repos="+strconv.FormatBool(o.allRepos))
 		}
 		return strings.Join(parts, " ")
 	case "deny":

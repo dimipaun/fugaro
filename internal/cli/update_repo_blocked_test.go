@@ -88,7 +88,7 @@ func TestUpdateConvergesPastAnInvalidCheckoutFugaroYAML(t *testing.T) {
 			t.Errorf("the %s stage acted behind a stage left for the user: it publishes installation state, and a run that is not converged does not publish what admits its runs\n%q\n%s", name, l, out)
 		}
 	}
-	if got := out + newestLog(t, "update"); !strings.Contains(got, "wait for repository") {
+	if got := out + newestLog(t, "update"); !waitsFor(got, initflow.Repository) {
 		t.Errorf("the run does not say the stages behind the repository stage wait for it:\n%s", out)
 	}
 
@@ -203,8 +203,12 @@ func TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile(t *testing.T
 	account := reportLines(out + newestLog(t, "update"))
 
 	// The stop: the repository stage could not clear the App ID at this terminal
-	// and failed over it, and a failure is not the user's to clear later.
-	if l := stepLineOf(account, initflow.Repository); !strings.HasPrefix(l, markFailed) || !strings.Contains(l, "GitHub App ID") {
+	// and failed over it, and a failure is not the user's to clear later. What
+	// it failed over is the message under the step's own line, not the line —
+	// a failed step prints its name and the whole of the error under it
+	// (report.Step.Failed).
+	l := stepLineOf(account, initflow.Repository)
+	if !strings.HasPrefix(l, markFailed) || !strings.Contains(strings.Join(account, "\n"), "GitHub App ID") {
 		t.Fatalf("the repository stage's line is %q, want a failure over the missing GitHub App ID\n%s", l, out)
 	}
 
@@ -213,7 +217,7 @@ func TestUpdateDoesNotBuildPastARepositoryStopThatIsNotAboutTheFile(t *testing.T
 	if l := stepLineOf(account, initflow.Checkout); l != "" {
 		t.Errorf("the checkout stage acted behind a stop this run did not clear: %q\n%s", l, out)
 	}
-	if got := out + newestLog(t, "update"); !strings.Contains(got, "wait for repository") {
+	if got := out + newestLog(t, "update"); !waitsFor(got, initflow.Repository) {
 		t.Errorf("the run does not say the stages behind the repository stage wait for it:\n%s", out)
 	}
 	if n := len(r.builder.specs); n != 0 {

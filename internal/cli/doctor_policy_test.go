@@ -934,6 +934,57 @@ func TestDoctorPolicyChecks(t *testing.T) {
 		}
 	})
 
+	t.Run("a marker of the launch envelope's generation, below the signature's", func(t *testing.T) {
+		// Generation 10 already carries the phone's stop request and the launch
+		// envelope, so the sentence for it must not send the operator after
+		// either: what generation 11 adds is the tag a signing device carries in
+		// place of the `mac` and the typed launch action, and that is what it
+		// names (mobile identity-pairing task J5r, O6 and O10). Generation 10 is
+		// the marker every installation on the release behind this one reports,
+		// so this is the state the sentence is read in — and the state a signing
+		// phone meets: under those rules every message it signs and every
+		// heartbeat is refused at the database with no error, and its launch is
+		// refused at the verb enumeration, so the app can neither speak nor
+		// start anything until the deploy.
+		if rulesLaunchGeneration >= projectpolicy.RulesVersion {
+			t.Fatalf("rulesLaunchGeneration = %d and RulesVersion = %d: this case is about a marker between them", rulesLaunchGeneration, projectpolicy.RulesVersion)
+		}
+		_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+		db.Set(projectpolicy.PathRulesMarker(), rulesLaunchGeneration)
+		db.SetRules([]byte(`{"rules":{".read":false,".write":false}}`))
+		c, ok := doctorChecksByID(t)["policy-rules-skew"]
+		if !ok || c.Severity != "warning" {
+			t.Fatalf("policy-rules-skew = %+v (present %v), want a warning", c, ok)
+		}
+		if c.Problem != rulesMarkerOlderText(rulesLaunchGeneration) {
+			t.Errorf("the body is not rulesMarkerOlderText:\n got %q\nwant %q", c.Problem, rulesMarkerOlderText(rulesLaunchGeneration))
+		}
+		for _, want := range []string{fmt.Sprintf("generation %d", rulesLaunchGeneration), "sig", "launch", fmt.Sprintf("generation %d or newer", projectpolicy.RulesVersion)} {
+			if !strings.Contains(c.Problem, want) {
+				t.Errorf("the body does not carry %q: %q", want, c.Problem)
+			}
+		}
+		// The earlier generations' own absences are what must not appear, for
+		// the reason the cases above give — and the launch envelope's is the one
+		// next door, since this marker's rules carry it: a sentence that claimed
+		// the stop request or the envelope were missing would send the operator
+		// after a deploy they already ran.
+		for _, bad := range []string{"fugaro pair", "by hand", "no run reads a published policy", coordpath.PathRoot + "/", "neither ask for a stop", "adds the credential route", "reads no route", "refused the whole stage report", "registered with nothing"} {
+			if strings.Contains(c.Problem, bad) {
+				t.Errorf("the body for a generation-%d marker carries %q, which is about rules it already has: %q", rulesLaunchGeneration, bad, c.Problem)
+			}
+		}
+		if !strings.Contains(c.Problem, "which adds the two shapes a phone of this release writes") {
+			t.Errorf("the body for a generation-%d marker does not name what the redeploy adds (the tag a signing device carries and the typed launch it sends): %q", rulesLaunchGeneration, c.Problem)
+		}
+		if !strings.Contains(c.Fix, "fugaro update") || strings.Contains(c.Fix, "--firebase-project") {
+			t.Errorf("the check does not name the owner's fix: %+v", c)
+		}
+		if !strings.Contains(c.Fix, "the device's signature and the typed launch") || strings.Contains(c.Fix, "stop request") || strings.Contains(c.Fix, "credential route") || strings.Contains(c.Fix, "run's outcome") || strings.Contains(c.Fix, "stage report") || strings.Contains(c.Fix, "registration") || strings.Contains(c.Fix, "voice") || strings.Contains(c.Fix, "coordinator") {
+			t.Errorf("the fix for a generation-%d marker does not name what the redeploy adds (the tag a signing device carries and the typed launch it sends): %q", rulesLaunchGeneration, c.Fix)
+		}
+	})
+
 	t.Run("a marker that is a negative generation", func(t *testing.T) {
 		// A negative marker is an integer, so this check's gen < RulesVersion
 		// branch took it as an old deployment and printed

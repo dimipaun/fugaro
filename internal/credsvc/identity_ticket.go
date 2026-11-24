@@ -202,6 +202,20 @@ func (s *Server) identityTicket(ctx context.Context, w http.ResponseWriter, call
 		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
 			requestRefused+"the attempt the ask names is not one the orchestrator's own spelling could have written")
 		return
+	case caller.Class != identitywire.ClassOrchestrator && req.Resumes != "":
+		// The resume reference is the orchestrator's own (D3189), as the
+		// attempt reference is: it names a paused run of this installation, and
+		// the class is the one that continues one.
+		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
+			requestRefused+"the ask names a resume, which is the resident orchestrator's own reference to the pause it continues")
+		return
+	case req.Resumes != "" && (!task.ValidRunID(req.Resumes) || budget.Key(req.Resumes) != req.Resumes):
+		// A resume names a run of this installation, so it is held to the shape
+		// a run id has — the same shape and the same escaping rule the ask's own
+		// run is held to above, because it is a run id that is looked up.
+		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
+			requestRefused+"the resume the ask names is not a run id of this installation's shape")
+		return
 	case req.MaxRuntimeSeconds <= 0:
 		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
 			requestRefused+"the ask names no runtime, and a ticket for no runtime is a ticket for an identity that is never live")

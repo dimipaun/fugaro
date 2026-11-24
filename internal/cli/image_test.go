@@ -476,7 +476,7 @@ func TestImageBuildCloudFailureIsRemote(t *testing.T) {
 	// the terminal's under --verbose — so what a failed build shows is the
 	// reporter's block: the step that failed, the error naming the build, and
 	// the path the run's full output is in, which holds that line (G8, D1352).
-	if ExitCode(err) != ExitRemoteError || !strings.Contains(out, markFailed+" app: ") || !strings.Contains(out, "full output: ") {
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(out, markFailed+" app") || !strings.Contains(out, "Log:  ") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	if log := writesALog(t, "image-build"); !strings.Contains(log, "submitted; log: ") {

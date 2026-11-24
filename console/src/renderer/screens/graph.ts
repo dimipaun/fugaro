@@ -2756,6 +2756,15 @@ export class GraphScreen {
     return this.model
   }
 
+  /** planInHand is the plan document the drawing on screen was made from, or
+   * `null` when the screen holds none (a refusal took it down). It is what the
+   * entry puts in its session cache after a decoration: the merge read's
+   * document and the canvas's are the same plan, and a decoration that landed
+   * after the merge read must not cache the older of the two. */
+  get planInHand(): PlanStatusView | null {
+    return this.document
+  }
+
   /** load takes a plan document, the console's run list and the sentence a
    * refused scope is answered with, and answers the next drawing -- or `null`
    * when a later ask has already superseded this one.
@@ -2829,6 +2838,40 @@ export class GraphScreen {
   decorate(runs: readonly string[]): ScreenElement | null {
     this.runs = runs
     return this.redraw()
+  }
+
+  /**
+   * decorateMerges takes the plain `plan status` document -- the same plan, read
+   * with its merge state -- and answers the drawing it makes (IR4 of the
+   * console-fixes plan, D3217 as amended).
+   *
+   * **It is the third read of the same section and the same rule as
+   * `decorate`'s.** The document is one this screen has already drawn: `--all`
+   * lists the same tasks either way and only the merge state of a task whose run
+   * recorded a ready pull request differs -- `done` with the `merge unknown` mark
+   * becomes `done`/closed -- so what arrives is a **decoration** of the canvas on
+   * screen and never a different graph. The node set is the same, which is why
+   * the entry hands this document to a screen that already holds one rather than
+   * going back through `load`: nothing about it is a new first paint, the run
+   * list and the live feed folded into the drawing in hand stay as they are, and
+   * a merged node's card changes colour under the reader's cursor instead of the
+   * whole picture being replaced.
+   *
+   * **The layout is asked, and it is the cache that makes that free.** The mark
+   * is part of a node's structure hash -- the drawing is sized by what it writes
+   * -- so this is `build`'s path and not `redraw`'s, and the engine answers a
+   * document it has already placed without a message to the worker.
+   *
+   * **`notice` is the sentence the drawing carries afterwards**, `load`'s third
+   * argument asked at the decoration instead of at a first paint: a screen whose
+   * notice is the merge section's own refusal must not keep it once a read has
+   * answered -- the sentence was about a read that did not answer, and the entry
+   * hands the scope's own sentence (usually none) back with the document.
+   */
+  decorateMerges(document: PlanStatusView, notice: string | null = null): Promise<ScreenElement | null> {
+    this.document = document
+    this.notice = notice
+    return this.build()
   }
 
   /**

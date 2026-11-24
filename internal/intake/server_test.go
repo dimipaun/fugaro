@@ -1577,3 +1577,160 @@ func TestUnknownRouteIsNotAnAct(t *testing.T) {
 		t.Fatalf("an unknown route wrote %s", f.lines.String())
 	}
 }
+
+// rosterPerson is the class a workspace's own project gives its intake (WC3,
+// R5): the installation's launchers AND the people of the workspace's roster as
+// ONE list, which is what the module composes into the class this process reads
+// (intake.tf's local.intake_accounts, one expression with the invoker grant).
+// The person on the roster is deliberately NOT a launcher of the project (F10:
+// the launchers' own list is the workspace project's credentials service
+// invoker set too, so `fugaro update` writes their address into the intake's
+// second list and not into that one).
+//
+// The admin is on the class as well, because admin-ness decides nothing to a
+// caller the class already refused: the derived list is asked only after the
+// caller is admitted (internal/intake's route order), so an admin of the
+// workspace project reaches the shared prefix by being on the installation's
+// class like everybody else, and their being on the list is the second
+// question.
+func rosterPerson(t *testing.T) *fixture {
+	t.Helper()
+	return newFixture(t, []string{testOwnerEmail, testAdminEmail, testOtherEmail}, []access.Admin{{Email: testAdminEmail, Sub: testAdminSub}})
+}
+
+// TestAnInstallationsIntakeAdmitsItsLaunchersOnly: the class the intake is
+// built with is the installation's own, and it admits exactly the people on it
+// — a launcher, and a person the workspace's roster put there (WC3, R5) — and
+// nobody else. The second list widens WHO may write and nothing about what they
+// may write: both classes reach the same routes on the same terms, which is why
+// the one class list is the whole of the admission and there is no second
+// question per caller.
+func TestAnInstallationsIntakeAdmitsItsLaunchersOnly(t *testing.T) {
+	f := rosterPerson(t)
+	for _, who := range []struct{ what, email, sub string }{
+		{"a launcher of the installation", testOwnerEmail, testOwnerSub},
+		{"a person of the workspace's roster", testOtherEmail, testOtherSub},
+	} {
+		w := f.post(t, CreatePath, f.token(t, who.email, who.sub), createBody(ScopeUser, "claude-oauth-token", testValue))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: create got %d %s", who.what, w.Code, w.Body.String())
+		}
+	}
+	want := []string{
+		secretname.UserPrefix + testOwnerSub + "_claude-oauth-token",
+		secretname.UserPrefix + testOtherSub + "_claude-oauth-token",
+	}
+	if !slices.Equal(f.store.created, want) {
+		t.Fatalf("the created containers are %v, want %v: each caller writes under their own account id", f.store.created, want)
+	}
+
+	// A caller in neither list is refused before any write, however plausible
+	// their token: the class is the whole of who this installation admits.
+	stranger := "stranger@example.com"
+	w := f.post(t, CreatePath, idToken(t, stranger, testAdminSub), createBody(ScopeUser, "claude-oauth-token", testValue))
+	if w.Code != http.StatusForbidden || errorType(t, w) != ErrorUnverifiedLauncher {
+		t.Fatalf("a caller on neither list: got %d %s, want 403 %s", w.Code, errorType(t, w), ErrorUnverifiedLauncher)
+	}
+	if len(f.store.created) != len(want) {
+		t.Fatalf("a refused caller made the containers %v, want %v", f.store.created, want)
+	}
+}
+
+// TestARosterPersonWritesOnlyUnderTheirOwnId: a person the workspace's roster
+// admitted writes under the account id THEIR OWN token carries and nowhere else
+// — one container per person and name in the workspace project's intake
+// (D3143), and their own `sub` is what names it (R3, R10).
+func TestARosterPersonWritesOnlyUnderTheirOwnId(t *testing.T) {
+	f := rosterPerson(t)
+	tok := f.token(t, testOtherEmail, testOtherSub)
+
+	// The body is the one every caller sends, and a body that tries to name
+	// the owner at all is refused by the decoder rather than read.
+	for _, body := range []string{
+		`{"scope":"user","name":"claude-oauth-token","value":"` + b64(testValue) + `","sub":"` + testOwnerSub + `"}`,
+		`{"scope":"user","name":"claude-oauth-token","value":"` + b64(testValue) + `","owner":"` + testOwnerEmail + `"}`,
+	} {
+		if w := f.post(t, CreatePath, tok, body); w.Code != http.StatusBadRequest || errorType(t, w) != ErrorRequestRefused {
+			t.Fatalf("a body naming the owner: got %d %s, want 400 %s", w.Code, errorType(t, w), ErrorRequestRefused)
+		}
+	}
+
+	if w := f.post(t, CreatePath, tok, createBody(ScopeUser, "claude-oauth-token", testValue)); w.Code != http.StatusOK {
+		t.Fatalf("the roster person's create: got %d %s", w.Code, w.Body.String())
+	}
+	want := secretname.UserPrefix + testOtherSub + "_claude-oauth-token"
+	if !slices.Equal(f.store.created, []string{want}) {
+		t.Fatalf("the created containers are %v, want %v: the prefix is the caller's own account id and never a body's", f.store.created, []string{want})
+	}
+	got := f.store.containers[want].Annotations
+	for k, v := range map[string]string{
+		AnnotationOwnerSub:   testOtherSub,
+		AnnotationOwnerEmail: testOtherEmail,
+		AnnotationCreatedBy:  testOtherEmail,
+	} {
+		if got[k] != v {
+			t.Fatalf("the container's %s is %q, want %q", k, got[k], v)
+		}
+	}
+
+	// And a list answers them their own containers and no other caller's: the
+	// launcher's is there for the store and not for them.
+	their := f.store.containers[want]
+	if w := f.post(t, CreatePath, f.token(t, testOwnerEmail, testOwnerSub), createBody(ScopeUser, "claude-oauth-token", testValue)); w.Code != http.StatusOK {
+		t.Fatalf("the launcher's create: got %d %s", w.Code, w.Body.String())
+	}
+	if their.ID != want {
+		t.Fatalf("the store's own container moved: %q", their.ID)
+	}
+	w := f.post(t, ListPath, tok, `{"scope":"user"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("the roster person's list: got %d %s", w.Code, w.Body.String())
+	}
+	var answer ListAnswer
+	if err := json.Unmarshal(w.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("the list answer: %v (%s)", err, w.Body.String())
+	}
+	if len(answer.Secrets) != 1 || answer.Secrets[0].ID != want {
+		t.Fatalf("the list answer is %+v, want only %s", answer.Secrets, want)
+	}
+	if strings.Contains(w.Body.String(), testOwnerSub) {
+		t.Fatalf("the answer carries another caller's account id: %s", w.Body.String())
+	}
+}
+
+// TestARosterPersonIsRefusedTheProjectPrefix: the shared prefix stays the
+// derived admin list's (D1935, D1940). A person the workspace's roster admitted
+// is a person of the `fugaro_u_` half under their own id and of NOTHING ELSE of
+// that installation (WC3, R5): they are not on the admin list, so every route
+// that reaches `fugaro_p_` refuses them and nothing of theirs lands there.
+func TestARosterPersonIsRefusedTheProjectPrefix(t *testing.T) {
+	f := rosterPerson(t)
+	tok := f.token(t, testOtherEmail, testOtherSub)
+
+	for _, c := range []struct{ path, body string }{
+		{CreatePath, createBody(ScopeShared, "claude-oauth-token", testValue)},
+		{VersionPath, createBody(ScopeShared, "claude-oauth-token", testValue)},
+		{ListPath, `{"scope":"shared"}`},
+		{DeletePath, `{"scope":"shared","name":"claude-oauth-token"}`},
+	} {
+		w := f.post(t, c.path, tok, c.body)
+		if w.Code != http.StatusForbidden || errorType(t, w) != ErrorNotAdmin {
+			t.Fatalf("%s on the shared prefix: got %d %s, want 403 %s", c.path, w.Code, errorType(t, w), ErrorNotAdmin)
+		}
+	}
+	if len(f.store.created) != 0 || len(f.store.deleted) != 0 {
+		t.Fatalf("a refused shared call reached the store: created %v, deleted %v", f.store.created, f.store.deleted)
+	}
+
+	// The admin on the derived list holds it, which is what makes the refusal
+	// the list's and not a route's: the second class admits a person to the
+	// same routes a launcher reaches, and the shared prefix is neither's unless
+	// the list says so.
+	w := f.post(t, CreatePath, f.token(t, testAdminEmail, testAdminSub), createBody(ScopeShared, "claude-oauth-token", testValue))
+	if w.Code != http.StatusOK {
+		t.Fatalf("the admin's shared create: got %d %s", w.Code, w.Body.String())
+	}
+	if want := []string{secretname.ProjectPrefix + "claude-oauth-token"}; !slices.Equal(f.store.created, want) {
+		t.Fatalf("the created containers are %v, want %v", f.store.created, want)
+	}
+}
