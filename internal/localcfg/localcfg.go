@@ -2153,9 +2153,11 @@ type Repo struct {
 	// GitHubAppID is the repository's GitHub App, for GitHub
 	// repositories. It is not a secret.
 	GitHubAppID string `yaml:"github_app_id,omitempty"`
-	// Vertex records that one of the repository's workflows authenticates
-	// its agent through Vertex AI (agent.auth: vertex), so fugaro update
-	// enables the Vertex AI API. fugaro update sets it.
+	// Vertex records that the repository's runs reach Vertex AI at all —
+	// its file's agent.auth: vertex, or a chain of the project's own
+	// routing table that may serve it naming Vertex — so fugaro update
+	// enables the Vertex AI API. fugaro update sets it, from
+	// infra.RepoSpec.UsesVertex.
 	Vertex bool `yaml:"vertex,omitempty"`
 	// CredentialsServiceReady records that this repository's root has been
 	// applied with the installation's credentials service ON — its bundle

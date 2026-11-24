@@ -16,6 +16,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
+// release0121 is a job image whose runner reads a task's base_branch
+// (baseBranchSince), the field TestBaseBranchOnAFollowUp is about.
+const release0121 = "ghcr.io/dimipaun/fugaro-base:0.12.1"
+
 // baseBranchCheckout makes the working directory a checkout of repo with the
 // given fugaro.yaml, and gives origin the remote-tracking refs of main,
 // develop and master. A branch of "" leaves HEAD detached: that is the

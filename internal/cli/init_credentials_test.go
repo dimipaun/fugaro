@@ -793,12 +793,17 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 	// rig's config records a Bitbucket repository and has the service opted in,
 	// so the installation deploys the implicit review-only job of that provider
 	// (plan task RJ8, finding F6) and the service has to admit the caller that
-	// runs it. And signer_account is the identity half's arrival, the same kind
-	// again: the names are written by the run that DEPLOYS the service and by
-	// no other, so an installation that already has the block gains the signer
-	// — and the roster and the implicit admins, where this rig's config names
-	// any (TestUpdateNamesTheServicesIdentity is that case) — on the next
-	// update. Every other member is the earlier run's, byte for byte.
+	// runs it. shared_job_accounts is the same kind of arrival for the third
+	// table the refresh composes (B5.1): the class's own table is derived from
+	// the installation's profiles, so the first update of an installation whose
+	// block predates the module's rendering of it writes one row per profile
+	// rather than carrying the member the previous release never wrote. And
+	// signer_account is the identity half's arrival, the same kind again: the
+	// names are written by the run that DEPLOYS the service and by no other, so
+	// an installation that already has the block gains the signer — and the
+	// roster and the implicit admins, where this rig's config names any
+	// (TestUpdateNamesTheServicesIdentity is that case) — on the next update.
+	// Every other member is the earlier run's, byte for byte.
 	want := map[string]any{
 		"account_id":       infra.CredentialsAccountID,
 		"service":          infra.CredentialsServiceName,
@@ -810,6 +815,9 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 			"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "web"}},
 		"review_job_accounts": []any{map[string]any{
 			"profile": infra.ImplicitReviewProfile, "provider": "bitbucket", "account": config.DefaultClaudeAccount}},
+		"shared_job_accounts": []any{map[string]any{
+			"profile": "standard", "provider": "bitbucket", "account": "",
+			"repos": []any{"bitbucket/acme/sandbox"}}},
 		"url":            credentialsServiceURL,
 		"signer_account": infra.SignerAccountID + "@" + fpID + ".iam.gserviceaccount.com",
 		"verifier_accounts": []any{

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -32,6 +33,18 @@ type AB struct {
 	// default) is off, and a run is sampled by a hash of its run ID below
 	// the rate (D557).
 	Rate float64 `yaml:"rate"`
+	// Repos is the project's per-repository rate, keyed owner/name as
+	// rigor.repos is, each value in [0, Rate]: the repository's own rate
+	// replaces the block's, so 0 opts that one repository out without
+	// turning the project's sampling off (D3297). A repository present here
+	// is sampled at its own rate only; one left out takes Rate.
+	//
+	// It is the project layer's alone, like the challenger list: a
+	// repository's file carries ab.rate: 0 and nothing else, and an
+	// ab.repos there is refused (validateRepoAB). It is what ee/ab reads a
+	// repository's rate from once the planner has moved every per-repository
+	// opt-out here (A3.x).
+	Repos map[string]float64 `yaml:"repos"`
 	// MaxPairsPerDay is the most pairs one repository is sampled for per
 	// UTC day, counted by the launcher from today's challenger records
 	// (D557, D566). 0 takes the shipped ABDefaultMaxPairsPerDay.
@@ -111,12 +124,13 @@ func (a *AB) MaxPairs() int {
 // of 0. It is the whole of what a repository can say with its own ab: block.
 func (a *AB) Off() bool { return a == nil || a.Rate == 0 }
 
-// validateAB checks the project layer's ab: block (D557, D565). What it
-// refuses is a figure no sampling run could use — a rate outside [0,
-// ABMaxRate], a negative daily count, a model ID that is no model ID, an
-// unknown rigor mode, a negative exchange rate — and never a rate the owner
-// chose: the block is his to set, and where code may go is decided by the
-// challenger list he writes, not by this check.
+// validateAB checks the project layer's ab: block (D557, D565, D3297). What
+// it refuses is a figure no sampling run could use — a rate outside [0,
+// ABMaxRate], a negative daily count, a per-repository rate outside [0,
+// ab.rate], a repository name that is no repository name, a model ID that is
+// no model ID, an unknown rigor mode, a negative exchange rate — and never a
+// rate the owner chose: the block is his to set, and where code may go is
+// decided by the challenger list he writes, not by this check.
 func validateAB(p string, a *AB) []Problem {
 	if a == nil {
 		return nil
@@ -130,6 +144,20 @@ func validateAB(p string, a *AB) []Problem {
 	}
 	if a.MaxPairsPerDay < 0 {
 		add(p+".max_pairs_per_day", "must not be negative")
+	}
+	repos := slices.Sorted(maps.Keys(a.Repos))
+	if len(repos) > rigor.MaxRepoLevels {
+		add(p+".repos", "must hold at most %d repositories", rigor.MaxRepoLevels)
+		repos = nil
+	}
+	for _, name := range repos {
+		v := a.Repos[name]
+		switch {
+		case rigor.Member{Repo: name}.Validate() != "":
+			add(p+".repos."+name, "must be a repository name, owner/name: letters, digits, dot, dash and underscore in each of two segments, and no . or .. segment")
+		case math.IsNaN(v) || v < 0 || v > a.Rate:
+			add(p+".repos."+name, "is %v: a repository's rate sits inside the block's own ab.rate %v (D3297), where 0 opts that repository out rather than the project (D556)", v, a.Rate)
+		}
 	}
 	for i, m := range a.Challengers {
 		if msg := CheckModelPattern(m); msg != "" {
@@ -175,6 +203,9 @@ func validateRepoAB(a *AB) []Problem {
 	}
 	if a.MaxPairsPerDay != 0 {
 		add("ab.max_pairs_per_day", owner+": the daily pair count is the project's, counted per repository (D557)")
+	}
+	if names := slices.Sorted(maps.Keys(a.Repos)); len(names) > 0 {
+		add("ab.repos", "names repository "+showKey(names[0])+": ab.rate is the project's (D3237): remove the ab: block from fugaro.yaml; opt this repository out with ab.repos.<owner/name>: 0 in the project layer")
 	}
 	if modes := sortedModes(a.ExchangeRate); len(modes) > 0 {
 		add("ab.exchange_rate", "carries mode "+showKey(string(modes[0]))+": "+owner+" (D565)")

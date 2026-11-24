@@ -38,7 +38,7 @@ import (
 //
 // **A source with no spelling for a model is never sent it** (D3175). The map
 // is the only authority for a spelling (pricing.SpellingFor), and a source the
-// map does not spell that model for — a provider key for a model with no
+// map does not spell that model for — a provider key for a Claude model with no
 // measured route ID, a Vertex source for a model the map does not carry — is
 // skipped by the walk rather than sent the ID the agent asked with, which would
 // be a call to a model nobody measured on that source. sourceModel answers

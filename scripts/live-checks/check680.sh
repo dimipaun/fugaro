@@ -50,9 +50,13 @@
 #     for you in …`): the subject the three parts diagnose. The check passes its
 #     ID explicitly and holds the document's own `run_id` to it, so a diagnosis
 #     of another log cannot be read as this one's;
-#   * `gcloud` — the executions of the project's jobs before and after each part
-#     (T-TC10(a): no execution created), and, in (c), the run's own objects in
-#     the runs bucket: the record, the stored task, the answer's two artifacts
+#   * `gcloud` — what the project's jobs created while each part ran (T-TC10(a)
+#     and (b): no execution created, and (c): exactly one), read as a window on
+#     creation time — the newest executions, newest first, of which the check
+#     counts the ones created at or after the moment the window opened — rather
+#     than as a total of the project's executions, which a project that has run
+#     for weeks can never be counted against; and, in (c), the run's own objects
+#     in the runs bucket: the record, the stored task, the answer's two artifacts
 #     and the bundle that must be gone.
 #
 # What it writes, and what it puts back. This check doctors ONE file, the
@@ -103,9 +107,9 @@
 #             release carries), --absent-project the project part (b) points the
 #             tier at (it must not exist, and the check asks gcloud to confirm
 #             that), --task the text of the deliberately refused launch,
-#             --executions-limit how many executions each gcloud read asks for
-#             (default 200: a read gcloud fills is widened, because the count
-#             parts (a) and (c) compare has to be the exact one),
+#             --executions-limit how many of the NEWEST executions each gcloud
+#             read asks for (default 200: the reads are windows on creation time,
+#             so how many executions the project holds never enters them),
 #             --cloud-seconds the bound on every call of this check that reaches
 #             the cloud — the deliberately refused launch of (a), the diagnosis
 #             of (c) and the two troubleshoot reads of (a) and (b), each of which
@@ -153,13 +157,16 @@
 #             decline carried a sentence the gate did not write, an execution
 #             appeared where none may, the answer was not a cloud one, the record
 #             held no cost, the class marker was missing, the bundle survived the
-#             answer — or a guard stopped the check. 2: a row could NOT be
-#             measured, for a reason that is this check's arrangement or the
-#             installation: no failed command is logged, the workflow's image is
-#             judged from the build record rather than the local config, the
-#             config file could not be found or held to the CLI's reading, the
-#             executions could not be listed. A key the run never reached reads
-#             `FAIL — not reached`, which is a row that was NOT measured.
+#             answer — or a guard stopped the check, such as a run of the
+#             project's own jobs going on in the window this check opened. 2: a
+#             row could NOT be measured, for a reason that is this check's
+#             arrangement or the installation: no failed command is logged, the
+#             workflow's image is judged from the build record rather than the
+#             local config, the config file could not be found or held to the
+#             CLI's reading, the executions could not be listed, the record names
+#             no execution or one the list it is read against contradicts. A key
+#             the run never reached reads `FAIL — not reached`, which is a row
+#             that was NOT measured.
 #
 # Knobs, all read with a default so an unset shell runs it as written:
 # CHECK680_NAME, CHECK680_CONFIG, CHECK680_CHECKOUT, CHECK680_REPO,
@@ -280,7 +287,13 @@ A_REASON=""
 UNREACHABLE=""
 NOCLAUDE_PATH=""
 CLAUDE_DROPPED=""
-EXEC_BEFORE=""
+SINCE_CHECK=""
+SINCE_CHECK_STAMP=""
+SINCE_A=""
+SINCE_A_STAMP=""
+RUN_EXEC=""
+RUN_JOB=""
+RUN_EXEC_NAME=""
 COST_PRINTED=""
 DECLINE_STATUS=""
 LEVER=""
@@ -383,7 +396,7 @@ finish() {
 # `FAIL — not reached`, and any other recorded key follows in the order the run
 # recorded it.
 BLOCK_KEYS=(xtrace agent-session project belong checkout config login subject
-  baseline a-config a-decline a-launch a-executions b-config b-tier
+  baseline a-config a-decline a-launch a-executions b-config b-tier b-executions
   c-answer c-run c-cost c-marker c-artifacts c-bundle c-executions restore scratch)
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
@@ -586,6 +599,11 @@ cost = doc.get("cost") or {}
 if not isinstance(cost, dict):
     cost = {}
 print("cost_total=%s" % ("" if cost.get("total_usd") is None else cost["total_usd"]))
+# execution is the canonical name of the execution this run ran as
+# (projects/<p>/locations/<r>/jobs/<job>/executions/<name>): part (c) narrows its
+# read to that job and pins the one execution it finds to that name.
+execution = doc.get("execution")
+print("execution=%s" % (execution if isinstance(execution, str) else ""))
 print("artifacts=%s" % ",".join(sorted(
     (row.get("name") or "") for row in (doc.get("artifacts") or [])
     if isinstance(row, dict))))
@@ -736,37 +754,97 @@ claude_on_path() {
 }
 
 # --------------------------------------------------------------- the gcloud side
-# executions_count FILE — how many executions the project has, EXACTLY, or a
-# failure instead of a number.
+# executions_since FILE SINCE_EPOCH [JOB] — what was created at or after
+# SINCE_EPOCH, read as a window on creation time and never as a total.
 #
-# Both readings that rest on this are counts — (a) is "the refused launch created
-# none", (c) is "the diagnosis created exactly one" — and a count read through a
-# limit saturates: on a project holding as many executions as --executions-limit,
-# a refused launch that created one and a refused launch that created none read
-# the same number, so (a)'s safety row would pass over the very leak it exists to
-# find, and (c) would report a finding about a project this check never measured.
-# The read is therefore widened (×2 at a time, at most 8× what the flag asks for)
-# while gcloud returns as many names as it was asked for — a page that is not
-# full IS the count — and a project still full at the widest read is a row this
-# check did NOT measure (the callers' unmeasured path, which prints what is
-# written to the error file here) rather than a number it guessed.
-executions_count() { # executions_count FILE
-  local limit=$EXECUTIONS_LIMIT n
-  while :; do
-    gcloud run jobs executions list --project "$PROJECT" --region "$REGION" \
-      --limit="$limit" --format='value(name)' >"$1" 2>"$1.err" || return 1
-    n=$(awk 'NF{c++} END{print c+0}' "$1")
-    if [ "$n" -lt "$limit" ]; then
-      printf '%s' "$n"
-      return 0
-    fi
-    if [ "$limit" -ge "$EXECUTIONS_LIMIT_MAX" ]; then
-      printf 'the project holds at least %s executions and this check reads at most %s of them, so the count is not the exact one parts (a) and (c) compare\n' "$n" "$limit" >>"$1.err"
-      return 1
-    fi
-    limit=$((limit * 2))
-    if [ "$limit" -gt "$EXECUTIONS_LIMIT_MAX" ]; then limit=$EXECUTIONS_LIMIT_MAX; fi
-  done
+# What the rows below rest on is always "what did this part create": (a) is "the
+# refused launch created none", (c) is "the diagnosis created exactly one". A
+# total answers that only while the project is small — a count read through a
+# limit saturates, so on a project holding as many executions as the limit, a
+# refused launch that created one and a refused launch that created none read the
+# same number, and (a)'s safety row would pass over the very leak it exists to
+# find. A project that has run for weeks holds thousands of them, which is how
+# the read of a total stopped this check at its first row.
+#
+# So the read is a window: the newest EXECUTIONS_LIMIT executions of one job (or
+# of the project's jobs, where no job is named), asked for newest first, of which
+# this counts the ones whose creationTimestamp is at or after SINCE_EPOCH. How
+# many executions the project holds elsewhere never enters it, and no limit can
+# saturate it: a page that is full AND sits entirely inside the window is
+# reported as `exact=no` — a floor rather than a guess.
+#
+# The comparison is made here, in python3, and not by a gcloud --filter: a filter
+# whose key gcloud does not know answers an empty list, which would read as
+# "nothing was created" — a PASS out of a read that measured nothing at all. A
+# page that is not newest-first (a --sort-by this gcloud ignored) is a failure
+# for the same reason: what sits behind the window's edge would be invisible.
+#
+# Prints `read=`, `count=` (the rows at or after SINCE_EPOCH), `exact=` and
+# `names=` (those rows' names, newest first) on stdout, and answers non-zero with
+# the reason on FILE.err where the list itself could not be read.
+executions_since() { # executions_since FILE SINCE_EPOCH [JOB]
+  local file=$1 since=$2 job=${3:-}
+  local common=(--project "$PROJECT" --region "$REGION"
+    --sort-by='~metadata.creationTimestamp' --limit="$EXECUTIONS_LIMIT" --format=json)
+  if [ -n "$job" ]; then
+    gcloud run jobs executions list --job "$job" "${common[@]}" >"$file" 2>"$file.err" || return 1
+  else
+    gcloud run jobs executions list "${common[@]}" >"$file" 2>"$file.err" || return 1
+  fi
+  python3 - "$file" "$since" "$EXECUTIONS_LIMIT" <<'PY' 2>>"$file.err" || return 1
+import datetime, json, re, sys
+
+STAMP = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:?\d{2})?$")
+
+
+def epoch(stamp):
+    m = STAMP.match(stamp.strip())
+    if not m:
+        raise ValueError(stamp)
+    base, frac, off = m.group(1), (m.group(2) or "")[:6].ljust(6, "0"), m.group(3)
+    iso = "%s.%s%s" % (base, frac, "+00:00" if off in (None, "Z", "+00:00") else off)
+    return datetime.datetime.fromisoformat(iso).timestamp()
+
+
+path, since, limit = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+try:
+    rows = json.load(open(path))
+except Exception as exc:
+    print("gcloud's answer is not a document this check can read (%s)" % exc, file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(rows, list):
+    print("gcloud's answer is not the list of executions this check reads", file=sys.stderr)
+    raise SystemExit(1)
+seen = []
+for row in rows:
+    meta = row.get("metadata") if isinstance(row, dict) else None
+    meta = meta if isinstance(meta, dict) else {}
+    name, stamp = meta.get("name"), meta.get("creationTimestamp")
+    if not isinstance(name, str) or not name or not isinstance(stamp, str) or not stamp:
+        print("an execution of this answer names no name or no creation time", file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        seen.append((epoch(stamp), name))
+    except Exception:
+        print("an execution of this answer carries a creation time this check cannot read (%s)" % stamp, file=sys.stderr)
+        raise SystemExit(1)
+for older, newer in zip(seen, seen[1:]):
+    if newer[0] > older[0]:
+        print("gcloud answered these executions oldest last and not newest first, so the window's edge is not on this page", file=sys.stderr)
+        raise SystemExit(1)
+inside = [name for when, name in seen if when >= since]
+print("read=%d" % len(seen))
+print("count=%d" % len(inside))
+print("exact=%s" % ("no" if len(seen) >= limit and len(inside) == len(seen) else "yes"))
+print("names=%s" % ",".join(inside))
+PY
+}
+
+# window_start: the moment a window opens, printed as `EPOCH STAMP`. One instant,
+# read once, so the epoch the comparison uses and the timestamp the row prints
+# cannot be a second apart.
+window_start() {
+  python3 -c 'import datetime; n = datetime.datetime.now(datetime.timezone.utc); print(int(n.timestamp()), n.strftime("%Y-%m-%dT%H:%M:%SZ"))'
 }
 
 # -------------------------------------------------------------------- the steps
@@ -889,14 +967,24 @@ step_setup() {
   fact login PASS "the three diagnoses run with no local login, which is the only state the cloud tier answers in: CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_API_KEY are unset and \`claude\` is off PATH${CLAUDE_DROPPED:+ (dropped from PATH: $CLAUDE_DROPPED)} (it resolves to '${claude:-nothing}'). D2400: with a local login the local tier answers instead, and this check will not take yours away"
 
   step_subject
-  local n
-  n=$(executions_count "$SCRATCH/executions.before" || true)
-  if [ -z "$n" ]; then
-    unmeasured baseline "gcloud run jobs executions list --project $PROJECT --region $REGION answered nothing this check can count ($(last_lines "$SCRATCH/executions.before.err")): parts (a) and (b) read 'no execution created' against this list and part (c) reads one more than it, so nothing could be measured without it"
+
+  # The window every part below is read against, opened before anything of this
+  # check is arranged, and the read that proves the list can be read at all — so
+  # a project whose executions cannot be listed stops the check here, before it
+  # writes a byte of the installation's config.
+  read -r SINCE_CHECK SINCE_CHECK_STAMP <<<"$(window_start)"
+  if ! executions_since "$SCRATCH/executions.before" "$SINCE_CHECK" >"$SCRATCH/before.txt"; then
+    unmeasured baseline "gcloud run jobs executions list --project $PROJECT --region $REGION --sort-by '~metadata.creationTimestamp' --limit $EXECUTIONS_LIMIT answered nothing this check can count ($(last_lines "$SCRATCH/executions.before.err")): every row below is a count of what was created at or after $SINCE_CHECK_STAMP, so nothing could be measured without it"
     stop "the project's executions could not be listed, so no part of this check could read what it created"
   fi
-  EXEC_BEFORE=$n
-  fact baseline PASS "the project has $EXEC_BEFORE execution(s) before any part of this check runs (gcloud run jobs executions list --project $PROJECT --region $REGION --limit $EXECUTIONS_LIMIT, widened while a read came back full, so the figure is the count): parts (a) and (b) are held to this figure and part (c) to exactly one more"
+  local opened names
+  opened=$(field "$SCRATCH/before.txt" count)
+  names=$(field "$SCRATCH/before.txt" names)
+  if [ "$opened" != 0 ]; then
+    fact baseline FAIL "$opened execution(s) of $PROJECT were created in the second the window opened ($SINCE_CHECK_STAMP — $names): a real run of this project's jobs was going on as this check started, and every row below counts what was created since, so it would read that run as this check's own work. Wait for the runs of $PROJECT to finish and run the check again"
+    stop "a run of the project was going on when the window opened"
+  fi
+  fact baseline PASS "the window every part below is read against opened at $SINCE_CHECK_STAMP, with no execution of $PROJECT created in it: gcloud run jobs executions list --project $PROJECT --region $REGION --sort-by '~metadata.creationTimestamp' --limit $EXECUTIONS_LIMIT (the newest $EXECUTIONS_LIMIT executions, newest first) answers the rows at or after that moment, so parts (a) and (b) read 'no execution created since $SINCE_CHECK_STAMP' and part (c) reads exactly one — and how many older executions the project holds never enters any of them"
 }
 
 # step_subject: the failed command the three parts diagnose. The check writes no
@@ -985,6 +1073,9 @@ sentence_release() { printf '%s' "$1" | grep -oE '\(fugaro [0-9]+\.[0-9]+\.[0-9]
 sentence_workflow() { printf '%s' "$1" | sed -n 's/.*workflow \([^ ]*\) .*/\1/p' | head -n 1 || true; }
 
 step_decline() {
+  # (a)'s own window, opened before the tier's read: the tier's read must upload
+  # nothing and launch nothing, and the refused launch below must not either.
+  read -r SINCE_A SINCE_A_STAMP <<<"$(window_start)"
   local status=0
   fg_bounded troubleshoot "$SUBJECT" --json >"$SCRATCH/decline.json" 2>"$SCRATCH/decline.err" || status=$?
   if [ "$status" = 124 ]; then
@@ -1088,17 +1179,19 @@ step_launch() {
 }
 
 step_no_execution() { # the whole of (a), read once at the end of it
-  local after
-  after=$(executions_count "$SCRATCH/executions.after.a" || true)
-  if [ -z "$after" ]; then
+  if ! executions_since "$SCRATCH/executions.after.a" "$SINCE_A" >"$SCRATCH/after.a.txt"; then
     unmeasured a-executions "gcloud run jobs executions list answered nothing after the refused launch ($(last_lines "$SCRATCH/executions.after.a.err")): this check will not report 'no execution created' from a list it could not read"
     stop "the executions could not be listed after the refused launch"
   fi
-  if [ "$after" != "$EXEC_BEFORE" ]; then
-    fact a-executions FAIL "the refused launch created $((after - EXEC_BEFORE)) execution(s): the project had $EXEC_BEFORE before the check and $after after it (gcloud run jobs executions list --project $REAL_PROJECT --region $REGION). D2401's decline exists so that a broken launch path costs a person a sentence and not a job that fails the same way a second time"
+  local after names rows
+  after=$(field "$SCRATCH/after.a.txt" count)
+  names=$(field "$SCRATCH/after.a.txt" names)
+  rows=$(field "$SCRATCH/after.a.txt" read)
+  if [ "$after" != 0 ]; then
+    fact a-executions FAIL "the refused launch created $after execution(s) — $names — in $PROJECT at or after $SINCE_A_STAMP (of the $rows newest execution(s) gcloud answered, which is what this row counts). D2401's decline exists so that a broken launch path costs a person a sentence and not a job that fails the same way a second time. A real run of this project's jobs going on during the check looks exactly the same: read the names before taking this for a leak, because nothing this check runs may create an execution at all"
     stop "the refused launch created an execution"
   fi
-  fact a-executions PASS "the refused launch created no execution: the project's count is unchanged at $EXEC_BEFORE (gcloud run jobs executions list --project $REAL_PROJECT --region $REGION --limit $EXECUTIONS_LIMIT, widened while a read came back full), so what the gate refused never reached the backend — and the tier's own refusal to launch over it (a-decline, above) uploaded nothing either"
+  fact a-executions PASS "the refused launch created no execution: gcloud answers no execution of $PROJECT created at or after $SINCE_A_STAMP (gcloud run jobs executions list --project $REAL_PROJECT --region $REGION --sort-by '~metadata.creationTimestamp' --limit $EXECUTIONS_LIMIT, read newest first and counted in the window), so what the gate refused never reached the backend — and the tier's own refusal to launch over it (a-decline, above) uploaded nothing either. No total of the project's executions was read, so how many older ones it holds is not part of this row"
 }
 
 step_unavailable() {
@@ -1234,6 +1327,22 @@ step_unavailable_tier() {
   esac
 }
 
+step_unavailable_executions() { # the whole of (b), read once at the end of it
+  if ! executions_since "$SCRATCH/executions.after.b" "$SINCE_A" >"$SCRATCH/after.b.txt"; then
+    unmeasured b-executions "gcloud run jobs executions list answered nothing after the tier was pointed at $UNREACHABLE ($(last_lines "$SCRATCH/executions.after.b.err")): this check will not report 'no execution created' from a list it could not read"
+    stop "the executions could not be listed after the unavailable tier"
+  fi
+  local after names rows
+  after=$(field "$SCRATCH/after.b.txt" count)
+  names=$(field "$SCRATCH/after.b.txt" names)
+  rows=$(field "$SCRATCH/after.b.txt" read)
+  if [ "$after" != 0 ]; then
+    fact b-executions FAIL "the tier pointed at $UNREACHABLE created $after execution(s) — $names — in $PROJECT at or after $SINCE_A_STAMP (of the $rows newest execution(s) gcloud answered, which is what this row counts). (b) makes the tier's own reads unavailable and is answered by the pre-flight, which runs before the bundle is uploaded and before any execution exists, so nothing it runs may reach the backend. A real run of this project's jobs going on during the check looks exactly the same: read the names before taking this for a leak, because this part launches nothing either"
+    stop "the unavailable tier created an execution"
+  fi
+  fact b-executions PASS "the tier with its own project unavailable created no execution: gcloud answers no execution of $PROJECT created at or after $SINCE_A_STAMP (gcloud run jobs executions list --project $REAL_PROJECT --region $REGION --sort-by '~metadata.creationTimestamp' --limit $EXECUTIONS_LIMIT, read newest first and counted in the window), so what (b) broke is the tier's read in its own project and not the backend: no job of $PROJECT was launched by it. No total of the project's executions was read, so how many older ones it holds is not part of this row"
+}
+
 step_answer() {
   local status=0
   fg_bounded troubleshoot "$SUBJECT" --json >"$SCRATCH/answer.json" 2>"$SCRATCH/answer.err" || status=$?
@@ -1313,6 +1422,14 @@ step_run_record() {
   cost=$(field "$SCRATCH/record.txt" cost_usd)
   total=$(field "$SCRATCH/record.txt" cost_total)
   artifacts=$(field "$SCRATCH/record.txt" artifacts)
+  RUN_EXEC=$(field "$SCRATCH/record.txt" execution)
+  case "$RUN_EXEC" in
+  */jobs/*/executions/*)
+    RUN_JOB=${RUN_EXEC#*/jobs/}
+    RUN_JOB=${RUN_JOB%%/*}
+    RUN_EXEC_NAME=${RUN_EXEC##*/}
+    ;;
+  esac
   if [ "$outcome" != artifacts ]; then
     fact c-run FAIL "the diagnosis run's record reads outcome '$outcome' and not 'artifacts': a diagnosis is a mode: artifact run whose deliverable is the answer in the bucket — it opens no pull request and is never ready for review — so a record that says otherwise is a record of something else"
     stop "the diagnosis run's record is not an artifact run"
@@ -1378,18 +1495,36 @@ step_run_record() {
 }
 
 step_executions_after() {
-  local after delta
-  after=$(executions_count "$SCRATCH/executions.final" || true)
-  if [ -z "$after" ]; then
-    unmeasured c-executions "gcloud run jobs executions list answered nothing after the diagnosis ($(last_lines "$SCRATCH/executions.final.err")): D2407's one execution and no retry is read from this list, and this check will not report it from a list it could not read"
+  if [ -z "$RUN_EXEC_NAME" ] || [ -z "$RUN_JOB" ]; then
+    unmeasured c-executions "the diagnosis run's record names no execution this check can read ('${RUN_EXEC:-nothing}', where projects/<p>/locations/<r>/jobs/<job>/executions/<name> is the shape the record writes): D2407's 'one execution and no retry' is read against the job that record names and pinned to the execution it names, so there is nothing here to hold a count to"
+    stop "the record names no execution for the diagnosis to be held to"
+  fi
+  if ! executions_since "$SCRATCH/executions.final" "$SINCE_CHECK" "$RUN_JOB" >"$SCRATCH/after.c.txt"; then
+    unmeasured c-executions "gcloud run jobs executions list --job $RUN_JOB answered nothing after the diagnosis ($(last_lines "$SCRATCH/executions.final.err")): D2407's one execution and no retry is read from this list, and this check will not report it from a list it could not read"
     stop "the executions could not be listed after the diagnosis"
   fi
-  delta=$((after - EXEC_BEFORE))
-  if [ "$delta" != 1 ]; then
-    fact c-executions FAIL "the diagnosis created $delta execution(s): the project had $EXEC_BEFORE before the check and $after after it. D2407 — one execution and no second launch — so a diagnosis that launched twice paid twice for one answer, and a reader of the record sees one run"
+  local after names rows exact
+  after=$(field "$SCRATCH/after.c.txt" count)
+  names=$(field "$SCRATCH/after.c.txt" names)
+  rows=$(field "$SCRATCH/after.c.txt" read)
+  exact=$(field "$SCRATCH/after.c.txt" exact)
+  case "$after" in
+  0)
+    unmeasured c-executions "the run's own record names the execution $RUN_EXEC_NAME of job $RUN_JOB, and gcloud answers no execution of that job created at or after $SINCE_CHECK_STAMP (of the $rows newest execution(s) it answered): the record and the list cannot both be right, and this check will not report D2407's 'exactly one' from a read that contradicts the record it is reading"
+    stop "the list says the diagnosis created no execution and the record names one"
+    ;;
+  1)
+    if [ "$names" != "$RUN_EXEC_NAME" ]; then
+      fact c-executions FAIL "the one execution of job $RUN_JOB created at or after $SINCE_CHECK_STAMP is '$names' and the diagnosis run's own record names '$RUN_EXEC_NAME': the execution this check's window holds is not the one the run says it ran as, so the run whose record, cost and artifacts were read above is not the run this project made"
+      stop "the execution in the window is not the one the record names"
+    fi
+    ;;
+  *)
+    fact c-executions FAIL "the diagnosis created $after executions of job $RUN_JOB at or after $SINCE_CHECK_STAMP (of the $rows newest execution(s) gcloud answered, exact=$exact: $names). D2407 — one execution and no second launch — so a diagnosis that launched twice paid twice for one answer, and a reader of the record sees one run. A real run of $RUN_JOB going on during this check looks exactly the same: read the names before taking this for a retry, because nothing this check runs may launch a job at all"
     stop "the diagnosis created more than one execution"
-  fi
-  fact c-executions PASS "the diagnosis created exactly one execution: the project went from $EXEC_BEFORE to $after (gcloud run jobs executions list --project $REAL_PROJECT --region $REGION --limit $EXECUTIONS_LIMIT, widened while a read came back full), which is D2407's one execution and no retry — and, since parts (a) and (b) created none, it is the only execution any part of this check created"
+    ;;
+  esac
+  fact c-executions PASS "the diagnosis created exactly one execution: $RUN_EXEC_NAME, the execution the run's own record names (in $RUN_JOB, the job the record's execution belongs to), is the only execution of that job gcloud answers at or after $SINCE_CHECK_STAMP — the moment the window opened, before any part of this check ran. That is D2407's one execution and no retry, read by time over the newest $EXECUTIONS_LIMIT executions of that job rather than against a total of the project's, and since a-executions and b-executions both read no execution of $PROJECT created at or after $SINCE_A_STAMP, it is the only execution any part of this check created"
 }
 
 step_restore() {
@@ -1413,17 +1548,18 @@ plan() {
   say "  [git, read-only] rev-parse --show-toplevel and remote get-url origin — the checkout and the repository (owner/name) everything is scoped to"
   say "  [local, read-only] \$XDG_CONFIG_HOME/fugaro/projects/<name>.yaml, read by python3 for base_images.base, gcp_project, runs_bucket and the budget block: the ONE file this check writes"
   say "  [local, read-only] the newest failed log under <state>/fugaro/logs (the CLI's own rule: a closing line 'Failed in …' or 'Left for you in …') — the failure the three parts diagnose"
-  say "  [gcloud, read-only] run jobs executions list --project <p> --region <r> — the executions before any part, which (a) and (b) are held to and (c) to exactly one more than"
+  say "  [gcloud, read-only] run jobs executions list --project <p> --region <r> --sort-by '~metadata.creationTimestamp' --limit <n> — the moment the window every part below is read against opened: nothing was created since it, so (a) and (b) read 'no execution created since' and (c) reads exactly one"
   say "  [local, WOULD WRITE, PUT BACK] base_images.base rolled back to $BAD_RELEASE in the config file (a copy beside it first; the exit trap puts it back whatever happens)"
   say "  [fugaro, no launch, no cost] troubleshoot <id> --json with NO local login (claude off PATH, neither credential variable set) — (a): the cloud tier must DECLINE in D2401's sentence, from the pre-flight, so nothing is uploaded and no execution exists"
   say "  [fugaro, THE ONE REFUSED LAUNCH, no cost, ${CLOUD_SECONDS}s bound here] run --repo <owner/name> '<this check's own task text>' — refused by the same gate, and run at all only once the decline above has shown that gate is the judge: a real run starts if that is wrong, which is why the order is this way"
-  say "  [gcloud, read-only] run jobs executions list once more — (a): the count did not move, so what the gate refused never reached the backend"
+  say "  [gcloud, read-only] run jobs executions list once more, the newest executions counted in the window (a) opened — no execution was created in it, so what the gate refused never reached the backend"
   say "  [local, PUT BACK] the base image put back from the sidecar (the image gate answers first, so (b) could not reach the tier's own reads over it)"
   say "  [local, WOULD WRITE, PUT BACK] gcp_project (and the budget block's own project and database, where the config records them) pointed at $ABSENT_PROJECT, a project gcloud is asked to confirm does not exist"
   say "  [fugaro, no launch, no cost] troubleshoot <id> --json — (b): tier 4 with the reason, a sentence that is NOT (a)'s, from the pre-flight, which is before the upload and before any execution"
   say "  [local, PUT BACK] the config file restored to the byte the check found, before anything else runs"
+  say "  [gcloud, read-only] run jobs executions list once more, the newest executions counted in the window (a) opened — neither the refused launch nor the unavailable tier created one"
   say "  [fugaro, THE ONE JOB — the recipe's own fifteen-minute timeout and USD 0.25 cap, ${CLOUD_SECONDS}s bound here] troubleshoot <id> --json — (c): a cloud answer with its cost, and the run it names is then read out of the bucket: the record, the stored task's review_class marker, the two answer artifacts, the deleted bundle"
-  say "  [gcloud, read-only] run jobs executions list a last time — (c): exactly one execution, no retry"
+  say "  [gcloud, read-only] run jobs executions list a last time, narrowed with --job to the job the run's own record names — (c): exactly one execution created since the window opened, and it is the execution the record names, no retry"
   say "  [local] the config compared byte for byte with what it was, the sidecar removed, the scratch directory removed"
   fact dry-run PASS "the plan was printed and nothing was run: no fugaro command, no gcloud call and no file written — the config this check would doctor was not touched, and no row of the block below was measured"
 }
@@ -1450,6 +1586,7 @@ main() {
   step_unavailable_tier
   config_restore
   PROJECT=$REAL_PROJECT
+  step_unavailable_executions
   step_answer
   step_run_record
   step_executions_after
@@ -1598,6 +1735,11 @@ TASK_DEFAULT="Check 680: this launch exists only to be refused by the installati
 TASK=${CHECK680_TASK:-${TASK_CLI:-$TASK_DEFAULT}}
 DRY_RUN=${CHECK680_DRY_RUN:-${DRY_RUN_CLI:-}}
 KEEP_SCRATCH=${CHECK680_KEEP_SCRATCH:-}
+# How many of the NEWEST executions each read asks for (see executions_since):
+# how deep a window reaches into the newest few, never a total the project has to
+# fit in. A project holding thousands of executions reads the same as one holding
+# none, and a page that comes back full and entirely inside the window is
+# reported as a floor (`exact=no`) rather than widened.
 EXECUTIONS_LIMIT=${CHECK680_EXECUTIONS_LIMIT:-${EXECUTIONS_LIMIT_CLI:-200}}
 CLOUD_SECONDS=${CHECK680_CLOUD_SECONDS:-${CLOUD_SECONDS_CLI:-1500}}
 LOGS_DIR=${CHECK680_LOGS_DIR:-}
@@ -1611,12 +1753,6 @@ esac
 case "$CLOUD_SECONDS" in
 "" | *[!0-9]*) say "--cloud-seconds has to be a whole number. usage: $USAGE"; exit 2 ;;
 esac
-
-# The widest executions_count reads: 8× what --executions-limit asks for. A
-# count read is widened while gcloud fills the page it was asked for, and a
-# project that fills this one is a row the check reports as one it could not
-# measure rather than a number it guessed (see executions_count).
-EXECUTIONS_LIMIT_MAX=$((EXECUTIONS_LIMIT * 8))
 
 trap finish EXIT
 trap on_signal INT TERM HUP

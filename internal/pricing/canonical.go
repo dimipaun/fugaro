@@ -196,12 +196,26 @@ func vertexIDFor(canonical string) (string, bool) {
 //     all. Whether the source reaches that model is a different question, and
 //     not this map's: a project's Anthropic key and a pool's accounts serve
 //     whatever the account serves, which validation asks (RT3's reach rule).
-//   - provider, vertex: the source writes the model its own way and only the
-//     map knows how — a provider's route ID (RouteIDFor), Vertex's own spelling
-//     (vertexIDFor). A model the map does not spell for that kind is answered
-//     ("", false), and a caller must not fall back to the ID the agent asked
-//     with: that is a call sent to a model nobody measured on that source,
-//     which is exactly the guess this map exists to remove.
+//   - provider: the source writes the model its own way, and there are two
+//     cases of it. A Claude model is written as the route's own ID, which only
+//     this map has (RouteIDFor): a Claude model ID it carries without one, or
+//     does not carry at all, is answered ("", false), because the ID a pin
+//     carries is the API's own and not the route's, and a route ID invented
+//     here would be a call to a model nobody measured (D8, D3175). Everything
+//     else is a vendor's own model under a provider route
+//     ("deepseek/deepseek-v4", spec.md's own `deepseek-*` → OpenRouter key),
+//     which has no canonical/route duality to translate: the route's own ID for
+//     it IS its name, so the answer is the model as written and nothing is
+//     derived. Whether the route serves it is the provider entry's own claim,
+//     which the caller asks (config.ModelProvider.Matches, RT3's reach rule),
+//     and never a spelling this map would have had to measure. A name that is
+//     not a model ID at all — an alias, a variant suffix — is answered
+//     ("", false) like any other model this map does not spell.
+//   - vertex: the source writes the model its own way too, and the map has the
+//     spelling for both halves of its column (vertexIDFor). A model neither
+//     table carries is answered ("", false), and a caller must not fall back to
+//     the ID the agent asked with: that is a call sent to a model nobody
+//     checked Vertex for, which is exactly the guess this map exists to remove.
 //
 // The kinds are internal/routing's Kind values, as strings because
 // internal/routing reads SpellingFor and a routing.Kind parameter would make
@@ -217,7 +231,26 @@ func spellingFor(kind, model string) (string, bool) {
 	case "anthropic", "pool", "launcher-pool":
 		return model, true
 	case "provider":
-		return RouteIDFor(model, "")
+		if id, ok := RouteIDFor(model, ""); ok {
+			return id, true
+		}
+		// A Claude model ID this build has no measured route for is not spelled
+		// as itself: what a pin carries is the API's own ID, not the route's,
+		// and sending it to a provider key is the guess the map exists to remove
+		// (the three measured rows above, D8; UnmappedReason says which models
+		// this refuses and why). A name that is not a model ID at all is not
+		// spelled either: an alias is not a model, and a variant ("...:free") is
+		// another route and another price.
+		if modelIDRE.MatchString(model) || IsAlias(model) {
+			return "", false
+		}
+		// Everything else is a vendor's own model under a provider route
+		// ("deepseek/deepseek-v4"): there is no canonical ID and route ID to
+		// translate between, because the route's own ID for it is its name. So
+		// the answer is the model as written and nothing is derived; whether the
+		// route serves it is the provider entry's claim, which the caller asks
+		// (config.ModelProvider.Matches, RT3's reach rule).
+		return model, true
 	case "vertex":
 		return vertexIDFor(model)
 	}

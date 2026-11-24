@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+ab:
+  rate: 0.05
+  repos:
+    acme/web: 0.02
+    acme/legacy: 0

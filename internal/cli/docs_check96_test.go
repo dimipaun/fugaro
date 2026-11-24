@@ -205,7 +205,7 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		"On a **shared project job** the same switch judges it (B5.2), so the expected answer there is `true` on a switched-on repository and `false` on one whose root has not been re-applied",
 		"that job is then where the run **stops** (exit `2`)",
 		"**What to expect on a switched-on repository is therefore `FUGARO_CREDENTIALS_SERVICE_URL` present on a per-repository job's execution and, on the same switch, on the shared project job's, and the App key not read in-job",
-		"**What a told shared job then meets is the class's own missing deployment**",
+		"**What a told shared job is admitted by is the installation's own deployment**",
 		"and whether its container carries `FUGARO_SHARED_JOB_ACCOUNTS`, the shared class's own table",
 		"**The launch is what puts it there, as of 0.10.1**",
 		"credentialsServiceLaunchEnv",
