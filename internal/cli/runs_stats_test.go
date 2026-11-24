@@ -125,20 +125,21 @@ func userStatsID(day time.Time, n int) string {
 
 // userStatsOut is runs stats --json's document, as a test reads it.
 type userStatsOut struct {
-	Version    int             `json:"version"`
-	Project    string          `json:"project"`
-	By         string          `json:"by"`
-	View       string          `json:"view"`
-	You        string          `json:"you"`
-	Admin      bool            `json:"admin"`
-	Since      string          `json:"since"`
-	Until      string          `json:"until"`
-	MaxRuns    int             `json:"max_runs"`
-	Truncated  bool            `json:"truncated"`
-	Rows       []userstats.Row `json:"rows"`
-	Totals     []userstats.Row `json:"totals"`
-	Unlaunched int             `json:"unlaunched"`
-	Notes      []string        `json:"notes"`
+	Version       int             `json:"version"`
+	Project       string          `json:"project"`
+	By            string          `json:"by"`
+	View          string          `json:"view"`
+	You           string          `json:"you"`
+	Admin         bool            `json:"admin"`
+	Since         string          `json:"since"`
+	Until         string          `json:"until"`
+	MaxRuns       int             `json:"max_runs"`
+	Truncated     bool            `json:"truncated"`
+	IndexComplete bool            `json:"index_complete"`
+	Rows          []userstats.Row `json:"rows"`
+	Totals        []userstats.Row `json:"totals"`
+	Unlaunched    int             `json:"unlaunched"`
+	Notes         []string        `json:"notes"`
 }
 
 // runsStats runs the command as JSON and returns its document.

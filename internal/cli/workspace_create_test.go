@@ -5,16 +5,19 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // workspace_create_test.go is the workspace's own project's root (W3 of the
@@ -28,7 +31,7 @@ import (
 // points at, a private XDG state home, and no cloud.
 //
 // The owner's half of the config is update_workspace_test.go's own fixture
-// (wsOwnerTable and wsOwnerCap, the shape `fugaro workspace member add` and
+// (wsOwnerTable and wsOwnerCap, the shape `fugaro workspace project add` and
 // `cap set` write): the stage's predicate is W2's, so the config that makes
 // this installation a workspace's own is the same document, and a second
 // spelling of it here would be a second reading of what a workspace is.
@@ -776,6 +779,46 @@ func TestWorkspaceProjectStageNamesTheIAMAccountWhenThePlanCreatesOnlyIt(t *test
 	}
 }
 
+// TestWorkspaceApplyNamesTheRostersInvokeGrants: the sentence the owner types
+// their project's name against describes what the run is going to do (WC2's
+// review), and the invoke grants the root binds on the workspace's own service
+// are part of that — one per member job account AND one per person of the
+// workspace's roster. The clause is read from the same call the plan's own
+// document was written from, so a confirmation that named one class and not the
+// other would be a sentence about a run that is not this one.
+func TestWorkspaceApplyNamesTheRostersInvokeGrants(t *testing.T) {
+	fakeTerminal(t)
+	db := gcpfake.NewRTDB(t)
+	g := newWSCreateRig(t, wsProjectName+"\n", wsOwnerTable+wsOwnerCap+wsBudgetFor(db))
+	db.Set("workspaceRosters/"+wsProjectName, wsRosterDoc(t))
+	// The block a previous release's run deployed, so this run holds a service
+	// to name in the sentence, and the URL its own outputs assign it, so the
+	// second apply finds the audience already written back.
+	wsSeedRecorded(t, wsProjectName, oldCredentialsRef("1.0.0"), wsServiceURL)
+	g.ri.setPlanAt(t, "workspace", wsAccountChange("create"), wsGrantChange("create"))
+	g.ri.script["output@workspace"] = map[string]any{
+		"stdout": `{"workspace_service_url":{"value":"` + wsServiceURL + `"}}`}
+	g.ri.save(t)
+
+	if _, err := g.apply(t, initflow.Env{Interactive: true}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var confirmation string
+	for _, line := range strings.Split(g.out.String(), "\n") {
+		if strings.HasPrefix(line, "⚠ CONFIRM ") {
+			confirmation = line
+		}
+	}
+	if confirmation == "" {
+		t.Fatalf("the stage asked nothing: no CONFIRM line in the run's output:\n%s", g.out.String())
+	}
+	for _, want := range []string{"one invoke grant on it per member job account", "one per person of the workspace's roster"} {
+		if !strings.Contains(confirmation, want) {
+			t.Errorf("the sentence the operator types does not name %q:\n%s", want, confirmation)
+		}
+	}
+}
+
 // TestWorkspaceProjectStageVerifyRefusesARootThatStillHasChanges: the apply's
 // own re-read is a boundary and not a formality — a fresh plan that still finds
 // work names the workdir the operator reads the plan in.
@@ -797,7 +840,7 @@ func TestWorkspaceProjectStageVerifyRefusesARootThatStillHasChanges(t *testing.T
 
 // TestWorkspaceProjectStageConvergesACapWithoutAMember: a config the owner's
 // own commands reach — `fugaro workspace cap set` writes the cap alone, and
-// `workspace member rm` of the last member leaves the table empty — is this
+// `workspace project rm` of the last member leaves the table empty — is this
 // project's workspace, and the run converges it. W2 publishes nothing (a record
 // that lists none admits nobody) and that is its stage's business; reading it
 // as "no workspace" here would leave the account missing, and reading it as an
@@ -974,6 +1017,221 @@ func TestWorkspaceProjectStageCarriesTheRecordedBlockWhenItDeploysNothing(t *tes
 			}
 		})
 	}
+}
+
+// wsRosterPersonA and wsRosterPersonB are two people of the fixture roster: the
+// addresses the root's `people` variable takes and binds one invoke grant per.
+const (
+	wsRosterPersonA = "ada@example.com"
+	wsRosterPersonB = "grace@example.org"
+)
+
+// wsRosterMachine is the fixture roster's one machine: a member's job account,
+// which the root's `members` variable already binds its own invoke grant to and
+// which the `people` variable must never carry (a person is admitted by address
+// and by nothing else).
+const wsRosterMachine = "fugaro-run-borealis@member-borealis-1234.iam.gserviceaccount.com"
+
+// wsBudgetFor is the budget block of an installation whose database is db: what
+// the roster read needs, and the block the rig's own config carries none of.
+func wsBudgetFor(db *gcpfake.RTDB) string {
+	return "budget: { mode: observe, per_run_usd: 5, firebase_project: " + wsProject + ", rtdb_url: " + db.URL + " }\n"
+}
+
+// wsRosterDoc is a roster node as the workspace's own database carries it: two
+// people and one machine, encoded by the package that owns the document's shape
+// rather than written out here, because a node this reader refuses would test
+// the carry path and not the read.
+func wsRosterDoc(t *testing.T) map[string]any {
+	t.Helper()
+	roster := &workspace.Roster{
+		Version:   workspace.RosterVersion,
+		Mechanism: workspace.MechanismSA,
+		People: []workspace.Person{
+			{Address: wsRosterPersonA, Kind: workspace.KindHuman},
+			{Address: wsRosterMachine, Kind: workspace.KindSA},
+			{Address: wsRosterPersonB, Kind: workspace.KindHuman},
+		},
+		Admins: []string{wsRosterPersonA},
+	}
+	b, err := workspace.EncodeRoster(roster)
+	if err != nil {
+		t.Fatalf("encoding the fixture roster: %v", err)
+	}
+	var v map[string]any
+	if err := json.Unmarshal(b, &v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// wsSeedRecordedPeople writes the workspace root's tfvars as a run of an earlier
+// release left them, carrying the people that run's roster named: the list a run
+// whose own read fails hands back verbatim.
+func wsSeedRecordedPeople(t *testing.T, people []string) {
+	t.Helper()
+	if err := os.MkdirAll(wsWorkdirRoot(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := workspaceVars{Project: wsProject, Workspace: wsProjectName, Members: map[string]workspaceMemberVar{}, People: people}
+	doc.Names.WorkspaceAccountID = tf.WorkspaceServiceAccountID
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wsWorkdirRoot(), infra.VarsFile), append(b, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// wsSeedTfvarsWithoutPeople writes the workspace root's tfvars as a release
+// BEFORE var.people left them: a document with no `people` key at all, which is
+// what every workspace whose tfvars predate WC2 holds on that first run.
+func wsSeedTfvarsWithoutPeople(t *testing.T) {
+	t.Helper()
+	if err := os.MkdirAll(wsWorkdirRoot(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := map[string]any{
+		"project":   wsProject,
+		"workspace": wsProjectName,
+		"names":     map[string]any{"workspace_account_id": tf.WorkspaceServiceAccountID},
+		"members":   map[string]any{},
+	}
+	b, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wsWorkdirRoot(), infra.VarsFile), append(b, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestWorkspaceVarsNameTheRostersPeople: var.people is the workspace roster's
+// human addresses, read from the workspace's own roster node
+// (`workspaceRosters/<name>`, R6, D2971) — so `fugaro update` renders the people
+// the roster names and the root binds one invoke grant on the workspace's own
+// service per address. A machine is never one of them: an `sa` entry of the
+// roster is a member's job account, which the root's `members` variable already
+// binds its own invoke grant to, and a person is admitted by address alone.
+//
+// The second case is the read that cannot be made, and it is the security
+// property rather than an error: the people the workdir's own tfvars already
+// hold go back VERBATIM, with one line saying why. An empty list there would
+// plan the deletion of every person's invoke grant — a loosening of the
+// workspace's own service that no run decided, and a deletion the root's cover
+// does not admit — so the state that cannot read the roster keeps the list it
+// already has.
+func TestWorkspaceVarsNameTheRostersPeople(t *testing.T) {
+	t.Run("the roster's own people and no machine", func(t *testing.T) {
+		db := gcpfake.NewRTDB(t)
+		g := newWSCreateRig(t, wsProjectName+"\n", wsOwnerTable+wsOwnerCap+wsBudgetFor(db))
+		db.Set("workspaceRosters/"+wsProjectName, wsRosterDoc(t))
+		g.noChanges(t)
+
+		g.check(t)
+		if _, err := g.plan(t, initflow.Env{Interactive: true}); err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		want := []string{wsRosterPersonA, wsRosterPersonB}
+		if got := g.tfvars(t).People; !slices.Equal(got, want) {
+			t.Errorf("var.people = %v, want the roster's human addresses %v: the root binds one invoke grant per entry, and a machine or a person the roster does not name here is a grant nothing asked for", got, want)
+		}
+	})
+
+	t.Run("a roster this run cannot read carries the recorded people", func(t *testing.T) {
+		// Deliberately not the order a roster would carry: what the run writes
+		// back is the document the workdir held, field for field, and not a list
+		// this run derived again from something it could not read.
+		recorded := []string{"zoe@example.com", wsRosterPersonA}
+		g := newWSCreateOwnerRig(t, wsProjectName+"\n")
+		wsSeedRecordedPeople(t, recorded)
+		g.noChanges(t)
+
+		g.check(t)
+		if _, err := g.plan(t, initflow.Env{Interactive: true}); err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		if got := g.tfvars(t).People; !slices.Equal(got, recorded) {
+			t.Errorf("var.people = %v, want the recorded list %v verbatim: a run that cannot read the roster must not empty it, because the empty list plans the deletion of every person's invoke grant", got, recorded)
+		}
+		out := g.out.String()
+		if !strings.Contains(out, "the workspace's roster is not read: ") {
+			t.Errorf("a run that could not read the roster said nothing about it, so an owner cannot tell a workspace with no people from a read that failed:\n%s", out)
+		}
+	})
+
+	t.Run("a read made before the workdir exists does not empty the document", func(t *testing.T) {
+		// Check answers Todo with a sentence even where its own read never
+		// reached a plan, and it reads the roster for that sentence with no
+		// workdir set — no recorded list to carry and no document in front of
+		// it. That answer decides nothing and must not be kept: the call that
+		// decides what the tfvars carry is prepare's own, made with the workdir
+		// set, and an empty list kept from before it writes `people: []` over
+		// the recorded list — the plan that deletes every person's invoke
+		// grant. The first read below is made to fail before the workdir is
+		// prepared at all (no state directory can be named), which is exactly
+		// the state Check's own sentence comes from and the only one in which
+		// the recorded document is still on disk for the next prepare.
+		recorded := []string{"zoe@example.com", wsRosterPersonA}
+		g := newWSCreateOwnerRig(t, wsProjectName+"\n")
+		wsSeedRecordedPeople(t, recorded)
+		g.noChanges(t)
+		state := os.Getenv("XDG_STATE_HOME")
+		home := os.Getenv("HOME")
+		t.Setenv("XDG_STATE_HOME", "")
+		t.Setenv("HOME", "")
+
+		if st := g.check(t); st.State != initflow.Todo {
+			t.Fatalf("check = %v, want a todo: a read that never reached a plan has not found the stage done", st.State)
+		}
+		if g.s.wd != nil {
+			t.Fatal("the workdir was set by a prepare that failed before it: this case is about the read made before the workdir exists")
+		}
+		t.Setenv("XDG_STATE_HOME", state)
+		t.Setenv("HOME", home)
+
+		if _, err := g.plan(t, initflow.Env{Interactive: true}); err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		if got := g.tfvars(t).People; !slices.Equal(got, recorded) {
+			t.Errorf("var.people = %v, want the recorded list %v: a read made before the workdir existed must not decide what the document carries, because the empty list plans the deletion of every person's invoke grant", got, recorded)
+		}
+	})
+
+	t.Run("a roster this run cannot read and no recorded people carries the empty list", func(t *testing.T) {
+		// The first run of this variable over a workspace whose tfvars predate
+		// it: the read fails and there is no list to carry. The document must
+		// still hold `[]` and NOT `null`, because the root's own variable walks
+		// the list — a null is refused at plan time with "iteration over null
+		// value" rather than carrying nothing, which is the one thing carrying
+		// here is for — and because the empty list is the truth of a roster
+		// nobody could read.
+		g := newWSCreateOwnerRig(t, wsProjectName+"\n")
+		wsSeedTfvarsWithoutPeople(t)
+		g.noChanges(t)
+
+		g.check(t)
+		if _, err := g.plan(t, initflow.Env{Interactive: true}); err != nil {
+			t.Fatalf("plan: %v", err)
+		}
+		b, err := os.ReadFile(filepath.Join(g.root(), infra.VarsFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(b, &doc); err != nil {
+			t.Fatal(err)
+		}
+		people, ok := doc["people"].([]any)
+		if !ok || len(people) != 0 {
+			t.Errorf("the written document carries people = %v, want the empty list []: the root's own validation walks the list, so a null here fails the workspace root's plan on the value's shape instead of converging the workspace", doc["people"])
+		}
+		out := g.out.String()
+		if !strings.Contains(out, "the workspace's roster is not read: ") {
+			t.Errorf("a run that could not read the roster said nothing about it, so an owner cannot tell a workspace with no people from a read that failed:\n%s", out)
+		}
+	})
 }
 
 // TestWorkspaceProjectStageNeverConfirmsByTheRunsOwnAnswer: what the stage

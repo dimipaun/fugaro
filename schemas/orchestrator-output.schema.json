@@ -113,6 +113,23 @@
           "description": "The generated summary: the goal, the work items with their phases, the questions waiting on someone and the facts, with every stored string fenced and cleaned and the whole of it capped by the generator (internal/orchestrator.Summarize). It is the same text `fugaro orchestrator state --brief` prints without --json.",
           "maxLength": 3072
         },
+        "items": {
+          "type": "array",
+          "description": "Every work item of the live state node, uncapped and in the state's own order, so a reader never has to parse the brief's prose (which lists running items first and is capped). Written for `node` and never for `cache`, and empty when the node holds none: an empty list is omitted.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "phase", "attempts", "repo"],
+            "properties": {
+              "id": { "type": "string" },
+              "phase": { "enum": ["queued", "running", "review", "done", "failed", "blocked", "cancelled"] },
+              "run_id": { "type": "string", "description": "The run id the item's last attempt recorded; absent before any run." },
+              "attempts": { "type": "integer", "minimum": 0 },
+              "repo": { "type": "string" },
+              "spec": { "type": "string", "description": "The plan folder the item declares; absent when it declares none." }
+            }
+          }
+        },
         "cached_at": {
           "allOf": [{ "$ref": "#/$defs/stamp" }],
           "description": "When the daemon wrote the cached brief, which is its freshness stamp: `--brief --offline` prints it so that a stale cache is visible rather than silent. Written for `source: cache` and never for `node`."

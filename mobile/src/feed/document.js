@@ -34,13 +34,18 @@
 // feed, while a document that grows one must not be rendered as if it were
 // understood.
 //
-// **Two fields are the grant's, not the shape's.** `runs`, `finished` and
-// `ready` come from the runs bucket, which the phone does not see (the queued
-// and finished rows live there, and tension (a)'s resolution says so). They are
-// accepted only as **empty** arrays: an empty array is "no rows", which is what
-// the phone sees anyway, and a non-empty one is data the grant denies, refused
-// here so that no screen can render a run title the phone is not allowed to
-// read. `queued_note` is the same family's field and is not read at all.
+// **The run rows are the grant's, and a row carries only what the phone may
+// draw.** `runs`, `finished` and `ready` come from the runs bucket, which the
+// phone does not see (the queued and finished rows live there, and tension
+// (a)'s resolution says so): `finished` and `ready` are accepted only as
+// **empty** arrays, and a row of `runs` may carry **four members and no
+// others** -- the run's id, C1's `fallback` mark and C3's pause (`resume_at`,
+// `cancelled`), which are the facts a screen of this app draws of a run. Every
+// other member the bucket's own row carries (`title`, `repo`, `slug`,
+// `status`, a pull request, its cost) is data the grant denies and is refused
+// at the member it arrived in, so no screen can render a run title the phone is
+// not allowed to read. `queued_note` is the same family's field and is not read
+// at all.
 //
 // **The degraded shape is its own shape** (§2 fact (iii), §10.8): the CLI's
 // `watchDegradedDoc` is `lsDoc` **embedded** -- `project`, `runs[]`, `totals`,
@@ -108,11 +113,28 @@ const DOC_FIELDS = Object.freeze([
   'queued_note',
 ]);
 
-/** The runs-bucket fields of the **live** document: accepted empty, refused
- * with content. The degraded document is the exception, and §2 (iii) is why:
- * its `runs[]` is `lsDoc`'s own list, bounded by `degradedSince`, and the shape
- * cannot be recognised at all if the field is refused. */
-const RUN_BUCKET_FIELDS = Object.freeze(['runs', 'finished', 'ready']);
+/** The runs-bucket fields of the **live** document that are accepted empty and
+ * refused with content: the finished and the ready rows, which have no member
+ * this app may draw (VS4). `runs` is judged row by row instead -- against
+ * `RUN_ROW_FIELDS`, which is the same fence by another route. The degraded
+ * document is the exception to all of it, and §2 (iii) is why: its `runs[]` is
+ * `lsDoc`'s own list, bounded by `degradedSince`, and the shape cannot be
+ * recognised at all if the field is refused. */
+const RUN_BUCKET_FIELDS = Object.freeze(['finished', 'ready']);
+
+/** What one row of `runs` may carry, and the whole of the fence around the runs
+ * bucket: the run's own id, C1's `fallback` (`stages[].fallback`, CS8) and
+ * C3's pause (`resume_at`, `cancelled`: `runstore.PauseNode`, and the same two
+ * member names a run's row in `fugaro watch --json` carries). Everything else
+ * the bucket's row holds is refused at the member it arrived in. */
+const RUN_ROW_FIELDS = Object.freeze(['run', 'fallback', 'resume_at', 'cancelled']);
+
+/** A run id's shape -- the same judgement `paths.js` makes of a run key
+ * (`RUN_RE`) before it builds a path out of one. It is restated rather than
+ * imported because this module reads a document and imports no gate, and it is
+ * here at all because a row whose id is not an id is a row out of some other
+ * shape: the bucket's own rows are what this member list exists to keep out. */
+const RUN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** §2 (iii)'s document, in full: `lsDoc` embedded (`internal/cli/runs.go`) plus
  * its two own fields. `totals` and `warnings` are here and **not** in
@@ -321,6 +343,46 @@ function repoOf(value, index) {
   return Object.freeze({ ok: true, repo: Object.freeze({ slug, repo: text(value.repo), ...figures.figures }) });
 }
 
+/**
+ * One row of `runs`: the run's id, whether it fell back, and the pause it is
+ * in.
+ *
+ * **Absent members are the ordinary case, not a hole.** `fallback` is absent on
+ * every record written before C1's member existed, and absent is **false** --
+ * the record's own `omitempty` meaning (`schemas/result.schema.json`), so a row
+ * without it is a run that did not fall back rather than a run nobody measured.
+ * `resume_at` and `cancelled` are absent on a run that is not paused, and a
+ * pause with no readable instant is a pause with `resumeAt: null`
+ * (`nodes.js`'s `readPause`), never a row that claims an instant it does not
+ * have. `resume_at` is spelled RFC 3339, as every instant of a run's row is
+ * (`watch`'s `waiting_until`).
+ */
+function runOf(value, index) {
+  const where = `runs[${index}]`;
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return refuse(DOCUMENT_CODES.BAD_TYPE, where);
+  for (const key of Object.keys(value)) {
+    if (!RUN_ROW_FIELDS.includes(key)) return refuse(DOCUMENT_CODES.NOT_GRANTED, `${where}.${key}`);
+  }
+  const run = text(value.run);
+  if (run === null) return refuse(DOCUMENT_CODES.MISSING_FIELD, `${where}.run`);
+  if (!RUN_ID_RE.test(run)) return refuse(DOCUMENT_CODES.BAD_TYPE, `${where}.run`);
+  for (const key of ['fallback', 'cancelled']) {
+    if (value[key] !== undefined && typeof value[key] !== 'boolean') return refuse(DOCUMENT_CODES.BAD_TYPE, `${where}.${key}`);
+  }
+  if (value.resume_at !== undefined && value.resume_at !== null && text(value.resume_at) === null) {
+    return refuse(DOCUMENT_CODES.BAD_TYPE, `${where}.resume_at`);
+  }
+  return Object.freeze({
+    ok: true,
+    run: Object.freeze({
+      run,
+      fallback: value.fallback === true,
+      resumeAt: text(value.resume_at),
+      cancelled: value.cancelled === true,
+    }),
+  });
+}
+
 function connectionOf(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return refuse(DOCUMENT_CODES.MISSING_FIELD, 'connection');
@@ -450,6 +512,21 @@ export function validateDocument(value) {
     repos = Object.freeze(judged);
   }
 
+  // `runs` is absent in every document `reader.js` assembles today: the four
+  // granted families carry no run. It is judged the same way `repos` is, and
+  // absent is `null` rather than `[]` for the same reason.
+  let runs = null;
+  if (value.runs !== undefined) {
+    if (!Array.isArray(value.runs)) return refuse(DOCUMENT_CODES.BAD_TYPE, 'runs');
+    const judged = [];
+    for (const [index, entry] of value.runs.entries()) {
+      const row = runOf(entry, index);
+      if (!row.ok) return row;
+      judged.push(row.run);
+    }
+    runs = Object.freeze(judged);
+  }
+
   return Object.freeze({
     ok: true,
     document: Object.freeze({
@@ -461,6 +538,7 @@ export function validateDocument(value) {
       connection: connection.connection,
       total: totals,
       repos,
+      runs,
       queuedNote: text(value.queued_note),
     }),
   });

@@ -108,6 +108,17 @@ describe('the stub’s command keys', () => {
       // declarations the fleet's writers stored, and the one row here with no
       // argument at all -- its words are the whole argv.
       'coordinator intents',
+      // The console-fixes plan's CG7a (`orchestrator.map` / `orchestratorMap`,
+      // D3221): the Coordinator tab's map read, and the second row here with no
+      // argument at all -- its words are the whole argv, so its key is the
+      // command path, `orchestrator map`, and nothing of a caller's reaches the
+      // child. The row is behind `ORCHESTRATOR_MAP_CLI_FLOOR`
+      // (`src/shared/version.ts`), which is unset today, so the read is refused
+      // at the source and no scenario reaches this key through a real spawn --
+      // the key is here because the row is: the list is derived from the table
+      // below, and a row the stub cannot key is the silent fallback this file
+      // exists to catch.
+      'orchestrator map',
       // The managed screens' plan's CM4 (`managed.status` / `managedStatus`):
       // what the two marks say about the project and the newest audit record,
       // with no argument at all -- so its key is its command words, `managed

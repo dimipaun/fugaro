@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -30,16 +31,35 @@ import (
 func seedRoot(t *testing.T, f *cloudFixture, id string, at time.Time) {
 	t.Helper()
 	seedSpec(t, f, firstRunSpec(id), false)
+	seedTitleAwareImage(t, f)
 	rec := prRecord(id, "", 7, 1)
 	rec.StartedAt = at
 	writeRecord(t, f, id, rec)
+}
+
+// seedTitleAwareImage gives the web workflow a build record whose runner knows
+// job titles: a follow-up inherits its chain's title, a review launch names
+// itself after its pull request, and a titled launch is gated on such an image,
+// so a fixture with no record would be refused for the gate, not for what its
+// test is about. A record the test already wrote is kept
+// (a test of an image's own floor wrote it first), and one it writes after
+// seeding replaces this one.
+func seedTitleAwareImage(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(f.dir, "runs", filepath.FromSlash(imagecheck.RecordKey(appSlug, "web")))); err == nil {
+		return
+	}
+	writeBuildRecord(t, f, appSlug, "web", release085)
 }
 
 // seedFollowUp stores follow-up id of root's PR 7 after previous, started
 // at, with status; pushed says whether its record has pushed_head.
 func seedFollowUp(t *testing.T, f *cloudFixture, id, root, previous string, at time.Time, status runstore.Status, pushed bool) {
 	t.Helper()
-	seedSpec(t, f, followUpSpec(id, root, previous, 7), false)
+	spec := followUpSpec(id, root, previous, 7)
+	spec.Title = "Follow-up of the fixture's chain"
+	seedSpec(t, f, spec, false)
+	seedTitleAwareImage(t, f)
 	rec := prRecord(id, "", 7, 1)
 	rec.Branch, rec.StartedAt, rec.Status = "fugaro/"+root, at, status
 	rec.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: previous}
@@ -185,6 +205,7 @@ func TestRunPRTakesPreviousRef(t *testing.T) {
 	spec := firstRunSpec(rootID)
 	spec.Ref = "release"
 	seedSpec(t, f, spec, false)
+	seedTitleAwareImage(t, f)
 	writeRecord(t, f, rootID, prRecord(rootID, "", 7, 1))
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
 		t.Fatal(err)
@@ -706,6 +727,7 @@ func TestRunPRRootBranchMustNameRoot(t *testing.T) {
 func TestRunPRPreM6Record(t *testing.T) {
 	f := newCloudFixture(t)
 	seedSpec(t, f, firstRunSpec(rootID), false)
+	seedTitleAwareImage(t, f)
 	writeRecord(t, f, rootID, &runstore.Record{Version: 1, RunID: rootID, Repo: "acme/app", Workflow: "web", Status: runstore.StatusSucceeded,
 		Outcome: runstore.OutcomeReady, Branch: "fugaro/" + rootID, HeadSHA: "2222222222222222222222222222222222222222",
 		PR: &runstore.PRRef{Number: 7, URL: "https://github.com/acme/app/pull/7"}})
@@ -1001,6 +1023,7 @@ func TestRunPRUsesRecordedBaseBranch(t *testing.T) {
 	spec := firstRunSpec(rootID)
 	spec.Ref = "develop"
 	seedSpec(t, f, spec, false)
+	seedTitleAwareImage(t, f)
 	rec := prRecord(rootID, "", 7, 1)
 	rec.BaseBranch = "main"
 	writeRecord(t, f, rootID, rec)
@@ -1033,6 +1056,7 @@ func TestRunPRRefsHeadsRefIsItsBranch(t *testing.T) {
 	spec := firstRunSpec(rootID)
 	spec.Ref = "refs/heads/release"
 	seedSpec(t, f, spec, false)
+	seedTitleAwareImage(t, f)
 	writeRecord(t, f, rootID, prRecord(rootID, "", 7, 1))
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
 		t.Fatal(err)
@@ -1077,6 +1101,7 @@ func TestRunPRRecordedHexBaseBranch(t *testing.T) {
 			spec := firstRunSpec(rootID)
 			spec.Ref = base
 			seedSpec(t, f, spec, false)
+			seedTitleAwareImage(t, f)
 			rec := prRecord(rootID, "", 7, 1)
 			rec.BaseBranch = base
 			writeRecord(t, f, rootID, rec)

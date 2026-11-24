@@ -49,7 +49,11 @@ type EnvSpec struct {
 	ImageEnv map[string]string
 	// Gateway, when set, points Claude Code at Fugaro's gateway: the agent
 	// gets the gateway's URL and per-run token, never the real model
-	// credential (see GatewayVars). It is an error with auth: oauth.
+	// credential (see GatewayVars). It is an error with auth: oauth, and it is
+	// required with api-key and the cascade: there is always a budget, so
+	// those two runs have a gateway in every mode, and one that reached here
+	// without it is refused rather than handed a key of the job's (AB1b,
+	// D3009).
 	Gateway *Gateway
 	// Compression, when set, points Claude Code at the context-compression
 	// sidecar, which chains to the gateway. It is an error with auth: oauth
@@ -170,20 +174,25 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 			return nil, nil, fmt.Errorf("vertex auth needs CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID in the runner environment")
 		}
 	case "api-key":
+		// An api-key run carries no key of its own: the gateway holds it and
+		// presents its own per-run token to the agent, and this arm no longer
+		// has a branch that mounts the real key for want of a gateway (AB1b,
+		// F15, D3009). Every credential the gateway can carry has a gateway in
+		// every mode, so a run that reaches here without one is refused rather
+		// than handed a key, exactly as the cascade arm below refuses it.
 		if spec.Gateway == nil {
-			secretNames = append([]string{"ANTHROPIC_API_KEY"}, secretNames...)
-		} else {
-			// The real key is registered for redaction but never put in
-			// the agent's environment: the gateway holds it. It is
-			// optional, too: a run whose models all route through
-			// providers has none, and a call that needs it is refused by
-			// the gateway rather than here (design project-centric §6.1).
-			if realKey := p["ANTHROPIC_API_KEY"]; realKey != "" {
-				if len(realKey) < 4 {
-					return nil, nil, fmt.Errorf("secret ANTHROPIC_API_KEY is shorter than 4 bytes, so it cannot be redacted safely")
-				}
-				secretValues = append(secretValues, realKey)
+			return nil, nil, fmt.Errorf("auth: api-key runs through the gateway, and this agent has none: the key is the gateway's to hold, and this agent has no credential of its own to fall back to")
+		}
+		// The real key is registered for redaction but never put in the
+		// agent's environment: the gateway holds it. It is optional, too: a
+		// run whose models all route through providers has none, and a call
+		// that needs it is refused by the gateway rather than here (design
+		// project-centric §6.1).
+		if realKey := p["ANTHROPIC_API_KEY"]; realKey != "" {
+			if len(realKey) < 4 {
+				return nil, nil, fmt.Errorf("secret ANTHROPIC_API_KEY is shorter than 4 bytes, so it cannot be redacted safely")
 			}
+			secretValues = append(secretValues, realKey)
 		}
 	case "oauth":
 		if spec.Gateway != nil {
@@ -221,14 +230,12 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		}
 		v := p[k]
 		if v == "" {
-			if k == "ANTHROPIC_API_KEY" {
-				// This run has no gateway at all (the budget is off), so
-				// every call goes to Anthropic -- the key is not optional
-				// here whatever the pins are -- and "is not set" alone names
-				// no fix. Refuse with the gateway's own text, one text for
-				// both (internal/config.MissingAnthropicKey).
-				return nil, nil, fmt.Errorf("secret ANTHROPIC_API_KEY is not set in the runner environment: %s", config.MissingAnthropicKey)
-			}
+			// The one name that used to have a sentence of its own is
+			// ANTHROPIC_API_KEY, for the api-key run that had no gateway and
+			// therefore made every call on the key itself (AB1b, F15): no such
+			// run exists, and the branch above keeps that name out of this
+			// loop -- the gateway's token stands in for any declared mount of
+			// it -- so the plain sentence is the whole of it.
 			return nil, nil, fmt.Errorf("secret %s is not set in the runner environment", k)
 		}
 		if len(v) < 4 {

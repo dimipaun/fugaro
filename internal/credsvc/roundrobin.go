@@ -53,15 +53,45 @@ package credsvc
 import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/routing"
 )
 
-// poolStrategy is the strategy one pool of the published node asks for, as
-// internal/creds spells it: the owner's word, with failover for a pool that
-// writes none (D1632) and for one that writes something this release does not
-// know — a hand-edit of a node is read as the strategy that spreads nothing
-// rather than as a rotation the owner never asked for.
+// poolRule is the rule one pool of the published node is served by, in the
+// vocabulary C2 fixes for it (routing.Rule): the rotation for a pool written
+// with `round-robin`, and `failover` for every other pool, which is what a pool
+// that names neither a rule nor a strategy has always been served by (R5,
+// D1632, D3177).
+//
+// A pool's own `rule` member is PL1's to add, and this release cannot read one:
+// what a published pool says today is its `strategy`. routing.Rule.
+// RuleOrDefault is the one reader of an absent rule — the pool's strategy, then
+// failover — so this is that reader over the member the pool has, and the line
+// a pool's own `rule` is read at when one arrives (PL1) rather than a second
+// resolution of the same question.
+//
+// It is the rule PL3's picker acts on, through the reference the lookup fills
+// (routing.PoolRef.Rule, creds.PoolRule.PickInPool): `ordered` is the third
+// rule, no pool can name it yet, and a pool that names it is picked by the
+// picker and never by a selection — which is why poolStrategy below answers the
+// cascade's own rule for it.
+func poolRule(pool config.Pool) routing.Rule {
+	return routing.Rule("").RuleOrDefault(pool.StrategyOrDefault())
+}
+
+// poolStrategy is poolRule read as the word the selection path takes
+// (creds.Strategy): a rotation for a pool asking for one, and the cascade's own
+// rule otherwise — the owner's word, with failover for a pool that writes none
+// (D1632) and for one that writes something this release does not know, because
+// a hand-edit of a node is read as the strategy that spreads nothing rather
+// than as a rotation the owner never asked for.
+//
+// `ordered` is the rule with no strategy of its own, and failover is the honest
+// answer for it: a pool served `ordered` is picked by PL3's picker and never by
+// a selection (poolRule above), so what the selection path is handed for it is
+// the rule that spreads nothing silently — the same shape every pool that names
+// no rule is served by until the walk is wired to the picker (I1).
 func poolStrategy(pool config.Pool) creds.Strategy {
-	if pool.StrategyOrDefault() == config.PoolStrategyRoundRobin {
+	if poolRule(pool) == routing.RuleRoundRobin {
 		return creds.StrategyRoundRobin
 	}
 	return creds.StrategyFailover

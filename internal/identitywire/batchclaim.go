@@ -50,9 +50,10 @@ const JobPath = "/v1/identity/job"
 // that hold nothing else in common.
 //
 // It is the ticket ask's Job and the registration's Job, and it lands on the
-// issuance record (Record.Job) unchanged: the release wire held this shape
-// (internal/credsvc's validBatchJobNameRE, which BR23 retires with the rest of
-// that wire) and it moves here rather than being spelled a second time.
+// issuance record (Record.Job) unchanged: the release wire carries this shape
+// too (internal/credsvc's validBatchJobNameRE, whose own copy BR23 retires with
+// the rest of that wire) and this contract declares it because the three sides
+// above are held to it here and not to a rule of a file that is going away.
 type JobName string
 
 // validBatchJobNameRE is what a Cloud Batch job's name may be, [a-z0-9-]
@@ -155,9 +156,11 @@ type JobResponse struct{}
 // is keyed by: "<slug>/<run id>", one slash, both parts non-empty, the slug in
 // the one shape task.Slug emits (which is the claim the run identity carries
 // too) and neither part holding a character a Realtime Database key may not —
-// the record's path is built from these two values. It came with the release
-// wire's registration body (internal/credsvc's RegisterRequest.Run) and is
-// declared here, where the two fields it reads are.
+// the record's path is built from these two values. The release wire's
+// registration body carries the same pair (internal/credsvc's
+// RegisterRequest.Run, whose own splitter BR23 retires with it), and this is
+// the copy the registration of this contract is held to: it is declared here,
+// where the two fields it reads are.
 func checkRunRef(ref string) (slug, run string, err error) {
 	slug, run, ok := strings.Cut(ref, "/")
 	refuse := fmt.Errorf("the run must be spelled <slug>/<run id> as FUGARO_RUN carries it, and %q is not", ref)
@@ -218,7 +221,8 @@ const (
 // that holds it lives, because that package already declares a VMIdentity of
 // its own — the release wire's struct of the caller's own facts — and one name
 // in one package is one thing (the same reason validBatchJobNameRE and
-// checkRunRef moved into this file rather than being said twice).
+// checkRunRef are declared here, and read by the sides of this contract, while
+// the release wire's copies of them stay in the file BR23 retires).
 type VMIdentity interface {
 	// VMsJob reports whether the VM that presented attestation is a VM of job,
 	// that job's id is jobID, and that job was live and created within the bound

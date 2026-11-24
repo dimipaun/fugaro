@@ -827,3 +827,41 @@ func TestDestinationRejectionShowsItsStatus(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A destination tag holding the image of an earlier release the source
+// published is recognised as the source's own; a digest the source never
+// published, and a source whose tags cannot be read, prove nothing.
+func TestOwnEarlierRecognisesOnlyAPublishedRelease(t *testing.T) {
+	e := newEnv(t)
+	old := makeImage("amd64", "an-earlier-release-layer")
+	e.sst.publishIndex(srcRepo, "1.2.2", map[string]image{"amd64": old})
+	e.sst.publishIndex(srcRepo, "latest", map[string]image{"amd64": makeImage("amd64", "moving")})
+	e.dst2.put(old)
+	e.dst2.tags[dstRepo+":1.2.3"] = old.digest
+	p, err := e.plan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := e.m.OwnEarlier(context.Background(), p); got != "1.2.2" {
+		t.Errorf("OwnEarlier = %q, want 1.2.2", got)
+	}
+
+	foreign := makeImage("amd64", "hand-pushed")
+	e.dst2.put(foreign)
+	e.dst2.tags[dstRepo+":1.2.3"] = foreign.digest
+	if p, err = e.plan(); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.m.OwnEarlier(context.Background(), p); got != "" {
+		t.Errorf("a foreign image was recognised as release %s", got)
+	}
+
+	e.dst2.tags[dstRepo+":1.2.3"] = old.digest
+	if p, err = e.plan(); err != nil {
+		t.Fatal(err)
+	}
+	e.src.srv.Close()
+	if got := e.m.OwnEarlier(context.Background(), p); got != "" {
+		t.Errorf("an unreadable source proved %s", got)
+	}
+}

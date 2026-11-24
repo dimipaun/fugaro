@@ -495,9 +495,14 @@ type Record struct {
 	// (D3114), and a record that names none is claimed as every run of the
 	// release behind claims.
 	//
-	// It is written once, with the ticket, and never changes while the record
-	// lives: a second job under the same name is a different launch with a
-	// different run id.
+	// It is written with the ticket and written AGAIN by every ask before the
+	// claim, because the ask replaces the whole record — a re-ask re-issues the
+	// ticket and the old one dies with the node's digest (R6) — so the LAST
+	// ask's name is the one the claim is held to. What it never does is change
+	// under a claimed record: the store refuses a replacement once the ticket is
+	// claimed (R5), so the name the run's identity was signed from is the name
+	// it keeps, and a second job under the same name is a different launch with
+	// a different run id.
 	Job JobName `json:"job,omitempty"`
 	// JobID is the platform's id for that job, as the registration wrote it
 	// (R19). It is empty on a record that names no job and on one whose job is

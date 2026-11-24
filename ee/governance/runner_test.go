@@ -55,13 +55,19 @@ func fixtureYAML(t *testing.T) string {
 }
 
 // runnerLayer's profile app is the fixture's workflow app, minus its
-// secrets, which are repo-only.
+// secrets, which are repo-only. Its agent defaults carry the three pins a run
+// must name to be priced: the price rule judges every run an api-key
+// credential serves, and since the gateway runs in every mode (AB1b, D3009)
+// that is every run, so a repository whose own file names no agent at all —
+// layeredRepo below — is refused at bootstrap unless the layer it resolves
+// over, which is where a real installation's pins come from
+// (config.ProjectLayer), names them.
 const runnerLayer = `version: 1
 project: aurora
 gcp_project: proj-1234
 defaults:
   git: { provider: github }
-  agent: { auth: api-key, review_rounds: 2 }
+  agent: { auth: api-key, review_rounds: 2, models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5, background: claude-haiku-4-5 } }
 profiles:
   app:
     commands:
@@ -173,9 +179,14 @@ func TestStageTimeoutHaltsWithCheckpoint(t *testing.T) {
 	}
 	// The checkpoint's why_over names the bound that fired and not the other
 	// one of the two stage_budget trips: money is not what stopped this stage
-	// (T7.6).
+	// (T7.6). The figure it carries is the run's spend, and under the gateway
+	// (AB1b, D3009) that is the gateway's ledger rather than what a stage
+	// reports of itself — this stage makes no call and reports 1 anyway, so
+	// zero here is the proof that the two are not the same account. What money
+	// on a checkpoint really looks like is pinned by internal/runner's own
+	// halt tests, where a stage calls through a fake upstream.
 	cp := rec.Checkpoint
-	if cp == nil || cp.Trigger != string(runstore.HaltStageBudget) || cp.WhyOver != "a stage passed its own time bound" || cp.EstimateUSD != 1 {
+	if cp == nil || cp.Trigger != string(runstore.HaltStageBudget) || cp.WhyOver != "a stage passed its own time bound" || cp.EstimateUSD != 0 {
 		t.Fatalf("checkpoint = %+v", cp)
 	}
 	pr := h.PR(t)

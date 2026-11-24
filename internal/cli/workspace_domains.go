@@ -65,8 +65,8 @@ is computed from this list, so removing their domain would report them as a
 difference the drift check calls tampering.`,
 	}
 	cmd.AddCommand(
-		newWorkspaceDomainsAddCmd(open),
-		newWorkspaceDomainsRmCmd(open),
+		workspaceReported(newWorkspaceDomainsAddCmd(open), "workspace-domains-add"),
+		workspaceReported(newWorkspaceDomainsRmCmd(open), "workspace-domains-rm"),
 		newWorkspaceDomainsLsCmd(open),
 	)
 	return cmd
