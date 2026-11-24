@@ -347,6 +347,248 @@ func TestReadHoldsNoYAML(t *testing.T) {
 	}
 }
 
+// TestReadKeepsBranchAndHead: every repository the reader answers carries its
+// default branch's name and the commit that branch resolved to (R1, F16),
+// which is the revision every tree read of it was made at. The name is the
+// host's own answer, taken off the repository read the reader already makes, so
+// a caller that needs it pays no call for it (V2). A host that names none
+// leaves it empty without making the repository unread: what a host cannot name
+// is not a repository nobody could read.
+func TestReadKeepsBranchAndHead(t *testing.T) {
+	ctx := context.Background()
+	app := githubFixture(t, []byte("agent: {}\n"), nil)
+	web := newBitServer(t, "acme/web")
+	web.repo([]byte("agent: {}\n"), nil)
+	web.noFolder()
+	trunk := &fake.Provider{Repo: "acme/trunk", State: fake.State{
+		DefaultBranch: "trunk", Commits: map[string]string{"": fakeSHA},
+		Files: map[string]string{YAML: "ab:\n  rate: 0\n"},
+	}}
+	quiet := &fake.Provider{Repo: "acme/quiet", State: fake.State{
+		Commits: map[string]string{"": fakeSHA},
+		Files:   map[string]string{YAML: "ab:\n  rate: 0\n"},
+	}}
+	got, _, err := Read(ctx, Input{Repos: []Listed{
+		{Repo: "acme/app", Provider: "github"},
+		{Repo: "acme/web", Provider: "bitbucket"},
+		{Repo: "acme/trunk", Provider: "github"},
+		{Repo: "acme/quiet", Provider: "github"},
+	}}, opens(map[string]gitprov.Provider{
+		"github/acme/app":    app,
+		"bitbucket/acme/web": web.provider(t),
+		"github/acme/trunk":  trunk,
+		"github/acme/quiet":  quiet,
+	}))
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	at := map[string]Repo{}
+	for _, r := range got {
+		at[r.Repo] = r
+	}
+	for _, c := range []struct{ repo, branch, head string }{
+		// The two adapters name the branch on the repository read itself: the
+		// contents API's default_branch, the src API's mainbranch.name. Both
+		// fixtures name "main", and each read is made at its own commit.
+		{"acme/app", ghBranch, ghSHA},
+		{"acme/web", "main", bitSHA},
+		{"acme/trunk", "trunk", fakeSHA},
+		// A host that names no default branch: read all the same, with the
+		// commit its default branch resolved to.
+		{"acme/quiet", "", fakeSHA},
+	} {
+		r, ok := at[c.repo]
+		if !ok {
+			t.Fatalf("%s: not answered", c.repo)
+		}
+		if r.Unread != "" {
+			t.Errorf("%s: Unread = %q, want it read", c.repo, r.Unread)
+		}
+		if r.Branch != c.branch || r.Head != c.head {
+			t.Errorf("%s: branch %q, head %q; want %q / %q", c.repo, r.Branch, r.Head, c.branch, c.head)
+		}
+	}
+}
+
+// TestReadExtraPaths: a caller may ask for paths of its own beside the files L8
+// needs — a file, such as the plugin pin's .claude/settings.json, and a folder,
+// such as the backlog's docs/backlog/ — and each is answered under the path it
+// was asked for, at the commit the default branch resolved to, with a path the
+// repository does not hold answering no files rather than making it unread.
+func TestReadExtraPaths(t *testing.T) {
+	ctx := context.Background()
+	settings := "{\"permissions\": {}}\n"
+	// The folder's files are listed out of path order, so the answer's order is
+	// the read's own and not the host's.
+	backlog := []ghEntry{
+		{Path: "5678-second.md", Data: "# second\n"},
+		{Path: "1234-first.md", Data: "# first\n"},
+		{Path: "nested/deep.md", Data: "# deep\n"},
+	}
+	t.Run("a file and a folder at the resolved commit", func(t *testing.T) {
+		app := githubFixtureWith(t, []byte("agent: {}\n"), []ghEntry{{Path: "review.yaml", Data: "name: review\n"}}, []ghExtra{
+			{Path: ".claude/settings.json", Data: settings},
+			{Path: "docs/backlog/", Dir: true, Entries: backlog},
+			{Path: ".claude/absent.json", Missing: true},
+			{Path: ".claude/empty.json", Data: ""},
+		})
+		r := readRepo(t, ctx, "acme/app", "github", app, ".claude/settings.json", "docs/backlog/", ".claude/absent.json", ".claude/empty.json")
+		// The strict replay pins the read's exchanges: a file is read at the
+		// commit the branch resolved to (?ref=<commit>), and a folder is listed
+		// again at that commit.
+		if want := []string{".claude/settings.json", "docs/backlog/", ".claude/absent.json", ".claude/empty.json"}; !slices.EqualFunc(r.Extra, want, func(e Extra, p string) bool { return e.Path == p }) {
+			t.Fatalf("extra paths = %v, want %q, in the order asked", r.Extra, want)
+		}
+		// A file is one entry at its own path, a folder is its files at their
+		// paths in the repository — what a caller asked for by name is what the
+		// answer carries, whichever shape it read.
+		if want := []File{{Path: ".claude/settings.json", Data: []byte(settings)}}; !slices.EqualFunc(files(r, ".claude/settings.json"), want, sameFile) {
+			t.Errorf("settings.json = %v, want %v", files(r, ".claude/settings.json"), want)
+		}
+		if want := []File{
+			{Path: "docs/backlog/1234-first.md", Data: []byte("# first\n")},
+			{Path: "docs/backlog/5678-second.md", Data: []byte("# second\n")},
+			{Path: "docs/backlog/nested/deep.md", Data: []byte("# deep\n")},
+		}; !slices.EqualFunc(files(r, "docs/backlog/"), want, sameFile) {
+			t.Errorf("docs/backlog/ = %v, want %v", files(r, "docs/backlog/"), want)
+		}
+		if f := files(r, ".claude/absent.json"); len(f) != 0 {
+			t.Errorf("absent.json = %v, want no files", f)
+		}
+		// A file that holds nothing is a file: the contents read refuses an
+		// empty one because a definition read has no use for it, and what these
+		// bytes mean is the caller's to judge (an empty settings file pins
+		// nothing, and its repository is not one nobody could read).
+		if f := files(r, ".claude/empty.json"); len(f) != 1 || f[0].Path != ".claude/empty.json" || len(f[0].Data) != 0 {
+			t.Errorf("empty.json = %v, want one file holding nothing", f)
+		}
+	})
+	t.Run("a path the repository does not hold", func(t *testing.T) {
+		web := newBitServer(t, "acme/web")
+		web.repo([]byte("agent: {}\n"), nil)
+		web.noFolder()
+		web.fileAt(".claude/settings.json", settings)
+		web.dirAt("docs/backlog", backlog)
+		// No route for the folder, which is the src endpoint's own 404.
+		r := readRepo(t, ctx, "acme/web", "bitbucket", web.provider(t), ".claude/settings.json", "docs/backlog/", "docs/gone/")
+		if r.Unread != "" {
+			t.Fatalf("Unread = %q, want a repository that holds two of these three paths", r.Unread)
+		}
+		if want := []string{".claude/settings.json", "docs/backlog/", "docs/gone/"}; !slices.EqualFunc(r.Extra, want, func(e Extra, p string) bool { return e.Path == p }) {
+			t.Fatalf("extra paths = %v, want %q, in the order asked", r.Extra, want)
+		}
+		if f := files(r, ".claude/settings.json"); len(f) != 1 || string(f[0].Data) != settings {
+			t.Errorf("settings.json = %v, want the file", f)
+		}
+		if want := []File{
+			{Path: "docs/backlog/1234-first.md", Data: []byte("# first\n")},
+			{Path: "docs/backlog/5678-second.md", Data: []byte("# second\n")},
+			{Path: "docs/backlog/nested/deep.md", Data: []byte("# deep\n")},
+		}; !slices.EqualFunc(files(r, "docs/backlog/"), want, sameFile) {
+			t.Errorf("docs/backlog/ = %v, want %v", files(r, "docs/backlog/"), want)
+		}
+		if f := files(r, "docs/gone/"); len(f) != 0 {
+			t.Errorf("docs/gone/ = %v, want no files", f)
+		}
+	})
+	t.Run("an extra path the host refuses", func(t *testing.T) {
+		web := newBitServer(t, "acme/web")
+		web.repo([]byte("agent: {}\n"), nil)
+		web.fail(web.listingAt("docs/backlog"), http.StatusInternalServerError, `{"error": {"message": "boom"}}`)
+		r := readRepo(t, ctx, "acme/web", "bitbucket", web.provider(t), "docs/backlog/")
+		if !strings.Contains(r.Unread, "its docs/backlog/ could not be read") || !strings.Contains(r.Unread, "500") {
+			t.Errorf("Unread = %q, want the refused path named", r.Unread)
+		}
+		// The whole repository is unread: a caller that planned from the files
+		// the read did get would move half a repository (D3306).
+		if len(r.YAML) != 0 || len(r.Recipes) != 0 || len(r.Extra) != 0 || r.Branch != "" || r.Head != "" {
+			t.Errorf("Unread %q carries %d yaml bytes, %d recipes, %d extra paths, branch %q, head %q; an unread repository carries nothing else", r.Unread, len(r.YAML), len(r.Recipes), len(r.Extra), r.Branch, r.Head)
+		}
+	})
+}
+
+// TestReadWithoutExtraPathsIsUnchanged: with no extra path asked for, the read
+// is L8's own — the same fields with the same exchanges and not one more — so
+// the migration that asks for none reads exactly what it read before the option
+// existed. The GitHub fixture is a strict replay, so a read it did not record
+// fails there; the Bitbucket host is asked for nothing beyond those reads.
+func TestReadWithoutExtraPathsIsUnchanged(t *testing.T) {
+	ctx := context.Background()
+	appYAML := "agent: {}\n"
+	app := githubFixture(t, []byte(appYAML), []ghEntry{{Path: "review.yaml", Data: "name: review\n"}})
+	webYAML := "ab:\n  rate: 0\n"
+	web := newBitServer(t, "acme/web")
+	web.repo([]byte(webYAML), []ghEntry{{Path: "poc.yaml", Data: "name: poc\n"}})
+	got, patterns, err := Read(ctx, Input{
+		Repos:  []Listed{{Repo: "acme/app", Provider: "github"}, {Repo: "acme/web", Provider: "bitbucket"}},
+		Admits: []string{"github/acme/*"},
+	}, opens(map[string]gitprov.Provider{"github/acme/app": app, "bitbucket/acme/web": web.provider(t)}))
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if want := []string{"github/acme/*"}; !slices.Equal(patterns, want) {
+		t.Errorf("unexpanded patterns = %q, want %q", patterns, want)
+	}
+	if want := []string{"acme/app", "acme/web"}; !slices.Equal(names(got), want) {
+		t.Fatalf("repositories = %q, want %q", names(got), want)
+	}
+	appRepo, webRepo := got[0], got[1]
+	if string(appRepo.YAML) != appYAML || appRepo.Unread != "" {
+		t.Errorf("acme/app = fugaro.yaml %q, Unread %q", appRepo.YAML, appRepo.Unread)
+	}
+	if want := []File{{Path: "review.yaml", Data: []byte("name: review\n")}}; !slices.EqualFunc(appRepo.Recipes, want, sameFile) {
+		t.Errorf("acme/app recipes = %v, want %v", appRepo.Recipes, want)
+	}
+	if string(webRepo.YAML) != webYAML || webRepo.Unread != "" {
+		t.Errorf("acme/web = fugaro.yaml %q, Unread %q", webRepo.YAML, webRepo.Unread)
+	}
+	if want := []File{{Path: "poc.yaml", Data: []byte("name: poc\n")}}; !slices.EqualFunc(webRepo.Recipes, want, sameFile) {
+		t.Errorf("acme/web recipes = %v, want %v", webRepo.Recipes, want)
+	}
+	if appRepo.Extra != nil || webRepo.Extra != nil {
+		t.Errorf("extra paths = %v / %v, want none answered", appRepo.Extra, webRepo.Extra)
+	}
+	// Every exchange the Bitbucket host was asked for is one L8's read makes.
+	l8 := []string{web.at(""), web.yaml(), web.at("/commit/main"), web.listing(), web.at("/src/" + bitSHA + "/" + recipe.RepoDir + "/poc.yaml")}
+	for _, asked := range web.asked() {
+		if !slices.Contains(l8, asked) {
+			t.Errorf("acme/web asked for %q, which is not an exchange L8's read makes", asked)
+		}
+	}
+	if asked := web.asked(); !slices.Contains(asked, web.listing()) {
+		t.Errorf("acme/web asked for %q, want the recipes folder listed", asked)
+	}
+}
+
+// fakeSHA is the commit the fake provider fixtures pin their default branch to.
+const fakeSHA = "0a2b4c6d8e0f1a3b5c7d9e0f2a4b6c8d0e1f3a5b"
+
+// readOne reads one repository through the reader and fails the test if the
+// read did not happen, so a case can assert what one repository's answer holds.
+func readRepo(t *testing.T, ctx context.Context, repo, provider string, p gitprov.Provider, extra ...string) Repo {
+	t.Helper()
+	got, _, err := Read(ctx, Input{Repos: []Listed{{Repo: repo, Provider: provider}}, ExtraPaths: extra},
+		opens(map[string]gitprov.Provider{provider + "/" + repo: p}))
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("Read answered %d repositories, want 1", len(got))
+	}
+	return got[0]
+}
+
+// files is the files one extra path of a repository's answer holds, and none
+// when the path was not asked for or holds none.
+func files(r Repo, path string) []File {
+	for _, e := range r.Extra {
+		if e.Path == path {
+			return e.Files
+		}
+	}
+	return nil
+}
+
 // TestReadNamesAPatternItCannotList: an admit that is a pattern cannot be
 // expanded into names, so it is answered beside the repositories and never
 // guessed at — the repositories an update migrates are D3306's real list.
@@ -414,6 +656,23 @@ type ghEntry struct {
 // lower-hex characters, the shape a commit read answers with.
 const ghSHA = "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"
 
+// ghBranch is the default branch the GitHub fixture's repository object names,
+// as the host names it.
+const ghBranch = "main"
+
+// ghExtra is one extra path a fixture answers beside the recipes folder: a
+// folder read as a tree (Dir, with the entries its listing holds), a file's
+// bytes (Data, which may be empty — the contents API's own reply for a file
+// that holds nothing), or a path the repository does not hold (Missing, the
+// contents API's 404).
+type ghExtra struct {
+	Path    string
+	Dir     bool
+	Entries []ghEntry
+	Data    string
+	Missing bool
+}
+
 // githubFixture replays one GitHub repository's read: the installation token
 // mint, the repository read, the default branch's fugaro.yaml, the branch
 // resolved to a commit, and the tree under .fugaro/recipes/ read one blob at a
@@ -425,12 +684,34 @@ const ghSHA = "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"
 // 404 — a repository that holds no fugaro.yaml at all.
 func githubFixture(t *testing.T, yaml []byte, files []ghEntry) *github.Provider {
 	t.Helper()
+	return githubFixtureWith(t, yaml, files, nil)
+}
+
+// githubFixtureWith is the fixture above with the extra paths of one read: each
+// one's own exchanges come after the recipes folder's, in the order the reader
+// asks for them, which is what pins that a read asked for nothing pays for
+// nothing and that an extra path is read at the commit the branch resolved to.
+func githubFixtureWith(t *testing.T, yaml []byte, files []ghEntry, extras []ghExtra) *github.Provider {
+	t.Helper()
 	tok := "ghs_fixture-not-a-credential"
 	blobSHA := func(i int) string { return fmt.Sprintf("%040x", i+1) }
+	// The tree API answers the whole repository's entries in one listing, so
+	// the recipes folder's entries and every extra folder's stand in the same
+	// reply; the blobs are read in the order the reader walks them — the
+	// recipes folder's in listing order, then each extra folder's.
+	var listing, blobs []string
+	add := func(dir string, entries []ghEntry) {
+		for _, f := range entries {
+			sha := blobSHA(len(blobs))
+			listing = append(listing, fmt.Sprintf(`{"path": "%s/%s", "type": "blob", "mode": %q, "size": %d, "sha": %q}`,
+				dir, f.Path, f.Mode, len(f.Data), sha))
+			blobs = append(blobs, f.Data)
+		}
+	}
 	x := []string{
 		`{"method": "GET", "path": "/repos/acme/app/installation", "status": 200, "response": {"id": 777}}`,
 		fmt.Sprintf(`{"method": "POST", "path": "/app/installations/777/access_tokens", "status": 201, "response": {"token": %q, "expires_at": "2026-09-27T11:00:00Z"}}`, tok),
-		fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app", "auth": "Bearer %s", "status": 200, "response": {"private": true}}`, tok),
+		fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app", "auth": "Bearer %s", "status": 200, "response": {"private": true, "default_branch": %q}}`, tok, ghBranch),
 	}
 	if yaml != nil {
 		x = append(x, fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/contents/%s", "status": 200, "response": {"type": "file", "encoding": "base64", "size": %d, "content": %q}}`,
@@ -439,16 +720,40 @@ func githubFixture(t *testing.T, yaml []byte, files []ghEntry) *github.Provider 
 		x = append(x, fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/contents/%s", "status": 404, "response": {"message": "Not Found", "documentation_url": "https://docs.github.com/rest"}}`, YAML))
 	}
 	x = append(x, fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/commits/HEAD", "status": 200, "response": {"sha": %q}}`, ghSHA))
-	var listed []string
-	for i, f := range files {
-		listed = append(listed, fmt.Sprintf(`{"path": "%s/%s", "type": "blob", "mode": %q, "size": %d, "sha": %q}`,
-			recipe.RepoDir, f.Path, f.Mode, len(f.Data), blobSHA(i)))
+	add(recipe.RepoDir, files)
+	var dirEnds []int
+	for _, e := range extras {
+		if e.Dir {
+			add(strings.TrimSuffix(e.Path, "/"), e.Entries)
+			dirEnds = append(dirEnds, len(blobs))
+		}
 	}
-	x = append(x, fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/git/trees/%s?recursive=1", "status": 200, "response": {"tree": [%s], "truncated": false}}`,
-		ghSHA, strings.Join(listed, ", ")))
-	for i, f := range files {
-		x = append(x, fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/git/blobs/%s", "status": 200, "response": {"encoding": "base64", "content": %q}}`,
-			blobSHA(i), base64.StdEncoding.EncodeToString([]byte(f.Data))))
+	tree := fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/git/trees/%s?recursive=1", "status": 200, "response": {"tree": [%s], "truncated": false}}`,
+		ghSHA, strings.Join(listing, ", "))
+	at := 0
+	readTo := func(end int) {
+		for ; at < end; at++ {
+			x = append(x, fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/git/blobs/%s", "status": 200, "response": {"encoding": "base64", "content": %q}}`,
+				blobSHA(at), base64.StdEncoding.EncodeToString([]byte(blobs[at]))))
+		}
+	}
+	x = append(x, tree)
+	readTo(len(files))
+	dir := 0
+	for _, e := range extras {
+		switch {
+		case e.Dir:
+			// The folder is listed again — a tree read is one listing at one
+			// commit — and its own entries are the ones this walk reads.
+			x = append(x, tree)
+			readTo(dirEnds[dir])
+			dir++
+		case e.Missing:
+			x = append(x, fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/contents/%s?ref=%s", "status": 404, "response": {"message": "Not Found", "documentation_url": "https://docs.github.com/rest"}}`, e.Path, ghSHA))
+		default:
+			x = append(x, fmt.Sprintf(`{"method": "GET", "path": "/repos/acme/app/contents/%s?ref=%s", "status": 200, "response": {"type": "file", "encoding": "base64", "size": %d, "content": %q}}`,
+				e.Path, ghSHA, len(e.Data), base64.StdEncoding.EncodeToString([]byte(e.Data))))
+		}
 	}
 	file := filepath.Join(t.TempDir(), "github.json")
 	if err := os.WriteFile(file, []byte("["+strings.Join(x, ",")+"]"), 0o644); err != nil {
@@ -533,9 +838,12 @@ func (f *bitServer) at(path string) string { return "/2.0/repositories/" + f.nam
 // yaml is the route the default branch's fugaro.yaml is read at, and listing
 // the route the recipes folder is listed at — at the commit the fixture
 // resolves the default branch to.
-func (f *bitServer) yaml() string { return f.at("/src/main/" + YAML) }
-func (f *bitServer) listing() string {
-	return f.at("/src/" + bitSHA + "/" + recipe.RepoDir + "/?pagelen=100&max_depth=100")
+func (f *bitServer) yaml() string    { return f.at("/src/main/" + YAML) }
+func (f *bitServer) listing() string { return f.listingAt(recipe.RepoDir) }
+
+// listingAt is the route one directory is listed at, at that commit.
+func (f *bitServer) listingAt(path string) string {
+	return f.at("/src/" + bitSHA + "/" + strings.TrimSuffix(path, "/") + "/?pagelen=100&max_depth=100")
 }
 
 // asked is every path the adapter asked for, in the order it asked.
@@ -571,6 +879,25 @@ func (f *bitServer) repo(yaml []byte, files []ghEntry) {
 // noFolder leaves the folder's listing out, so the read meets the 404 that is
 // a repository keeping no recipes of its own — not a failure.
 func (f *bitServer) noFolder() { delete(f.routes, f.listing()) }
+
+// fileAt registers one file read at the commit the default branch resolves to,
+// which is how an extra path that is a file is read (a read that named the
+// branch instead would miss this route).
+func (f *bitServer) fileAt(path, data string) {
+	f.routes[f.at("/src/"+bitSHA+"/"+path)] = bitReply{status: 200, ctype: "application/octet-stream", body: data}
+}
+
+// dirAt registers one directory read at that commit, which is how an extra path
+// that is a folder is read: its listing, and one route per file it holds.
+func (f *bitServer) dirAt(path string, files []ghEntry) {
+	var values []string
+	for _, file := range files {
+		values = append(values, fmt.Sprintf(`{"path": "%s/%s", "type": "commit_file", "size": %d}`, path, file.Path, len(file.Data)))
+		f.fileAt(path+"/"+file.Path, file.Data)
+	}
+	f.routes[f.listingAt(path)] = bitReply{status: 200, ctype: "application/json",
+		body: fmt.Sprintf(`{"pagelen": 100, "values": [%s]}`, strings.Join(values, ", "))}
+}
 
 // fail replaces one route with a refusal, for a case about a host that answers
 // an error rather than the file or the folder.
