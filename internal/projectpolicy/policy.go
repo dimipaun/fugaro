@@ -938,14 +938,18 @@ type ClaudeRoute = config.RoutingClaude
 // contract's own, so a source or a pool cannot be spelled one way in the
 // installation's file and another on the wire.
 //
-// The members are read strictly, the rule every block of this node is held to:
-// this document decides where a project's calls go and what they cost, so a
-// misspelt member is refused rather than read as nothing. What the key buys is
-// the one thing a member of `craft_pools` cannot: a reader of the release
-// behind lists it in UnknownKeys and reads every block it does know byte for
-// byte, so an update publishes the table while runs are in flight (F49, R21).
-// A release that grows the key's own members says what a reader of the release
-// behind does with the growth; R25 leaves that question to it.
+// The members are read the two ways every wire of this tree is read: the WRITER
+// reads them strictly and refuses a table RT3's checks refuse (DecodeStrict,
+// the publisher's gate — this document decides where a project's calls go and
+// what they cost), while every reader tolerates what it does not know (Decode).
+// What the key buys is the one thing a member of `craft_pools` cannot: a reader
+// of the release behind lists it in UnknownKeys and reads every block it does
+// know byte for byte, so an update publishes the table while runs are in flight
+// (F49, R21). The same rule holds one release further on, inside the key: a
+// member a later release adds here is read by the readers that know it and
+// ignored by the ones that do not, because a run in flight meets the newer node
+// before its own `fugaro update` can move it — which is why the tolerance has
+// to be in the shipped reader and not in the release that grows the key (R25).
 type ModelRouting struct {
 	// Entries is the table: the model or pattern each entry answers and the
 	// chain of sources that may serve it, first usable one wins. nil is a
@@ -962,9 +966,11 @@ type ModelRouting struct {
 // pools, providers and budget, plus the warnings it carries (today exactly X2's
 // lone subscription token, which release 1 reports and release 2 refuses).
 //
-// It is the node's own validation — Decode refuses the first problem it reports
-// — and the publisher's gate, so a table `fugaro routing set` or `fugaro
-// validate` refuses is a table no door of this release writes into the policy.
+// It is the writer's gate — DecodeStrict refuses the first problem it reports,
+// which is the read a command lands through, and the publisher asks it of the
+// table it has just built — so a table `fugaro routing set` or `fugaro
+// validate` refuses is a table no door of this release writes into the policy,
+// while a node a later release wrote is still READ by every run in flight.
 //
 // The project is read from the node itself, and the one list the node cannot
 // supply whole is the models a run can call: a run's rungs are the run's
@@ -1486,8 +1492,33 @@ const MaxPolicyBytes = 64 << 10
 //
 // Unknown JSON keys are ignored; version is not (see VersionError), and the
 // budget block is strict (see the package comment).
+//
+// The routing table is read the way an unknown key is: what this release does
+// not model inside `model_routing` is left alone rather than refused, and a
+// table the checks would refuse is read. It is the one block whose contents a
+// later release grows — a source, a pool or an entry gains a member, a
+// credential kind is added — and a run in flight meets a node a later release
+// published before its own `fugaro update` can move it: a reader that refused
+// it would halt every job image on the project over a member that reader was
+// never told about (contract-table.md, F49). DecodeStrict is the other half of
+// the pair, and it is the half the writer reads.
 func Decode(raw []byte) (*Policy, bool, error) {
 	return decodeWithKeys(raw, knownTopLevelKeys)
+}
+
+// DecodeStrict is the node as a WRITER must read it: the bytes a command is
+// about to land are refused unless this release understands every member of
+// them, and a routing table routing.Problems refuses is refused here rather
+// than by the run that cannot start (checkPolicyBytes, the publisher's own
+// gate).
+//
+// The two answers differ in exactly one place, `model_routing`: its members are
+// read strictly and the table is held to RT3's checks. Everything else is
+// Decode, and the rule the pair states is the one every wire this tree writes
+// is held to — a reader tolerates what it does not know, a writer lands only
+// what it does.
+func DecodeStrict(raw []byte) (*Policy, bool, error) {
+	return decodePolicy(raw, knownTopLevelKeys, true)
 }
 
 // decodeWithKeys is Decode under a named key set: the top-level keys the reader
@@ -1498,6 +1529,15 @@ func Decode(raw []byte) (*Policy, bool, error) {
 // this release writes, so a key spelled here is never one this reader does not
 // know.
 func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
+	return decodePolicy(raw, keys, false)
+}
+
+// decodePolicy is the read both of the above are: keys is the top-level key set
+// the reader being modelled knows, and strict is whether it is the writer
+// reading — the one place the answer differs is `model_routing`, whose members
+// are refused when this release does not model them only for a writer, and
+// whose table only a writer is held to RT3's checks about.
+func decodePolicy(raw []byte, keys map[string]bool, strict bool) (*Policy, bool, error) {
 	if IsNull(raw) {
 		return nil, false, nil
 	}
@@ -1834,34 +1874,43 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		}
 		p.ModelGrades = grades
 	}
-	// The routing table is read after every block it is judged against — the
-	// credentials and the pools a chain's source names, the providers it
-	// resolves through, the budget a paid source after a pool is held to, and
-	// the crafts and grades whose models it must answer — because its own
-	// problems are properties of those together (routing.Problems, RT3). A block
-	// that sets neither an entry nor a pool is no block, the crafts' rule: two
-	// spellings of "this project routes nothing" are one answer and a writer
-	// that round trips this policy writes no member.
+	// The routing table is read last, after every block the writer's own checks
+	// judge it against — the credentials and the pools a chain's source names,
+	// the providers it resolves through, the budget a paid source after a pool
+	// is held to, and the crafts and grades whose models it must answer — so
+	// that the strict read below has the blocks in hand (routing.Problems, RT3).
+	// A block that sets neither an entry nor a pool is no block, the crafts'
+	// rule: two spellings of "this project routes nothing" are one answer and a
+	// writer that round trips this policy writes no member.
+	//
+	// The read is strict for the writer and tolerant for everyone else, which is
+	// the pair Decode and DecodeStrict document: a member a later release adds
+	// inside the key is a member a run in flight must not halt on, and a table
+	// the checks refuse is one only the writer's gate may land.
 	if mraw, ok := doc["model_routing"]; ok && !IsNull(mraw) {
 		dec := json.NewDecoder(bytes.NewReader(mraw))
-		dec.DisallowUnknownFields()
+		if strict {
+			dec.DisallowUnknownFields()
+		}
 		var mr ModelRouting
 		if err := dec.Decode(&mr); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: model_routing: %w", err)
 		}
-		// The pools the table names are published pools, so they are held to the
-		// rules a published pool is held to (config.ValidatePublishedPools):
-		// craft_pools carries the same set beside this key, and the members that
-		// are only here — a pool's rule, its principal and its threshold — are
-		// the ones no earlier release could have refused.
-		for _, prob := range config.ValidatePublishedPools(mr.Pools, p.CraftCredentials) {
-			return nil, true, fmt.Errorf("projectpolicy: model_routing.%s: %s", prob.Path, prob.Message)
-		}
 		if len(mr.Entries) > 0 || len(mr.Pools) > 0 {
 			p.ModelRouting = &mr
 		}
-		if problems, _ := p.ModelRoutingProblems(); len(problems) > 0 {
-			return nil, true, fmt.Errorf("projectpolicy: %s: %s", problems[0].Path, problems[0].Message)
+		if strict && p.ModelRouting != nil {
+			// The pools the table names are published pools, so they are held to
+			// the rules a published pool is held to (config.ValidatePublishedPools):
+			// craft_pools carries the same set beside this key, and the members
+			// that are only here — a pool's rule, its principal and its threshold
+			// — are the ones no earlier release could have refused.
+			for _, prob := range config.ValidatePublishedPools(mr.Pools, p.CraftCredentials) {
+				return nil, true, fmt.Errorf("projectpolicy: model_routing.%s: %s", prob.Path, prob.Message)
+			}
+			if problems, _ := p.ModelRoutingProblems(); len(problems) > 0 {
+				return nil, true, fmt.Errorf("projectpolicy: %s: %s", problems[0].Path, problems[0].Message)
+			}
 		}
 	}
 	// The Bitbucket block is judged *before* the profiles block, and the

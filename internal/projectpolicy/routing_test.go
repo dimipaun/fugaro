@@ -93,8 +93,10 @@ func TestPolicyCarriesModelRouting(t *testing.T) {
 	})
 
 	// The table's own problems, one sub-test per rule the checks answer with:
-	// each is refused with the path the fix is written at and the check's own
-	// sentence, which names the fix.
+	// each is refused by the WRITER's read with the path the fix is written at
+	// and the check's own sentence, which names the fix — while the read every
+	// run in flight makes of the same node answers without refusing it (the
+	// pair DecodeStrict and Decode document; the next test is that rule's own).
 	for _, tc := range []struct {
 		name, table, want string
 	}{
@@ -116,9 +118,9 @@ func TestPolicyCarriesModelRouting(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := Decode([]byte(routingNode(tc.table)))
+			_, _, err := DecodeStrict([]byte(routingNode(tc.table)))
 			if err == nil {
-				t.Fatalf("the node carrying %s was read", tc.table)
+				t.Fatalf("the node carrying %s was written", tc.table)
 			}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("the refusal does not name the problem (%q): %v", tc.want, err)
@@ -126,20 +128,24 @@ func TestPolicyCarriesModelRouting(t *testing.T) {
 			if !strings.Contains(err.Error(), "model_routing") {
 				t.Errorf("the refusal does not say which key the problem is in: %v", err)
 			}
+			// The same node is READ by the runs this project has in flight: the
+			// table is theirs to be served by, and a reader that refused the node
+			// would have halted every run over a value only the writer judges.
+			p, found, err := Decode([]byte(routingNode(tc.table)))
+			if err != nil || !found || p == nil {
+				t.Fatalf("the reader refused the node the writer refuses = (%v, %v, %v)", p, found, err)
+			}
+			if p.ModelRouting == nil || len(p.ModelRouting.Entries) != 1 {
+				t.Errorf("the reader read no table: %+v", p.ModelRouting)
+			}
 		})
 	}
 
-	// A member this Fugaro does not model inside the key is refused rather than
-	// read as nothing (the strict decode every block of this node is held to),
-	// and so is a pool the rules a published pool is held to refuse: craft_pools
-	// carries the same set beside the key, and the members only this key has are
-	// the ones no earlier release could have refused.
+	// A pool the rules a published pool is held to refuse is the writer's to
+	// refuse: craft_pools carries the same set beside the key, and the members
+	// only this key has are the ones no earlier release could have refused. The
+	// read a run makes of the same node answers, for the reason above.
 	for _, tc := range []struct{ name, table, want string }{
-		{
-			name:  "a member this Fugaro does not model",
-			table: `{"entries": [], "pools": [], "admissions": []}`,
-			want:  `unknown field "admissions"`,
-		},
 		{
 			name:  "a pool whose rule is not one of the rules",
 			table: `{"entries": [], "pools": [{"name": "acme-pool", "members": ["acme-main"], "owner": "owner@example.com", "rule": "random"}]}`,
@@ -152,12 +158,15 @@ func TestPolicyCarriesModelRouting(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := Decode([]byte(routingNode(tc.table)))
+			_, _, err := DecodeStrict([]byte(routingNode(tc.table)))
 			if err == nil {
-				t.Fatalf("the node carrying %s was read", tc.table)
+				t.Fatalf("the node carrying %s was written", tc.table)
 			}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("the refusal does not name the problem (%q): %v", tc.want, err)
+			}
+			if _, _, err := Decode([]byte(routingNode(tc.table))); err != nil {
+				t.Errorf("the reader refused the node the writer refuses: %v", err)
 			}
 		})
 	}
@@ -181,6 +190,63 @@ func TestPolicyCarriesModelRouting(t *testing.T) {
 			t.Errorf("a policy decoded from an empty block re-marshals with the member: %s", b)
 		}
 	})
+}
+
+// TestAMemberALaterReleaseAddsIsRead is the other half of the compatibility
+// story, one release further in: the key's own contents are what a later
+// release grows — a source, an entry or a pool gains a member, a credential
+// kind is added — and a run in flight meets that node before its own `fugaro
+// update` can move it. The reader tolerates the member and serves the table it
+// does know; the writer refuses to land a node it cannot write back whole,
+// which is the pair every wire of this tree is held to (contract-table.md: the
+// key's contents are free to grow inside it, and a shipped reader cannot be
+// taught the growth).
+func TestAMemberALaterReleaseAddsIsRead(t *testing.T) {
+	for _, tc := range []struct{ name, table string }{
+		{
+			name: "a member of a source",
+			table: `{"entries": [{"match": "claude-*", "chain": [{"kind": "pool", "pool": "acme-pool", "spend_cap_usd": 12}]}],` +
+				`"pools": [{"name": "acme-pool", "members": ["acme-main"], "owner": "owner@example.com"}]}`,
+		},
+		{
+			name: "a member of an entry",
+			table: `{"entries": [{"match": "claude-*", "chain": [{"kind": "pool", "pool": "acme-pool"}], "retired_at": "2027-01-01"}],` +
+				`"pools": [{"name": "acme-pool", "members": ["acme-main"], "owner": "owner@example.com"}]}`,
+		},
+		{
+			name: "a member of a pool",
+			table: `{"entries": [{"match": "claude-*", "chain": [{"kind": "pool", "pool": "acme-pool"}]}],` +
+				`"pools": [{"name": "acme-pool", "members": ["acme-main"], "owner": "owner@example.com", "cooldown_s": 30}]}`,
+		},
+		{
+			name: "a member of the key itself",
+			table: `{"entries": [{"match": "claude-*", "chain": [{"kind": "pool", "pool": "acme-pool"}]}],` +
+				`"pools": [{"name": "acme-pool", "members": ["acme-main"], "owner": "owner@example.com"}], "admissions": []}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(routingNode(tc.table)))
+			if err != nil || !found || p == nil {
+				t.Fatalf("the reader refused a node a later release published = (%v, %v, %v)", p, found, err)
+			}
+			if p.ModelRouting == nil || len(p.ModelRouting.Entries) != 1 || p.ModelRouting.Entries[0].Match != "claude-*" {
+				t.Fatalf("the member took the table with it: %+v", p.ModelRouting)
+			}
+			if len(p.ModelRouting.Pools) != 1 || p.ModelRouting.Pools[0].Members[0] != "acme-main" {
+				t.Errorf("the member took the pool with it: %+v", p.ModelRouting.Pools)
+			}
+			if len(p.UnknownKeys) != 0 {
+				t.Errorf("UnknownKeys = %v, want none: the key is one this Fugaro reads, whatever a later release writes inside it", p.UnknownKeys)
+			}
+
+			// The writer is the other side of the same rule: a command of this
+			// release would drop the member it cannot write back, so it lands no
+			// such node, and the move for the operator is the upgrade.
+			if _, _, err := DecodeStrict([]byte(routingNode(tc.table))); err == nil {
+				t.Error("the writer would land a node carrying a member it does not model, and drop the member")
+			}
+		})
+	}
 }
 
 // TestAReleaseBehindReaderStillDecodes is the compatibility story this key

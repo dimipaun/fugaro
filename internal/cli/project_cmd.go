@@ -790,11 +790,17 @@ func refuseNewerPolicy(raw []byte) error {
 // publishedPolicyOf is the node as a policy, or nil when none is published.
 // A node this Fugaro cannot read is refused rather than replaced: publishing
 // over one would drop whatever it is that this binary does not understand.
+//
+// The strict read is the one that answers "cannot read" here, for the reason
+// the sentence above gives: what this release does not model inside the routing
+// table is a member a publish would drop, since the block is written from the
+// typed members and not patched — so a node a later release wrote is one this
+// binary refuses to publish over, and the move is the upgrade.
 func publishedPolicyOf(raw []byte, exists bool) (*projectpolicy.Policy, error) {
 	if !exists {
 		return nil, nil
 	}
-	p, found, err := projectpolicy.Decode(raw)
+	p, found, err := projectpolicy.DecodeStrict(raw)
 	var ve *projectpolicy.VersionError
 	switch {
 	case errors.As(err, &ve):
@@ -2534,8 +2540,15 @@ func jsonMember(raw []byte, key string) (json.RawMessage, bool, error) {
 // price_policy outside its two values, a misspelt model pattern, a per_run_usd
 // that rounds to nothing): either way nothing is written, and the operator
 // sees which value it was.
+//
+// The read is the strict one (projectpolicy.DecodeStrict), because this is the
+// writer: a member inside the routing table that this release does not model,
+// and a table RT3's checks refuse, are exactly the mistakes this gate is here
+// to keep off the node. A run in flight reads that same node through Decode,
+// which tolerates both — a reader that refused them would halt every job image
+// on the project over a node a later release published.
 func checkPolicyBytes(raw []byte) error {
-	p, found, err := projectpolicy.Decode(raw)
+	p, found, err := projectpolicy.DecodeStrict(raw)
 	switch {
 	case err != nil:
 		// The credentials member, when the refusal names one, is the block this
