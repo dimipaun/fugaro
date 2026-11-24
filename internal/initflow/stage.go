@@ -160,6 +160,22 @@ const (
 	// landing it; the stage's position is what makes the guard's answer a
 	// state the same run has already fixed.
 	CredentialsCopy = "credentials-copy"
+	// VersionStamp is the required-CLI stamp's stage
+	// (internal/cli/update_version_stamp.go, D3260, R1): the node
+	// config/policy/required_cli, which says the oldest fugaro release that may
+	// act on the project, raised to this release once the installation has
+	// converged on it. Nothing else writes that node, and it is never lowered
+	// (D3262).
+	//
+	// It sits immediately AFTER the credentials copy, and with nothing between
+	// them that the stamp's own fence would refuse: the stage raises the node
+	// only once every other stage of the run — the policy and rules it needs
+	// among them — has converged, and the credentials copy is the last of the
+	// stages that writes a document a deployed service reads (R1). A stamp
+	// raised before one of them left an installation whose own `fugaro update`
+	// could not finish: an older binary is refused by this node, so the run
+	// holding the half-finished installation has to be this release's.
+	VersionStamp = "version-stamp"
 	// Workspace is the workspace OWNER's published record
 	// (internal/cli/update_workspace.go, D1292): `workspaces/<name>` in the
 	// workspace's own database, built from the record this installation
@@ -342,6 +358,16 @@ var order = []slot{
 	// the stage before this one is the run's one move of that service's image
 	// (CredentialsCopy's own comment has the window).
 	{name: CredentialsCopy, needs: []string{CredentialsService}},
+	// The required-CLI stamp is raised last of the stages that write anything
+	// a deployed reader sees (R1, D3267): it names this release as the oldest
+	// that may act on the project, so a stamp raised before the run had
+	// converged would refuse that same run's own remaining work — an older
+	// binary is what the node stops, but a run holding a half-finished
+	// installation is one the person would have to finish by hand. It needs
+	// the policy node and the rules it is read under, which are the two the
+	// stage names as its own reason for waiting (needs records why, and F2's
+	// gating is linear: these do not gate anything themselves).
+	{name: VersionStamp, needs: []string{Policy, Rules}},
 	// The workspace's own project's root, before the record it serves: what it
 	// creates is the identity the workspace's own service runs as, and the
 	// record stage publishes the node that service reads. It needs the
