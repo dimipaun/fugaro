@@ -78,6 +78,21 @@ type RunReport struct {
 	// graph each path is about is what the daemon matches them against, and
 	// nothing a run says names that item.
 	ConflictPaths []string
+	// Pause is the node the credentials service wrote for this run when it
+	// suspended itself (C3, D3189), and nil for a run it wrote none for. It is
+	// the service's own account of the pause — the instant the run comes back,
+	// and whether its launcher cancelled the pause before then — and never the
+	// job's: a suspended run that named its own resume time would be an agent
+	// choosing when to spend, which is why the node is not written by the run
+	// that is suspended (R8, R19).
+	//
+	// It is here because the fold is the only reader of it: what a person is
+	// told about a run that suspended itself is the pause (notify.go), and the
+	// instant cannot be read off the record, which carries none. The reader
+	// fills it from the node the service wrote, and only for a record that ended
+	// `paused` (internal/cli's orchestratorRunView.pauseNode): a run the service
+	// wrote no node for carries none, and its report is the ending it had.
+	Pause *runstore.PauseNode
 }
 
 // Halt is the halt a run's record carries, as the record states it: what
@@ -133,6 +148,35 @@ func foldPhase(o Outcome, leftPR bool) (Phase, bool) {
 		return PhaseCancelled, true
 	}
 	return "", false
+}
+
+// noticeForRun is what a tick tells a person about one attempt that reported:
+// the line the fold has always said, or — where the chain's exhaustion is why
+// the attempt ended — the pause that is holding it or the halt that replaced
+// it (C3, notify.go). Both readings are read off what the report already
+// carries and neither is judged here: a paused node is the service's own
+// record that this run is coming back at an instant, and `no_credential` is
+// the halt the service's own answer or a refused `/pause` leaves, so the fold
+// says what the two sides wrote and decides nothing about time or credits.
+//
+// A paused attempt is told as a pause and not as the outcome the report
+// carries: the run neither finished the work nor failed at it — it stopped,
+// and the chain is in flight until the orchestrator resumes it (D3195), which
+// is the reading a person needs. Which outcome a reader gives a run whose
+// record says `paused` is that reader's own work (PR11, PR12) and this notice
+// does not depend on it: what makes it a pause is the node, not the word.
+func noticeForRun(runID, title string, r RunReport, outcome Outcome) Notification {
+	switch {
+	case r.Pause != nil:
+		return pausedNotice(runID, title, *r.Pause)
+	case r.Halt.Reason == string(runstore.HaltNoCredential):
+		return pauseHaltedNotice(runID, r.Halt)
+	}
+	return Notification{
+		Kind:    NotifyRunFinished,
+		Subject: runID,
+		Text:    fmt.Sprintf("run %s ended %s for %q", runID, outcome, title),
+	}
 }
 
 // openRunIDs is the run ids a tick asks the reader about: the attempts that
@@ -214,11 +258,7 @@ func foldOps(s State, reports []RunReport) ([]Op, []Notification, error) {
 			op.Phase = &phase
 		}
 		ops = append(ops, Op{Op: OpWorkItemUpsert, WorkItem: &op})
-		notes = append(notes, Notification{
-			Kind:    NotifyRunFinished,
-			Subject: it.RunID,
-			Text:    fmt.Sprintf("run %s ended %s for %q", it.RunID, outcome, w.Title),
-		})
+		notes = append(notes, noticeForRun(it.RunID, w.Title, r, outcome))
 		if len(ops) >= MaxOps {
 			// One op per finished attempt, and a patch carries at most MaxOps:
 			// the rest are folded by the next tick, which is what level

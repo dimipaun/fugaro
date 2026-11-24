@@ -94,12 +94,11 @@ type Entry struct {
 	// own finish where it has one, else its start, else the launch's moment,
 	// else the run id's mint time (runstore.RunTime). The last fallback is what
 	// a run that was claimed and never launched has -- a task.json and nothing
-	// else -- and it is not optional: an entry with no sort key falls outside
-	// every window, so a reader that counts such runs in a window would count
-	// none of them.
-	// It is the index's sort key, and it is the only field of the entry the
-	// writer moves forward on its own -- a run's records do not change after
-	// the run ends, so a settled run's entry is written once.
+	// else -- and it is not optional: an entry with no sort key sorts nowhere,
+	// so a page that has no window to order by could not place it.
+	// It is the sort key of a page with no window, and it is the only field of
+	// the entry the writer moves forward on its own -- a run's records do not
+	// change after the run ends, so a settled run's entry is written once.
 	UpdatedAt time.Time `json:"updated_at"`
 
 	// Status is the run's settled status (runstore.Statuses), and is absent
@@ -118,6 +117,14 @@ type Entry struct {
 	// (runview.Row.PR): what `--pr` filters by and what a pull request's runs
 	// are grouped by.
 	PR int `json:"pr,omitempty"`
+	// Branch is the branch the run is on: the record's, else its task's
+	// (runview.Row.Branch), the same order coordinatorRun applies. It is
+	// projected beside the records rather than read from Record alone because
+	// a run whose record is absent or unreadable still carries the branch its
+	// task named, and the view derives a record's release from it
+	// (coordinator.finish): a reader of the index that took the branch from
+	// the record would draw that run differently from the bucket read.
+	Branch string `json:"branch,omitempty"`
 	// RequestedBy is the identity the run's task names, and LaunchedBy the
 	// identity its launch record names. They are two facts and not one: the
 	// task is written by whoever filed it and the launch by whoever started
@@ -245,10 +252,18 @@ type Filter struct {
 	// is every repository of the installation. It is what a listing in a
 	// checkout sets (the local config's repositories).
 	Slugs []string
-	// Since is the earliest UpdatedAt a row may carry, inclusive; the zero
-	// time is no bound. It is `runs ls --since` and `runs stats --since`, and
-	// it bounds the read by the window rather than by history: with it, every
-	// run of the window is listed (D3203).
+	// Since is the earliest moment a run may have started at, inclusive -- the
+	// run id's own mint time (runstore.RunTime), not UpdatedAt; the zero time
+	// is no bound. It is `runs ls --since` and `runs stats --since` ("only runs
+	// started within this long"), and it bounds the read by the window rather
+	// than by history: with it, every run of the window is listed (D3203).
+	//
+	// It is also the page's order: a window is the run's start, so a windowed
+	// page is ordered by the run id and stops at the first run older than the
+	// window, exactly as the bucket read it replaces lists one
+	// (runstore.ListRunIDs). The two reads of a window then hold the same runs
+	// in the same order, which is what makes `index_complete` a statement about
+	// where the figures came from and not about which runs they are over.
 	Since time.Time
 	// States keeps the runs that ended in one of these statuses; empty keeps
 	// every run. It is `runs ls --state`.
@@ -297,8 +312,9 @@ type Filter struct {
 // the position is written down rather than recomputed.
 type Cursor struct {
 	// UpdatedAt is the run's sort key in the index: the entry's own UpdatedAt,
-	// which the page continuation carries. It is absent for a cursor that
-	// names a position in the reindex's walk, whose order is the run id alone.
+	// which the page continuation carries. It is absent for a page with a
+	// window (Filter.Since), whose order is the run id alone, and for a cursor
+	// that names a position in the reindex's walk, which is the same order.
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 	// Slug is the repository the run belongs to, set by the reindex walk
 	// alone, which walks one repository's runs at a time and resumes inside
@@ -364,10 +380,11 @@ func DecodeCursor(token string) (Cursor, error) {
 
 // Page is one answer of List.
 type Page struct {
-	// Entries are the rows, newest first, with the overlay's rows merged in:
-	// the order is the index's own (UpdatedAt descending, then the run id),
-	// and an overlay row that the index does not carry yet takes its place in
-	// that order rather than being appended.
+	// Entries are the rows, with the overlay's rows merged in, in the page's
+	// own order: the run id descending for a page with a window (the run's
+	// start, Filter.Since), and UpdatedAt descending then the run id for one
+	// without. An overlay row that the index does not carry yet takes its place
+	// in that order rather than being appended.
 	Entries []Entry
 	// Next is where the page after this one starts, and is nil when this is
 	// the last one: the caller hands Next.RunID back as Filter.After. It is a

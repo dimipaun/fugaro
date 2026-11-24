@@ -293,11 +293,13 @@ func (s *projectStage) read(ctx context.Context) error {
 		// the label's own value saying how (resumedCreation).
 		s.e.r.resumedCreation = info.CreatedLabel
 	case info.CreatedLabel != "":
-		// The origin label is there with a value this program never writes:
-		// the project is one Fugaro did not write, so it cannot be resumed,
-		// and the label alone says it holds something of Fugaro's. It is
-		// refused rather than adopted (infra.ProjectInfo.CreatedLabel,
-		// init_adopt.go).
+		// The key a run of fugaro setup writes, carrying a value this program
+		// does not: Fugaro did not write this label, and the project is
+		// refused like any other of Fugaro's rather than adopted — the
+		// refusal's own words ("a label fugaro setup writes") and
+		// init_adopt.go's list of what stops an adoption. Read off the
+		// project the stage already read, so nothing about it is asked for
+		// again.
 		return freshOnly(s.id)
 	default:
 		// A project that is there and that no run of fugaro setup made
