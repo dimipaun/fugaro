@@ -1324,10 +1324,10 @@ func TestTheClaimSecretStaysOutOfTheEnvironment(t *testing.T) {
 // is refused within a minute whether or not the sweep of their containers
 // succeeded. The refusal halts the run with the removal named, and the run
 // moves to no other credential: the model call is not sent to the member's own
-// service, and nothing is asked twice. What the stand-in sends is the word
-// gateway.ErrorSlipOwnerRemoved names, which the workspace's scope does not
-// write yet: this test holds the gateway's reader and the halt it forces, not
-// the service's sentence.
+// service, and nothing is asked twice. What the stand-in sends is the word the
+// workspace's scope writes for this call — credsvc.ErrorSlipOwnerRemoved, which
+// verifyPersonCallSlip answers once the slip's claim secret has been matched —
+// so what this test holds is the gateway's reader and the halt it forces.
 func TestARemovedOwnersRunHaltsNamingTheRemoval(t *testing.T) {
 	const wsSlip = "fake-workspace-slip-4b2a9e77-not-a-credential"
 	workspace, wsSrv := anthropicfake.New(t)

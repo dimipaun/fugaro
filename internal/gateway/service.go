@@ -215,16 +215,14 @@ const (
 	//
 	// The word is the workspace's scope's to write — it is mirrored here the
 	// way every other type of this contract is, because this package cannot
-	// import the service's half — and the scope that landed (WC4) answers a
-	// removed owner with the one refusal it gives its record:
-	// credsvc's verifyPersonCallSlip reads the roster on every call and
-	// answers unverified_run_identity — "the slip is not this run's, or not
-	// this account's, or is no longer live" — so a caller cannot tell
-	// "removed" from "not yours". A removed owner's run therefore halts
-	// through the identity arm below, with that arm's detail, where plan row
-	// 61, the threat model and D3146 all expect the removal named; the
-	// sentence in slipOwnerRemovedDetail waits for the service's side to write
-	// this word.
+	// import the service's half — and the landed scope (WC4) writes it at the
+	// one point it may: credsvc's verifyPersonCallSlip asks the roster after
+	// the slip's claim secret has been matched, so only the run that holds
+	// that secret is ever answered this word, and it is answered the removal
+	// by name (slipOwnerRemoved). The claim route's own reading of the same
+	// fact keeps the record's one sentence instead, since a caller there names
+	// a slip before it holds any secret — so a call is answered here and a
+	// claim is not.
 	ErrorSlipOwnerRemoved = "slip_owner_removed"
 )
 

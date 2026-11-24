@@ -623,7 +623,7 @@ func ValidStatus(status string) bool {
 
 // validErrorType reports whether s is one of the refusal body's error types
 // (wire.go, provider_wire.go). It is the reader's half of a closed set the
-// writer already owns — all thirteen of them, the request-shape refusal
+// writer already owns — all fourteen of them, the request-shape refusal
 // included: the answer path records that refusal like the rest (server.go), so
 // this set is the wire's own vocabulary and not a subset of what this service
 // happens to answer today.
@@ -642,6 +642,11 @@ func ValidStatus(status string) bool {
 func validErrorType(s string) bool {
 	switch s {
 	case ErrorExhaustedUntil, ErrorUnverifiedRunIdentity, ErrorUnverifiedJobIdentity, ErrorStateUnavailable, ErrorRequestRefused, ErrorNoCandidateCredentials, ErrorIssueGone, ErrorNoReadConsumer, ErrorProviderNotServed, ErrorProviderNotAllowed:
+		return true
+	case ErrorSlipOwnerRemoved:
+		// D3146's, answered on a call under a workspace slip whose owner the
+		// roster no longer lists: a run halted by it is explained by this
+		// line or by none.
 		return true
 	case ErrorWorkflowSecretNotAllowed, ErrorWorkflowSecretUnmarked, ErrorWorkflowSecretsOff:
 		return true

@@ -465,6 +465,29 @@ func TestServiceContractMirrorsCredsvcReadsWhatItWrites(t *testing.T) {
 			t.Errorf("an exhausted answer halted the run: %q", detail)
 		}
 	})
+
+	t.Run("slip_owner_removed", func(t *testing.T) {
+		// D3146's refusal, through the service's own writer: a call under a
+		// slip whose owner the roster no longer lists is halted naming the
+		// removal. It is the one word of this contract whose writer and reader
+		// are tested apart otherwise — the gateway's own reader by the
+		// runner's stand-in — so this holds the two ends to each other.
+		rec := httptest.NewRecorder()
+		credsvc.WriteWireError(rec, credsvc.StatusUnverified, credsvc.WireError{
+			Error:   credsvc.ErrorSlipOwnerRemoved,
+			Message: "the slip's owner is no longer on this workspace's roster",
+		})
+		h := newServiceMirror(t, func(*http.Request, []byte) anthropicfake.Reply {
+			return anthropicfake.Reply{Status: rec.Code, Body: rec.Body.String()}
+		})
+		status, _ := postMirror(t, h)
+		if status != http.StatusForbidden {
+			t.Fatalf("the refusal was answered %d", status)
+		}
+		if detail := haltDetail(t, h); !strings.Contains(detail, gateway.ErrorSlipOwnerRemoved) || !strings.Contains(detail, "roster") {
+			t.Errorf("the gateway halted %q, want the removal named", detail)
+		}
+	})
 }
 
 // TestServiceAuthHeadersMirrorCredsvc: a switched run's declaration (B2.2) is
