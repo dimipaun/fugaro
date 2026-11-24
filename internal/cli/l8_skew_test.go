@@ -220,6 +220,38 @@ func TestL8GateRefusesAnOlderImage(t *testing.T) {
 	}
 }
 
+// TestL8SinceHasAReleaseBullet: l8Since names 0.30.0, which is not tagged, so
+// docs/release.md's Before-you-tag list is what holds the constant to the release
+// actually cut — the job every other *Since constant's bullet does, and the one
+// this constant's own comment claims.
+func TestL8SinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `l8Since`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no l8Since bullet: the checklist is where a release verifies the constant")
+	}
+	for _, want := range []string{
+		"currently `\"" + l8Since + "\"`",
+		"abReposSince", "recipeCopySince", "checkL8Image", "checkCloneL8Image",
+		"default branch", ".fugaro/recipes/", "not tagged yet",
+	} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's l8Since bullet does not say %q", want)
+		}
+	}
+	// The two companion constants carry release A's number, which is what makes
+	// one bullet and one census-row move the whole gate: a value that moved on
+	// its own would refuse a release the other two admit.
+	if abReposSince != l8Since || recipeCopySince != l8Since {
+		t.Errorf("abReposSince = %q and recipeCopySince = %q, want both %q: release A is one release", abReposSince, recipeCopySince, l8Since)
+	}
+}
+
 // TestLaunchNamesLiftedKeys is the other half of S5: a launch prints each lifted
 // key its default branch writes, once, and a repository that writes none is
 // printed nothing. The launch itself goes through — C1's note decides nothing,
