@@ -691,6 +691,15 @@ type initRun struct {
 	// they always have. repLog is the log it keeps, closed when the run ends.
 	rep    *report.Reporter
 	repLog report.Sink
+	// repoDoor is whether this run is the standalone `--repo` door rather than
+	// the converge. The converge's loop prints one line per stage and its plan
+	// view is tf.Brief; the standalone door has no loop, so it prints the
+	// repository's own line itself (planBlock) and its refusal is the one a
+	// person reads rather than an agent's (guard) — both are the owner's
+	// feedback of 2026-11-24, whose `fugaro update --repo` printed two init
+	// banners, a line per refreshed resource, Terraform's whole plan and an
+	// instruction addressed to a coding agent, at the owner's own terminal.
+	repoDoor bool
 	// detail is where a run driven by another keeps its own account of itself,
 	// and it is set only there: the refresh the converge's checkout stage runs
 	// (refreshOptions.detail) writes its lines where that converge keeps its
@@ -1887,6 +1896,19 @@ func (r *initRun) planBlock(plan *tf.Plan) {
 		fmt.Fprint(r.w, tf.Summary(plan))
 		return
 	}
+	if r.repoDoor {
+		// The standalone --repo door has no converge loop, so the plan IS the
+		// step: one line with what the plan holds and the log the whole of it —
+		// Terraform's own account, every address and attribute path — is in
+		// (the owner's feedback of 2026-11-24). tf.Brief's plain-words view
+		// goes to the log beside Summary rather than the screen, because a
+		// refusal this door stops on prints its own short block in those words
+		// (guard), and a plan that is not refused is confirmed by the counts
+		// this line carries.
+		r.rep.Step("repository " + r.res.Repo).Done(tf.Counts(plan) + " (log: " + r.repLog.Path() + ")")
+		fmt.Fprint(r.rep.Stream(), tf.Brief(plan)+tf.Summary(plan))
+		return
+	}
 	fmt.Fprint(r.w, tf.Brief(plan))
 	fmt.Fprint(r.rep.Stream(), tf.Summary(plan))
 }
@@ -2982,11 +3004,17 @@ func (r *initRun) guard(ctx context.Context, c *infra.Clients, plan *tf.Plan, al
 		return userErr("%s\nwhether %s is a managed project could not be read (%s), so this refusal names no way past it: say which address is refused to the person who owns the project",
 			tf.GuardWith(plan, allowDelete, ""), safetext.Field(r.projectName), safetext.Field(readErr.Error()))
 	case isManaged:
+		if r.refusalIsShort() {
+			return userErr("%s", r.guardRefusalBlock(plan, allowDelete, managedDeleteAdviceTerminal))
+		}
 		advice := ""
 		if len(tf.Listable(plan, allowDelete)) > 0 {
 			advice = initManagedDeleteAdvice
 		}
 		return userErr("%s", tf.GuardWith(plan, allowDelete, advice))
+	}
+	if r.refusalIsShort() {
+		return userErr("%s", r.guardRefusalBlock(plan, allowDelete, tf.AllowDeleteAdvice))
 	}
 	msg := err.Error()
 	for _, h := range infra.DeleteHints(plan, allowDelete) {
@@ -5001,7 +5029,35 @@ func runInitRepo(r *initRun, args []string) error {
 	if len(args) > 0 {
 		dir = args[0]
 	}
+	// The run's own account, opened before anything can print (CL5b): this door
+	// converges one root, and its Terraform output is the same flood the
+	// converge keeps in a log — two init banners, a line per resource
+	// refreshed, and Terraform's whole plan — which the owner met at the
+	// terminal on 2026-11-24. The reporter is the converge's, so the two doors
+	// cannot disagree about colour, about the log or about what reaches the
+	// screen (D1352); the step line for the repository and the refusal a person
+	// reads are this door's own, because there is no converge loop here to
+	// print one (planBlock, guard).
+	r.repoDoor = true
+	r.rep, r.repLog = convergeReporter(cmd, o.doorName(), r.repoRedaction)
+	if r.repLog != nil {
+		defer func() { _ = r.repLog.Close() }()
+	}
 	return r.repoEngine(cmd.Context(), dir, "", false)
+}
+
+// repoRedaction is what a --repo run's log is redacted with, read at each line
+// (F6): the values the process held from the start (secretsHeld), and the
+// GitHub App key this run typed — the one secret the repository door reads,
+// which the pre-check signs with and which is cleared when the run ends. The
+// converge's own list is initEngine's slots; this door has no engine, so its
+// list is the run's own and holds the same two things.
+func (r *initRun) repoRedaction() []string {
+	vals := slices.Clone(secretsHeld())
+	if len(r.appKeyMem) > 0 {
+		vals = append(vals, heldValues(r.appKeyMem)...)
+	}
+	return vals
 }
 
 // billableBuildLeft is the left-for-you for a billable first image build: the
