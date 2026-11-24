@@ -990,6 +990,9 @@
         "layer.ab.rate": {
           "default": "unset = 0: no run is a challenger"
         },
+        "layer.ab.repos": {
+          "default": "unset = none: every repository runs at the block's own rate"
+        },
         "layer.claude_models": {
           "default": "unset = every Claude model the project's accounts may serve"
         },

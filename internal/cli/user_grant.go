@@ -252,6 +252,17 @@ func userPair(cmd *cobra.Command, o *userGrantOptions, arg string, grant bool) e
 	if err := userLocalConfig(sel, lc); err != nil {
 		return err
 	}
+	// The door the workspace owns on a linked member (WU10, D2813, R11): its
+	// roster is the workspace's record there, written through
+	// `fugaro workspace user grant|revoke`. It is asked before the database is
+	// opened, so a linked member's refusal costs no read of it.
+	verb := "revoke"
+	if grant {
+		verb = "grant"
+	}
+	if err := installationMemberRefusal(ctx, lc, "written", installationMemberDoor(verb)); err != nil {
+		return err
+	}
 	_, db, err := budgetDBFor(ctx, lc)
 	if err != nil {
 		return err
@@ -478,7 +489,7 @@ func userPairJudge(lc *localcfg.Config, grants []accesslib.Grant, caller, member
 	if unplaced {
 		implicit = append(slices.Clone(implicit), caller)
 	}
-	if err := userLastProjectAdmin(grants, next, implicit, member); err != nil {
+	if err := userLastProjectAdmin(lc, grants, next, implicit, member); err != nil {
 		return nil, err
 	}
 	return next, nil
@@ -500,11 +511,21 @@ func userPairJudge(lc *localcfg.Config, grants []accesslib.Grant, caller, member
 // project-scope role and could not add the admin the sentence asks for. What
 // the rule protects is the admin the change is about to remove, and an
 // installation that has none loses none.
-func userLastProjectAdmin(grants, next []accesslib.Grant, implicit []string, member string) error {
+//
+// The remedy is the roster's own: the installation's node is settled by a
+// project Owner outside it, and a MEMBER's roster (lc is nil, the caller being
+// `fugaro workspace user`'s door onto that member) by the workspace command that
+// writes it — naming `fugaro update --budget-admin` there would name a door
+// that a linked member refuses (WU10, D2813, R12).
+func userLastProjectAdmin(lc *localcfg.Config, grants, next []accesslib.Grant, implicit []string, member string) error {
 	if len(implicit) > 0 || userProjectAdmins(grants) == 0 || userProjectAdmins(next) > 0 {
 		return nil
 	}
-	return userErr("nothing was written: the grants node would hold no admin at project scope after this change — %s is the only member that carries it — and no owner, editor or terraform.budget_admin is named either, so the installation would have no project admin at all: nobody could grant a role, run its update or settle it. Add the admin who is to take over first, then make this change; a project Owner can also do it from outside the grants node, or add themselves to terraform.budget_admins (fugaro update --budget-admin)", safetext.Field(member))
+	remedy := "a project Owner can also do it from outside the grants node, or add themselves to terraform.budget_admins (fugaro update --budget-admin)"
+	if lc == nil {
+		remedy = "a workspace admin puts the admin who is to take over on it with " + installationMemberDoor("grant") + " (D2813, R11), and the member's own update is what derives its IAM lists from the record it then holds"
+	}
+	return userErr("nothing was written: the grants node would hold no admin at project scope after this change — %s is the only member that carries it — and no owner, editor or terraform.budget_admin is named either, so the installation would have no project admin at all: nobody could grant a role, run its update or settle it. Add the admin who is to take over first, then make this change; %s", safetext.Field(member), remedy)
 }
 
 // userProjectAdmins counts the pairs of a document that are a project-scope
@@ -695,6 +716,16 @@ func userPairDone(out io.Writer, lc *localcfg.Config, member string, role access
 // false for every client token, so only a holder of
 // roles/firebasedatabase.admin reaches it — the project's owners, editors and
 // terraform.budget_admins. It names them and the one command that settles it.
+//
+// On a MEMBER's roster (lc is nil, the caller being `fugaro workspace user`'s
+// door onto that member) the sentence names the workspace's door instead. It
+// names no installation-level door at all -- not even to deny it -- because
+// naming one there would put the refused command in front of a person looking
+// for the one to run (WU10, D2813, R12).
 func userPairDenied(lc *localcfg.Config, grant bool) error {
+	if lc == nil {
+		return userErr("nothing was %s: this member's grants node cannot be written with your credentials, and writing it needs roles/firebasedatabase.admin on the member's own Firebase project, which its GCP owners and editors and its terraform.budget_admins hold. An admin stored in the member's grants node derives no database write of its own (finding F22, D1592), so it cannot grant either: a project Owner on the member runs fugaro update there, or adds you to the member's terraform.budget_admins; and the change itself is made through %s, the workspace's door, which writes this member's record with exactly those credentials (D2813, R11)",
+			pairPast(grant), installationMemberDoor("grant"))
+	}
 	return userErr("nothing was %s: the grants node cannot be written with your credentials, and writing it needs roles/firebasedatabase.admin, which the GCP project's owners and editors and terraform.budget_admins hold. An admin stored in the grants node derives no database write of its own (finding F22, D1592), so it cannot grant either: a project Owner runs fugaro update on this installation, or adds you to terraform.budget_admins (fugaro update --budget-admin)", pairPast(grant))
 }

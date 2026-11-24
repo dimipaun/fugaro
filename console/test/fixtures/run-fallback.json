@@ -1,0 +1,102 @@
+{
+  "project": "example-project",
+  "row": {
+    "run": "20261123-101500-c4d2",
+    "run_id": "20261123-101500-c4d2",
+    "repo": "example-owner/example-repo",
+    "workflow": "go",
+    "recipe": "implement",
+    "title": "model-credentials-routing VS1: the console's run screen: source, fallback, switches",
+    "status": "succeeded",
+    "stage": "writeback",
+    "outcome": "ready",
+    "branch": "fugaro/20261123-101500-c4d2",
+    "requested_by": "ana",
+    "launched_by": "ana@example.test",
+    "created": "2026-11-23T10:15:00Z",
+    "started_at": "2026-11-23T10:15:04Z",
+    "image_age_s": 3600,
+    "terminal": true,
+    "settled": true,
+    "follow_up": false,
+    "pr": 512,
+    "pr_url": "https://github.com/example-owner/example-repo/pull/512",
+    "cost": {
+      "model_usd": 4.1,
+      "model_notional_usd": 0.6,
+      "compute_usd": 0.31,
+      "compute_estimated": true,
+      "total_usd": 4.41,
+      "model_basis": "api-list",
+      "fallback_usd": 2.35
+    }
+  },
+  "stages": [
+    {
+      "name": "implement",
+      "started_at": "2026-11-23T10:15:04Z",
+      "duration_s": 900,
+      "calls": 42,
+      "agents": 3,
+      "model_usd": 2.6,
+      "model": "model-a",
+      "model_notional_usd": 0.2,
+      "source": { "kind": "pool", "name": "team" },
+      "fallback": true
+    },
+    {
+      "name": "review-1",
+      "started_at": "2026-11-23T10:30:04Z",
+      "duration_s": 300,
+      "calls": 12,
+      "agents": 0,
+      "model_usd": 1.1,
+      "model": "model-a",
+      "source": { "kind": "anthropic", "name": "" }
+    },
+    {
+      "name": "writeback",
+      "started_at": "2026-11-23T10:35:04Z",
+      "duration_s": 60,
+      "model_usd": 0.4,
+      "model": "model-a"
+    }
+  ],
+  "switches": [
+    { "to": "team-shared", "reason": "exhausted" },
+    { "from": "team-shared", "to": "alice", "reason": "broken", "cache_miss_usd": 0.42 },
+    { "from": "alice", "to": "team-shared", "reason": "exhausted" },
+    { "from": "team-shared", "to": "anthropic-key", "reason": "not_admitted", "cache_miss_unmeasured": true }
+  ],
+  "route_by": { "openrouter": 3.7 },
+  "model_by": { "model-a": 4.1 },
+  "verify": [
+    {
+      "n": 1,
+      "kind": "build",
+      "head_sha": "c4d2e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2",
+      "clean_tree": true,
+      "exit_code": 0,
+      "passed": true,
+      "tests": 0,
+      "failures": 0,
+      "skipped": 0,
+      "started_at": "2026-11-23T10:36:04Z",
+      "duration_s": 95
+    },
+    {
+      "n": 1,
+      "kind": "test",
+      "head_sha": "c4d2e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2",
+      "clean_tree": true,
+      "exit_code": 0,
+      "passed": true,
+      "tests": 812,
+      "failures": 0,
+      "skipped": 4,
+      "started_at": "2026-11-23T10:37:39Z",
+      "duration_s": 420
+    }
+  ],
+  "report_path": "runs/example-project/20261123-101500-c4d2/report.md"
+}

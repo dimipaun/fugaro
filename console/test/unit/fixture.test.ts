@@ -693,6 +693,26 @@ describe('the committed synthetic fixture', () => {
       // document to the kind directly until it is.
       'accounts-pool-ls.json',
       'accounts-pool-ls.json.license',
+      // `run-fallback.json` is the eighth invented document (the
+      // model-credentials-routing plan's VS1): one `diagnose RUN --json`
+      // document, written from the structs (`internal/cli/diagnose.go`'s
+      // `Diagnosis`, which relays the record's own `stages` and `switches`, and
+      // `internal/runstore`'s `StageTiming`, `Switch` and `Cost`) rather than
+      // recorded, so the Run screen's source, fallback and switch drawing has a
+      // document to run over without a CLI. It is the fixture the task's own
+      // file list names, and it carries the four cases that drawing turns on: a
+      // stage a pool served that fell back (with the run's own `fallback_usd`
+      // beside it), a stage served by a kind that names nothing, a stage no
+      // service-answered call was made from at all (so it carries neither new
+      // member), and a switch log whose four entries are the four shapes of
+      // one -- a call that started on the credential that answered it (an empty
+      // `from`, which the service writes and this console draws as "started
+      // here"), a measured cache miss, none at all, and an unmeasured one, which
+      // is unknown rather than free. It is JSON and not `.ndjson`, so the sweep
+      // above never reads it, and no arm of the e2e stub answers with it:
+      // `run-source.test.ts` feeds this document to `buildRunModel` directly.
+      'run-fallback.json',
+      'run-fallback.json.license',
       ...FIXTURE_CASES.map((name) => `${name}.ndjson`),
     ])
     const present = readdirSync(FIXTURE_DIRECTORY)

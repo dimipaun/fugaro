@@ -858,6 +858,26 @@ type RefreshStore interface {
 	Revoke(ctx context.Context, project, family string) error
 }
 
+// RefreshRoot is where a project keeps its refresh families — one node per
+// device, under config/admin beside the device allowlist, the invites, the
+// member records and the push registrations, where no client token may read or
+// write — and RefreshFamilyPath is one device's node in it.
+//
+// The path is in the contract because two sides write it and neither may spell
+// its own: P4's store creates, rotates and deletes a family at this path, and
+// P7's admin revoke deletes the node with the database admin it holds, with no
+// phone and no service in the loop. A store that kept its families somewhere
+// else would make that revoke delete nothing and report no error, leaving a
+// stolen phone refreshing — the hole D2794 closes (F32) — so the one place a
+// family is looked for is fixed here rather than in either caller.
+const RefreshRoot = "config/admin/refresh"
+
+// RefreshFamilyPath is the node one device's family lives at. The key is the
+// DEVICE's uid, which is the one name both sides already hold: Issue is asked
+// for a family by uid, the device node is keyed by it, and an admin revoke
+// names the family it ends from the uid alone.
+func RefreshFamilyPath(deviceUID string) string { return RefreshRoot + "/" + deviceUID }
+
 // MintRequest is what a session asks the minter for: the uid the device's
 // Firebase token is for, and the role the token reports.
 type MintRequest struct {
