@@ -15,6 +15,8 @@
     "paths": [
      "internal/cli/update_repos.go",
      "internal/cli/update_repos_stub.go",
+     "internal/initflow/repos.go",
+     "internal/cli/init_stages.go",
      "docs/update-from-anywhere/contract-repos.md"
     ]
    },
@@ -40,7 +42,7 @@
   },
   {
    "id": "U2",
-   "title": "the enrolled list, its parse and the token fallback",
+   "title": "the enrolled list through the credentials service's read mint",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -49,14 +51,15 @@
     "prediction": true,
     "paths": [
      "internal/cli/update_repos_read.go",
-     "internal/cli/update_repos_token.go",
+     "internal/cli/service_read_provider.go",
+     "internal/cli/reviewverify.go",
      "internal/cli/update_repos_read_test.go"
     ]
    }
   },
   {
-   "id": "U3",
-   "title": "the secrets stage over every repository, and --ask for values",
+   "id": "U3a",
+   "title": "the secrets stage over every repository",
    "run": null,
    "version": null,
    "tier": "large",
@@ -65,10 +68,27 @@
     "prediction": true,
     "paths": [
      "internal/cli/initsecrets.go",
-     "internal/cli/init.go",
-     "docs/no-prompt-policy/reconciliation.md",
-     "website/content/cli-reference.md",
      "internal/cli/initsecrets_repos_test.go"
+    ]
+   }
+  },
+  {
+   "id": "U3b",
+   "title": "update's --ask turns on value entry",
+   "run": null,
+   "version": null,
+   "tier": "medium",
+   "size": 2,
+   "footprint": {
+    "prediction": true,
+    "paths": [
+     "internal/cli/initsecrets.go",
+     "internal/cli/init.go",
+     "internal/initflow/stage.go",
+     "internal/cli/managed_ask_test.go",
+     "docs/no-prompt-policy/reconciliation.md",
+     "docs/managed-agent-converge/reconciliation.md",
+     "website/content/cli-reference.md"
     ]
    }
   },
@@ -118,6 +138,7 @@
     "paths": [
      "internal/cli/init_plugin_stage.go",
      "internal/cli/update_budget_off.go",
+     "internal/cli/init_fugaroyaml.go",
      "internal/cli/repo_notices.go",
      "internal/cli/repo_notices_test.go"
     ]
@@ -125,7 +146,7 @@
   },
   {
    "id": "U6b",
-   "title": "doctor's plugin-pin and budget-mode checks read the default branch",
+   "title": "doctor's repo-plugin-pin and repo-budget-mode checks",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -204,6 +225,7 @@
     "paths": [
      "internal/cli/project_enroll_converge.go",
      "internal/cli/project_enroll.go",
+     "internal/cli/init_fugaroyaml.go",
      "internal/cli/project_enroll_anchor_test.go"
     ]
    }
@@ -213,8 +235,8 @@
    "title": "update and setup lose --anchor",
    "run": null,
    "version": null,
-   "tier": "medium",
-   "size": 2,
+   "tier": "large",
+   "size": 3,
    "footprint": {
     "prediction": true,
     "paths": [
@@ -223,14 +245,21 @@
      "internal/cli/update.go",
      "internal/cli/init_anchor.go",
      "internal/cli/init_repo_stage.go",
+     "internal/cli/init_fugaroyaml.go",
+     "internal/cli/init_anchor_test.go",
+     "internal/cli/docs_project_centric_test.go",
      "internal/cli/testdata/init_retire.golden",
+     "internal/cli/image_refresh_test.go",
+     "internal/cli/image_refresh_upgrade_test.go",
+     "internal/cli/setup_test.go",
+     "internal/cli/init_fugaroyaml_test.go",
      "website/content/cli-reference.md"
     ]
    }
   },
   {
    "id": "U9c",
-   "title": "every pointer to --anchor names project repos add",
+   "title": "the code's pointers to --anchor name project repos add",
    "run": null,
    "version": null,
    "tier": "small",
@@ -241,15 +270,32 @@
      "internal/cli/doctor.go",
      "internal/cli/doctor_render.go",
      "internal/cli/image_refresh.go",
+     "internal/localcfg/select.go",
+     "internal/cli/writers_labels.go"
+    ]
+   }
+  },
+  {
+   "id": "U9d",
+   "title": "the live documents' pointers, and the test that none remains",
+   "run": null,
+   "version": null,
+   "tier": "small",
+   "size": 1,
+   "footprint": {
+    "prediction": true,
+    "paths": [
      "README.md",
      "docs/how-to/teammates.md",
-     ".claude/skills/new-release/SKILL.md"
+     "docs/release.md",
+     ".claude/skills/new-release/SKILL.md",
+     "internal/cli/docs_no_anchor_flag_test.go"
     ]
    }
   },
   {
    "id": "U10",
-   "title": "update --check reads the local list from the code host",
+   "title": "update --check reads the local list through the read mint",
    "run": null,
    "version": null,
    "tier": "small",
@@ -266,7 +312,7 @@
   },
   {
    "id": "U13",
-   "title": "the repos member and the notices member in --json and --events",
+   "title": "the repos and notices members, and the human per-repository lines",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -302,7 +348,7 @@
   },
   {
    "id": "I1",
-   "title": "integration: the real list, the reports wired to the output, the end-to-end tests",
+   "title": "integration: the real list, the end-to-end tests",
    "run": null,
    "version": null,
    "tier": "medium",
@@ -312,7 +358,6 @@
     "paths": [
      "internal/cli/update_repos_stub.go",
      "internal/cli/update_repos_read.go",
-     "internal/cli/init_stages.go",
      "internal/cli/update_anywhere_test.go",
      "internal/cli/update_in_flight_test.go"
     ]
@@ -355,9 +400,14 @@
    "reason": "kept, behaviour: it reads through U1's option, branch and head"
   },
   {
-   "task": "U3",
+   "task": "U3a",
    "needs": "C1",
    "reason": "the view and the report"
+  },
+  {
+   "task": "U3b",
+   "needs": "U3a",
+   "reason": "kept: both write initsecrets.go"
   },
   {
    "task": "U4",
@@ -392,7 +442,7 @@
   {
    "task": "U13",
    "needs": "C1",
-   "reason": "the line type it carries"
+   "reason": "the RepoLine type and the RepoReporter interface"
   },
   {
    "task": "U10",
@@ -401,13 +451,23 @@
   },
   {
    "task": "U10",
-   "needs": "U3",
+   "needs": "U3b",
    "reason": "kept: both write init.go and the generated CLI reference"
   },
   {
    "task": "U10",
    "needs": "U4",
    "reason": "kept, behaviour: the per-repository staleness function U4 writes"
+  },
+  {
+   "task": "U9a",
+   "needs": "U2",
+   "reason": "kept, behaviour: it reads the repository through U2's read-mint opener"
+  },
+  {
+   "task": "U9a",
+   "needs": "U6a",
+   "reason": "kept: both write init_fugaroyaml.go"
   },
   {
    "task": "U9b",
@@ -433,6 +493,16 @@
    "task": "U9c",
    "needs": "U6b",
    "reason": "kept: both write doctor.go and doctor_render.go"
+  },
+  {
+   "task": "U9d",
+   "needs": "U9c",
+   "reason": "kept, behaviour: its test asserts no pointer remains anywhere"
+  },
+  {
+   "task": "U9d",
+   "needs": "U7a",
+   "reason": "kept: both write README.md"
   },
   {
    "task": "U7a",
@@ -466,7 +536,12 @@
   },
   {
    "task": "I1",
-   "needs": "U3",
+   "needs": "U3a",
+   "reason": "integration: the end-to-end test needs every side of C1 and the real list"
+  },
+  {
+   "task": "I1",
+   "needs": "U3b",
    "reason": "integration: the end-to-end test needs every side of C1 and the real list"
   },
   {
@@ -529,7 +604,7 @@
   {
    "contract": "C1",
    "was": {
-    "task": "U3",
+    "task": "U3a",
     "needs": "U2"
    },
    "integration": "I1",

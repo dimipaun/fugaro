@@ -16,8 +16,8 @@ It covers audit rows RC12, RC13, RC38, RC39, RC75, RC98, RC104 and RC105.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | Assumptions A1–A5, findings F1–F30 (F15–F30 from review round 1), decisions D3340–D3351 with the owner's answers (D3343 and D3347 amended after review and confirmed), resolutions R1–R17, open items O1–O2, UNVERIFIED V1–V3. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Contract C1, sixteen tasks (U1–U5, U6a, U6b, U7a, U7b, U8, U9a, U9b, U9c, U10, U11, U13), integration I1, the owner's Check 930 (K1) and one contract change that runs only if raised, in five levels. Also the critical path, the shared files and the edges broken and kept. Nothing in it is approved |
+| [reconciliation.md](reconciliation.md) | Assumptions A1–A5, findings F1–F41 (F15–F30 from review round 1, F31–F41 from round 2), decisions D3340–D3351 with the owner's answers (D3343, D3347 and D3349 amended after review and confirmed), resolutions R1–R20, open items O1–O3 (O3 closed), UNVERIFIED V1–V3. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Contract C1, eighteen tasks (U1, U2, U3a, U3b, U4, U5, U6a, U6b, U7a, U7b, U8, U9a–U9d, U10, U11, U13), integration I1, the owner's Check 930 (K1) and one contract change that runs only if raised, in seven levels. Also the critical path, the shared files and the edges broken and kept. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it |
 
 **The owner's answers, all as recommended:**
@@ -27,25 +27,30 @@ It covers audit rows RC12, RC13, RC38, RC39, RC75, RC98, RC104 and RC105.
   (D3346), waits on L2.
 - **D3342:** every stale derived image is refreshed from its default branch, behind today's
   confirmation.
-- **D3343:** the shell's token reads the default branches. **Amended after review**, confirmed
-  2026-11-24: with no token variable set, it falls back to `gh auth token` and the git credential
-  helper.
+- **D3343:** the shell's token reads the default branches. **Amended twice after review**, the
+  second confirmed 2026-11-24: GitHub has no token path (survey reads the App key), so every read
+  goes through the credentials service's person read mint (`serviceReadProvider`). No key or token
+  reaches the admin's machine. The first amendment's `gh`/credential-helper fallback is withdrawn.
 - **D3344:** the backlog fold runs from every default branch for one release, then goes.
 - **D3345:** `update --anchor` moves into `fugaro project repos add`.
 - **D3346:** the RC39 facts are written for every repository. Moving them to installation state is
   a follow-up.
 - **D3347:** a value is asked for only under `--ask`. Otherwise a line names the repository and the
   fix. **Amended after review**, confirmed 2026-11-24: `--ask` also turns on value entry, on every
-  project (today it restores only a managed project's confirmations).
+  project, in `fugaro update` only. `setup` keeps its terminal prompt.
 - **D3348:** the hint never narrows `--plan-only`.
-- **D3349 (2026-11-24):** `update --check` drops PATH and reads the local config's repositories from
-  the code host, with no GCP call.
+- **D3349 (2026-11-24):** `update --check` drops PATH and reads the local config's repositories.
+  **Amended after review**, confirmed 2026-11-24: it reads through the read mint and writes nothing,
+  instead of "no cloud call".
 - **D3350 (2026-11-24):** a published admit counts as enrolled for secrets, builds and the fold.
-  The hostile-checkout gate stays for `setup --repo`.
+  The hostile-checkout gate stays for `setup --repo` and
+  `--onboard-repo`.
 - **D3351 (2026-11-24):** `setup --anchor` goes too.
 
 **Findings that changed the design:**
-- L8's task M1 (`repofiles.Read`, in flight as #3816) is already the reader of every listed
+- GitHub has no token path for a person's read; the credentials service's read mint is the way in
+  (F31).
+- L8's task M1 (`repofiles.Read`, merged as #3816) is already the reader of every listed
   repository, so L5 extends it and writes no reader of its own (F1).
 - `--check`'s no-cloud promise cannot cover the published admits (F2, D3349).
 - Image-secrets makes workflow secrets project-wide, so a name several repositories want is one line
@@ -67,6 +72,5 @@ The highest decision was image-secrets' reserved block (D3320–D3339), and the 
 
 **What waits on something external:**
 - the owner's go for each task;
-- L8 M1 (#3816) for U1 and U9a;
 - L2 (shared-jobs) for U11;
 - Check 930, which the owner runs after the release that carries I1.

@@ -2,7 +2,8 @@
 
 Checked against `origin/main` at `486823a00` on 2026-11-24. The spec's own claims were checked at
 `b8fdb53e2`; of the files it cites, only `init_stages.go` and `update_backlog.go` changed since, and
-neither change touches a claim. L8 M1's reader was read from its pull request, #3816.
+neither change touches a claim. L8 M1's reader merged during review round 2 (#3816, `d5ec51b5f`); the
+plan cites the merged code.
 
 **Where this file disagrees with [spec.md](spec.md), this file wins.**
 
@@ -31,8 +32,9 @@ ships alone.
 
 Rows F15–F30 come from review round 1.
 
-- **F1 (Exists).** L8's task M1 (`repofiles.Read`, `docs/repo-override-rulings/`, in flight as
-  #3816) is the reader of every listed repository.
+- **F1 (Exists).** L8's task M1 (`repofiles.Read(ctx, in, open gitprov.Opener)`,
+  `docs/repo-override-rulings/`, merged as #3816) is the reader of every listed repository. It
+  opens each repository through the opener its caller passes.
   - It lists exactly A1's repositories, reads each default-branch `fugaro.yaml` through
     `gitprov.ContentsReader` and its `.fugaro/recipes/` through `gitprov.TreeReader`, and returns a
     one-line reason for each repository it could not read.
@@ -68,7 +70,7 @@ Rows F15–F30 come from review round 1.
   - `init_stages.go`: L1 T2a (#3766) and L8 M2;
   - `init.go`: L1 T4 (#3786) and L8 DK2;
   - `update_in_flight_test.go`: image-secrets IS5 and L8;
-  - `doctor.go`: image-secrets IS10 (#3802).
+  - `doctor.go`: image-secrets IS10 (#3802, merged during review round 2).
 
   *Amended in round 1:* L1 T3 (#3778) does not write `init.go`. → R7.
 - **F9 (Exists).** `writeAnchor` (`init_fugaroyaml.go`) and the pin's `remove`
@@ -80,8 +82,8 @@ Rows F15–F30 come from review round 1.
   `origin/HEAD`. Other commands keep it. → A2.
 - **F12 (Wrong).** Acceptance 8's scan cannot ban every `gitRead(ctx, ".", …)` in `internal/cli`:
   `doctor.go`, `config_show.go`, `recipes.go` and others legitimately read the working directory.
-  The working directory is also reached through `originRepo(ctx)` (`init_images_catalog.go:145`),
-  `os.Getwd()` (`init_plugin_stage.go:96`) and `gitCmd(ctx, ".")` (`init_inputs.go:186`). → R10.
+  The working directory is also reached through `originRepo(ctx)` (`init_images_catalog.go:146`),
+  `os.Getwd()` (`init_plugin_stage.go:96`) and `gitCmd(ctx, ".")` (`init_inputs.go:187`). → R10.
 - **F13 (Exists).** Every provider implements both readers: github and bitbucket
   (`contents.go`, `commits.go`) and the fake (`fake.go`).
 - **F14 (Interaction).** The HARD RULE's pin sentence is in `CLAUDE.md`, and the update skill is
@@ -103,7 +105,7 @@ Rows F15–F30 come from review round 1.
   `initsecrets.go:520`; `authState`, `init_repo_gate.go`) admits only a repository the local config
   lists (`repoKnown`), or one opted in by `--onboard-repo` or by typing its name. → D3350.
 - **F18 (Wrong premise of D3347).** `--ask` today restores only the confirmations a managed
-  project's gate stands in for (`confirmNow`: `r.o.ask && r.gateRestores()`, `init.go:2628`; its
+  project's gate stands in for (`confirmNow`: `r.o.ask && r.gateRestores()`, `init.go:2651`; its
   help says it "changes nothing" elsewhere). Value entry is a separate rule, `canPrompt`: any real
   terminal, no flag (`initsecrets.go:262`, D1540). D3347 is amended (below).
 - **F19 (Gap).** The token source is the environment only (`providers.FromEnv`). An admin signed in
@@ -158,6 +160,46 @@ Rows F15–F30 come from review round 1.
   - U6a: how `claude` is spawned;
   - U8: backlog briefs become agents' tasks.
 
+Rows F31–F41 come from review round 2.
+
+- **F31 (Wrong premise of D3343).** There is no "shell token" for GitHub. `image survey` opens
+  through `OpenProvider` → `providers.FromEnv` (`internal/gitprov/providers/providers.go:90–129`),
+  whose GitHub arm reads only the App ID and the App's private key, and `github.Options` has no token
+  field. The credentials service already has a person's read mint for both hosts
+  (`internal/credsvc/githubread.go`, `GitHubReadPath`; `BitbucketReadPath`), and the CLI already
+  opens a provider through it: `serviceReadProvider` (`internal/cli/reviewverify.go:364`). Its
+  token is read-only, scoped to one repository, refused for a repository the installation does not
+  hold, and needs the repository's `github_app_id` from the local config. D3343 is amended again
+  (below). → R1.
+- **F32 (Wrong).** `secretsStage` serves both doors (`initsecrets.go:236`). `fugaro setup` promises
+  hidden prompts at any terminal (`setup.go:281–296`) and refuses `--ask` by name (`setup.go:370`).
+  D3347 is scoped to `update` (below). → R18.
+- **F33 (Wrong).** `--ask` on an unmanaged project is the no-op `AskUnmanaged`
+  (`internal/initflow/stage.go:1012, 1071`), pinned by `managed_ask_test.go`. D1028
+  (`docs/managed-agent-converge/reconciliation.md:226`) says `--ask` leaves a secret's hidden prompt
+  untouched. D3347 as amended supersedes both, for `update` only. → R18.
+- **F34 (Gap).** More pointers name the flag: `anchorProblemText` (`init_fugaroyaml.go:429`, the text
+  `gcpProjectProblems` returns, which `repos add` will reuse), `internal/localcfg/select.go:296`,
+  `writers_labels.go:214` and `docs/release.md:364`. Historical specs and release notes name it too
+  and stay as written. → R14.
+- **F35 (Wrong).** `initflow` cannot import `cli`, so a `repos` member on `initflow.StageResult`
+  needs a type in `initflow` and a way for the loop to read a stage's lines. → R12.
+- **F36 (Gap).** M1 returns the admit patterns it could not list. C1 had no place for them, so they
+  would be skipped silently. → R19.
+- **F37 (Gap).** The list's memo and the reported lines need state on `initEngine`
+  (`init_stages.go`). → R12.
+- **F38 (Gap).** `writeAnchor` is `(r *initRun)` (`init_fugaroyaml.go:219`) with `initRun`'s gate;
+  `repos add` has no `initRun`. U6a leaves `writeBudgetModeRemoval` (`init_fugaroyaml.go:299`) and
+  `pluginStage.remove` dead. → R8, U6a.
+- **F39 (Gap).** `doctor`'s `plugin-pin` and `budget-mode` ids mean "this checkout" today. Reading
+  every repository changes their meaning. → R15.
+- **F40 (Untestable).** The source scan bans spellings. A stage can still reach the working directory
+  through `exec.Command` with no `Dir`, a relative `os.ReadFile` or `filepath.Abs(".")`. → R10.
+- **F41 (Convention).** I1 wires the read mint into every stage, and U4 fans out billable builds to
+  admit-only repositories. Both get the security reviewer. D3350 widens trust: an admit-only
+  repository now gets secret containers (a cloud write the `--onboard-repo` gate used to fence),
+  builds and backlog items. → R20.
+
 ## Decisions
 
 The owner answered D3340–D3348 on 2026-11-23, on the spec's draft. D3349–D3351 and the amendments
@@ -168,24 +210,27 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
 | D3340 | The HARD RULE says a leftover plugin pin "is offered its removal as a diff". May L5 reword it? | Reword: a leftover pin becomes a notice in `doctor` and `update`, naming the line to delete | **As recommended (2026-11-23).** The sentence and the update skill change in one pull request (R11) |
 | D3341 | The `repository` stage needs L2's per-repository roots | Ship the rest first; that stage's half is a task gated on L2 | **As recommended (2026-11-23).** → R3, R4 |
 | D3342 | Derived images (open question 1) | Refresh every stale one; each build keeps today's confirmation and names its repository | **As recommended (2026-11-23).** → R6 |
-| D3343 | Which credential reads the default branches (open question 2) | The shell's token, as `image survey` uses | **As recommended (2026-11-23). Amended after review (F19), confirmed by the owner 2026-11-24:** with no token variable set, the reader falls back to `gh auth token` for GitHub and to the git credential helper where one answers, read-only. An unread line names the variable and `gh auth login` |
+| D3343 | Which credential reads the default branches (open question 2) | The shell's token, as `image survey` uses | **As recommended (2026-11-23). Amended after review round 1 (F19), confirmed 2026-11-24:** fall back to `gh auth token` and the git credential helper. **Amended again after review round 2 (F31), the owner's answer of 2026-11-24, as recommended:** the premise was wrong (GitHub has no token path; `image survey` reads the App key). Every read goes through the credentials service's person read mint, which the CLI already opens (`serviceReadProvider`). No App key and no token reaches the admin's machine, and nothing is exported. The round-1 fallback is withdrawn |
 | D3344 | The backlog fold (open question 3) | Fold from every default branch for one release, then delete it | **As recommended (2026-11-23).** → R5. Its deletion is a follow-up (O2) |
 | D3345 | `update --anchor` (open question 4) | Fold it into `project repos add` and remove the flag | **As recommended (2026-11-23).** → R14, with D3351 |
 | D3346 | The RC39 facts (open question 5) | The repository stage writes them for every repository; installation state later | **As recommended (2026-11-23).** Lands in U11 (R4) |
-| D3347 | `--ask` and value entry (open question 6) | Accept: a value is asked for only under `--ask` | **As recommended (2026-11-23). Amended after review (F18), confirmed by the owner 2026-11-24:** `--ask` also turns on secret value entry at the owner's own terminal, on every project, never for an agent or `--json`. The flag's help and `docs/no-prompt-policy/` say so |
+| D3347 | `--ask` and value entry (open question 6) | Accept: a value is asked for only under `--ask` | **As recommended (2026-11-23). Amended after review (F18), confirmed by the owner 2026-11-24:** `--ask` also turns on secret value entry at the owner's own terminal, on every project, never for an agent or `--json`; with no terminal it fails at once. **Scoped after review round 2 (F32, F33), the owner's answer of 2026-11-24, as recommended:** this is `fugaro update` only. `fugaro setup` keeps today's terminal prompt for its first run. D1028 and `AskUnmanaged` are superseded for `update` only |
 | D3348 | Does the hint narrow `--plan-only`? (open question 7) | No | **As recommended (2026-11-23)** |
-| D3349 | What does `update --check` read? (F2) | Drop PATH; read the local config's repositories from the code host, with no GCP call; one line points admit-only repositories to `update --plan-only` | **As recommended (2026-11-24).** → R17 |
-| D3350 | Does a published admit count as enrolled for secrets, builds and the fold? (F17) | Yes: the list is the project's own, not a directory's, so the hostile-checkout gate has nothing to guard in `update`'s stages | **As recommended (2026-11-24).** Whoever can publish the allow-list can direct a value into that repository's secrets. The gate stays for `setup --repo` and `--onboard-repo` |
+| D3349 | What does `update --check` read? (F2) | Drop PATH; read the local config's repositories from the code host, with no GCP call; one line points admit-only repositories to `update --plan-only` | **As recommended (2026-11-24).** → R17. **Amended after review round 2 (F31), confirmed by the owner 2026-11-24:** with reads through the credentials service (D3343), `--check`'s only calls are that service's read mint and the code host's API. It writes nothing and reads no bucket or policy. The help says "no write; reads each repository through the credentials service" instead of "no cloud call" |
+| D3350 | Does a published admit count as enrolled for secrets, builds and the fold? (F17) | Yes: the list is the project's own, not a directory's, so the hostile-checkout gate has nothing to guard in `update`'s stages | **As recommended (2026-11-24).** Whoever can publish the allow-list can direct a value into that repository's secrets. The gate stays for `setup --repo` and `--onboard-repo`. This is the owner's go for the cloud writes it widens (F41, R20) |
 | D3351 | Does `setup --anchor` go too? (F20) | Remove it from both; the anchor lives in `project repos add` alone | **As recommended (2026-11-24).** → R14 |
 
 ## Resolutions
 
-- **R1 (F1, F16).** L5 writes no reader of its own. U1 extends `repofiles.Read`, without changing
-  its results for L8 when its new option is unset, so that it:
+- **R1 (F1, F16, F31).** L5 writes no reader of its own. U1 extends `repofiles.Read`, without
+  changing its results for L8 when its new option is unset, so that it:
   - takes extra paths;
   - keeps the default branch's name and head commit.
 
-  U1 and U9a wait on M1. That is an external edge, not a contract, because M1 is already running.
+  U2 passes it an opener built on `serviceReadProvider` (moved to a file of its own, unchanged), so
+  every read is the credentials service's person read mint. A repository the mint refuses (no
+  `github_app_id` recorded, not held by the installation) is `unread`, naming the fix
+  (`fugaro doctor`, `fugaro project repos add`). M1 has merged, so U1 can start.
 - **R2 (F3).** The secrets stage keeps the command its builder makes today, so it follows IS4 when
   IS4 lands. A name several repositories want is one line listing them.
 - **R3 (F4, F28).** Until U11, the repository stage is the one exception. It may differ by
@@ -208,17 +253,22 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
   own checkout".
 - **R9 (F10).** The images stage copies the union of the kinds it read. Only the default catalog
   entry is held while a repository is unread.
-- **R10 (F12, F4).** The scan covers the functions `update` reaches (its stages and the two steps
+- **R10 (F12, F4, F40).** The scan covers the functions `update` reaches (its stages and the two steps
   after them). It bans `gitRead(ctx, "."`, `gitCmd(ctx, "."`, `pluginwire.Locate(".")`,
   `loadCheckoutConfigAt(ctx, ".")`, `os.Getwd` and `originRepo(ctx)`. It allows the selector's
   project default and, until U11, the repository stage. A mutation that adds `Locate(".")` to a
-  stage fails it.
+  stage fails it. The scan is a tripwire. The guard is I1's byte-identical stream test, run from an
+  empty directory where any working-directory read finds nothing.
 - **R11 (F14, D3340).** The task that changes `CLAUDE.md`'s pin clause and the update skill gets the
   security reviewer, and it adds a Docs test that pins the new sentence. The rule's "the plugin
   pin: what `doctor` already reports" stays.
-- **R12 (F15, F27).** C1 settles how a stage hands over its lines:
-  - A stage records them on the engine with `e.reportRepos(stage, lines)`. A step after the loop
-    reports under its own step name the same way.
+- **R12 (F15, F27, F35, F37).** C1 settles how a stage hands over its lines:
+  - `internal/initflow/repos.go` defines `RepoLine` and the interface `RepoReporter`
+    (`RepoLines() []RepoLine`). The loop reads a stage that implements it (U13).
+  - The engine gains one field for the list's memo and the reported lines (`init_stages.go`, C1's
+    only edit there).
+  - A stage records its lines with `e.reportRepos(stage, lines)` and returns them through
+    `RepoLines`. A step after the loop reports under its own step name the same way.
   - U13 carries them to two places:
     - a `repos` member on `initflow.StageResult`, its stage event and its schema;
     - for the steps after the loop, a top-level `notices` member and a `notice` event.
@@ -231,15 +281,22 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
   - an invalid file is `unread`, naming its first problem;
   - the parse takes the project layer the run already read, and under `--check` the local layer
     file, so it makes no bucket read.
-- **R14 (D3345, D3351, F20).**
+- **R14 (D3345, D3351, F20, F34).**
   - U9a moves the anchor into `repos add`.
   - U9b removes the flag from `update` and `setup`, together with `noteAnchor` and the repository
     stage's anchor calls.
-  - U9c moves every pointer to `fugaro project repos add`.
+  - U9c moves every pointer to `fugaro project repos add`: code, the user-facing refusals in
+    `localcfg/select.go` and `writers_labels.go`, and the live documents. Release notes and the
+    specs of other plans stay as written; the test's grep excludes `docs/releases/` and each
+    `docs/*/{spec,reconciliation,implementation-plan}.md`.
+  - U9a moves `anchorProblemText` to name `repos add`, and lifts `writeAnchor`'s gate out of
+    `initRun` so both doors call one function (F38).
   - The generated CLI reference is regenerated by each task that changes a flag's help.
-- **R15 (F21).** `doctor`'s `plugin-pin` and `budget-mode` checks keep their ids and read the
-  default branch through the view, with the same text `update` prints. Their fix names the line to
-  delete. Under `--offline` and `--plugin` they say "not read (offline)" and make no call.
+- **R15 (F21, F39).** `doctor`'s `plugin-pin` and `budget-mode` checks, which mean "this checkout",
+  are retired. Two new checks, `repo-plugin-pin` and `repo-budget-mode`, read every repository
+  through the view and print the same text as `update`. Each check is one row, with one line per
+  affected repository, and its fix names the line to delete. Under `--offline` and `--plugin` they
+  say "not read (offline)" and make no call.
 - **R16 (F22).** C1's list is a free function, `enrolledRepos(ctx, in)`, and `(e *initEngine).repos`
   wraps it. Doctor calls the free function, so when I1 replaces the stub, doctor gets the real list
   too.
@@ -247,9 +304,22 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
   - the `plugin` step is unchanged (it is this machine's);
   - `rules` and `policy` stay skipped, with their notes;
   - the `cloud` step runs per repository from the view, through U4's per-repository staleness
-    function, offline.
+    function, with no write and no bucket or policy read (D3349 as amended).
 
   The update skill's "needs no credentials" becomes "reads the code host with your token" (U7a).
+
+- **R18 (F32, F33, D3347).** The secrets stage branches on its door. `update` reads the list and asks
+  for a value only under `--ask` (on any project, with no terminal failing at once). `setup` keeps
+  its checkout target and today's `canPrompt`. `AskDecision` stops returning `AskUnmanaged` for
+  `update` when a value is missing. `docs/no-prompt-policy/` and D1028's row each get a dated
+  note.
+- **R19 (F36).** `enrolledRepos` returns the admit patterns it could not list as well. Each pattern
+  gets one notice line ("admitted by pattern, not listed: add the repository by name with
+  `fugaro project repos add`").
+- **R20 (F41, D3350).** U8 pins that an item's repository is the repository it was read from, never
+  a field of the file. The fold stays skipped in an agent's session (`update_backlog.go:80–82`), and
+  folded items stay queued and unapproved. U3 and U4's acceptance cite D3350 as the go for their
+  widened writes.
 
 ## Open tensions
 
@@ -261,6 +331,8 @@ None.
   (R3).
 - **O2.** Two follow-up tasks are outside this plan: the backlog fold's deletion, one release after
   L5 ships (D3344), and moving the RC39 facts to installation state (D3346).
+- **O3. Closed 2026-11-24.** The owner confirmed D3349's amendment (R17, F31): `--check` writes
+  nothing and reads through the credentials service's read mint.
 
 ## UNVERIFIED
 
