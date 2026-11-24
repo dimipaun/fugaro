@@ -37,9 +37,13 @@ import {
   DESTRUCTIVE_VERBS,
   EVENT,
   ID_MAX,
+  DEFAULT_BIOMETRIC_ON_COSTLY,
+  DEFAULT_COSTLY_MODES,
   INPUT_REFUSALS,
   LEDGER_KIND,
   MAX_CONFIRM_TIMEOUT_MS,
+  MAX_COSTLY_MODES,
+  MAX_MODE_LENGTH,
   MAX_FORWARD_JUMP_MS,
   MAX_MAX_LEDGER,
   MAX_MAX_PENDING,
@@ -57,6 +61,7 @@ import {
   TIME_MAX,
   TRANSITIONS,
   VERB,
+  costlyStart,
   initialState,
   isConfirmPhrase,
   pending,
@@ -565,6 +570,121 @@ test('a launch passes through with no read-back and no record, and its utterance
   assert.deepEqual(after.state.pending, withPending.state.pending);
 });
 
+test('a start in a costly mode is read back like a cancel, and a plain start still is not (D2786)', () => {
+  const machine = newMachine();
+
+  // The session's default policy is P6's: pro and critical are costly.
+  assert.deepEqual([...machine.costlyModes], ['pro', 'critical']);
+  assert.equal(machine.biometricOnCostly, false);
+
+  const costly = accepted(
+    step(machine, launchEvent({ text: 'kick off in pro mode', mode: 'pro', actionId: 'act_l' })),
+    OUTCOME.READ_BACK,
+  );
+  // D47's Rule, for a start: there is no run id to name, so the read-back names
+  // the mode the start would run in -- the one value that made it costly.
+  assert.equal(costly.readBack, `Start a run in pro mode. ${CONFIRM_CUE}`);
+  assert.deepEqual(costly.target, { kind: TARGET_KIND.MODE, mode: 'pro' });
+  assert.equal(costly.biometric, false, 'the switch is off: no biometric');
+  assert.equal(costly.phase, PHASE.PENDING);
+  assert.deepEqual(costly.state.pending[0].target, { kind: TARGET_KIND.MODE, mode: 'pro' });
+
+  // A start in a mode the session does not call costly is D162's start exactly:
+  // no read-back, no action id, straight through.
+  const plain = accepted(step(machine, launchEvent({ text: 'kick off in poc mode', mode: 'poc' })), OUTCOME.PASS_THROUGH);
+  assert.equal(plain.readBack, null);
+  assert.equal(plain.biometric, false);
+  // And a start that names no mode at all: the mode is the router's to resolve,
+  // and a machine handed none has been told the start is not in a named costly
+  // mode.
+  accepted(step(machine, launchEvent({ text: 'kick off the docs job' })), OUTCOME.PASS_THROUGH);
+
+  // The mode is the launch's alone, and a launch never carries a target: a start
+  // has no run id, so a caller that hands one is refused.
+  refused(step(machine, launchEvent({ mode: 'pro', actionId: 'act_l', target: RUN })), REFUSAL.VERB_TARGET_MISMATCH, 'target');
+  refused(step(machine, cancelEvent({ mode: 'pro' })), REFUSAL.VERB_TARGET_MISMATCH, 'mode');
+  refused(step(machine, mergeEvent({ mode: 'pro' })), REFUSAL.VERB_TARGET_MISMATCH, 'mode');
+  refused(step(machine, confirmActionEvent({ mode: 'pro' })), REFUSAL.VERB_TARGET_MISMATCH, 'mode');
+
+  // The mode is read with the same reader every other string gets.
+  refused(step(machine, launchEvent({ mode: '' })), REFUSAL.EMPTY_STRING, 'mode');
+  refused(step(machine, launchEvent({ mode: 42 })), REFUSAL.WRONG_TYPE, 'mode');
+  refused(step(machine, launchEvent({ mode: 'x'.repeat(MAX_MODE_LENGTH + 1) })), REFUSAL.TOO_LONG, 'mode');
+  refused(step(machine, launchEvent({ mode: 'pro​' })), REFUSAL.BAD_CHARACTER, 'mode');
+
+  // A costly start with no action id is malformed rather than read back with an
+  // action nobody can confirm -- the same rule the destructive verbs get.
+  refused(step(machine, launchEvent({ mode: 'pro' })), REFUSAL.MISSING_FIELD, 'actionId');
+  // A *plain* start carrying one is a caller that thinks it is confirmed.
+  refused(step(machine, launchEvent({ mode: 'poc', actionId: 'act_l' })), REFUSAL.VERB_TARGET_MISMATCH, 'actionId');
+});
+
+test('a costly start is confirmed against the mode that was read back, and binds it (D2786)', () => {
+  const opened = machineWith(launchEvent({ text: 'kick off in pro mode', mode: 'pro', actionId: 'act_l' }));
+  assert.equal(opened.readBack, `Start a run in pro mode. ${CONFIRM_CUE}`);
+
+  // A confirmation asserting another mode heard a different read-back, so the
+  // assertion is refused: it authorises nothing.
+  refused(
+    step(opened.state, confirmEvent({ actionId: 'act_l', target: { kind: TARGET_KIND.MODE, mode: 'critical' } })),
+    REFUSAL.DIFFERENT_TARGET,
+    'target',
+  );
+  refused(step(opened.state, confirmEvent({ actionId: 'act_l', target: RUN })), REFUSAL.VERB_TARGET_MISMATCH, 'target.kind');
+
+  const done = accepted(
+    step(opened.state, confirmEvent({ actionId: 'act_l', target: { kind: TARGET_KIND.MODE, mode: 'pro' } })),
+    OUTCOME.CONFIRMED,
+  );
+  // The record binds the mode the read-back named, and nothing a start does not
+  // have: no run, no repository, no head SHA.
+  assert.deepEqual(done.record, {
+    id: 'act_l',
+    verb: VERB.LAUNCH,
+    target: { mode: 'pro' },
+    confirmation: { id: 'cnf_1', at: NOW + 2_000 },
+  });
+  assert.equal(done.phase, PHASE.IDLE);
+  // One confirmation, one action: the same one replayed confirms nothing.
+  refused(
+    step(done.state, confirmEvent({ actionId: 'act_l', target: { kind: TARGET_KIND.MODE, mode: 'pro' } })),
+    REFUSAL.NO_PENDING_ACTION,
+    'actionId',
+  );
+});
+
+test('with the biometric switch on, a costly start asks for it and a plain one does not', () => {
+  const machine = newMachine({ biometricOnCostly: true });
+
+  const costly = accepted(
+    step(machine, launchEvent({ text: 'kick off in critical mode', mode: 'critical', actionId: 'act_l' })),
+    OUTCOME.READ_BACK,
+  );
+  assert.equal(costly.biometric, true, 'the session asks for the biometric on a costly start');
+  // The read-back itself does not change: the biometric is a separate demand of
+  // the session, offered beside the phrase rather than inside it (P5.1g).
+  assert.equal(costly.readBack, `Start a run in critical mode. ${CONFIRM_CUE}`);
+
+  // The screen's view of the outstanding read-back carries it too, recomputed
+  // from the state's policy rather than stored in the pending record.
+  const view = pendingOf(costly.state, NOW + 1_500);
+  assert.equal(view.actions[0].biometric, true);
+
+  // A mode the session does not call costly asks for nothing, switch or no.
+  const plain = accepted(step(machine, launchEvent({ text: 'kick off in poc mode', mode: 'poc' })), OUTCOME.PASS_THROUGH);
+  assert.equal(plain.biometric, false);
+
+  // And a session that names its own costly modes reads its own list, not the
+  // default: the same mode is plain here.
+  const other = newMachine({ costlyModes: ['hotfix'] });
+  accepted(step(other, launchEvent({ text: 'kick off in pro mode', mode: 'pro' })), OUTCOME.PASS_THROUGH);
+  const hotfix = accepted(
+    step(other, launchEvent({ text: 'kick off hotfix', mode: 'hotfix', actionId: 'act_h' })),
+    OUTCOME.READ_BACK,
+  );
+  assert.equal(hotfix.readBack, `Start a run in hotfix mode. ${CONFIRM_CUE}`);
+});
+
 test('the kill switch, the budget writes and the deletes are refused outright', () => {
   for (const verb of REFUSED_VERBS) {
     refused(step(newMachine(), cancelEvent({ verb })), REFUSAL.REFUSED_VERB, 'verb');
@@ -1010,7 +1130,7 @@ test('an event that is not an event, and a field it may not carry, are refused',
   for (const field of ['runId', 'action', 'command', 'utterance', 'action_id', 'ActionId']) {
     refused(step(machine, { ...cancelEvent(), [field]: 'x' }), REFUSAL.UNKNOWN_FIELD, 'event');
   }
-  assert.deepEqual([...COMMAND_FIELDS].sort(), ['actionId', 'now', 'target', 'text', 'type', 'utteranceId', 'verb']);
+  assert.deepEqual([...COMMAND_FIELDS].sort(), ['actionId', 'mode', 'now', 'target', 'text', 'type', 'utteranceId', 'verb']);
   assert.deepEqual([...CONFIRM_FIELDS].sort(), ['actionId', 'confirmationId', 'now', 'target', 'text', 'type', 'utteranceId']);
   assert.deepEqual([...ABORT_FIELDS].sort(), ['now', 'text', 'type', 'utteranceId']);
 });
@@ -1043,11 +1163,32 @@ test('a state that is not a state is refused, each way with its own code', () =>
   refused(step({ ...state, maxLedger: 0 }, abortEvent()), REFUSAL.INVALID_MAX_LEDGER, 'maxLedger');
   refused(step({ ...state, now: 0 }, abortEvent()), REFUSAL.INVALID_NOW, 'now');
 
+  // The session's policy (D2786): the two values ride the state, so a state
+  // carrying one this module cannot read is refused as a state -- and every step
+  // that reads the policy answers with the refusal rather than around it.
+  const missingPolicy = { ...state };
+  delete missingPolicy.costlyModes;
+  refused(step(missingPolicy, abortEvent()), REFUSAL.MISSING_FIELD, 'costlyModes');
+  refused(step({ ...state, costlyModes: 'pro' }, abortEvent()), REFUSAL.WRONG_TYPE, 'costlyModes');
+  refused(step({ ...state, costlyModes: ['pro', ''] }, abortEvent()), REFUSAL.EMPTY_STRING, 'costlyModes');
+  refused(step({ ...state, costlyModes: ['pro', 'x'.repeat(MAX_MODE_LENGTH + 1)] }, abortEvent()), REFUSAL.TOO_LONG, 'costlyModes');
+  refused(step({ ...state, costlyModes: new Array(MAX_COSTLY_MODES + 1).fill('pro') }, abortEvent()), REFUSAL.TOO_LONG, 'costlyModes');
+  refused(step({ ...state, biometricOnCostly: 'yes' }, abortEvent()), REFUSAL.WRONG_TYPE, 'biometricOnCostly');
+
   // The pending set.
   refused(step({ ...state, pending: 'none' }, abortEvent()), REFUSAL.INVALID_PENDING, 'pending');
   // Two records for one action id, before the phase is even asked about.
   refused(step({ ...state, phase: PHASE.PENDING, pending: [{ ...pending }, { ...pending }] }, abortEvent()), REFUSAL.DUPLICATE_PENDING_ENTRY, 'pending');
   refused(step({ ...state, phase: PHASE.PENDING, pending: [{ ...pending, verb: VERB.LAUNCH }] }, abortEvent()), REFUSAL.INVALID_PENDING_ENTRY, 'pending');
+  // A costly start is a read-back a state may hold (D2786), and its target is
+  // its mode: the same record with a run in it is not one.
+  const costly = machineWith(launchEvent({ mode: 'pro', actionId: 'act_l' })).state.pending[0];
+  assert.equal(costly.verb, VERB.LAUNCH);
+  refused(
+    step({ ...state, phase: PHASE.PENDING, pending: [{ ...costly, target: RUN }] }, abortEvent()),
+    REFUSAL.INVALID_PENDING_ENTRY,
+    'pending',
+  );
   refused(step({ ...state, phase: PHASE.PENDING, pending: [{ ...pending, extra: 1 }] }, abortEvent()), REFUSAL.INVALID_PENDING_ENTRY, 'pending');
   refused(step({ ...state, phase: PHASE.PENDING, pending: [{ ...pending, deadline: pending.at }] }, abortEvent()), REFUSAL.INVALID_PENDING_ENTRY, 'pending');
   // A deadline further out than the longest timeout this module accepts could
@@ -1099,7 +1240,17 @@ test('a state that is not a state is refused, each way with its own code', () =>
   // A state the module wrote is read back by the module, every field of it.
   const good = machineWith().state;
   assert.equal(step(good, abortEvent({ utteranceId: 'utt_q' })).ok, true);
-  assert.deepEqual([...STATE_FIELDS].sort(), ['ledger', 'maxLedger', 'maxPending', 'now', 'pending', 'phase', 'timeoutMs']);
+  assert.deepEqual([...STATE_FIELDS].sort(), [
+    'biometricOnCostly',
+    'costlyModes',
+    'ledger',
+    'maxLedger',
+    'maxPending',
+    'now',
+    'pending',
+    'phase',
+    'timeoutMs',
+  ]);
 });
 
 test('an accessor property is refused, and the getter is never called', () => {
@@ -1287,6 +1438,11 @@ test('the vectors file replays exactly: every accept and every refusal', () => {
       timeoutMs: vectors.timeoutMs,
       maxPending: vectors.maxPending,
       maxLedger: vectors.maxLedger,
+      // The document's own session policy, and a case's override of it: D2786's
+      // answer is a function of these two, so a case that moves them is a case
+      // about a project whose policy differs.
+      costlyModes: testCase.costlyModes ?? vectors.costlyModes,
+      biometricOnCostly: testCase.biometricOnCostly ?? vectors.biometricOnCostly,
     });
     assert.equal(opened.ok, true, `${testCase.name}: the vectors' machine`);
 
@@ -1308,6 +1464,17 @@ test('the vectors file replays exactly: every accept and every refusal', () => {
         if (expected.actionId !== undefined) assert.equal(result.actionId, expected.actionId, `${where}: action id`);
         if (expected.confirmationId !== undefined) assert.equal(result.confirmationId, expected.confirmationId, `${where}: confirmation id`);
         if (expected.record !== undefined) assert.deepEqual(result.record, expected.record, `${where}: record`);
+        // The machine the step produced, where a case names it: the answer says
+        // what was spoken, and this says what the step left behind -- a second
+        // pending read-back, or an action id that was not spent, is a failing
+        // case here rather than a divergence nothing looks at.
+        if (expected.state !== undefined) {
+          assert.equal(result.state.pending.length, expected.state.pending, `${where}: pending read-backs`);
+          assert.equal(result.state.ledger.length, expected.state.ledger, `${where}: ledger entries`);
+        }
+        // D2786's policy answer, where a case names it: a costly start asks for
+        // the read-back, and with the switch the biometric beside it.
+        if (expected.biometric !== undefined) assert.equal(result.biometric, expected.biometric, `${where}: biometric`);
         state = result.state;
       } else {
         refusals++;
@@ -1502,6 +1669,8 @@ function stateWith(pendings, overrides = {}) {
     timeoutMs: TIMEOUT,
     maxPending: Math.max(MAX_PENDING, pendings.length),
     maxLedger: MAX_LEDGER,
+    costlyModes: DEFAULT_COSTLY_MODES,
+    biometricOnCostly: DEFAULT_BIOMETRIC_ON_COSTLY,
     pending: pendings,
     ledger: SPENT_LEDGER,
     ...overrides,

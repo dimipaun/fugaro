@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -24,6 +25,15 @@ import (
 const (
 	newProj    = "fugaro-new-1234"
 	billingAcc = "0123AB-4567CD-89EF01"
+)
+
+// resumedBudget is the amount the rerun below answers the budget question with
+// (R8: a resumed creation is a creating run, and the question is asked on it
+// like on any other), and resumedBudgetAmount is that answer as the run reads
+// it — the one number the run's own line about an account-less budget prints.
+const (
+	resumedBudget       = "250"
+	resumedBudgetAmount = 250
 )
 
 // The two patterns TestTheBillingListIsNarrow reads the tree with: the one
@@ -1314,11 +1324,13 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// The rigor answer comes first: the wizard's phase is the run's first, and
-	// the paused run is the one that asked this question and could not write it
-	// anywhere (wizardResumesCreation) — so this run asks it again, before the
-	// typed confirmations of the creation it resumes.
-	out, errOut, err = r.run(t, true, string(rigor.Critical)+"\n"+initProjectName+"\n"+initProjectName+"\n"+newProj+"\n", "--operator", "user:dev@example.com", "--admin", "user:dev@example.com")
+	// The questions the paused run asked and could not carry come first — the
+	// wizard's phase is the run's first: the rigor answer, which the paused run
+	// gave and only the layer stage writes (wizardResumesCreation), and the
+	// budget answer, which no config member holds either (askBudget is asked on
+	// a resumed creation too, R8) — before the typed confirmations of the
+	// creation it resumes.
+	out, errOut, err = r.run(t, true, string(rigor.Critical)+"\n"+resumedBudget+"\n"+initProjectName+"\n"+initProjectName+"\n"+newProj+"\n", "--operator", "user:dev@example.com", "--admin", "user:dev@example.com")
 	all = refusalText(out, errOut, err)
 	if err != nil || strings.Contains(all, "already exists") {
 		t.Fatalf("the rerun after billing was linked did not complete: %v\n%s", err, all)
@@ -1337,6 +1349,18 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 		t.Errorf("the resumed run wrote defaults.rigor.default = %q into %s, want critical: the answer the pause could not carry is lost\n%s",
 			l.Defaults.Rigor.Default, localLayerPath(t), layer)
 	}
+	// The budget question is one of them, and its answer is the one a resumed
+	// creation takes: the project the pause left is linked already, and this run
+	// links nothing, so no alert is created on an account it cannot name — the
+	// amount is dropped with the one line that says what adds it, rather than
+	// reaching the installation's Terraform, whose own rule refuses a budget
+	// with no billing account.
+	if !strings.Contains(all, questionFor("--budget").label) {
+		t.Errorf("the resumed creation never asked the budget question:\n%s", all)
+	}
+	if !strings.Contains(all, fmt.Sprintf(budgetNoAccount, resumedBudgetAmount)) {
+		t.Errorf("the resumed creation's budget answer is not settled against the account it has none of:\n%s", all)
+	}
 	if n := len(r.crm.Creates()); n != 1 {
 		t.Errorf("%d project(s) created over the two runs, want the one", n)
 	}
@@ -1348,6 +1372,50 @@ func TestBillingLeftForTheAdminAndTheRerunResumes(t *testing.T) {
 	}
 	if cfg, _ := os.ReadFile(r.cfg); strings.Contains(string(cfg), "setup_pending") {
 		t.Errorf("the completed setup left setup_pending in the config:\n%s", cfg)
+	}
+}
+
+// TestAResumedCreationWithNoTerminalTakesTheDefaultBudget is the other half of
+// the budget answer a resumed creation owes: where somebody can be asked, it is
+// asked (the test above), and where nobody can — --json, a pipe, a run that
+// never prompts — the default is taken rather than the run stopping or going on
+// with no amount at all (D2212). The question's own row demands no flag for the
+// reason it has none (setupQuestions), so a run that stopped on it would be the
+// wait the no-prompt policy refuses.
+//
+// The amount is read off the options after the phase's own check, which is
+// where a run that took the default keeps it: settleBudget drops an amount no
+// billing account can carry, so this run is given the account with
+// --link-billing — the same place a first run's account comes from — and the
+// default it took is what the installation's variables are written with.
+func TestAResumedCreationWithNoTerminalTakesTheDefaultBudget(t *testing.T) {
+	r := newProjectRig(t)
+	cfg, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, append(cfg, []byte("setup_pending: billing\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	o := &initOptions{
+		door: setupDoor.name, asJSON: true, linkBilling: billingAcc,
+		cloud: cloudOptions{gcpProject: newProj}, rigor: string(rigor.Critical),
+	}
+	out := &strings.Builder{}
+	run := &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	if !run.wizardResumesCreation(t.Context()) {
+		t.Fatalf("the config the pause left is not read as a creation to resume:\n%s", out)
+	}
+	st, err := newWizardStage(t.Context(), run).Check(t.Context())
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if st.State != initflow.Done {
+		t.Errorf("the resumed run with no terminal stopped at %q (%s): the budget question is one a run answers for itself", st.State, st.Detail)
+	}
+	if o.budget != managed.DefaultBudgetAmount || o.budgetCurrency != managed.DefaultBudgetCurrency {
+		t.Errorf("the resumed creation with no terminal has %d %s, want the default %d %s",
+			o.budget, o.budgetCurrency, managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency)
 	}
 }
 

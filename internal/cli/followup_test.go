@@ -38,9 +38,10 @@ func seedRoot(t *testing.T, f *cloudFixture, id string, at time.Time) {
 }
 
 // seedTitleAwareImage gives the web workflow a build record whose runner knows
-// job titles: a follow-up inherits its chain's title and a titled launch is
-// gated on such an image, so a fixture with no record would be refused for the
-// gate, not for what its test is about. A record the test already wrote is kept
+// job titles: a follow-up inherits its chain's title, a review launch names
+// itself after its pull request, and a titled launch is gated on such an image,
+// so a fixture with no record would be refused for the gate, not for what its
+// test is about. A record the test already wrote is kept
 // (a test of an image's own floor wrote it first), and one it writes after
 // seeding replaces this one.
 func seedTitleAwareImage(t *testing.T, f *cloudFixture) {
