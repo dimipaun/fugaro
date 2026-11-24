@@ -361,10 +361,16 @@ func (h *harness) noBudget() {
 }
 
 // setTask replaces the task text the run bootstraps from: the bootstrap's own
-// checks read it (checkImages), and the harness's default names no file.
+// checks read it (checkImages), and the harness's default names no file. The
+// recipe the harness's own task carried stays: a test that changes the brief
+// is not a test about which recipe the task launched with.
 func (h *harness) setTask(t *testing.T, text string) {
 	t.Helper()
-	h.setSpec(t, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: text})
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: text}
+	if prev, err := h.store.ReadTask(context.Background()); err == nil {
+		spec.Recipe = prev.Recipe
+	}
+	h.setSpec(t, spec)
 }
 
 // setSpec is setTask for a task of another shape: the run reads its mode and
