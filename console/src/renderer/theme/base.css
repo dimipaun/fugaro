@@ -943,11 +943,15 @@ code.installation-onboarding-command {
 
 /* A press whose answer has not landed is held: the module sets `disabled` on the
  * two controls that start a read for as long as one is outstanding, and the busy
- * line above them says what that read is. */
+ * line above them says what that read is. It keeps the ring it had and changes the
+ * ring's own style, which is how §4.3 draws a control waiting on a request (the
+ * picker's buttons, `screens.css`): `--border` is the 1 px hairline and may not
+ * carry a control's extent, so the boundary is the enabled state's `--border-strong`
+ * and the dashed rule is what says "not now". */
 .console-wizard-submit:disabled,
 .console-wizard-follow:disabled {
   color: var(--text-muted);
-  border-color: var(--border);
+  border-style: dashed;
   cursor: default;
 }
 
