@@ -446,7 +446,7 @@ const accessNoOutputs = "the installation's own outputs could not be read, so it
 // by hand or by a door this release does not move is the one that would revoke
 // a member — and the sentence names both lists, so an operator who edited the
 // file sees what happened rather than finding it gone.
-const accessStale = "this machine's %s is not the installation's, so this run applies the installation's lists: %s, %s"
+const accessStale = "this machine's %s is not what the installation outputs list: this run applies the installation's, %s, %s"
 
 // migrateAccess computes the grants node for an installation whose lists the
 // node has never held — the caller has read the marker and found it unset

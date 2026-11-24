@@ -117,10 +117,10 @@ func TestUpdateMigratesListsToAccessNode(t *testing.T) {
 			if got := grantLines(accessGrants(t, db)); !slices.Equal(got, want) {
 				t.Errorf("the grants node holds %v, want %v:\n%s", got, want, all)
 			}
-			if !strings.Contains(out, "migrated the installation's member lists into the grants node") {
+			if !strings.Contains(out, "migrated the member lists into the grants node") {
 				t.Errorf("the run does not say it migrated the roles, which is a rewrite of who may do what:\n%s", all)
 			}
-			if got := strings.Contains(out, "is not what the installation's own outputs list"); got != tc.stale {
+			if got := strings.Contains(out, "is not what the installation outputs list"); got != tc.stale {
 				t.Errorf("the drift warning is %v, want %v:\n%s", got, tc.stale, all)
 			}
 			// The old keys retire, and the lists follow the node: the machine's
@@ -234,7 +234,7 @@ func TestAnAgentSessionWritesNoGrantsNode(t *testing.T) {
 	if !strings.Contains(all, "a coding agent's session") || !strings.Contains(all, "your own terminal window") {
 		t.Errorf("the refusal is not the session's own:\n%s", all)
 	}
-	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
+	if strings.Contains(all, "migrated the member lists into the grants node") {
 		t.Errorf("the run says it migrated a node it never wrote:\n%s", all)
 	}
 	if n := len(r.ran(t, "apply")); n != 0 {
@@ -274,7 +274,7 @@ func TestAManagedSessionMigratesTheNode(t *testing.T) {
 	if have := grantLines(accessGrants(t, db)); !slices.Equal(have, want) {
 		t.Errorf("a managed session's migration did not land: the grants node holds %v, want %v:\n%s", have, want, got)
 	}
-	if !strings.Contains(got, "migrated the installation's member lists into the grants node") {
+	if !strings.Contains(got, "migrated the member lists into the grants node") {
 		t.Errorf("the run does not say it migrated the roles, which is what the next converge derives from:\n%s", got)
 	}
 	if n := len(r.ran(t, "apply")); n == 0 {
@@ -315,7 +315,7 @@ func TestADeclinedRunMigratesNoNode(t *testing.T) {
 	if got := db.Value(accesslib.PathNode); got != nil {
 		t.Errorf("a declined run migrated the installation's roles into the grants node: %v\n%s", got, all)
 	}
-	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
+	if strings.Contains(all, "migrated the member lists into the grants node") {
 		t.Errorf("the run says it migrated a node it never wrote:\n%s", all)
 	}
 }
@@ -405,7 +405,7 @@ func TestAMigrationWithNoUserMemberWritesNoNode(t *testing.T) {
 	if node := accessNode(t, db); node.Found {
 		t.Errorf("the migration wrote %v from lists that name no address a grant can hold:\n%s", node.Grants, all)
 	}
-	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
+	if strings.Contains(all, "migrated the member lists into the grants node") {
 		t.Errorf("the run says it migrated a roster it derived no grant from:\n%s", all)
 	}
 	if !accessMarked(t, db) {
@@ -490,10 +490,10 @@ func TestUpdateDoesNotRebuildARevokedRoster(t *testing.T) {
 	if got := accessGrants(t, db); len(got) != 0 {
 		t.Errorf("the grants node holds %v, want nobody: the installation's roster is the empty one the revocation left:\n%s", got, all)
 	}
-	if strings.Contains(all, "migrated the installation's member lists into the grants node") {
+	if strings.Contains(all, "migrated the member lists into the grants node") {
 		t.Errorf("the run says it migrated the lists into the node although the marker says the installation's roles have already moved there:\n%s", all)
 	}
-	if !strings.Contains(all, "which the installation's grants node does not") {
+	if !strings.Contains(all, "which the grants node does not") {
 		t.Errorf("the run does not say the members its own list holds are not the node's, so a revocation the node records is applied without a word:\n%s", all)
 	}
 }

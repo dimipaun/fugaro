@@ -120,5 +120,5 @@ func (e *initEngine) reindexRunIndex(ctx context.Context) {
 		r.warn(fmt.Sprintf("no reindex execution was started (%s): the walk stands, and the history job's next sweep carries it", safetext.FieldErr(err)))
 		return
 	}
-	fmt.Fprintf(r.w, "run index: marked incomplete, reindexing now%s; `fugaro runs ls` is short until the walk ends. No run was waited for.\n", reindexExecClause(exec))
+	fmt.Fprintf(r.w, "run index: marked incomplete and reindexing now%s, so `fugaro runs ls` is short. No run was waited for.\n", reindexExecClause(exec))
 }
