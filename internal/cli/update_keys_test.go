@@ -1282,6 +1282,11 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 	// the copy may not enter it, because its bundle entry is the person's own
 	// scalar under the account's name (D3015).
 	accountToken := credsValue(t, "account-token")
+	// The PROJECT's own Anthropic key, in the project-wide container of the same
+	// logical name as the one acme/app holds a key of its own in: the key every
+	// repository without one of its own is served, and the value that must not
+	// reach an entry under any repository's name (D3008).
+	projectAnthropicValue := credsValue(t, "project-anthropic")
 	// The bundle holds no version: the first copy starts from the containers
 	// Terraform created, which is the state a fresh installation is in.
 	h := newEnumRigWith(t, copyRunnerKeyYAML, copyRunnerKeyBlocks, nil)
@@ -1295,13 +1300,14 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 	h.sm.Seed(copyContainerID(config.CredentialSecret("team-or")), nil, []byte(teamOrValue))
 	h.sm.Seed(copyContainerID("team-or-api-key"), nil, []byte(supersededValue))
 	h.sm.Seed(copyRepoContainerID(mustSlug("github", "acme/app"), config.AnthropicSecret), nil, []byte(ownAnthropicValue))
+	h.sm.Seed(copyContainerID(config.AnthropicSecret), nil, []byte(projectAnthropicValue))
 	h.sm.Seed(copyContainerID(config.ClaudeOAuthToken), nil, []byte(accountToken))
 
 	oc, out, err := h.apply(t)
 	if err != nil {
 		t.Fatalf("the copy of an installation's provider keys failed: %v", err)
 	}
-	assertNoValue(t, out, openrouterValue, moonshotValue, ownValue, teamOrValue, supersededValue, ownAnthropicValue, accountToken)
+	assertNoValue(t, out, openrouterValue, moonshotValue, ownValue, teamOrValue, supersededValue, ownAnthropicValue, projectAnthropicValue, accountToken)
 	if !oc.Changed {
 		t.Fatalf("the copy wrote the installation's model keys into an empty bundle and reports no change: %+v", oc)
 	}
@@ -1368,11 +1374,15 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 		}
 	}
 
-	// The repository that holds no key of its own: no entry — the PROJECT's key
-	// is exactly what its runs are served, before this copy and after it
-	// (D3008) — and no line either. A run that named every repository of the
-	// installation without an Anthropic key of its own would bury the states a
-	// person can act on under a list of the ones they cannot.
+	// The repository that holds no key of its own: no entry — the PROJECT's key,
+	// whose container is filled here, is exactly what its runs are served, before
+	// this copy and after it (D3008) — and no line either, which is why the
+	// project's value is seeded above rather than left out: an entry under
+	// acme/other's name would be the project's key served as that repository's
+	// own, and a key the next rotation writes back over the project's. A run
+	// that named every repository of the installation without an Anthropic key of
+	// its own would bury the states a person can act on under a list of the ones
+	// they cannot.
 	otherOwn, err := credsvc.RepoCredentialKey(mustSlug("bitbucket", "acme/other"), config.AnthropicKeyAccount)
 	if err != nil {
 		t.Fatal(err)
@@ -1390,6 +1400,107 @@ func TestTheCopyWritesEveryModelKey(t *testing.T) {
 	// document is left without an entry for it (D3015).
 	if _, found := bundleOf(t, h.sm, h.bundle).Lookup(config.ClaudeOAuthToken); found {
 		t.Errorf("the copy entered %s into the bundle: an account's token stays under its account's name, entered once by the person who holds it (D3015)", config.ClaudeOAuthToken)
+	}
+}
+
+// TestTheProjectsKeyNeverLandsUnderARepositorysEntry: the project's own
+// Anthropic key is not a pair's, whatever container of its logical name holds a
+// version, so no repository's entry can ever be served it (D3008).
+//
+// A provider's pair reads two homes of one logical name — the repository's own
+// container, and the project-wide one it is served from while it holds none of
+// its own (keyCopy.homes) — and the own pair deliberately does not
+// (copyRepositoryKeys). The two keys are different credentials with different
+// entries: the project's is entered once under the project's own name, and it is
+// what every repository that holds no key of its own is served; a repository's
+// entry exists only for a key that repository holds in its OWN container, which
+// is what its runs are served INSTEAD of the project's
+// (internal/credsvc cascade.go's ownKeyBeforeTheProjects). An own pair that took
+// the project-wide container as a second home would enter the PROJECT's key
+// under every repository's name: a credential that repository's operator never
+// stored, served as that repository's own, indistinguishable in the document
+// from one the copy is allowed to rotate — and the next rotation would write it
+// back over the project's key for everyone.
+//
+// The installation here holds the project's key where it really is — in the
+// project-wide container and in the bundle's scalar under the project's own name
+// (§F42) — beside a key ONE of the two repositories holds as its own. Five
+// things are asserted over the one run: the entry that repository gets, out of
+// its own container and carrying it as the marker; the other repository's entry,
+// which does not exist; the project's scalar, which the run leaves exactly as it
+// found it; the project-wide container, which is never read for a value; and the
+// transcript, which names neither key.
+func TestTheProjectsKeyNeverLandsUnderARepositorysEntry(t *testing.T) {
+	projectValue, ownValue := credsValue(t, "project-anthropic"), credsValue(t, "own-anthropic")
+	// The project's key as a person entered it: the bundle's own scalar under the
+	// project's name, which is the entry every repository without a key of its
+	// own is served from, and a different value from the container's so that a
+	// copy that overwrote either one with the other would be visible.
+	projectEntry := credsValue(t, "project-entry")
+	h := newEnumRig(t, projectProvidersYAML, []byte(config.AnthropicSecret+": "+projectEntry+"\n"))
+	projectID := copyContainerID(config.AnthropicSecret)
+	h.sm.Seed(projectID, nil, []byte(projectValue))
+	ownSlug := mustSlug("github", "acme/app")
+	// acme/app alone holds a key of its own; acme/other's own container is left
+	// unfilled, which is the ordinary state of a repository whose runs are served
+	// the project's key — and the state in which a pair that read the project-wide
+	// container would find one anyway.
+	h.sm.Seed(copyRepoContainerID(ownSlug, config.AnthropicSecret), nil, []byte(ownValue))
+
+	oc, out, err := h.apply(t)
+	if err != nil {
+		t.Fatalf("the copy over an installation holding the project's Anthropic key and one repository's own failed: %v", err)
+	}
+	assertNoValue(t, out, projectValue, ownValue, projectEntry)
+	if !oc.Changed {
+		t.Fatalf("the copy entered the one repository's own key and reports no change: %+v", oc)
+	}
+
+	// The entry the one repository gets: the key out of its OWN container, and
+	// that container as the marker — the two homes are told apart by it, and a
+	// pair that read the project-wide one would name that container here and hold
+	// its value.
+	entry := bundleEntry(t, h.sm, h.bundle, ownSlug, config.AnthropicKeyAccount)
+	if entry.Value() != ownValue {
+		t.Errorf("%s for acme/app holds %d bytes and acme/app's own container holds %d: the entry must hold the key that repository's runs are served",
+			config.AnthropicKeyAccount, len(entry.Value()), len(ownValue))
+	}
+	if want := copyRepoContainerID(ownSlug, config.AnthropicSecret); entry.Source.Container != want {
+		t.Errorf("%s for acme/app carries the container %q, want %q: the marker is the container the value was copied out of, and the project-wide container of the same logical name is not a home this pair reads",
+			config.AnthropicKeyAccount, entry.Source.Container, want)
+	}
+
+	// The repository that holds no key of its own: no entry at all. One here
+	// would hold the project's key under acme/other's name — its runs are served
+	// the project's entry already, and its operator never stored anything for it
+	// (D3008).
+	if _, found := credsvc.ReadProviderKey(bundleOf(t, h.sm, h.bundle), mustSlug("bitbucket", "acme/other"), config.AnthropicKeyAccount); found {
+		t.Errorf("the copy wrote an Anthropic entry for acme/other, which holds no key of its own: the entry holds the project's key under a repository's name")
+	}
+
+	// The project's own entry is left where it is, holding what the person
+	// entered under the project's name: the own half is not a second writer of
+	// it, and a run that replaced it with the container's value would rotate the
+	// key of every repository that has none of its own.
+	held, ok := bundleOf(t, h.sm, h.bundle).Lookup(config.AnthropicSecret)
+	if !ok {
+		t.Errorf("the bundle holds no %s entry after the copy: the project's key stays under the project's own name and is no line of this copy's", config.AnthropicSecret)
+	} else if len(held.Value()) != len(projectEntry) {
+		t.Errorf("the bundle's %s entry holds %d bytes and the person's own value is %d: the copy rewrote the entry the project's key is entered under (D3008)",
+			config.AnthropicSecret, len(held.Value()), len(projectEntry))
+	}
+
+	// The read behind the marker above: the project-wide container is asked for
+	// no value at all, and the run writes one entry rather than one per
+	// repository.
+	if n := h.readCount(projectID); n != 0 {
+		t.Errorf("the copy read the project-wide container %s %d time(s): the project's key is no key a repository holds, and a pair that read it would enter it under every repository's name (D3008)", projectID, n)
+	}
+	if n := h.adds(); n != 1 {
+		t.Errorf("the copy added %d version(s) of the bundle, want one: exactly one repository of this installation holds an Anthropic key of its own", n)
+	}
+	if !strings.Contains(oc.Detail, "1 model key(s)") {
+		t.Errorf("the copy reports %q, want the one entry the own half writes: an entry per repository would be the project's key entering every repository's name", oc.Detail)
 	}
 }
 
