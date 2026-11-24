@@ -681,6 +681,7 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 	if err != nil {
 		return CredentialsServiceSpec{}, err
 	}
+	signer, roster, admins := credentialsServiceIdentity(lc, b)
 	return CredentialsServiceSpec{
 		AccountID:         CredentialsAccountID,
 		Service:           CredentialsServiceName,
@@ -698,14 +699,35 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 		// for, and the account it creates is admitted.
 		VerifierAccounts: verifierAccountsField(lc.VerifierAccountsEffective(publishedVerifiers)),
 		// The identity half's three names (LM12's variables, D3121, D3123,
-		// F29/R16). The signer is the Firebase root's own account, in the
-		// project the budget block names — the root that creates it — and the
-		// roster is the same merged launcher list the installation root's
-		// class is derived from, read one member class over.
-		SignerAccount:         serviceAccountEmail(SignerAccountID, b.FirebaseProject),
-		RosterServiceAccounts: launcherServiceAccounts(launchersWithOperators(lc.Terraform.Operators, lc.Terraform.Admins)),
-		ImplicitAdmins:        implicitAdmins(lc.Terraform.BudgetAdmins),
+		// F29/R16), through the one derivation the carry reads too
+		// (credentialsServiceIdentity), so the run that deploys the service and
+		// every run after it configure it the same way.
+		SignerAccount:         signer,
+		RosterServiceAccounts: roster,
+		ImplicitAdmins:        admins,
 	}, nil
+}
+
+// credentialsServiceIdentity is the block's three identity names — the runs'
+// signer, the roster's service accounts and the implicit admins (LM12's
+// variables, D3121, D3123, F29/R16) — as one derivation, read by both writers
+// of the block: the deploy that composes it (Credentials) and the carry that
+// brings an installation's own block up to date
+// (RefreshCredentialsServiceIdentity). It is one function so the two cannot
+// disagree about what the service is configured with, which is the property
+// every class list of this service has.
+//
+// b is the budget block the signer's project comes from: the signer is the
+// Firebase root's own account, in the project that root creates it in, and the
+// root has been applied by the time the local config names the project. The
+// roster is the same merged launcher list the installation root's class is
+// derived from, read one member class over (launcherServiceAccounts), and the
+// implicit admins are the gate's own list, read the way the gate reads it
+// (implicitAdmins).
+func credentialsServiceIdentity(lc *localcfg.Config, b *localcfg.Budget) (string, []string, []string) {
+	return serviceAccountEmail(SignerAccountID, b.FirebaseProject),
+		launcherServiceAccounts(launchersWithOperators(lc.Terraform.Operators, lc.Terraform.Admins)),
+		implicitAdmins(lc.Terraform.BudgetAdmins)
 }
 
 // implicitAdmins is the machine's implicit admins as the bare addresses the
@@ -999,6 +1021,81 @@ func RefreshCredentialsServiceJobAccounts(vars []byte, lc *localcfg.Config) ([]b
 			return strings.Compare(credentialsReviewJobKey(a), credentialsReviewJobKey(b))
 		})
 		svc["review_job_accounts"] = mergedReview
+	}
+	doc["credentials_service"] = svc
+	return sortedJSON(doc)
+}
+
+// RefreshCredentialsServiceIdentity returns vars with the credentials service
+// block's three identity names — signer_account, roster_service_accounts and
+// implicit_admins — brought up to date with the installation the local config
+// names now, and every other member of the block exactly what it was.
+//
+// The three names are the block's members this side derives from the local
+// config, and the deploy is their only other writer (Credentials): the run that
+// CREATES the block fills them in, and every later run carries the block as it
+// is found (CarriedCredentialsService). The names are new in this release, so
+// every installation that has the block from before it carries one without
+// them — and the block is carried byte for byte, so nothing else ever adds
+// them. That is the whole of LM13's acceptance at the installations that
+// matter: the roster's `serviceAccount:` entries and the implicit admins are
+// rendered to the service there too, the account that may knock and the account
+// that may be served stay one list (the module makes the service's invoker
+// grant for the same variable, iam.tf's credentials_roster_service_account),
+// and the runs' signer reaches the process, without which LM14's probe has
+// nothing to read and the minter grant can never move.
+//
+// The three are REPLACED, not unioned, which is where they part from the two
+// job tables RefreshCredentialsServiceJobAccounts composes: a job row the
+// refresh dropped is a job that holds an invoker grant and is refused by the
+// service (the union's own comment), while a roster or implicit-admin member
+// the config no longer names is a GRANT the service would keep for an account
+// that no longer launches, or an admission the CLI's own gate has already
+// withdrawn — a widening nothing can undo, and, for the implicit admins, a
+// disagreement between the two ends of the one rule F29/R16 arm 1 states.
+// Replacing is also what keeps an installation whose config has not changed
+// converging on the bytes it already has, because the derivation is the
+// deploy's own (credentialsServiceIdentity).
+//
+// A name with nothing to carry is DELETED rather than written empty, which is
+// what the spec's `omitempty` tags write and what the module's own defaults
+// read as the empty class: an installation whose roster names no service
+// account, or whose config names no implicit admin, then carries exactly the
+// bytes the run that deployed the service would have written.
+//
+// A config that cannot name the Firebase project the signer lives in is refused
+// rather than written around (firebaseBackend), the direction the job tables'
+// refresh takes: the caller then keeps the block it found, so an installation
+// whose service is deployed but whose config no longer names the project is
+// left with the names it has rather than a block with the signer dropped.
+func RefreshCredentialsServiceIdentity(vars []byte, lc *localcfg.Config) ([]byte, error) {
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	svc, _ := doc["credentials_service"].(map[string]any)
+	if svc == nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json carries no credentials_service to refresh the identity names of")
+	}
+	b, err := firebaseBackend(lc, "the credentials service")
+	if err != nil {
+		return nil, err
+	}
+	signer, roster, admins := credentialsServiceIdentity(lc, b)
+	if signer == "" {
+		delete(svc, "signer_account")
+	} else {
+		svc["signer_account"] = signer
+	}
+	if len(roster) == 0 {
+		delete(svc, "roster_service_accounts")
+	} else {
+		svc["roster_service_accounts"] = roster
+	}
+	if len(admins) == 0 {
+		delete(svc, "implicit_admins")
+	} else {
+		svc["implicit_admins"] = admins
 	}
 	doc["credentials_service"] = svc
 	return sortedJSON(doc)
