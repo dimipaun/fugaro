@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/place"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -399,6 +400,40 @@ type CredentialsServiceSpec struct {
 	//   - a pointer to the owner's list: written as it is. The account is never
 	//     ADDED to it: a union would admit an identity `[]` cannot remove.
 	VerifierAccounts *[]string `json:"verifier_accounts,omitempty"`
+	// SharedJobAccounts are the installation's SHARED project jobs
+	// (CredentialsSharedJob): the shared coding class's admitted set (B5.1),
+	// one row per (profile, provider, account) the deployer creates a shared
+	// job for, plus the repositories that profile serves. It is neither of the
+	// two tables above and it is not a row of either: a shared job is ONE job
+	// for every repository a profile serves, so its account is admitted to the
+	// repositories of its profile and to nothing else, and a repository that
+	// runs on a per-repository job (a JobAccounts row) is admitted to its own
+	// repository alone.
+	//
+	// The rows carry the triple and never the account's email, for the reason
+	// the two tables above do (credsvc.SharedJobAccountFor over
+	// gcp.ProjectServiceAccountID): a shared job's service account is a hash of
+	// (profile, provider, account), and a list of addresses here would be a
+	// second derivation that can drift from the accounts the deployer creates.
+	// Account is the axis's OWN spelling, in which the empty string is the
+	// profile's no-account job (config.ProjectJobAccounts), and it is NOT
+	// ReviewVariantAccount's mapping: this class's caller is the coding job,
+	// which the axis spells as it is.
+	//
+	// Repos is the profile's own allow_repos, or — a profile that names none —
+	// the repositories this installation's own config records for the profile's
+	// provider (sharedJobRepos), and it is REQUIRED and may be empty: an empty
+	// Repos is the deny-all profile and not a refusal, while a row the service
+	// read as deny-all because the member was missing would be a job it refuses
+	// every call of (internal/cli's credentialsServiceSharedJobAccounts refuses
+	// the document rather than guess).
+	//
+	// It is left out of an installation that deploys no shared job at all — no
+	// profile on a provider a shared job serves — which is an installation
+	// whose service admits no shared caller: the fail-closed state, and not an
+	// error, since the class is inert until a job of it exists. It is the
+	// review table's rule and not JobAccounts' one, for the same reason.
+	SharedJobAccounts []CredentialsSharedJob `json:"shared_job_accounts,omitempty"`
 	// URL is the service's OWN URL, the audience its callers' Google ID
 	// tokens are minted for. It is empty on the apply that CREATES the
 	// service: Cloud Run assigns the URL, nothing in the module may read the
@@ -515,6 +550,38 @@ type CredentialsReviewJob struct {
 	Profile  string `json:"profile"`
 	Provider string `json:"provider"`
 	Account  string `json:"account"`
+}
+
+// CredentialsSharedJob is one SHARED project job of the installation as the
+// credentials service's environment carries it (B5.1): the
+// (profile, provider, account) triple the job and its service account are
+// derived from (gcp.ProjectServiceAccountID), plus the repositories that
+// profile serves.
+//
+// It is the review row's shape one axis over and it is not that row: Account
+// is the axis' own spelling (the empty string is the profile's no-account job,
+// config.ProjectJobAccounts) and never ReviewVariantAccount's mapping, because
+// the caller this row admits holds the CODING job — the same job the launcher
+// launches a repository of an admitted profile onto (internal/cli's
+// launchProjectJobFor). Repos is what the call's admission is read through
+// (credsvc's ClassShared over projectpolicy.AdmitRepo): the repositories the
+// profile serves, as patterns, and an empty list is the profile that serves
+// none — a row whose callers are all refused.
+type CredentialsSharedJob struct {
+	Profile  string   `json:"profile"`
+	Provider string   `json:"provider"`
+	Account  string   `json:"account"`
+	Repos    []string `json:"repos"`
+}
+
+// credentialsSharedJobKey is the shared table's row identity, the same rule
+// credentialsReviewJobKey states for the review table: two rows are one row
+// exactly when they name one job. Repos is deliberately NOT part of it — the
+// repositories a profile serves are a fact ABOUT the job and not part of
+// naming it, so a profile whose list moved is the same row with another
+// value, which is what lets the union below update it in place.
+func credentialsSharedJobKey(j CredentialsSharedJob) string {
+	return j.Profile + "\x00" + j.Provider + "\x00" + j.Account
 }
 
 // The credentials service's singletons. The account is what reads the bundle,
@@ -649,6 +716,10 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 	if err != nil {
 		return CredentialsServiceSpec{}, err
 	}
+	shared, err := CredentialsSharedJobAccounts(lc)
+	if err != nil {
+		return CredentialsServiceSpec{}, err
+	}
 	return CredentialsServiceSpec{
 		AccountID:         CredentialsAccountID,
 		Service:           CredentialsServiceName,
@@ -658,6 +729,7 @@ func Credentials(lc *localcfg.Config, image string, publishedVerifiers []string)
 		RTDBURL:           b.RTDBURL,
 		JobAccounts:       jobs,
 		ReviewJobAccounts: reviews,
+		SharedJobAccounts: shared,
 		// The one rule, applied here as the publisher applies it: the owner's
 		// list when the config states one — an explicit empty list included,
 		// which clears the route — and the node's otherwise. The pointer is
@@ -806,14 +878,15 @@ func credentialsReviewJobKey(j CredentialsReviewJob) string {
 }
 
 // RefreshCredentialsServiceJobAccounts returns vars with the credentials
-// service's two job tables — job_accounts and review_job_accounts — brought up
-// to date with the installation the local config names now, and every other
-// member of the block — the image, the URL, the bundle container, the database
-// and the verifier list — exactly what it was.
+// service's three job tables — job_accounts, review_job_accounts and
+// shared_job_accounts — brought up to date with the installation the local
+// config names now, and every other member of the block — the image, the URL,
+// the bundle container, the database and the verifier list — exactly what it
+// was.
 //
-// The two tables are the members of the block this side composes out of the
+// The three tables are the members of the block this side composes out of the
 // local config (CredentialsJobAccounts over lc.Repos, CredentialsReviewJobAccounts
-// over lc.Profiles), and the deploy is their only other writer: Credentials
+// and CredentialsSharedJobAccounts over lc.Profiles), and the deploy is their only other writer: Credentials
 // fills them in on the run that CREATES the block, and every later run carries
 // the block as it is found (CarriedCredentialsService). A repository onboarded
 // after that deploy is therefore in the table of nobody — its root still grants
@@ -833,11 +906,14 @@ func credentialsReviewJobKey(j CredentialsReviewJob) string {
 // no token is ever minted for, while a row a refresh DROPPED is a job that
 // holds an invoker grant and is refused. It is also what keeps an installation
 // whose config has not changed byte for byte what it was, which is what a
-// carried block owes its readers. The review table is read and unioned the same
-// way, with the one difference CredentialsReviewJobAccounts' own comment gives:
-// an installation that names no profile derives no review row at all, so the
-// empty table written here is the class's fail-closed state and not the refusal
-// an empty job_accounts is.
+// carried block owes its readers. The review and shared tables are read and
+// unioned the same way, with the one difference their own comments give: an
+// installation that names no profile — or no profile on a provider a shared job
+// serves — derives no row of them at all, so the empty table written here is
+// the class's fail-closed state and not the refusal an empty job_accounts is.
+// The shared table's ONE other difference is that a row's repositories are not
+// part of its identity, so a row the config still derives is taken whole from
+// the config rather than kept as found (see the union below).
 //
 // A config that cannot describe a table at all — a named repository whose
 // provider it does not state, no repository with a workflow, or a profile whose
@@ -926,6 +1002,52 @@ func RefreshCredentialsServiceJobAccounts(vars []byte, lc *localcfg.Config) ([]b
 		})
 		svc["review_job_accounts"] = mergedReview
 	}
+	// The shared table, read and unioned by the same rules, with the one
+	// difference its own row shape gives: the repositories a row carries are
+	// not part of its identity (credentialsSharedJobKey), so a row the config
+	// still derives is taken from the config WHOLE — the profile's list has
+	// moved where it moved, and a carried row kept verbatim would hold an
+	// admission the config no longer states (a repository switched off stays
+	// served, or one added stays refused and its runs die at their first git
+	// command). A row the config no longer derives is carried as it is, which
+	// is the direction every table here is unioned in: a row for a job the
+	// installation still holds is a job the service must keep admitting, and
+	// dropping it would refuse a caller the deployment runs.
+	var foundShared []CredentialsSharedJob
+	if raw, ok := svc["shared_job_accounts"]; ok && raw != nil {
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(b, &foundShared); err != nil {
+			return nil, fmt.Errorf("the installation's credentials_service.shared_job_accounts is not a list of profile, provider, account and repos rows: %w", err)
+		}
+	}
+	shared, err := CredentialsSharedJobAccounts(lc)
+	if err != nil {
+		return nil, err
+	}
+	mergedShared := make([]CredentialsSharedJob, 0, len(foundShared)+len(shared))
+	mergedShared = append(mergedShared, foundShared...)
+	at := make(map[string]int, len(mergedShared))
+	for i, r := range mergedShared {
+		at[credentialsSharedJobKey(r)] = i
+	}
+	for _, r := range shared {
+		if i, ok := at[credentialsSharedJobKey(r)]; ok {
+			r.Repos = slices.Clone(r.Repos)
+			mergedShared[i] = r
+			continue
+		}
+		at[credentialsSharedJobKey(r)] = len(mergedShared)
+		mergedShared = append(mergedShared, r)
+	}
+	if len(mergedShared) > 0 {
+		slices.SortFunc(mergedShared, func(a, b CredentialsSharedJob) int {
+			return strings.Compare(credentialsSharedJobKey(a), credentialsSharedJobKey(b))
+		})
+		svc["shared_job_accounts"] = mergedShared
+	}
 	doc["credentials_service"] = svc
 	return sortedJSON(doc)
 }
@@ -985,6 +1107,97 @@ func CredentialsReviewJobAccounts(lc *localcfg.Config) ([]CredentialsReviewJob, 
 		return strings.Compare(a.Account, b.Account)
 	})
 	return slices.Compact(out), nil
+}
+
+// CredentialsSharedJobAccounts is the installation's SHARED project jobs as
+// the module's var.credentials_service carries them: one row per
+// (profile, provider, account) the deployer creates a shared job for
+// (ProjectJobs' axis), with the repositories that profile serves.
+//
+// It is derived from the same two facts the deployer derives its jobs from and
+// from no third one: the profiles of the local config, held to SharedJobProvider
+// (the one predicate that says which providers a shared job serves) and to the
+// account axis with the names this installation declares a KEY credential left
+// out (config.ClaudeAccountTokenNames, which is the very filter projectJobs
+// applies when it composes the jobs) — so the accounts this service admits are
+// the accounts the deployment runs, which is the claim credsvc's
+// TestSharedJobAccountsAreTheNamesProjectJobsDeploys makes about the other
+// half. A profile is counted whatever its records say about the service
+// switch: the row is the class the service admits, and the switch is the
+// separate fact that decides whether a launch of that profile is handed this
+// service's address at all (CredentialsServiceServesProfile).
+//
+// An installation that deploys no shared job at all gets an empty table and no
+// error — the review table's own rule and for its own reason (the coding table
+// above is the exception, and the service refuses an empty version of it): a
+// service whose shared class is empty answers every caller of it with the
+// class's refusal, which is the fail-closed state and not a deployment that
+// cannot start.
+func CredentialsSharedJobAccounts(lc *localcfg.Config) ([]CredentialsSharedJob, error) {
+	var out []CredentialsSharedJob
+	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+		pr := lc.Profiles[name]
+		if !SharedJobProvider(pr.Provider) {
+			continue
+		}
+		axis := config.ProjectJobAccounts(pr)
+		keyAccounts := config.ClaudeAccountTokenNames(lc.Credentials, axis)
+		repos := sharedJobRepos(lc, pr)
+		for _, account := range axis {
+			if slices.Contains(keyAccounts, account) {
+				continue
+			}
+			out = append(out, CredentialsSharedJob{Profile: name, Provider: pr.Provider, Account: account, Repos: repos})
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	slices.SortFunc(out, func(a, b CredentialsSharedJob) int {
+		return strings.Compare(credentialsSharedJobKey(a), credentialsSharedJobKey(b))
+	})
+	return out, nil
+}
+
+// sharedJobRepos is the repositories a shared job's row carries: what its
+// profile serves, which is the profile's own allow_repos when it names one
+// (projectpolicy.ProfileAllowRepos' rule) and, when it names none, the
+// repositories this machine's config records for the profile's provider.
+//
+// The fallback is the installation's own record of its repositories and not
+// the published project list, which is the same list with every other
+// machine's shared entries in it (internal/cli's seedAllowRepos): reading it
+// here would be a database call the deploy path deliberately makes none of
+// (internal/cli's deployCredentialsService), and every entry the config does
+// not record is a repository whose shared caller this service then refuses —
+// which is the fail-closed direction for a value that is an admission, and
+// never a widening of one. What is written is always a subset of what the
+// project's own list admits, so the two gates the service reads a call
+// through (projectpolicy.Admits) are read here as they are read there.
+//
+// The value is never nil: the member is REQUIRED and an empty one is the
+// deny-all profile, while a missing one is a document the service refuses to
+// read at all.
+func sharedJobRepos(lc *localcfg.Config, pr config.JobProfile) []string {
+	if len(pr.AllowRepos) > 0 {
+		return slices.Clone(pr.AllowRepos)
+	}
+	out := []string{}
+	for _, key := range slices.Sorted(maps.Keys(lc.Repos)) {
+		entry := lc.Repos[key]
+		if entry.Provider != pr.Provider {
+			continue
+		}
+		canonical, err := projectpolicy.Canonical(entry.Provider, key)
+		if err != nil {
+			// A repository the config cannot canonicalise is one no admission
+			// of this service could ever match: it is dropped rather than
+			// written as a pattern that admits nothing.
+			continue
+		}
+		out = append(out, canonical)
+	}
+	return out
 }
 
 // CredentialsServiceURLOf returns the credentials_service.url the installation
