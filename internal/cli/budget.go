@@ -473,7 +473,7 @@ type showRepo struct {
 	Slug         string   `json:"slug"`
 	Repo         string   `json:"repo,omitempty"`
 	DailyCapUSD  *float64 `json:"daily_cap_usd"`
-	CapSource    string   `json:"daily_cap_source"` // repo, default or none
+	CapSource    string   `json:"daily_cap_source"` // repo, default, global or none
 	PerRunCapUSD *float64 `json:"per_run_cap_usd"`
 	// PerRunCapSource is where the effective per-run cap comes from: repo,
 	// default, global, or none when no per-run cap is set anywhere.
@@ -488,15 +488,44 @@ type showRepo struct {
 	Running         []showRun      `json:"running"`
 }
 
+// dailyCapSource names the scope whose daily cap binds a repository: its own
+// node, counted as its ceiling where that is smaller (A3), else the default.
+// The global cap bounds a node only through that ceiling, so a node above it is
+// named for the global and not for itself. "none" is no daily cap anywhere.
+func dailyCapSource(c budget.Caps) string {
+	if c.Repo != nil && c.Repo.DailyMicros != nil {
+		if ceil := c.RepoCeiling().DailyMicros; ceil != nil && *ceil < *c.Repo.DailyMicros {
+			if c.Global != nil && c.Global.DailyMicros != nil {
+				return "global"
+			}
+			return "default"
+		}
+		return "repo"
+	}
+	if c.Defaults != nil && c.Defaults.RepoDailyMicros != nil {
+		return "default"
+	}
+	return "none"
+}
+
 // perRunCapSource names the scope whose per-run cap binds a repository: the
 // smaller of the repository's side (its own node, else the default) and the
 // global one, which is the fallback where the repository's side is unset
-// (D6). "none" is no per-run cap anywhere: a run in enforce halts (no_cap).
+// (D6). A repository's own node counts as its ceiling where that is smaller
+// (A3), so a node above the ceiling is named for the scope the ceiling came
+// from and not for itself. "none" is no per-run cap anywhere: a run in enforce
+// halts (no_cap).
 func perRunCapSource(c budget.Caps) string {
 	repo, repoOK := c.RepoPerRun()
 	global, globalOK := c.GlobalPerRun()
 	if repoOK && (!globalOK || repo <= global) {
 		if c.Repo != nil && c.Repo.PerRunMicros != nil {
+			if ceil := c.RepoCeiling().PerRunMicros; ceil != nil && *ceil < *c.Repo.PerRunMicros {
+				if globalOK {
+					return "global"
+				}
+				return "default"
+			}
 			return "repo"
 		}
 		return "default"
@@ -725,10 +754,7 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		}
 		if v, ok := rc.RepoDaily(); ok {
 			rs.DailyCapUSD = usdPtr(&v)
-			rs.CapSource = "default"
-			if rc.Repo != nil && rc.Repo.DailyMicros != nil {
-				rs.CapSource = "repo"
-			}
+			rs.CapSource = dailyCapSource(rc)
 		}
 		// The per-run cap is the effective one: the repository's own or the
 		// default, and the global one where that side is unset (D6), so the
