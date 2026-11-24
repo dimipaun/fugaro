@@ -320,7 +320,7 @@ func TestInitFirebaseSameProject(t *testing.T) {
 	if got := strs(v["skip_apis"]); !slices.Equal(got, infra.SharedAPIs) {
 		t.Errorf("skip_apis = %v, want %v", got, infra.SharedAPIs)
 	}
-	if !strings.Contains(out, "warning: the Firebase project is the installation's own project") || !strings.Contains(out, "123456789012-compute@developer.gserviceaccount.com (roles/editor)") ||
+	if !strings.Contains(out, "Warning: the Firebase project is the installation's own project") || !strings.Contains(out, "123456789012-compute@developer.gserviceaccount.com (roles/editor)") ||
 		!strings.Contains(out, "iam.automaticIamGrantsForDefaultServiceAccounts") {
 		t.Errorf("no warning about the default Compute account's roles/editor in\n%s", out)
 	}
@@ -2165,7 +2165,7 @@ func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
 	}
 	// And it is the rules step's own: the run reaches this stage's
 	// confirmation and stops there, not at a step of a stage before it.
-	if !strings.Contains(out, "stopped at "+initflow.Rules) {
+	if !strings.Contains(out, "to resume at "+initflow.Rules+".") {
 		t.Errorf("the run did not stop at the rules stage's own confirmation:\n%s", out)
 	}
 	if db.RulePuts() != puts {

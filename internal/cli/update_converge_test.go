@@ -1684,15 +1684,19 @@ func stoppedStage(out string) string {
 		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), markFailed+" failed"); ok {
 			return strings.TrimSpace(rest)
 		}
-		// The resume line is the run's own: "stopped at policy; fix: rerun
-		// fugaro update: it resumes at policy". The stage is what stands between
-		// the two sentences, and it is the name the loop's own stages carry.
-		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "stopped at ")
+		// The closing line is the run's own: "Failed in 2.2s. Rerun fugaro
+		// update to resume at policy." The stage is what follows "to resume
+		// at", and it is the name the loop's own stages carry.
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "Failed in ")
 		if !ok {
 			continue
 		}
-		if stage, _, ok := strings.Cut(rest, "; fix: "); ok {
-			return stage
+		_, resume, ok := strings.Cut(rest, ". Rerun ")
+		if !ok {
+			continue
+		}
+		if _, stage, ok := strings.Cut(resume, " to resume at "); ok {
+			return strings.TrimSuffix(stage, ".")
 		}
 	}
 	return "(the summary names no failed stage)"
@@ -1869,7 +1873,7 @@ func TestUpdateConvergesACachePriceWrittenTheOldWay(t *testing.T) {
 	}
 	// And the warning names both prices: the rename is not silent, and the
 	// price the owner wrote is reported rather than refused.
-	if want := "warning: model_prices.deepseek/deepseek-v4.1-flash.cache_read_per_m is $0.000588 per million tokens"; !strings.Contains(out, want) {
+	if want := "Warning: model_prices.deepseek/deepseek-v4.1-flash.cache_read_per_m is $0.000588 per million tokens"; !strings.Contains(out, want) {
 		t.Errorf("the run did not warn about the price below the catalog's floor (%q), which is the other half of what this release owes the one command the owner runs:\n%s", want, out)
 	}
 	// And the price the node carries is the owner's, unchanged by the rename.

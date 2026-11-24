@@ -15,7 +15,7 @@
 - Commands show clean, Brew-style status output by default: one line per step, with a check mark or an X. The full output (Terraform, gcloud, and so on) goes to a log file. *(In progress.)*
 - Every run has its own **run ID** and its own log file.
 - Secrets are removed when the log is written, so logs are safe to give to an agent or attach to an issue.
-- When a step fails, the command prints one line, for example: `Something went wrong. Run: fugaro diagnose <run-id>`.
+- When a step fails, the command prints the reason, the run's log path and the one command that explains the run, for example: `Error: the bucket did not answer`, `Log:  <path>`, `Help: fugaro diagnose <run-id>`.
 
 ## Command
 
