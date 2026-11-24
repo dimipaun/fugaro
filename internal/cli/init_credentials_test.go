@@ -781,7 +781,12 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 	// rig's config records a Bitbucket repository and has the service opted in,
 	// so the installation deploys the implicit review-only job of that provider
 	// (plan task RJ8, finding F6) and the service has to admit the caller that
-	// runs it. Every other member is the earlier run's, byte for byte.
+	// runs it. shared_job_accounts is the same kind of arrival for the third
+	// table the refresh composes (B5.1): the class's own table is derived from
+	// the installation's profiles, so the first update of an installation whose
+	// block predates the module's rendering of it writes one row per profile
+	// rather than carrying the member the previous release never wrote. Every
+	// other member is the earlier run's, byte for byte.
 	want := map[string]any{
 		"account_id":       infra.CredentialsAccountID,
 		"service":          infra.CredentialsServiceName,
@@ -793,6 +798,9 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 			"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "web"}},
 		"review_job_accounts": []any{map[string]any{
 			"profile": infra.ImplicitReviewProfile, "provider": "bitbucket", "account": config.DefaultClaudeAccount}},
+		"shared_job_accounts": []any{map[string]any{
+			"profile": "standard", "provider": "bitbucket", "account": "",
+			"repos": []any{"bitbucket/acme/sandbox"}}},
 		"url": credentialsServiceURL,
 		"verifier_accounts": []any{
 			"fugaro-verifier@proj-1234.iam.gserviceaccount.com"},

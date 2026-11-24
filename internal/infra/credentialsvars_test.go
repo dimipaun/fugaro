@@ -647,8 +647,16 @@ func TestRefreshCredentialsServiceJobAccountsUnionsTheReviewVariants(t *testing.
 		t.Errorf("credentials_service.review_job_accounts = %+v, want %+v (the config's own variants in their sorted place, and the row the block already carried kept): a table the refresh DROPPED is a review job that holds the service's address and is refused by it", have, want)
 	}
 	// The coding table is refreshed in the same pass and by the same rule, and
-	// every other member of the block is the installation's own record.
+	// so is the shared class's own table (B5.1's rows, derived from the same
+	// config: every profile, on the axis's own spelling, with the repositories
+	// its profile serves). Every other member of the block is the
+	// installation's own record.
 	svc.ReviewJobAccounts = want
+	svc.SharedJobAccounts = []CredentialsSharedJob{
+		{Profile: "apikey", Provider: "github", Account: "", Repos: []string{"github/acme/webapp"}},
+		{Profile: "standard", Provider: "github", Account: "", Repos: []string{"github/acme/webapp"}},
+		{Profile: "standard", Provider: "github", Account: "acme-personal", Repos: []string{"github/acme/webapp"}},
+	}
 	svc.JobAccounts = []CredentialsJob{
 		{Provider: "bitbucket", Repo: "acme/sandbox", Workflow: "web"},
 		{Provider: "github", Repo: "acme/webapp", Workflow: "web"},
