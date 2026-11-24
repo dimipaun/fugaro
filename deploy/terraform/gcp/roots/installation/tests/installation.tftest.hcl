@@ -3623,3 +3623,248 @@ run "the_intake_is_told_the_region" {
   }
 }
 
+
+# The intake's SECOND class list (WC3, R5, D3143): the people of the workspace's
+# roster, which `fugaro update` renders on the workspace owner's own run and
+# which is empty for every installation that is not a workspace's project. Two
+# facts, and the first is the one F10 is about:
+#
+#   - The people are ADDED to the intake's own lists and to nothing else. The
+#     list the credentials service's invoker is made from is the launchers'
+#     (iam.tf's launcher_invoker_members), so the person on this run's roster is
+#     granted no invocation of the workspace project's credentials service and
+#     reaches no route of it — which is what keeps a workspace person's token
+#     out of the read mint (F10, R5).
+#   - The intake's invoker set AND the class in its environment are the same
+#     union: the launcher and the two roster people, as members IAM takes and as
+#     the bare addresses the process reads. One expression makes both, so a
+#     caller the plan admits is a caller the process admits (R5, F36).
+#
+# The environment is asserted whole for the reason the run above gives: the
+# cover holds the intake's container to the five names of
+# internal/infra/tf.intakeServiceEnv, so the second list has no name of its own
+# and cannot drift from the grant it is admitted by.
+run "the_intake_admits_the_rosters_people" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launchers         = ["user:dev@example.com"]
+    launcher_accounts = ["dev@example.com"]
+    credentials_service = {
+      account_id       = "fugaro-credentials"
+      service          = "fugaro-credentials"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      bundle_secret    = "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358"
+      firebase_project = "aurora-fp"
+      rtdb_url         = "https://aurora-fp-default-rtdb.firebaseio.com"
+      job_accounts = [{
+        provider = "github"
+        repo     = "owner/repo-a"
+        workflow = "web"
+      }]
+    }
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      people     = ["zoe@example.com", "ada@example.com"]
+    }
+  }
+
+  assert {
+    condition = toset([for e in google_cloud_run_v2_service.intake[0].template[0].containers[0].env : "${e.name}=${e.value}"]) == toset([
+      "FUGARO_GCP_PROJECT=proj-1234",
+      "FUGARO_REGION=us-east5",
+      "FUGARO_INTAKE_URL=https://intake-url-unassigned.invalid",
+      "FUGARO_RUNS_BUCKET=fugaro-runs-proj-1234",
+      "FUGARO_LAUNCHER_ACCOUNTS=[\"ada@example.com\",\"dev@example.com\",\"zoe@example.com\"]",
+    ])
+    error_message = "the intake's class is the installation's launchers AND the workspace roster's people as ONE entry, sorted, under the one name the process reads (R5): a second name would be a second list the grant and the class could drift apart in"
+  }
+  assert {
+    condition = toset([for m in google_cloud_run_v2_service_iam_member.intake_invoker : m.member]) == toset([
+      "user:ada@example.com", "user:dev@example.com", "user:zoe@example.com",
+    ])
+    error_message = "the intake's invoker set is the launchers and the roster's people (R5, F36): a person the class admits and the front end refuses would be a caller no route can serve"
+  }
+  assert {
+    condition = toset([for m in google_cloud_run_v2_service_iam_member.credentials_invoker : m.member]) == toset([
+      "user:dev@example.com",
+    ])
+    error_message = "a workspace roster's person is granted NO invocation of the credentials service (F10): that service's own read mint reaches the installing person's whole workspace, which is not what a launcher asked for and not what this task widens"
+  }
+}
+
+# ... and an installation that is not a workspace's project: `fugaro update`
+# renders no people, the class is the launchers' own, and no key is written that
+# would be a diff in every such installation's tfvars. This is the state of every
+# installation that has no workspace, so it is pinned rather than assumed.
+run "an_installation_without_a_workspace_admits_its_launchers_only" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launchers         = ["user:dev@example.com"]
+    launcher_accounts = ["dev@example.com"]
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+    }
+  }
+
+  assert {
+    condition     = one([for e in google_cloud_run_v2_service.intake[0].template[0].containers[0].env : e.value if e.name == "FUGARO_LAUNCHER_ACCOUNTS"]) == "[\"dev@example.com\"]"
+    error_message = "with no people the class is exactly the installation's launchers: this is the bytes every installation that is not a workspace's project keeps"
+  }
+  assert {
+    condition = toset([for m in google_cloud_run_v2_service_iam_member.intake_invoker : m.member]) == toset([
+      "user:dev@example.com",
+    ])
+    error_message = "with no people the intake's invoker set is the launchers' alone"
+  }
+}
+
+# A person whose address reads like a MEMBER spelling is refused here, and the
+# reason is the same list's other half: each entry of this one is spelled
+# `user:<entry>` into the intake's invoker set (intake.tf, local.intake_invoker_members)
+# and into the class list beside the launchers, so an address that already
+# carries a colon is the member spelling and not a bare address — the grant
+# would name a principal IAM does not have and the class would hold a value no
+# token's email claim carries (internal/access's own rule for the same kind of
+# value: an entry is the bare address, never the "user:" form). var.launcher_accounts,
+# which merges into that same class list, has refused the shape since F31.
+# `fugaro update` does not reach this refusal: internal/infra's IntakePeople
+# leaves the person off the list it renders, exactly as internal/access's
+# derivation leaves one off its admin list, so the roster can hold such an
+# address and no update fails over it — the person is simply not in the class.
+run "a_roster_person_may_not_read_like_a_member_spelling" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      people     = ["user:ada@example.com"]
+    }
+  }
+
+  expect_failures = [var.intake]
+}
+
+# The other end of the same rule: an address PAST the fold's bound is refused.
+# internal/credsvc's foldEmail holds every value it reads to
+# printableHeaderValue's 512 bytes, so a longer address is a configuration error
+# at NewLaunchers — the intake's revision exits on start, the apply fails and
+# every later `fugaro update` of that workspace fails with it. The roster can
+# hold one (nothing in workspace.CanonicalAddress, `workspace user add` or the
+# roster schema bounds the length), so the guard belongs here and the renderer
+# drops the same shape (internal/infra's IntakePeople).
+run "a_roster_person_may_not_be_longer_than_the_fold_takes" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      people     = ["${join("", [for _ in range(501) : "a"])}@example.com"]
+    }
+  }
+
+  expect_failures = [var.intake]
+}
+
+# A service account's address is refused here too, and this is the one entry a
+# roster can carry that a person wrote: `workspace user add` defaults its kind
+# to `human` and nothing in that path refuses the suffix, so an address Google
+# minted for a job can sit on the roster under a person's kind. It reaches
+# FUGARO_LAUNCHER_ACCOUNTS through this list, and internal/credsvc's
+# foldLauncherAccounts REFUSES the shape — a configuration error, so the
+# intake's new revision exits on start and the apply that would have written it
+# fails, taking every later `fugaro update` of that workspace with it.
+run "a_roster_person_may_not_be_a_service_account" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      people     = ["robot@proj-1234.iam.gserviceaccount.com"]
+    }
+  }
+
+  expect_failures = [var.intake]
+}
+
+# ... and in any case, because the process FOLDS an address before it compares
+# it: internal/credsvc's foldEmail lower cases the whole value and
+# foldLauncherAccounts refuses the suffix on the folded one. A guard that
+# matched the suffix as written would let "Robot@Proj-1234.IAM.GServiceAccount.com"
+# through and the process would refuse it all the same — the revision that
+# exits on start, from the one hand edit this validation exists for.
+run "a_roster_person_may_not_be_a_service_account_in_any_case" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      people     = ["Robot@Proj-1234.IAM.GServiceAccount.com"]
+    }
+  }
+
+  expect_failures = [var.intake]
+}
+
+# The same rule without the prefix: a `:` anywhere in the local part is the
+# member spelling's grammar, so the value is refused here whether or not it
+# begins `user:`. internal/workspace's CanonicalAddress keeps it and
+# `fugaro workspace user add` stores it — the refusal is the class list's, and
+# IntakePeople leaves that person off the list it renders rather than failing an
+# update over a value the roster can hold, which is the same split
+# internal/access makes for its own list.
+run "a_roster_person_may_not_be_an_address_with_a_colon" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    intake = {
+      account_id = "fugaro-intake"
+      service    = "fugaro-intake"
+      image      = "us-east5-docker.pkg.dev/proj-1234/fugaro-ghcr/dimipaun/fugaro-credentials:0.15.0@sha256:9f2c7b1e4d6a8305c1b7e9f2a4d6c8b0e3f5a7c9d1b3e5f7a9c1e3d5b7f9a1c3"
+      people     = ["a:b@example.com"]
+    }
+  }
+
+  expect_failures = [var.intake]
+}

@@ -2734,12 +2734,19 @@ var runAccountGrants = setOf(
 	// nothing else; the object itself is written by the operator's own update,
 	// not by this account).
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | google_service_account.intake[0].member | for_each= | perms=`,
-	// ... and the intake's own front door: the same roles/run.invoker on the
-	// intake service, to the same roster's people, for the read mint's reasons
-	// above. Invoking the intake hands the caller a write of a secret of THEIR
-	// OWN name (the service derives it from the verified sub), and the class
-	// inside the service refuses every caller the roster does not name.
-	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.intake.service | each.value | for_each=local.intake_on ? local.launcher_invoker_members : toset([]) [local.intake_on=var.intake != null] [local.launcher_invoker_members=toset([for m in var.launchers : m if startswith(m, "user:")])] | perms=`,
+	// ... and the intake's own front door: roles/run.invoker on the intake
+	// service to the installation's launchers AND, on a workspace's own project,
+	// the people of the workspace's roster (WC3, R5, D3143 — the union below,
+	// which is one expression shared with the class the process reads). It is the
+	// intake's grant and NEITHER the credentials service's nor its grant route's:
+	// that service's invoker set stays local.launcher_invoker_members (the row
+	// above) because its read mint reaches the installing person's whole
+	// workspace, which is not what a roster person may be given (F10). Invoking
+	// the intake hands the caller a write of a secret of THEIR OWN name (the
+	// service derives it from the verified sub), the class inside the service
+	// refuses every caller the list does not name, and a caller on it reaches the
+	// `fugaro_u_` half alone — the shared prefix is the derived admin list's.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.intake.service | each.value | for_each=local.intake_on ? local.intake_invoker_members : toset([]) [local.intake_invoker_members=setunion(local.launcher_invoker_members, toset([for e in local.intake_people : "user:${e}"]))] [local.intake_on=var.intake != null] | perms=`,
 
 	// Reviewed for W3 (the workspace's own project): the workspace root's own
 	// grant, the only resource the tree gives that project's service account.
@@ -2781,8 +2788,8 @@ var runAccountGrants = setOf(
 	//     and forge routes a member's run calls, and a typed refusal for
 	//     everything else (R14). It is a member resource and never a binding,
 	//     which is what makes a member leaving the table a deletion and nothing
-	//     else — the ONE deletion internal/infra/tf's WorkspaceNotCovered admits
-	//     (F25) — so no operator repair is ever the answer here.
+	//     else — one of the TWO deletions internal/infra/tf's WorkspaceNotCovered
+	//     admits (F25) — so no operator repair is ever the answer here.
 	//
 	// Neither is bound to a named person, so no row above covers it: the
 	// accessor's member is terraform's own computation of the workspace account
@@ -2791,6 +2798,37 @@ var runAccountGrants = setOf(
 	// here.
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.credentials_service.bundle_secret | google_service_account.workspace.member | for_each= | perms=`,
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | "serviceAccount:${each.value}" | for_each=local.credentials_service_on ? local.member_job_accounts : toset([]) [local.credentials_service_on=var.credentials_service != null] [local.member_job_accounts=toset(flatten([for m in values(var.members) : m.job_service_accounts]))] | perms=`,
+	// Reviewed for WC2 (the workspace root admits the roster's people, R6,
+	// D2971): the two grants the workspace root makes to the people of the
+	// workspace's own roster, and neither of them reaches the installation's runs
+	// bucket and its marker.
+	//
+	//   - the person's invoke grant is the row above with another member class:
+	//     roles/run.invoker on the workspace's own service, bound to a `user:`
+	//     address the roster names rather than to a member's job account. It is
+	//     the same reach and the same refusal — that process's front door, the
+	//     model and forge routes and a typed refusal for everything else (R14) —
+	//     carries no storage permission, no permission to grant a role, no actAs
+	//     and no token minting, and is a member resource, so a person the roster
+	//     drops is the second deletion WorkspaceNotCovered admits (F25, WC2) and
+	//     no operator repair;
+	//   - the conditioned accessor is the bundle accessor's row under a
+	//     condition: roles/secretmanager.secretAccessor on the workspace's OWN
+	//     project, fenced to the per-person prefix AND the one name the
+	//     workspace's credentials half serves (fugaro_u_…_claude-oauth-token,
+	//     R6). secretmanager.versions.access carries no storage permission, no
+	//     write of any kind, no actAs and no token minting, the fence is what
+	//     keeps it off every other secret of the project (and off the
+	//     project-shared class), and the project it is in is the workspace's own
+	//     and not the installation's — so fugaro/managed.json is not a thing
+	//     either grant can reach.
+	//
+	// Neither is bound to a named person in the plan, so no row above covers
+	// them: the person's invoker member is a `user:` address resolved from
+	// var.people at apply, and the accessor's member is terraform's own
+	// computation of the workspace account, exactly as the two rows above.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | "user:${each.value}" | for_each=local.credentials_service_on ? local.roster_people : toset([]) [local.credentials_service_on=var.credentials_service != null] [local.roster_people=toset(var.people)] | perms=`,
+	`google_project_iam_member | "roles/secretmanager.secretAccessor" | project=var.project | google_service_account.workspace.member | for_each= | perms=`,
 	// Reviewed for P5.1b (the installation's resident orchestrator, the mobile
 	// design's section 4.3). The account is the installation's own, it exists on
 	// no installation that has not opted in — var.orchestrator is null by

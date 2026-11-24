@@ -286,9 +286,17 @@ type Config struct {
 	// a credential is a spending and data-egress grant (F12, D1628), which is
 	// why a repository may select among them and never add one.
 	Credentials []config.Credential `yaml:"credentials,omitempty"`
-	// Pools are named, ordered lists of those credentials with a strategy
-	// (spec §2). They are created where credentials are, and for the same
-	// reason.
+	// Pools are named, ordered lists of those credentials with a rule: the
+	// `strategy` they were written with, which still means what it means, and
+	// the `rule` that arrived with the routing table, which is served where it
+	// is written and resolved from the strategy where it is not (spec §2, R5,
+	// R21). A pool also names the `principal` it belongs to, which is optional
+	// until the migration writes one (MG2), and a `threshold`, which validation
+	// refuses wherever it is written: no rule set this release ships acts on one,
+	// so the member arrives with the rule that reads it (PL8). An installation
+	// that has not migrated carries neither, and a pool moves only where its
+	// owner wrote a rule (config.Pool.RuleOrDefault). They are created where
+	// credentials are, and for the same reason.
 	Pools []config.Pool `yaml:"pools,omitempty"`
 	// SubscriptionSpread is whether a run may spread across two or more Claude
 	// OAuth subscription credentials at all (D1622, D1636): the D875 switch

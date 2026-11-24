@@ -214,23 +214,69 @@ const (
 // PoolStrategies are the strategies a pool may be written with.
 var PoolStrategies = []string{PoolStrategyFailover, PoolStrategyRoundRobin}
 
-// Pool is one named, ordered list of credentials with a strategy: failover
-// tries them in order and moves to the next when one is exhausted, round-robin
-// shares the load and skips a member that fails (spec §2).
+// Pool is one named, ordered list of credentials with a rule: `ordered` walks
+// the list and takes the first usable member, round-robin shares the load and
+// skips a member a mark or the cap holds, and failover takes the member
+// exhausted longest ago (spec §2, R5, D3177).
+//
+// A pool carries a rule of its own (Rule) beside the strategy it was written
+// with (Strategy): the rule is NEW and the strategy is still read and still
+// means what it means, so a pool published with `strategy: round-robin` and no
+// rule is served round-robin, and a pool moves because a rule arrived only
+// where its owner wrote one (R21, Pool.RuleOrDefault).
 type Pool struct {
 	Name string `yaml:"name" json:"name"`
 	// Strategy is a value of PoolStrategies; "" is failover.
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+	// Rule is the pool's rule, a value of PoolRules; "" is a pool that
+	// names none, which is served by its Strategy and by failover only where it
+	// names neither. It is a separate member from Strategy on purpose (R21): a
+	// value never changes meaning, so `ordered` arrives as a new name beside the
+	// strategy rather than as a third value of it, and a release-behind reader
+	// that knows only Strategy still reads a pool this file writes.
+	//
+	// It is optional and `omitempty` for that reader's sake as well: the
+	// published craft_pools block is decoded strictly by every job image of the
+	// installation, so an unset rule must write no key at all.
+	Rule string `yaml:"rule,omitempty" json:"rule,omitempty"`
 	// Members are the credentials' names, in the order the pool tries them.
-	// The order is meaningful for both strategies — it is what failover walks
-	// and what round-robin starts from — so it is a list and never a set.
+	// The order is meaningful for every rule — it is what ordered and failover
+	// walk and what round-robin starts from — so it is a list and never a set.
 	Members []string `yaml:"members" json:"members"`
+	// Threshold is the fraction of a member's limit at which the pool moves off
+	// that member, before the limit is hit (D3178, PL8), or nil when the pool
+	// names none: it is optional and no default is invented for it. It is a
+	// pointer for the same reason Rule is `omitempty` — an absent threshold
+	// writes no key into a block a release-behind reader decodes — and the bound
+	// it is held to is PoolThreshold's, which is the answer PL8's picker
+	// acts on.
+	Threshold *PoolThreshold `yaml:"threshold,omitempty" json:"threshold,omitempty"`
+
+	// Principal is who the pool belongs to (D3181, D3179 as amended): a person
+	// by their Google subject, a verified service account, or the project
+	// itself. It is a NEW member and it is the enforcing half of a pool's
+	// ownership; Owner below keeps its meaning and decides nothing about which
+	// pool a run is served from (R21, R7).
+	//
+	// It is a pointer because it is optional: a pool an installation already
+	// holds names none until `fugaro update` migrates it (MG1, MG2), and a
+	// published block must stay byte for byte what a release-behind reader
+	// decodes — so a pool with no principal writes no key.
+	Principal *PoolPrincipal `yaml:"principal,omitempty" json:"principal,omitempty"`
 
 	// Owner is the pool's owner, spelled by email (D1936, R10): the person a
 	// slip naming this pool is served to, and the pool's administrator. It is
 	// the roster's key, not a `sub` — the roster is keyed by email, and the
 	// service resolves it to the `sub` of the person asking for a slip at
 	// grant time — so a value here is a person's address and never a secret.
+	//
+	// It KEEPS ITS MEANING (R21): it stays an email address, which is display
+	// text an operator reads and the key the roster is written against, and it
+	// is not reused as the enforcing principal. Principal above is that half,
+	// and it is a member of its own rather than a second reading of this one —
+	// so a pool that names an owner and no principal is exactly the pool every
+	// installation holds today, and nothing about it moves until the migration
+	// writes a principal.
 	Owner string `yaml:"owner,omitempty" json:"owner,omitempty"`
 	// AllowedUsers are the other people the pool is served to, by email, in
 	// the same vocabulary as Owner. Empty is D1936's default: the owner alone,
@@ -468,6 +514,22 @@ func CredentialNamed(creds []Credential, name string) (Credential, bool) {
 // A pool and a credential share one namespace, because a craft's access names
 // either without saying which: a pool whose name is a credential's would leave
 // that name meaning two things.
+//
+// What this does NOT refuse is the release-1 bridge of D3176: a subscription
+// token that no pool lists is left alone. `fugaro update` wraps each lone
+// account in a pool of one (MG1, MG2), and until it has, every installation
+// holds such a token — so a refusal here would refuse the config of every
+// project that has not migrated yet. The state is reported and not refused in
+// release 1, and refused in release 2 by X2, once the migration has wrapped
+// what it can.
+//
+// The report is not here and is not written yet. Release 1's reporter is
+// routing.Problems — RT3 of docs/model-credentials-routing/implementation-plan.md,
+// whose acceptance carries the sentence "a subscription token in no pool is
+// reported as a warning in release 1" — and RT7 is the task that has `fugaro
+// validate` print it. Neither has shipped, so nothing reports the state today:
+// this function's silence is the whole of the bridge until RT3 lands, and a
+// migration that lifts it before then has nothing to read.
 func ValidatePools(pools []Pool, creds []Credential) []Problem {
 	var ps []Problem
 	defined := definedCredentialNames(creds)
@@ -491,6 +553,7 @@ func ValidatePools(pools []Pool, creds []Credential) []Problem {
 		if p.Strategy != "" && !slices.Contains(PoolStrategies, p.Strategy) {
 			ps = append(ps, Problem{Path: at + ".strategy", Message: fmt.Sprintf("must be one of %s", strings.Join(PoolStrategies, ", "))})
 		}
+		ps = append(ps, poolRuleProblems(at, p)...)
 		if len(p.Members) == 0 {
 			ps = append(ps, Problem{Path: at + ".members", Message: "a pool with no members serves nothing: list at least one credential"})
 		}

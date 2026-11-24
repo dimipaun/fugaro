@@ -52,7 +52,7 @@ func TestRunUsesTheProjectDefaultClaudeAccount(t *testing.T) {
 		f := newCloudFixture(t)
 		f.appendConfig(t, defaultClaudeAccountConfig)
 		oauthCheckout(t, f, "")
-		writeBuildRecord(t, f, otherSlug, "svc", release065)
+		writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 		f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 		if _, _, err := execute(t, "run", "--run-id", "20261105-100000-aaaa", "A task"); err != nil {
 			t.Fatal(err)
@@ -65,7 +65,7 @@ func TestRunUsesTheProjectDefaultClaudeAccount(t *testing.T) {
 		f := newCloudFixture(t)
 		f.appendConfig(t, defaultClaudeAccountConfig)
 		oauthCheckout(t, f, "  oauth_token: acme-personal\n")
-		writeBuildRecord(t, f, otherSlug, "svc", release065)
+		writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 		f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-personal")), "2", "4Gi")
 		if _, _, err := execute(t, "run", "--run-id", "20261105-100000-bbbb", "A task"); err != nil {
 			t.Fatal(err)
@@ -85,7 +85,7 @@ func TestRunRefusesAStageAccountOnTheCodersStage(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, stageAccountConfig("implement", "acme-overflow"))
 	recipeCheckout(t, f, "", nil) // agent.auth: api-key
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	_, _, err := execute(t, "run", "--run-id", "20261105-100000-cccc", "A task")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user refusal", err)
@@ -108,7 +108,7 @@ func TestRunRefusesASecondStageAccount(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, stageAccountConfig("review", "acme-overflow", "adversarial", "acme-personal"))
 	recipeCheckout(t, f, "", nil)
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	_, _, err := execute(t, "run", "--run-id", "20261105-100000-dddd", "A task")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "one") {
 		t.Fatalf("err = %v, want a refusal naming the one account a mixed run may hold", err)
@@ -136,7 +136,7 @@ func TestRunAdmitsAStageAccountForTheReviewsOnly(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, stageAccountConfig("review", "acme-overflow", "adversarial", "acme-overflow"))
 	recipeCheckout(t, f, "", nil)
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 	if _, _, err := execute(t, "run", "--run-id", "20261105-100000-eeee", "A task"); err != nil {
 		t.Fatal(err)
@@ -155,7 +155,7 @@ func TestRunRefusesAStageAccountThisRepositoryMayNotUse(t *testing.T) {
 	f.appendConfig(t, "claude_accounts:\n  acme-elsewhere:\n    allow_data_to: [\"acme/person-1\"]\n"+
 		stagesBlock("review", "acme-elsewhere"))
 	recipeCheckout(t, f, "", nil) // acme/other is not in acme-elsewhere's allow_data_to
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	_, _, err := execute(t, "run", "--run-id", "20261105-100000-ffff", "A task")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "acme-elsewhere") || !strings.Contains(err.Error(), "claude_accounts") {
 		t.Fatalf("err = %v, want the allow-list refusal", err)
@@ -222,6 +222,18 @@ const (
 	// mixElsewhereDefault is the key those rows write it in.
 	mixElsewhereDefault = "default_claude_account: acme-elsewhere\n"
 )
+
+// mixEnforceOn is mixEnforce with the installation's own database, for the
+// rows that launch: every launch of an installation whose config names a
+// database mints the run's identity (AB4, F7), so a block appended over the
+// harness's — which replaces it whole, appendConfig — has to name the
+// database, the signer the mint signs through and the key the client
+// exchanges the token with, or the launch is refused before anything is
+// written. The rows that only resolve an account keep the one above.
+func mixEnforceOn(f *cloudFixture) string {
+	return "budget: { mode: enforce, per_run_usd: 5, rtdb_url: " + f.budget.DB.URL +
+		", token_signer: " + testSigner + ", firebase_api_key: " + f.budget.APIKey + " }\n"
+}
 
 // mixCase is one row's fixture: the accounts (keys adds the account-choice
 // keys the row is about), the routes and the budget mode, over a checkout of
@@ -437,9 +449,9 @@ func TestRunLandsAMixedRunOnTheMixsAccount(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCloudFixture(t)
-			f.appendConfig(t, claudeAccountsConfig+mixRouteConfig+mixEnforce+tc.keys)
+			f.appendConfig(t, claudeAccountsConfig+mixRouteConfig+mixEnforceOn(f)+tc.keys)
 			recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+tc.reviewer+", background: "+mixCoderModel+" }\n", nil)
-			writeBuildRecord(t, f, otherSlug, "svc", release065)
+			writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 			// The account's own job variant, which a mixed run has to start
 			// on: the base job is registered by recipeCheckout.
 			f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
@@ -468,9 +480,9 @@ func TestRunLandsAMixedRunOnTheMixsAccount(t *testing.T) {
 // no execution starts.
 func TestRunRetryLaunchesAMixedRunOnTheMixsAccount(t *testing.T) {
 	f := newCloudFixture(t)
-	f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforce)
+	f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforceOn(f))
 	recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+claudeReviewer+", background: "+mixCoderModel+" }\n", nil)
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	variant := gcp.WorkflowVariant("svc", "acme-overflow")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 	// The task a mixed launch of this repository stores, never started —
@@ -522,9 +534,9 @@ func TestRunPRLandsAFollowUpOfAMixedRunOnTheMixsAccount(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCloudFixture(t)
-			f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforce)
+			f.appendConfig(t, defaultClaudeAccountConfig+mixRouteConfig+mixEnforceOn(f))
 			recipeCheckout(t, f, "  models: { coder: "+mixCoderModel+", reviewer: "+claudeReviewer+", background: "+mixCoderModel+" }\n", nil)
-			writeBuildRecord(t, f, otherSlug, "svc", release065)
+			writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 			variant := gcp.WorkflowVariant("svc", "acme-overflow")
 			f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 			root := wallRunIDAt(2, "090000", "d5e1")

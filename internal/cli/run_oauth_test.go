@@ -18,8 +18,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// release065 is a build record's base_ref at exactly namedTokensSince: a
-// runner built from it knows task.Spec.OAuthToken.
+// release065 is a build record's base_ref at exactly namedTokensSince: a runner
+// built from it knows task.Spec.OAuthToken. The two tests that still name it are
+// the ones that never reach the seal gate — an unlaunched repeat and a launch
+// refused for its account — because every launch that does reach one needs an
+// image built from releaseSeal (AB4, F7: every launch of an installation with a
+// database mints, and the seal's image gate judges it).
 const release065 = "ghcr.io/dimipaun/fugaro-base:0.6.5"
 
 // otherSlug is acme/other's storage slug, the repository oauthCheckout anchors.
@@ -69,7 +73,7 @@ func TestRunTokenDefaultsToConfiguredThenDefaultAccount(t *testing.T) {
 		f := newCloudFixture(t)
 		f.appendConfig(t, claudeAccountsConfig)
 		oauthCheckout(t, f, "  oauth_token: acme-personal\n")
-		writeBuildRecord(t, f, otherSlug, "svc", release065)
+		writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 		f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 		if _, _, err := execute(t, "run", "--run-id", "20261012-100000-aaaa", "--token", "acme-overflow", "A task"); err != nil {
 			t.Fatal(err)
@@ -82,7 +86,7 @@ func TestRunTokenDefaultsToConfiguredThenDefaultAccount(t *testing.T) {
 		f := newCloudFixture(t)
 		f.appendConfig(t, claudeAccountsConfig)
 		oauthCheckout(t, f, "  oauth_token: acme-personal\n")
-		writeBuildRecord(t, f, otherSlug, "svc", release065)
+		writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 		f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-personal")), "2", "4Gi")
 		if _, _, err := execute(t, "run", "--run-id", "20261012-100000-bbbb", "A task"); err != nil {
 			t.Fatal(err)
@@ -94,6 +98,10 @@ func TestRunTokenDefaultsToConfiguredThenDefaultAccount(t *testing.T) {
 	t.Run("else default", func(t *testing.T) {
 		f := newCloudFixture(t)
 		oauthCheckout(t, f, "")
+		// The seal gate judges every launch of an installation with a database
+		// (AB4, F7), so a job whose build record is missing is refused — the
+		// record the two rows above write for the same reason.
+		writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 		if _, _, err := execute(t, "run", "--run-id", "20261012-100000-cccc", "A task"); err != nil {
 			t.Fatal(err)
 		}
@@ -124,7 +132,7 @@ func TestRunLaunchesTheVariantJob(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, claudeAccountsConfig)
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	variant := gcp.WorkflowVariant("svc", "acme-personal")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 	var got gcpfake.RunCall
@@ -145,7 +153,7 @@ func TestRunTokenVariantJobMissingNeverFallsBackToDefault(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, claudeAccountsConfig)
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	// No AddJob for the "svc_acme-personal" variant: it does not exist yet.
 	_, _, err := execute(t, "run", "--run-id", "20261012-100000-ffff", "--token", "acme-personal", "A task")
 	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "fugaro update") {
@@ -181,7 +189,7 @@ func TestFollowUpNoTokenInheritsPreviousAccount(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, appClaudeAccountsConfig)
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-personal")), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	seedAppFollowUpRoot(t, f, "acme-personal")
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "more work")
 	if err != nil {
@@ -206,7 +214,7 @@ func TestFollowUpExplicitTokenOverridesInheritedAccount(t *testing.T) {
 	f.appendConfig(t, appClaudeAccountsConfig)
 	variant := gcp.WorkflowVariant("web", "acme-personal")
 	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	seedAppFollowUpRoot(t, f, "") // root used the default account
 	var got gcpfake.RunCall
 	f.run.OnRun = func(c gcpfake.RunCall) { got = c }
@@ -312,7 +320,7 @@ func TestFollowUpTokenOverrideRefusedWhenAuthNotOAuth(t *testing.T) {
 func TestFollowUpTokenOverrideRefusedWhenVariantJobMissing(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, appClaudeAccountsConfig)
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	// No AddJob for "web_acme-personal": it does not exist yet.
 	seedAppFollowUpRoot(t, f, "")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work")
@@ -337,7 +345,7 @@ func TestFollowUpDocumentedTokenOverrideCommandWorks(t *testing.T) {
 	f.appendConfig(t, appClaudeAccountsConfig)
 	variant := gcp.WorkflowVariant("web", "acme-personal")
 	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	seedAppFollowUpRoot(t, f, "")
 	var got gcpfake.RunCall
 	f.run.OnRun = func(c gcpfake.RunCall) { got = c }
@@ -369,7 +377,7 @@ func TestFollowUpRepeatRunIDRefusesDifferentToken(t *testing.T) {
 	f.appendConfig(t, appClaudeAccountsConfig) // allows acme-personal and acme-overflow for acme/app
 	variant := gcp.WorkflowVariant("web", "acme-personal")
 	f.run.AddJob(gcp.JobName(appSlug, variant), "4", "8Gi")
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	seedAppFollowUpRoot(t, f, "")
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "--token", "acme-personal", "more work"); err != nil {
 		t.Fatal(err)

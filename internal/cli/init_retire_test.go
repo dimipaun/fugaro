@@ -2008,15 +2008,15 @@ var retireTranscriptRE = []struct {
 	re *regexp.Regexp
 	to string
 }{
-	// "warning: couldn't check origin/main's fugaro.yaml ...": the rig's
+	// "Warning: couldn't check origin/main's fugaro.yaml ...": the rig's
 	// origin is a local URL the fetch cannot reach, and the sentence is
 	// git's, so its tail is the curl on the machine -- "Could not connect
 	// to server" on the builder's Linux, "Couldn't connect" in CI's
 	// macOS -- and the golden may not pin that. The whole line is folded:
 	// what it says is that the check could not be made, which is the same
 	// on every machine.
-	{regexp.MustCompile(`warning: couldn't check origin/main's fugaro\.yaml[^\n]*`),
-		"warning: couldn't check origin/main's fugaro.yaml for project: aurora: <the fetch did not reach it>; runs read it from there"},
+	{regexp.MustCompile(`Warning: couldn't check origin/main's fugaro\.yaml[^\n]*`),
+		"Warning: couldn't check origin/main's fugaro.yaml for project: aurora: <the fetch did not reach it>; runs read it from there"},
 	// The test binary's path and the temp dir differ per machine: Linux's is
 	// /tmp, macOS's is /var/folders/.../T/ (a trailing slash that must not
 	// double up), so neither is spelled out.

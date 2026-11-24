@@ -133,6 +133,7 @@ import { SECURE_STORE_CODES } from '../accounts/secure-store.js';
 // the door would make the mailbox suite need an install. `store.test.js` and
 // `verify.test.js` reach the modules behind the door the same way.
 import { UNENFORCED_LICENCE, lapseRefusalAt, licenceSpeech, writeOf } from '../licence/state.js';
+import { jobWrite } from '../../../shared/command/index.js';
 import {
   TEXT_MAX,
   canonicalBytes,
@@ -783,6 +784,39 @@ export function createMailboxClient(options = {}) {
   }
 
   /**
+   * **A job command, from the phone** (J4; D2787, D162, D169): a start or a
+   * cancel, composed by `shared/command`'s `jobWrite` and written by `send`.
+   *
+   * The composition is elsewhere and the write is here, deliberately. `jobWrite`
+   * decides which KIND of record a verb makes -- D162's plain launch message, or
+   * D169's action record -- and whether the session's role may make it at all,
+   * and it answers both with no store, no gate and no clock, so a screen can ask
+   * it what to draw. What only this file can do is the rest of D113: redact,
+   * lapse, gate, tag, validate and store. It does exactly that, through the same
+   * `send` every other write goes through, so there is still one write path.
+   *
+   * The role is read as a display claim and nothing more (F14, D2791): a viewer's
+   * write is refused here, before anything is redacted, minted or signed, and the
+   * consumer refuses it independently with `internal/access` if a modified client
+   * sends it anyway. `jobWrite`'s refusal comes back unchanged -- the same
+   * `{ ok: false, code, field }` shape `send` returns -- so a screen switches on
+   * one vocabulary, not two.
+   *
+   * @param {unknown} session the paired project's session (C2's port value);
+   *   only its `role` is read
+   * @param {{verb: string, text: string, record?: object}} request the verb, the
+   *   message's text, and -- for a cancel -- the action record P6.2's machine
+   *   built
+   * @returns {Promise<{ok: true, id: string, at: number}
+   *   | {ok: false, code: string, field: string|null}>}
+   */
+  function sendJob(session, request) {
+    const write = jobWrite(session, request);
+    if (!write.ok) return write;
+    return send(write.text, write.options);
+  }
+
+  /**
    * Register this phone: ONE `registration` message -- P5.2.1's kind -- carrying
    * its push token, the platform it was issued for and §3.8's switches. It is
    * the app's end of §3.5 (b), the design's only registration path, and the
@@ -1272,6 +1306,10 @@ export function createMailboxClient(options = {}) {
     ok: true,
     paths,
     send: (text, options) => serial(() => send(text, options)),
+    // J4's job commands, in the chain with `send` for the same reason `register`
+    // is: a start and a cancel mint an id and read `minted`, and the write must
+    // be one pass at a time. Composed by `jobWrite`, written by `send`.
+    sendJob: (session, request) => serial(() => sendJob(session, request)),
     // P5.2.8's registration, in the same chain as `send` and for a reason of
     // its own: it mints an id and adds it to `minted`, which is the set `send`
     // reads to keep an id source from reusing one.

@@ -66,11 +66,18 @@ type lsOptions struct {
 // They are the vocabulary a row's `status` carries, never the decorated cell
 // statusCell prints -- `failed (preempted)` is --state failed, as a reader
 // switching on status has always seen it.
+//
+// `paused` is the run's own status word (R15) and belongs here with the
+// others: a run that suspended itself is a state a reader asks a listing for,
+// and it is a scan rather than a live query, because a pause ends the run's
+// execution and releases its lease (R12, runs_live.go). It is also the state
+// of the pull request such a run is on, and it is deliberately not one of the
+// three in lsPRStates -- that list's own note says why.
 var lsStates = []string{
 	string(runstore.StatusCancelled), runview.StatusError, string(runstore.StatusFailed),
 	string(runstore.StatusHalted), string(runstore.StatusInfraError), runview.StatusLaunching,
-	runview.StatusPending, string(runstore.StatusRunning), string(runstore.StatusSucceeded),
-	runview.StatusUnlaunched, string(runstore.StatusUnreviewed),
+	string(runstore.StatusPaused), runview.StatusPending, string(runstore.StatusRunning),
+	string(runstore.StatusSucceeded), runview.StatusUnlaunched, string(runstore.StatusUnreviewed),
 }
 
 // prLookback is runs ls --pr's default --since: run --pr's window
@@ -255,7 +262,7 @@ func newRunsCmd() *cobra.Command {
 		Use:   "runs",
 		Short: "List and inspect runs",
 	}
-	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsSummaryCmd(), newRunsDigestCmd(), newRunsReportsCmd(), newRunsShowCmd(), newRunsWatchCmd())
+	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsSummaryCmd(), newRunsDigestCmd(), newRunsReportsCmd(), newRunsShowCmd(), newRunsWatchCmd(), newRunsReindexCmd())
 	return cmd
 }
 
@@ -752,7 +759,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// below pick the page: a state is the pull request's, read from every run
 	// of it the listing read, so it is the same on every row of a page as on
 	// the rows the filters below dropped.
-	markPRStates(rows, reviewing)
+	markPRStates(rows, reviewing, pauseFactsFor(ctx, env, warnf))
 	// A review run --pr kept for the fold alone is not a row it prints: the
 	// state every row of the pull request carries is read from it, and the
 	// review itself is not one of the pull request's own runs. rows is runs

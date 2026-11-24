@@ -93,8 +93,9 @@
 // dated when. The merge into `ios.infoPlist` is a merge and not an assignment:
 // see `declaring`.
 //
-// **The Firebase wiring (mobile plan, Tasks P7.1a and P5.2.8).** The app carries
-// Firebase through four `@react-native-firebase` packages -- and this file is where their
+// **The Firebase wiring (mobile plan, Tasks P7.1a and P5.2.8; T3.1 removes the
+// Analytics package).** The app carries
+// Firebase through three `@react-native-firebase` packages -- and this file is where their
 // config plugins are registered and where the two **native config files** are
 // pointed at. The files themselves are the owner's: the console writes
 // `google-services.json` (Android) and `GoogleService-Info.plist` (iOS), they
@@ -124,14 +125,14 @@
 // carries no `env`, because one would override them and replace the path with a
 // literal.
 //
-// The two **advertising-id** settings are the other half, and they are structural
-// rather than promised: `@react-native-firebase/analytics`'s iOS plugin takes
-// `ios.withoutAdIdSupport`, which writes `$RNFirebaseAnalyticsWithoutAdIdSupport
-// = true` into the Podfile so the pod links no `AdSupport` framework, and
-// Android's `com.google.android.gms.permission.AD_ID` is removed from the merged
-// manifest through Expo's own `android.blockedPermissions`. The Android
-// collection switches themselves are **not** here: the SDK reads them from
-// `mobile/firebase.json` at build time (see that file).
+// The **advertising-id** ban is the other half, and it is structural rather than
+// promised: Android's `com.google.android.gms.permission.AD_ID` is removed from
+// the merged manifest through Expo's own `android.blockedPermissions`. The iOS
+// half was the Analytics plugin's `ios.withoutAdIdSupport` until T3.1 removed
+// that package from the app under D731 -- with no Analytics pod in the build,
+// there is no `AdSupport` framework to link and no option left to take. The
+// Crashlytics and messaging switches themselves are **not** here: the SDK reads
+// them from `mobile/firebase.json` at build time (see that file).
 
 import {
   GOOGLE_SERVICES_FIELD,
@@ -319,10 +320,14 @@ function declaring(section) {
 }
 
 /**
- * The four packages the app's Firebase wiring is made of: P7.1a's three, and
- * P5.2.8's `messaging`, which mints the phone's own push token -- the one piece
- * of a registration the publisher's relay is given. It is the same family and
- * the same pinned version, so the native SDK stays one SDK with one set of pods.
+ * The three packages the app's Firebase wiring is made of: `app` (the SDK),
+ * `crashlytics` (the crash reporter T3.1's `mobile_crash_reports` switch
+ * governs) and P5.2.8's `messaging`, which mints the phone's own push token --
+ * the one piece of a registration the publisher's relay is given. It is the
+ * same family and the same pinned version, so the native SDK stays one SDK with
+ * one set of pods. `@react-native-firebase/analytics` was the fourth until
+ * T3.1 removed it: D731 drops Analytics from the app, so the package left the
+ * manifest, this list and the plugin entries with it.
  *
  * **`messaging` is not the delivery path, and Q7's answer is why it is enough.**
  * The owner ruled on 2026-11-21 that the app registers with a relay **the
@@ -339,7 +344,6 @@ function declaring(section) {
  */
 export const FIREBASE_PACKAGES = Object.freeze([
   '@react-native-firebase/app',
-  '@react-native-firebase/analytics',
   '@react-native-firebase/crashlytics',
   '@react-native-firebase/messaging',
 ]);
@@ -356,13 +360,17 @@ export const NATIVE_CONFIG_VARIABLES = Object.freeze({
 
 /**
  * Android's advertising-id permission: the one Play reads as "this app uses the
- * advertising id". `@react-native-firebase/analytics` turns the SDK's *reading*
- * of the id off through `firebase.json`, and it does not stop the merged
- * manifest from **declaring** the permission -- the config plugin's source has
- * no Android option for it at all -- so it is removed here, through Expo's own
+ * advertising id". The privacy page promises the app carries no advertising
+ * identifier, and a permission the merged manifest declares is Play reading the
+ * opposite -- so it is removed here, through Expo's own
  * `android.blockedPermissions`, which prebuild writes as a `tools:node="remove"`
  * entry. The plan requires the permission absent from the merged manifest
  * (§4.2), and the build-time walk that reads the generated manifest is P7.1b's.
+ * The ban held while the app carried `@react-native-firebase/analytics` (whose
+ * arrow was the manifest entry and whose iOS pod was the other half), and it
+ * holds unchanged now that T3.1 removed that package (D731): a dependency added
+ * later that declared the permission would still be removed here rather than
+ * shipped.
  */
 const AD_ID_PERMISSION = 'com.google.android.gms.permission.AD_ID';
 
@@ -385,19 +393,14 @@ const AD_ID_PERMISSION = 'com.google.android.gms.permission.AD_ID';
  * library needs from a build: the manifest mod and the platform's own messaging
  * setup, with the notification's appearance configured where it is drawn.
  *
- * The Analytics entry names the variant with **no advertising-id support**:
- * `ios.withoutAdIdSupport` writes `$RNFirebaseAnalyticsWithoutAdIdSupport =
- * true` into the Podfile, and the podspec then links `FirebaseAnalyticsCore`
- * rather than the identity subspec -- so the app's binary contains no
- * `AdSupport` framework and there is no id a later misconfiguration could read
- * (§4.2, the iOS half of the ban D255's answer does not touch).
+ * The Analytics entry that carried `ios.withoutAdIdSupport` left with the
+ * package (T3.1, D731), so no entry here carries an advertising-id option.
  */
 const PLUGIN_ENTRIES = Object.freeze([
   ['expo-build-properties', { ios: { useFrameworks: 'dynamic' } }],
   FIREBASE_PACKAGES[0],
-  [FIREBASE_PACKAGES[1], { ios: { withoutAdIdSupport: true } }],
+  FIREBASE_PACKAGES[1],
   FIREBASE_PACKAGES[2],
-  FIREBASE_PACKAGES[3],
 ]);
 
 /** A plugin entry's name, whether it is a bare string or a `[name, options]` pair. */
