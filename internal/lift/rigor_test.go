@@ -1,6 +1,7 @@
 package lift
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -167,6 +168,29 @@ func TestPlanRigor(t *testing.T) {
 		}
 		wantLine(t, got, "acme/app: an empty rigor: block -> defaults.rigor.repos.acme/app (startup), the level it resolves to today")
 		wantLine(t, got, "acme/tools: an empty rigor: block -> defaults.rigor.repos.acme/tools (startup), the level it resolves to today")
+	})
+
+	t.Run("no room for another repository level", func(t *testing.T) {
+		// The project layer already holds MaxRepoLevels repositories, and both
+		// writes this item makes — the default, and the empty block's resolved
+		// level — add one more key. validateRigorRepos refuses a layer one entry
+		// over the bound, so the repository is named and left alone instead:
+		// publishing a layer every run then fails to load is not a migration.
+		var b strings.Builder
+		b.WriteString("defaults:\n  rigor:\n    repos:\n")
+		for i := range rigor.MaxRepoLevels {
+			fmt.Fprintf(&b, "      acme/r%d: pro\n", i)
+		}
+		got := planRigor(t, Project{Layer: layerTree(t, b.String())}, []Repo{
+			repoWith(t, "acme/empty", "rigor:\n"),
+			repoWith(t, "acme/level", "rigor:\n  default: poc\n"),
+		})
+		if len(got.LayerEdits) != 0 || len(got.Records) != 0 {
+			t.Errorf("LayerEdits = %+v, Records = %v, want none: the map holds all the repositories the layer may", got.LayerEdits, got.Records)
+		}
+		for _, repo := range []string{"acme/empty", "acme/level"} {
+			wantLine(t, got, fmt.Sprintf("%s: the project layer already states the level of %d repositories, the most it may hold", repo, rigor.MaxRepoLevels))
+		}
 	})
 
 	t.Run("a raise named", func(t *testing.T) {

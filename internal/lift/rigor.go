@@ -220,7 +220,12 @@ func notMovable(project config.LayerRigor, mine repoRigor, repo string) string {
 	if n := len(project.Areas) + len(mine.areas); n > rigor.MaxAreas {
 		return fmt.Sprintf("its %d areas would leave the project layer with %d, more than the %d it may hold", len(mine.areas), n, rigor.MaxAreas)
 	}
-	if mine.def != "" && !hasRepoLevel(project, repo) && len(project.Repos) >= rigor.MaxRepoLevels {
+	// Both writes below add a defaults.rigor.repos key — the default branch, and
+	// the empty block, which becomes the level it resolves to today — so either
+	// has to leave the map room: validateRigorRepos refuses the layer one entry
+	// over the bound, and a published layer every run then fails to load is
+	// worse than a repository this item names and leaves alone.
+	if (mine.def != "" || len(mine.areas) == 0) && !hasRepoLevel(project, repo) && len(project.Repos) >= rigor.MaxRepoLevels {
 		return fmt.Sprintf("the project layer already states the level of %d repositories, the most it may hold", len(project.Repos))
 	}
 	return ""
