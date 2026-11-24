@@ -9422,9 +9422,15 @@ nothing at your own terminal, and a coding agent's session is refused it, with
 the command to run yourself (D1552). This whole family is refused in a session,
 and no flag lifts it. Nothing here reads or prints a value.
 
-This is a local file edit. It ends on one line: next: fugaro update — the
-published policy's entry is derived from this list, so the change reaches the
-project's runs in that run and not before it.
+A workflow secret's list is written twice in one run: to the local block, and to
+the project record at creds/projectsecrets, which is the list the credentials
+service admits a fetch by (D3328). The record is the project's database, so this
+needs the Firebase backend the project's runs use; the project block's names
+have no record entry and are a local edit alone.
+
+This ends on one line: next: fugaro update — the published policy's entry is
+derived from this list, so the change reaches the project's runs in that run and
+not before it.
 
 Usage: `fugaro secrets allow NAME PATTERN...`
 
@@ -9432,6 +9438,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--all-repos` | bool | `false` | no | admit every repository enrolled in the project, whatever its owner, in the name's project record entry (--all-repos=false takes it away); it names no local pattern and is not written to the local block |
 | `-h`, `--help` | bool | `false` | no | help for allow |
 | `--proxy` | bool | `false` | no | set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off) |
 
@@ -9453,16 +9460,16 @@ an error and not a write — the command says there is no change, because the
 state it was asked for is the state the file is in.
 
 A removal that leaves the list empty is allowed and is not a removal of the
-entry: the value is then stored for no repository, and the entry stays for the
-day a pattern is added back.
+entry: the value is then stored for no repository, and both the local entry and
+the project record's entry stay for the day a pattern is added back.
 
 This whole family is refused in a coding agent's session (spec §5): what a
 secret reaches is a decision no plan shows. Nothing here reads or
 prints a value.
 
-This is a local file edit. It ends on one line: next: fugaro update — the
-published policy's entry is derived from this list, so the change reaches the
-project's runs in that run and not before it.
+This ends on one line: next: fugaro update — the published policy's entry is
+derived from this list, so the change reaches the project's runs in that run and
+not before it.
 
 Usage: `fugaro secrets deny NAME PATTERN...`
 

@@ -9,13 +9,273 @@ package cli
 // the ALLOWED column `secrets ls` prints from it.
 
 import (
+	"context"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agentenv"
+	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 )
+
+// projectSecretsOf reads the record out of the fixture's database through
+// internal/creds' own reader: what the service reads on a version-2 call, and
+// not a copy this test decoded for itself.
+func projectSecretsOf(t *testing.T, db *gcpfake.RTDB) (creds.ProjectSecrets, bool) {
+	t.Helper()
+	client, err := newBudgetClient(context.Background(), db.URL, true)
+	if err != nil {
+		t.Fatalf("opening the installation's budget database: %v", err)
+	}
+	rec, found, err := creds.ReadProjectSecrets(context.Background(), client)
+	if err != nil {
+		t.Fatalf("reading %s after the run: %v", creds.PathProjectSecrets(), err)
+	}
+	return rec, found
+}
+
+// TestSecretsAllowWritesProjectRecordAndLocalBlock: the write a version-2
+// installation needs is made in two places at once — the operator-local
+// `workflow_secrets` block, which version 1 and the mounts still read, and the
+// project record at `creds/projectsecrets`, which is the list the credentials
+// service admits a run's fetch by (IS1, IS3, D3328). Both hold the list the
+// entry ends up with, read back through the two readers a real installation
+// has, and the record is the one the red step finds absent.
+func TestSecretsAllowWritesProjectRecordAndLocalBlock(t *testing.T) {
+	path, db := secretsWorkflowRecordFixture(t)
+	noTerminal(t)
+
+	if v := db.Value(creds.PathProjectSecrets()); v != nil {
+		t.Fatalf("the fixture carries a record at %s already: the state this test is about is an installation no allow has written", creds.PathProjectSecrets())
+	}
+	out, errOut, err := execute(t, "secrets", "allow", "deploy-token", "acme/web")
+	if err != nil {
+		t.Fatalf("secrets allow deploy-token acme/web: %v\nstdout %s\nstderr %s", err, out, errOut)
+	}
+	if got := secretsPolicyWorkflowEntry(t, path, "deploy-token").AllowDataTo; !slices.Equal(got, []string{"acme/app", "acme/web"}) {
+		t.Errorf("workflow_secrets.deploy-token.allow_data_to = %v, want the entry's own repository and the one the run named", got)
+	}
+	rec, found := projectSecretsOf(t, db)
+	if !found {
+		t.Fatalf("%s was not written: a version-2 fetch has no list to be admitted by", creds.PathProjectSecrets())
+	}
+	rule, held := rec.Rule("deploy-token")
+	if !held {
+		t.Fatalf("the record holds %v; want an entry for deploy-token", rec.Secrets)
+	}
+	if !slices.Equal(rule.Repos, []string{"acme/app", "acme/web"}) {
+		t.Errorf("the record's deploy-token = %v, want the list the local entry ends with", rule.Repos)
+	}
+	if !strings.Contains(out+errOut, creds.PathProjectSecrets()) {
+		t.Errorf("no line names the record the run wrote:\n%s%s", out, errOut)
+	}
+}
+
+// TestSecretsDenyNarrows: a removal narrows both halves — the record's list as
+// well as the local block — and the last repository goes the same way as the
+// local entry does: the ENTRY STAYS with an empty list rather than vanishing,
+// which is the state update must not re-seed from the operator's local block
+// (F23, G8).
+func TestSecretsDenyNarrows(t *testing.T) {
+	path, db := secretsWorkflowRecordFixture(t)
+	noTerminal(t)
+	if _, _, err := execute(t, "secrets", "allow", "deploy-token", "acme/web"); err != nil {
+		t.Fatalf("secrets allow deploy-token acme/web: %v", err)
+	}
+
+	out, errOut, err := execute(t, "secrets", "deny", "deploy-token", "acme/app")
+	if err != nil {
+		t.Fatalf("secrets deny deploy-token acme/app: %v\nstdout %s\nstderr %s", err, out, errOut)
+	}
+	if got := secretsPolicyWorkflowEntry(t, path, "deploy-token").AllowDataTo; !slices.Equal(got, []string{"acme/web"}) {
+		t.Errorf("workflow_secrets.deploy-token.allow_data_to = %v, want the one repository the removal did not name", got)
+	}
+	rec, _ := projectSecretsOf(t, db)
+	if rule, _ := rec.Rule("deploy-token"); !slices.Equal(rule.Repos, []string{"acme/web"}) {
+		t.Errorf("the record's deploy-token = %v, want the removal to have narrowed it too", rule.Repos)
+	}
+
+	if _, _, err := execute(t, "secrets", "deny", "deploy-token", "acme/web"); err != nil {
+		t.Fatalf("secrets deny deploy-token acme/web: %v", err)
+	}
+	rec, _ = projectSecretsOf(t, db)
+	rule, held := rec.Rule("deploy-token")
+	if !held {
+		t.Fatalf("the record dropped the entry a deny emptied: %v — update seeds a name only when the record holds no entry for it, so an absent one is re-seeded and the deny undone (F23)", rec.Secrets)
+	}
+	if len(rule.Repos) != 0 || rule.AllRepos {
+		t.Errorf("the record's deploy-token = %+v, want an entry with an empty list that admits nobody", rule)
+	}
+}
+
+// TestSecretsAllowAllReposRecordOnly: `--all-repos` is the one reach the local
+// block cannot spell — its owner-literal rule refuses a wildcard owner, and O2
+// keeps that rule (answered 2026-11-23: every repository of the project, any
+// owner) — so it is a member of the record alone and writes nothing local. The
+// local file is byte-identical afterwards.
+func TestSecretsAllowAllReposRecordOnly(t *testing.T) {
+	path, db := secretsWorkflowRecordFixture(t)
+	noTerminal(t)
+	before := readFileString(t, path)
+
+	out, errOut, err := execute(t, "secrets", "allow", "deploy-token", "--all-repos")
+	if err != nil {
+		t.Fatalf("secrets allow deploy-token --all-repos: %v\nstdout %s\nstderr %s", err, out, errOut)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("--all-repos wrote the local block, whose owner-literal rule has no spelling for it:\n%s", after)
+	}
+	rec, found := projectSecretsOf(t, db)
+	if !found {
+		t.Fatalf("--all-repos wrote no record at %s", creds.PathProjectSecrets())
+	}
+	rule, held := rec.Rule("deploy-token")
+	if !held || !rule.AllRepos {
+		t.Fatalf("the record's deploy-token = %+v (held=%v), want all_repos", rule, held)
+	}
+	if !rec.Allows("deploy-token", "someone-else/app") {
+		t.Error("the record does not admit another owner's repository: that is the reach --all-repos was answered to give (O2)")
+	}
+	if !strings.Contains(out+errOut, creds.PathProjectSecrets()) {
+		t.Errorf("no line names the record the run wrote:\n%s%s", out, errOut)
+	}
+
+	// --all-repos=false takes the reach away again, and it too writes nothing
+	// local: the switch is the record's own member, not the block's.
+	if _, _, err := execute(t, "secrets", "allow", "deploy-token", "--all-repos=false"); err != nil {
+		t.Fatalf("secrets allow deploy-token --all-repos=false: %v", err)
+	}
+	rec, _ = projectSecretsOf(t, db)
+	if rule, _ := rec.Rule("deploy-token"); rule.AllRepos {
+		t.Errorf("--all-repos=false left the switch on: %+v", rule)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("--all-repos=false wrote the local block:\n%s", after)
+	}
+}
+
+// TestSecretsAllowAllReposRefusedForAReservedName: the record's names are
+// workflow secrets, and a reserved name's reach is its own
+// project_secrets.allow_data_to list — the block's, not the record's. A switch
+// written for one would be a member nothing reads, so it is refused, naming the
+// block the name's reach does live in, and neither the record nor the file
+// moves.
+func TestSecretsAllowAllReposRefusedForAReservedName(t *testing.T) {
+	path, db := secretsWorkflowRecordFixture(t)
+	noTerminal(t)
+	before := readFileString(t, path)
+
+	_, _, err := execute(t, "secrets", "allow", "bitbucket-token", "--all-repos")
+	if err == nil {
+		t.Fatal("--all-repos wrote a member for a reserved name, whose reach is its own allow_data_to list")
+	}
+	if !strings.Contains(err.Error(), secretsBlockProject) {
+		t.Errorf("the refusal does not name the block the name's reach lives in: %v", err)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Errorf("the refusal wrote the config:\n%s", after)
+	}
+	if v := db.Value(creds.PathProjectSecrets()); v != nil {
+		t.Errorf("the refusal wrote the record: %v", v)
+	}
+}
+
+// TestLocalBlockStillRefusesWildcardOwner: the record's all_repos member does
+// not soften the local block's own rule — `secrets allow NAME "*"` and a
+// wildcard owner are still refused by the loader, and refused BEFORE anything
+// is written, so neither the file nor the record moves. The cross-owner reach
+// is the record's own member and only that (O2).
+func TestLocalBlockStillRefusesWildcardOwner(t *testing.T) {
+	for _, pattern := range []string{"*", "*/app"} {
+		t.Run(pattern, func(t *testing.T) {
+			path, db := secretsWorkflowRecordFixture(t)
+			noTerminal(t)
+			before := readFileString(t, path)
+
+			_, _, err := execute(t, "secrets", "allow", "deploy-token", pattern)
+			if err == nil {
+				t.Fatalf("secrets allow deploy-token %q wrote a pattern the local block's owner-literal rule refuses", pattern)
+			}
+			for _, want := range []string{"workflow_secrets.deploy-token.allow_data_to"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name the key it would have written (%q):\n%v", want, err)
+				}
+			}
+			if after := readFileString(t, path); after != before {
+				t.Errorf("the refusal wrote the local block:\n%s", after)
+			}
+			if v := db.Value(creds.PathProjectSecrets()); v != nil {
+				t.Errorf("the refusal wrote the record: %v", v)
+			}
+		})
+	}
+}
+
+// TestSecretsAllowLosesNoConcurrentWrite: the record is read and written
+// through the compare-and-swap, so a name another operator allow-listed is
+// still there after this run's write. A whole-node replacement would drop it,
+// and the operator would never see it happen.
+func TestSecretsAllowLosesNoConcurrentWrite(t *testing.T) {
+	_, db := secretsWorkflowRecordFixture(t)
+	noTerminal(t)
+	db.Set(creds.PathProjectSecrets(), map[string]any{
+		"version": creds.ProjectSecretsVersion,
+		"secrets": map[string]any{
+			"other-token": map[string]any{"repos": []string{"acme/other"}, "all_repos": false},
+		},
+	})
+
+	if _, _, err := execute(t, "secrets", "allow", "deploy-token", "acme/web"); err != nil {
+		t.Fatalf("secrets allow deploy-token acme/web: %v", err)
+	}
+	rec, found := projectSecretsOf(t, db)
+	if !found {
+		t.Fatalf("%s was not written", creds.PathProjectSecrets())
+	}
+	if rule, held := rec.Rule("other-token"); !held || !slices.Equal(rule.Repos, []string{"acme/other"}) {
+		t.Fatalf("the other operator's entry was lost: %v", rec.Secrets)
+	}
+	if rule, held := rec.Rule("deploy-token"); !held || !slices.Equal(rule.Repos, []string{"acme/app", "acme/web"}) {
+		t.Fatalf("deploy-token = %+v (held=%v), want [acme/app acme/web]", rule, held)
+	}
+}
+
+// TestSecretsAllowRefusedInAgentSession: the family's fence holds for the
+// record too (D1552). A coding agent's session may not decide which
+// repositories fetch a project secret — what a secret reaches is a decision no
+// plan shows — and the refusal comes before either write, so the file and the
+// record are untouched and the command to run at a terminal is printed.
+func TestSecretsAllowRefusedInAgentSession(t *testing.T) {
+	for _, marker := range agentenv.Markers {
+		t.Run(marker, func(t *testing.T) {
+			path, db := secretsWorkflowRecordFixture(t)
+			noTerminal(t)
+			before := readFileString(t, path)
+			t.Setenv(marker, "1")
+
+			_, _, err := execute(t, "secrets", "allow", "deploy-token", "acme/web")
+			if err == nil {
+				t.Fatal("the record was written in a coding agent's session")
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+			}
+			for _, want := range []string{marker, "secrets allow deploy-token acme/web", "nothing was written"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not carry %q:\n%v", want, err)
+				}
+			}
+			if after := readFileString(t, path); after != before {
+				t.Errorf("the session changed the local block:\n%s", after)
+			}
+			if v := db.Value(creds.PathProjectSecrets()); v != nil {
+				t.Errorf("the session wrote the record: %v", v)
+			}
+		})
+	}
+}
 
 // TestSecretsAllowWritesThePatternList is the widening form: each PATTERN is
 // added to project_secrets.NAME.allow_data_to, the entry's own repositories are
@@ -167,7 +427,7 @@ func TestSecretsAllowProxySetsTheFlag(t *testing.T) {
 	if err == nil {
 		t.Fatal("a run that named neither a pattern nor the switch was accepted")
 	}
-	if !strings.Contains(err.Error(), "neither a repository to add nor the switch") {
+	if !strings.Contains(err.Error(), "neither a repository to add") {
 		t.Errorf("the refusal does not say what is missing: %v", err)
 	}
 }
