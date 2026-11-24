@@ -357,8 +357,9 @@ func (s *computeStage) updateApply(ctx context.Context) (initflow.Outcome, error
 }
 
 // preloadInputsChange reports whether a plan changes what the preloaded boot
-// image is built from: the build's own configuration and the job that starts it
-// (modules/compute/preload.tf). Everything else the root holds -- the network,
+// image is built from: the rebuild's own job, which is where the build's inputs
+// live (modules/compute/preload.tf puts the base image, the refresh window and
+// the family in the job's body). Everything else the root holds -- the network,
 // the accounts and their bindings, the reaper's sweep -- leaves the image as it
 // is, which is what R12's "an apply that changes only a role or a grant starts no
 // rebuild" is about.
@@ -367,9 +368,7 @@ func preloadInputsChange(plan *tf.Plan) bool {
 		if !planChangesSomething(rc) {
 			continue
 		}
-		switch {
-		case strings.HasPrefix(rc.Address, "module.compute.google_cloudbuild_trigger.preload"),
-			strings.HasPrefix(rc.Address, "module.compute.google_cloud_scheduler_job.preload_rebuild"):
+		if strings.HasPrefix(rc.Address, "module.compute.google_cloud_scheduler_job.preload_rebuild") {
 			return true
 		}
 	}
