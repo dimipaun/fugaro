@@ -43,6 +43,11 @@ type Keys interface {
 // an orchestrator: every path under the subtree is built from an id, so a name
 // PathState refuses is a node no reader of this release could have written and
 // none can open.
+//
+// The claims node is skipped by name and not left to the id rule: it is the
+// one child of the subtree that is meant to be there and is not an
+// orchestrator (D3209), so the read that lists orchestrators says so where it
+// lists them rather than by the rule that happens to refuse `~claims` today.
 func NodeIDs(ctx context.Context, db Keys) ([]string, error) {
 	keys, err := db.Keys(ctx, SubtreeRoot)
 	if err != nil {
@@ -50,6 +55,9 @@ func NodeIDs(ctx context.Context, db Keys) ([]string, error) {
 	}
 	ids := make([]string, 0, len(keys))
 	for _, key := range keys {
+		if key == ClaimsKey {
+			continue
+		}
 		if err := checkAgentID(key); err != nil {
 			continue
 		}

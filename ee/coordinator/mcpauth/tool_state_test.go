@@ -33,8 +33,8 @@ import (
 // is O16b's, which is the task that serves this one.
 
 // testStateID is the orchestrator the state tools are asked about: a name the
-// database's own rule admits (orchestrator's agentRE, the pattern every path
-// under orchestrator/<id> is built and checked by).
+// database's own rule admits (orchestrator.ValidOrchestratorID, naming.go: the
+// pattern every path under orchestrator/<id> is built and checked by).
 const testStateID = "belong"
 
 // fakeReach is the read reach as a test supplies it: one orchestrator's state,

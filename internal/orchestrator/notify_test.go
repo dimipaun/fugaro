@@ -86,14 +86,20 @@ func TestNotifyLogSinkWithoutAWriterRefuses(t *testing.T) {
 	}
 }
 
-// TestNotifyKindsAreClosed pins the vocabulary a sink is written against: four
+// TestNotifyKindsAreClosed pins the vocabulary a sink is written against: six
 // events, each of them something a cycle itself wrote — a run that ended, a
 // question it committed, work the ladder merged without a person reading it
-// (E10b), and an item the cycle blocked because it sits on a dependency cycle
-// that crosses orchestrators (D3220). A further kind is a deliberate change to
-// what a person is told, so it fails here first.
+// (E10b), an item the cycle blocked because it sits on a dependency cycle that
+// crosses orchestrators (D3220), and the two readings of an exhausted chain, a
+// run that suspended itself until a time and one that halted for want of a
+// model (C3). A further kind is a deliberate change to what a person is told,
+// so it fails here first.
 func TestNotifyKindsAreClosed(t *testing.T) {
-	want := []orchestrator.Kind{orchestrator.NotifyRunFinished, orchestrator.NotifyDecisionNeeded, orchestrator.NotifyMergedNeedsReview, orchestrator.NotifyCycleBlocked}
+	want := []orchestrator.Kind{
+		orchestrator.NotifyRunFinished, orchestrator.NotifyDecisionNeeded,
+		orchestrator.NotifyMergedNeedsReview, orchestrator.NotifyCycleBlocked,
+		orchestrator.NotifyRunPaused, orchestrator.NotifyPauseHalted,
+	}
 	if got := orchestrator.Kinds; !slices.Equal(got, want) {
 		t.Fatalf("this release has the kinds %v and the tests are written against %v", got, want)
 	}

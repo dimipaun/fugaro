@@ -28,9 +28,10 @@ import (
 )
 
 const (
-	// fpID is the installation's own GCP project: Fugaro only starts fresh,
-	// and the budget backend lives in the project setup created (D7), never in
-	// a Firebase project of another id.
+	// fpID is the installation's own GCP project: the budget backend lives in
+	// the project setup made Fugaro's (D7) — created, or adopted where it was
+	// already there and held nothing of Fugaro's — never in a Firebase project
+	// of another id.
 	fpID             = initProject
 	fpSigner         = "fugaro-token-signer@" + initProject + ".iam.gserviceaccount.com"
 	fpAPIKey         = "AIzaSyA0123456789abcdefghijklmnopqrstu"
@@ -249,9 +250,8 @@ func TestInitFirebaseNeverCreatesProject(t *testing.T) {
 		}
 	}
 
-	// Another project, there or not, stops before any plan: Fugaro only
-	// starts fresh, and the budget backend goes in the installation's own
-	// project and nowhere else.
+	// Another project, there or not, stops before any plan: the budget backend
+	// goes in the installation's own project and nowhere else.
 	r2 := newFBRig(t)
 	_, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", "aurora-missing")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not the installation's GCP project") {
@@ -320,7 +320,7 @@ func TestInitFirebaseSameProject(t *testing.T) {
 	if got := strs(v["skip_apis"]); !slices.Equal(got, infra.SharedAPIs) {
 		t.Errorf("skip_apis = %v, want %v", got, infra.SharedAPIs)
 	}
-	if !strings.Contains(out, "warning: the Firebase project is the installation's own project") || !strings.Contains(out, "123456789012-compute@developer.gserviceaccount.com (roles/editor)") ||
+	if !strings.Contains(out, "Warning: the Firebase project is the installation's own project") || !strings.Contains(out, "123456789012-compute@developer.gserviceaccount.com (roles/editor)") ||
 		!strings.Contains(out, "iam.automaticIamGrantsForDefaultServiceAccounts") {
 		t.Errorf("no warning about the default Compute account's roles/editor in\n%s", out)
 	}
@@ -351,10 +351,9 @@ func TestInitFirebaseSameProjectPlanOnly(t *testing.T) {
 	}
 }
 
-// TestInitFirebaseRefusesAnotherProject: the two-project layout is gone
-// (Fugaro only starts fresh): --firebase-project naming another project than
-// the installation's own is refused in both doors before anything is read,
-// planned or applied.
+// TestInitFirebaseRefusesAnotherProject: the two-project layout is gone:
+// --firebase-project naming another project than the installation's own is
+// refused in both doors before anything is read, planned or applied.
 func TestInitFirebaseRefusesAnotherProject(t *testing.T) {
 	for _, door := range []string{"setup", "update"} {
 		t.Run(door, func(t *testing.T) {
@@ -807,19 +806,9 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	if strings.Contains(out, "every run halts") {
 		t.Errorf("a warning about missing caps with caps set:\n%s", out)
 	}
-
-	// off turns the jobs' backend off in the config and leaves the database's
-	// mode as it is; it still deploys the database, and says so.
-	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "off")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.localConfig(t).BudgetMode() != localcfg.BudgetOff || mode(r) != "enforce" {
-		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
-	}
-	if !strings.Contains(out, "still deployed the database") || !strings.Contains(out, "unchanged by off") {
-		t.Errorf("off doesn't say the database is still written:\n%s", out)
-	}
+	// The case that used to stand here — --budget-mode off turning the jobs'
+	// backend off in the config while the database was still deployed — is the
+	// flag's refusal now, and TestBudgetModeOffFlagIsRefused is its case (AB3).
 }
 
 // A first run with no database yet refuses enforce before any apply.
@@ -886,6 +875,130 @@ func TestInitFirebaseIdempotent(t *testing.T) {
 	// beside it either way, and only the logs these two runs added (logsAdded).
 	if account := out + logsAdded(t, before, "setup"); !strings.Contains(account, "is up to date") {
 		t.Errorf("no word that the config is up to date:\n%s", account)
+	}
+}
+
+// TestTheRunIndexIndexesWaitForTheDatabase is RI2's own gate at this level:
+// the Firebase root is applied with the answer its composite indexes need, and
+// it is an answer about the database as it will be when that apply runs.
+//
+// The root is applied BEFORE this stage ensures the Firestore database (D3027,
+// init_firebase.go), so the answer read here is the one from the plan made
+// before the apply. Without the gate, the eleven creates in
+// deploy/terraform/gcp/modules/firebase/firestore_indexes.tf would be planned
+// against a database that is not there yet: the create is refused, the apply
+// fails, the run never reaches the step that creates the database, and every
+// later `fugaro update` fails the same way. What the answer DOES to the plan is
+// the other half of this fact and lives where the plan is real:
+// TestFirebaseModulePlansNoIndexWithoutTheDatabase (tag `terraform`,
+// internal/infra/firebase_indexes_test.go).
+func TestTheRunIndexIndexesWaitForTheDatabase(t *testing.T) {
+	// A fresh installation: the run applies the Firebase root and then creates
+	// the database itself, so the root is applied with false — no index in a
+	// plan that would be refused (the history's arm below is this one's other
+	// name and is asserted by the run ending, not by a Terraform error).
+	r := newFBRig(t)
+	r.historyImage()
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe"); err != nil {
+		t.Fatalf("a fresh setup did not converge: %v\n%s", err, out)
+	}
+	if v := r.fbVars(t)["firestore_database_exists"]; v != false {
+		t.Errorf("a fresh installation's Firebase root is applied with firestore_database_exists = %v, want false: the database does not exist yet, and an index under it is refused (RI2)", v)
+	}
+	if loc, _ := r.fs.Database(); loc == "" {
+		t.Fatalf("the run did not create the Firestore database at all, so what it applied the root with says nothing about a database that is not there")
+	}
+
+	// The next run meets the database the first one made, and says so. It is
+	// the update door with the flag: this rig's state bucket holds no Firebase
+	// state, so the stage's own check cannot read whether the run index's
+	// composite indexes are already there, and F34's skip stands (RI2, the
+	// firebaseSkip the check asks) — a plain `update` would leave the root
+	// unplanned here.
+	r.script["plan"] = map[string]any{"exit": 0}
+	r.save(t)
+	if out, err := updateRun(t, r.initRig, "update", "--firebase-project", fpID); err != nil {
+		t.Fatalf("the second run did not converge: %v\n%s", err, out)
+	}
+	if v := r.fbVars(t)["firestore_database_exists"]; v != true {
+		t.Errorf("the run after the database was created is applied with firestore_database_exists = %v, want true: this is the update that gains the run index's composite indexes (RI2)", v)
+	}
+}
+
+// The other arm is an installation whose Firestore location was left for a
+// person: the database is not there when the root is applied either, and what
+// such a run must do is converge everything else and leave the location — the
+// failing apply the gate exists to prevent is exactly what it must not do. A
+// managed project in a coding agent's session is the state where the applies
+// happen and the location still cannot be confirmed (D3028, R11), which is why
+// the gate is the Firebase root's own input and not a step of its own.
+func TestALeftFirestoreLocationPlansNoIndexAndConverges(t *testing.T) {
+	r := alwaysRig(t)
+	mayCreate(t, r)
+	noDatabaseYet(t, r)
+	r.managedRuns(t, initProjectName, initProject)
+	isolateGateCredentials(t)
+	t.Setenv("CLAUDECODE", "1")
+	updating(t, r.initRig)
+
+	out, err := updateRun(t, r.initRig, "update")
+	noStepLeftBehind(t, err)
+	if v := r.fbVars(t)["firestore_database_exists"]; v != false {
+		t.Errorf("a run whose Firestore location is left applies the Firebase root with firestore_database_exists = %v, want false: the database this run waited for a person to place is not there (RI2)", v)
+	}
+	if got := r.applies(t); !slices.Contains(got, "firebase") {
+		t.Fatalf("the Firebase root was not applied at all (%v): this run is about an apply that carries the gate's answer", got)
+	}
+	if loc, _ := r.fs.Database(); loc != "" {
+		t.Errorf("the Firestore database was created in %s, and this run left its location for a person", loc)
+	}
+	if !strings.Contains(out, "⚠ CONFIRM (project ") {
+		t.Errorf("the run does not print the location's note, so the step this test is about was never reached:\n%s", out)
+	}
+}
+
+// The gate's third state is the one the read cannot answer in: the plan made
+// before the apply fails on a read AFTER the database's own (a mark, a rules
+// list, a collection list), which is an error the run tolerates and carries on
+// from (init_firebase.go). The answer it would take from that plan is false,
+// and false is the last thing the tfvars may say for an installation that
+// already has the eleven indexes: the module's for_each would be empty and the
+// apply would plan their destruction. The state is what says the installation
+// has them (runIndexIndexesManaged).
+//
+// The second arm is the control, and the pair is why this test proves anything:
+// with the same failing read and a state that manages no index, the answer is
+// false — which is only true of a read that did not answer at all, since the
+// rig's project HAS a Firestore database and a read that answered would say so.
+func TestAnUnreadableFirestoreReadKeepsTheIndexesTheStateHas(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		managed []string
+		want    bool
+	}{
+		{"the state manages one", []string{`module.firebase.google_firestore_index.run["slug_updated_at"]`}, true},
+		{"the state manages none", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := alwaysRig(t)
+			mayCreate(t, r)
+			r.fs.SetDatabase("us-east5") // the project has one; the READ is what fails
+			r.fbPlan(t, nil, nil, tc.managed)
+			r.fs.DisabledReads(1)
+			fakeTerminal(t)
+
+			out, err := updateRun(t, r.initRig, "update")
+			if err != nil {
+				t.Fatalf("the run did not converge on an unreadable Firestore read: %v\n%s", err, out)
+			}
+			if v := r.fbVars(t)["firestore_database_exists"]; v != tc.want {
+				t.Errorf("the Firebase root is applied with firestore_database_exists = %v, want %v (RI2): the plan's own read failed, so the state is what answers", v, tc.want)
+			}
+			if !strings.Contains(out, "ensured the Firestore database") {
+				t.Errorf("the run did not reach the Firestore step's own end, so what the root was applied with is not this run's:\n%s", out)
+			}
+		})
 	}
 }
 
@@ -2052,7 +2165,7 @@ func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
 	}
 	// And it is the rules step's own: the run reaches this stage's
 	// confirmation and stops there, not at a step of a stage before it.
-	if !strings.Contains(out, "stopped at "+initflow.Rules) {
+	if !strings.Contains(out, "to resume at "+initflow.Rules+".") {
 		t.Errorf("the run did not stop at the rules stage's own confirmation:\n%s", out)
 	}
 	if db.RulePuts() != puts {
@@ -2977,5 +3090,73 @@ func TestTheFirebasePrintVarsCarryTheWorkspacePin(t *testing.T) {
 	}
 	if len(r.calls(t)) != 0 {
 		t.Errorf("--print-vars made calls: terraform %q", r.calls(t))
+	}
+}
+
+// TestFreshSetupPlansNoRowForAMissingAccount is LM13's U9 read at the two ends
+// it has (launcher-does-not-mint plan task LM13; D3121, F7). The Firebase
+// root's issuer_minter row is the one grant of the tree whose member is a
+// literal of ANOTHER root's apply — the credentials account the installation
+// root creates — and IAM refuses a member it cannot find, so a plan that named
+// the account on an installation that has none would fail its apply with the
+// installation root already behind it.
+//
+// Arm one is the fresh setup, and it is the whole of U9: the credentials
+// service is deployed LATER in a run whose config carries no Firebase backend
+// (the credentials stage is what writes the block, and this stage is what
+// gives the run its database), so the installation root's first apply creates
+// no such account and publishes none — and the Firebase tfvars this stage
+// writes must name no issuer at all. An installation that names an account it
+// has not created is a first `fugaro setup` that ends with a failed apply.
+//
+// Arm two is the same stage on a run whose installation root DID publish the
+// account (a converged installation, whose block and account the apply that
+// turned the service on created): the tfvars must name exactly that account —
+// read back from the outputs and never composed here, since a name this
+// package could spell is an account nothing has created.
+//
+// Mutation (run, restore): compose the account from the installation's project
+// (infra.CredentialsAccountID + "@" + lc.GCPProject) and arm one's assertion
+// fails with a tfvars that names an account no apply has created; drop the
+// hand-off and arm two's fails with the row unplanned on every installation
+// that has the service.
+func TestFreshSetupPlansNoRowForAMissingAccount(t *testing.T) {
+	fakeTerminal(t)
+
+	// Arm one: a fresh setup. The rig's installation outputs carry no
+	// credentials service, which is the state the first apply leaves.
+	fresh := newFBRig(t)
+	out, errOut, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe")
+	if err != nil {
+		t.Fatalf("a fresh setup failed: %v\n%s", err, out+errOut)
+	}
+	if v, ok := fresh.fbVars(t)["issuer_account"]; ok {
+		t.Errorf("a fresh setup's Firebase tfvars carry issuer_account = %v, want no key at all: that apply's installation root creates no credentials service, so the member the row would name is an account nothing has created and the Firebase apply fails on it (U9)", v)
+	}
+
+	// Arm two: a run whose installation root publishes the account the service
+	// runs as (the module's own output member, outputs.tf). The account is
+	// spelled here because the fixture has to name something, and because the
+	// shared credentialsServiceOutput models the installation that predates the
+	// member (infra.CredentialsService.Account's own comment: empty there, and
+	// inert, since nothing grants anything to an account the outputs do not
+	// name) — this test is about the end where the member is there.
+	const account = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+	deployed := newFBRig(t)
+	svc := credentialsServiceOutput()
+	svc["account"] = account
+	deployed.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service":     svc,
+		"history_service_account": historyAccount,
+		"history_job":             nil,
+	})}
+	deployed.save(t)
+	out, errOut, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "observe")
+	if err != nil {
+		t.Fatalf("setup of an installation that has the service failed: %v\n%s", err, out+errOut)
+	}
+	want := any(account)
+	if got := deployed.fbVars(t)["issuer_account"]; got != want {
+		t.Errorf("issuer_account = %v, want %v: the account comes from the installation root's own output, and a run that passed anything else — a name composed here, or none at all — plans the issuer's row on a member no apply created (LM13, D3121)", got, want)
 	}
 }

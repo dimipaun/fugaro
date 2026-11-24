@@ -66,6 +66,10 @@
     "branch": { "type": "string", "pattern": "^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
     "pr": { "type": "integer", "minimum": 1 },
     "previous_run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+    "resumes": {
+      "type": "string",
+      "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$",
+      "description": "The run whose pause this one picks up (task.Spec.Resumes, runstore.PauseMemberResumes, docs/model-credentials-routing): the run that suspended itself on this pull request, whose pause.json names the stage it was in, the session it saved and the commit it pushed, and where this run enters rather than at the first stage (R18, D3185). Written only by the orchestrator's launcher, and only for a pause the credentials service recorded (R19, D3189). A resumed run is a follow-up of the run it continues, so branch, pr and previous_run are required beside it and name the same run: the chain link carries the chain's remaining budget (D1045 to D1047), the pull request's branch holds the checkpoint, and a task naming one run for the chain and another for the pause is refused by task.Spec.Validate. Needs a runner that reads the member: task.Parse decodes with DisallowUnknownFields, so an older runner refuses the whole spec rather than starting the work at its first stage." },
     "owner_ruled": {
       "type": "string",
       "minLength": 1,
@@ -244,7 +248,7 @@
       "required": ["name", "source"],
       "description": "The recipe the launching CLI resolved; absent means, for a first run, agent.recipe in fugaro.yaml at the ref, else default; for a follow-up, default (docs/recipes/spec.md).",
       "properties": {
-        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
+        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,44}[a-z0-9])?-[0-9a-f]{8})?$", "description": "The recipe the launcher resolved: a recipe name, or the name of the project's copy of one (recipe.IsNameOrCopy) — the copy a migrated repository's runs embed." },
         "source": { "enum": ["repo", "project", "catalog"] },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "yaml": { "type": "string", "minLength": 1, "maxLength": 16384 }
@@ -443,6 +447,7 @@
     "branch": ["pr", "previous_run"],
     "pr": ["branch", "previous_run"],
     "previous_run": ["branch", "pr"],
+    "resumes": ["branch", "pr", "previous_run"],
     "owner_ruled": ["branch", "pr", "previous_run"],
     "mutate": ["review_prs"],
     "own_text": ["from_findings"]

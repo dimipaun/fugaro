@@ -3676,9 +3676,12 @@ not evaluated at all, because a runner has no Claude Code.
 
 --offline checks the update class and nothing else, and it makes no cloud call,
 no network call and no secret read: the plugin's wiring and the install on this
-machine, the login unit that runs the orchestrator daemon, and the base image
+machine, the login unit that runs the orchestrator daemon, the base image
 this checkout resolves to where a local installation is configured to answer
-it. Every check whose answer lives in the project's Realtime Database or the
+it, and whether this binary is below the release the project requires,
+answered from this machine's own stamp cache (with no cache entry there, the
+check is skipped like the others rather than read from the database). Every
+other check whose answer lives in the project's Realtime Database or the
 runs bucket — the published policy, the deployed rules, and whether a
 workflow's job was built from the image settings it resolves to now — and the
 one that asks whether a newer release is available, is skipped rather than
@@ -3771,6 +3774,9 @@ have cost.
 whose runs this machine cannot all read has no age and no cost, which the
 document writes as null and the table as unknown.
 
+--name reads one of the project's named orchestrators instead of the project's
+own: `--name night` reads the ledger of `<project>~night`'s items.
+
 Usage: `fugaro escalation ls`
 
 Flags:
@@ -3781,6 +3787,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -3802,6 +3809,9 @@ the head each one was decided at.
 whose runs this machine cannot all read has no age and no cost, which the
 document writes as null and the table as unknown.
 
+--name reads one of the project's named orchestrators instead of the project's
+own: `--name night` reads an item of `<project>~night`.
+
 Usage: `fugaro escalation show ITEM`
 
 Flags:
@@ -3812,6 +3822,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for show |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -3988,7 +3999,7 @@ cached brief, which the stream re-reads on every document it writes.
 consume.
 
 Exit codes: 1 for a refused scope or a project with no database, 2 for a
-failure of the database or the runs bucket.
+failure of the database or the run index.
 
 Usage: `fugaro graph`
 
@@ -5436,9 +5447,9 @@ command with no flags records a figure rather than asking for one (design
 D2212 and D2211). The amount is the budget ALERT amount the installation's
 Terraform creates and nothing else — this command does not create or change a
 budget, and it makes no billing call. The alert itself is the installation's
-own Terraform and belongs to the fugaro update that applies it, not to this
+own Terraform and belongs to the update step of that installation, not to this
 object — fugaro update --budget N --budget-currency CCC --billing-account ID
-applies the amount this command records. Nothing else is a question: the bound
+sets the amount this command records. Nothing else is a question: the bound
 on
 billable image builds this object used to record (D1013) is gone (D1543), so
 there is no count to ask the owner for and none to write, exactly as fugaro
@@ -6085,6 +6096,10 @@ oldest first. --since takes a duration (1h, 30m) and keeps the entries the
 database's own clock puts inside it. --json prints a versioned document
 (schemas/orchestrator-output.schema.json).
 
+--name reads one of the project's named orchestrators instead of the project's
+own: `--name night` reads `<project>~night`'s log, which is the log its own
+daemon writes.
+
 Usage: `fugaro orchestrator events`
 
 Flags:
@@ -6095,6 +6110,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for events |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--since` | string | "" | no | only entries newer than this duration, such as 1h or 30m |
@@ -6136,6 +6152,9 @@ they read (fugaro orchestrator patch). So no dump approves work and no dump
 closes a decision of the person's — not even one the dump raises and closes
 itself — and every work item the dump declares arrives unapproved.
 
+--name imports into one of the project's named orchestrators instead of the
+project's own: `--name night` writes `<project>~night`'s plan and state nodes.
+
 Usage: `fugaro orchestrator import`
 
 Flags:
@@ -6147,6 +6166,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for import |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--plan` | string | "" | no | the plan to import, as its folder under docs/ (docs/<plan>): reads its implementation-plan.graph.json into the plan's node |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -6310,6 +6330,9 @@ nothing, and no flag covers them.
 No flag, environment variable or field of the document makes this command the
 daemon or the decision agent: the daemon's bookkeeping is the daemon's.
 
+--name lands the document on one of the project's named orchestrators instead of
+the project's own: `--name night` writes `<project>~night`'s nodes.
+
 Usage: `fugaro orchestrator patch`
 
 Flags:
@@ -6321,6 +6344,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for patch |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -6382,6 +6406,9 @@ network at all, showing the stamp the daemon wrote it with; with no cache yet it
 says so rather than reading the node. --json prints a versioned document
 (schemas/orchestrator-output.schema.json).
 
+--name reads one of the project's named orchestrators instead of the project's
+own: `--name night` reads `<project>~night`, its node and its cached brief.
+
 Usage: `fugaro orchestrator state`
 
 Flags:
@@ -6393,6 +6420,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for state |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--name` | string | "" | no | which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own |
 | `--offline` | bool | `false` | no | print the brief the daemon cached at session start, reaching no network (goes with --brief) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -6692,7 +6720,7 @@ Print every plan's tasks, joined to the runs working on them
 
 Print every plan's graph under docs/, with each task's state from the runs.
 
-A task's state joins the graph to the runs bucket of the selected project:
+A task's state joins the graph to the runs the project's index holds:
 running with the stage of the run working on it, done when the run's pull
 request is merged, cancelled when the task's only run was, blocked while a
 task it needs is not done, ready when the work can start (the task a launch
@@ -6703,11 +6731,11 @@ is a run of this checkout's own repository: a run of another repository
 naming the same task is ignored. The join is display-only — nothing here
 makes another plan's task ready.
 
-Every run the bucket still holds (ninety days) is listed. Only the runs that
-join a task of a plan here have their pull requests looked up, so the
-lookups cost what the plans hold rather than what the repository's history
-holds, and one read asks about at most 32 pull requests, the newest runs'
-first.
+The runs come from the run index, one query per task of the plans here, so
+the read costs what the plans hold rather than what the repository's history
+holds, and a task's runs are listed however old they are. Only the runs that
+join a task of a plan here have their pull requests looked up, and one read
+asks about at most 32 pull requests, the newest runs' first.
 
 Whether a pull request is merged is asked of your own gh, when it is
 installed, and only about a pull request of this checkout's own
@@ -6715,6 +6743,10 @@ repository: a run that recorded another repository's pull request is not
 merged here. Where gh cannot answer (a Bitbucket repository, no gh, a
 lookup that failed, one past the 32) a task whose run recorded a ready pull
 request shows done with the mark "merge unknown" rather than nothing.
+
+--no-merges does not ask your gh at all: every task whose run recorded a
+ready pull request reads the same way, and the document says merges_read is
+false. It is the read a screen paints before merge state.
 
 Two artifacts that would be one plan id — docs/plans/foo.graph.json and
 docs/plans/foo/bar.graph.json both give plans/foo — cannot be joined apart,
@@ -6734,6 +6766,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for status |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--no-merges` | bool | `false` | no | spawn no gh: every task whose run recorded a ready pull request reads merge unknown |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -7313,7 +7346,10 @@ will change, asks once for the project's name, and then does each step as
 far as it can:
 
   1. the repository's own fugaro.yaml: read, never written
-  2. this machine's project config: the repository's repos: entry
+  2. this machine's project config: the repository's repos: entry (and, when
+     its fugaro.yaml names a Claude account by agent.oauth_token, the
+     repository in that one account's allow_data_to, which the next
+     update's publish requires; no other account's list is touched)
   3. this machine's project config: its repo-to-image mapping
   4. the published policy's allow_repos
   5. the publish of the policy node (fugaro update's policy stage)
@@ -7486,11 +7522,13 @@ The repos.* scalars and lists are the generic writer's (D1173):
     fugaro settings set repos.acme/app.base_branch main
     fugaro settings set repos.acme/app.workflows --add docs
 
-The write and the publish are one act, as they are for the same keys through
-fugaro settings set: the keys land in this machine's project config and the
-policy node they are served from is published by this same command, so no second
-command is needed. --no-apply saves the write and leaves the publish to fugaro
-apply.
+The write and the publish are one act, through the same chain fugaro settings
+set runs for a key it writes: the keys land in this machine's project config and
+the policy node they are served from is published by this same command, so no
+second command is needed. A repository's workflows selection is a key the
+generic writer spells too; a profile's seven keys are not, and the generic path
+refuses them and names this command's family instead (D853). --no-apply saves
+the write and leaves the publish to fugaro apply.
 
 This write is a person's own: a coding agent's session is refused it, in a
 managed project by that project's gate.
@@ -8010,7 +8048,8 @@ closed, not yours to read) the restore proceeds only on --budget and
 --budget-currency. The billing account is always yours to give: the creation
 fact is not a credential and records none.
 
-NEW_PROJECT_ID must not exist: an existing project is refused (Fugaro only starts fresh).
+NEW_PROJECT_ID must not exist: restore creates a project, and adopts nothing
+(setup is the command that adopts one that holds nothing of Fugaro's).
 If the creation fails or does not end in a project this run created and
 marked, the local project config file is put back as it was and the restore
 can be run again; what the creation did in the cloud (the project, its
@@ -8525,10 +8564,10 @@ fugaro watch and runs ls list the run by, and the title (with the body's first
 heading) of the pull request the run opens when the agent writes no pr.md of
 its own. Without it the run is named by the task's first line, so briefs that
 start with the same preamble all read alike. A follow-up (--pr) keeps its run's
-title unless --title is given, and with neither a title nor a task of its own it
-takes the title of the pull request it continues, read from the code host (a host
-that cannot be read leaves the run named by its own instructions). A task of its
-own always wins, and --retry takes none (the stored task keeps its own).
+title (the first line of its brief when it had none) unless --title is given; one
+whose chain names nothing and which has no task of its own is refused, naming
+--title, and so is any launch left with no title. A review launch with neither is
+named Review of PR #N. --retry takes none (the stored task keeps its own).
 
 --plan-task PLAN/TASK records which task of which plan this run works on, so
 the console's graph can join the run to that node. One plan and one task id,
@@ -8614,7 +8653,7 @@ Flags:
 | `--spec` | string | "" | no | review against the task in this FILE instead of the task of the run that opened the pull request: the way to review a pull request no run produced. Its text is redacted like any other a launcher adds, and a file over 16384 bytes is refused with its size. Needs a mode: review recipe and --pr, and refused with --code-only |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
 | `--tier` | string | "" | no | the expectation tier to dispatch this run at: trivial, small, medium, large. It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all |
-| `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given, and with no title and no task of its own it takes the pull request's title instead |
+| `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given, and one whose chain names nothing and which has no task of its own is refused, naming --title |
 | `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's) |
 | `--total-timeout` | string | "" | no | override the workflow's timeouts.total for this run, such as 45m |
 | `--used-review-rounds` | string | "" | no | state that the chain has already spent N review rounds, such as 2: tighten-only like --used-usd |
@@ -8643,6 +8682,7 @@ Subcommands:
 
 - `fugaro runs digest` -- Write a closed period's report of this repository, or print the stored one
 - `fugaro runs ls` -- List runs with their status, stage, cost and PR
+- `fugaro runs reindex` -- Rebuild the run index from the runs bucket
 - `fugaro runs reports` -- Write every repository's closed-period reports into the runs bucket (the project's reports job)
 - `fugaro runs show` -- Show a run's chain and what is left of its limits
 - `fugaro runs stats` -- Aggregate run records by the person who started each run
@@ -8867,9 +8907,49 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
-| `--state` | string | "" | no | only runs in this state, a run's or its pull request's (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed, live, ready, stalled) |
+| `--state` | string | "" | no | only runs in this state, a run's or its pull request's (cancelled, error, failed, halted, infra_error, launching, paused, pending, running, succeeded, unlaunched, unreviewed, live, ready, stalled) |
 | `--stream` | bool | `false` | no | with --json: one line per run, then a line saying how many there were |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro runs reindex`
+
+Rebuild the run index from the runs bucket
+
+Rebuild the run index: mark it incomplete, then walk every run in the runs
+bucket into it and recompute the summary (RI5).
+
+The mark is written first and is the part that always lands: from it, every
+later sweep of the history job continues the walk on its own until it reaches
+the end of history, with no execution started by the job and no timeout
+overridden. Then one execution is started in the job's --reindex mode, which
+is the pass that walks now; a caller who may not start the job -- only the
+installation's own scheduler account may -- gets one line saying so, and the
+walk is carried by the next sweep instead.
+
+The walk is resumable: a pass that runs out of time leaves its position
+beside the writer lease, and the next pass continues from there rather than
+starting over. A walk that is already going is left alone: its own fresh
+claim is what says so, and nothing is started.
+
+A reindex asks nothing of any run: a run in flight is neither waited for nor
+touched, because the walk reads the runs bucket and never writes a run's own
+objects.
+
+Usage: `fugaro runs reindex`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for reindex |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -9001,8 +9081,11 @@ Attribution, as the records themselves state it:
   - Dollars are never added across currencies: a row is one user and one currency,
     and a total covers one currency. Every cost recorded today is in USD.
   - The window is UTC days like the rest of the CLI. A run is counted on the day
-    the bucket's run IDs place its start, so the window and the runs in it agree
-    with runs ls.
+    the read places it: the day its own run id places its start when the records
+    are read -- which is runs ls's window -- and its entry's own last change when
+    the index answers, which is a settled run's finish. The two reads can therefore
+    put the same run inside the window or outside it (see the index paragraph
+    below).
 
 The money is model dollars, counted the way the budget screens count them. COUNTED
 $ is the model spend that counts toward the caps: the money part of a run's model
@@ -9032,8 +9115,9 @@ is refused, never quietly widened: the error says so, and names --all-users. An
 identity with no key of its own because nothing printable is left of it (a pasted
 zero-width character, say) is shown no row instead: the table is empty, and its
 view line says the CLI cannot tell who you are. A row keyed 'unknown' is every run
-of the window that recorded no launcher -- never one person's -- so it is not shown
-as the caller's own either, and a note says so.
+of the window that recorded no launcher, and -- when the index answers -- the runs
+it has not folded yet, whose launcher its page cannot show (below). It is never one
+person's, so it is not shown as the caller's own either, and a note says so.
 
 The launcher text is what a launcher wrote and is read for nothing else: it is
 sanitised and size-capped before it is printed, and it authorises and admits
@@ -9047,20 +9131,35 @@ sanitises to the same text is never counted in it and your own row can be
 smaller than that key's row in the full table.
 
 A window can hold every run of every repository in the bucket, so the read is
-bounded: at most --max-runs records are read per call, newest first, and a window
+bounded: at most --max-runs runs are read per call, newest first, and a window
 holding more says so in the output rather than publishing figures over a part of
 itself silently. The bound is on the read, not on a person: the newest --max-runs
 runs are taken before any view is applied, so a private view can be over fewer of
 the caller's own runs than --max-runs suggests. A run with neither a launch nor a
-record -- never launched, cancelled before launch, or a stale claim -- never
-started and is counted in no figure. The count of those is the window's, over
-everyone's runs, and is no more the caller's own than the truncation is.
+record, and no status settled for it -- never launched, cancelled before launch,
+or a stale claim -- never started and is counted in no figure. The count of those
+is the window's, over everyone's runs, and is no more the caller's own than the
+truncation is. The rows come from the run index -- one page of entries for the
+window, and no run object read at all -- which index_complete reports: it is false
+while the index has not finished a walk, when the run records are read instead,
+one object read per run.
+
+The two reads answer the same question and do not always answer it alike. The
+index windows a run by its entry's own last change where the record read windows
+it by the day its run id places its start, so a run that started and settled on
+opposite sides of an edge is in one read's window and not the other's. And a run
+the index has not folded yet arrives as its id, its repository and its status
+alone -- no launcher and no record to read -- so the index read counts it under
+'unknown' with no record, where the record read would name the launcher its own
+launch recorded. A folded run both windows hold reads the same either way, and
+index_complete says which of the two reads a caller is looking at.
 
 --json prints {version, project, by, view, you, admin, since, until, max_runs,
-truncated, rows[], totals[], unlaunched, notes}; rows and totals carry {user,
-currency, runs, succeeded, failed, halted, infra_error, other, no_record,
-counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the counts add up:
-runs == succeeded + failed + halted + infra_error + other + no_record.
+truncated, index_complete, rows[], totals[], unlaunched, notes}; rows and totals
+carry {user, currency, runs, succeeded, failed, halted, infra_error, other,
+no_record, counted_usd, notional_usd, counted_runs, avg_counted_usd}, and the
+counts add up: runs == succeeded + failed + halted + infra_error + other +
+no_record.
 
 Usage: `fugaro runs stats`
 
@@ -9079,7 +9178,7 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
-| `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
+| `--since` | string | `7d` | no | only runs the read places within this long (7d, 36h, 90m; 0 for all) |
 
 Subcommands:
 
@@ -10228,8 +10327,10 @@ Credentials), so that fugaro run works; --operator or --admin replaces that,
 an existing config is never changed by it, and with a service
 account's credentials it stops and names the two flags.
 
-Fugaro only starts fresh: a first run creates the GCP project the installation
-lives in, and that project is Fugaro's, and managed, from its creation. On a
+A first run creates the GCP project the installation
+lives in — or adopts one that is already there and holds nothing of Fugaro's,
+using it as if it had created it (the owner's ruling of 2026-11-22) — and that
+project is Fugaro's, and managed, from its creation. On a
 first run it asks its questions once, in this order, each with a suggestion
 Enter takes, and writes the local config, so later runs ask nothing: the new
 GCP project's ID (--gcp-project; a project named after this one,
@@ -10253,14 +10354,18 @@ confirmations below need a terminal at all: without one, or with
 --json, the run names every missing flag in one
 error — the bake switch and the budget need no flag there, because an absent
 key means the same as a written yes and a budget nobody answered takes its own
-default. An ID that already exists is refused before anything is
-asked or changed ("Fugaro only starts fresh: <id> already exists; pick
-another id"), and so is one that already holds a Fugaro installation, with the
+default. An ID that already exists and holds anything of Fugaro's is refused
+before anything is asked or changed ("<id> already exists and holds something
+of Fugaro's: fugaro setup only adopts a project that holds nothing of
+Fugaro's, so pick another id"), and so is one that already holds a Fugaro
+installation, with the
 command that uses that installation from this machine instead: fugaro update
 --gcp-project <id> --region <region>, which writes the local config from the
-installation and applies nothing. The one taken ID a first run goes on with is a project an
-earlier run of fugaro setup created and did not finish (it carries the label
-fugaro_created=true from its creation): the rerun resumes it. The budget
+installation and applies nothing. A project that already exists and holds
+nothing of Fugaro's is adopted: the run uses it as if it had created it. The
+other ID a first run goes on with is a project an
+earlier run of fugaro setup made Fugaro's and did not finish (it carries the
+label fugaro_created, true or adopted, from that run): the rerun resumes it. The budget
 section of a local config written from an installation (rtdb_url,
 firebase_project, firebase_api_key, token_signer: none a secret) is filled
 from the Firebase root's outputs, read only. A --name given for an
@@ -10522,7 +10627,7 @@ Flags:
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing) |
-| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, budget, budget_currency, bake_repos — the five questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
+| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, budget, budget_currency, bake_repos — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
 | `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
@@ -10530,12 +10635,12 @@ Flags:
 | `--budget` | int64 | `0` | no | a monthly budget on the project, in whole units of --budget-currency |
 | `--budget-admin` | stringArray | `[]` | no | with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins) |
 | `--budget-currency` | string | "" | no | the budget's currency, such as USD |
-| `--budget-mode` | string | "" | no | with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe) |
+| `--budget-mode` | string | "" | no | with --firebase-project: observe or enforce: the jobs' budget mode in the project config, and the project-wide mode in the database (an absent one is seeded observe) |
 | `--check-github-app` | bool | `false` | no | let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it setup checks only with the key you typed in this run |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--config-only` | bool | `false` | no | only write the local config, from the installation's outputs (else the flags) |
 | `--coordinator` | bool | `false` | no | with --firebase-project, opt the installation in to the coordinator's aggregation job (docs/coordinator, P5): the fugaro-coordinator service account, its roles/firebasedatabase.admin on the Firebase project (IAM cannot scope it to the coordinator's subtree; the job's own code does), roles/storage.objectViewer on the runs bucket, and — once the history image exists and the local config records a GitHub App ID — the Cloud Run job that holds the App key, its accessor on that one secret and a Scheduler job that runs it every 15 minutes. Nothing creates any of it by default. The opt-in is recorded in the local config (terraform.coordinator) once the apply has created the account, so later runs keep it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
-| `--create-project` | bool | `false` | no | create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of setup always creates its project, so the flag only says so explicitly. Fugaro only starts fresh: an ID that already exists is refused, unless an earlier run of setup created it (the resume). Billing is not linked unless --link-billing is also given; without it setup prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing |
+| `--create-project` | bool | `false` | no | create the GCP project --gcp-project names and add Firebase to it, as you, at your own real terminal (never with --json; nothing is typed there, being at it is what confirms the step). A first run of setup always creates its project, so the flag only says so explicitly. An ID that already exists is refused unless an earlier run of setup made it Fugaro's (the resume), and one that holds nothing of Fugaro's is adopted instead: setup uses it as if it had created it. Billing is not linked unless --link-billing is also given; without it setup prints the one gcloud command that links it, unless the run asks the billing question (no --json and no coding agent's session) and has no terminal, where it is refused there at once instead, in the sentence naming --link-billing |
 | `--display-name` | string | "" | no | on a first run, which creates the project: its display name (default: its ID) |
 | `--events` | bool | `false` | no | write the run to stdout as newline-delimited events instead of the one --json document: one `step` line as the run reaches a stage, one `stage` line as a stage settles (its name, state, detail and the stage it waited for), one `left_for_you` line for each thing only you can do — with the one line to run — and one last line that ends the feed: `done` with the run's exit code, or `error` naming the stage the run stopped at. A run that ends with steps left for you ends `done` with exit code 1 — it did not fail, and the steps are the left_for_you lines above it — which is the hand-off a surface draws rather than an error. It needs --json: the feed takes the document's place on stdout, and the run's own progress stays on stderr where --json already puts it. Nothing here confirms a step: --json confirms none, so every step that needs a confirmation arrives as left_for_you for you to run in your own terminal window |
 | `--expect-digest` | stringArray | `[]` | no | pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it setup trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag |
@@ -10553,7 +10658,6 @@ Flags:
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
 | `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal) |
 | `--operator` | stringArray | `[]` | no | an IAM member who may start and watch runs (the operator role; repeatable; default: the local config's, and for a new config you, the authenticated user) |
-| `--orchestrator` | bool | `false` | no | with --firebase-project, opt the installation in to the resident orchestrator (docs/mobile/design/always-on-orchestrator.md, P5.1): the fugaro-orch service account with exactly the grants that design's section 4.3 table lists — the launcher's project role, the runs bucket's conditioned write and its unconditioned read, iam.serviceAccounts.signJwt on the budget signer (the widest grant there is: a holder may mint any identity in the installation), the job runner's role on each of the installation's jobs and roles/run.invoker on the credentials service — the fugaro-orch-pairing secret container, the Cloud Run service that account runs (min-instances = 0, woken by a Scheduler tick) and a Scheduler job per minute. Nothing creates any of it by default, and it is refused where the installation has no credentials service, no Firebase backend or no released image to pin. The opt-in is recorded in the installation root's tfvars (its orchestrator block) by the same command, so later runs keep it and move only the image inside it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--parent` | string | "" | no | on a first run, which creates the project: organizations/<number> or folders/<number> to create it under (default: no parent; an organization is never guessed) |
 | `--plan-only` | bool | `false` | no | stop after showing the plan (it creates nothing) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
@@ -10562,7 +10666,7 @@ Flags:
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (setup does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
-| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
+| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names an image the release source never published (a customised or hand-pushed history:latest needs it once; the image of an earlier release needs no flag, and is moved on its own). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
 | `--repo` | bool | `false` | no | onboard the repository of the checkout at PATH (default: the current directory) instead of the installation |
 | `--retire` | bool | `false` | no | with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; no flag, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply |
 | `--rigor` | string | "" | no | answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set |
@@ -10820,7 +10924,7 @@ Flags:
 | `--allow-delete` | stringArray | `[]` | no | a resource address the plan may delete or replace (repeatable) |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then the person at the terminal confirms it, and a run with no terminal prints the line and writes nothing) |
-| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, budget, budget_currency, bake_repos — the five questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
+| `--answers-file` | string | "" | no | answer the wizard's questions from one JSON document: version, gcp_project, location, region, name, rigor, budget, budget_currency, bake_repos — the questions a first run asks (--gcp-project, --location or its precise form --region, --name, --rigor, --budget with --budget-currency, and --bake-repos), with the document's version. PATH is a file, or - for stdin (what the console passes: the document reaches the child on its stdin, so no file exists for another process to change between a check and the read). A flag given beside the file wins over it, and the run says which. The file answers questions and confirms nothing: the steps that are a person's — creating the GCP project, linking its billing, the permanent Firestore location, every secret value — have no member here and are still taken at a real terminal without --json, so a --json run with a whole answers file applies only what needs no confirmation |
 | `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the review's own question, and each step's own, the billable builds included. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never stands in for a confirmation: the step's own question is asked, and a no is a no. In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed |
 | `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
@@ -10829,7 +10933,7 @@ Flags:
 | `--budget` | int64 | `0` | no | a monthly budget on the project, in whole units of --budget-currency. On an installation that is not managed, giving update the budget once — --budget, --budget-currency and --billing-account together — flags that installation as managed in the same run: it writes gs://fugaro-runs-<gcp-project>/fugaro/managed.json and the fugaro_managed=true label on the project itself, and from the next run on that project's applies no longer stop for the typed confirmation. The run prints what it writes before it writes it, and the write is refused inside a coding agent's session and inside a Fugaro run's process |
 | `--budget-admin` | stringArray | `[]` | no | with --firebase-project: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins) |
 | `--budget-currency` | string | "" | no | the budget's currency, such as USD |
-| `--budget-mode` | string | "" | no | with --firebase-project: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe) |
+| `--budget-mode` | string | "" | no | with --firebase-project: observe or enforce: the jobs' budget mode in the project config, and the project-wide mode in the database (an absent one is seeded observe) |
 | `--check` | bool | `false` | no | read-only: write nothing, run no claude command and make no cloud call, print what each step of update would do from this checkout's own files, and exit 1 when anything is stale. The checkout is PATH (update --check [PATH]); the converge's own flags are refused rather than ignored, because this mode runs none of them. The rules and the policy steps are skipped with a note naming the command that answers them: the deployed rules generation and the published policy node live in the cloud, and reading either is the call this flag promises not to make |
 | `--check-github-app` | bool | `false` | no | let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it update checks only with the key you typed in this run |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
@@ -10850,14 +10954,13 @@ Flags:
 | `--no-log-isolation` | bool | `false` | no | leave Fugaro job logs in _Default instead of their own log bucket |
 | `--onboard-repo` | string | "" | no | owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one opt-in that needs no terminal to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (neither it nor this flag is honoured in a coding agent's session; any other origin takes the confirmation of a person at the terminal) |
 | `--operator` | stringArray | `[]` | no | an IAM member who may start and watch runs (the operator role; repeatable; default: the local config's, and for a new config you, the authenticated user) |
-| `--orchestrator` | bool | `false` | no | with --firebase-project, opt the installation in to the resident orchestrator (docs/mobile/design/always-on-orchestrator.md, P5.1): the fugaro-orch service account with exactly the grants that design's section 4.3 table lists — the launcher's project role, the runs bucket's conditioned write and its unconditioned read, iam.serviceAccounts.signJwt on the budget signer (the widest grant there is: a holder may mint any identity in the installation), the job runner's role on each of the installation's jobs and roles/run.invoker on the credentials service — the fugaro-orch-pairing secret container, the Cloud Run service that account runs (min-instances = 0, woken by a Scheduler tick) and a Scheduler job per minute. Nothing creates any of it by default, and it is refused where the installation has no credentials service, no Firebase backend or no released image to pin. The opt-in is recorded in the installation root's tfvars (its orchestrator block) by the same command, so later runs keep it and move only the image inside it. No flag covers it, it is confirmed at a real terminal, and a coding agent's session is refused. It excludes --repo and the flags that only read or only stop (--forget, --print-vars, --config-only, --publish-config, --anchor) |
 | `--plan-only` | bool | `false` | no | stop after showing the plan (it creates nothing) |
 | `--print-vars` | bool | `false` | no | print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--publish-config` | bool | `false` | no | publish the shared config to the runs bucket and stop (update does it after it writes the local config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--registry-cleanup` | string | "" | no | Artifact Registry cleanup: dry-run (the default), on or off |
-| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
+| `--replace-image` | stringArray | `[]` | no | KIND (history; repeatable): let the converge replace that image's tag in your registry when it names an image the release source never published (a customised or hand-pushed history:latest needs it once; the image of an earlier release needs no flag, and is moved on its own). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so a person at a real terminal confirms it by being there (a pipe, --json and a coding agent's session confirm nothing) |
 | `--repo` | bool | `false` | no | onboard the repository of the checkout at PATH (default: the current directory) instead of the installation |
 | `--retire` | bool | `false` | no | with --repo: run the retirement this config change needs (a workflow or a named account removed, a secret no longer mounted): remove the protected addresses from Terraform's state (destroying nothing), apply, then delete the orphaned Cloud Run jobs through the API. Both confirmations are a real terminal's, and nothing is typed at them; no flag, --json, a pipe and a coding agent cover neither. Excludes --plan-only, --print-vars and --forget, which read or forget rather than apply |
 | `--rigor` | string | "" | no | answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set |
@@ -11492,11 +11595,15 @@ to. The workspace owner's config carries the other half: the member table, which
 is how the workspace reaches each member. This family writes the half that
 belongs to the machine it runs on.
 
-The reads are offline: ls and show read this machine's own project configs, no
-bucket and no cloud node, so they work anywhere, a coding agent's session
-included. The writes are local config edits — the diff, the backup and the
-atomic write the fugaro models commands make — and each ends by naming the one
-command that converges the installation: fugaro update.
+The reads are offline: ls, show, project ls and status, and user ls and
+domains ls read this machine's own project configs and the workspace's own
+roster, no bucket and no cloud node beyond it, so they work anywhere, a coding
+agent's session included. The writes are of three kinds, and each ends by
+naming the one command that converges the installation: fugaro update — the
+local config edits above, written the way the fugaro models commands write one
+(the diff, the backup and the atomic write); the workspace's own roster, its
+trail and the state of its members, in the workspace's own project; and each
+member's own roster and mirror, written at its own Google Cloud project.
 
 Usage: `fugaro workspace`
 
@@ -11510,13 +11617,16 @@ Subcommands:
 
 - `fugaro workspace add` -- Join the selected project to a workspace, and pin what it trusts
 - `fugaro workspace cap` -- The workspace's own spend ceiling
+- `fugaro workspace domains` -- The email domains the workspace admits people from
+- `fugaro workspace init` -- Create a workspace: its mechanism, its folder and its first admin (D2803, R8)
 - `fugaro workspace login` -- Print the sign-in this project's pin asks for
 - `fugaro workspace ls` -- List the workspaces this machine's project configs name
-- `fugaro workspace member` -- Declare how the workspace reaches one of its members
+- `fugaro workspace project` -- The projects this workspace holds, and the machinery that holds them
 - `fugaro workspace rm` -- Leave a workspace: drop this project's membership key and its pin
 - `fugaro workspace share` -- Offer one of the workspace's credentials to some of its members
 - `fugaro workspace show` -- Show one workspace from this machine's own files
 - `fugaro workspace unshare` -- Stop offering one of the workspace's credentials to its members
+- `fugaro workspace user` -- The workspace's own members: who is in it, and who administers it
 
 ## `fugaro workspace add`
 
@@ -11625,6 +11735,161 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro workspace domains`
+
+The email domains the workspace admits people from
+
+The domains the workspace admits people from.
+
+An address whose domain is on this list is admitted as a workspace member
+without a word; an address from anywhere else is admitted only with --external,
+which records the mark that says so (D2812). The list is the workspace's own,
+next to its roster, and every change to it is a workspace admin's act.
+
+A domain is stored in its folded spelling — the lower case an address is folded
+into — so one domain is one entry however it is typed.
+
+The list is per DOMAIN: there is no entry for one address, and admitting a
+single outsider is what the external mark is for rather than a one-address
+exception. A domain somebody already in the roster sits in cannot be taken off
+the list while that person is a member: whether they were admitted from outside
+is computed from this list, so removing their domain would report them as a
+difference the drift check calls tampering.
+
+Usage: `fugaro workspace domains`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for domains |
+
+Subcommands:
+
+- `fugaro workspace domains add` -- Admit every address of a domain
+- `fugaro workspace domains ls` -- List the domains the workspace admits people from
+- `fugaro workspace domains rm` -- Stop admitting every address of a domain
+
+## `fugaro workspace domains add`
+
+Admit every address of a domain
+
+Add one domain to the workspace's allowed domains.
+
+Every address whose domain is this one is then admitted as a member without
+--external. The domain is stored folded, so Example.COM and example.com are one
+entry, and adding one that is already there is refused rather than written
+twice: the list holds each domain once.
+
+Nothing is admitted by this command but the domain: nobody becomes a member
+until they are added (the workspace's roster), and nothing is granted to anybody
+by it.
+
+Usage: `fugaro workspace domains add DOMAIN --workspace <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--workspace` | string | "" | no | the workspace whose allowed domains these are (required: the list belongs to one workspace) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace domains ls`
+
+List the domains the workspace admits people from
+
+List the workspace's allowed domains, folded, in one line.
+
+An empty list is said rather than printed as nothing: a workspace that lists no
+domain admits nobody without --external, which is the same rule read from the
+other side. The command reads and writes nothing and may run in a coding agent's
+session.
+
+The machine-readable form of this list is the `domains` member of
+`fugaro workspace user ls --json` (schemas/workspace-users.schema.json),
+which is the workspace's one published document.
+
+Usage: `fugaro workspace domains ls --workspace <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--workspace` | string | "" | no | the workspace whose allowed domains these are (required: the list belongs to one workspace) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace domains rm`
+
+Stop admitting every address of a domain
+
+Remove one domain from the workspace's allowed domains.
+
+The members the workspace already holds are not touched: removing a domain stops
+admitting NEW addresses of it, and everybody who is a member stays one. What
+changes is that the next address from that domain needs --external, which
+records the mark D2812 keeps.
+
+A domain a member's address sits in is refused rather than removed: whether a
+member was admitted from outside is computed from this list, so removing their
+domain would report them as a difference the drift check calls tampering. Remove
+them first (`fugaro workspace user rm`), or keep the domain.
+
+Usage: `fugaro workspace domains rm DOMAIN --workspace <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--workspace` | string | "" | no | the workspace whose allowed domains these are (required: the list belongs to one workspace) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace init`
+
+Create a workspace: its mechanism, its folder and its first admin (D2803, R8)
+
+Create a workspace: the one command that sets one up, and the first write of
+its roster node.
+
+The mechanism is detected and not chosen (D2803). An organization the caller's
+own credentials can see — an organization it can create a folder in — means the
+folder mechanism: the workspace's folder is created under it, the caller is
+bound to roles/owner on it, and the workspace's own project is placed in it (R8,
+where the roster and the workspace's audit trail live). The first organization
+the API lists is the one used. With no organization the workspace falls back to
+the service-account model: the workspace IAM account's token creator and an
+owner grant on the workspace's own project become the caller's, and every member
+the workspace adds is reached by impersonating that account (D2803, F20).
+
+Either way the caller is the workspace's first person and its first admin, the
+roster records the mechanism, the folder and that person, and one init entry is
+created in the workspace's own audit trail. The mechanism and the folder are
+written once: a workspace whose roster is already there is refused, and nothing
+is created.
+
+Usage: `fugaro workspace init <workspace>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for init |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro workspace login`
 
 Print the sign-in this project's pin asks for
@@ -11687,83 +11952,87 @@ Subcommands:
 
 This command has no subcommands.
 
-## `fugaro workspace member`
+## `fugaro workspace project`
 
-Declare how the workspace reaches one of its members
+The projects this workspace holds, and the machinery that holds them
 
-The owner's side of a membership.
+Work with the projects a workspace holds.
 
-The workspace's own config holds one entry per member: the member's job service
-accounts, its Firebase project and fp, and its exchange URL, which is what the
-workspace's own service resolves a caller by (spec §5). The member's database
-URL is not among them: it is derived from the Firebase project the verified iss
-names, so an owner cannot pair one member's accounts with another's database.
-Neither is the runs bucket: the workspace holds no read of a member's runs.
+add, rm, save and reconcile are the workspace owner's own commands and run on the
+machine that holds the member table -- the config of the project the workspace is
+named after (D2821). link and unlink are the member owner's own consent and run
+on the MEMBER's machine (D2819). ls and status read the members of the project
+this machine selected.
 
-A member is in the workspace when the owner's table lists it AND the member's
-own config names the workspace. These commands write the owner's half, in the
-config of the project the workspace is named after.
+Nothing here asks a question, and every write refuses in a coding agent's session
+(A7): the membership of a workspace and the people in it are a person's own act
+at their own terminal.
 
-Usage: `fugaro workspace member`
+Usage: `fugaro workspace project`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `-h`, `--help` | bool | `false` | no | help for member |
+| `-h`, `--help` | bool | `false` | no | help for project |
 
 Subcommands:
 
-- `fugaro workspace member add` -- Declare a member: how the workspace reaches it
-- `fugaro workspace member rm` -- Stop declaring a member: drop its entry from the workspace's table
+- `fugaro workspace project add` -- Declare a member in the workspace's table and adopt it once it is linked
+- `fugaro workspace project link` -- Give the workspace named in this project's pin authority over it
+- `fugaro workspace project ls` -- One line per member of this workspace, with its worst row
+- `fugaro workspace project reconcile` -- Close the difference between the workspace's record and a member's policy
+- `fugaro workspace project rm` -- Detach a project from the workspace, deleting nothing
+- `fugaro workspace project save` -- Save a member's state, or the workspace's audit export
+- `fugaro workspace project status` -- Whether a member can run against this workspace, one row per fact
+- `fugaro workspace project unlink` -- Drop the workspace's authority over this project, and only it
 
-## `fugaro workspace member add`
+## `fugaro workspace project add`
 
-Declare a member: how the workspace reaches it
+Declare a member in the workspace's table and adopt it once it is linked
 
-Write one member entry into the workspace's own project config.
+Write one member entry into the workspace's own project config, and, once the
+member's own owner has linked their project, write the workspace's side into it.
 
-The four values are the workspace owner's declaration, made once per member: the
-member's job service accounts (the identities the workspace's service resolves a
-caller by), its Firebase project and fp (the project the caller's token is
-issued under, and the Fugaro project the token's fp claim must name), and its
-exchange URL (where the workspace's signer mints a member-bound assertion for).
---repo names a repository the member contributes to the workspace, and is
-repeatable.
-
-Every job service account carries the repositories it is a job of, one
---job-repos <account>=<owner/name> per repository, at least one per account: the
-workspace's service holds a run's verified repository to the calling account's
-own list, so an account whose jobs the table cannot state is a caller no run of
-it could be served for. One repository is the ordinary case — a repository's own
-job is a job of that repository — and a shared project job serving several
-repositories names all of them. A pattern is refused where a repository is
-asked for, because a pattern is a promise about what the account may be a job of
-rather than the jobs it is.
-
---database-region is where the member's Realtime Database lives, and it is
-optional: left out, it is read from the member's own budget.rtdb_url, which that
-installation's fugaro update writes, so a member in europe-west1 is linked at
-its own host with no flag — and it wins when it is given. It is never whose
-database it is — that is derived from the Firebase project the verified iss
-names, so an owner cannot pair one member's accounts with another's database —
-and this says only where in that project it lives. A database in the project's
-default region records no region either way.
-
-A member the table already declares is replaced whole: the entry ends up
-holding the four values given, the accounts with their repositories, the
-database region and the repositories named, and nothing else. A
-re-declaration is therefore how a retired or compromised job service account
-leaves the table, and it asks for the workspace's own project name because what
-it removes is what the workspace trusted. Use fugaro workspace member rm to drop
-the entry altogether.
-
-Only the keys it writes are rewritten: every comment and every other key of the
-file is kept, except inside the entry it replaces, which is written fresh. The
-write is local; the owner's fugaro update publishes the record the table
+The entry is the one fugaro workspace project add writes, built from the same
+flags: the member's job service accounts with the repositories they are a job of,
+its Firebase project and fp, its exchange URL, its database region and the
+repositories it contributes. --workspace names the workspace whose config holds
+the table, which is the project the workspace is named after, on the machine that
+holds it (D2821); the owner's own fugaro update publishes the record the table
 builds.
 
-Usage: `fugaro workspace member add <workspace> <project>`
+What the add does besides the entry depends on whether the workspace already
+holds the member, and holding it is the member owner's own act (fugaro workspace
+project link, D2819):
+
+  - a member the workspace holds is adopted. Its grantees become people of the
+    workspace's roster, and nothing of the member's own grants is touched: a
+    grant that was there before the workspace arrived is the member's own
+    (D2805). A grantee whose domain is not one of the workspace's allowed
+    domains is refused unless --external is given, and is marked external then
+    (D2812). Each workspace admin who also holds the live binding gets one
+    stored grant of admin at project scope written into the member's own roster
+    and marked in the workspace's node (D2818, D2823), and the workspace's member
+    list is mirrored into the member's own database (D2813).
+
+  - a member the workspace does not hold is declared and nothing is written into
+    it: the member's own owner runs fugaro workspace project link on their own
+    machine, from their own credentials, and this command finishes the add
+    afterwards.
+
+A member the workspace holds whose database already carries another workspace's
+member list is refused: a project belongs to one workspace (D1291, R2, R14). The
+two documents that reading is made from -- the member's mirror and the parent it
+hangs under -- are readable once the workspace holds the member (R14), so a
+project this workspace does not hold is refused by fugaro workspace project link,
+on the member owner's own machine, and not here. Nothing is ever removed from a
+member by this command.
+
+Only the keys it writes are rewritten: every comment and every other key of the
+config is kept, except inside the entry it replaces, which is written fresh.
+
+Usage: `fugaro workspace project add <project> --workspace <name>`
 
 Flags:
 
@@ -11771,6 +12040,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `--database-region` | string | "" | no | the region of the member's Realtime Database; omit it to read it from the member's own budget.rtdb_url (a database in the project's default region has none) |
 | `--exchange-url` | string | "" | no | the member's exchange endpoint, where the workspace's signer mints a member-bound assertion for |
+| `--external` | bool | `false` | no | adopt the member's grantees outside the workspace's allowed domains, marking them external (D2812) |
 | `--firebase-project` | string | "" | no | the member's Firebase project ID, which the caller's token is issued under |
 | `--fp` | string | "" | no | the member's Fugaro project name, which the token's fp claim must be |
 | `-h`, `--help` | bool | `false` | no | help for add |
@@ -11778,27 +12048,144 @@ Flags:
 | `--job-service-account` | stringArray | `[]` | no | a job service account of the member, which the workspace's service resolves a caller by (repeatable) |
 | `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--repo` | stringArray | `[]` | no | a repository the member contributes to the workspace, as owner/name (repeatable) |
+| `--workspace` | string | "" | no | the workspace this project is added to (required: a project belongs to one workspace, D1291) |
 
 Subcommands:
 
 This command has no subcommands.
 
-## `fugaro workspace member rm`
+## `fugaro workspace project link`
 
-Stop declaring a member: drop its entry from the workspace's table
+Give the workspace named in this project's pin authority over it
 
-Remove one member entry from the workspace's own project config.
+Give the workspace authority over the selected project, from this machine and
+with your own credentials.
 
-The workspace's service can no longer resolve that project as a caller, so its
-shared-credential calls are refused at the front door until it is declared
-again. The member's own config is not this command's to change: a member leaves
-by running its own fugaro workspace rm, and until it does the membership is
-half-done — which is what fugaro workspace show reports.
+This is the member owner's own act and the only way the authority is created
+(D2800, D2819): the workspace's own project add records the member and writes its
+stored grants, but nothing on the workspace's side can create this. The
+membership and the pin must already be in the selected config — fugaro workspace
+add writes them — because the pin is this project's own statement of which
+workspace it trusts, its key and the account that acts for it there.
 
-Only the entry it removes is rewritten: every comment and every other key of the
-file is kept. The owner's fugaro update publishes the record the table builds.
+In the folder model this moves the project into the workspace's folder, and a
+project takes the IAM and organization policies of the parent it hangs under: it
+loses whatever its old parent carried and takes on the workspace folder's. That
+difference is reported here, before the move, with the policies this machine can
+read on both sides named; what linking cannot do is undo an inheritance it has
+changed. The service account model moves nothing — the account is granted on the
+project where it stands — so it reports no policy change.
 
-Usage: `fugaro workspace member rm <workspace> <project>`
+The mirror and the workspace admins' stored grants are not written here: the
+member list is the workspace's, and this machine holds no grant on the
+workspace's project at all. The workspace's owner runs fugaro workspace project
+add on theirs, which is what writes them.
+
+Usage: `fugaro workspace project link`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for link |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace project ls`
+
+One line per member of this workspace, with its worst row
+
+Print one line per member of this workspace: the member, its worst row's
+verdict, and that row's sentence and fix. It is `workspace project status`
+summarised, so an owner can see which member is worth a full look.
+
+It reads and writes nothing but reads: no apply, no grant, no snapshot, on
+every path including --json.
+
+The exit status is nonzero when a member has a failing row, and zero otherwise.
+
+Usage: `fugaro workspace project ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace project reconcile`
+
+Close the difference between the workspace's record and a member's policy
+
+Print the difference between what the workspace's record states about a member's
+people and what the member's policy carries, and write the member's own roster
+so that its next fugaro update closes it.
+
+The differences are the drift check's: the member's live IAM against the
+workspace's record, never against the mirror, which the member's own admins can
+rewrite. This command adds the grants the record states and the member does not
+carry, takes back the rows the member's roster holds and the record does not
+state, and prints each difference with what it did about it.
+
+It writes no member's IAM: a grant is a row in the member's own roster at
+config/admin/access, and the member's own fugaro update is what turns that row
+into a binding. A machine's difference is reported and never written -- a machine
+gets no member roster of its own -- and a binding the roster states nothing about
+is named rather than silently dropped, because no roster write can take it back.
+
+--dry-run prints the change and writes nothing.
+
+Usage: `fugaro workspace project reconcile PROJECT`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--dry-run` | bool | `false` | no | print the change each difference needs and write nothing |
+| `-h`, `--help` | bool | `false` | no | help for reconcile |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace project rm`
+
+Detach a project from the workspace, deleting nothing
+
+Detach one member project from the workspace. No Google Cloud or Firebase
+resource is deleted.
+
+The project's state is saved before it is detached: to a local file the command
+names, and as a pull request to the member's designated state repository when it
+has one. --no-save-state skips that, and nothing asks either way.
+
+What the workspace holds on the project is then taken back: the grants its
+admins were written into the member's own roster, the mirror of the workspace's
+member list, the marks the workspace's own node keeps for it, and the authority
+the workspace held over the project. A member owner who already ran fugaro
+workspace project unlink has dropped the authority alone, so running this
+afterwards is what takes the grants back.
+
+The project itself is left as it is, and the command says so: what is still
+deployed there keeps costing money until the project is shut down, and the
+console page for that is printed rather than opened, because shutting a project
+down is Google's own flow and your own decision.
+
+Usage: `fugaro workspace project rm <project>`
 
 Flags:
 
@@ -11806,6 +12193,123 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
 | `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
+| `--no-save-state` | bool | `false` | no | do not save the project's settings and spending summary before detaching it |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace project save`
+
+Save a member's state, or the workspace's audit export
+
+Save a state snapshot: one member's settings and spend summary, every
+member's with no project named, or, with --audit, the workspace's own audit
+export.
+
+A snapshot is written to a local file the command names, always, and to the
+designated state repository as a pull request when the workspace's own project
+has one: the repository and where its setting came from are printed before it is
+pushed. The writer refuses a public repository, because a snapshot carries the
+member's addresses, and names the --repo override that designates another one.
+
+The members are the ones the member table of this workspace's own project
+declares -- the file fugaro workspace project add writes -- and each is saved
+under its own name. --audit saves the workspace's audit trail, which is
+not any member's state, so it takes no project.
+
+Run it in your own terminal, with your own credentials: it refuses a coding
+agent's session, and it asks nothing.
+
+Usage: `fugaro workspace project save [<project>]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--audit` | bool | `false` | no | save the workspace's audit export instead of a member's state |
+| `-h`, `--help` | bool | `false` | no | help for save |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace project status`
+
+Whether a member can run against this workspace, one row per fact
+
+Print a doctor for the workspace's members: one row per fact that decides
+whether a member can run against it -- reachable, linked, the credentials
+service, the credentials, the rebuild images, the caps, the grants waiting
+for the member's own fugaro update, the grants an unlink left, the state
+repository, drift -- and then the workspace's own rows: the admins' live
+bindings, a single admin, and the workspace IAM account's keys and every
+principal that can act as it.
+
+With a project name it prints that member's rows and the workspace's; with
+none it prints every member's.
+
+Every row is pass, warn or fail, and every row that is not pass names the
+one command that puts it right. A fact this machine could not read is a
+warn that says what was read and what was not, never a pass: a member whose
+own installation is out of this machine's reach is reported as such.
+
+--check-credentials asks each provider whether the member's model credentials
+still work (one minimal authenticated call each, the value never printed).
+It reads credential values with your own credentials, so it runs in your own
+terminal and is refused in a coding agent's session; a personal token under
+a person's own prefix is never probed.
+
+It writes nothing, on every path including --json and --check-credentials.
+
+The exit status is nonzero when a row fails, and zero otherwise.
+
+Usage: `fugaro workspace project status [PROJECT]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--check-credentials` | bool | `false` | no | ask each provider whether the member's model credentials still work (your own terminal only) |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for status |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace project unlink`
+
+Drop the workspace's authority over this project, and only it
+
+Drop the authority the workspace named in this project's pin holds over it.
+
+The member owner's own act, made with their own credentials (D2819): in the
+folder model the projects move back to the parent the link recorded, and in the
+service account model the owner grant is removed. Nothing else changes.
+
+What it does not do is remove the workspace admins' stored grants from this
+member: unlink drops the authority and ONLY the authority (D2822). Those grants
+stay in this member's own roster — they are rows in a document the member's own
+config and update own — until the workspace project's owner runs fugaro
+workspace project rm, which removes them and takes the mirror away. This command
+says so and names that command.
+
+Usage: `fugaro workspace project unlink`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for unlink |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -11851,13 +12355,18 @@ to state and none to get wrong. A provider key is offered as a model entry, whic
 is what a call spent through one is; a repository's own Anthropic key is refused,
 because the entry belongs to that one repository by construction.
 
---projects names the members this credential may be served to, as a comma
-separated list or repeated, and each must be a member the workspace's own table
-declares: a shared entry naming a project the table does not is an entry the
-workspace's own fugaro update refuses to publish. --covers names the
-repositories a forge credential reaches, as owner/name, and it is required for
-bitbucket and github and refused for a model credential, which a call names no
-repository for.
+Who it may be served to is one of two declarations and never both: --projects
+names the members, as a comma separated list or repeated, each a member the
+workspace's own table declares — a shared entry naming a project the table does
+not is an entry the workspace's own fugaro update refuses to publish; and
+--all-members offers it to every member of the workspace, the ones that join
+later included. An entry offered to every member is bounded by the workspace's
+own ceiling alone, so --all-members is refused while the workspace states no cap:
+set one with fugaro workspace cap set first.
+
+--covers names the repositories a forge credential reaches, as owner/name, and
+it is required for bitbucket and github and refused for a model credential,
+which a call names no repository for.
 
 An entry the list already holds is replaced whole, as a member entry is: the
 projects and the coverage it ends up with are the ones given, so re-sharing is
@@ -11868,12 +12377,13 @@ Only the keys it writes are rewritten: every comment and every other key of the
 file is kept. The write is local; the owner's fugaro update publishes the list
 in the record the workspace's service reads.
 
-Usage: `fugaro workspace share <credential> --workspace <name> --projects a,b`
+Usage: `fugaro workspace share <credential> --workspace <name> --projects a,b | --all-members`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--all-members` | bool | `false` | no | offer the credential to every member of the workspace, the ones that join later included (exclusive with --projects; needs the workspace's cap) |
 | `--covers` | stringArray | `[]` | no | a repository a forge credential reaches, as owner/name (repeatable; required for bitbucket and github) |
 | `-h`, `--help` | bool | `false` | no | help for share |
 | `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
@@ -11943,6 +12453,275 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for unshare |
 | `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--workspace` | string | "" | no | the workspace whose list this is (required: an entry belongs to one workspace) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace user`
+
+The workspace's own members: who is in it, and who administers it
+
+The workspace's members: the people it admits, the machines it records, and the
+admins who may change either.
+
+Who is a member is the workspace's own record — the roster node at
+workspaceRosters/<name> — and not any member's copy of it: a member reads
+the mirror the workspace writes into its own database, and the workspace's node
+stays the truth (D2813). What a person may do in a member project is that
+member's own roster, written by `workspace user grant` and applied by that
+member's own `fugaro update` (D2801).
+
+Only a workspace admin changes the roster, and an admin is an entry of the
+workspace's own admin list that ALSO holds the live binding the mechanism gives
+it — `roles/owner` on the workspace's folder, or the workspace IAM account's
+token creator (D2823). The list alone is not authority: the accounts that can
+rewrite it cannot set a binding.
+
+Every write here refuses in a coding agent's session and asks nothing: a change
+that cannot be made is refused with the flag or the command that can make it.
+
+Usage: `fugaro workspace user`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for user |
+
+Subcommands:
+
+- `fugaro workspace user add` -- Admit a person or record a machine in the workspace
+- `fugaro workspace user grant` -- Give a person a role in a workspace member
+- `fugaro workspace user ls` -- List the workspace's members and the grants they hold
+- `fugaro workspace user revoke` -- Take a role away from a person in a workspace member
+- `fugaro workspace user rm` -- Take a person or machine off the workspace
+
+## `fugaro workspace user add`
+
+Admit a person or record a machine in the workspace
+
+Add one member to the workspace's roster.
+
+An address outside the workspace's allowed domains is admitted only with
+--external, which records the mark D2812 keeps; an address inside them is not
+marked, and --external on one is refused rather than stored. The allowed domains
+are the workspace's own list (`workspace domains`), and an empty list admits
+nobody without the mark. What the workspace records is how the person was
+admitted — nothing is granted to them here, and a member's own roster is where
+their roles are written.
+
+--kind sa records a MACHINE: a service account of CI, a coordinator or a central
+orchestrator, with the per-project roles the workspace expects it to hold
+(--role PROJECT=ROLE, repeatable). A machine is recorded in the workspace's node
+and nowhere else (D2806): its real IAM stays where it is, in the member's own
+Terraform or by hand, and drift and audit compare the record against it. A
+machine is never external and never a workspace admin.
+
+--admin makes the person a workspace ADMIN (D2818): their live binding — the
+folder's `roles/owner`, or the workspace IAM account's token creator — and
+their owner grant on the workspace's own project are given at once (R8), and a
+project-scope admin grant is written into every linked member's roster for that
+member's own `fugaro update` to apply. It refuses in a workspace whose roster
+no bound admin administers yet, and it asks for no confirmation: the change is
+the one flag.
+
+The change is written under the roster node's own revision, so two workspace
+admins editing at once cannot lose each other's work: a node that moved under
+this command is read again and the change is judged against what is really
+there.
+
+Usage: `fugaro workspace user add ADDRESS --workspace <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--admin` | bool | `false` | no | make the person a workspace admin: the live binding, the owner grant on the workspace's own project, and a stored admin grant on every linked member (D2818, R8) |
+| `--external` | bool | `false` | no | admit an address outside the workspace's allowed domains, marked external (D2812) |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--kind` | string | `human` | no | what the member is: human (the default) or sa for a machine |
+| `--role` | stringArray | `[]` | no | a machine's expected role, PROJECT=ROLE (repeatable; --kind sa only; the roles are viewer, operator and admin) |
+| `--workspace` | string | "" | no | the workspace whose roster this is (required: a member belongs to one workspace) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace user grant`
+
+Give a person a role in a workspace member
+
+Give one person a role in one member project of a workspace, in
+that member's own record of who may do what.
+
+The record is the member's grants node at config/admin/access -- the same node
+fugaro user grant writes -- and it is written in the same format, so the
+member's own fugaro update derives the same IAM lists from it. What differs is
+this command's gate and its trail:
+
+  - a grant's address must be in the member's own copy of the workspace's
+    member list (config/admin/workspace-members), which the workspace mirrors
+    into every member it manages. An address the list does not carry was never
+    admitted to the workspace, and a grant is not an admitting. A revoke needs
+    the member to be linked and reads the list no further: taking access away is
+    never blocked by a list the member's own admins can rewrite;
+  - the change is filed in the member's own audit trail at
+    config/admin/workspace-audit, because a project admin holds no write on the
+    workspace's own project (D2811).
+
+The judgement is the installation command's: a grant is a subset of the
+grantor's own scope at that role or higher, a revoke or a demotion needs admin
+over the pair, and the member's last project admin stays.
+
+Writing the member's grants node needs roles/firebasedatabase.admin on the
+member, held by that project's owners and editors and by its
+terraform.budget_admins. No grant on the workspace's own project is needed or
+read.
+
+The member's own fugaro update is what applies the change to its IAM: this
+command writes the record and binds nothing (D2801), and it never runs
+Terraform.
+
+An agent session is refused: granting here is a change to who may do what, and a
+person runs it at their own terminal.
+
+Usage: `fugaro workspace user grant ADDRESS PROJECT ROLE`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for grant |
+| `--scope` | string | "" | no | what the role covers: project (the default), all-repos, or a comma-separated list of repository patterns |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace user ls`
+
+List the workspace's members and the grants they hold
+
+List the workspace's members, and what each of them holds.
+
+Every member of the roster node is a row: their address, whether they are a
+person or a machine, whether they were admitted from outside the allowed domains
+and whether they are a workspace admin. Adjacent to each row is what the
+workspace knows about their access — a person's stored grants, read from each
+linked member's own roster, and a machine's expected per-project roles, which
+are the workspace's record and not a grant (D2806).
+
+It reads and writes nothing of anybody's: no grant is made, no node is written,
+and no member is changed. A coding agent's session may run it.
+
+The document --json prints is schemas/workspace-users.schema.json, and its
+version is the one that schema states.
+
+Usage: `fugaro workspace user ls --workspace <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--workspace` | string | "" | no | the workspace whose members these are (required: a member belongs to one workspace) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace user revoke`
+
+Take a role away from a person in a workspace member
+
+Take one person a role in one member project of a workspace, in
+that member's own record of who may do what.
+
+The record is the member's grants node at config/admin/access -- the same node
+fugaro user grant writes -- and it is written in the same format, so the
+member's own fugaro update derives the same IAM lists from it. What differs is
+this command's gate and its trail:
+
+  - a grant's address must be in the member's own copy of the workspace's
+    member list (config/admin/workspace-members), which the workspace mirrors
+    into every member it manages. An address the list does not carry was never
+    admitted to the workspace, and a grant is not an admitting. A revoke needs
+    the member to be linked and reads the list no further: taking access away is
+    never blocked by a list the member's own admins can rewrite;
+  - the change is filed in the member's own audit trail at
+    config/admin/workspace-audit, because a project admin holds no write on the
+    workspace's own project (D2811).
+
+The judgement is the installation command's: a grant is a subset of the
+grantor's own scope at that role or higher, a revoke or a demotion needs admin
+over the pair, and the member's last project admin stays.
+
+Writing the member's grants node needs roles/firebasedatabase.admin on the
+member, held by that project's owners and editors and by its
+terraform.budget_admins. No grant on the workspace's own project is needed or
+read.
+
+The member's own fugaro update is what applies the change to its IAM: this
+command writes the record and binds nothing (D2801), and it never runs
+Terraform.
+
+An agent session is refused: revoking here is a change to who may do what, and a
+person runs it at their own terminal.
+
+Usage: `fugaro workspace user revoke ADDRESS PROJECT ROLE`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for revoke |
+| `--scope` | string | "" | no | what the role covers: project (the default), all-repos, or a comma-separated list of repository patterns |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workspace user rm`
+
+Take a person or machine off the workspace
+
+Remove one member from the workspace's roster.
+
+The person is swept out of every member the workspace holds: their stored grants
+are dropped from that member's own roster and their secrets are swept by that
+member's intake, which is that member's own `fugaro update` away from being
+applied (D2801). A machine holds nothing on a member, so removing one reaches no
+member at all (D2806).
+
+--admin removes a workspace ADMIN, and it is required for one: their live
+binding — the folder's `roles/owner`, or the workspace IAM account's token
+creator — goes at once, so their authority over every member ends with the
+command, and the stored admin grant in each linked member's roster is queued for
+removal the same way it was written (D2818 as corrected). The last workspace
+admin cannot be removed: a workspace nobody administers is one the roster itself
+refuses, so add another admin first.
+
+A member who is not a workspace admin is removed without --admin, and --admin on
+one is refused rather than ignored: the flag is a statement about a binding, and
+there is none to drop.
+
+Every change is judged against the roster node as it stands and written under
+the revision it was read at, so a removal that raced another admin's change is
+re-judged rather than written over it. A member whose own update has not applied
+the workspace's stored grant is refused by that member's own contract, and this
+command reports that refusal rather than half-removing the person.
+
+Usage: `fugaro workspace user rm ADDRESS --workspace <name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--admin` | bool | `false` | no | remove a workspace admin: the live binding goes at once, and every stored grant is queued for removal (D2818) |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--workspace` | string | "" | no | the workspace whose roster this is (required: a member belongs to one workspace) |
 
 Subcommands:
 

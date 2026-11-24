@@ -87,13 +87,12 @@ import type { ManageAction, ManageColumn, ManageKind, ManageRow } from '../types
 
 /**
  * BUDGET_CAPS_HIDDEN_WORD is what a withheld cap figure says. It is the
- * family's sentence -- the one `LIVE_CAPS_HIDDEN_WORD` and
- * `COORDINATOR_QUEUE_CAPS_HIDDEN_WORD` end with -- and it is a second copy
- * rather than an import for the reason those two are copies of each other: the
- * screens and the kinds are siblings and none owns the others. One console with
- * one reduced mode withholding the caps in two places under two sentences would
- * read as two modes, so `manage-budget.test.ts` holds this constant equal to the
- * Live screen's.
+ * family's sentence -- the one `LIVE_CAPS_HIDDEN_WORD` ends with -- and it is a
+ * second copy rather than an import for the reason that one is: the screens and
+ * the kinds are siblings and none owns the others. One console with one reduced
+ * mode withholding the caps in two places under two sentences would read as two
+ * modes, so `manage-budget.test.ts` holds this constant equal to the Live
+ * screen's.
  */
 export const BUDGET_CAPS_HIDDEN_WORD =
   'the caps are withheld for the installation this console is driving'

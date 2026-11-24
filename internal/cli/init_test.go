@@ -1560,7 +1560,7 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	vertex, apiKey := cfgFile("vertex"), cfgFile("api-key")
 	enforce := withBudget("budget: { mode: enforce, per_run_usd: 5 }\n")
 	err := checkVertexBudget(enforce, vertex)
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet: use budget.mode observe or off") {
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet: use budget.mode observe for this repository") {
 		t.Fatalf("vertex + enforce: exit %d, err %v", ExitCode(err), err)
 	}
 	// A committed enforce is the effective mode under an off ceiling, and

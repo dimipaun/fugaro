@@ -44,13 +44,22 @@ type confirmVectorFile struct {
 	CancelReadBack  string `json:"cancelReadBack"`
 	MergeReadBack   string `json:"mergeReadBack"`
 	ConfirmReadBack string `json:"confirmReadBack"`
+	StartReadBack   string `json:"startReadBack"`
 	ConfirmText     string `json:"confirmText"`
+	// The session policy D2786 reads (C2's `costly_modes` and
+	// `biometric_on_costly`), which the cases are written against.
+	CostlyModes       []string `json:"costlyModes"`
+	BiometricOnCostly bool     `json:"biometricOnCostly"`
 }
 
 type confirmVectorCase struct {
 	Name   string                `json:"name"`
 	Events []confirmVectorEvent  `json:"events"`
 	Expect []confirmVectorExpect `json:"expect"`
+	// A case may move the session policy, which is a case about a project whose
+	// policy differs; an absent one is the document's own.
+	CostlyModes       []string `json:"costlyModes"`
+	BiometricOnCostly *bool    `json:"biometricOnCostly"`
 }
 
 // confirmVectorEvent is one utterance. Every field the module's event sets name
@@ -64,6 +73,7 @@ type confirmVectorEvent struct {
 	Text           string          `json:"text"`
 	Verb           string          `json:"verb"`
 	Target         json.RawMessage `json:"target"`
+	Mode           *string         `json:"mode"`
 	ActionID       *string         `json:"actionId"`
 	ConfirmationID string          `json:"confirmationId"`
 }
@@ -74,6 +84,7 @@ type confirmVectorTarget struct {
 	Repo    string `json:"repo"`
 	PR      int64  `json:"pr"`
 	HeadSHA string `json:"headSha"`
+	Mode    string `json:"mode"`
 }
 
 // confirmVectorExpect is one step's expected answer. The pointers are what the
@@ -89,6 +100,22 @@ type confirmVectorExpect struct {
 	ActionID       *string        `json:"actionId"`
 	ConfirmationID *string        `json:"confirmationId"`
 	Record         map[string]any `json:"record"`
+	// D2786's policy answer, where a case names it: a costly start asks for the
+	// read-back, and with the switch the biometric beside it.
+	Biometric *bool `json:"biometric"`
+	// What the machine holds after an accept, where a case names it: the answer
+	// says what was spoken, and this says what the step produced. An omitted key
+	// is "not asserted", as every other one is.
+	State *confirmVectorState `json:"state"`
+}
+
+// confirmVectorState is the machine a case says the step left behind: how many
+// read-backs are pending and how many ids the ledger has spent. It is counted
+// rather than compared entry for entry, so a case stays about the shape of the
+// state rather than about every field the port carries.
+type confirmVectorState struct {
+	Pending int `json:"pending"`
+	Ledger  int `json:"ledger"`
 }
 
 // TestConfirmParityWithShared replays every vector in `shared/confirm/vectors.json`
@@ -127,9 +154,21 @@ func confirmParityWithShared(t *testing.T) {
 	for _, c := range file.Cases {
 		c := c
 		t.Run(c.Name, func(t *testing.T) {
+			// The document's own session policy, and a case's override of it:
+			// D2786's answer is a function of these two, so a case that moves
+			// them is a case about a project whose policy differs.
+			costlyModes := file.CostlyModes
+			if c.CostlyModes != nil {
+				costlyModes = c.CostlyModes
+			}
+			biometricOnCostly := file.BiometricOnCostly
+			if c.BiometricOnCostly != nil {
+				biometricOnCostly = *c.BiometricOnCostly
+			}
 			state, refusal := mailbox.ConfirmInitialState(mailbox.ConfirmOptions{
 				Now: file.Now, TimeoutMs: file.TimeoutMs,
 				MaxPending: file.MaxPend, MaxLedger: file.MaxLedger,
+				CostlyModes: costlyModes, BiometricOnCostly: biometricOnCostly,
 			})
 			if refusal != nil {
 				t.Fatalf("the vector document's own knobs are refused: %s", refusal)
@@ -161,6 +200,9 @@ func confirmParityWithShared(t *testing.T) {
 				if string(answer.Phase) != want.Phase {
 					where("phase = %q, want %q", answer.Phase, want.Phase)
 				}
+				if want.Biometric != nil && answer.Biometric != *want.Biometric {
+					where("biometric = %v, want %v", answer.Biometric, *want.Biometric)
+				}
 				if want.ReadBack != nil && answer.ReadBack != *want.ReadBack {
 					where("readBack = %q, want %q", answer.ReadBack, *want.ReadBack)
 				}
@@ -175,6 +217,14 @@ func confirmParityWithShared(t *testing.T) {
 						where("no record, want %v", want.Record)
 					} else if got := canonicalJSON(t, answer.Record.Value()); !reflect.DeepEqual(got, canonicalJSON(t, want.Record)) {
 						where("record = %v, want %v", got, want.Record)
+					}
+				}
+				if want.State != nil {
+					if n := len(answer.State.Pending); n != want.State.Pending {
+						where("state holds %d pending read-backs, want %d", n, want.State.Pending)
+					}
+					if n := len(answer.State.Spent); n != want.State.Ledger {
+						where("state holds %d ledger entries, want %d", n, want.State.Ledger)
 					}
 				}
 				// An omitted key is "not asserted": a case that confirms without
@@ -202,11 +252,15 @@ func confirmVectorToEvent(t *testing.T, raw confirmVectorEvent) mailbox.ConfirmE
 		Text:        raw.Text,
 		Verb:        raw.Verb,
 		HasTarget:   raw.Target != nil,
+		HasMode:     raw.Mode != nil,
 		HasActionID: raw.ActionID != nil,
 		// A confirmation id is only ever read by the confirm handler, and the
 		// module reads it as a required field there, so an absent one is the
 		// empty string this port refuses as missing.
 		ConfirmationID: raw.ConfirmationID,
+	}
+	if raw.Mode != nil {
+		ev.Mode = *raw.Mode
 	}
 	if raw.ActionID != nil {
 		ev.ActionID = *raw.ActionID
@@ -220,7 +274,7 @@ func confirmVectorToEvent(t *testing.T, raw confirmVectorEvent) mailbox.ConfirmE
 		}
 		ev.Target = &mailbox.ConfirmTarget{
 			Kind: target.Kind, RunID: target.RunID, Repo: target.Repo,
-			PR: target.PR, HeadSHA: target.HeadSHA,
+			PR: target.PR, HeadSHA: target.HeadSHA, Mode: target.Mode,
 		}
 	}
 	return ev

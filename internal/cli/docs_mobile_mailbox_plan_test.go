@@ -196,17 +196,13 @@ func isPlanPath(p string) bool {
 // and the presence verdict `internal/mailbox/expiry.go` holds) was still to
 // come. T7's own half has landed since — the file and its tests are in the tree
 // — so it left the map the way every landed task's entry does, and P6.13 is no
-// longer half-built. The remaining entries are the tasks still unbuilt — T8's
-// corpus — and each of them must stay absent until its own task lands.
-var planWillCreate = map[string]string{
-	"internal/mailbox/parity_test.go":         "T8 (replays shared/mailbox/parity.test.js's corpus)",
-	"internal/mailbox/testdata/parity.json":   "T8 generates it; the Go side only reads it",
-	"docs/mobile/mailbox-review-checklist.md": "T8",
-	// The parity corpora the shared modules' own test files will write; the
-	// merged modules' index.test.js files exist today, these do not (§13's
-	// "no merged module changes" — test files only).
-	"shared/mailbox/parity.test.js": "T8",
-}
+// longer half-built. T8's four left it last: the replay, the corpus it reads and
+// this plan's review checklist are in the tree, and the module's own test file
+// that writes the corpus is beside `shared/mailbox/index.js`. **Every entry has
+// left the map, and that is the state the rule is written for** — it stays as
+// the place a later plan's unbuilt paths would be named, with the same two
+// assertions over whatever is in it: absent, and still cited.
+var planWillCreate = map[string]string{}
 
 // planWillCreateElsewhere is the other half of that rule: paths the plan names
 // that belong to another, later task. It is empty on this branch, and that is
@@ -249,7 +245,8 @@ var planPathMoved = map[string]struct {
 // TestMailboxPlanEveryCitedPathExists is the path half of the citations pin,
 // derived from the plan rather than kept by hand. Every backticked `internal/`,
 // `shared/`, `mobile/`, `docs/`, `website/`, `deploy/` or `scripts/` path the
-// plan names must be in the tree — or be one of the handful T1–T8 create, each
+// plan names must be in the tree — or be one of the paths a task names and has
+// not created yet (planWillCreate, empty now that T1–T8 have all landed), each
 // of which must still be absent and still be named by the plan, or one of the
 // two ee-reorg E1.7a moved, whose successor must be present in its place.
 //

@@ -33,15 +33,18 @@ apply.go	Run fugaro update
 config_publish.go	run fugaro config publish
 config_publish.go	run fugaro image refresh
 config_publish.go	run fugaro update
+config_show.go	with fugaro config publish
 credentials_serve.go	fugaro update is what publishes it
 creds.go	Run fugaro update
 creds_bitbucket.go	run fugaro update
 doctor.go	fugaro project policy publish writes this
 doctor.go	fugaro update publishes your
+doctor.go	next fugaro update
 doctor.go	re-run fugaro update
 doctor.go	run fugaro update
 doctor.go	then fugaro project policy publish
 doctor.go	then fugaro update
+doctor.go	with fugaro image refresh
 doctor_batch.go	fugaro update writes it
 doctor_batch.go	run accounts (fugaro update
 doctor_batch.go	run fugaro update
@@ -51,6 +54,7 @@ doctor_catalog.go	then run fugaro image build
 doctor_layer.go	now: fugaro image build
 doctor_layer.go	run fugaro config publish
 doctor_layer.go	run fugaro update
+doctor_orchestrator_identity.go	run fugaro update
 doctor_render.go	run brew upgrade fugaro, then fugaro update
 doctor_render.go	run fugaro config publish
 doctor_render.go	run fugaro update
@@ -73,12 +77,15 @@ image_map.go	now on: the mapping is in this machines project config, and fugaro 
 image_promote.go	run for it, and fugaro update
 image_refresh.go	next: run fugaro update
 image_refresh.go	then, if this checkouts fugaro.yaml lacks gcp_project: the fugaro update
+image_refresh.go	with fugaro update
 image_refresh_rules.go	rerun %s. To keep your own base image, rebuild from it with fugaro image build
+image_refresh_rules.go	with fugaro image build
 image_refresh_steps.go	next fugaro update
 image_refresh_steps.go	run fugaro update
 image_survey.go	fugaro update publishes it
 imagecheck.go	run fugaro config publish
 imagecheck.go	run fugaro update
+imagecheck.go	with fugaro image build
 init.go	rerun fugaro update
 init.go	run fugaro image build
 init.go	run fugaro setup --provision-batch for the installation, then fugaro update
@@ -103,13 +110,17 @@ init_policy_publish.go	then publish it with fugaro project policy publish
 init_project.go	run fugaro update
 init_retire.go	then rerun fugaro update
 init_review.go	run by fugaro update
-init_stages.go	next fugaro update
 init_stages.go	run fugaro update
 issue_mine.go	run fugaro update
 launch_budget.go	run fugaro update
 launch_budget.go	then run fugaro update
 launch_budget.go	then the job image from it with fugaro image build
+launch_budget.go	with fugaro image build
+launch_budget.go	with fugaro image refresh
+launch_budget.go	with fugaro update
 managed_flag.go	fugaro update that applies it
+operator_write.go	with fugaro update
+orchestrator_identity.go	run fugaro update
 pair_invite.go	fugaro update, which writes it
 pair_invite.go	run fugaro update
 pair_invite.go	run.app): run fugaro update
@@ -124,8 +135,11 @@ project_cmd.go	now is one the runs it bounds cannot read; run fugaro update
 project_cmd.go	re-run fugaro update
 project_cmd.go	run fugaro update
 project_cmd.go	then run fugaro update
+project_enroll_converge.go	next fugaro update
 project_job.go	run fugaro update
+project_job.go	with fugaro update
 project_profile.go	fugaro update, which publishes it
+project_profile.go	with fugaro update
 project_repos_rm.go	Run jobs are — fugaro update
 project_repos_set.go	run would ever read this selection: fugaro update
 project_repos_set.go	then holds and fugaro project policy publish
@@ -142,10 +156,13 @@ recipes_skew.go	run opens no Fixes line for its issue; fugaro update
 recipes_skew.go	run. Run fugaro update
 recipes_skew.go	runs commits stay the runs own identity. Run fugaro update
 restore.go	run pins this releases base images again (fugaro update
+restore.go	with fugaro config publish
+restore.go	with fugaro update
 retired.go	now fugaro setup (first run) and fugaro update
 retired.go	run, fugaro update
 review.go	then fugaro update
 review.go	then run fugaro update
+review.go	with fugaro project policy publish
 reviewverify.go	run fugaro update
 rigor.go	next: fugaro update
 rigor_floor.go	next: fugaro update
@@ -165,6 +182,7 @@ setup.go	runs flag: fugaro update
 sharedcfg.go	next fugaro update
 sharedcfg.go	rerun fugaro update
 sharedcfg.go	run fugaro update
+sharedcfg.go	with fugaro update
 skillwarn.go	run fugaro update
 tell.go	Run fugaro update
 update.go	next fugaro update

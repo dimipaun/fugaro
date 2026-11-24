@@ -135,6 +135,15 @@ func (s rtdbIssuanceStore) Get(ctx context.Context, slug, run string) (identityw
 //     thing that says which job may claim, and a store that wrote a claim from
 //     any other account would have handed a run's identity to whoever asked
 //     first.
+//
+// Both account comparisons fold as every address in this service does
+// (sameAccount, the ASCII lower case the contract holds a claim's match to), and
+// that is not a loosening: the ticket route admits the account the ask names
+// folded and writes the ask's OWN spelling on the record, while the claim's
+// account is the CONFIGURED spelling the verifier answers (R10, C1.10), so a
+// byte-for-byte comparison here would refuse a run whose ticket names a
+// differently-cased account that the route's own check admitted — the two
+// spellings are one account, and this floor has to see them as one.
 func (s rtdbIssuanceStore) Claim(ctx context.Context, slug, run string, claim identitywire.Claim) (identitywire.Record, error) {
 	path, err := issuancePath(slug, run)
 	if err != nil {
@@ -145,11 +154,11 @@ func (s rtdbIssuanceStore) Claim(ctx context.Context, slug, run string, claim id
 		case !found:
 			return cur, false, identitywire.ErrNoRecord
 		case cur.Claimed.Account != "":
-			if cur.Claimed.Account == claim.Account && cur.Claimed.NonceHash == claim.NonceHash {
+			if sameAccount(cur.Claimed.Account, claim.Account) && cur.Claimed.NonceHash == claim.NonceHash {
 				return cur, false, nil
 			}
 			return cur, false, identitywire.ErrClaimed
-		case claim.Account != cur.ExpectedAccount:
+		case !sameAccount(claim.Account, cur.ExpectedAccount):
 			return cur, false, identitywire.ErrAnotherCaller
 		}
 		cur.Claimed = claim

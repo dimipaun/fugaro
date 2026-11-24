@@ -543,18 +543,32 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// roster to read and no intake to call. The write and the sweep are driven
 	// by offboard_test.go's own installation rather than by this world, which
 	// holds no roster.
-	"fugaro user offboard":        {args: []string{"someone@example.com"}},
-	"fugaro user rm":              {args: []string{"someone@example.com"}},
-	"fugaro verify":               {args: []string{"build"}},
-	"fugaro workspace add":        {args: []string{"ws"}},
-	"fugaro workspace cap set":    {args: []string{"--workspace", "ws", "--monthly", "50"}},
-	"fugaro workspace login":      {args: []string{"ws"}},
-	"fugaro workspace member add": {args: []string{"ws", "acme/app"}},
-	"fugaro workspace member rm":  {args: []string{"ws", "acme/app"}},
-	"fugaro workspace rm":         {args: []string{"ws"}},
-	"fugaro workspace share":      {args: []string{"anthropic-api-key", "--workspace", "ws", "--projects", "acme"}},
-	"fugaro workspace show":       {args: []string{"ws"}},
-	"fugaro workspace unshare":    {args: []string{"anthropic-api-key", "--workspace", "ws"}},
+	"fugaro user offboard":     {args: []string{"someone@example.com"}},
+	"fugaro user rm":           {args: []string{"someone@example.com"}},
+	"fugaro verify":            {args: []string{"build"}},
+	"fugaro workspace add":     {args: []string{"ws"}},
+	"fugaro workspace cap set": {args: []string{"--workspace", "ws", "--monthly", "50"}},
+	"fugaro workspace login":   {args: []string{"ws"}},
+	"fugaro workspace rm":      {args: []string{"ws"}},
+	"fugaro workspace share":   {args: []string{"anthropic-api-key", "--workspace", "ws", "--projects", "acme"}},
+	"fugaro workspace show":    {args: []string{"ws"}},
+	"fugaro workspace unshare": {args: []string{"anthropic-api-key", "--workspace", "ws"}},
+	// The workspace family's own writes (I1, D2802): each takes the workspace's
+	// name or a member project's on the command line, so a bare run would stop
+	// at the argument check and prove nothing. This world declares no workspace
+	// of its own and holds no roster, so every run below reaches the body and
+	// the refusal it makes there, which is the whole of what a closed stdin has
+	// to be walked through -- none of them asks a person anything.
+	"fugaro workspace init":              {args: []string{"ws"}},
+	"fugaro workspace domains add":       {args: []string{"example.com", "--workspace", "ws"}},
+	"fugaro workspace domains rm":        {args: []string{"example.com", "--workspace", "ws"}},
+	"fugaro workspace project add":       {args: []string{"acme", "--workspace", "ws"}},
+	"fugaro workspace project reconcile": {args: []string{"acme"}},
+	"fugaro workspace project rm":        {args: []string{"acme"}},
+	"fugaro workspace user add":          {args: []string{"someone@example.com", "--workspace", "ws"}},
+	"fugaro workspace user grant":        {args: []string{"someone@example.com", "acme", "viewer"}},
+	"fugaro workspace user revoke":       {args: []string{"someone@example.com", "acme", "viewer"}},
+	"fugaro workspace user rm":           {args: []string{"someone@example.com", "--workspace", "ws"}},
 }
 
 // closedStdinNoFixture is the other half of the classification, and the reason
@@ -680,6 +694,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro rigor floor show":       "reads the selected project's own config and prints the floor it carries, which is the whole of what a bare run does",
 	"fugaro runs digest":            "prints the no-project-config refusal",
 	"fugaro runs ls":                "prints the no-project-config refusal",
+	"fugaro runs reindex":           "prints the no-project-config refusal",
 	"fugaro runs reports":           "refuses from inside its body: it writes the project's stored reports only as the project's reports job, and a bare run says so and names fugaro runs digest",
 	"fugaro runs stats":             "prints the no-project-config refusal",
 	"fugaro runs summary":           "prints the no-project-config refusal",
@@ -709,6 +724,17 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro version":       "prints the version",
 	"fugaro voice serve":   "refuses without FUGARO_FIREBASE_PROJECT in its own environment",
 	"fugaro workspace ls":  "prints that no config on this machine names a workspace",
+	// The workspace family's own reads and its two member-side writes (I1): a
+	// bare run is the whole of what each of them does with no argument -- a
+	// reading of the selected config, or the refusal for a machine whose config
+	// is not a workspace's own and names no member to link or unlink.
+	"fugaro workspace project link":   "refuses from inside its body: this world's config names no workspace, and linking a member is its owner's own act on the config that names one",
+	"fugaro workspace project unlink": "refuses from inside its body for the reason a link does: this world's config names no workspace to unlink",
+	"fugaro workspace project save":   "refuses from inside its body: the selected project declares no member table, no cap and no shared credential, so it is not a workspace's own",
+	"fugaro workspace project ls":     "reads the member table of the selected config, which this world's declares none of, and prints that refusal",
+	"fugaro workspace project status": "prints the same refusal a bare ls does: the selected config declares no member table",
+	"fugaro workspace user ls":        "refuses from inside its body: --workspace is required, and a member belongs to one workspace",
+	"fugaro workspace domains ls":     "refuses from inside its body: --workspace is required, and the domain list belongs to one workspace",
 }
 
 // closedStdinPrompts is the allow-list: the leaves that still print a question

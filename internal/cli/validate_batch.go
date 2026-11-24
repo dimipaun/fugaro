@@ -112,14 +112,16 @@ func batchValidateProblems(lc *localcfg.Config, cfg *config.Config, rcp *recipe.
 	// selects the backend and mints is refused here rather than at
 	// jobs.create's doorstep, after a token was minted and dropped.
 	//
-	// Offline this is the config's own arm -- a budget backend that is not off,
-	// with a database for this CLI to read a policy from. The other arm of
-	// budgetMintOn's answer, a published policy with the mode off, needs a read
-	// this file does not make, and `fugaro doctor` is where it is answered
-	// (doctorBatchBudgetSeal asks budgetMintOn itself, so the two readers of
-	// the pair cannot disagree about the shapes a config can hold).
+	// Offline this is the config's own arm, and since AB4 that arm is the whole
+	// answer: a launch mints for every configuration that names a budget
+	// database, whatever its mode and whether or not a policy is published
+	// (budgetBackendOn), so a config with a database and this backend is a
+	// config whose every launch is refused, and nothing this file does not read
+	// could change that. `fugaro doctor` asks the same function
+	// (doctorBatchBudgetSeal), so the two readers of the pair cannot disagree
+	// about the shapes a config can hold.
 	if on, _ := budgetBackendOn(lc); on {
-		ps = append(ps, config.Problem{Path: "backend", Message: "this installation selects backend: cloud-batch and its budget backend is on (budget.mode with budget.rtdb_url), so every launch of it mints a budget token -- and a Batch job has no carrier for the token's seal key, so every launch is refused before the job is created (docs/budget-token-channel/spec.md; docs/compute-backend/spec.md §1.6). Minting is the installation's, not a run's: there is no per-run fallback, and the installation has to stay on backend: cloud-run"})
+		ps = append(ps, config.Problem{Path: "backend", Message: "this installation selects backend: cloud-batch and names a budget database (budget.rtdb_url), so every launch of it mints a budget token -- and a Batch job has no carrier for the token's seal key, so every launch is refused before the job is created (docs/budget-token-channel/spec.md; docs/compute-backend/spec.md §1.6). Minting is the installation's, not a run's: there is no per-run fallback, and the installation has to stay on backend: cloud-run"})
 	}
 
 	// The artifact boundary (Global Constraint 13, design artifact-runs.md

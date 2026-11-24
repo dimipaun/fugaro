@@ -588,8 +588,9 @@ plan; this table says what happens to each task, and the levels below include th
   to `main`, a tag, a delete, another pull request's update, a merge and `/workspaces` are refused
   and audited; a review-only run's push is refused; after the run ends its identity is refused.
 - **Check 192** (`--after-flip`): the job no longer mounts `bitbucket-token` and its account has
-  no accessor on it; a run still succeeds; `fugaro doctor` reports `bitbucket-direct` clean for the repository; a non-proxied Bitbucket
-  repository of the same installation still mounts its token and runs.
+  no accessor on it; a run still succeeds; `fugaro doctor` reports `bitbucket-direct` clean for the repository. (The `plain-repo` row that
+  read a non-proxied repository's mount and run was removed on 2026-11-22: shared jobs give a repository
+  no job of its own and mount no Bitbucket token, D2312/D2302.)
 - **Tests:** `check191_test.sh` (the project guard, `--dry-run`, and that `--after-flip` asserts
   the mount and the accessor are gone).
 - **Command:** `bash scripts/live-checks/check191_test.sh && go test ./internal/cli/ -run Docs -count=1`

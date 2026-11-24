@@ -429,6 +429,7 @@ jobs:
     permissions:
       contents: read # the checkout
       checks: read # scripts/release-gate.sh reads the commit's check-runs
+      actions: read # the gate lists the tag's workflow runs and reads their titles
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1016,6 +1017,7 @@ jobs:
     permissions:
       contents: read # the checkout
       checks: read # scripts/release-gate.sh reads the commit's check-runs
+      actions: read # the gate lists the tag's workflow runs and reads their titles
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

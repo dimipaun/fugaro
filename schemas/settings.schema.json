@@ -1465,6 +1465,24 @@
         "model_prices.*.web_search_per_1k": {
           "default": "unset = the built-in price"
         },
+        "model_routing.*.chain.*.admit": {
+          "default": "unset = nobody: an absent list and an empty one both admit no repository, and a pool's admission is its members' own allow_data_to"
+        },
+        "model_routing.*.chain.*.kind": {
+          "default": "unset = required: a source names which credential serves the model, one of launcher-pool, pool, anthropic, provider, vertex"
+        },
+        "model_routing.*.chain.*.model": {
+          "default": "unset = the model the call asked for: a source names a model only for a written downgrade"
+        },
+        "model_routing.*.chain.*.pool": {
+          "default": "unset = none: only a source of kind pool names a pool"
+        },
+        "model_routing.*.chain.*.provider": {
+          "default": "unset = none: only a source of kind provider names a provider key"
+        },
+        "model_routing.*.match": {
+          "default": "unset = required: an entry that matches nothing answers no model"
+        },
         "name": {
           "default": "unset = the file is refused (name: is required)"
         },
@@ -1890,6 +1908,9 @@
         },
         "workspace_pin.service_address": {
           "default": "unset = this project takes no workspace credential"
+        },
+        "workspace_shared.*.all_members": {
+          "default": "unset = false: the credential is offered to the members `projects` names, and only the written true offers it to every member of the workspace"
         },
         "workspace_shared.*.covers": {
           "default": "unset = the credential covers no repository"

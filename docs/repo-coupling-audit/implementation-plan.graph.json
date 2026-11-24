@@ -1,0 +1,146 @@
+{
+  "schema_version": 3,
+  "plan": "docs/repo-coupling-audit/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "K1",
+      "title": "Check 890, as a script: the data layout of a real project",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-890-data-layout.sh",
+          "scripts/live-checks/check-890-data-layout_test.sh"
+        ]
+      }
+    },
+    {
+      "id": "K2",
+      "title": "Check 891, as a script: where update and a launch read repo context",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-891-update-trace.sh",
+          "scripts/live-checks/check-891-update-trace_test.sh"
+        ]
+      }
+    },
+    {
+      "id": "K3",
+      "title": "Check 892, as a script: the IAM a member and an admin hold",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-892-iam.sh",
+          "scripts/live-checks/check-892-iam_test.sh"
+        ]
+      }
+    },
+    {
+      "id": "K4",
+      "title": "Checks 890 to 892 registered in the suite and the checklist",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live_checks_test.go",
+          "docs/gcp-live-checklist.md",
+          "scripts/live-checks/README.md"
+        ]
+      }
+    },
+    {
+      "id": "V1",
+      "title": "U1 and U2 settled from the code",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/repo-coupling-audit/reconciliation.md",
+          "docs/repo-coupling-audit/report.md",
+          "docs/repo-coupling-audit/README.md"
+        ]
+      }
+    },
+    {
+      "id": "D1",
+      "title": "The docs name fugaro update, not the missing fugaro upgrade",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "README.md",
+          "docs/release.md",
+          "website/data/install.yaml",
+          "internal/cli/docs_upgrade_test.go"
+        ]
+      }
+    },
+    {
+      "id": "R1",
+      "title": "The report's live columns from Checks 890 to 892",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/repo-coupling-audit/report.md",
+          "docs/repo-coupling-audit/reconciliation.md",
+          "docs/repo-coupling-audit/README.md"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "K4",
+      "needs": "K1",
+      "reason": "kept, data: TestLiveCheckScripts runs every listed script, so a row for a file that does not exist yet fails the suite"
+    },
+    {
+      "task": "K4",
+      "needs": "K2",
+      "reason": "kept, data: TestLiveCheckScripts runs every listed script, so a row for a file that does not exist yet fails the suite"
+    },
+    {
+      "task": "K4",
+      "needs": "K3",
+      "reason": "kept, data: TestLiveCheckScripts runs every listed script, so a row for a file that does not exist yet fails the suite"
+    },
+    {
+      "task": "R1",
+      "needs": "K4",
+      "reason": "kept, behaviour: R1 writes the output of the owner's Checks 890 to 892, which run only once the registered scripts are on main"
+    },
+    {
+      "task": "R1",
+      "needs": "V1",
+      "reason": "kept: three shared files (report.md, reconciliation.md, README.md), and R1 fills the columns V1 answers change"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}

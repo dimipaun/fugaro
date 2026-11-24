@@ -41,7 +41,10 @@
 // only replay a fixture this build vouches for), `plan-status.json` (the
 // document `plan status --json` prints, the Graph view's own read, GV2.3b) and
 // `coordinator-status.json` (the document `coordinator status
-// --from-store --all --json` prints, the project view's own read, T1.2).
+// --from-store --all --json` prints, T1.2 -- a read no screen makes any more
+// since D3210 retired the tab that made it, kept because the console's spawn row
+// and the fixture are still there and the three are deleted together or not at
+// all).
 //
 //   - offers `resolveConsoleBinary(env)`, which runs the console's own
 //     `resolveBinary` with **exactly the arguments `src/main/index.ts` uses**, so
