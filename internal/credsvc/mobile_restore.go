@@ -692,6 +692,9 @@ func readMobileRestoreRequest(r *http.Request) (mobilesession.RestoreRequest, er
 	if req.Challenge == "" {
 		return mobilesession.RestoreRequest{}, fmt.Errorf("%w: the call carries no challenge, and an assertion bound to no challenge is one this service cannot tell from a replay", errMobileRestoreBadRequest)
 	}
+	if err := validMobileChallenge(req.Challenge); err != nil {
+		return mobilesession.RestoreRequest{}, err
+	}
 	if err := validMobileDeviceKey(req.DevicePublicKey); err != nil {
 		return mobilesession.RestoreRequest{}, err
 	}
@@ -743,6 +746,24 @@ func validMobileDeviceKey(key string) error {
 	raw, err := base64.RawURLEncoding.Strict().DecodeString(key)
 	if err != nil || len(raw) != mobilesession.DevicePublicKeySize {
 		return fmt.Errorf("%w: the device's public key is not %d bytes of unpadded base64url, which is the one spelling this contract has for a key", errMobileRestoreBadRequest, mobilesession.DevicePublicKeySize)
+	}
+	return nil
+}
+
+// validMobileChallenge holds the challenge a restore spends to the shape the
+// challenge route issues: mobileChallengeBytes of randomness, unpadded
+// base64url, decoded strictly. It is the same rule the device key above gets
+// and for a sharper reason: the value is used VERBATIM as a key of the shared
+// compare-and-set store, before any policy has been asked, so text this route
+// did not draw is text it would write into a store every instance reads —
+// a path-shaped string, a database-key-illegal character or a value long
+// enough to be worth writing. A challenge that is not this shape cannot be one
+// this service issued, so the call is refused as the shape refusal and the
+// store is never reached.
+func validMobileChallenge(challenge string) error {
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(challenge)
+	if err != nil || len(raw) != mobileChallengeBytes {
+		return fmt.Errorf("%w: the challenge is not the %d bytes of unpadded base64url this service issues, which is the one spelling a challenge has", errMobileRestoreBadRequest, mobileChallengeBytes)
 	}
 	return nil
 }
