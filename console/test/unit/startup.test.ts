@@ -971,6 +971,15 @@ describe('the entry point is wired to the handshake', () => {
     // that answered `ok` without asking would hold a request no window reads: a
     // refused console has no dashboard, and a handshake in flight has none yet.
     expect(indexSource).toContain('addProjectRefusal(current)')
+    // And the request it raises is spent by the read that delivers it. The
+    // mechanism is `createAddProjectRequest`'s (tested in
+    // `installations-ipc.test.ts`); what only this file can hold is that the
+    // entry point wires it where the boot reads -- the door records, the boot's
+    // `installation.current` read takes -- so a later boot opens nothing.
+    expect(bodyOf('function installationState('), 'the boot’s read does not spend the request').toContain(
+      'addProject.take()',
+    )
+    expect(indexSource, 'the door records no request').toContain('addProject.please()')
   })
 
   it('stops the child the console started before the process quits', () => {

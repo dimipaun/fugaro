@@ -228,6 +228,58 @@ export function addProjectRefusal(compatibility: CliCompatibility | null): strin
   return undefined
 }
 
+/**
+ * AddProjectRequest is the picker's Add project door as main holds it (SW3c,
+ * R4): the console's state for one request, between the click and the read that
+ * delivers it. Three rules make it one object with a test of its own rather than
+ * a boolean in the entry point, which cannot be imported by a test:
+ *
+ *   - **it is one-shot.** The dashboard reads `installation.current` once, at
+ *     boot, and that read is the door's whole delivery, so the read *spends* the
+ *     request. One that outlived it would open the wizard on every later boot --
+ *     a reload, a second window -- which no test of the row itself would notice;
+ *
+ *   - **a request already waiting is not recorded twice.** A second click while
+ *     the window is coming would remake the window the first one opened and race
+ *     the two boots;
+ *
+ *   - **and it can be dropped.** A choice of another installation is a different
+ *     console, so a request that console could never carry out -- a refused one
+ *     has no dashboard -- goes with it.
+ *
+ * Nothing is being remembered here: the operator asked for a screen, not for an
+ * installation, which is why this is not a field of the store.
+ */
+export interface AddProjectRequest {
+  /** please records a request, and answers whether it was recorded: `false` is
+   * a request already waiting for the window it asked for. */
+  please(): boolean
+  /** take reads the request and spends it: `true` exactly once per `please()`. */
+  take(): boolean
+  /** clear drops a request that will never be carried out. */
+  clear(): void
+}
+
+/** createAddProjectRequest returns the one-shot flag above, empty. */
+export function createAddProjectRequest(): AddProjectRequest {
+  let waiting = false
+  return {
+    please: () => {
+      if (waiting) return false
+      waiting = true
+      return true
+    },
+    take: () => {
+      const asked = waiting
+      waiting = false
+      return asked
+    },
+    clear: () => {
+      waiting = false
+    },
+  }
+}
+
 /** UpdateMenuOptions is the off switch as the menu sees it: the value the
  * checkbox draws, and the two things the items do with it. Plain values and
  * callbacks rather than the store itself, so that the template stays a plain

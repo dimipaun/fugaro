@@ -65,6 +65,7 @@ import {
   UPDATE_AUTO_LABEL,
   UPDATE_NOW_LABEL,
   addProjectRefusal,
+  createAddProjectRequest,
   pickerOptions,
   pickerPreloadPath,
 } from '../../src/main/picker'
@@ -576,13 +577,41 @@ describe('the picker’s Add project row', () => {
     // `addProjectRefusal` is the entry point's decision, and it lives here
     // because `src/main/index.ts` cannot be imported: what it is handed is the
     // handshake's answer as the console holds it. Neither of the two refusals
-    // may set the flag -- the flag is main's (`addProjectPlease`), and the one
+    // may set the flag -- the flag is main's (`addProject`), and the one
     // window that would spend it is the dashboard a refused console never gets.
     expect(addProjectRefusal(null)).toBe(ADD_PROJECT_NOT_READY)
     expect(addProjectRefusal(classifyCliVersion('not a version'))).toBe(ADD_PROJECT_REFUSED)
     // The non-vacuity half: the door is *not* refused on a console that may
     // drive its fugaro, which is the case the whole row exists for.
     expect(addProjectRefusal(classifyCliVersion(CLOCKED))).toBeUndefined()
+  })
+
+  it('delivers a request to exactly one dashboard boot', () => {
+    // The delivery mechanism the whole operation rests on (SW3c review): the
+    // dashboard reads `installation.current` once, at boot, and that read is the
+    // door's entire delivery, so it must be the read that **spends** the
+    // request. A request that outlived it would open the wizard on every later
+    // boot -- a reload, a second window -- and no test of the row itself, or of
+    // the sentence it refuses with, would notice.
+    const request = createAddProjectRequest()
+    // A read before anything asked is not a request.
+    expect(request.take()).toBe(false)
+    expect(request.please()).toBe(true)
+    expect(request.take()).toBe(true)
+    // The whole rule, in one line: the boot after the one that delivered it
+    // opens nothing.
+    expect(request.take()).toBe(false)
+    // A second click while the window is coming is not a second request: it
+    // would remake the window the first one opened and race the two boots.
+    expect(request.please()).toBe(true)
+    expect(request.please()).toBe(false)
+    expect(request.take()).toBe(true)
+    expect(request.take()).toBe(false)
+    // And a request this console can never carry out goes with the choice that
+    // makes it a different console.
+    expect(request.please()).toBe(true)
+    request.clear()
+    expect(request.take()).toBe(false)
   })
 })
 

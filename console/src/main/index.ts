@@ -39,7 +39,7 @@ import { app, BrowserWindow, Menu, ipcMain, protocol, session, shell } from 'ele
 
 import { APP_ENTRY_URL, handleAppRequests, registerAppScheme } from './protocol'
 import { consoleIconPath, installDevDockIcon } from './icon'
-import { addProjectRefusal, installInstallationPicker } from './picker'
+import { addProjectRefusal, createAddProjectRequest, installInstallationPicker } from './picker'
 import type { InstallationPicker } from './picker'
 import {
   createConsoleLifecycle,
@@ -365,7 +365,8 @@ function installationState(): ActiveInstallation | undefined {
   // holds until the dashboard asks for its installation -- and the dashboard
   // asks exactly once, at boot, which is the boot the door asked for by
   // remaking the window. A later read (a reload, a second window) must not
-  // open the wizard again, so the flag is cleared here and not kept.
+  // open the wizard again, so the request is taken here and not kept
+  // (`createAddProjectRequest`, whose three rules its own test pins).
   //
   // **Which answer it rides is not the door's business**: the first run's answer
   // carries it too, because the picker draws its row whenever it has
@@ -373,8 +374,7 @@ function installationState(): ActiveInstallation | undefined {
   // unchosen is that same console -- the one the rail's own door opens the wizard
   // on. A request spent on an answer that names no installation is a button that
   // does nothing, repeatably.
-  const asked = addProjectPlease
-  addProjectPlease = false
+  const asked = addProject.take()
   const chosen = picker?.installation()
   if (chosen === undefined) return undefined
   // `withResolvedBinary` is where the direction of the join is decided and
@@ -385,13 +385,13 @@ function installationState(): ActiveInstallation | undefined {
 }
 
 /**
- * addProjectPlease is the picker's Add project door waiting for the window that
- * answers it (SW3c, R4), and the reason it is a flag here rather than a field
- * of the store is that nothing is being remembered: the operator asked for a
- * screen, not for an installation. `installationState` above is its only
- * reader, and it is written by the picker's `onAddProject`.
+ * addProject is the picker's Add project door waiting for the window that
+ * answers it (SW3c, R4). The state and the rules are `createAddProjectRequest`'s
+ * (`picker.ts`, where they are unit-tested); what is here is the wiring: the door
+ * records a request, `installationState` above is its only reader, and a choice
+ * of another installation drops one.
  */
-let addProjectPlease = false
+const addProject = createAddProjectRequest()
 
 /**
  * activeBinding is the installation the source is bound to: the same state, as
@@ -1405,10 +1405,10 @@ async function main(): Promise<void> {
     onChosen: (chosen) => {
       // An Add project request the console could not carry out -- a refused
       // installation is a refusal window and no dashboard, so nothing ever read
-      // the flag -- is dropped by the next real choice: the operator asked for
-      // the wizard on the console that was up, and this is a different console
-      // (SW3c).
-      addProjectPlease = false
+      // the request -- is dropped by the next real choice: the operator asked
+      // for the wizard on the console that was up, and this is a different
+      // console (SW3c).
+      addProject.clear()
       // Rule 11's "re-chosen": a launch names its own installation rather than
       // the active one, so the installation being chosen again is the window
       // that must close. Before `lifecycle.choose`, so the cancel is decided
@@ -1451,8 +1451,7 @@ async function main(): Promise<void> {
       // second time: a second `choose` remakes the window the first one opened,
       // and which of the two boots spends the flag is a race the operator would
       // see as a console that flashed and came up on Live.
-      if (addProjectPlease) return undefined
-      addProjectPlease = true
+      if (!addProject.please()) return undefined
       void lifecycle.choose(storedCompatibility()).catch(reportAndQuit)
       return undefined
     },
