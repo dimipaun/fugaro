@@ -45,6 +45,62 @@ repos:
   owner/repo-b: {}
 `
 
+// modelsUseLayerProject is the project the project-layer model writes run
+// against: the route claims the same models the repository fixtures use, opened
+// to both repositories the project onboards — a project-layer default is judged
+// against every repository of the project rather than the one a `--layer repo`
+// write named, so the route has to cover them both — and the allow-list admits
+// them, so a pin the tests expect to land is judged on the model and not on the
+// list.
+//
+// A model is the project's choice (D3237), so this is where the tests that used
+// to write a repository's own file write now (S4, R15): `models use` refuses a
+// lifted key in a repository, and the checks are otherwise the same ones.
+const modelsUseLayerProject = `
+providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models:
+      - deepseek/*
+      - vendor/model-x
+      - vendor/model-q
+    allow_data_to:
+      - owner/repo-a
+      - owner/repo-b
+model_prices:
+  vendor/model-x:
+    input_per_m: 1
+    output_per_m: 2
+budget:
+  mode: enforce
+  per_run_usd: 10
+  allowed_models:
+    - claude-sonnet-5-5
+    - deepseek/deepseek-v4-flash
+    - deepseek/deepseek-v4-pro
+    - vendor/model-x
+repos:
+  owner/repo-a: {}
+  owner/repo-b: {}
+`
+
+// modelsUseLayerNoVendor is that project with the route's own model left out of
+// the allow-list: the list is the tighter of the two the launch merges, so it is
+// what refuses the pin (modelsUseModelCheck reads the project's list).
+var modelsUseLayerNoVendor = strings.Replace(modelsUseLayerProject, "    - vendor/model-x\nrepos:", "repos:", 1)
+
+// modelsUseProjectHome is the fixture for a project-layer model write: the
+// project above and the layer file the write lands in, whose body is the
+// caller's own `defaults:` block.
+func modelsUseProjectHome(t *testing.T, layer string) string {
+	t.Helper()
+	modelsWriteHomeWith(t, modelsUseLayerProject)
+	return settingsWriteLayerFile(t, layer)
+}
+
 // modelsUseCommentedYAML is a repository's file with a comment, a key above the
 // agent block and a key below it: the three things an edit that is only the one
 // role line has to leave exactly as they are.
@@ -148,6 +204,42 @@ workflows:
       build: go build ./...
 `
 
+// The layer fixtures are the repository ones under the layer's own `defaults:`
+// block: defaults.agent is the block a repository that names none of its own
+// runs with, which is the block a project-layer model write is judged over.
+
+// modelsUseLayerCommented is modelsUseCommentedYAML under defaults:, comment and
+// all.
+const modelsUseLayerCommented = `defaults:
+  # the coder writes, the reviewer reads it back
+  agent:
+    auth: api-key
+    models:
+      coder: deepseek/deepseek-v4-flash
+      reviewer: claude-sonnet-5-5
+`
+
+// modelsUseLayerNoModels is modelsUseNoModelsYAML under defaults:.
+const modelsUseLayerNoModels = "defaults:\n  agent:\n    auth: api-key\n"
+
+// modelsUseLayerOAuth is modelsUseOAuthYAML under defaults:.
+const modelsUseLayerOAuth = `defaults:
+  agent:
+    auth: oauth
+    models:
+      reviewer: claude-sonnet-5-5
+`
+
+// modelsUseLayerClaudeCoder is modelsUseClaudeCoderYAML under defaults:.
+const modelsUseLayerClaudeCoder = `defaults:
+  agent:
+    auth: api-key
+    models:
+      coder: deepseek/deepseek-v4-flash
+      reviewer: claude-sonnet-5-5
+      background: deepseek/deepseek-v4-flash
+`
+
 // modelsUseHome is the fixture: the project above, and no coding-agent marker
 // set, so a write that is meant to land is not fenced by the session the test
 // binary happens to run in.
@@ -157,16 +249,16 @@ func modelsUseHome(t *testing.T) string {
 	return path
 }
 
-// TestModelsUseEditsOnlyTheRoleLine is the red step: the command edits the
-// repository's own fugaro.yaml in its working tree, and the only line that
-// changes is the role's. The comment, the key above the agent block and the key
-// below it are byte-for-byte what they were (D781, D790).
+// TestModelsUseEditsOnlyTheRoleLine is the red step: the command edits the one
+// key and nothing else, so the only line that changes is the role's and the
+// comment above the block is byte-for-byte what it was (D781, D790). The file
+// is the project layer's: a model is the project's choice (D3237), and S4
+// refuses a write of one into a repository.
 func TestModelsUseEditsOnlyTheRoleLine(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	path := modelsUseProjectHome(t, modelsUseLayerCommented)
 	before := readFileString(t, path)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
+	out, _, err := execute(t, "models", "use", "coder", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -181,10 +273,10 @@ func TestModelsUseEditsOnlyTheRoleLine(t *testing.T) {
 			changed = append(changed, i)
 		}
 	}
-	if len(changed) != 1 || now[changed[0]] != "    coder: deepseek/deepseek-v4-pro" {
+	if len(changed) != 1 || now[changed[0]] != "      coder: deepseek/deepseek-v4-pro" {
 		t.Errorf("the edit changed %d line(s), want only the coder line:\n%s", len(changed), after)
 	}
-	for _, want := range []string{"# the coder writes, the reviewer reads it back", "rigor:", "default: pro", "reviewer: claude-sonnet-5-5"} {
+	for _, want := range []string{"# the coder writes, the reviewer reads it back", "auth: api-key", "reviewer: claude-sonnet-5-5"} {
 		if !strings.Contains(after, want) {
 			t.Errorf("the edit dropped %q:\n%s", want, after)
 		}
@@ -194,15 +286,13 @@ func TestModelsUseEditsOnlyTheRoleLine(t *testing.T) {
 	}
 }
 
-// TestModelsUseAsksNothing: switching a role's model is the repository's own
-// file, edited in the working tree, and it is written without a question
-// (D1540). No terminal and no --yes: the diff is printed, the sentence naming
-// the line is printed beside it, and the write lands.
+// TestModelsUseAsksNothing: switching a role's model is a diff the command
+// prints and nothing else — no question, no --yes, no terminal (D1540). The
+// sentence naming the file is printed beside the diff, and the write lands.
 func TestModelsUseAsksNothing(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	path := modelsUseProjectHome(t, modelsUseLayerCommented)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
+	out, _, err := execute(t, "models", "use", "coder", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -212,14 +302,13 @@ func TestModelsUseAsksNothing(t *testing.T) {
 	}
 }
 
-// TestModelsUseInsertsAgentModelsWhenAbsent: a file that names no
+// TestModelsUseInsertsAgentModelsWhenAbsent: a layer that names no
 // agent.models gains the block, with the role inside it, rather than the
 // command failing or writing the key in the wrong place.
 func TestModelsUseInsertsAgentModelsWhenAbsent(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseNoModelsYAML)
+	path := modelsUseProjectHome(t, modelsUseLayerNoModels)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "reviewer", "deepseek/deepseek-v4-pro")
+	out, _, err := execute(t, "models", "use", "reviewer", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -235,19 +324,20 @@ func TestModelsUseInsertsAgentModelsWhenAbsent(t *testing.T) {
 
 // TestModelsUseRefusesAModelNoRouteOpensToTheRepository: the switch is judged
 // as a launch would judge it, so a model the route serves but whose
-// allow_data_to does not name this repository is refused, and nothing is
-// written.
+// allow_data_to does not name every repository this project onboards is
+// refused, and nothing is written. The layer is the whole project's, so the
+// repository the route misses is the one the refusal names.
 func TestModelsUseRefusesAModelNoRouteOpensToTheRepository(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-b", modelsUseCommentedYAML)
+	modelsWriteHomeWith(t, modelsUseExtra)
+	path := settingsWriteLayerFile(t, modelsUseLayerCommented)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-b", "coder", "vendor/model-x")
+	_, _, err := execute(t, "models", "use", "coder", "vendor/model-x")
 	if err == nil {
-		t.Fatal("a model the route does not open to the repository was accepted")
+		t.Fatal("a model the route does not open to every repository was accepted")
 	}
 	if !strings.Contains(err.Error(), "owner/repo-b") {
-		t.Errorf("the refusal does not name the repository: %v", err)
+		t.Errorf("the refusal does not name the repository the route misses: %v", err)
 	}
 	if got := readFileString(t, path); got != before {
 		t.Errorf("the refused switch wrote the file:\n%s", got)
@@ -258,11 +348,10 @@ func TestModelsUseRefusesAModelNoRouteOpensToTheRepository(t *testing.T) {
 // refused, and the refusal names the `models add` that would fix it rather than
 // leaving the owner to guess (spec §6).
 func TestModelsUseRefusesAnUnpricedModel(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	path := modelsUseProjectHome(t, modelsUseLayerCommented)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "vendor/model-q")
+	_, _, err := execute(t, "models", "use", "coder", "vendor/model-q")
 	if err == nil {
 		t.Fatal("an unpriced model was accepted")
 	}
@@ -274,19 +363,18 @@ func TestModelsUseRefusesAnUnpricedModel(t *testing.T) {
 	}
 }
 
-// TestModelsUseRefusesAModelTheFileItselfDoesNotAllow: the repository's own
-// budget.allowed_models is the tighter list, so the switch it forbids is
-// refused here rather than written into a file `fugaro validate` then refuses.
-// The launch reads the merged list (policy.Merge), so this command reads it
-// through validate's own rules and not from the project config alone.
-func TestModelsUseRefusesAModelTheFileItselfDoesNotAllow(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseFileAllowedYAML)
+// TestModelsUseRefusesAModelTheAllowListForbids: the project's own
+// budget.allowed_models is the tighter of the two lists the launch merges, so
+// the switch it forbids is refused here rather than written into a layer every
+// launch of every repository then refuses.
+func TestModelsUseRefusesAModelTheAllowListForbids(t *testing.T) {
+	modelsWriteHomeWith(t, modelsUseLayerNoVendor)
+	path := settingsWriteLayerFile(t, modelsUseLayerCommented)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "vendor/model-x")
+	_, _, err := execute(t, "models", "use", "coder", "vendor/model-x")
 	if err == nil {
-		t.Fatal("a model the file's own allow-list does not name was accepted")
+		t.Fatal("a model the allow-list does not name was accepted")
 	}
 	if !strings.Contains(err.Error(), "allowed_models") {
 		t.Errorf("the refusal does not name the list that forbids it: %v", err)
@@ -296,18 +384,17 @@ func TestModelsUseRefusesAModelTheFileItselfDoesNotAllow(t *testing.T) {
 	}
 }
 
-// TestModelsUseWritesAModelBothListsAllow: the list above is a list, not a
-// wall: a model both lists admit is written as it was before, so the rule
-// refuses the file's own exclusions and nothing else.
-func TestModelsUseWritesAModelBothListsAllow(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseFileAllowedYAML)
+// TestModelsUseWritesAModelTheAllowListAdmits: the list above is a list, not a
+// wall: a model it admits is written as it was before, so the rule refuses the
+// exclusions and nothing else.
+func TestModelsUseWritesAModelTheAllowListAdmits(t *testing.T) {
+	path := modelsUseProjectHome(t, modelsUseLayerCommented)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
+	out, _, err := execute(t, "models", "use", "coder", "vendor/model-x")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(readFileString(t, path), "coder: deepseek/deepseek-v4-pro") {
+	if !strings.Contains(readFileString(t, path), "coder: vendor/model-x") {
 		t.Errorf("the pin was not written:\n%s", readFileString(t, path))
 	}
 }
@@ -332,20 +419,21 @@ workflows:
 `
 
 // TestModelsUseWritesIntoAFileThatAlreadyFailsValidate: only the problem the
-// edit introduces is a refusal. A file whose reviewer is already unpriced is
-// its owner's to fix, and a switch that has nothing to do with that reviewer
-// refusing on its behalf would be a second, wrong verdict on the same file —
-// the coder's own pin is one a launch takes.
+// edit introduces is a refusal. A file whose reviewer is already unpriced is its
+// owner's to fix, and a write that has nothing to do with that reviewer refusing
+// on its behalf would be a second, wrong verdict on the same file — the recipe
+// written here is one a launch takes. The key is `agent.recipe`, a repository's
+// own: every model key of that file is the project's now (S4, R15).
 func TestModelsUseWritesIntoAFileThatAlreadyFailsValidate(t *testing.T) {
 	modelsUseHome(t)
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseBrokenReviewerYAML)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "agent.recipe", "solo")
 	if err != nil {
-		t.Fatalf("the switch was refused over a problem the file already had: %v\n%s", err, out)
+		t.Fatalf("the write was refused over a problem the file already had: %v\n%s", err, out)
 	}
-	if !strings.Contains(readFileString(t, path), "coder: deepseek/deepseek-v4-pro") {
-		t.Errorf("the pin was not written:\n%s", readFileString(t, path))
+	if !strings.Contains(readFileString(t, path), "recipe: solo") {
+		t.Errorf("the recipe was not written:\n%s", readFileString(t, path))
 	}
 	if !strings.Contains(readFileString(t, path), "reviewer: vendor/model-q") {
 		t.Errorf("the edit rewrote a line it does not own:\n%s", readFileString(t, path))
@@ -482,44 +570,25 @@ func TestModelsUseRefusesALevelEffortALaunchWouldRefuse(t *testing.T) {
 // TestModelsUseRefusesAProviderModelOnALevelThatHasAnEffort: the same rule from
 // the other side — the level's effort is already written, so the model a route
 // serves is the key that would be refused at every launch, and it is refused
-// here instead, at both layers, with the file untouched (D725).
+// here instead, with the layer untouched (D725). A level's model is the
+// project's (D3237), so the write is the layer's; `agent.levels.l2.effort` above
+// is the key a repository still states, and its test keeps the repo half.
 func TestModelsUseRefusesAProviderModelOnALevelThatHasAnEffort(t *testing.T) {
-	for _, c := range []struct {
-		name    string
-		file    string
-		project string
-		layer   string
-	}{
-		{name: "repo", file: modelsUseEffortLevelYAML},
-		{name: "project layer", project: modelsUseProjectExtra, layer: modelsUseLayerEffortYAML},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			var args []string
-			var path string
-			if c.project == "" {
-				modelsUseHome(t)
-				path = modelsWriteGitCheckout(t, "owner/repo-a", c.file)
-				args = []string{"models", "use", "owner/repo-a", "agent.levels.l2.model", "deepseek/deepseek-v4-pro"}
-			} else {
-				modelsWriteHomeWith(t, c.project)
-				path = settingsWriteLayerFile(t, c.layer)
-				args = []string{"models", "use", "agent.levels.l2.model", "deepseek/deepseek-v4-pro", "--layer", "project"}
-			}
-			before := readFileString(t, path)
+	modelsWriteHomeWith(t, modelsUseProjectExtra)
+	path := settingsWriteLayerFile(t, modelsUseLayerEffortYAML)
+	before := readFileString(t, path)
 
-			_, _, err := execute(t, args...)
-			if err == nil {
-				t.Fatalf("a provider model a launch refuses was pinned:\n%s", readFileString(t, path))
-			}
-			for _, want := range []string{"D725", "l2.effort", "openrouter", "deepseek/deepseek-v4-pro"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("the refusal does not name %q: %v", want, err)
-				}
-			}
-			if got := readFileString(t, path); got != before {
-				t.Errorf("the refused write changed the file:\n%s", got)
-			}
-		})
+	_, _, err := execute(t, "models", "use", "agent.levels.l2.model", "deepseek/deepseek-v4-pro")
+	if err == nil {
+		t.Fatalf("a provider model a launch refuses was pinned:\n%s", readFileString(t, path))
+	}
+	for _, want := range []string{"D725", "l2.effort", "openrouter", "deepseek/deepseek-v4-pro"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused write changed the file:\n%s", got)
 	}
 }
 
@@ -527,17 +596,17 @@ func TestModelsUseRefusesAProviderModelOnALevelThatHasAnEffort(t *testing.T) {
 // TestModelsUseWritesIntoAFileThatAlreadyFailsValidate, for the levels: only a
 // level this write changes is a refusal, so a file whose level 2 already pairs a
 // provider model with an effort — a file no launch takes until its owner fixes
-// that level — still takes the coder's pin, which has nothing to do with it.
+// that level — still takes the recipe, which has nothing to do with it.
 func TestModelsUseWritesIntoAFileWhoseLevelsAlreadyRefuse(t *testing.T) {
 	modelsUseHome(t)
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseRefusingLevelYAML)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "vendor/model-x")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "agent.recipe", "solo")
 	if err != nil {
-		t.Fatalf("the switch was refused over a level the file already had: %v\n%s", err, out)
+		t.Fatalf("the write was refused over a level the file already had: %v\n%s", err, out)
 	}
 	after := readFileString(t, path)
-	if !strings.Contains(after, "coder: vendor/model-x") {
+	if !strings.Contains(after, "recipe: solo") {
 		t.Errorf("the pin was not written:\n%s", after)
 	}
 	if !strings.Contains(after, "effort: high") || !strings.Contains(after, "model: deepseek/deepseek-v4-pro") {
@@ -549,11 +618,10 @@ func TestModelsUseWritesIntoAFileWhoseLevelsAlreadyRefuse(t *testing.T) {
 // run's (config.CheckProviderAuth), so a repository whose file runs on oauth is
 // refused the switch rather than handed a pin no launch would take.
 func TestModelsUseRefusesAProviderModelUnderOAuth(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseOAuthYAML)
+	path := modelsUseProjectHome(t, modelsUseLayerOAuth)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
+	_, _, err := execute(t, "models", "use", "coder", "deepseek/deepseek-v4-pro")
 	if err == nil {
 		t.Fatal("a provider model was accepted under oauth")
 	}
@@ -569,16 +637,16 @@ func TestModelsUseRefusesAProviderModelUnderOAuth(t *testing.T) {
 // agent.models has — Claude Code's own small requests — and it is a pin this
 // command writes like the other two, as the one line it adds.
 func TestModelsUsePinsTheBackgroundRole(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	path := modelsUseProjectHome(t, modelsUseLayerCommented)
+	before := readFileString(t, path)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "background", "deepseek/deepseek-v4-pro")
+	out, _, err := execute(t, "models", "use", "background", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := strings.Replace(modelsUseCommentedYAML,
-		"    reviewer: claude-sonnet-5-5\n",
-		"    reviewer: claude-sonnet-5-5\n    background: deepseek/deepseek-v4-pro\n", 1)
+	want := strings.Replace(before,
+		"      reviewer: claude-sonnet-5-5\n",
+		"      reviewer: claude-sonnet-5-5\n      background: deepseek/deepseek-v4-pro\n", 1)
 	if got := readFileString(t, path); got != want {
 		t.Errorf("the edit is not the one line, under the role it names:\ngot:\n%s\nwant:\n%s", got, want)
 	}
@@ -589,11 +657,10 @@ func TestModelsUsePinsTheBackgroundRole(t *testing.T) {
 // cannot carry a provider model is refused it too — a background model that
 // slipped through would reach another provider on the run's own credential.
 func TestModelsUseJudgesTheBackgroundRoleAsALaunchWould(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseOAuthYAML)
+	path := modelsUseProjectHome(t, modelsUseLayerOAuth)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "background", "deepseek/deepseek-v4-pro")
+	_, _, err := execute(t, "models", "use", "background", "deepseek/deepseek-v4-pro")
 	if err == nil {
 		t.Fatal("a provider model was accepted for background under oauth")
 	}
@@ -612,21 +679,21 @@ func TestModelsUseJudgesTheBackgroundRoleAsALaunchWould(t *testing.T) {
 // has three entries: the role is refused, and the slot is not a name a
 // repository may pin.
 func TestModelsUseWritesTheVisionSlot(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	path := modelsUseProjectHome(t, modelsUseLayerCommented)
+	before := readFileString(t, path)
 
 	wantRoles := []string{"coder", "reviewer", "background", "vision"}
 	if !slices.Equal(modelsRoleNames, wantRoles) {
 		t.Fatalf("modelsRoleNames = %v, want %v: the vision slot is one of agent.models' keys, and every surface lists it beside the other three", modelsRoleNames, wantRoles)
 	}
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "vision", "deepseek/deepseek-v4-pro")
+	out, _, err := execute(t, "models", "use", "vision", "deepseek/deepseek-v4-pro")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := strings.Replace(modelsUseCommentedYAML,
-		"    reviewer: claude-sonnet-5-5\n",
-		"    reviewer: claude-sonnet-5-5\n    vision: deepseek/deepseek-v4-pro\n", 1)
+	want := strings.Replace(before,
+		"      reviewer: claude-sonnet-5-5\n",
+		"      reviewer: claude-sonnet-5-5\n      vision: deepseek/deepseek-v4-pro\n", 1)
 	if got := readFileString(t, path); got != want {
 		t.Errorf("the edit is not the one line, under the key it names:\ngot:\n%s\nwant:\n%s", got, want)
 	}
@@ -638,11 +705,10 @@ func TestModelsUseWritesTheVisionSlot(t *testing.T) {
 // one would be the failure the slot exists to prevent: the stage that reads an
 // image dies at the gateway for want of a price.
 func TestModelsUseRefusesAnUnpricedVisionModel(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	path := modelsUseProjectHome(t, modelsUseLayerCommented)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "vision", "vendor/model-q")
+	_, _, err := execute(t, "models", "use", "vision", "vendor/model-q")
 	if err == nil {
 		t.Fatal("an unpriced vision model was accepted")
 	}
@@ -660,10 +726,9 @@ func TestModelsUseRefusesAnUnpricedVisionModel(t *testing.T) {
 // written (the file names its background model, since a Claude coder derives
 // none), and the price of the spelling the table carries is what lets it.
 func TestModelsUsePinsAClaudeModelWithNoRoute(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseClaudeCoderYAML)
+	path := modelsUseProjectHome(t, modelsUseLayerClaudeCoder)
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "claude-sonnet-5-5")
+	out, _, err := execute(t, "models", "use", "coder", "claude-sonnet-5-5")
 	if err != nil {
 		t.Fatalf("a Claude model with no route was refused: %v\n%s", err, out)
 	}
@@ -677,11 +742,10 @@ func TestModelsUsePinsAClaudeModelWithNoRoute(t *testing.T) {
 // price as the reason, rather than sending the owner to open a provider route
 // for a model that never takes one.
 func TestModelsUseRefusesAClaudeSpellingTheTableDoesNotPrice(t *testing.T) {
-	modelsUseHome(t)
-	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
+	path := modelsUseProjectHome(t, modelsUseLayerCommented)
 	before := readFileString(t, path)
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "anthropic/claude-sonnet-5-5")
+	_, _, err := execute(t, "models", "use", "coder", "anthropic/claude-sonnet-5-5")
 	if err == nil {
 		t.Fatal("a spelling the price table does not carry was accepted")
 	}
@@ -705,7 +769,7 @@ func TestModelsUseNeverCommits(t *testing.T) {
 	dir := filepath.Dir(path)
 	head := modelsUseGit(t, dir, "rev-parse", "HEAD")
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "agent.recipe", "solo")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -718,7 +782,7 @@ func TestModelsUseNeverCommits(t *testing.T) {
 	if modified := modelsUseGit(t, dir, "diff", "--name-only"); modified != "fugaro.yaml" {
 		t.Errorf("the working tree's changed files are %q, want only fugaro.yaml", modified)
 	}
-	if !strings.Contains(readFileString(t, path), "coder: deepseek/deepseek-v4-pro") {
+	if !strings.Contains(readFileString(t, path), "recipe: solo") {
 		t.Errorf("the working tree's file was not changed:\n%s", readFileString(t, path))
 	}
 }
@@ -731,7 +795,7 @@ func TestModelsUseRefusesWithoutACheckout(t *testing.T) {
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())
 
-	_, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
+	_, _, err := execute(t, "models", "use", "owner/repo-a", "agent.recipe", "solo")
 	if err == nil {
 		t.Fatal("a switch with no checkout was accepted")
 	}
@@ -748,11 +812,11 @@ func TestModelsUseRunsInAnAgentSession(t *testing.T) {
 	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseCommentedYAML)
 	t.Setenv("CLAUDECODE", "1")
 
-	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "deepseek/deepseek-v4-pro")
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "agent.recipe", "solo")
 	if err != nil {
 		t.Fatalf("a repository's own file was refused in a coding agent's session: %v\n%s", err, out)
 	}
-	if !strings.Contains(readFileString(t, path), "coder: deepseek/deepseek-v4-pro") {
+	if !strings.Contains(readFileString(t, path), "recipe: solo") {
 		t.Errorf("the session's write did not land:\n%s", readFileString(t, path))
 	}
 }
@@ -762,16 +826,17 @@ func TestModelsUseRunsInAnAgentSession(t *testing.T) {
 func modelsUseAgentBlock(t *testing.T, path string) string {
 	t.Helper()
 	var out []string
-	in := false
+	indent := -1
 	for _, line := range strings.Split(readFileString(t, path), "\n") {
-		if line == "agent:" {
-			in = true
-			continue
-		}
-		if in && line != "" && !strings.HasPrefix(line, " ") {
-			break
-		}
-		if in {
+		lead := len(line) - len(strings.TrimLeft(line, " "))
+		switch {
+		case indent < 0:
+			if strings.TrimSpace(line) == "agent:" {
+				indent = lead
+			}
+		case line != "" && lead <= indent:
+			return strings.Join(out, "\n")
+		default:
 			out = append(out, line)
 		}
 	}

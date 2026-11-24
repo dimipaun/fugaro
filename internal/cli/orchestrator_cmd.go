@@ -34,8 +34,25 @@ import (
 // meaning across it: a new one is additive, and a renamed one is a new version.
 const orchestratorOutputVersion = 1
 
-// openOrchestrator selects the project and returns its config, the state node
-// of its orchestrator and the database client.
+// orchestratorTarget is what one command of this family acts through: the
+// selected project, the orchestrator id `--name` resolved to, and the id's node
+// and database.
+//
+// The id is carried here rather than left for the caller to resolve again
+// because it is one answer to "which orchestrator is this command about": it is
+// what the command prints, what its node's paths were built from and what a
+// refusal names (D3206, D3207). A caller that rebuilt it would be a second
+// place the flag is read, and the two could come to disagree.
+type orchestratorTarget struct {
+	lc   *localcfg.Config
+	id   string
+	node *orchestrator.Node
+	db   *rtdb.Client
+}
+
+// openOrchestrator selects the project and returns the state node of the
+// orchestrator name names: the project's own for "", `<project>~<name>` for a
+// name (D3206, D3207).
 //
 // The node is built without a lease: the CLI is the person's own credential
 // and holds no daemon's claim (D1241), so the one write it makes is the
@@ -44,8 +61,8 @@ const orchestratorOutputVersion = 1
 // installation's — because the orchestrator's three nodes live in the budget
 // database, and a write into somebody else's installation is what that check
 // is for.
-func openOrchestrator(ctx context.Context, o cloudOptions) (*localcfg.Config, *orchestrator.Node, *rtdb.Client, error) {
-	return openOrchestratorShard(ctx, o, orchestrator.ShardState)
+func openOrchestrator(ctx context.Context, o cloudOptions, name string) (*orchestratorTarget, error) {
+	return openOrchestratorShard(ctx, o, orchestrator.ShardState, name)
 }
 
 // openOrchestratorShard is openOrchestrator for one of the nodes beside the
@@ -53,31 +70,30 @@ func openOrchestrator(ctx context.Context, o cloudOptions) (*localcfg.Config, *o
 // Which node the caller gets is the shard and nothing else — the id, the role,
 // the lease and the ownership check are the same for all three — because a
 // second opener would be a second place for one of those four to differ.
-func openOrchestratorShard(ctx context.Context, o cloudOptions, shard orchestrator.Shard) (*localcfg.Config, *orchestrator.Node, *rtdb.Client, error) {
+func openOrchestratorShard(ctx context.Context, o cloudOptions, shard orchestrator.Shard, name string) (*orchestratorTarget, error) {
 	lc, db, err := openBudget(ctx, o)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	node, err := orchestratorNodeShard(lc, db, shard)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	return lc, node, db, nil
-}
-
-// orchestratorNodeFor builds the state node of the project's orchestrator.
-func orchestratorNodeFor(lc *localcfg.Config, db orchestrator.CAS) (*orchestrator.Node, error) {
-	return orchestratorNodeShard(lc, db, orchestrator.ShardState)
-}
-
-// orchestratorNodeShard builds one node of the project's orchestrator: the
-// state node (ShardState, the zero shard), the standing backlog's
-// (ShardBacklog) or one imported plan's (PlanShard).
-func orchestratorNodeShard(lc *localcfg.Config, db orchestrator.CAS, shard orchestrator.Shard) (*orchestrator.Node, error) {
-	id, err := orchestratorID(lc)
 	if err != nil {
 		return nil, err
 	}
+	id, err := orchestratorIDFor(lc, name)
+	if err != nil {
+		return nil, err
+	}
+	node, err := orchestratorNodeShard(db, id, shard)
+	if err != nil {
+		return nil, err
+	}
+	return &orchestratorTarget{lc: lc, id: id, node: node, db: db}, nil
+}
+
+// orchestratorNodeShard builds one node of one orchestrator id: the state node
+// (ShardState, the zero shard), the standing backlog's (ShardBacklog) or one
+// imported plan's (PlanShard).
+//
+// The id is the caller's, resolved the one way every command resolves it
+// (orchestratorIDFor), so that the id a command prints and the id its node is
+// built from are one resolution rather than two.
+func orchestratorNodeShard(db orchestrator.CAS, id string, shard orchestrator.Shard) (*orchestrator.Node, error) {
 	node, err := orchestrator.NewNode(orchestrator.NodeOptions{DB: db, AgentID: id, Role: orchestrator.RoleOrchestrator, Shard: shard})
 	if err != nil {
 		return nil, userErr("%v", err)
@@ -138,26 +154,44 @@ func addOrchestratorNameFlag(cmd *cobra.Command, name *string) {
 		"which of the project's orchestrators to act on: `--name night` is the named orchestrator <project>~night, and no --name is the project's own")
 }
 
+// orchestratorStateCommand is the command a refusal sends a reader to for the
+// revision a patch or a dump is built against, carrying the flag the run was
+// given: the revision of a named orchestrator's node is one only a named read
+// prints, and a reader sent to the project's own would build a patch from
+// another node's numbers and have it refused for a revision nobody moved.
+//
+// The name is written as it was given, and not fenced or rewritten: it is a
+// flag of a command the reader types back, and the resolver has already held it
+// to the name rule (orchestratorIDFor) before any of these refusals is reached.
+func orchestratorStateCommand(name string) string {
+	if name == "" {
+		return "fugaro orchestrator state"
+	}
+	return "fugaro orchestrator state --name " + name
+}
+
 // selectOrchestratorProject selects the project without reaching for a
 // database: the offline print needs the project's name alone, and the shared
 // config is never fetched here (a print that ran at every session start must
-// not read a bucket, D1243).
-func selectOrchestratorProject(ctx context.Context, o cloudOptions) (*localcfg.Config, error) {
+// not read a bucket, D1243). It answers with the project and the orchestrator
+// id `--name` resolved to, which is what the cached brief is filed under.
+func selectOrchestratorProject(ctx context.Context, o cloudOptions, name string) (*localcfg.Config, string, error) {
 	co, err := checkoutProject(ctx, "")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	sel, lc, err := selectFrom(o, co, false)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	if _, err := orchestratorID(lc); err != nil {
-		return nil, err
+	id, err := orchestratorIDFor(lc, name)
+	if err != nil {
+		return nil, "", err
 	}
 	if err := announce(o, sel, lc); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return lc, nil
+	return lc, id, nil
 }
 
 func newOrchestratorCmd() *cobra.Command {

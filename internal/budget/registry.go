@@ -44,7 +44,7 @@ func clipString(s string) string {
 }
 
 func clipEntry(e *AgentEntry) {
-	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted, &e.Action, &e.Credential, &e.Mode, &e.From} {
+	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted, &e.Action, &e.Credential, &e.Mode, &e.From, &e.Source} {
 		*p = clipString(*p)
 	}
 	// The rules refuse the whole entry for a tokens value outside
@@ -76,14 +76,33 @@ func (s *Session) Start(ctx context.Context, entry AgentEntry) error {
 		return s.db.Patch(ctx, "", map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): entry})
 	}
 	err := s.retryBoot(ctx, "registry", write)
+	if errors.Is(err, ErrPermissionDenied) && (entry.Source != "" || entry.Fallback) {
+		// Rules deployed before the routing table reached the registry have no
+		// key for these two children, and their $other refuses the whole entry
+		// rather than ignoring them: go on without them for the whole session.
+		// They are the newest children, so they are the first asked — the older
+		// ones below are dropped only once this write has landed, so none of
+		// them is lost for a refusal that was not about it. Warn only once the
+		// second write succeeded: a second refusal is a genuinely bad
+		// credential, not old rules.
+		entry.Source, entry.Fallback = "", false
+		s.mu.Lock()
+		s.entry, s.noSource = entry, true
+		s.mu.Unlock()
+		err = s.retryBoot(ctx, "registry", write)
+		if err == nil {
+			s.log.Warn("budget: the database's rules predate the routing table's source in the registry, so the registry entry goes without it; run fugaro update --firebase-project <gcp-project-id> to update the rules")
+		}
+	}
 	if errors.Is(err, ErrPermissionDenied) && (entry.Mode != "" || entry.From != "") {
 		// Rules deployed before the rigor mode reached the registry have no
 		// key for these children, and their $other refuses the whole entry
 		// rather than ignoring them: go on without them for the whole
-		// session. The newest children are probed first, so an older one the
-		// rules do know (the recipe, below) is never dropped for a refusal
-		// that was not about it. Warn only once the second write succeeded: a
-		// second refusal is a genuinely bad credential, not old rules.
+		// session. The children are dropped newest first (the routing table's
+		// source above), so an older one the rules do know (the recipe, below)
+		// is never dropped for a refusal that was not about it. Warn only once
+		// the second write succeeded: a second refusal is a genuinely bad
+		// credential, not old rules.
 		entry.Mode, entry.From = "", ""
 		s.mu.Lock()
 		s.entry, s.noMode = entry, true
@@ -175,6 +194,9 @@ func (s *Session) Update(fn func(*AgentEntry)) {
 	if s.noMode {
 		s.entry.Mode, s.entry.From = "", ""
 	}
+	if s.noSource {
+		s.entry.Source, s.entry.Fallback = "", false
+	}
 	if s.newKeysRefused {
 		s.entry.Action, s.entry.Tokens = "", 0
 	}
@@ -234,11 +256,13 @@ func (s *Session) checkNewKeys(ctx context.Context) {
 	s.log.Warn("budget: the dashboard rules predate 0.7.0, so the last action and token count are not shown; run fugaro update --firebase-project <gcp-project-id> to update them")
 }
 
-// dropRefusedMode writes the entry once without the rigor mode and its layer,
-// and keeps them dropped for the rest of the session when that write lands.
-// It is the heartbeat's half of Start's own fallback, and it answers the same
-// question the same way: refused with the children and accepted without them,
-// the deployed rules are what do not know them.
+// dropRefusedChildren writes the entry again with each family of children the
+// deployed rules may not know left out — newest first, and each attempt
+// carrying what the attempts before it left out — and keeps them out for the
+// rest of the session once a write lands. It is the heartbeat's half of Start's
+// own fallback, and it answers the same question the same way: refused with the
+// children and accepted without them, the deployed rules are what do not know
+// them.
 //
 // Start meets this at bootstrap, where the rules in place are the ones the
 // installation has. A heartbeat meets it when the document changes under a
@@ -248,27 +272,91 @@ func (s *Session) checkNewKeys(ctx context.Context) {
 // cascade's children. What a run cannot do is keep sending them: the usage
 // report travels in the same patch (flush), so every beat is refused, the
 // grace clock the refusal fails runs out, and the run halts as
-// budget-unavailable — the wrong reason for two facts the dashboard only ever
-// shows. Dropping costs the row its mode and its layer, which is what Start
-// does under the same rules and what the row's `-` means: "not recorded".
+// budget-unavailable — the wrong reason for facts the dashboard only ever
+// shows. Dropping costs the row its source, its mode and its layer, which is
+// what Start does under the same rules and what the row's `-` means: "not
+// recorded".
 //
-// A second refusal leaves the entry as it was and the session undecided, as
-// checkNewKeys leaves it: the two attempts can straddle an unrelated blip, and
-// the next refused heartbeat asks again. That is why nothing is cached here
-// but noMode, which is set only once a write without the children has landed.
-func (s *Session) dropRefusedMode(ctx context.Context) {
+// One pass, not one write per family: a child the rules have just refused is
+// still in the entry the next attempt would send, so two attempts that each
+// dropped only their own family re-send each other's refused child. Under a
+// document that knows neither the routing table's source nor the rigor mode,
+// both writes are refused and every beat after them too, so the live row the
+// operator is watching freezes for the rest of the run. Each attempt therefore
+// leaves out everything the attempts before it left out, as Start's own
+// fallback does with its one entry. The newest family — the routing table's
+// `source` and its `fallback` flag (model-credentials-routing CS9, D3070) — is
+// asked first, and the rules are a version chain: a document that knows an
+// older child knows every newer one, so what this settles on is the longest
+// prefix of the run's own children the installed document can take. The recipe
+// is not among them — Start drops it and the session then never sends it, so no
+// heartbeat can be refused over it (noRecipe).
+//
+// Dropping is the answer here rather than the named halt the cascade's children
+// take (checkCascadeKeys), for the rigor mode's reason and one of its own:
+// nothing decides anything by these children — they are what the dashboard
+// shows — so ending a run over a row the console can draw without them would be
+// the wrong failure, while a run whose credential is unrecorded is one nobody
+// can account for. The withdrawn credentials-belong-to-models plan settled the
+// same way for the same fact (CM12: a runner that meets rules without it
+// "drops the member and writes the rest, as it does for `recipe`").
+//
+// A refusal that survives every attempt leaves the entry as it was and the
+// session undecided, as checkNewKeys leaves it: the attempts can straddle an
+// unrelated blip, and the next refused heartbeat asks again. That is why
+// nothing is cached here but noSource and noMode, each set only once a write
+// without its children has landed.
+//
+// It reports whether a write landed, because the probes below it ask about
+// children these rules may well know — the cascade's, and action and tokens —
+// and must not read this refusal as theirs. Start keeps the same invariant by
+// reassigning its error inside each branch.
+func (s *Session) dropRefusedChildren(ctx context.Context) bool {
 	e := s.snapshotEntry()
+	path := PathAgent(s.cfg.Slug, s.cfg.Run)
+	write := func() error { return s.db.Patch(ctx, "", map[string]any{path: e}) }
+	sourceCarried := e.Source != "" || e.Fallback
+	if sourceCarried {
+		e.Source, e.Fallback = "", false
+		if err := write(); err == nil {
+			s.dbOK()
+			s.forgetSource()
+			return true
+		}
+	}
 	if e.Mode == "" && e.From == "" {
-		return
+		return false
 	}
 	e.Mode, e.From = "", ""
-	if err := s.db.Patch(ctx, "", map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): e}); err != nil {
-		return // refused without them too: not about the children, or a blip
+	if err := write(); err != nil {
+		return false // refused without them too: not about the children, or a blip
 	}
+	s.dbOK()
+	if sourceCarried {
+		// This is the write that landed, and it carried neither family: the
+		// source is gone with the mode, and it is said so exactly as the write
+		// above would have said it.
+		s.forgetSource()
+	}
+	s.forgetMode()
+	return true
+}
+
+// forgetSource keeps the routing table's two children out of every later entry
+// of the session, and says once why they are gone.
+func (s *Session) forgetSource() {
+	s.mu.Lock()
+	s.entry.Source, s.entry.Fallback, s.noSource = "", false, true
+	s.mu.Unlock()
+	s.log.Warn("budget: the database's rules predate the routing table's source in the registry, so the registry entry goes without it; run fugaro update --firebase-project <gcp-project-id> to update the rules")
+}
+
+// forgetMode keeps the rigor mode and its layer out of every later entry of the
+// session, and says once why they are gone.
+func (s *Session) forgetMode() {
 	s.mu.Lock()
 	s.entry.Mode, s.entry.From, s.noMode = "", "", true
 	s.mu.Unlock()
-	s.dbOK()
 	s.log.Warn("budget: the database's rules predate the rigor mode in the registry, so the registry entry goes without it; run fugaro update --firebase-project <gcp-project-id> to update the rules")
 }
 
@@ -409,14 +497,16 @@ func (s *Session) heartbeat(ctx context.Context) {
 	s.checkNewKeys(ctx)
 	e := s.snapshotEntry()
 	err := s.flush(ctx, map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): e}, "heartbeat")
-	if err != nil && errors.Is(err, rtdb.ErrPermission) && (e.Mode != "" || e.From != "") {
-		// The bundled write carried the rigor children into the refusal: find
-		// out, with the entry's own write, whether the deployed rules are the
-		// reason, and go on without them if they are. This is the newest of
-		// the children, so it is asked first: under rules that refuse a
-		// cascade child as well, this write is refused too and the named halt
-		// below is what answers.
-		s.dropRefusedMode(ctx)
+	if err != nil && errors.Is(err, rtdb.ErrPermission) && (e.Source != "" || e.Fallback || e.Mode != "" || e.From != "") {
+		// The bundled write carried children the deployed rules may not know
+		// into the refusal: find out, with the entry's own writes, whether they
+		// are the reason, and go on without them if they are. Once a write
+		// lands the refusal is answered, and the probes below — which ask about
+		// children these rules may well know — must not take that same refusal
+		// for their own.
+		if s.dropRefusedChildren(ctx) {
+			err = nil
+		}
 	}
 	if err != nil && errors.Is(err, rtdb.ErrPermission) && (e.Credential != "" || e.WaitingUntil != 0) {
 		// The bundled write carried a cascade child into the refusal: find

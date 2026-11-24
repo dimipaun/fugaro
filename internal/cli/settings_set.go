@@ -257,6 +257,7 @@ var settingsGenericKeys = map[string]bool{
 	// design's to write once the owner column names the generic writer (D1178),
 	// and a block listed in two places is the drift D1161's own cost names.
 	"layer.ab.rate":              true,
+	"layer.ab.repos":             true,
 	"layer.ab.max_pairs_per_day": true,
 	"layer.ab.challengers":       true,
 	"layer.ab.judge_model":       true,
@@ -492,6 +493,13 @@ there and in the local project config when it may not, and every other key
 lands in the narrowest layer it may be set in. --layer repo without --repo uses
 the current directory's checkout and refuses when the directory is not one.
 
+A key the project owns is refused here whatever --layer names: the model
+choice (agent.model, agent.models.*, agent.levels.<l>.model), ab.rate, the
+rigor default and areas and a grade's model moved out of a repository's file
+(D3237), and each is refused with the command that states it in its new home —
+` + "`fugaro models use --layer project`" + ` for a model, ` + "`fugaro rigor set --repo`" + ` for the
+rigor level. ` + "`fugaro settings unset`" + ` still removes one from a repository's file.
+
 A string-list key takes --add V or --remove V instead of a value. A map or an
 object list takes --add-entry and --remove-entry instead: --add-entry carries
 one entry, one field=value per member the entry has, and --remove-entry carries
@@ -712,6 +720,24 @@ func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, er
 		return settings.Row{}, userErr("%s is not a key the generic path writes: settings set writes spec §4.4's settings (the budget scalars, base_branch, max_parallel, update_check, watch.*, commit_name, commit_email, agent.*, git.*, followup.*, governance.*, default_profile, clone_urls.* and the layer's defaults.*), the account choice (default_claude_account, claude_account_auto, stages.<stage>.claude_account), the pools' subscription switch (subscription_spread) and a repository's workflows.<name>.* and the project layer's profiles.<name>.*, and refuses the installation's own plumbing — an endpoint, a terraform switch, a generation counter, name or runs_bucket — however it is spelled", key)
 	}
 	return row, nil
+}
+
+// liftedKeyAt is the lifted key a write names: C1's list is the only answer to
+// "is this key lifted" (contract-lift-keys.md (c)), so a consumer looks the
+// path up there rather than keeping a list of its own.
+//
+// What is lifted is the key and not a layer: D3237 moves it out of a
+// repository's file into the project, so a write of one into a repository is
+// the trap R15 refuses (F23), and LiftedKey.Why is the one sentence the
+// contract holds for it — the same one S2 prints over a file that still writes
+// it and release B's validate refuses.
+func liftedKeyAt(key string) (config.LiftedKey, bool) {
+	for _, k := range config.LiftedKeys {
+		if k.Key == key {
+			return k, true
+		}
+	}
+	return config.LiftedKey{}, false
 }
 
 // settingsRefusalWriter is the writer a refusal prints the line of: the writer
@@ -2568,6 +2594,18 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		if !list && !entry {
 			value = args[1]
 		}
+	}
+	// A lifted key is the project's now (R15): no repository states it, whatever
+	// --layer says, so the generic path refuses the write and prints the one
+	// sentence C1 holds for the key, whose fix is the command that writes it in
+	// its new home — `fugaro models use --layer project` for a model key,
+	// `fugaro rigor set --repo` for a rigor one. It stands before the row is
+	// looked up because the row is the family's, and the family's own sentence
+	// sends a person to `fugaro models use … --layer repo`, which S4 refuses.
+	// `settings unset` is untouched: removing the key from a repository's file
+	// is the cleanup the sentence asks for, not a write of one into it.
+	if k, ok := liftedKeyAt(key); ok {
+		return userErr("%s", k.Why)
 	}
 	lookup := settingsWriteRow
 	switch {

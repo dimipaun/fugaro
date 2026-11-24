@@ -594,7 +594,47 @@ const PolicyRulesVersion = 1
 // into a mailbox, so a run that bootstrapped under the release behind keeps its
 // records, its ledger and its counters, and every write it makes still lands
 // (docs/design/update-in-flight.md).
-const RulesVersion = 10
+//
+// Generation 11 is the mailbox's signature and the typed launch (mobile
+// identity-pairing plan tasks J5r, O6 and O10 — the owner's answer of
+// 2026-11-21 that a device signs with Ed25519 rather than an HMAC tag, amending
+// D171). It carries two shapes, and each is a *write* a client holds.
+//
+// The first is the tag: a message and the heartbeat carry exactly one of `mac`
+// and `sig`, where `sig` is the unpadded base64url encoding of a 64-byte
+// Ed25519 signature (86 characters, checked for length and characters and never
+// for value — the rules check shape, and which scheme a device must use is its
+// own device node's, task J5b). It bumps for generation 6's reason: a device
+// that signs under the document behind has every message and every heartbeat
+// refused at the database with no error, because the older document requires a
+// `mac` member these records do not carry. It is a widening in exactly one
+// place — the registration's three fields accept either scheme
+// (`PARENTMACOK || PARENTSIGOK`) — because which one a device writes under is
+// not this document's to read.
+//
+// The second is the typed launch: an inbox action whose `verb` is `launch`
+// carries a `mode` (a rigor mode — a short identity string here, the
+// vocabulary being internal/rigor's) and needs no `confirmation`, where every
+// other verb still does, and its target is a repository alone. It bumps for the
+// same reason one verb along: `launch` is a word the older document's verb
+// enumeration does not carry, so a phone's start is refused at the database
+// with no error. Which modes need a read-back before they run is the launch
+// gate's (J5a, D2786) and not this document's: the rules see a bounded string
+// and the action's shape, and a plain start needs no confirmation at all.
+//
+// What the bump does to an existing installation is what every bump does, and
+// it is met the same way: `fugaro doctor` reports policy-rules-skew until the
+// owner runs `fugaro update`, whose rules stage deploys this document and
+// records generation 11 in the marker, so an installation at generation 10
+// converges in one run and no second command. The deploy still refuses to write
+// this binary's document under a marker *above* it, so an older CLI cannot take
+// the signature away behind a newer one's back. And the update is safe while
+// runs are in flight, which the marker's own write path carries: the tag is a
+// field beside a field a device already writes and the launch is one more verb
+// in a mailbox no run writes, so a run that bootstrapped under the release
+// behind keeps its records, its ledger and its counters, and every write it
+// makes still lands (docs/design/update-in-flight.md).
+const RulesVersion = 11
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own

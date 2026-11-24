@@ -21,6 +21,7 @@ import (
 
 	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -52,8 +53,14 @@ func catalogBuildSpec(t *testing.T) CatalogBuildSpec {
 		Entry: "agent", Slug: slug,
 		GitProvider: "bitbucket", RepoURL: "https://bitbucket.org/acme/app.git", BaseBranch: "main",
 		GitSecretID: SecretID(slug, "bitbucket-token"), GitUser: "x-token-auth",
-		Base:  "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc",
-		Image: image,
+		// The installation's credentials service, which the credential step
+		// asks for the entry's git credential (IS8): a catalog build's
+		// source repository is the one the build itself was submitted from,
+		// so the credential a build clones with is the service's answer and
+		// no secret of the project's is mounted or named.
+		CredentialsServiceURL: "https://credentials.example.com",
+		Base:                  "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc",
+		Image:                 image,
 		// What PIC3's copy recorded and a build is submitted with: the
 		// commit the definition was taken from, the copied object's
 		// generation and the sha256 of the Dockerfile's bytes.
@@ -148,32 +155,21 @@ func TestCatalogBuildReadsTheCopiedDockerfile(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildRequestCarriesTheServiceURL: a catalog build's request is
-// built the way a repository's is, so the address the credential step fetches
-// at travels from the spec as it does there (B4.5) — and every caller of this
-// path leaves it empty, because the route's caller is a repository's build
-// account and a catalog build runs as the project's build identity, which the
-// route does not admit (D2076). What the test pins is the mechanism, so that a
-// later task that admits that identity does not have to build the request a
-// second way; the empty value is what a catalog build submits today and the
-// step reads it as "there is no service here" and holds the credential its
-// request mounts.
+// TestCatalogBuildRequestCarriesTheServiceURL: the address the credential step
+// fetches at travels from the spec as it does on a repository's build (B4.5),
+// and on this path it is the whole credential: a catalog build runs as the
+// project's build identity (B6), which is the caller the entry route admits, so
+// the step asks the installation's service for the entry's git credential and
+// a request that names no service is refused before a build is paid for
+// (IS8, D3330).
 //
 // Mutation (verified, run and restored): drop the `_CREDENTIALS_SERVICE_URL`
-// entry from this request's substitutions and the switched case fails with a
-// step that reads `${_CREDENTIALS_SERVICE_URL}` and a request that never
-// declared it — which Cloud Build refuses.
+// entry from this request's substitutions and this fails with a step that reads
+// `${_CREDENTIALS_SERVICE_URL}` and a request that never declared it — which
+// Cloud Build refuses.
 func TestCatalogBuildRequestCarriesTheServiceURL(t *testing.T) {
 	s := catalogBuildSpec(t)
 	b, err := CatalogBuildRequest("proj-1234", s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v, ok := b.Substitutions["_CREDENTIALS_SERVICE_URL"]; !ok || v != "" {
-		t.Fatalf("a catalog build sends _CREDENTIALS_SERVICE_URL %q (present %v): %v", v, ok, b.Substitutions)
-	}
-	s.CredentialsServiceURL = "https://credentials.example.com"
-	b, err = CatalogBuildRequest("proj-1234", s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,34 +183,155 @@ func TestCatalogBuildRequestCarriesTheServiceURL(t *testing.T) {
 	if args := strings.Join(cred.Args, " "); strings.Contains(args, s.CredentialsServiceURL) {
 		t.Errorf("the credential step's argv carries the address: %q", args)
 	}
+	// A catalog build is submitted only where the credential step can fetch: an
+	// installation whose service is not there is a build that would fail at its
+	// first step having cloned nothing, and the refusal names what is missing
+	// rather than submitting it.
+	s.CredentialsServiceURL = ""
+	_, err = CatalogBuildRequest("proj-1234", s)
+	if !errors.Is(err, ErrBadBuildSpec) || err == nil || !strings.Contains(err.Error(), "credentials service") {
+		t.Fatalf("a catalog build with no credentials service was answered %v, want a bad-spec refusal naming it", err)
+	}
+}
+
+// TestCatalogBuildRequestNamesNoSecret is IS8's own pin (D3330): the build of a
+// catalog entry used to mount its source repository's git credential — one
+// availableSecret, the credential step's secretEnv, and the per-repository
+// accessor the installation granted the build identity for it
+// (modules/installation/build_identity.tf) — and it names none of that now. The
+// credential step runs the entry mode instead (internal/cli/gitcred.go): one
+// request for the entry being built, asked of the installation's credentials
+// service as the project's build identity, naming the entry, the build, the
+// provider, the repositories the bake composes stages for and the lifetime the
+// step needs — and the answer's one credential is what it writes.
+//
+// The whole request is read rather than the two fields: what a step names is
+// what Cloud Build resolves, so a secret left in a step's env, in its argv or
+// in the substitutions that feed either is a mount the entry's build would have
+// again.
+func TestCatalogBuildRequestNamesNoSecret(t *testing.T) {
+	s := catalogBuildSpec(t)
+	b, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.AvailableSecrets != nil {
+		t.Fatalf("the request names the secrets %+v, want none: a catalog build's git credential is the service's answer and no secret of the project's (IS8, D3330)", b.AvailableSecrets.SecretManager)
+	}
+	for _, st := range b.Steps {
+		if len(st.SecretEnv) > 0 {
+			t.Fatalf("step %s reads secretEnv %v, want none: an entry's build is handed no secret of the repository's (B9, D2311) and this request mounts none at all", st.Id, st.SecretEnv)
+		}
+	}
+	cred := step(t, b, credentialStep)
+	wantArgs := []string{"-c", `exec fugaro image git-credential --entry "$$ENTRY" --build-id "$$BUILD_ID" --provider "$$PROVIDER" --repos "$$CATALOG_REPOS" --ttl-seconds 3600 --out /creds/git-credentials`}
+	if !slices.Equal(cred.Args, wantArgs) {
+		t.Fatalf("the credential step runs %q, want %q: the entry mode is the one way this build is handed a credential", cred.Args, wantArgs)
+	}
+	wantEnv := []string{
+		"PROVIDER=bitbucket",
+		"ENTRY=${_ENTRY}",
+		"CATALOG_REPOS=${_CATALOG_REPOS}",
+		"FUGARO_CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}",
+		"BUILD_ID=$BUILD_ID",
+	}
+	if !slices.Equal(cred.Env, wantEnv) {
+		t.Fatalf("the credential step's env = %v, want %v", cred.Env, wantEnv)
+	}
+	// Every value the step reads about itself is its own environment's and not
+	// its argv's, so a repository name or an entry name a config left in a list
+	// is data and never shell next to the credential.
+	if got := b.Substitutions["_ENTRY"]; got != s.Entry {
+		t.Fatalf("_ENTRY = %q, want %q", got, s.Entry)
+	}
+	if got := b.Substitutions["_CATALOG_REPOS"]; got != "acme/app" {
+		t.Fatalf("_CATALOG_REPOS = %q, want %q", got, "acme/app")
+	}
+	// The repository name the request names is the one the bake plan ordered, in
+	// the service's key space (task.CanonicalRepo): the image map keys the entry's
+	// repositories by it, and a name in another case is a repository the route
+	// refuses by name.
+	s.RepoURL = "https://bitbucket.org/Acme/App.git"
+	b, err = CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Substitutions["_CATALOG_REPOS"]; got != "acme/app" {
+		t.Fatalf("_CATALOG_REPOS = %q for the repository URL %s, want the canonical name", got, s.RepoURL)
+	}
+	// The two substitutions the mount needed are gone with it: a request that
+	// still declared them would be a substitution no step references, which Cloud
+	// Build refuses, and a value nothing reads.
+	for _, name := range []string{"_GIT_USER", "_WORKFLOW"} {
+		if v, ok := b.Substitutions[name]; ok {
+			t.Fatalf("the request still declares %s = %q, want neither: the credential step is the only step that read either", name, v)
+		}
+	}
+	// Nothing the request carries is a secret's address: the version name the
+	// mount resolved and the provider secret's variable are both gone.
+	for _, st := range b.Steps {
+		joined := strings.Join(st.Args, " ") + " " + strings.Join(st.Env, " ")
+		for _, gone := range []string{"projects/proj-1234/secrets/", gitTokenEnv, gitTokenEnv + "=", githubAppKeyEnv} {
+			if strings.Contains(joined, gone) {
+				t.Fatalf("step %s still carries %q, want a build whose credential is the service's answer only", st.Id, joined)
+			}
+		}
+	}
+	// The GitHub half is the same step with the App's id in place of nothing: the
+	// id is not a secret (the service's bundle holds the key and never the id),
+	// and it is what the mint needs of this step.
+	s.GitProvider = gitprov.KindGitHub
+	s.RepoURL = "https://github.com/acme/app.git"
+	s.GitUser = ""
+	s.GitHubAppID = "12345"
+	b, err = CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.AvailableSecrets != nil {
+		t.Fatalf("the GitHub request names the secrets %+v, want none", b.AvailableSecrets.SecretManager)
+	}
+	cred = step(t, b, credentialStep)
+	if !slices.Contains(cred.Env, "GITHUB_APP_ID=${_GITHUB_APP_ID}") {
+		t.Fatalf("the GitHub credential step's env = %v, want the App's id among it: the service holds the key and the mint is made as the App this step names", cred.Env)
+	}
+	if got := b.Substitutions["_GITHUB_APP_ID"]; got != "12345" {
+		t.Fatalf("_GITHUB_APP_ID = %q, want the App's id", got)
+	}
+	if _, ok := b.Substitutions["_GIT_USER"]; ok {
+		t.Fatalf("the GitHub request declares _GIT_USER: %v", b.Substitutions)
+	}
 }
 
 // TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv is PIC4's SEC property
 // (D1150), and the name is that task's own pin — the plan and
 // docs_project_image_catalog_test.go both read it. What it asserts is the
 // stronger fact D2311 leaves in its place (B9): an entry's build is handed no
-// secret at all. The one secret the request names is the repository's provider
-// credential, which the clone step reads and no other step does; the build
-// step's secretEnv is empty, _SECRET_ENVS is empty, and the loop the step
-// reads it with passes docker no --secret — so an entry that mounts one has
-// nothing to mount, whatever its definition says. A secret is still never an
-// ENV, a build argument, a layer, a step's env: or a log line, which is what
-// the property was about: it is now never handed over at all.
+// secret at all, and since IS8 there is no secret of the request to leave
+// out: the credential step fetches the entry's git credential from the
+// installation's service (D3330), so the build step's secretEnv is empty,
+// empty, and the loop the step reads it with passes docker no --secret — so an
+// entry that mounts one has nothing to mount, whatever its definition says. A
+// secret is still never an ENV, a build argument, a layer, a step's env: or a
+// log line, which is what the property was about: it is now never handed over
+// at all.
 func TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv(t *testing.T) {
 	s := catalogBuildSpec(t)
 	b, err := CatalogBuildRequest("proj-1234", s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var secrets []string
-	for _, sm := range b.AvailableSecrets.SecretManager {
-		secrets = append(secrets, sm.Env+"="+sm.VersionName)
+	// IS8 took the last secret out of this request, so what the property asserts
+	// is now the whole of it: the request names no secret and no step is handed
+	// one. The credential the clone step reads is the entry route's answer, which
+	// the credential step writes into the volume the clone step mounts.
+	if b.AvailableSecrets != nil {
+		t.Fatalf("availableSecrets = %+v, want none: a catalog build mounts no secret (IS8, D3330)", b.AvailableSecrets.SecretManager)
 	}
-	want := []string{
-		"GIT_TOKEN=projects/proj-1234/secrets/" + s.GitSecretID + "/versions/latest",
-	}
-	if !slices.Equal(secrets, want) {
-		t.Fatalf("availableSecrets = %v, want %v", secrets, want)
+	for _, st := range b.Steps {
+		if len(st.SecretEnv) > 0 {
+			t.Fatalf("step %s is handed the secrets %v: a catalog build mounts none (B9, D2311)", st.Id, st.SecretEnv)
+		}
 	}
 	build := step(t, b, "build")
 	if len(build.SecretEnv) != 0 {
@@ -245,19 +362,6 @@ func TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv(t *testing.T) {
 	// the textual substitution the request applies.
 	if strings.Contains(script, "${_SECRET_ENVS") {
 		t.Fatalf("the script holds a substitution the request would rewrite: %q", script)
-	}
-	for _, st := range b.Steps {
-		switch st.Id {
-		case "build":
-			// Nothing to check beyond above: an empty secretEnv cannot carry a
-			// name.
-		default:
-			// Only the credential step reads another secret, and it is the
-			// provider credential, not an entry's.
-			if len(st.SecretEnv) > 0 && (st.Id != credentialStep || !slices.Equal(st.SecretEnv, []string{gitTokenEnv})) {
-				t.Fatalf("step %s mounts a secret it does not need: %v", st.Id, st.SecretEnv)
-			}
-		}
 	}
 }
 
@@ -716,15 +820,17 @@ func TestCatalogBuildSelftestIsTheSmokeSpec(t *testing.T) {
 	if !strings.Contains(pin, "/workspace/out/selftest.json") || !strings.Contains(pin, "base64 -d") {
 		t.Fatalf("the smoke's spec is not written where the smoke reads it: %q", pin)
 	}
-	// The credential step a catalog build reuses reads the three a repository's
-	// build fetches through (B4.5), so this request carries the workflow and the
-	// address too — empty, because a catalog build fetches nothing at the
-	// service: its identity is the project's build identity, which the service's
-	// build route does not admit (D2076).
-	for _, k := range []string{"_WORKFLOW", "_SECRET_ENVS", "_CREDENTIALS_SERVICE_URL"} {
-		if v, ok := b.Substitutions[k]; !ok || v != "" {
-			t.Fatalf("the catalog build's %s is %q, and the credential step reads it: %v", k, v, b.Substitutions)
-		}
+	// The credential step a catalog build reuses reads the address the service
+	// is served on (IS8, D3330), so this request carries it; it reads no
+	// workflow, and it is handed no secret of the entry's (D2311, B9).
+	if got := b.Substitutions["_CREDENTIALS_SERVICE_URL"]; got != s.CredentialsServiceURL {
+		t.Fatalf("the catalog build's _CREDENTIALS_SERVICE_URL is %q, want %q, and the credential step reads it: %v", got, s.CredentialsServiceURL, b.Substitutions)
+	}
+	if got, ok := b.Substitutions["_WORKFLOW"]; ok {
+		t.Fatalf("the catalog build sends _WORKFLOW = %q, want no such substitution: the credential step fetches from the service and reads no workflow (IS8, D3330)", got)
+	}
+	if got, ok := b.Substitutions["_SECRET_ENVS"]; !ok || got != "" {
+		t.Fatalf("the catalog build's _SECRET_ENVS is %q (present=%v), want the empty value it always had: an entry's build is handed no secret of the entry's (D2311, B9)", got, ok)
 	}
 	// Every substitution it does send is one a step of the request references:
 	// Cloud Build refuses a request whose substitution no step uses.

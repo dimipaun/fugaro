@@ -168,6 +168,7 @@ layer.ab.exchange_rate	open:no-writer
 layer.ab.judge_model	open:no-writer
 layer.ab.max_pairs_per_day	open:no-writer
 layer.ab.rate	open:no-writer
+layer.ab.repos	open:no-writer
 layer.claude_models	open:writer-unproven
 layer.defaults.agent.crafts.coder.access	open:no-writer
 layer.defaults.agent.crafts.coder.model	open:no-writer
@@ -273,7 +274,11 @@ pools.conformance.legacy_open	open:no-writer
 pools.conformance.members	open:writer-unproven
 pools.conformance.name	open:writer-unproven
 pools.conformance.owner	open:writer-unproven
+pools.conformance.principal.id	open:no-writer
+pools.conformance.principal.kind	open:no-writer
+pools.conformance.rule	open:no-writer
 pools.conformance.strategy	open:writer-unproven
+pools.conformance.threshold	open:no-writer
 profile	label:file
 project	label:file
 project_secrets.CONFORMANCE.allow_data_to	open:no-writer
@@ -352,6 +357,7 @@ workspace_pin.firebase_project	open:no-writer
 workspace_pin.issuer	open:no-writer
 workspace_pin.service_account	open:no-writer
 workspace_pin.service_address	open:no-writer
+workspace_shared.conformance.all_members	open:no-writer
 workspace_shared.conformance.covers	open:no-writer
 workspace_shared.conformance.kind	open:no-writer
 workspace_shared.conformance.projects	open:no-writer

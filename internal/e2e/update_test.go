@@ -785,7 +785,7 @@ func TestUpdateRecordsVertex(t *testing.T) {
 	if got := r.localConfig(t).Repos["acme/sandbox"]; !got.Vertex {
 		t.Errorf("local config repo = %+v, want vertex", got)
 	}
-	if !strings.Contains(res.stdout, "warning: ") || !strings.Contains(res.stdout, "Vertex AI API") || !strings.Contains(res.stdout, "rerun fugaro update") {
+	if !strings.Contains(res.stdout, "Warning: ") || !strings.Contains(res.stdout, "Vertex AI API") || !strings.Contains(res.stdout, "rerun fugaro update") {
 		t.Errorf("no warning to enable the Vertex AI API:\n%s", res)
 	}
 	// Recorded, it isn't repeated.
@@ -813,7 +813,7 @@ func TestUpdateWarnsBaseImageOutsideBaseRegistry(t *testing.T) {
 	if res.code != 0 {
 		t.Fatal(res)
 	}
-	if !strings.Contains(res.stdout, "warning: ") || !strings.Contains(res.stdout, legacy) || !strings.Contains(res.stdout, infra.BaseRegistry) {
+	if !strings.Contains(res.stdout, "Warning: ") || !strings.Contains(res.stdout, legacy) || !strings.Contains(res.stdout, infra.BaseRegistry) {
 		t.Errorf("no warning about the base image:\n%s", res)
 	}
 	// The one in the base registry passes silently.
@@ -1496,11 +1496,11 @@ func TestUpdateStorageDisabledIsRemote(t *testing.T) {
 	}
 }
 
-// logNamedIn reads the run log a stage's failure names ("full output: PATH")
-// when the terminal shows only its first line.
+// logNamedIn reads the run log a stage's failure names ("Log:  PATH", two
+// spaces after the label) when the terminal shows only its first line.
 func logNamedIn(t *testing.T, stdout string) string {
 	t.Helper()
-	_, rest, ok := strings.Cut(stdout, "full output: ")
+	_, rest, ok := strings.Cut(stdout, "Log:  ")
 	if !ok {
 		return ""
 	}

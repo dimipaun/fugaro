@@ -210,7 +210,8 @@
       "policy": {
         "costly_modes": ["pro", "critical"],
         "biometric_on_costly": false,
-        "compact_threshold_percent": 40
+        "compact_threshold_percent": 40,
+        "crash_reports": true
       },
       "consumer_public_key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
       "refresh_token": "not-a-credential-test-refresh-token",
@@ -229,7 +230,8 @@
       "policy": {
         "costly_modes": ["pro", "critical"],
         "biometric_on_costly": false,
-        "compact_threshold_percent": 40
+        "compact_threshold_percent": 40,
+        "crash_reports": true
       }
     },
     "restore_challenge_request": {},

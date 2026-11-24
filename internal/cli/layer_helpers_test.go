@@ -27,6 +27,12 @@ default_profile: svc
 
 const minimalAnchored = "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
 
+// pinnedMinimal is a repository file that names its three role models, for
+// the layer fixtures whose file a command validates or a run judges: the price
+// rules hold in every mode (AB3, D3020), so a file that names no model at all
+// is refused where an unset mode used to let it through.
+const pinnedMinimal = minimalAnchored + "agent:\n" + pinnedAgent + "\n"
+
 // publishedLayer moves the fixture to the default runs bucket name and,
 // unless text is "", writes text as the project layer.
 func publishedLayer(t *testing.T, f *cloudFixture, text string) {

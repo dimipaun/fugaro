@@ -649,8 +649,8 @@ type Policy struct {
 	ImageServices ImageServices `json:"image_services,omitempty"`
 
 	// BakeRepos is whether a repository is baked into the image its job runs
-	// (D1901): the setup wizard's "Bake your repos into the Docker images?",
-	// asked with the answer yes.
+	// (D1901): the setup wizard's "Bake repos into the images for faster job
+	// starts?", asked with the answer yes.
 	//
 	// It is a pointer because the default is yes and therefore absent and true
 	// are the same statement: a project that never answered writes no member,
@@ -738,6 +738,38 @@ type Policy struct {
 	// mobile disabled (F40, O9).
 	Mobile *Mobile `json:"mobile,omitempty"`
 
+	// MobileCrashReports is the switch that decides whether the project's phones
+	// send crash reports to the project's Firebase project (D731, D738): the
+	// app's one collection switch, on by default and opt-out, and Firebase
+	// Analytics is not in the app at all (D731). The app reads it as
+	// `crash_reports` off the pairing session's policy and never off this node:
+	// `config/policy/**` is not in the paired device's read set (D2791).
+	//
+	// **It is a top-level key of the node and deliberately not a member of the
+	// mobile block above.** That block decodes strictly (decodeMobile's closed
+	// member set, DisallowUnknownFields), so a member added inside it makes
+	// every reader of the release behind refuse the WHOLE policy — and the node
+	// is re-read while runs are in flight (internal/runner's
+	// projectpolicy.Read on every run, the credentials service on every model
+	// call), so that refusal would stop the runs an update promises to leave
+	// alone (docs/design/update-in-flight.md). An unknown top-level key is
+	// listed in UnknownKeys and tolerated (P8), so a CLI or a runner of the
+	// release behind reads every key it knows and keeps serving; it simply has
+	// no switch of its own. It is F46's rule, which the block's own comment in
+	// mobile.go states for the block, and the same reason orchestrator_enabled
+	// is not a member of the orchestrator block.
+	//
+	// It is a pointer because the default is on and therefore absent and true
+	// are one statement: a project that never answered writes no member, and its
+	// node is byte for byte what it was before this key existed — while a
+	// project that turned the reports off is the only one with anything to say
+	// here. A publish writes the default explicitly for a node that carries none
+	// (MobileCrashReportsForPublish), which is what carries the key to an
+	// installation that published before it existed, and MobileCrashReportsOn is
+	// the reader — which answers a key that is not there **off**, never this
+	// default.
+	MobileCrashReports *bool `json:"mobile_crash_reports,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -790,6 +822,13 @@ var knownTopLevelKeys = map[string]bool{
 	// the release behind lists it and keeps reading the policy, which is what
 	// lets an update publish it while runs are in flight (F35, F46).
 	"mobile": true,
+	// The app's crash-report switch (T3.1 of docs/review-levels-ab-jobmax, D731,
+	// D738): a top-level key BESIDE the mobile block and not a member of it, for
+	// the reason orchestrator_enabled is beside the orchestrator block — the
+	// block decodes strictly, so a member added inside it is refused by every
+	// reader of the release behind, which is what update must never do. Read by
+	// MobileCrashReportsOn, which answers an absent key off.
+	"mobile_crash_reports": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -1802,6 +1841,16 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.Mobile = block
+	}
+	// The app's crash-report switch is read on its own, the daemon's switch's
+	// shape: one bool beside the mobile block and not a member of it, so that a
+	// reader of the release behind lists it in UnknownKeys and keeps reading the
+	// whole policy (F46). A written null is the absent key, which reads off
+	// (MobileCrashReportsOn).
+	if craw, ok := doc["mobile_crash_reports"]; ok && !IsNull(craw) {
+		if err := json.Unmarshal(craw, &p.MobileCrashReports); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: mobile_crash_reports: %w", err)
+		}
 	}
 	if vraw, ok := doc["verifier_accounts"]; ok && !IsNull(vraw) {
 		if err := json.Unmarshal(vraw, &p.VerifierAccounts); err != nil {

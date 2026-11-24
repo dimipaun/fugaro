@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
@@ -187,4 +189,39 @@ func annotateProjectRecipe(root string, cfg *config.Config, problems []config.Pr
 			problems[i].Message += fmt.Sprintf(" (if project recipe %s maps coder to reviewer, this key is ignored; remove it)", n)
 		}
 	}
+}
+
+// recipesCleanupNotes is the cleanup diff for this checkout: recipesCleanupLines
+// over the project store, which validate reaches the way every other cloud read
+// here does — the selected config's own client (openCloudFor), the origin's
+// repository, one read per name the folder's files can resolve to.
+//
+// It is silence, never a problem, whenever the read cannot be made: the folder
+// is legal, and a checkout with no store in reach is offered nothing rather
+// than told a file is missing from a store nobody looked in. --offline makes no
+// read at all (the flag promises validate reads neither the runs bucket nor the
+// published policy), a config selected for another project is not this
+// installation's, and a directory that is no checkout, an installation whose
+// runs bucket is not the one project recipes live in, or a bucket that cannot
+// be opened all leave the store unknown.
+func recipesCleanupNotes(ctx context.Context, root string, cfg *config.Config, lc *localcfg.Config, offline bool) []config.Problem {
+	if offline || lc == nil || lc.Name != cfg.Project || cfg.Git.Provider == "" {
+		return nil
+	}
+	if projectRecipesNote(lc) != "" {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(recipe.RepoDir))); err != nil {
+		return nil
+	}
+	repo, err := originRepo(ctx)
+	if err != nil {
+		return nil
+	}
+	env, err := openCloudFor(ctx, lc)
+	if err != nil {
+		return nil
+	}
+	defer env.Close()
+	return recipesCleanupLines(root, recipesStoreOf(ctx, env, cfg.Git.Provider, repo, root))
 }
