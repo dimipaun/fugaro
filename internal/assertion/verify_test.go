@@ -177,6 +177,14 @@ func (s *keySetServer) down(fail bool) {
 	s.fail = fail
 }
 
+// answer makes the endpoint refuse with a status rather than with a document,
+// which set() cannot express: it always answers 200.
+func (s *keySetServer) answer(status int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status = status
+}
+
 // hangUp makes the endpoint accept the request and then say nothing at all,
 // until the request's context ends: the socket a fetch can wait on forever is
 // the one this test stands in.
@@ -1048,11 +1056,42 @@ func TestVerifyRefusesAKeySetEnvelope(t *testing.T) {
 	buildPins := pins(rootPub, 7, pinned("signing-build", buildPub))
 
 	cases := []struct {
-		name  string
-		field string
-		body  string
-		why   string
+		name   string
+		field  string
+		body   string
+		status int
+		why    string
 	}{
+		{
+			name: "answered with a status that is not 200", field: "document",
+			body: keySetDoc(t, rootPriv, 8, validUntil(), keys...), status: http.StatusNotFound,
+			why: "an endpoint that answers anything but a document is a read that failed, and a reader that parsed the body of a 404 would be reading whatever the endpoint chose to say while refusing",
+		},
+		{
+			name: "larger than this reader will hold", field: "document",
+			body: strings.Repeat("x", maxKeySetBytes+1),
+			why:  "the document is bounded before it is parsed, so an endpoint -- or whoever can answer for it -- cannot make this service hold a body of their choosing",
+		},
+		{
+			name: "signed with an algorithm this contract does not name", field: "alg",
+			body: func() string {
+				head, _ := json.Marshal(mobilesession.KeySetHeader{Alg: "RS256", Kid: testRootKID, Typ: mobilesession.KeySetTyp})
+				payload, _ := json.Marshal(mobilesession.KeySet{Format: mobilesession.KeySetFormat, Seq: 8, Iat: testNow.Unix(), Exp: validUntil().Unix(), JWKS: mobilesession.JWKS{Keys: keys}})
+				signing := b64(head) + "." + b64(payload)
+				return signing + "." + b64(ed25519.Sign(rootPriv, []byte(signing)))
+			}(),
+			why: "EdDSA is the only algorithm this contract names for the envelope, and its header is what says which algorithm the signature is -- a reader that trusted the header would be told how to read the document by the document",
+		},
+		{
+			name: "with a header that is not a key set's", field: "typ",
+			body: func() string {
+				head, _ := json.Marshal(mobilesession.KeySetHeader{Alg: mobilesession.KeySetAlg, Kid: testRootKID, Typ: "JWT"})
+				payload, _ := json.Marshal(mobilesession.KeySet{Format: mobilesession.KeySetFormat, Seq: 8, Iat: testNow.Unix(), Exp: validUntil().Unix(), JWKS: mobilesession.JWKS{Keys: keys}})
+				signing := b64(head) + "." + b64(payload)
+				return signing + "." + b64(ed25519.Sign(rootPriv, []byte(signing)))
+			}(),
+			why: "the type tag is what tells a key set from any other document the root key signs, so a signature over something else is not a set of keys to verify with",
+		},
 		{
 			name: "signed by another root key", field: "signature",
 			body: keySetDoc(t, impostorPriv, 8, validUntil(), keys...),
@@ -1155,6 +1194,9 @@ func TestVerifyRefusesAKeySetEnvelope(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := &keySetServer{}
 			srv.set(tc.body)
+			if tc.status != 0 {
+				srv.answer(tc.status)
+			}
 			v := newTestVerifier(t, buildPins, srv, newMemoryClaims(), &memorySeq{})
 			if _, err := verify(t, v, signAssertion(t, signPriv, testSignKID, goodClaims())); err == nil {
 				t.Fatalf("an assertion was accepted from a key set %s: %s", tc.name, tc.why)
@@ -1229,6 +1271,32 @@ func TestVerifyRefusesWhenAStoreFails(t *testing.T) {
 		}
 		if !errors.Is(err, ErrStore) {
 			t.Errorf("the refusal is %v, which does not wrap ErrStore", err)
+		}
+	})
+
+	t.Run("the sequence store on the pinned path", func(t *testing.T) {
+		// The build pins the key this assertion is signed with, so the store is
+		// asked before the pin is used at all -- endsPin's own read of it, and not
+		// parseKeySet's. A store that fails there is a refusal and never a pin that
+		// stands: whether a set above this build's floor has withdrawn the pin is
+		// the store's answer to give, and a verifier that read a failed store as
+		// "no rotation" would keep verifying with a key the project has retired --
+		// a leaked one included -- on exactly the instances that have read nothing.
+		// An endpoint this case never sets a document on: a read here would be a
+		// read that found nothing, so the refusal below is the store's and cannot
+		// have come from a fetch.
+		unreached := &keySetServer{}
+		seq := &memorySeq{fail: true}
+		v := newTestVerifier(t, p, unreached, newMemoryClaims(), seq)
+		_, err := verify(t, v, signAssertion(t, signPriv, testSignKID, goodClaims()))
+		if err == nil {
+			t.Fatal("an assertion signed by a pinned key was accepted while the sequence store could not be read")
+		}
+		if !errors.Is(err, ErrStore) {
+			t.Errorf("the refusal is %v, which does not wrap ErrStore: a caller has to be able to tell a store that failed from an assertion that was refused", err)
+		}
+		if reads := unreached.reads(); reads != 0 {
+			t.Errorf("the pinned path read the key set %d times, and a pinned key verifies with no fetch: the store is what is asked instead", reads)
 		}
 	})
 }
