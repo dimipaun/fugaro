@@ -126,6 +126,64 @@ func TestHeaderNamesAreRecordedWithoutValues(t *testing.T) {
 	}
 }
 
+// TestAnAnswerAboutTheRequestIsNotRecorded: the record is a claim that an answer
+// says something about the CREDENTIAL, and the answers this service relays
+// without judging the credential say nothing about it — a 529 is the overloaded
+// upstream's own answer and the service retries none of them (the chain's rule,
+// "an answer about the request moves nothing"). The answer below carries the
+// names a utilisation figure comes in, so a guard that recorded every status
+// would be caught here rather than passing for having recorded nothing.
+func TestAnAnswerAboutTheRequestIsNotRecorded(t *testing.T) {
+	s := newSvc(t)
+	about := http.Header{}
+	about.Set("Anthropic-Ratelimit-Unified-5h-Utilization", utilisationAnswer)
+	about.Set("Retry-After", "30")
+	s.up.Script = []anthropicfake.Reply{
+		{Status: 529, Header: about, Body: `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`},
+	}
+
+	resp, body := s.call(t, callBody("relayed-529"))
+	if resp.StatusCode != 529 {
+		t.Fatalf("the call answered %d %s, want the upstream's own 529", resp.StatusCode, body)
+	}
+	if o, ok := s.state.observation("default"); ok {
+		t.Errorf("the credential that answered a 529 recorded %v: a record is a claim about the credential, and this answer is about the request", o.Headers)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Errorf("the upstream saw %d requests, want the one it answered: an overloaded answer is not retried", n)
+	}
+}
+
+// TestAServeIsUnaffectedByAStoreThatCannotRecord: recording is a capability a
+// store has or has not (creds.ObservationStore), and a store without it is not
+// a failure of the call — the answer the run was given is the run's, and the
+// record is the operator's check. It is also the only test that takes
+// stateReads.UpdateObservation's fail-open branch: the wrapper always has the
+// method, and this is a state whose own store does not, which is exactly what
+// the branch is for.
+func TestAServeIsUnaffectedByAStoreThatCannotRecord(t *testing.T) {
+	s := newSvcWith(t, func(s *svc, cfg *Config) { cfg.State = noObservationStore{Store: s.state} })
+	served := http.Header{}
+	served.Set("Anthropic-Ratelimit-Unified-5h-Utilization", utilisationAnswer)
+	s.up.Script = []anthropicfake.Reply{
+		{Status: http.StatusOK, Header: served, Body: anthropicfake.MessageOK(testModel, testUsage).Body},
+	}
+
+	resp, body := s.call(t, callBody("no-record-store"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call answered %d %s: a store that cannot record what an answer carried is not a failure of the call", resp.StatusCode, body)
+	}
+	if o, ok := s.state.observation("default"); ok {
+		t.Errorf("the store that cannot record one holds %v: a store without the capability writes nothing, and Check 880 reads that source as one it cannot answer for", o.Headers)
+	}
+}
+
+// noObservationStore is a state store that cannot record an observation: it
+// carries creds.Store's own methods and not UpdateObservation. It is written as
+// an embedded interface rather than as a struct with seven methods so that a
+// method added to creds.Store needs no edit here.
+type noObservationStore struct{ creds.Store }
+
 // assertNoValueRecorded reads the record back as the operator's script reads it
 // — the node's JSON — and fails on any value the answers carried. The names are
 // the check's question; a value would be the leak the record exists to avoid.
