@@ -44,8 +44,15 @@
 # words of a refusal only.
 #
 # Usage:      bash scripts/live-checks/check630.sh --sandbox <a sandbox repository checkout> [--project <name>]
+#             bash scripts/live-checks/check630.sh --sandbox <path> --preflight
 #             bash scripts/live-checks/check630.sh --sandbox <path> --dry-run
 #             bash scripts/live-checks/check630.sh --help
+#             --preflight makes the check's own READS and evaluates every
+#             precondition before anything is written or launched (the
+#             installation, the node, the crossing members and the pool the
+#             write door is asked for), prints every blocker at once with the
+#             command that clears it, writes nothing and launches nothing, and
+#             exits non-zero when anything blocks.
 # Needs:      bash, mktemp, date, python3, awk, sed, grep and fugaro (the
 #             installed release, an admin of the project: `fugaro update` and
 #             the pool write both reach the cloud as you).
@@ -114,6 +121,13 @@ on_error() {
   say "an internal error ended this check at line $line"
   exit 2
 }
+
+# The shared `--preflight` driver (scripts/live-checks/lib/preflight.sh).
+CHECK630_LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib
+LIVE_CHECK_LIB=${LIVE_CHECK_LIB:-$CHECK630_LIB}
+# shellcheck source=lib/preflight.sh
+. "$CHECK630_LIB/preflight.sh"
+PREFLIGHT_TOOL=check630
 
 need_tools() {
   command -v bash >/dev/null 2>&1 || die "Check 630 needs bash"
@@ -359,6 +373,144 @@ version_row() {
   local v
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   fact "fugaro-version" PASS "${v:-fugaro version printed nothing} (the release whose crossing rule and whose split this check measures)"
+}
+
+# ---------------------------------------------------------------- preflight
+# step_preflight: --preflight. The reads the check makes, every precondition it
+# has evaluated, nothing written and nothing launched. The installation the
+# checkout names is the same thing step_installation refuses a bad --sandbox
+# for, so that check is argument validation and stays a stop.
+step_preflight() {
+  if [ ! -d "$SANDBOX" ]; then
+    die "--sandbox is not a directory: $SANDBOX (pass the checkout of a repository of the sandbox project)"
+  fi
+  if [ ! -f "$SANDBOX/fugaro.yaml" ]; then
+    die "--sandbox carries no fugaro.yaml: $SANDBOX is not a Fugaro repository's checkout, and the pool write and the update are both made from it"
+  fi
+  local named
+  named=$(sed -n 's/^project:[[:space:]]*//p' "$SANDBOX/fugaro.yaml" | head -n 1)
+  PROJECT=${PROJECT_ARG:-$named}
+  INSTALLATION=$PROJECT
+  local pflag=()
+  [ -z "$PROJECT_ARG" ] || pflag=(--project "$PROJECT_ARG")
+
+  if [ -z "$INSTALLATION" ]; then
+    preflight_block installation \
+      "$SANDBOX/fugaro.yaml names no project, and both the pool write and the update are made from the installation it names" \
+      "cd $SANDBOX && fugaro config show --json"
+    return 0
+  fi
+
+  say "preflight: reading the installation: fugaro doctor --all, in ${SANDBOX}"
+  run_bounded "$DOCTOR_TIMEOUT" pf-doctor "$SANDBOX" "$FUGARO_BIN" doctor --all
+  local line gcp=""
+  line=$(grep -m1 '^project: ' "$SCRATCH/pf-doctor.out" 2>/dev/null || true)
+  if [ -n "$line" ]; then
+    gcp=$(printf '%s' "$line" | sed -n 's/^.*(GCP \([^,]*\),.*/\1/p')
+  fi
+  case "${gcp:-$INSTALLATION}" in
+  *belong*) stop "the checkout at $SANDBOX belongs to ${gcp:-$INSTALLATION}: this check is never run there" ;;
+  esac
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ -z "$line" ]; then
+    preflight_block installation \
+      "fugaro doctor --all does not answer for ${INSTALLATION} in ${SANDBOX} (exit ${BOUNDED_STATUS}), so the installation this check would write to cannot be read" \
+      "cd $SANDBOX && fugaro doctor --all"
+  else
+    preflight_note installation "the installation is ${INSTALLATION} (GCP ${gcp:-unknown}), read from ${SANDBOX}/fugaro.yaml and fugaro doctor --all"
+  fi
+
+  say "preflight: reading the published node: fugaro project policy show --json, in ${SANDBOX}"
+  run_bounded "$CLI_TIMEOUT" pf-node "$SANDBOX" "$FUGARO_BIN" project policy show --json
+  local words
+  words=$(head -c 1200 "$SCRATCH/pf-node.err" 2>/dev/null | tr '\n' ' ' || true)
+  if [ "$BOUNDED_TIMED_OUT" = yes ]; then
+    preflight_block node-crossing \
+      "fugaro project policy show --json did not finish inside ${CLI_TIMEOUT}s, and the node's own read is one of the check's rows" \
+      "cd $SANDBOX && fugaro project policy show --json"
+  elif [ "$BOUNDED_STATUS" != 0 ]; then
+    case "$words" in
+    *"name two pools, one per half"*)
+      preflight_note node-crossing "the published node already carries a crossing pool and this build's read refuses it, with the crossing's own sentence"
+      ;;
+    *)
+      preflight_block node-crossing \
+        "fugaro project policy show --json refuses ${INSTALLATION}'s node for a reason that is not the crossing's sentence: ${words:-no stderr}" \
+        "cd $SANDBOX && fugaro project policy show --json"
+      ;;
+    esac
+  elif ! read_json crossing "$SCRATCH/pf-node.out" "$SCRATCH/pf-node.cross.txt"; then
+    preflight_block node-crossing \
+      "fugaro project policy show --json prints a document this check cannot read" \
+      "cd $SANDBOX && fugaro project policy show --json"
+  else
+    local crossed
+    crossed=$(field "$SCRATCH/pf-node.cross.txt" crossing)
+    local v
+    v=$(read_json node "$SCRATCH/pf-node.out" "$SCRATCH/pf-node.txt" && field "$SCRATCH/pf-node.txt" version)
+    if [ "${crossed:-0}" != 0 ]; then
+      preflight_block node-crossing \
+        "the published node (version ${v:-unknown}) carries a crossing pool and this build's read did NOT refuse it, so every reader of the node would serve it" \
+        "fugaro update"
+    else
+      preflight_note node-crossing "the published node (version ${v:-unknown}) carries no crossing pool, so this door has nothing to refuse"
+    fi
+  fi
+
+  say "preflight: reading the credentials: fugaro accounts ls --json, in ${SANDBOX}"
+  run_bounded "$CLI_TIMEOUT" pf-creds "$SANDBOX" "$FUGARO_BIN" accounts ls --json ${pflag[@]+"${pflag[@]}"}
+  local runner="" svc=""
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ] ||
+    ! read_json creds "$SCRATCH/pf-creds.out" "$SCRATCH/pf-creds.txt"; then
+    preflight_block refused-at-add \
+      "fugaro accounts ls --json does not answer in ${SANDBOX}, and the crossing list needs one member of each path from it" \
+      "cd $SANDBOX && fugaro accounts ls --json"
+  else
+    local name type
+    while IFS=$'\t' read -r kind name type _path; do
+      [ "$kind" = cred ] || continue
+      case "$type" in
+      openrouter | vertex) [ -n "$runner" ] || runner=$name ;;
+      anthropic | claude-oauth) [ -n "$svc" ] || svc=$name ;;
+      esac
+    done <"$SCRATCH/pf-creds.txt"
+    [ -z "$WANT_RUNNER" ] || runner=$WANT_RUNNER
+    [ -z "$WANT_CREDSVCC" ] || svc=$WANT_CREDSVCC
+    if [ -z "$runner" ]; then
+      preflight_block refused-at-add \
+        "the config declares no OpenRouter or vertex member, so the crossing list has no member of the run's own path" \
+        "fugaro accounts add openrouter-key --type openrouter"
+    fi
+    if [ -z "$svc" ]; then
+      preflight_block refused-at-add \
+        "the config declares no Anthropic-key or Claude OAuth member, so the crossing list has no member of the credentials service's path" \
+        "fugaro accounts add anthropic-key --type anthropic"
+    fi
+    [ -z "$runner" ] || [ -z "$svc" ] || preflight_note refused-at-add \
+      "the crossing list would name ${runner} (the run's path) and ${svc} (the credentials service's)"
+  fi
+
+  say "preflight: reading the pools: fugaro accounts pool ls, in ${SANDBOX}"
+  run_bounded "$CLI_TIMEOUT" pf-pools "$SANDBOX" "$FUGARO_BIN" accounts pool ls ${pflag[@]+"${pflag[@]}"}
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+    preflight_block config-crossing \
+      "fugaro accounts pool ls does not answer in ${SANDBOX}, so the pool the write door would be asked for cannot be read" \
+      "cd $SANDBOX && fugaro accounts pool ls"
+  else
+    local existing
+    existing=$(pool_ls_row "$SCRATCH/pf-pools.out" "$POOL_NAME")
+    if [ -n "$existing" ]; then
+      preflight_block refused-at-add \
+        "the pool ${POOL_NAME} is already declared (${existing}), and the write door is asked to declare it" \
+        "fugaro accounts pool rm $POOL_NAME"
+    fi
+    local crossed
+    crossed=$(crossing_pools "$SCRATCH/pf-pools.out")
+    if [ -n "$crossed" ]; then
+      preflight_note config-crossing "the config already holds a crossing pool ($(printf '%s' "$crossed" | tr '\n' ' ')), which the update below splits"
+    else
+      preflight_note config-crossing "the config holds no crossing pool, so the update has no crossing of its own to split"
+    fi
+  fi
 }
 
 # ---------------------------------------------------------------- the steps
@@ -694,6 +846,12 @@ finish() {
   local status=$?
   trap - EXIT
   trap - ERR
+  if [ "$PREFLIGHT_MODE" = yes ]; then
+    # A preflight wrote nothing and launched nothing: it prints its own lines
+    # and no RESULT block.
+    remove_scratch
+    exit "$status"
+  fi
   CLEANUP_RUNNING=yes
   cleanup
   local facts=$FACTS_CAPTURED
@@ -779,6 +937,7 @@ on_signal() {
 
 # ---------------------------------------------------------------------- inputs
 DRY_RUN_CLI=""
+PREFLIGHT_CLI=""
 SANDBOX_CLI=""
 PROJECT_CLI=""
 usage() {
@@ -795,6 +954,10 @@ while [ $# -gt 0 ]; do
     [ $# -ge 2 ] || die "--project needs the installation's own name"
     PROJECT_CLI=$2
     shift 2
+    ;;
+  --preflight)
+    PREFLIGHT_CLI=1
+    shift
     ;;
   --dry-run)
     DRY_RUN_CLI=1
@@ -826,6 +989,9 @@ WANT_RUNNER=${CHECK630_OPENROUTER_MEMBER:-}
 WANT_CREDSVCC=${CHECK630_ANTHROPIC_MEMBER:-}
 CREDSVCC_FALLBACK=""
 DRY_RUN=${CHECK630_DRY_RUN:-$DRY_RUN_CLI}
+PREFLIGHT=${CHECK630_PREFLIGHT:-$PREFLIGHT_CLI}
+PREFLIGHT_MODE=no
+[ -z "$PREFLIGHT" ] || PREFLIGHT_MODE=yes
 KEEP_SCRATCH=${CHECK630_KEEP_SCRATCH:-}
 CLI_TIMEOUT=${CHECK630_CLI_TIMEOUT_SECONDS:-180}
 DOCTOR_TIMEOUT=${CHECK630_DOCTOR_TIMEOUT_SECONDS:-300}
@@ -850,6 +1016,10 @@ main() {
   if [ -n "$DRY_RUN" ]; then
     plan
     return 0
+  fi
+  if [ -n "$PREFLIGHT" ]; then
+    step_preflight
+    preflight_report
   fi
   step_installation
   step_node_crossing
