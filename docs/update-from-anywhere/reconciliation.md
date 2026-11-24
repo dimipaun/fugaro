@@ -1,6 +1,7 @@
 # Update from anywhere: reconciliation
 
-Checked against `origin/main` at `486823a00` on 2026-11-24. The spec's own claims were checked at
+Checked against `origin/main` at `486823a00` on 2026-11-24, and re-read at `14114c064` in review
+round 3 (line citations refreshed there). The spec's own claims were checked at
 `b8fdb53e2`; of the files it cites, only `init_stages.go` and `update_backlog.go` changed since, and
 neither change touches a claim. L8 M1's reader merged during review round 2 (#3816, `d5ec51b5f`); the
 plan cites the merged code.
@@ -113,17 +114,17 @@ Rows F15–F30 come from review round 1.
   operator step. D3343 is amended (below).
 - **F20 (Gap).** `--anchor` is shared with `fugaro setup` (`setup.go:137, 156, 266`), and text
   points at it from many places:
-  - code: `doctor.go:500`, `doctor_render.go:921`, `image_refresh.go:387, 427, 592` and
+  - code: `doctor.go:510`, `doctor_render.go:950`, `image_refresh.go:387, 427, 592` and
     `update.go:91`;
   - tests and docs: `testdata/init_retire.golden:87`, `README.md:120`,
     `docs/how-to/teammates.md:13` and `.claude/skills/new-release/SKILL.md:79`;
   - the generated `website/content/cli-reference.md` (`go run ./ee/clidoc`).
 
-  `repositoryStage.anchor` is called from `init_repo_stage.go:178, 198`. The `repos add` converge
+  `repositoryStage.anchor` is called from `init_repo_stage.go:182, 202`. The `repos add` converge
   is `runProjectReposEnroll` (`project_enroll_converge.go:125`). It reads the working tree's
   `fugaro.yaml`, and its help promises "the repository's own fugaro.yaml: read, never written"
   (`project_enroll.go:151`). → D3351, R14.
-- **F21 (Gap).** `doctor` already has a `plugin-pin` check (`doctor.go:393`; its fix,
+- **F21 (Gap).** `doctor` already has a `plugin-pin` check (`doctor.go:396`; its fix,
   `doctor_render.go:750`, reads "run `fugaro update` in the repository's checkout") and a
   `budget-mode` check (`doctor_budget_mode.go`). Both read the working tree, and after L5 the first
   fix is a dead loop. `doctor --offline` and `--plugin` promise no network call. → R15.
@@ -172,7 +173,7 @@ Rows F31–F41 come from review round 2.
   hold, and needs the repository's `github_app_id` from the local config. D3343 is amended again
   (below). → R1.
 - **F32 (Wrong).** `secretsStage` serves both doors (`initsecrets.go:236`). `fugaro setup` promises
-  hidden prompts at any terminal (`setup.go:281–296`) and refuses `--ask` by name (`setup.go:370`).
+  hidden prompts at any terminal (`setup.go:281–296`) and refuses `--ask` by name (`setup.go:371`).
   D3347 is scoped to `update` (below). → R18.
 - **F33 (Wrong).** `--ask` on an unmanaged project is the no-op `AskUnmanaged`
   (`internal/initflow/stage.go:1012, 1071`), pinned by `managed_ask_test.go`. D1028
@@ -200,6 +201,40 @@ Rows F31–F41 come from review round 2.
   repository now gets secret containers (a cloud write the `--onboard-repo` gate used to fence),
   builds and backlog items. → R20.
 
+Rows F42–F50 come from review round 3.
+
+- **F42 (Wrong).** `repos add` needs a checkout because it deploys the repository's job set from it
+  (the Repository stage in-process, D2401; `project_enroll_converge.go:200–206, 1027–1105`). The read
+  mint refuses a repository no job serves yet (`RepositoryTableFor`, `review.go:258–273`;
+  `ErrGitHubReadUnknownRepository`). So `repos add` cannot read the repository it is adding through
+  the mint. → R8.
+- **F43 (Wrong).** `github_app_id` lives only in this machine's local config
+  (`reviewverify.go:383–388`, `localcfg.go:2131`). An admit-only GitHub repository would always read
+  as unread. `projectGitHubAppID` (`project_enroll_converge.go:548`) is the existing rule: the one
+  App ID the project's other GitHub repositories use. → R1.
+- **F44 (Gap).** `serviceReadAtTheForge` refuses to mint the operator's identity in a coding agent's
+  process (`refuseKeyReadInAgent`, `project_job.go:830–836`, D902). `serviceReadProvider` has no
+  such guard, and the guarded pattern (`serviceReadTarget`, `serviceReadRepoConfigAtRef`,
+  `project_job.go:764–836`) already exists. → D3352, R1.
+- **F45 (Gap).** Stages that switch to `e.repos` before I1 would read no repositories from C1's
+  stub, and `main` would lose today's behaviour (with tests red) until I1. → R21.
+- **F46 (Gap).** The credentials stage runs after images, secrets, plugin, repository and policy
+  (`init_stages.go:287–323`). On a run that first deploys the service, its URL is empty until
+  `fillCredentialsAudience`. → R22.
+- **F47 (Gap).** The read mint needs the `gcloud` binary, a user-account login, and the caller on the
+  installation's operators list with `run.invoker` on the service. A Bitbucket read needs the read
+  consumer in the service's bundle. → the plan's `### For operators` entry, U2's reasons.
+- **F48 (Wrong).** R20 said the fold is skipped in an agent's session. It is skipped only when
+  `!r.gateUnderway()` (`update_backlog.go:80–82`), so it runs under the managed gate (D1016). With
+  D3352 an agent's session reads no repository, so the fold reads nothing there. → R20.
+- **F49 (Gap).** Existing tests change with the tasks: `update_budget_off_test.go` (U6a),
+  `initsecrets_test.go` and `initsecrets_pty_test.go` (U3b), `plugin/update_skill_test.go` (U7a), and
+  `docs_upgrade_test.go:138`, which pins `fugaro update [--check [PATH]]` in `docs/upgrade/spec.md`
+  (U10). `.claude/skills/new-release/SKILL.md:79` and `docs/gcp-live-checklist.md:3300` also carry
+  the pin's diff sentence.
+- **F50 (Untestable).** U10's "no bucket read" depends on which staleness variant it calls: today's
+  `cloudCheck` runs offline, while the converge's reads build records. → U4, U10.
+
 ## Decisions
 
 The owner answered D3340–D3348 on 2026-11-23, on the spec's draft. D3349–D3351 and the amendments
@@ -219,6 +254,7 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
 | D3349 | What does `update --check` read? (F2) | Drop PATH; read the local config's repositories from the code host, with no GCP call; one line points admit-only repositories to `update --plan-only` | **As recommended (2026-11-24).** → R17. **Amended after review round 2 (F31), confirmed by the owner 2026-11-24:** with reads through the credentials service (D3343), `--check`'s only calls are that service's read mint and the code host's API. It writes nothing and reads no bucket or policy. The help says "no write; reads each repository through the credentials service" instead of "no cloud call" |
 | D3350 | Does a published admit count as enrolled for secrets, builds and the fold? (F17) | Yes: the list is the project's own, not a directory's, so the hostile-checkout gate has nothing to guard in `update`'s stages | **As recommended (2026-11-24).** Whoever can publish the allow-list can direct a value into that repository's secrets. The gate stays for `setup --repo` and `--onboard-repo`. This is the owner's go for the cloud writes it widens (F41, R20) |
 | D3351 | Does `setup --anchor` go too? (F20) | Remove it from both; the anchor lives in `project repos add` alone | **As recommended (2026-11-24).** → R14 |
+| D3352 | In a coding agent's session, do L5's reads mint the operator's identity? (F44) | No, as D902: every repository reads as unread with one line, "run fugaro update from your own terminal", and the stages that need repositories say needs-you | **As recommended (2026-11-24).** An agent-run update converges only the project-wide parts. → R1 |
 
 ## Resolutions
 
@@ -227,10 +263,18 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
   - takes extra paths;
   - keeps the default branch's name and head commit.
 
-  U2 passes it an opener built on `serviceReadProvider` (moved to a file of its own, unchanged), so
-  every read is the credentials service's person read mint. A repository the mint refuses (no
-  `github_app_id` recorded, not held by the installation) is `unread`, naming the fix
-  (`fugaro doctor`, `fugaro project repos add`). M1 has merged, so U1 can start.
+  U2 passes it an opener that calls `serviceReadProvider` where it is, behind the guard the
+  launcher's read uses (`refuseKeyReadInAgent`, D902, D3352), so every read is the credentials
+  service's person read mint and none happens in an agent's session. A GitHub repository with no
+  `github_app_id` of its own takes `projectGitHubAppID`'s answer (F43). A repository the mint
+  refuses is `unread`, naming the fix:
+  - no App ID anywhere in the project: onboard a GitHub repository in its checkout with
+    `fugaro project repos add`;
+  - no job serves it yet: `fugaro project repos add` in its checkout;
+  - not on the operators list, no `gcloud` login, or no Bitbucket read consumer: the service's own
+    refusal sentence.
+
+  M1 has merged, so U1 can start.
 - **R2 (F3).** The secrets stage keeps the command its builder makes today, so it follows IS4 when
   IS4 lands. A name several repositories want is one line listing them.
 - **R3 (F4, F28).** Until U11, the repository stage is the one exception. It may differ by
@@ -247,10 +291,10 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
   repository, from the view.
 - **R7 (F8).** No L5 task waits on another plan's task over a shared file. A task that finds one
   merged first rebases on it, as L8's O2 does.
-- **R8 (F9, F20).** `project repos add` gets the anchor step with `writeAnchor`'s exact gate and no
-  new question. It reads the repository's `fugaro.yaml` from the default branch, and its help says
-  the file is "read, and written only for the anchor line, through the gate, in that repository's
-  own checkout".
+- **R8 (F9, F20, F42).** `project repos add` gets the anchor step with `writeAnchor`'s exact gate and
+  no new question. It keeps its checkout, which it deploys from (D2401), and reads that checkout's
+  `fugaro.yaml` as today. Its help says the file is "read, and written only for the anchor line,
+  through the gate, in that repository's own checkout".
 - **R9 (F10).** The images stage copies the union of the kinds it read. Only the default catalog
   entry is held while a repository is unread.
 - **R10 (F12, F4, F40).** The scan covers the functions `update` reaches (its stages and the two steps
@@ -306,7 +350,8 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
   - the `cloud` step runs per repository from the view, through U4's per-repository staleness
     function, with no write and no bucket or policy read (D3349 as amended).
 
-  The update skill's "needs no credentials" becomes "reads the code host with your token" (U7a).
+  The update skill's "needs no credentials" becomes "reads each repository through the
+  installation's credentials service" (U7a).
 
 - **R18 (F32, F33, D3347).** The secrets stage branches on its door. `update` reads the list and asks
   for a value only under `--ask` (on any project, with no terminal failing at once). `setup` keeps
@@ -316,10 +361,19 @@ to D3343 and D3347 were answered on 2026-11-24. All are as recommended.
 - **R19 (F36).** `enrolledRepos` returns the admit patterns it could not list as well. Each pattern
   gets one notice line ("admitted by pattern, not listed: add the repository by name with
   `fugaro project repos add`").
-- **R20 (F41, D3350).** U8 pins that an item's repository is the repository it was read from, never
-  a field of the file. The fold stays skipped in an agent's session (`update_backlog.go:80–82`), and
-  folded items stay queued and unapproved. U3 and U4's acceptance cite D3350 as the go for their
+- **R20 (F41, F48, D3350).** U8 pins that an item's repository is the repository it was read from,
+  never a field of the file. Under the managed gate the fold runs in an agent's session
+  (`update_backlog.go:80–82`, D1016), but there it reads no repository (D3352). Folded items stay
+  queued and unapproved. U3 and U4's acceptance cite D3350 as the go for their
   widened writes.
+
+- **R21 (F45).** C1's stub returns today's behaviour: the working directory's checkout as a single
+  view, read the way the stages read it now, or none outside a checkout. Each stage that switches to
+  `e.repos` keeps its behaviour, and its existing tests stay green until I1 deletes the stub.
+- **R22 (F46).** Every installation on a released version already has the credentials service
+  (`fugaro update` deploys it everywhere). A run with no service URL reads every repository as
+  unread, with one line that names the credentials stage and says the next `update` reads them. I1
+  adds a test that an installation at the previous release converges.
 
 ## Open tensions
 

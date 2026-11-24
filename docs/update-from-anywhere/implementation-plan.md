@@ -4,7 +4,7 @@ This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconcilia
 
 **Status: nothing is implemented, and no task is approved.** Each task needs the owner's explicit go.
 
-The answers that shaped it are D3340–D3351, all as recommended. D3343, D3347 and D3349 were
+The answers that shaped it are D3340–D3352, all as recommended. D3343, D3347 and D3349 were
 amended after review and confirmed.
 - **D3340:** the pin becomes a notice, and the HARD RULE's clause changes.
 - **D3341:** the repository stage waits for L2, and everything else ships first.
@@ -19,6 +19,7 @@ amended after review and confirmed.
 - **D3348:** the hint never narrows `--plan-only`.
 - **D3349:** `--check` reads the local list through the read mint and writes nothing.
 - **D3350:** a published admit counts as enrolled.
+- **D3352:** no read in a coding agent's session, as D902.
 
 ## Conventions every part follows
 
@@ -68,6 +69,9 @@ amended after review and confirmed.
 | `doctor --offline` and `--plugin` make no network call (R15) | U6b |
 | No key or token reaches the admin's machine; every read is the credentials service's read mint (D3343) | U2, I1 |
 | An admit pattern the reader could not list gets a notice line (R19) | U2, I1 |
+| No identity is minted in a coding agent's session (D3352, D902) | U2 |
+| `main` keeps today's behaviour between the stage tasks and I1 (R21) | C1 |
+| An installation at the previous release converges (HARD RULE, R22) | I1 |
 
 ## Launch notes
 
@@ -109,7 +113,8 @@ launches by plan edges holds it by hand.
   `needs you`, `unread` and `skipped`) and the interface `RepoReporter` (`RepoLines() []RepoLine`)
   (R12). `init_stages.go` gains one field on `initEngine` that holds the memo and the reported
   lines; it is C1's only edit there. `internal/cli/update_repos_stub.go` holds
-  `enrolledReposImpl`, which returns no repositories. `contract-repos.md` says what a stage may rely
+  `enrolledReposImpl`, which returns today's behaviour (R21): the working directory's checkout as a
+  single view, read the way the stages read it now, or none outside a checkout. `contract-repos.md` says what a stage may rely
   on: the same list from every directory; an unread repository carries its reason, and a stage
   reports it and never guesses; extra files only when asked for; no working-tree read.
 - Files: `internal/cli/update_repos.go` (new), `internal/cli/update_repos_stub.go` (new),
@@ -141,23 +146,27 @@ launches by plan edges holds it by hand.
 ### U2: the enrolled list through the credentials service's read mint
 - Acceptance:
   - `readEnrolledRepos` calls `repofiles.Read` with the extra paths the stages need, and with an
-    opener built on `serviceReadProvider`. That function moves unchanged from `reviewverify.go` to
-    a file of its own, and both callers use it (D3343, R1).
-  - No App key, token variable or credential helper is read on this machine.
+    opener that calls `serviceReadProvider` where it is, behind `refuseKeyReadInAgent` as the
+    launcher's read does (`project_job.go`, `serviceReadTarget`) (D3343, D3352, R1).
+  - No App key, token variable or credential helper is read on this machine. In a coding agent's
+    session, no identity is minted: every repository is `unread`, with one line, "run fugaro
+    update from your own terminal".
+  - A GitHub repository with no `github_app_id` of its own takes `projectGitHubAppID`'s answer
+    (F43).
   - **The parse** (R13): each `fugaro.yaml` is parsed against the layer it is given. A missing or
     invalid file is `unread`, naming the cause or the first problem.
-  - **The fix in each reason:** `fugaro doctor` for a missing `github_app_id`, and
-    `fugaro project repos add` for a repository the installation does not hold. With no credentials
-    service, the service's own refusal sentence.
+  - **The fix in each reason** (R1): no App ID in the project; no job serving the repository; the
+    service's own refusal for the operators list, the `gcloud` login or the Bitbucket read consumer;
+    no service URL yet (R22).
   - **Admit patterns:** it returns the patterns it could not list, for a notice line each (R19).
   - **The hint:** the selector's existing project default is reused; nothing new picks a project
     (A3).
-- Files: `internal/cli/update_repos_read.go` (new), `internal/cli/service_read_provider.go` (new),
-  `internal/cli/reviewverify.go`, `internal/cli/update_repos_read_test.go` (new).
-- Interfaces: consumes U1 and `serviceReadProvider`; produces `readEnrolledRepos`, which I1
-  connects to C1's stub.
+- Files: `internal/cli/update_repos_read.go` (new), `internal/cli/update_repos_read_test.go` (new).
+- Interfaces: consumes U1, `serviceReadProvider`, `refuseKeyReadInAgent` and
+  `projectGitHubAppID`; produces `readEnrolledRepos`, which I1 connects to C1's stub.
 - Tests: `TestEnrolledReposAreTheListReposLsDraws`, `TestEnrolledReposMissingOrInvalidIsUnread`,
   `TestEnrolledReposNameTheFix`, `TestEnrolledReposReadThroughTheMint`,
+  `TestEnrolledReposMintNothingForAnAgent`, `TestEnrolledReposBorrowTheProjectAppID`,
   `TestEnrolledReposNamePatterns`.
 - Command: `go test ./internal/cli/ -run 'TestEnrolledRepos' -count=1`
 - Red step: the tests fail before the functions exist.
@@ -200,13 +209,14 @@ launches by plan edges holds it by hand.
   - `docs/no-prompt-policy/reconciliation.md` and D1028's row in
     `docs/managed-agent-converge/reconciliation.md` each get a dated note naming D3347.
 - Files: `internal/cli/initsecrets.go`, `internal/cli/init.go`, `internal/initflow/stage.go`,
-  `internal/cli/managed_ask_test.go`, `docs/no-prompt-policy/reconciliation.md`,
+  `internal/cli/managed_ask_test.go`, `internal/cli/initsecrets_test.go`,
+  `internal/cli/initsecrets_pty_test.go`, `docs/no-prompt-policy/reconciliation.md`,
   `docs/managed-agent-converge/reconciliation.md`, `website/content/cli-reference.md`
   (generated).
 - Interfaces: none new.
 - Tests: `TestUpdateAsksValuesOnlyUnderAsk`, `TestUpdateAskWithNoTerminalFailsAtOnce`,
   `TestUpdateNeverAsksAnAgentOrJSON`, `TestSetupKeepsItsValuePrompt`, plus the Docs tests.
-- Command: `go test ./internal/cli/ -run 'TestUpdateAsksValuesOnlyUnderAsk|TestUpdateAskWithNoTerminal|TestUpdateNeverAsksAnAgentOrJSON|TestSetupKeepsItsValuePrompt|TestManagedAsk|Docs' -count=1`
+- Command: `go test ./internal/cli/ -run 'TestUpdateAsksValuesOnlyUnderAsk|TestUpdateAskWithNoTerminal|TestUpdateNeverAsksAnAgentOrJSON|TestSetupKeepsItsValuePrompt|TestManagedAsk|TestSecrets|TestInitSecrets|Docs' -count=1`
 - Red step: `TestUpdateAsksValuesOnlyUnderAsk` fails while `canPrompt` asks at any terminal.
 - Depends on: U3a (both write `initsecrets.go`).
 - Commit: `update-from-anywhere U3b: update's --ask turns on value entry`
@@ -220,7 +230,8 @@ launches by plan edges holds it by hand.
   - `jobConfigCopyNote` runs per repository, from the view.
   - A repository it cannot build from this machine gets one line (V1). An admit-only repository's
     build is the owner's go under D3350 (R20).
-  - It exports a per-repository staleness function, which U10 uses.
+  - It exports a per-repository staleness function with an offline variant (today's `cloudCheck`
+    rule, no build-record read), which U10 uses (F50).
   - `fugaro image refresh` keeps its checkout path.
 - Files: `internal/cli/init_checkout_upgrade.go`, `internal/cli/upgrade_cloud.go`,
   `internal/cli/image_refresh.go`, `internal/cli/init_checkout_repos_test.go` (new).
@@ -260,7 +271,7 @@ launches by plan edges holds it by hand.
   - The plugin's install half runs in a fixed directory, with no `os.Getwd`.
 - Files: `internal/cli/init_plugin_stage.go`, `internal/cli/update_budget_off.go`,
   `internal/cli/init_fugaroyaml.go`, `internal/cli/repo_notices.go` (new),
-  `internal/cli/repo_notices_test.go` (new).
+  `internal/cli/repo_notices_test.go` (new), `internal/cli/update_budget_off_test.go`.
 - Interfaces: consumes C1 and its extra files; produces the notice text.
 - Tests: `TestPinNoticeFromDefaultBranch`, `TestBudgetOffNoticeFromDefaultBranch`,
   `TestPluginInstallRunsInAFixedDirectory`.
@@ -294,12 +305,12 @@ launches by plan edges holds it by hand.
     its removal as a diff, which the user commits or does not" with: `doctor` and `update` name such
     a pin, and the line to delete. Nothing else in the rule changes (D3340, R11).
   - `plugin/skills/update/SKILL.md` says the same, and its `--check` line says it reads the code
-    host with the user's token (R17).
+    repository through the installation's credentials service (R17).
   - `README.md:61` follows.
   - A new Docs test pins the new clause in both `CLAUDE.md` and the skill.
   - The `plugin/` tests pass.
 - Files: `CLAUDE.md`, `plugin/skills/update/SKILL.md`, `README.md`,
-  `internal/cli/docs_update_anywhere_test.go` (new).
+  `internal/cli/docs_update_anywhere_test.go` (new), `plugin/update_skill_test.go`.
 - Interfaces: consumes U6a's text and U10's `--check`.
 - Tests: `TestDocsUpdateAnywherePinClause`, the Docs tests and the plugin tests.
 - Command: `go test ./internal/cli/ -run Docs -count=1 && (cd plugin && go test ./... -count=1)`
@@ -313,7 +324,8 @@ launches by plan edges holds it by hand.
   - `docs/design/update-in-flight.md`'s rows for checkout, `budget.mode` and images say that each
     reads every repository's default branch and writes nothing a run holds (A4).
   - `docs/upgrade/spec.md:52` follows.
-  - `docs/gcp-live-checklist.md` gets Check 930's row and section, and its pin paragraph follows.
+  - `docs/gcp-live-checklist.md` gets Check 930's row and section, and its pin paragraph (line
+    3300) names the notice instead of the diff.
   - `scripts/live-checks/check-884-update-migrates.sh` and its `_test.sh` expect the notice, not
     the diff.
 - Files: `docs/design/update-in-flight.md`, `docs/upgrade/spec.md`, `docs/gcp-live-checklist.md`,
@@ -352,22 +364,22 @@ launches by plan edges holds it by hand.
 
 ### U9a: the anchor moves into `project repos add`
 - Acceptance:
-  - `runProjectReposEnroll` reads the repository's `fugaro.yaml` from the default branch through
-    U2's read-mint opener, and no longer requires a checkout.
+  - `runProjectReposEnroll` keeps its checkout, which it deploys from (D2401, F42), and reads that
+    checkout's `fugaro.yaml` as today.
   - When the file has no `gcp_project:` line, `repos add` prints the line and runs today's image
     checks (`gcpProjectProblems`). `anchorProblemText` names `repos add`, not `update --anchor`.
-  - Run in that repository's checkout, it offers the edit through `writeAnchor`'s exact gate. The
-    gate is lifted out of `initRun` into a function both doors call (R8, F38).
+  - It offers the edit through `writeAnchor`'s exact gate. The gate is lifted out of `initRun` into
+    a function both doors call (R8, F38).
   - Its help's "read, never written" becomes "read, and written only for the anchor line, through
     the gate, in that repository's own checkout".
 - Files: `internal/cli/project_enroll_converge.go`, `internal/cli/project_enroll.go`,
   `internal/cli/init_fugaroyaml.go`, `internal/cli/project_enroll_anchor_test.go` (new).
-- Interfaces: consumes U2's opener and the lifted gate.
-- Tests: `TestReposAddReadsTheDefaultBranch`, `TestReposAddPrintsTheAnchorLine`,
-  `TestReposAddOffersTheAnchorInTheCheckout`, `TestReposAddAnchorRefusedForAnAgent`.
+- Interfaces: consumes the lifted gate.
+- Tests: `TestReposAddPrintsTheAnchorLine`, `TestReposAddOffersTheAnchorThroughTheGate`,
+  `TestReposAddAnchorRefusedForAnAgent`.
 - Command: `go test ./internal/cli/ -run 'TestReposAdd' -count=1`
-- Red step: `TestReposAddReadsTheDefaultBranch` fails while the converge needs a checkout.
-- Depends on: U2 (behaviour: the opener); U6a (both write `init_fugaroyaml.go`).
+- Red step: `TestReposAddPrintsTheAnchorLine` fails while `repos add` says nothing of the anchor.
+- Depends on: U6a (both write `init_fugaroyaml.go`).
 - Commit: `update-from-anywhere U9a: the anchor moves into project repos add`
 - Reviewer tier: opus, with an independent review (a write into a checkout, the allow-list path).
 
@@ -375,7 +387,7 @@ launches by plan edges holds it by hand.
 - Acceptance:
   - The flag is gone from `update` and `setup` (D3345, D3351), and so are its exclusions in
     `init.go`. `noteAnchor` is deleted.
-  - The repository stage no longer calls `anchor` (`init_repo_stage.go:178, 198`;
+  - The repository stage no longer calls `anchor` (`init_repo_stage.go:182, 202`;
     `repositoryStage.anchor` in `init_fugaroyaml.go` goes), so `update` writes no `fugaro.yaml`.
   - The tests that ran `setup --anchor` or `update --anchor` move to `repos add` or go:
     `init_anchor_test.go`, `image_refresh_test.go`, `image_refresh_upgrade_test.go`,
@@ -403,7 +415,7 @@ launches by plan edges holds it by hand.
 
 ### U9c: the code's pointers to `--anchor` name `project repos add`
 - Acceptance: these name `fugaro project repos add` instead of `--anchor`:
-  - `doctor.go:500` and `doctor_render.go:921`;
+  - `doctor.go:510–511` and `doctor_render.go:950`;
   - `image_refresh.go:387, 427, 592`;
   - the refusal at `internal/localcfg/select.go:296`;
   - the label at `writers_labels.go:214`.
@@ -420,7 +432,8 @@ launches by plan edges holds it by hand.
 ### U9d: the live documents' pointers, and the test that none remains
 - Acceptance:
   - `README.md:120`, `docs/how-to/teammates.md:13`, `docs/release.md:364` and
-    `.claude/skills/new-release/SKILL.md:79` name `fugaro project repos add`.
+    `.claude/skills/new-release/SKILL.md:79` name `fugaro project repos add`. The skill's line also
+    loses its pin sentence ("offered its removal as a diff"), which becomes the notice.
   - `TestDocsNoAnchorFlagNamed` greps the tree for `update --anchor` and `setup --anchor` and finds
     none. It excludes `docs/releases/` and each `docs/*/{spec,reconciliation,implementation-plan}.md`,
     which stay as written (R14).
@@ -439,13 +452,16 @@ launches by plan edges holds it by hand.
   - `update --check` takes no PATH.
   - Its `plugin` step is unchanged. `rules` and `policy` stay skipped, with their notes.
   - Its `cloud` step runs per local-config repository through the view, using the local layer file
-    and U4's staleness function. It writes nothing and reads no bucket or policy (D3349 as amended,
+    and U4's offline staleness variant. It writes nothing and reads no bucket or policy (D3349 as amended,
     R17).
   - It prints one line saying that admit-only repositories are covered by `update --plan-only`.
   - The flag's help says "writes nothing; reads each repository through the credentials service"
     instead of "make no cloud call", and the CLI reference is regenerated.
+  - `docs/upgrade/spec.md`'s usage line drops `[PATH]`, and `docs_upgrade_test.go:138` pins the new
+    one.
 - Files: `internal/cli/update_check.go`, `internal/cli/init.go`,
-  `website/content/cli-reference.md` (generated), `internal/cli/update_check_repos_test.go` (new).
+  `website/content/cli-reference.md` (generated), `internal/cli/update_check_repos_test.go` (new),
+  `docs/upgrade/spec.md`, `internal/cli/docs_upgrade_test.go`.
 - Interfaces: consumes C1 and U4.
 - Tests: `TestUpdateCheckReadsTheLocalList`, `TestUpdateCheckWritesNothing`,
   `TestUpdateCheckTakesNoPath`, plus the Docs tests.
@@ -463,6 +479,8 @@ launches by plan edges holds it by hand.
   - The document gains a top-level `notices` member, and the stream a `notice` event, for the steps
     after the stage loop and the admit patterns (R12, R19).
   - Human output prints each stage's lines under its header, hint first (`hintFirst`).
+  - A stage that reports lines gets a `detail` summary built from them ("3 repositories: 1 done,
+    1 needs you, 1 unread"), the same from every directory.
   - The schema, the golden stream and the console's JSON contract are updated. No existing member
     changes.
 - Files: `internal/initflow/loop.go`, `internal/cli/setup_events.go`,
@@ -512,16 +530,19 @@ launches by plan edges holds it by hand.
       directory, from each checkout, and from one dirty in a key other than `project:`
       (acceptance 2, F29). This is the real guard against a working-directory read (R10);
     - `TestUpdateStagesReadNoWorkingTree`: the scan of R10 (acceptance 8);
-    - `TestUpdateLeavesARunInFlightRunning` (acceptance 7).
+    - `TestUpdateLeavesARunInFlightRunning` (acceptance 7);
+    - `TestUpdateFromThePreviousReleaseConverges`: an installation at the previous release
+      converges (HARD RULE, R22).
 
     Both of the first two exempt the repository stage by name, until U11.
 - Files: `internal/cli/update_repos_stub.go` (deleted), `internal/cli/update_repos_read.go`,
   `internal/cli/update_anywhere_test.go` (new), `internal/cli/update_in_flight_test.go`.
 - Interfaces: re-joins C1 with U2, U3a, U3b, U4, U5, U6a, U6b, U8, U10 and U13.
 - Tests: `TestUpdateIsTheSameFromAnyDirectory`, `TestUpdateStagesReadNoWorkingTree`,
-  `TestUpdateLeavesARunInFlightRunning`.
-- Command: `go test ./internal/cli/ -run 'TestUpdateIsTheSameFromAnyDirectory|TestUpdateStagesReadNoWorkingTree|TestUpdateLeavesARunInFlightRunning' -count=1`
-- Red step: `TestUpdateIsTheSameFromAnyDirectory` fails while the stub returns no repositories.
+  `TestUpdateLeavesARunInFlightRunning`, `TestUpdateFromThePreviousReleaseConverges`.
+- Command: `go test ./internal/cli/ -run 'TestUpdateIsTheSameFromAnyDirectory|TestUpdateStagesReadNoWorkingTree|TestUpdateLeavesARunInFlightRunning|TestUpdateFromThePreviousReleaseConverges' -count=1`
+- Red step: `TestUpdateIsTheSameFromAnyDirectory` fails while the stub returns only the working
+  directory's checkout.
 - Depends on: U2, U3a, U3b, U4, U5, U6a, U6b, U8, U10, U13 (integration).
 - Commit: `update-from-anywhere I1: the real list, the end-to-end tests`
 - Reviewer tier: opus, with an independent review (it wires the read mint into every stage).
@@ -564,7 +585,7 @@ bottleneck. U11 also waits on L2, outside the graph.
 - `init.go` and the generated CLI reference are written in the order U3b → U10 → U9b → U11, one
   writer at a time. `initsecrets.go` is written by U3a, then U3b.
 - `init_fugaroyaml.go` is written by U6a, then U9a, then U9b.
-- U10 needs U4's staleness function, and U9a needs U2's opener.
+- U10 needs U4's staleness function.
 - U6b prints U6a's text.
 - U9b removes the flag only after U9a's door exists. U9c follows U9b, and shares
   `image_refresh.go` with U4 and `doctor.go` and `doctor_render.go` with U6b. U9d's test needs
@@ -586,6 +607,7 @@ bottleneck. U11 also waits on L2, outside the graph.
 | `internal/cli/init_repo_stage.go` | U9b (4), U11 (5) | none |
 | `internal/cli/update_anywhere_test.go` | I1 (4), U11 (5) | none |
 | `README.md` | U7a (4), U9d (6) | none |
+| `docs/upgrade/spec.md` | U7b (2), U10 (3) | none |
 | `internal/cli/update_in_flight_test.go` | I1 (4) | image-secrets IS5; L8 |
 | `internal/repofiles/reader.go` | U1 (0) | L8 (M1 merged) |
 | `internal/cli/update_repos.go`, `update_repos_stub.go`, `internal/initflow/repos.go` | C1 (0); I1 deletes the stub (4); R-view-files (5) | none |
@@ -603,7 +625,7 @@ the view's shape and the report call. Each now waits on C1, and I1 re-joins them
 - U6b on U6a, for the text.
 - U3b on U3a (`initsecrets.go`).
 - U10 on U3b (`init.go`) and on U4 (the staleness function).
-- U9a on U2 (the opener) and on U6a (`init_fugaroyaml.go`).
+- U9a on U6a (`init_fugaroyaml.go`).
 - U9b on U9a (the door) and on U10 (`init.go`).
 - U9c on U9b, U4 and U6b (the flag's removal and shared files); U9d on U9c and U7a.
 - U6b on U6a and U10 on U4 could each be broken by a further contract (the notice text, the
@@ -613,7 +635,7 @@ the view's shape and the report call. Each now waits on C1, and I1 re-joins them
 - I1 on every side.
 - K1 and R-view-files on I1.
 
-**The gain, as the read reports it:** `8 broken, 20 kept, 3 added; before 8 tasks, weight 15; after
+**The gain, as the read reports it:** `8 broken, 19 kept, 3 added; before 8 tasks, weight 15; after
 7 tasks, weight 13; improves`.
 
 **The estimate the read printed:** `ready in 486–2018 min, no history yet for 15 tasks (22 tasks;
@@ -633,7 +655,8 @@ Checks 931–939 are reserved and unused.
 The release that carries I1 has this `### For operators` entry: "run `fugaro update`, from any
 directory". It also says:
 - `update` reads each repository through the installation's credentials service, so there is
-  nothing to export;
+  nothing to export. Run it from your own terminal, signed in with `gcloud auth login` as one of
+  the installation's operators. In a coding agent's session it reads no repository (D3352);
 - a repository it cannot read is named with the fix;
 - a missing secret is named with the command to store it, or asked for under `--ask`;
 - a leftover plugin pin or `budget.mode: off` line is named for you to delete;
@@ -649,5 +672,6 @@ directory". It also says:
   shared id loses nothing and changes no id (R5).
 - **A pull request per repository for the pin and `budget.mode`.** Declined by the spec, and by
   D3340.
-- **Contract edges for U9a, U9b and U11.** U9a needs U2's opener working, not its shape; U9b and
-  U11 share files.
+- **Contract edges for U9a, U9b and U11.** U9a reads no repository through the view; U9b and U11
+  share files.
+- **Moving `serviceReadProvider` to a file of its own.** U2 calls it where it is (round 3).

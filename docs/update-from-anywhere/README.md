@@ -16,7 +16,7 @@ It covers audit rows RC12, RC13, RC38, RC39, RC75, RC98, RC104 and RC105.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The spec as approved. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | Assumptions A1–A5, findings F1–F41 (F15–F30 from review round 1, F31–F41 from round 2), decisions D3340–D3351 with the owner's answers (D3343, D3347 and D3349 amended after review and confirmed), resolutions R1–R20, open items O1–O3 (O3 closed), UNVERIFIED V1–V3. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | Assumptions A1–A5, findings F1–F50 (F15–F30 from review round 1, F31–F41 from round 2, F42–F50 from round 3), decisions D3340–D3352 with the owner's answers (D3343, D3347 and D3349 amended after review and confirmed), resolutions R1–R22, open items O1–O3 (O3 closed), UNVERIFIED V1–V3. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Contract C1, eighteen tasks (U1, U2, U3a, U3b, U4, U5, U6a, U6b, U7a, U7b, U8, U9a–U9d, U10, U11, U13), integration I1, the owner's Check 930 (K1) and one contract change that runs only if raised, in seven levels. Also the critical path, the shared files and the edges broken and kept. Nothing in it is approved |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph, as `fugaro plan graph` reads it |
 
@@ -46,10 +46,13 @@ It covers audit rows RC12, RC13, RC38, RC39, RC75, RC98, RC104 and RC105.
   The hostile-checkout gate stays for `setup --repo` and
   `--onboard-repo`.
 - **D3351 (2026-11-24):** `setup --anchor` goes too.
+- **D3352 (2026-11-24):** in a coding agent's session no identity is minted, as D902: every
+  repository reads as unread, with a line that says to run `fugaro update` from your own terminal.
 
 **Findings that changed the design:**
 - GitHub has no token path for a person's read; the credentials service's read mint is the way in
-  (F31).
+  (F31). An admit-only GitHub repository borrows the project's App ID (F43), and `repos add` keeps
+  its checkout, which it deploys from (F42).
 - L8's task M1 (`repofiles.Read`, merged as #3816) is already the reader of every listed
   repository, so L5 extends it and writes no reader of its own (F1).
 - `--check`'s no-cloud promise cannot cover the published admits (F2, D3349).
@@ -63,7 +66,7 @@ It covers audit rows RC12, RC13, RC38, RC39, RC75, RC98, RC104 and RC105.
   checkout (F7).
 
 **Numbers reserved:**
-- Decisions **D3340–D3369**: D3340–D3351 used, D3352–D3369 reserved and unused.
+- Decisions **D3340–D3369**: D3340–D3352 used, D3353–D3369 reserved and unused.
 - Checks **930–939**: Check 930 used, 931–939 reserved and unused.
 
 Both blocks were checked free on `main` at `486823a00` and in every open pull request's documents.

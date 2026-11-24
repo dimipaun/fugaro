@@ -51,8 +51,6 @@
     "prediction": true,
     "paths": [
      "internal/cli/update_repos_read.go",
-     "internal/cli/service_read_provider.go",
-     "internal/cli/reviewverify.go",
      "internal/cli/update_repos_read_test.go"
     ]
    }
@@ -88,7 +86,9 @@
      "internal/cli/managed_ask_test.go",
      "docs/no-prompt-policy/reconciliation.md",
      "docs/managed-agent-converge/reconciliation.md",
-     "website/content/cli-reference.md"
+     "website/content/cli-reference.md",
+     "internal/cli/initsecrets_test.go",
+     "internal/cli/initsecrets_pty_test.go"
     ]
    }
   },
@@ -140,7 +140,8 @@
      "internal/cli/update_budget_off.go",
      "internal/cli/init_fugaroyaml.go",
      "internal/cli/repo_notices.go",
-     "internal/cli/repo_notices_test.go"
+     "internal/cli/repo_notices_test.go",
+     "internal/cli/update_budget_off_test.go"
     ]
    }
   },
@@ -174,7 +175,8 @@
      "CLAUDE.md",
      "plugin/skills/update/SKILL.md",
      "README.md",
-     "internal/cli/docs_update_anywhere_test.go"
+     "internal/cli/docs_update_anywhere_test.go",
+     "plugin/update_skill_test.go"
     ]
    }
   },
@@ -306,7 +308,9 @@
      "internal/cli/update_check.go",
      "internal/cli/init.go",
      "website/content/cli-reference.md",
-     "internal/cli/update_check_repos_test.go"
+     "internal/cli/update_check_repos_test.go",
+     "docs/upgrade/spec.md",
+     "internal/cli/docs_upgrade_test.go"
     ]
    }
   },
@@ -458,11 +462,6 @@
    "task": "U10",
    "needs": "U4",
    "reason": "kept, behaviour: the per-repository staleness function U4 writes"
-  },
-  {
-   "task": "U9a",
-   "needs": "U2",
-   "reason": "kept, behaviour: it reads the repository through U2's read-mint opener"
   },
   {
    "task": "U9a",
