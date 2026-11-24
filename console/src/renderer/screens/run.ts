@@ -441,6 +441,37 @@ export interface RunDiagnosis {
   readonly followUpSession: string | null
 }
 
+/**
+ * RunLevel is one review level as the Run screen draws it (V1.3): the level,
+ * the rounds its own loop spent, the cap the run's plan resolved for it, and
+ * the share of the cap those rounds take.
+ *
+ * **`rounds` and `cap` are the document's own figures and the screen derives
+ * neither.** The CLI computes the rounds from the record's reviews and the cap
+ * from the plan block the runner wrote (`internal/cli/diagnose.go`), and this
+ * screen draws what it read: a share computed from anything else -- a count of
+ * this document's review entries, a cap from a knob the console read somewhere
+ * -- would be a figure about a run nobody measured.
+ *
+ * **`cap` is `unavailable` far more often than it is a number**, and that is the
+ * case V1.3 is explicit about: a record written before the plan block existed, a
+ * run that never built a plan (a `mode: review` run) and a CLI older than the
+ * block all carry `null`, which the decoder reads as unavailable and never as a
+ * cap of zero. A cap of **zero** is not folded in with those: it is a cap a layer
+ * really set, and rounds against it are drawn as a bar the console says it cannot
+ * scale (`levelsFillOf`) rather than as no bar at all.
+ */
+export interface RunLevel {
+  /** the level's own word (`l1`, `l2`, `l3`), as the document spells it */
+  readonly level: string
+  readonly rounds: Reading
+  readonly cap: Reading
+  /** the rounds as a share of the cap (`levelsFillOf`), drawn as the bar's
+   * fill: `unavailable` whenever the cap is, because there is no share of a
+   * cap nobody resolved. */
+  readonly fill: Reading
+}
+
 /** RunHalt is why the run halted (`runstore.Halt`): the reason, the scope it
  * applied at and when. */
 export interface RunHalt {
@@ -481,6 +512,11 @@ export interface RunModel {
    * carries no `tolerated` block -- which is what a run that tolerated nothing
    * looks like. */
   readonly tolerated: RunTolerated | null
+  /** each review level's own loop: the rounds it spent against the cap the run's
+   * plan resolved for it (V1.3). Empty when the document carries no
+   * `review_levels`, which is what a record written before the plan block
+   * existed looks like. */
+  readonly levels: readonly RunLevel[]
   /** the run's switch log (C1.16, D140): every call the credentials service
    * moved off the credential it was on, in the order the gateway settled them.
    * Empty for a run that never switched, which is every run the service did not
@@ -710,6 +746,16 @@ const DEADLINE_BECAUSE = 'the document has no row.deadline'
  * names the key that is missing and never the fact. */
 const TOLERATED_ABSENT =
   'the document carries no tolerated block: a run that tolerated nothing, a record written before this field existed and a run whose record could not be read all look the same here'
+
+/** LEVELS_ABSENT is the one line a document with no `review_levels` block draws
+ * (V1.3). As with `TOLERATED_ABSENT`, the absence is not the claim "this run ran
+ * no review level": the CLI writes no block for a record that carries neither a
+ * plan block nor a review at any level, for every record written before the plan
+ * block existed, and for a run whose record could not be read. So the line names
+ * the key that is missing -- and the panel is still drawn, because a screen that
+ * dropped the region would say nothing at all about the rounds a run spent. */
+const LEVELS_ABSENT =
+  'the document carries no review_levels block: a run whose record carries no plan and no review, a record written before the plan block existed and a run whose record could not be read all look the same here'
 
 /**
  * RUN_SPEND_STAGES_MAX, RUN_TOLERATED_MAX and RUN_SWITCHES_MAX are how many
@@ -945,6 +991,79 @@ function toleratedOf(raw: unknown): RunTolerated | null {
   }
 }
 
+/**
+ * levelsOf reads the document's `review_levels` (`internal/cli/diagnose.go`,
+ * V1.3): one entry per review level, in the CLI's own order, each with the rounds
+ * the level's loop spent and the cap the run's plan resolved for it.
+ *
+ * **Nothing here is derived from another field of the document.** The rounds are
+ * the CLI's reading of the record's review rounds and the cap is the plan block
+ * the runner wrote; a screen that counted `reviews` entries or looked for a
+ * rounds knob in some other block would be a second opinion about the same run,
+ * and the two would disagree the first time a round was recorded twice.
+ *
+ * An entry that is not an object, and a `levels` list that is absent or not a
+ * list at all, are skipped rather than thrown on: the document is a
+ * hand-editable object, and a screen that threw would draw nothing at all.
+ */
+function levelsOf(raw: unknown): readonly RunLevel[] {
+  const records = arrayAt(raw) ?? []
+  const levels: RunLevel[] = []
+  for (const item of records) {
+    const record = objectAt(item)
+    if (record === null) continue
+    const cap = levelCapOf(record)
+    const rounds = readNumber(record['rounds'], 'review_levels[].rounds')
+    levels.push({ level: textAt(record['level']) ?? '', rounds, cap, fill: levelsFillOf(rounds, cap) })
+  }
+  return levels
+}
+
+/**
+ * levelCapOf reads one level's cap, and it is the whole of V1.3's `null` rule:
+ * the document carries `null` -- or no key at all -- for a level whose cap the
+ * record does not resolve, and the console draws `n/a` with the reason rather
+ * than a number no layer set. An absent cap is never read as zero: a cap of zero
+ * would be a plan that spends no round on the level, which the runner's own
+ * `checkPlan` refuses.
+ */
+function levelCapOf(record: Record<string, unknown>): Reading {
+  const cap = readNumber(record['cap'], 'review_levels[].cap')
+  if (cap.value === null) {
+    return unavailable(
+      'the document carries no cap for this level: the run recorded no plan step for it, or its record was written before the plan block existed',
+    )
+  }
+  return cap
+}
+
+/**
+ * levelsFillOf is the rounds a level spent as a share of its cap -- the bar's
+ * fill, and the screen's only arithmetic.
+ *
+ * **It is the same shape `live.ts`'s `concurrentOf` has, for the same reason.**
+ * A cap the document does not carry leaves the share unavailable with the cap's
+ * own reason, so the bar is drawn `n/a` -- never as a full bar, which would say
+ * "this level used its whole budget" about a level whose budget nobody knows.
+ * A cap of zero is a real cap, so it is not folded in with the missing ones: no
+ * rounds against it is honestly 0%, and rounds against it are a document
+ * contradicting itself (there is no finite share of zero), which the console
+ * says rather than drawing `Infinity` as a full bar.
+ */
+export function levelsFillOf(rounds: Reading, cap: Reading): Reading {
+  const limit = cap.value
+  const spent = rounds.value
+  if (limit === null) return unavailable(cap.because)
+  if (spent === null) return unavailable(rounds.because)
+  if (limit === 0) {
+    if (spent === 0) return measured(0)
+    return unavailable(
+      `the document says this level's cap is 0 and that it spent ${String(spent)} rounds, so its share of the cap is not a number the console can draw`,
+    )
+  }
+  return measured((spent / limit) * 100)
+}
+
 /** stagesOf builds the timeline. Each verify record is a stage; when the
  * document carries none, the row's own stage is the one row of the timeline --
  * a run that has not reached its verify gate has a stage and no records, and
@@ -1164,6 +1283,7 @@ export function buildRunModel(inputs: RunInputs): RunModel {
     spendStages,
     spendStagesDropped: measured(Math.max(0, (rawStages?.length ?? 0) - spendStages.length)),
     tolerated: toleratedOf(document['tolerated']),
+    levels: levelsOf(document['review_levels']),
     switches: switchesOf(document['switches']),
     // The run's own fallback is the stage flags folded over it: the record has
     // no run-level flag, and `cost.fallback_usd` is not one -- it is 0 for a
@@ -1942,6 +2062,48 @@ function spendStagesPanel(factory: ScreenFactory, model: RunModel): ScreenElemen
   return element
 }
 
+/**
+ * levelsPanel is the run's review levels: one row per level, the rounds it spent
+ * drawn against the cap the run's plan resolved for it (V1.3).
+ *
+ * **The row carries the cap twice, and the two are not the same statement.** The
+ * bar's fill is the share the rounds take of the cap, and the two cells beside it
+ * are the figures themselves -- the rounds the level spent and the cap they are
+ * measured against. A bar alone would answer "how much of the budget" with no
+ * "of what"; the cells alone would draw two numbers a person has to divide. The
+ * CLI prints both in the same words (`fugaro diagnose`'s Review levels block),
+ * and neither figure here is the screen's own.
+ *
+ * **A level whose cap the document does not carry gets no full mark.** The mark
+ * (`run-level-cap-mark`) is the cap's own edge on the track, and it is drawn only
+ * where there is a cap to mark: a bar carrying one for a cap nobody resolved
+ * would say the level has a bound it does not, and the review-levels figure the
+ * styling doc §2.10 names is the one a person reads to tell the two apart. Its
+ * fill is `n/a` for the same reason (`levelsFillOf`), so the bar is drawn as the
+ * console's mark rather than as an empty track.
+ */
+function levelsPanel(factory: ScreenFactory, levels: readonly RunLevel[]): ScreenElement {
+  const element = make(factory, 'section', 'run-levels')
+  element.setAttribute('aria-label', LEVELS_PANEL_NAME)
+  literal(cell(element, factory, 'h2', 'run-panel-title'), 'review levels')
+  const list = cell(element, factory, 'ol', 'run-level-list')
+  for (const level of levels) {
+    const row = cell(list, factory, 'li', 'run-level')
+    textCell(row, factory, 'span', level.level, 'label', 'review_levels[].level', 'run-level-name')
+    const bar = cell(row, factory, 'div', 'run-level-bar', ...(level.fill.state === 'unavailable' ? ['run-level-bar-absent'] : []))
+    putReading(bar, level.fill, 'percent')
+    if (level.cap.value !== null) {
+      cell(bar, factory, 'span', 'run-level-cap-mark')
+    }
+    const figures = cell(row, factory, 'p', 'run-level-figures')
+    numberCell(figures, factory, 'span', level.rounds, 'count', 'run-level-rounds')
+    literal(cell(figures, factory, 'span', 'run-level-of'), 'of')
+    numberCell(figures, factory, 'span', level.cap, 'count', 'run-level-cap')
+    literal(cell(figures, factory, 'span', 'run-level-rounds-word'), 'rounds')
+  }
+  return element
+}
+
 /** switchesPanel is the credential switches the run's record carries: the
  * document's `switches`, one row per move the credentials service made off a
  * source that could not serve the next call (C1, CS8, D3188).
@@ -2351,6 +2513,8 @@ const SWITCHES_PANEL_NAME = 'Credential switches'
 
 const TOLERATED_PANEL_NAME = 'Tolerated by the mode'
 
+const LEVELS_PANEL_NAME = 'Review levels'
+
 const DIAGNOSIS_PANEL_NAME = 'Diagnosis'
 
 const LOGS_PANEL_NAME = 'Logs'
@@ -2670,6 +2834,11 @@ export function fillRunRecord(factory: RunFactory, model: RunModel, frame: Drawn
     model.tolerated === null
       ? literal(make(factory, 'p', 'run-tolerated-absent'), TOLERATED_ABSENT)
       : toleratedPanel(factory, model.tolerated),
+  )
+  before.push(
+    model.levels.length === 0
+      ? literal(make(factory, 'p', 'run-levels-absent'), LEVELS_ABSENT)
+      : levelsPanel(factory, model.levels),
   )
   fillDiagnosePanel(factory, model, frame.diagnosis)
   frame.aside.append(ledgerPanel(factory, model))

@@ -181,6 +181,12 @@ export const WIRE_TEXT_CLASSES: Readonly<Record<string, TextClass>> = Object.fre
   // `config_sha256` already are.
   base_branch: 'branch',
   previous_run: 'runId',
+  // `resumed_by` is the run that resumed a paused run's chain (PR7 of
+  // model-credentials-routing) -- the paused row's second fact beside
+  // `resume_at`, and a run id like `previous_run` and `run_id` above, so the
+  // class those carry. Its **presence** is the state: a pause nothing has picked
+  // up yet leaves the key out, and no screen is built from it yet (VS3).
+  resumed_by: 'runId',
   // `rigor.revision`: the revision the run's mode was read from
   // (`runstore.RigorRecord.Revision`, docs/rigor-modes D25) -- `origin/main`,
   // the same kind of value as `base_branch` above and a string a branch name
@@ -483,6 +489,13 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // clock (`tools/scrub-fixture/scrub.ts`'s `instant` rule, beside `now` and a
   // kill's `at`), so a fixture's copy is a reading and not the wire's own value.
   'waiting_until',
+  // PR7 of model-credentials-routing: when a paused run's chain comes back,
+  // RFC 3339 UTC, on a `runs ls` row whose record ended `paused`. It is
+  // `waiting_until`'s kind exactly -- a stamp a reader places in time next to
+  // `now`, and one whose presence is the state -- and it is exempted here for
+  // the same reason, rather than classified: no screen draws it today (the
+  // paused row is VS3's).
+  'resume_at',
   // The jobs-free totals read (contract §6.17): `since` and `until` are the
   // window's two UTC days and `days_unknown` the days neither source answered
   // for. They are the same kind of value as `day` above -- a day the CLI
@@ -1243,6 +1256,8 @@ export const FINISHED_KEYS = [
   'account',
   'launched_by',
   'plan_task',
+  'resume_at',
+  'resumed_by',
 ]
 /**
  * RECORD_KEYS is **every** JSON key of `runview.Row`
@@ -1376,6 +1391,24 @@ export const FINISHED_KEYS = [
  * CLI's own table and not text a job wrote: it is in `NON_TEXT_STRING_KEYS`,
  * beside `status`, `outcome` and `derived`, whose vocabulary it is a second
  * closed list of.
+ *
+ * **`resume_at` and `resumed_by` arrived with pause and resume (PR7 of
+ * model-credentials-routing)**, between `pr_state` and `pushed` in the struct,
+ * and `runs ls` writes them on a row whose record ended `paused` and on no
+ * other: the instant the orchestrator will resume the run's chain at, and the
+ * run that did resume it (contract-pause R15, D3195). Neither is in the run's
+ * own records -- the instant is the credentials service's node for the pause
+ * under `paused/`, and the resumer is another run's task naming this one under
+ * `resumes` -- so a listing that could read neither writes neither, and a
+ * paused row with both absent is the degradation this listing has always had for
+ * a project whose pauses database it cannot see. It is `pr_state`'s omission a
+ * seventh time, and the pin against the struct is again what would catch it.
+ * The console reads no screen from either yet -- the paused row and its resume
+ * time are the visibility plan's VS3 -- and they are classified rather than
+ * exempted: `resume_at` is a stamp a reader compares with `now`
+ * (`NON_TEXT_STRING_KEYS`, beside `waiting_until`, and its **presence** is what
+ * says a resume is due rather than a string to draw) and `resumed_by` is a run
+ * id, the class `previous_run` and `run_id` carry.
  */
 export const RECORD_KEYS = [
   'run',
@@ -1416,6 +1449,8 @@ export const RECORD_KEYS = [
   'record_pr',
   'pr',
   'pr_state',
+  'resume_at',
+  'resumed_by',
   'pushed',
   'pushed_head',
   'started_at',

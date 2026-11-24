@@ -5662,6 +5662,15 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	// whose switch is on while the credentials service is null must create
 	// nothing here at all — which a `credentials_service_on` row would, by
 	// reaching into a null var.credentials_service's fields.
+	//
+	// local.credentials_vertex_on is the third, and it is the first boolean's
+	// own the same way (CS11): credentials.tf declares it as
+	// `local.credentials_service_on && var.enable_vertex`, so the two Vertex
+	// resources — the service's predict-only custom role and its binding — are
+	// created only where the service is deployed AND the project really has
+	// Vertex turned on. A Vertex permission planned in a project whose API is
+	// not enabled, or for a service that is not deployed, is a grant on
+	// nothing, and the narrowing keeps a plan honest in both directions.
 	gated := 0
 	for _, m := range resourceHeader.FindAllStringSubmatchIndex(code, -1) {
 		end := matchBrace(code, m[1]-1)
@@ -5669,8 +5678,8 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 			t.Fatalf("%s: unbalanced braces in %s.%s", path, code[m[2]:m[3]], code[m[4]:m[5]])
 		}
 		body := squash(code[m[1]:end])
-		if !strings.Contains(body, "count = local.credentials_service_on ? 1 : 0") && !strings.Contains(body, "count = local.mobile_service_on ? 1 : 0") {
-			t.Errorf("%s: %s.%s is gated on neither local.credentials_service_on nor local.mobile_service_on, so it is created in an installation that never opted in:\n%s", path, code[m[2]:m[3]], code[m[4]:m[5]], body)
+		if !strings.Contains(body, "count = local.credentials_service_on ? 1 : 0") && !strings.Contains(body, "count = local.mobile_service_on ? 1 : 0") && !strings.Contains(body, "count = local.credentials_vertex_on ? 1 : 0") {
+			t.Errorf("%s: %s.%s is gated on none of local.credentials_service_on, local.mobile_service_on or local.credentials_vertex_on, so it is created in an installation that never opted in:\n%s", path, code[m[2]:m[3]], code[m[4]:m[5]], body)
 			continue
 		}
 		gated++
@@ -6019,7 +6028,7 @@ func TestCredentialsServiceResourcesAreCounted(t *testing.T) {
 		}
 	}
 	if !ok {
-		t.Fatalf("%s: the sentence counts the file's resources as %q, which this test cannot read as a number: spell it as a word (one..ten) or a decimal, and keep it true", path, m[1])
+		t.Fatalf("%s: the sentence counts the file's resources as %q, which this test cannot read as a number: spell it as a word (one..eleven) or a decimal, and keep it true", path, m[1])
 	}
 
 	// Every resource the file declares, whatever its type: the sentence is
@@ -6037,7 +6046,9 @@ func TestCredentialsServiceResourcesAreCounted(t *testing.T) {
 	// mobile service's database binding is counted here too, and its own gate
 	// (local.mobile_service_on, mobile_service.tf) is the first boolean AND the
 	// mobile switch: strictly narrower, and null var.credentials_service still
-	// leaves it creating nothing.
+	// leaves it creating nothing. The two Vertex resources (CS11) are the same
+	// shape under local.credentials_vertex_on, which is that first boolean AND
+	// var.enable_vertex.
 	for _, r := range all {
 		name := code[r[2]:r[3]] + "." + code[r[4]:r[5]]
 		open := r[1] - 1
@@ -6045,8 +6056,8 @@ func TestCredentialsServiceResourcesAreCounted(t *testing.T) {
 		if end < 0 {
 			t.Fatalf("%s: unbalanced braces in %s", path, name)
 		}
-		if body := code[open+1 : end]; !strings.Contains(body, "local.credentials_service_on") && !strings.Contains(body, "local.mobile_service_on") {
-			t.Errorf("%s: %s is gated on neither local.credentials_service_on nor local.mobile_service_on, so a null var.credentials_service does not leave the file creating nothing (D147):\n%s", path, name, squash(body))
+		if body := code[open+1 : end]; !strings.Contains(body, "local.credentials_service_on") && !strings.Contains(body, "local.mobile_service_on") && !strings.Contains(body, "local.credentials_vertex_on") {
+			t.Errorf("%s: %s is gated on none of local.credentials_service_on, local.mobile_service_on or local.credentials_vertex_on, so a null var.credentials_service does not leave the file creating nothing (D147):\n%s", path, name, squash(body))
 		}
 	}
 }
@@ -6102,10 +6113,29 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	roles := resourceBlocks(t, path, b, "google_project_iam_custom_role")
-	if len(roles) != 1 {
-		t.Fatalf("%s declares %d custom roles, want the one database role", path, len(roles))
+	// The file declares TWO custom roles since CS11 — this one and the
+	// service's predict-only Vertex role (TestTheServiceVertexRoleIsItsOwn) —
+	// so the database role is selected by its own role_id rather than by being
+	// the only one, and the two names are asserted here so a third role in this
+	// file still fails this test.
+	var roleNames []string
+	for _, r := range roles {
+		roleNames = append(roleNames, strings.TrimPrefix(r.name, "google_project_iam_custom_role."))
 	}
-	role := squash(roles[0].body)
+	slices.Sort(roleNames)
+	if want := []string{"credentials_database", "credentials_vertex"}; !slices.Equal(roleNames, want) {
+		t.Fatalf("%s declares the custom roles %v, want exactly %v", path, roleNames, want)
+	}
+	var databaseRole block
+	for _, r := range roles {
+		if strings.Contains(r.body, `role_id = "`+tf.CredentialsDatabaseRole+`"`) {
+			databaseRole = r
+		}
+	}
+	if databaseRole.name == "" {
+		t.Fatalf("%s declares no %s: the service's database role is what this test pins", path, tf.CredentialsDatabaseRole)
+	}
+	role := squash(databaseRole.body)
 	for _, want := range []string{
 		"project = var.credentials_service.firebase_project", // the database's project, not the installation's
 		`role_id = "` + tf.CredentialsDatabaseRole + `"`,
@@ -6117,7 +6147,7 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	}
 	// Only the permissions list, so the role's title and role_id cannot stand
 	// in for a permission.
-	list := regexp.MustCompile(`(?s)permissions\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(roles[0].body)
+	list := regexp.MustCompile(`(?s)permissions\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(databaseRole.body)
 	if list == nil {
 		t.Fatalf("%s: the database role has no permissions list:\n%s", path, role)
 	}
@@ -6152,9 +6182,10 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	// to say whose principal a widening was for (internal/infra/tf's
 	// isCredentialsMember beside isMobileMember). The file's project grants are
 	// split rather than counted: this test's subject is the database role's,
-	// selected by its role, and the OTHER two are D1931's (the prefix accessor
-	// and the lister, TestServicePrefixAccessorIsConditioned), named here so a
-	// third one in this file still fails this test.
+	// selected by its role, and the OTHER three are D1931's two (the prefix
+	// accessor and the lister, TestServicePrefixAccessorIsConditioned) and
+	// CS11's Vertex binding (TestTheServiceVertexRoleIsItsOwn), named here so a
+	// fourth one in this file still fails this test.
 	var database []block
 	var names, others []string
 	for _, g := range resourceBlocks(t, path, b, "google_project_iam_member") {
@@ -6169,8 +6200,8 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 		t.Fatalf("%s declares %d grants of %s, want exactly two — the private service's own account and the public mobile service's (P5)", path, len(database), tf.CredentialsDatabaseRole)
 	}
 	slices.Sort(others)
-	if want := []string{"google_project_iam_member.credentials_lister", "google_project_iam_member.credentials_prefix_accessor"}; !slices.Equal(others, want) {
-		t.Errorf("%s: the file's project grants are %v and %v, want the database role's two and exactly %v (D1931's two halves)", path, names, others, want)
+	if want := []string{"google_project_iam_member.credentials_lister", "google_project_iam_member.credentials_prefix_accessor", "google_project_iam_member.credentials_vertex"}; !slices.Equal(others, want) {
+		t.Errorf("%s: the file's project grants are %v and %v, want the database role's two and exactly %v (D1931's two halves and CS11's Vertex role)", path, names, others, want)
 	}
 	members := map[string]bool{}
 	for _, g := range database {
@@ -6245,6 +6276,132 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	})
 	if n == 0 {
 		t.Errorf("no project grant naming the credentials service was found: this test is not reading the tree")
+	}
+}
+
+// TestTheServiceVertexRoleIsItsOwn is CS11's cloud half: a chain whose models
+// are served on Vertex is called by the credentials service on the service's
+// own installation identity (D3174), so the account that holds every model
+// credential of the installation needs exactly one permission — a predict on
+// one of this project's endpoints — and the job needs none.
+//
+// Why a custom role and never a predefined one. The narrowest predefined role
+// that could call Vertex is roles/aiplatform.user, and it is not narrow: it
+// carries endpoints.predict beside the platform's reads, the model registry,
+// the tuning jobs and the pipelines. A service holding every credential of the
+// installation must not hold that; the role here is the one permission the
+// call needs and nothing else, and its permission list is pinned both in
+// credentials.tf and in internal/infra/tf's RolePermissions (the pin the
+// confirmation reads), the way the database role's pair is.
+//
+// The three facts that keep the grant to its own case, each of which this test
+// reads: the project is var.project — the installation's, where apis.tf turns
+// the Vertex API on, and NOT the Firebase project the database role is
+// declared in — the role is spelled as the literal path a custom role needs at
+// plan time (a reference would reach the plan as an unknown role and the cover
+// could not say which role the grant is), and the gate is
+// local.credentials_vertex_on, which is credentials_service_on AND
+// enable_vertex: a predict permission in a project whose API is not enabled,
+// or for a service that is not deployed, is a grant on nothing.
+func TestTheServiceVertexRoleIsItsOwn(t *testing.T) {
+	const path = "gcp/modules/installation/credentials.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var role block
+	for _, r := range resourceBlocks(t, path, b, "google_project_iam_custom_role") {
+		if strings.Contains(r.body, `role_id = "`+tf.CredentialsVertexRole+`"`) {
+			role = r
+		}
+	}
+	if role.name == "" {
+		t.Fatalf("%s declares no %s: the credentials service's Vertex permission is a role of its own (D3174)", path, tf.CredentialsVertexRole)
+	}
+	if got := firstAttr(role.body, "project"); !strings.Contains(got, "var.project") {
+		t.Errorf("%s: the Vertex role is declared on %q, want var.project — the installation's own project, where apis.tf enables the Vertex API, and not the Firebase project the database role lives in", path, got)
+	}
+	for _, want := range []string{
+		"project = var.project",
+		`role_id = "` + tf.CredentialsVertexRole + `"`,
+		"count = local.credentials_vertex_on ? 1 : 0",
+	} {
+		if !strings.Contains(squash(role.body), want) {
+			t.Errorf("%s: the Vertex role does not hold %q:\n%s", path, want, squash(role.body))
+		}
+	}
+	list := regexp.MustCompile(`(?s)permissions\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(role.body)
+	if list == nil {
+		t.Fatalf("%s: the Vertex role has no permissions list:\n%s", path, squash(role.body))
+	}
+	var got []string
+	for _, p := range quotedPerm.FindAllStringSubmatch(list[1], -1) {
+		got = append(got, p[1])
+	}
+	slices.Sort(got)
+	want := []string{"aiplatform.endpoints.predict"}
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: the Vertex role holds %v, want exactly %v: the :rawPredict a served Claude call makes is the one call this account may make, and every other aiplatform permission — the platform's reads, the model registry, the tuning and pipeline jobs — is reach the credential holder must not have", path, got, want)
+	}
+	// The same one, on the Go side, so a cover that accepted a second
+	// permission and a module that granted one cannot drift apart.
+	if pin := tf.RolePermissions[tf.CredentialsVertexRole]; !slices.Equal(pin, want) {
+		t.Errorf("tf.RolePermissions[%s] = %v, want exactly %v", tf.CredentialsVertexRole, pin, want)
+	}
+	if !slices.Contains(tf.FugaroRoles, tf.CredentialsVertexRole) {
+		t.Errorf("tf.FugaroRoles does not name %s, so a grant of this role is refused", tf.CredentialsVertexRole)
+	}
+
+	// The binding: one, to the service's own account, on the installation's
+	// project, with the literal role path and no condition.
+	var bindings []block
+	for _, g := range resourceBlocks(t, path, b, "google_project_iam_member") {
+		if strings.Contains(firstAttr(g.body, "role"), tf.CredentialsVertexRole) {
+			bindings = append(bindings, g)
+		}
+	}
+	if len(bindings) != 1 {
+		t.Fatalf("%s declares %d bindings of %s, want exactly one — the credentials service's own account (D3174: the call goes out as the service, never as a job)", path, len(bindings), tf.CredentialsVertexRole)
+	}
+	grant := squash(bindings[0].body)
+	for _, want := range []string{
+		"project = var.project",
+		`role = "projects/${var.project}/roles/` + tf.CredentialsVertexRole + `"`,
+		"member = google_service_account.credentials[0].member",
+		"count = local.credentials_vertex_on ? 1 : 0",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("%s: %s does not hold %q:\n%s", path, bindings[0].name, want, grant)
+		}
+	}
+	if strings.Contains(grant, "condition") {
+		t.Errorf("%s: %s carries a condition: the role's permission list is the whole fence, and a condition here would be a second, weaker statement of it", path, bindings[0].name)
+	}
+	if roleAttr := firstAttr(bindings[0].body, "role"); strings.Contains(roleAttr, "google_project_iam_custom_role.") {
+		t.Errorf("%s: %s reads its role from the role resource (%s), which a plan sees as unknown:\n%s", path, bindings[0].name, roleAttr, grant)
+	}
+
+	// The gate, spelled out: the service's own boolean AND the Vertex fact. A
+	// role created for a project whose API is not enabled is a permission on a
+	// service the project does not have, and the two resources must not be the
+	// file's only ones created without the first boolean (D147).
+	gate := regexp.MustCompile(`(?m)^\s*credentials_vertex_on\s*=\s*(.+)$`).FindStringSubmatch(string(b))
+	if gate == nil {
+		t.Fatalf("%s declares no local.credentials_vertex_on: the two Vertex resources are gated on it and the gate is what keeps them to a project that names Vertex", path)
+	}
+	for _, want := range []string{"local.credentials_service_on", "var.enable_vertex"} {
+		if !strings.Contains(gate[1], want) {
+			t.Errorf("%s: local.credentials_vertex_on = %q, want credentials_service_on AND enable_vertex — a role and a binding where the service is not deployed, or where the project's Vertex API is off, are resources nothing asked for", path, strings.TrimSpace(gate[1]))
+		}
+	}
+
+	// No predefined Vertex role anywhere in this file, to the credentials
+	// account or to anyone else: roles/aiplatform.user is the release-1 grant a
+	// JOB holds under budget.mode: observe (X8 retires it), and handing it to
+	// the service as well would hand the credential holder the whole platform.
+	if regexp.MustCompile(`"(roles/aiplatform\.[A-Za-z]+)"`).MatchString(stripComments(string(b))) {
+		t.Errorf("%s grants a predefined Vertex role: the service's reach is its own one-permission role (%s), never roles/aiplatform.user", path, tf.CredentialsVertexRole)
 	}
 }
 
@@ -6962,9 +7119,12 @@ func TestTheWorkspaceIAMAccountIsGrantedNowhere(t *testing.T) {
 // counts the file's own resources: the number is what the test above reads.
 var resourceCountSentence = regexp.MustCompile(`keeps\s+the\s+(\w+)\s+resources\s+of\s+this\s+file`)
 
-// numberWords are the spellings of a count this test reads in prose.
+// numberWords are the spellings of a count this test reads in prose. The
+// range is one..eleven rather than one..ten because credentials.tf's sentence
+// reached eleven with CS11's two Vertex resources: a count that outgrows the
+// words has to grow them, or the sentence has to move to a decimal.
 var numberWords = map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
-	"six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10}
+	"six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11}
 
 // TestServiceHeldSecretsMatchTheCredentialsService pins the four literals in
 // modules/workflow/sa.tf — the two model-credential variable names, the

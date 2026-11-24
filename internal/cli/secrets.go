@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/intake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -1901,6 +1902,18 @@ func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, st *report.Step, en
 			"note: %s already has its own copy with an enabled version in %s, and a repository copy wins over the project copy: those repositories keep the value their own copy holds until its last enabled version is disabled (`fugaro secrets ls --repo <repository>` names the secret), and this version reaches them only after that. A repository this local config does not list is not named here, and its own copy wins the same way.\n",
 			pluginwire.Printable(name), pluginwire.Printable(strings.Join(repos, ", ")))
 	}
+	// A workflow's own secret is the project's second class of shared value,
+	// and it is stored through the installation's intake as fugaro_p_<name>
+	// (IS4, D3323, D3324) rather than in the project-wide container this
+	// function writes: the container is the intake's, the marker that keeps the
+	// two classes from being written over each other is written with it (F18,
+	// G2), and the credentials service serves this class of name from its own
+	// prefix. The note below is the one sentence the class is told in, and it
+	// carries the reach the project-wide one carries: who mounts the copy is
+	// the question for both.
+	if _, workflow := env.lc.WorkflowSecrets[name]; workflow {
+		return secretsSetWorkflowSecret(run, cmd, env, o, name)
+	}
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: env.lc.Name, gcp.LabelSecret: name}
 	id := gcp.ProjectSecretID(env.lc.Name, name)
 	_, version, err := storeSecret(run, cmd, env, o, id, labels, name)
@@ -1917,25 +1930,82 @@ func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, st *report.Step, en
 	// as the boundary, since inside a shared job no IAM boundary separates
 	// repositories. On stderr, so --json's stdout stays the document alone.
 	//
-	// The sentence about a workflow's own secret is D1273's: it used to say that
-	// such a secret cannot be shared this way at all, which was true before the
-	// new block and is not true of a name a workflow_secrets entry holds. The
-	// reach itself stays projectReach's answer, which reads the new block
-	// (projectSecretAllowed), so the note and the entry cannot disagree about
-	// who mounts the copy -- the workflow sentence says where the reach comes
-	// from and is otherwise the entry's own.
-	//
-	// It is said for a workflow secret alone: the name reaches this path with a
-	// workflow_secrets entry exactly when it is one, and a reserved name or a
-	// provider's key has no such entry and nothing to read in the sentence
-	// (code review, nit).
-	note := fmt.Sprintf("note: %s is stored project-wide for %s, where %s. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary.",
+	// It is one sentence about one class of value, and the name reaching this
+	// path is a credential's: a name a workflow declares is stored through the
+	// intake above, in a container of its own, and its own note says the same
+	// reach in the workflow's own words (IS4, F18).
+	fmt.Fprintf(cmd.ErrOrStderr(), "note: %s is stored project-wide for %s, where %s. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary.\n",
 		pluginwire.Printable(name), pluginwire.Printable(env.lc.Name), projectReach(env.lc, name, nil))
-	if _, workflow := env.lc.WorkflowSecrets[name]; workflow {
-		note += " A workflow's own secret (workflows.<n>.secrets) is shared this way only through its workflow_secrets entry, and that entry's allow_data_to is what decides which repositories mount the copy: with no entry, or with an entry that lists nothing, the name stays a repository copy instead."
-	}
-	fmt.Fprintln(cmd.ErrOrStderr(), note)
 	return id, version, nil
+}
+
+// secretsSetWorkflowSecret stores a secret a workflow declares, once for the
+// project, through the installation's secrets intake as fugaro_p_<name> (IS4,
+// D3323, D3324).
+//
+// The container is the intake's and not this process's, which is the whole
+// point of the task: the intake's own account holds the write, the person's
+// own Google ID token is the caller — and an admin on the installation's
+// derived admin list is the only caller the shared prefix admits (D1935,
+// D1940) — so no person's credentials hold a write of the container the other
+// repositories' jobs mount. The marker the request asks for (F18, G2) is
+// written into the container at create and is what keeps this class of value
+// apart from a project-shared credential of the same name: neither class is
+// ever written into the other's container, and a value stored under a name
+// meant for the other class has one way back, which both refusals name.
+//
+// The order is secretsIntakeSet's, for its reason: the refusals, then the
+// address (from the local config, before a person is ever prompted for a
+// credential), then the value, then the call. Nothing here reaches this
+// process's Secret Manager client at all — the store is not even opened — so
+// there is no path by which the value becomes a container of the person's.
+//
+// The one line printed says what was written and by which path, in the shape
+// the project-wide store's note has: the container the jobs mount, and the
+// entry whose allow_data_to decides who mounts it, because the person reading
+// it is deciding whether one value for many repositories is safe.
+func secretsSetWorkflowSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptions, name string) (string, string, error) {
+	ctx := cmd.Context()
+	if err := secretsIntakeRefusal(os.Getenv, "stored"); err != nil {
+		return "", "", err
+	}
+	serviceURL, err := secretsIntakeServiceURL(ctx, o.cloud, "stored")
+	if err != nil {
+		return "", "", err
+	}
+	value, err := readStoreValue(run, cmd, name)
+	if err != nil {
+		return "", "", err
+	}
+	defer clear(value)
+	var answer intake.SecretAnswer
+	if err := secretsIntakeDo(ctx, serviceURL, secretsIntakeCall{
+		Path: intake.CreatePath,
+		What: "a workflow's secret is stored",
+		Body: intake.CreateRequest{
+			Scope:          intake.ScopeShared,
+			Name:           name,
+			Value:          base64.StdEncoding.EncodeToString(value),
+			WorkflowSecret: true,
+		},
+		Out: &answer,
+	}); err != nil {
+		return "", "", err
+	}
+	if o.asJSON {
+		// The project-wide store's document, whole: a reader of --json reads
+		// the container and the version, and which command wrote it is the
+		// same question over both classes of project secret.
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(map[string]string{"project": env.lc.Name, "secret": answer.ID, "version": answer.Version}); err != nil {
+			return "", "", err
+		}
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(),
+		"note: %s is a workflow's own secret, stored once for the project as %s through the installation's secrets intake, where %s. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary. A workflow's own secret (workflows.<n>.secrets) is shared this way only through its workflow_secrets entry, and that entry's allow_data_to is what decides which repositories mount the copy: with no entry, or with an entry that lists nothing, the name stays a repository copy instead.\n",
+		pluginwire.Printable(name), pluginwire.Printable(answer.ID), projectReach(env.lc, name, nil))
+	return answer.ID, answer.Version, nil
 }
 
 // projectReach words who may mount a project copy of logical, for the note

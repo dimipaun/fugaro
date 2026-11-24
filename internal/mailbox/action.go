@@ -106,9 +106,10 @@ const (
 	ConfirmEventAbort   ConfirmEventType = "abort"
 )
 
-// The verbs. `launch` is here although it is never confirmed, because D162's
-// answer is about this machine: "kick off ..." passes through rather than being
-// refused as an unknown verb or silently treated as destructive.
+// The verbs. `launch` is here because D162's answer is about this machine:
+// "kick off ..." passes through rather than being refused as an unknown verb or
+// silently treated as destructive -- and D2786 reads a start in a costly mode
+// back, which is why it is also in ConfirmPendingVerbs below.
 const (
 	ConfirmVerbCancel  = "cancel"
 	ConfirmVerbConfirm = "confirm"
@@ -488,11 +489,12 @@ func (r ConfirmRecord) Value() Record {
 // the consumer's runner reads: `fugaro cancel RUN` takes the run id, and
 // `gh pr merge` takes the repository, the number and the head.
 func (r ConfirmRecord) Action() *Action {
-	// A start's record has no Action: a launch is not a mailbox action (J5a
-	// types it, and ConfirmValidateAction refuses it until then), so a record
+	// A start's record has no Action: this vocabulary is the two commands the
+	// CLI runs, and a launch is the orchestrator's to start (P5.1), so a record
 	// built from a costly start read-back authorises nothing here. nil rather
 	// than a half-filled Action, which is what the consumer would execute by
-	// mistake.
+	// mistake -- and there is nothing to fill it with: a launch's Action names
+	// the repository to start in, and a mode target has no repository.
 	if r.Target.Kind == ConfirmTargetMode {
 		return nil
 	}
@@ -1505,9 +1507,11 @@ func ConfirmValidateAction(a *Action, o ConfirmActionOptions) (*ConfirmRecord, *
 		return nil, refuse(CodeUnknownVerb, "action.verb")
 	}
 	if !confirmContains(ConfirmDestructiveVerbs, a.Verb) {
-		// A launch passes through without a record (D162) and is answered before
-		// this function is reached; a verb the ruling refuses is refused here,
-		// and a record carrying one authorises nothing.
+		// A launch is a mailbox action now (J5a, O10), but it is not this
+		// function's: this is the destructive allow-list (D128), and O10's gate
+		// -- ConfirmValidateLaunch -- is what reads a start against the
+		// session's policy. A verb the ruling refuses is refused here, and a
+		// record carrying one authorises nothing.
 		return nil, refuse(CodeConfirmRefusedVerb, "action.verb")
 	}
 	var target ConfirmTarget
@@ -1555,6 +1559,108 @@ func ConfirmValidateAction(a *Action, o ConfirmActionOptions) (*ConfirmRecord, *
 		ID: id, Verb: a.Verb, Target: resolved,
 		Confirmation: ConfirmConfirmation{ID: confirmationID, At: at},
 	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// O10's gate: the typed launch a consumer refuses when it skipped the read-back
+// ---------------------------------------------------------------------------
+
+// ConfirmLaunchOptions are what the gate judges a typed launch against: the
+// modes the session calls costly, which is D2786's policy and the same list the
+// confirm machine reads (C2's `costly_modes`). A nil list means P6's default
+// (ConfirmDefaultCostlyModes), exactly as ConfirmOptions.CostlyModes does; a
+// caller that means "no mode is costly" passes an empty, non-nil list.
+type ConfirmLaunchOptions struct {
+	CostlyModes []string
+}
+
+// ConfirmValidateLaunch is O10's gate, and the whole of what the typed launch
+// adds to the consumer's checks: a start in a mode the session calls costly is
+// refused when the record carries no confirmation. A start in any other mode
+// passes through with no confirmation, which is D162's answer and stays it for
+// every mode D2786 does not name.
+//
+// **Why it is a library check, and not a case in ConfirmValidateAction.** That
+// function is the destructive allow-list (D128) and a launch runs nothing
+// there. Wiring this gate into the running consumer -- reading the session's
+// policy and starting the run the record asks for -- is the P5.1
+// orchestrator's, so the check is exported and tested here, and nothing in this
+// package calls it yet. The two functions answer each other's verbs the same
+// way, and deliberately: each refuses a verb it does not authorise as
+// `refused-verb`, so a caller that hands a record to the wrong one is refused
+// rather than answered with a record that authorises nothing.
+//
+// **What it answers.** The record the consumer may start, or the refusal that
+// stops it. A launch's record binds the mode the record named -- the same
+// target kind J3's machine binds for a costly start (ConfirmTargetMode), so a
+// caller has one shape to read whatever produced it. A costly launch's record
+// carries the confirmation the phone wrote, for the caller to spend against its
+// own memory before anything runs; a plain launch's carries none.
+//
+// **What it re-reads, and what it deliberately does not.** It re-reads the
+// shape of what it hands back -- the action id, and the confirmation's id and
+// time when the record carries one -- for the reason ConfirmValidateAction
+// re-reads its own: a record built by hand inside this binary must not leave
+// here looking spendable. What it does NOT read is the **command window**: the
+// window is measured against the consumer's clock (D173's six hours from the
+// confirmation's own time), this gate has no clock in its options, and the
+// caller that owns the clock is the one that owns the window -- the same
+// division ConfirmValidateAction draws around the phone's confirmation timeout.
+// A caller that starts a costly launch must therefore spend the confirmation
+// against its own memory AND its own window before anything runs.
+//
+// **The refusal a costly start without a confirmation gets** is `missing-field`
+// at `action.confirmation`: it is the code the schema already answers a
+// confirmation-less destructive record with, and D2786 makes a costly start's
+// confirmation a requirement of exactly that kind -- one the session policy
+// states and the schema cannot, because a schema has no session to read.
+func ConfirmValidateLaunch(a *Action, o ConfirmLaunchOptions) (*ConfirmRecord, *Refusal) {
+	if a == nil {
+		return nil, refuse(CodeMissingField, "action")
+	}
+	if a.Verb != ConfirmVerbLaunch {
+		// The gate answers one verb. A destructive record is
+		// ConfirmValidateAction's, and a caller that hands one here has asked
+		// the wrong question: refusing it is the fail-closed answer.
+		return nil, refuse(CodeConfirmRefusedVerb, "action.verb")
+	}
+	costlyModes := o.CostlyModes
+	if costlyModes == nil {
+		costlyModes = ConfirmDefaultCostlyModes
+	}
+	if refusal := confirmReadCostlyModes(costlyModes); refusal != nil {
+		// A policy this file cannot read is refused rather than read as "no mode
+		// is costly": the lenient reading of a defect is exactly the reading
+		// that lets a costly start through with no read-back.
+		return nil, refusal
+	}
+	if confirmIsCostlyStart(a.Mode, costlyModes) && !a.HasConfirmation {
+		// D2786: a costly start is read back like a cancel, so a record that
+		// carries no confirmation is one the phone never read back -- a
+		// modified client, or one that skipped the read-back. Refused rather
+		// than started.
+		return nil, refuse(CodeMissingField, "action.confirmation")
+	}
+	id, refusal := confirmKeyID(a.ID, "action.id")
+	if refusal != nil {
+		return nil, refusal
+	}
+	record := &ConfirmRecord{
+		ID: id, Verb: ConfirmVerbLaunch,
+		Target: ConfirmTarget{Kind: ConfirmTargetMode, Mode: a.Mode},
+	}
+	if a.HasConfirmation {
+		confirmationID, refusal := confirmKeyID(a.Confirmation.ID, "action.confirmation.id")
+		if refusal != nil {
+			return nil, refusal
+		}
+		at := a.Confirmation.At
+		if at < 1 || at > TimeMax {
+			return nil, refuse(CodeBadTimestamp, "action.confirmation.at")
+		}
+		record.Confirmation = ConfirmConfirmation{ID: confirmationID, At: at}
+	}
+	return record, nil
 }
 
 // ---------------------------------------------------------------------------

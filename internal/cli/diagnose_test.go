@@ -2415,9 +2415,132 @@ func TestDiagnoseRedactsEveryStringOfAReviewRound(t *testing.T) {
 	}
 }
 
+// TestDiagnosePrintsEachLevelsRoundsAndCap: the document carries, per review
+// level, the rounds that level's own loop reached and the cap the run's plan
+// resolved for it (V1.3) -- the figures the Run screen's iterations bar is drawn
+// from, and the same figures the human output prints. Each level's loop numbers
+// its rounds from 1, so the rounds a level spent are the highest number its own
+// reviews carry and never a count of them.
+func TestDiagnosePrintsEachLevelsRoundsAndCap(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260101-000033-abcd"
+	seedPlannedRun(t, f, id,
+		[]runstore.ReviewSummary{
+			{Round: 1, Tier: runstore.TierFirst, Verdict: "changes", Findings: 1},
+			{Round: 2, Tier: runstore.TierFirst, Verdict: "ship"},
+			{Round: 1, Tier: runstore.TierSenior, Verdict: "changes", Findings: 2},
+			{Round: 2, Tier: runstore.TierSenior, Verdict: "ship"},
+			{Round: 1, Tier: runstore.TierAdversarial, Verdict: "ship"},
+		},
+		&runstore.PlanRecord{Steps: []runstore.PlanStepRecord{
+			{Kind: "first_line", Rounds: 3},
+			{Kind: "review", Rounds: 2},
+			{Kind: "adversarial", Rounds: 2},
+		}})
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"\nReview levels\n",
+		"  level l1: 2 of 3 rounds\n",
+		"  level l2: 2 of 2 rounds\n",
+		"  level l3: 1 of 2 rounds\n",
+	} {
+		if !strings.Contains(human, want) {
+			t.Errorf("diagnose does not print %q:\n%s", want, human)
+		}
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	levels, _ := doc["review_levels"].([]any)
+	if len(levels) != 3 {
+		t.Fatalf("review_levels = %v, want one entry per level", doc["review_levels"])
+	}
+	if got := keysOfDoc(levels[0].(map[string]any)); !slices.Equal(got, []string{"cap", "level", "rounds"}) {
+		t.Errorf("a level's keys = %v, want level, rounds and cap", got)
+	}
+	for i, want := range []struct {
+		level  string
+		rounds float64
+		cap    float64
+	}{{"l1", 2, 3}, {"l2", 2, 2}, {"l3", 1, 2}} {
+		entry := levels[i].(map[string]any)
+		if entry["level"] != want.level || entry["rounds"] != want.rounds || entry["cap"] != want.cap {
+			t.Errorf("review_levels[%d] = %v, want %s at %v of %v", i, entry, want.level, want.rounds, want.cap)
+		}
+	}
+}
+
+// TestDiagnosePrintsANullCapWithoutAPlan: a record with no plan block carries no
+// cap for any level, and the document says so with a null rather than a number
+// nothing set (V1.3: a cap it cannot resolve prints null, never a guess) -- and
+// with the sentence the human output prints in its place. A record with no plan
+// and no review carries no block at all, so a reader can tell it from one that
+// carries levels and no caps.
+func TestDiagnosePrintsANullCapWithoutAPlan(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260101-000034-abcd"
+	seedReviewersRun(t, f, id, []runstore.ReviewSummary{
+		{Round: 1, Tier: runstore.TierSenior, Verdict: "ship"},
+		{Round: 2, Tier: runstore.TierSenior, Verdict: "changes", Findings: 1},
+	})
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "  level l2: 2 rounds, no cap recorded\n"; !strings.Contains(human, want) {
+		t.Errorf("diagnose does not print %q:\n%s", want, human)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	levels, _ := doc["review_levels"].([]any)
+	if len(levels) != 1 {
+		t.Fatalf("review_levels = %v, want the one level the record's reviews reach", doc["review_levels"])
+	}
+	entry := levels[0].(map[string]any)
+	if entry["level"] != "l2" || entry["rounds"] != float64(2) {
+		t.Errorf("review_levels[0] = %v, want l2 at 2 rounds", entry)
+	}
+	if cap, ok := entry["cap"]; !ok || cap != nil {
+		t.Errorf("cap = %v (present %v), want a null: a record with no plan block resolves no cap", cap, ok)
+	}
+	// A record that carries neither prints no block, so a reader can tell the
+	// two apart.
+	const empty = "20260101-000035-abcd"
+	seedReviewersRun(t, f, empty, nil)
+	out, _, err = execute(t, "diagnose", "--json", empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "review_levels") {
+		t.Errorf("a record with no plan and no reviews printed the block:\n%s", out)
+	}
+}
+
 // seedReviewersRun stores a finished run under id whose record carries the
 // given review rounds and nothing else the diagnosis reads.
 func seedReviewersRun(t *testing.T, f *cloudFixture, id string, reviews []runstore.ReviewSummary) {
+	t.Helper()
+	seedPlannedRun(t, f, id, reviews, nil)
+}
+
+// seedPlannedRun is seedReviewersRun with the record's plan block, which is what
+// a run's review caps are read off (V1.3): nil for a record written before the
+// block existed, which is what a reader without one has to fall back to.
+func seedPlannedRun(t *testing.T, f *cloudFixture, id string, reviews []runstore.ReviewSummary, plan *runstore.PlanRecord) {
 	t.Helper()
 	seedSpec(t, f, firstRunSpec(id), false)
 	ctx := context.Background()
@@ -2428,7 +2551,7 @@ func seedReviewersRun(t *testing.T, f *cloudFixture, id string, reviews []runsto
 	if err := s.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
 		Status: runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
 		Reason: "tests failing on the final commit", CostUSD: 1.25, Cost: &cost,
-		Reviews: reviews}); err != nil {
+		Reviews: reviews, Plan: plan}); err != nil {
 		t.Fatal(err)
 	}
 }

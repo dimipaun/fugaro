@@ -142,7 +142,7 @@ variable "bucket_lifecycle" {
 }
 
 variable "enable_vertex" {
-  description = "Whether to enable the Vertex AI API, for workflows with agent.auth: vertex."
+  description = "Whether to enable the Vertex AI API: for workflows with agent.auth: vertex, and for a project whose routing table names Vertex anywhere (the credentials service calls it on its own identity)."
   type        = bool
   default     = false
   nullable    = false
@@ -356,18 +356,18 @@ variable "catalog_check" {
         expression = string
       })
       # The repository's provider credential (internal/infra's
-      # CatalogCheckRepository.GitSecretID), which the project's build identity
-      # holds one secretAccessor on: a build of one of this repository's
-      # entries runs as the identity now (B6, D2301) and reads that container
-      # through AvailableSecrets, so the reach the per-repository build account
-      # held (modules/repo/build.tf's own build grant) has to be the
-      # identity's. Optional, and absent for a repository whose credential this
-      # installation cannot name, where no build of its entries is submitted.
+      # CatalogCheckRepository.GitSecretID), which this module granted the
+      # project's build identity a secretAccessor on until IS8 (D3330): a
+      # catalog entry's build mounted it as AvailableSecrets while the build
+      # ran as the identity (B6, D2301). The build fetches that credential from
+      # the credentials service now, so NOTHING here reads either field — they
+      # are kept in the input shape so the tfvars an installation applied at
+      # the release behind still validate, and an installation whose tfvars
+      # carry them converges with no accessor planned and no refusal.
       git_secret_id = optional(string)
       # The repository's own container, when it holds a live version and
-      # git_secret_id names the project's copy: a build resolves the own copy
-      # first, so the identity is granted it too, as a second grant beside the
-      # first rather than a change of it.
+      # git_secret_id names the project's copy. Read by nothing here since IS8,
+      # for the reason above.
       own_git_secret_id = optional(string)
     }))
   })

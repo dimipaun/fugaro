@@ -1045,6 +1045,16 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			},
 			At:       runstore.RigorAtFinalize,
 			Revision: "origin/main"},
+		// And the plan (docs/review-levels-ab-jobmax V1.3): one entry per
+		// step of the loop after implement, each the rounds resolved for it
+		// -- the figures the Run screen draws a level's bar against. It
+		// rides the fully-populated record so a schema that did not name it
+		// would reject a record the runner writes.
+		Plan: &runstore.PlanRecord{Steps: []runstore.PlanStepRecord{
+			{Kind: "first_line", Rounds: 3},
+			{Kind: "review", Rounds: 2},
+			{Kind: "adversarial", Rounds: 2},
+		}},
 		// And the escalation (docs/security-classification SC6, D1509): the
 		// row of the list in force whose match turned review level 3 on for
 		// the run, and the seam it was decided at.

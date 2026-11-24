@@ -32,6 +32,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -182,6 +183,25 @@ type Diagnosis struct {
 	// record's bytes, which a hand can edit. Absent when the record has no
 	// reviews, and when there is no record at all.
 	Reviews []runstore.ReviewSummary `json:"reviews,omitempty"`
+	// ReviewLevels is what each review level's loop spent against the cap the
+	// run's plan resolved for it (docs/review-levels-ab-jobmax
+	// implementation-plan.md V1.3): one entry per level the run's plan holds or
+	// whose tier its reviews carry, in level order, each with the rounds that
+	// level's own loop reached and its cap.
+	//
+	// It is the figures the Run screen's iterations bar is drawn from, and they
+	// are the same figures `fugaro diagnose` prints: the cap is the record's own
+	// plan block, written by the runner, and the rounds are the highest round
+	// the record's reviews carry for that level -- each level's loop counts from
+	// 1, so its own highest round is what it spent. Cap is a pointer because a
+	// cap the record does not carry is not a zero: a record written before the
+	// plan block existed has none, and a bar drawn against a guessed cap would
+	// state a bound no layer set (V1.3's "a cap it cannot resolve prints null,
+	// never a guess").
+	//
+	// Absent -- never an empty list -- for a record that carries no plan block
+	// and no review at any level, and for a run with no record at all.
+	ReviewLevels []ReviewLevel `json:"review_levels,omitempty"`
 	// Triage is the record's triage rounds (runstore.TriageRecord, D1846,
 	// D1850) as a diagnosis reads them: one entry per round the stage ran, in
 	// the record's own order and bounded again on read, with the review round
@@ -460,6 +480,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		d.Ruling = clipRunes(red(rec.OwnerRuled), task.MaxOwnerRuledBytes)
 		d.Retries = rec.Retries
 		d.Reviews = reviewsOf(rec.Reviews, red)
+		d.ReviewLevels = reviewLevelsOf(rec.Reviews, rec.Plan)
 		d.Triage = triageRoundsOf(rec.Triage, red)
 		d.Checkpoint = checkpointOf(rec.Checkpoint, red)
 		d.Verify = rec.Verify
@@ -660,6 +681,118 @@ func reviewsOf(reviews []runstore.ReviewSummary, red func(string) string) []runs
 		out = append(out, r)
 	}
 	return out
+}
+
+// ReviewLevel is one review level's own loop as a diagnosis reads it (V1.3):
+// the level, the rounds that level spent, and the cap the run's plan resolved
+// for it. Cap is nil where the record carries no cap for the level, which is
+// every record written before the plan block existed and a record whose plan
+// does not hold the level -- and it is nil rather than a zero because a bound
+// nothing set is not a bound of zero.
+type ReviewLevel struct {
+	Level  policy.Level `json:"level"`
+	Rounds int          `json:"rounds"`
+	Cap    *int         `json:"cap"`
+}
+
+// reviewLevelsOf is the document's per-level figures (V1.3): one entry per
+// review level, in level order, whose cap the run's plan holds or whose tier the
+// record's reviews carry -- so a running run shows each level at zero rounds
+// against its cap, and a record written before the plan block shows what its
+// reviews spent with no cap beside it.
+//
+// Rounds is the highest round that level's reviews carry, and never a count of
+// them: each level's loop numbers its own rounds from 1, a first-line loop that
+// bounces back to a rejected round restarts at 1 too, and the rounds the loop
+// really spent is therefore the highest number it wrote. Independent review
+// entries are not this run's own rounds -- another job's reviewer wrote them,
+// display-only (runstore.TierIndependent) -- so they are not counted at any
+// level; an unknown tier is read as the senior level's, the way reviewLine reads
+// one.
+func reviewLevelsOf(reviews []runstore.ReviewSummary, plan *runstore.PlanRecord) []ReviewLevel {
+	caps := map[policy.Level]int{}
+	if plan != nil {
+		for _, st := range plan.Steps {
+			lv, ok := planKindLevel(st.Kind)
+			if !ok {
+				continue
+			}
+			if _, seen := caps[lv]; !seen {
+				caps[lv] = st.Rounds
+			}
+		}
+	}
+	spent := map[policy.Level]int{}
+	for _, r := range reviews {
+		lv, ok := reviewTierLevel(r.Tier)
+		if !ok {
+			continue
+		}
+		if r.Round > spent[lv] {
+			spent[lv] = r.Round
+		}
+	}
+	var out []ReviewLevel
+	for _, lv := range []policy.Level{policy.LevelL1, policy.LevelL2, policy.LevelL3} {
+		cap, hasCap := caps[lv]
+		rounds, hasRounds := spent[lv]
+		if !hasCap && !hasRounds {
+			continue
+		}
+		entry := ReviewLevel{Level: lv, Rounds: rounds}
+		if hasCap {
+			n := cap
+			entry.Cap = &n
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// planKindLevel is which review level a plan step's kind is, false for a step no
+// level owns: a rebase step is the runner's own work, and its rounds bound a
+// stage rather than a review loop (plan.go's stepLevel, which this mirrors over
+// the record's own string).
+func planKindLevel(kind string) (policy.Level, bool) {
+	switch kind {
+	case string(recipe.StepFirstLine):
+		return policy.LevelL1, true
+	case string(recipe.StepReview):
+		return policy.LevelL2, true
+	case string(recipe.StepAdversarial):
+		return policy.LevelL3, true
+	}
+	return "", false
+}
+
+// reviewTierLevel is which review level a round's tier is, false for a tier no
+// level of this run owns. An empty tier is a senior review in a run that had no
+// first line (runstore.ReviewSummary.Tier), and any other unknown word is read
+// as the senior level's rather than dropped: a hand-edited record still shows
+// the rounds it carries, and a round attributed to the wrong level is at worst a
+// bar that is too long -- dropping it would hide rounds a person can see in the
+// list above.
+func reviewTierLevel(tier string) (policy.Level, bool) {
+	switch tier {
+	case runstore.TierFirst:
+		return policy.LevelL1, true
+	case runstore.TierAdversarial:
+		return policy.LevelL3, true
+	case runstore.TierIndependent:
+		return "", false
+	}
+	return policy.LevelL2, true
+}
+
+// reviewLevelLine is one level as the diagnosis's Review levels block prints it:
+// the rounds the level spent against its cap, and -- where the record carries no
+// cap -- the rounds alone with the absent cap said in words, because a reader
+// must not take a missing bound for a reached one.
+func reviewLevelLine(lv ReviewLevel) string {
+	if lv.Cap == nil {
+		return fmt.Sprintf("level %s: %s, no cap recorded", lv.Level, runner.Plural(lv.Rounds, "round"))
+	}
+	return fmt.Sprintf("level %s: %d of %s", lv.Level, lv.Rounds, runner.Plural(*lv.Cap, "round"))
 }
 
 // triageFlag is the line a diagnosis carries at the top when any triage round
@@ -1616,6 +1749,17 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		// the difference between a short list and a complete one (F19).
 		if len(d.Reviews) == diagnoseReviews {
 			fmt.Fprintf(&b, "  … at most %d review rounds are printed\n", diagnoseReviews)
+		}
+	}
+	// Each level's own loop, under the rounds it spent: the cap the run's plan
+	// resolved for it beside the rounds it reached (V1.3). It is the block that
+	// answers "how much of its review budget did this run use", and a level
+	// whose cap the record does not carry says so in words rather than printing
+	// a zero.
+	if len(d.ReviewLevels) > 0 {
+		fmt.Fprintf(&b, "\nReview levels\n")
+		for _, lv := range d.ReviewLevels {
+			fmt.Fprintf(&b, "  %s\n", oneLine(reviewLevelLine(lv)))
 		}
 	}
 	// The triage rounds, under the reviews whose rounds they judged (D1846,

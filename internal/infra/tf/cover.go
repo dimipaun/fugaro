@@ -272,6 +272,14 @@ var grantRules = map[string]map[string]who{
 		// the one project-level binding the task adds). Granting it to a job
 		// account or to a person is not a grant the installation makes.
 		customKey + CredentialsDatabaseRole: toCredentials | toMobile,
+		// The service's Vertex role (CS11, D3174): the installation project's
+		// own role, holding aiplatform.endpoints.predict and nothing else,
+		// bound to the service's own account in credentials.tf and to nothing
+		// else. A chain whose models are served on Vertex calls it as this
+		// service, so the reach has to be this account's and no job's; the
+		// jobs' own roles/aiplatform.user is the release-1 path CS11 keeps
+		// only under budget.mode: observe (X8 retires it).
+		customKey + CredentialsVertexRole: toCredentials,
 		// The dynamic-delivery class (D1931, DS2.2). fugaroIntakeSecrets is
 		// create, version-add and delete of the grammar's containers, held by
 		// the intake's own account and by nothing else, and only under the
@@ -718,17 +726,26 @@ const ViewerRole = "fugaroViewer"
 
 // CredentialsAccountID is the credentials service's fixed service account ID
 // (internal/infra/tfvars.go's CredentialsAccountID, which
-// var.credentials_service.account_id carries) and CredentialsDatabaseRole the
-// custom role credentials.tf creates for it in the run's Firebase project.
+// var.credentials_service.account_id carries), CredentialsDatabaseRole the
+// custom role credentials.tf creates for it in the run's Firebase project, and
+// CredentialsVertexRole the second it creates for it in the installation's own
+// project where the installation names Vertex (CS11).
 //
 // The account is deliberately NOT among FugaroAccounts, for the deployer
-// account's reason and the ledger finding above: it holds its own role and the
+// account's reason and the ledger finding above: it holds its own roles and the
 // bundle's accessor, and nothing a job holds, so every row that would otherwise
 // accept it is refused (toCredentials). TestCoverNamesAreTheCodes and
 // TestCredentialsAccountIsItsOwnPrincipalKind read both halves.
+//
+// The Vertex role is a role of its own rather than a permission of the
+// database's — the two live in different projects and are read by different
+// callers — and it exists only where the installation names Vertex (D3174: the
+// service calls Vertex on its own installation identity, so a chain whose
+// models are served there needs this account to hold endpoints.predict).
 const (
 	CredentialsAccountID    = "fugaro-credentials"
 	CredentialsDatabaseRole = "fugaroCredentialsDatabase"
+	CredentialsVertexRole   = "fugaroCredentialsVertex"
 )
 
 // CoordinatorAccountID is the coordinator's writer account (internal/infra's
@@ -1082,7 +1099,7 @@ const (
 // reason (toBuildIdentity): its reach is the credentials service's invoker bit
 // and nothing a job of any repository holds.
 var (
-	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole, LicenceRenewalRole}
+	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CredentialsVertexRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole, LicenceRenewalRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -1754,6 +1771,15 @@ var RolePermissions = map[string][]string{
 	// installation's database. credentials.tf lists both permissions with their
 	// reasons; TestCredentialsDatabaseRoleIsTheTwoDataPermissions is the pin.
 	CredentialsDatabaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
+	// The service's Vertex role (CS11, D3174): the one permission a :rawPredict
+	// on one of the installation project's Claude endpoints needs, and nothing
+	// else. roles/aiplatform.user — the release-1 grant a job holds under
+	// budget.mode: observe — carries endpoints.predict plus the platform's
+	// reads, model deployments, tuning and pipelines, which is exactly the
+	// surface a chain-serving credential holder must not have.
+	// deploy/terraform's TestTheServiceVertexRoleIsItsOwn is the pin that reads
+	// this entry against the module.
+	CredentialsVertexRole: {"aiplatform.endpoints.predict"},
 	// The catalog check job's database role (D1554): the two permissions
 	// catalogcheck.tf lists, and the same two the credentials role above pins.
 	// They are a second entry and not a shared one on purpose — the two

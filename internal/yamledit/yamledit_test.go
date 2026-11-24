@@ -1822,6 +1822,134 @@ func TestUpsertSeqItemListByKeyRefusesWhatItCannotWriteSafely(t *testing.T) {
 	}
 }
 
+// TestUpsertSeqItemItemsByKeyWritesASequenceOfMappings is the operation M2 owes
+// the migration contract (docs/repo-override-rulings/contract-migrate.md): a
+// field whose value is a sequence of MAPPINGS — a project area's `members`, each
+// `{repo, paths}` — which neither the scalar upsert nor the list upsert reaches.
+// The item is written with its nested items where the sequence has no such item,
+// the nested sequence is replaced where the item already carries one, and every
+// other line of the file stays where it was.
+func TestUpsertSeqItemItemsByKeyWritesASequenceOfMappings(t *testing.T) {
+	const doc = `# The project's areas.
+defaults:
+  rigor:
+    areas:
+      - name: payments
+        level: critical
+        members:
+          - repo: acme/pay
+            paths:
+              - internal/pay
+`
+	items := []yamledit.SeqItem{
+		{KeyField: "repo", Key: "acme/api", Lists: map[string][]string{"paths": {"internal/api", "cmd"}}},
+	}
+	got, err := yamledit.UpsertSeqItemItemsByKey([]byte(doc), []string{"defaults", "rigor", "areas"}, "name", "payments", "members", items)
+	if err != nil {
+		t.Fatalf("UpsertSeqItemItemsByKey: %v", err)
+	}
+	const want = `# The project's areas.
+defaults:
+  rigor:
+    areas:
+      - name: payments
+        level: critical
+        members:
+          - repo: acme/api
+            paths:
+              - internal/api
+              - cmd
+`
+	if string(got) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	reparses(t, got)
+
+	// A second application writes the same bytes: the nested item is written
+	// where it stands, never doubled, which is what a second `fugaro update`
+	// finds.
+	again, err := yamledit.UpsertSeqItemItemsByKey(got, []string{"defaults", "rigor", "areas"}, "name", "payments", "members", items)
+	if err != nil {
+		t.Fatalf("UpsertSeqItemItemsByKey (again): %v", err)
+	}
+	if !bytes.Equal(again, got) {
+		t.Fatalf("the same upsert twice rewrote the document:\n%s", again)
+	}
+
+	// The area the sequence does not have yet is appended whole, with its own
+	// scalars and its nested sequence, and the key the sequence hangs from is
+	// written when the document has none of it.
+	appended, err := yamledit.UpsertSeqItemItemsByKey(got, []string{"defaults", "rigor", "areas"}, "name", "billing",
+		"members", []yamledit.SeqItem{{KeyField: "repo", Key: "acme/bill"}})
+	if err != nil {
+		t.Fatalf("UpsertSeqItemItemsByKey (a new area): %v", err)
+	}
+	if !strings.Contains(string(appended), "      - name: billing\n        members:\n          - repo: acme/bill\n") {
+		t.Fatalf("the new area was not written whole:\n%s", appended)
+	}
+	reparses(t, appended)
+
+	fresh, err := yamledit.UpsertSeqItemItemsByKey([]byte("other: 1\n"), []string{"defaults", "rigor", "areas"},
+		"name", "payments", "members", items)
+	if err != nil {
+		t.Fatalf("UpsertSeqItemItemsByKey (a document with no areas): %v", err)
+	}
+	const freshWant = `other: 1
+defaults:
+  rigor:
+    areas:
+      - name: payments
+        members:
+          - repo: acme/api
+            paths:
+              - internal/api
+              - cmd
+`
+	if string(fresh) != freshWant {
+		t.Fatalf("got:\n%s\nwant:\n%s", fresh, freshWant)
+	}
+	reparses(t, fresh)
+}
+
+// TestUpsertSeqItemItemsByKeyRefusesWhatItCannotWriteSafely pins the refusals of
+// the nested upsert: a field written in flow style, a sequence item that is not
+// a mapping, and the arguments that name nothing — a nested list asked for with
+// no items above all, which has no bytes an edit could write (an empty block
+// sequence is a null, not a sequence of nothing).
+func TestUpsertSeqItemItemsByKeyRefusesWhatItCannotWriteSafely(t *testing.T) {
+	one := []yamledit.SeqItem{{KeyField: "repo", Key: "acme/api"}}
+	for _, tc := range []struct {
+		name, doc, keyField, keyValue, field string
+		items                                []yamledit.SeqItem
+		path                                 []string
+		reason                               yamledit.Reason
+	}{
+		{"no path", "a: 1\n", "name", "x", "members", one, nil, yamledit.ReasonEmptyPath},
+		{"no key field", "a: 1\n", "", "x", "members", one, []string{"areas"}, yamledit.ReasonEmptyField},
+		{"no field", "a: 1\n", "name", "x", "", one, []string{"areas"}, yamledit.ReasonEmptyField},
+		{"the field is the key field", "a: 1\n", "name", "x", "name", one, []string{"areas"}, yamledit.ReasonFieldIsKeyField},
+		{"no items", "a: 1\n", "name", "x", "members", nil, []string{"areas"}, yamledit.ReasonEmptyList},
+		{"an item with no key field", "a: 1\n", "name", "x", "members",
+			[]yamledit.SeqItem{{Key: "acme/api"}}, []string{"areas"}, yamledit.ReasonEmptyField},
+		{"a nested list with no items", "a: 1\n", "name", "x", "members",
+			[]yamledit.SeqItem{{KeyField: "repo", Key: "acme/api", Lists: map[string][]string{"paths": {}}}},
+			[]string{"areas"}, yamledit.ReasonEmptyList},
+		{"a flow field", "areas:\n  - name: payments\n    members: [{repo: acme/api}]\n", "name", "payments", "members",
+			one, []string{"areas"}, yamledit.ReasonFlowCollection},
+		{"a scalar item", "areas:\n  - payments\n", "name", "payments", "members", one, []string{"areas"}, yamledit.ReasonNotAMapping},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := yamledit.UpsertSeqItemItemsByKey([]byte(tc.doc), tc.path, tc.keyField, tc.keyValue, tc.field, tc.items)
+			if r := yamledit.ReasonOf(err); r != tc.reason {
+				t.Fatalf("reason = %q, want %q (got %q, %v)", r, tc.reason, got, err)
+			}
+			if !bytes.Equal(got, []byte(tc.doc)) {
+				t.Fatalf("a refusal returned changed bytes: %q", got)
+			}
+		})
+	}
+}
+
 // TestSetEmptyMappingWritesTheEmptyMappingAndKeepsTheComments is the operation
 // the review floor's last removal needs: `review_floor: {}` is YAML's only
 // spelling of a floor of nothing — block style has no empty form — and what the

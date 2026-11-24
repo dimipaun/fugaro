@@ -74,5 +74,26 @@ func (b *Backend) sealedVars(full string, entries []backend.EnvVar) (map[string]
 		return nil, nil
 	}
 	kv := entries[0]
-	return nil, fmt.Errorf("launching %s: the launch carries %s as a secret (the budget token's seal key), and a Batch job has no per-execution override: its variables are the job's definition, which every launcher the Fugaro job-name condition admits and the reaper can read back for as long as the job is kept, so the key is not put there and nothing was created; this refusal is deliberate, and it is the documented limit (docs/budget-token-channel/spec.md, \"The Batch backend refuses a sealed launch\"): every launch of an installation that mints is sealed, so an installation that mints budget tokens — one that names a budget database, with the signer account it mints through — cannot launch any run on Batch, and such an installation has to stay on backend: cloud-run", full, kv.Name)
+	return nil, tokenCarrierRefusal(full, kv.Name)
+}
+
+// tokenCarrierRefusal is the **one reason** a launch on this backend is
+// refused when it carries the budget token's marker (AB9, D3021): the same
+// sentence for every spelling of it -- the sealed entry the launcher writes
+// (LaunchSpec.SecretEnv, D15) and the ordinary variable a launch may spell it
+// as (run.go's budgetTokenEntry, which closes the hole that let an unsealed
+// launch work here) -- so an operator reads one reason wherever it reaches
+// them,
+// and doctor's `batch-budget-seal` and validate's offline arm say the same
+// thing about the installation (internal/cli).
+//
+// It names the token's **missing carrier** and not the entry's shape: a Batch
+// job's variables are the job's definition, so the only carrier this backend
+// could give the token is a standing copy in the job resource, readable by
+// every launcher the IAM condition admits and by the reaper for as long as the
+// job is kept -- the limit the owner answered with (P1), and not a mechanism
+// somebody owes. entry is the marker's name and never its value: the name is
+// the most an operator may be shown (R7, and the value is the seal key).
+func tokenCarrierRefusal(full, entry string) error {
+	return fmt.Errorf("launching %s: the launch carries %s, and a Batch job has no carrier for the budget token's seal key: a Batch job has no per-execution override, so the only place a launch's variable can go is the job's definition, which every launcher the Fugaro job-name condition admits and the reaper can read back for as long as the job is kept -- a standing copy in the job resource, and the marker's value IS the seal key, so it is never a variable of a Batch job, sealed or plain, and nothing was created; this refusal is deliberate, and it is the documented limit (docs/budget-token-channel/spec.md, \"The Batch backend refuses a sealed launch\"): every launch of an installation that mints is sealed, so an installation that mints budget tokens — one that names a budget database, with the signer account it mints through — cannot launch any run on Batch, and such an installation has to stay on backend: cloud-run", full, entry)
 }
