@@ -8,6 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -104,23 +105,30 @@ func TestPlanModels(t *testing.T) {
 	})
 
 	t.Run("tie by price", func(t *testing.T) {
+		// One repository each, and the price table is the only thing that can
+		// settle it: by ID claude-opus-5-5 is the earlier name, and at $4/$20
+		// against $2/$10 it is the dearer model, so the project takes
+		// claude-sonnet-5 (D3290). Drop the price rule and this fixture answers
+		// opus, which is what keeps the rule load-bearing here.
 		app := repoAt(t, "acme/app", "agent:\n  models:\n    coder: claude-opus-5-5\n")
-		web := repoAt(t, "acme/web", "agent:\n  models:\n    coder: claude-haiku-4-5\n")
-		c := planModels(t, Project{}, app, web)
+		web := repoAt(t, "acme/web", "agent:\n  models:\n    coder: claude-sonnet-5\n")
+		c := planModels(t, Project{Prices: pricing.Embedded()}, app, web)
 
-		checkChange(t, c, []LayerEdit{edit("defaults.agent.models.coder", "claude-haiku-4-5")}, []string{
-			"acme/app: coder claude-opus-5-5 -> claude-haiku-4-5 (the project's)",
+		checkChange(t, c, []LayerEdit{edit("defaults.agent.models.coder", "claude-sonnet-5")}, []string{
+			"acme/app: coder claude-opus-5-5 -> claude-sonnet-5 (the project's)",
 		})
 	})
 
 	t.Run("a tie price does not settle", func(t *testing.T) {
-		// claude-sonnet-5 and claude-sonnet-5-5 are both $2/$10 in the table and
-		// claude-zzz-9 has no row at all, so no pair here is decided by price:
-		// the ID decides, which is the answer that does not move between runs.
+		// claude-sonnet-5 and claude-sonnet-5-5 are both $2/$10 in the table, so
+		// the pair of them is no answer price can give and the ID decides, which
+		// is the answer that does not move between runs. claude-zzz-9 has no row
+		// at all, which is the dearest there is — the table's own rule is that
+		// nothing is priced free — so it loses to both.
 		app := repoAt(t, "acme/app", "agent:\n  models:\n    coder: claude-zzz-9\n")
 		web := repoAt(t, "acme/web", "agent:\n  models:\n    coder: claude-sonnet-5\n")
 		api := repoAt(t, "acme/api", "agent:\n  models:\n    coder: claude-sonnet-5-5\n")
-		c := planModels(t, Project{}, app, web, api)
+		c := planModels(t, Project{Prices: pricing.Embedded()}, app, web, api)
 
 		checkChange(t, c, []LayerEdit{edit("defaults.agent.models.coder", "claude-sonnet-5")}, []string{
 			"acme/app: coder claude-zzz-9 -> claude-sonnet-5 (the project's)",
@@ -154,7 +162,7 @@ func TestPlanModels(t *testing.T) {
 		app := repoAt(t, "acme/app", "agent:\n  models:\n    coder: claude-opus-5-5\nbudget:\n  allowed_models: [claude-haiku-4-5]\n")
 		web := repoAt(t, "acme/web", "agent:\n  models:\n    coder: claude-opus-5-5\n")
 		api := repoAt(t, "acme/api", "agent:\n  models:\n    coder: claude-haiku-4-5\n")
-		c := planModels(t, Project{}, app, web, api)
+		c := planModels(t, Project{Prices: pricing.Embedded()}, app, web, api)
 
 		checkChange(t, c, []LayerEdit{edit("defaults.agent.models.coder", "claude-haiku-4-5")}, []string{
 			"acme/app: coder claude-opus-5-5 -> claude-haiku-4-5 (the project's)",
