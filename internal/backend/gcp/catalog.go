@@ -197,10 +197,11 @@ type CatalogBuildSpec struct {
 	// copied definition (config.CatalogDockerfileKey) and the record
 	// (CatalogRecordKey). It is never taken as a key from the caller.
 	Entry string
-	// Slug is the repository whose provider credential the clone step clones
-	// with, and whose record prefix (builds/<Slug>/catalog/) the build writes
-	// and the daily check reads; the entry's own build is handed that checkout
-	// and no secret of the repository's (B9, D2311). It is not the account the
+	// Slug is the repository whose credential the credential step asks the
+	// service for, and whose record prefix (builds/<Slug>/catalog/) the build
+	// writes and the daily check reads; the entry's own build is handed that
+	// checkout and no secret of the repository's (B9, D2311, and IS8 for where
+	// the credential comes from). It is not the account the
 	// build runs as — that is the project's build identity (B6), one for the
 	// whole installation — because a repository's build account dies with the
 	// repository's Terraform root (M2 retires every one of them) while its
@@ -210,9 +211,15 @@ type CatalogBuildSpec struct {
 	Slug string
 	// GitProvider, RepoURL, BaseBranch, GitSecretID, GitUser and
 	// GitHubAppID are the entry's source repository, as BuildSpec's are: the
-	// image bakes that repository's source, which the clone step clones with
-	// this credential and the entry's own build copies out of the build
-	// context it is handed (B8, F19).
+	// image bakes that repository's source, which the clone step clones and
+	// the entry's own build copies out of the build context it is handed
+	// (B8, F19). GitSecretID and GitUser are READ BY NOTHING here since IS8
+	// (D3330): the request names no AvailableSecrets and the credential step
+	// fetches the credential from CredentialsServiceURL instead, so the two
+	// are carried — and checked, which is the one thing they still do — only
+	// because both submit sites resolve them for the same repository and a
+	// request's shape is the reader's contract; nothing in this file is
+	// served by their value.
 	GitProvider string
 	RepoURL     string
 	BaseBranch  string
