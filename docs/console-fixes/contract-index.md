@@ -102,6 +102,13 @@ and no status is a run that was claimed and never launched, but add
 read — `runs stats` counts the first among the runs that never launched and the
 second among the runs, under `unknown`, exactly as its record read does.
 
+A `task.json` the fold cannot use — a syntax error, or a field a newer CLI wrote
+that the task parser refuses — costs that one entry its task-derived fields (no
+`title`, `requested_by`, `batch` or `workflow`) and nothing else: the entry is
+still written from the launch and the record beside it, and the sweep goes on.
+One run's unusable object is not the installation's index, and a fold that
+stopped on it would leave every other run of the window unfolded and unsaid.
+
 **Every entry carries a sort key**, and the last fallback is what a run that was
 claimed and never launched has: a `task.json` and nothing else, so neither a
 record nor a launch to take a moment from. It is the run id's own mint time
