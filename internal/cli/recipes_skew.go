@@ -1886,7 +1886,7 @@ func checkImageSinceDev(ctx context.Context, env *cloudEnv, slug string, spec *t
 // (deployedCatalogEntry). A failed resolution is not an answer, so the
 // repository's own record is judged as before.
 func launchCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (config.Entry, bool) {
-	entry, ok, err := deployedCatalogEntry(ctx, env, slug, spec)
+	entry, ok, _, err := deployedCatalogEntry(ctx, env, slug, spec)
 	if err != nil || !ok {
 		return config.Entry{}, false
 	}
