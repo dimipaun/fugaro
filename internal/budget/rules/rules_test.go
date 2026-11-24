@@ -303,12 +303,24 @@ func TestGoMirrorOfThePerRunBranches(t *testing.T) {
 	m := func(v int64) *budget.Micros { x := budget.Micros(v); return &x }
 	// mirror is perRunOK read as prose: the repository's own cap, else the
 	// default, and the global one where it is set; with neither side set the
-	// comparison is false (the rules deny).
+	// comparison is false (the rules deny). A repository's own cap counts as
+	// its ceiling — the global one when it is set, else the default — so a
+	// node above it is the ceiling, as it is in Caps (A3, spec §5.6). The
+	// default is not clamped: the global bounds it through the comparison
+	// below.
 	mirror := func(repo, def, global *budget.Micros, delta budget.Micros) bool {
 		if repo != nil || def != nil {
 			own := repo
 			if own == nil {
 				own = def
+			} else {
+				ceil := global
+				if ceil == nil {
+					ceil = def
+				}
+				if ceil != nil && *ceil < *own {
+					own = ceil
+				}
 			}
 			return delta <= *own && (global == nil || delta <= *global)
 		}
