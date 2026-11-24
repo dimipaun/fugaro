@@ -29,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/craft"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -41,6 +42,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/redact"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -2616,6 +2618,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// record and the same local config as the gate above, and like it not at
 	// all for a launch the service does not serve.
 	if err := env.serviceAuthGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
+	// The table's own gate (R22): a run of a repository whose project publishes
+	// a routing table, whose models the table does not all route, has no source
+	// to be served from — it is refused here, before the claim and before the
+	// task, rather than by the run that cannot start.
+	if err := env.chainRoutingGate(ctx, spec); err != nil {
 		return config.Inputs{}, err
 	}
 	// The workflow secrets' gate (B3.8, G17): a run of a switched repository
@@ -6815,8 +6824,17 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, sharedProfile, repo, auth,
 		return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
 	}
 	local, _ := lc.RepoFor(repo)
-	serves := infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth, mode)
-	if auth == "" {
+	// Two arms, one answer, exactly as the repository root's plan reads them
+	// (internal/infra's resolve): the release-1 bridge, which reads agent.auth,
+	// and the table, which does not. A repository the table serves is told
+	// about the service whatever its file names — a `vertex` repository above
+	// all, which has no credential to hand the service and whose chain the
+	// service serves on its own identity (D3174) — and a repository the bridge
+	// would serve keeps its answer.
+	ready := local.CredentialsServiceOn()
+	serves := infra.CredentialsServiceServes(installed, ready, auth, mode) ||
+		infra.CredentialsServiceServesChains(installed, ready, infra.ChainPlanFor(lc, repo))
+	if auth == "" && !serves {
 		// No document this launcher could read, so the switch's third
 		// condition is judged on the two answers that do not need one: the
 		// repository's own record, and this machine's tfvars of the root it
@@ -7031,6 +7049,15 @@ func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, accou
 		Credentials:       names,
 		MaxRuntimeSeconds: int64(slipRunTime(spec) / time.Second),
 	}
+	// The sources the run's models can reach by the project's table (R4, D3171):
+	// what the walk serves this run from, and a positive list — a grant that
+	// named none is one covering no source of the new kinds, which is what a
+	// launcher of a release before this route asks for. A project that publishes
+	// no table sends the member not at all (omitempty), so an unmigrated
+	// installation's grant is byte for byte the one it always was.
+	if env.lc != nil && len(env.lc.ModelRouting) > 0 {
+		req.Sources = chainGrantSources(env.lc.ModelRouting, launchRunModels(ctx, env, spec), spec.Repo)
+	}
 	sctx, cancel := context.WithTimeout(ctx, slipGrantTimeout)
 	defer cancel()
 	ans, err := slipGrant(sctx, serviceURL, req)
@@ -7099,12 +7126,7 @@ func slipCredentialNames(ctx context.Context, env *cloudEnv, spec *task.Spec) ([
 	if co == nil {
 		return nil, "the repository's own fugaro.yaml could not be read at the ref this run will check out — there is no checkout of the repository here, or that ref carries no such file this launcher can resolve — so the credentials the run will ask for cannot be named, and the launcher's own working tree is not the document the run reads; run `fugaro run` from a checkout of the repository with the ref the run will clone to have this run served under a slip"
 	}
-	layers := []craft.Layer{{Name: craft.SourceRepo, Crafts: co.Agent.Crafts}}
-	if env.lc != nil {
-		layers = append(layers, craft.Layer{Name: craft.SourceLocal, Crafts: env.lc.Crafts,
-			Credentials: env.lc.Credentials, Pools: env.lc.Pools, KeyPrefix: craftLocalKeyPrefix})
-	}
-	eff, ps := craft.Resolve(layers, false)
+	eff, ps := craft.Resolve(launchCraftModelLayers(env, co), false)
 	if len(ps) > 0 {
 		// The path and not the name an access wrote: that name is what the
 		// slip must not carry, so it stays out of the launcher's output the
@@ -7118,6 +7140,105 @@ func slipCredentialNames(ctx context.Context, env *cloudEnv, spec *task.Spec) ([
 		}
 	}
 	return names, ""
+}
+
+// launchCraftModelLayers are the two layers that can write a craft's model or
+// access for a launch: the document this run will check out, and the
+// installation's own config, which is where the owner creates the credentials
+// and the pools a repository's file only selects among (F12, D1628). The
+// project layer is not read because it carries crafts and only their models
+// (config.Scopes refuses a craft access in a file anyone who can write the runs
+// bucket can write). slipCredentialNames and launchRunModels read the same two
+// layers through this one function, so a craft's access and a craft's model
+// cannot be resolved from two different documents.
+func launchCraftModelLayers(env *cloudEnv, co *config.Config) []craft.Layer {
+	layers := []craft.Layer{{Name: craft.SourceRepo, Crafts: co.Agent.Crafts}}
+	if env.lc != nil {
+		layers = append(layers, craft.Layer{Name: craft.SourceLocal, Crafts: env.lc.Crafts,
+			Credentials: env.lc.Credentials, Pools: env.lc.Pools, KeyPrefix: craftLocalKeyPrefix})
+	}
+	return layers
+}
+
+// launchRunModels are every model the run can call: the rungs a stage's model
+// is chosen by (craft.ModelRungs — the task's grade, a review level's model, a
+// craft's model, a pinned role of agent.models and agent.model) and the
+// override a task carries (task.Overrides.Model), which is the lowest rung of
+// the same ladder (D1660) and which no flag of this launcher writes.
+//
+// It is the set the project's routing table is judged against at launch (R22):
+// a model the table does not route is a run with no source to be served from,
+// refused before anything is written. It is also the set the run's grant is
+// read from — the entries these models resolve to are the sources the grant
+// asks for (chainGrantSources).
+//
+// Each rung is read from the document the run's own resolution reads, resolved
+// over the installation's config: the crafts through the same two layers
+// slipCredentialNames resolves an access from, so the launcher and the runner
+// cannot disagree about what one configuration means.
+func launchRunModels(ctx context.Context, env *cloudEnv, spec *task.Spec) []string {
+	cfg := launchLevelsConfig(ctx, env, spec)
+	if cfg == nil {
+		return nil
+	}
+	var models []string
+	add := func(model string) {
+		if model != "" && !slices.Contains(models, model) {
+			models = append(models, model)
+		}
+	}
+	if spec.ModelGrade != "" {
+		add(cfg.ModelGrades.Of(string(spec.ModelGrade)).Model)
+	}
+	for _, level := range []*config.LevelSetting{cfg.Agent.Levels.L1, cfg.Agent.Levels.L2, cfg.Agent.Levels.L3} {
+		if level != nil {
+			add(level.Model)
+		}
+	}
+	eff, _ := craft.Resolve(launchCraftModelLayers(env, cfg), false)
+	for _, name := range config.CraftNames {
+		add(eff[name].Model)
+	}
+	for _, model := range cfg.Agent.PinnedModels() {
+		add(model)
+	}
+	add(cfg.Agent.Model)
+	add(spec.Overrides.Model)
+	return models
+}
+
+// chainGrantSources are the sources of the table this run's grant covers: every
+// entry the run's models resolve to, its chain reduced to the sources that may
+// serve this repository and deduplicated (C2's GrantSource).
+//
+// A source this repository is not admitted to is left out rather than sent: the
+// service refuses a grant naming a source the table does not give the
+// repository (CS14), and one such name would be the whole grant refused. The
+// pool kinds are asked for whatever the repository, since which member serves
+// them is the walk's answer at the call (D3180, D3182).
+//
+// A model no entry matches is left out here and not refused: that refusal is
+// the launch's own gate (chainRoutingGate), which runs before this read, and a
+// grant that named the other models' sources is the right one for the run that
+// gets that far.
+func chainGrantSources(table routing.Table, models []string, repo string) []creds.GrantSource {
+	var out []creds.GrantSource
+	for _, model := range models {
+		entry, err := routing.Resolve(table, model)
+		if err != nil {
+			continue
+		}
+		for _, source := range entry.Chain {
+			if !infra.ChainSourceServes(source, repo) {
+				continue
+			}
+			granted := creds.GrantSource{Kind: string(source.Kind), Pool: source.Pool}
+			if !slices.Contains(out, granted) {
+				out = append(out, granted)
+			}
+		}
+	}
+	return out
 }
 
 // slipRunTime is how long this run asks to be served for: the run's own

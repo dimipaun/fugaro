@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -29,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -878,6 +880,35 @@ func (e *cloudEnv) serviceAuthGate(ctx context.Context, slug string, spec *task.
 		return checkCloneImageSince(e.lc, spec, serviceAuthSince, subject, knows, "", warn)
 	}
 	return checkImageSince(ctx, e, slug, spec, kind, serviceAuthSince, subject, knows, "", warn)
+}
+
+// chainRoutingGate refuses a launch of a repository whose project publishes a
+// routing table where a model the run can call has no entry (R22, D3172): such
+// a run has no source to be served from at all, and it is refused here — before
+// the claim and before the task, like every gate in this file — rather than by
+// the run that cannot start.
+//
+// It reads the project's table (the local config's `model_routing`, the
+// document `fugaro update` publishes from, CS11) and the models the rungs can
+// choose, the same two the launch's grant is read from (launchRunModels), so
+// the sources asked for and the refusal are one answer.
+//
+// A repository the table does not serve is not judged either: a project that
+// publishes no table and one whose every source is admitted to another
+// repository are one answer here (infra.ChainPlanFor), because such a run goes
+// out on the release-1 bridge exactly as it did (O7, R25) and a model no entry
+// matches there is the config's own refusal to make. The table governs a run's
+// models only where it serves the run.
+func (e *cloudEnv) chainRoutingGate(ctx context.Context, spec *task.Spec) error {
+	if e.lc == nil || !infra.ChainPlanFor(e.lc, spec.Repo).Serves {
+		return nil
+	}
+	for _, model := range launchRunModels(ctx, e, spec) {
+		if _, err := routing.Resolve(e.lc.ModelRouting, model); errors.Is(err, routing.ErrNoEntry) {
+			return userErr("no model_routing entry matches %s: this run has no source to be served from, so add one with fugaro routing set", oneLineCLI(model))
+		}
+	}
+	return nil
 }
 
 // switchedServiceAuth is the auth a switched repository's run reaches the
