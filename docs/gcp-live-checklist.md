@@ -25432,7 +25432,8 @@ back. Its last line is the verdict and the exit status:
 `scripts/live-checks/check-880-token-utilisation_test.sh`, which drives every case of it against a fake `gcloud`,
 `curl` and `fugaro` (no cloud, no database, no token) — a utilisation figure recorded, rate-limit headers without
 one, a source with no names, a source with no record, a name the service never served, a record that is not the
-service's shape and one that cannot be read, a hostile name in the record, and, in every case, that no value the
+service's shape and one that cannot be read, a source name in the record carrying a control byte, and, in every
+case, that no value the
 record holds and no access token reaches the block or an argv — and is run by `go test ./scripts`.
 
 ## Check 890: the data layout of a real project (installation `fugaro`, never `belong`; run by you; RUN 2026-11-23: FAIL on one path, now RC106)
