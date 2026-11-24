@@ -8793,7 +8793,9 @@ fact either way, which is the state every installation is in until then.
 --limit N prints the newest N rows of the listing and shortens nothing else:
 the totals line, in the text listing and in --json's totals, is the listing's
 own -- the index's summary by default, and the rows of the window with --since
--- because a page is not a total. 0, the default, prints every row of it.
+-- because a page is not a total. 0, the default, prints every row of it -- a
+default listing's own page (the newest 50 plus the runs still going), or the
+whole window when --since, --mine or --batch bounds the listing instead.
 
 --after RUN-ID starts the listing after that run: the rows strictly after it
 in the listing's order, so the same argv with the last id of a page is the
@@ -8880,7 +8882,7 @@ Flags:
 | `--group-by` | string | "" | no | group the listing by one field (failure_class) |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
-| `--limit` | int | `0` | no | print only the newest N rows of the listing (0, the default, is every row of it; the totals stay the listing's) |
+| `--limit` | int | `0` | no | print only the newest N rows of the listing (0, the default, is every row of it: a default listing's page, a bounded one's whole window; the totals stay the listing's) |
 | `--mine` | bool | `false` | no | only runs you requested |
 | `--pr` | int | `0` | no | only runs on this pull request (needs one repository; --since defaults to 90d) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |

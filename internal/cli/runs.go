@@ -58,7 +58,7 @@ type lsOptions struct {
 	debt                     bool // only the runs filed from a triage deferral, when set
 	interval                 time.Duration
 	pr                       int    // only the runs on this pull request, when set
-	limit                    int    // print the newest N rows of the window, when > 0
+	limit                    int    // print the newest N rows of the listing, when > 0
 	after                    string // start the listing after this run, when set
 	noCache                  bool   // read every object from the bucket, as before the cache existed
 }
@@ -307,7 +307,9 @@ func newLsCmd() *cobra.Command {
 			"--limit N prints the newest N rows of the listing and shortens nothing else:\n" +
 			"the totals line, in the text listing and in --json's totals, is the listing's\n" +
 			"own -- the index's summary by default, and the rows of the window with --since\n" +
-			"-- because a page is not a total. 0, the default, prints every row of it.\n\n" +
+			"-- because a page is not a total. 0, the default, prints every row of it -- a\n" +
+			"default listing's own page (the newest " + strconv.Itoa(lsIndexPage) + " plus the runs still going), or the\n" +
+			"whole window when --since, --mine or --batch bounds the listing instead.\n\n" +
 			"--after RUN-ID starts the listing after that run: the rows strictly after it\n" +
 			"in the listing's order, so the same argv with the last id of a page is the\n" +
 			"next page. The id is the run_id --json carries; one the listing does not\n" +
@@ -383,7 +385,7 @@ func newLsCmd() *cobra.Command {
 	f.StringVar(&o.state, "state", "", "only runs in this state, a run's or its pull request's ("+strings.Join(lsStateWords(), ", ")+")")
 	f.StringVar(&o.groupBy, "group-by", "", "group the listing by one field ("+strings.Join(lsGroupings, ", ")+")")
 	f.BoolVar(&o.debt, "debt", false, "only runs filed from a triage deferral (a task marked debt)")
-	f.IntVar(&o.limit, "limit", 0, "print only the newest N rows of the listing (0, the default, is every row of it; the totals stay the listing's)")
+	f.IntVar(&o.limit, "limit", 0, "print only the newest N rows of the listing (0, the default, is every row of it: a default listing's page, a bounded one's whole window; the totals stay the listing's)")
 	f.StringVar(&o.after, "after", "", "print only the rows after this run id in the listing")
 	f.IntVar(&o.pr, "pr", 0, "only runs on this pull request (needs one repository; --since defaults to "+prLookback+")")
 	f.BoolVar(&o.watch, "watch", false, "redraw until every run has settled")
@@ -424,7 +426,7 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		return userErr("--interval must be positive")
 	}
 	if o.limit < 0 {
-		return userErr("--limit %d: use a count, or 0 for every run of the window", o.limit)
+		return userErr("--limit %d: use a count, or 0 for every row of the listing", o.limit)
 	}
 	// The flags are read as typed rather than by value, the way --pr is: a
 	// reader who wrote either beside --watch asked for a page of a listing
