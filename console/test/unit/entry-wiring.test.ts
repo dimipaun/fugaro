@@ -7957,6 +7957,15 @@ describe('the move the Graph screen wires', () => {
 // tab makes the one read it has always made and its document carries its own
 // merge state. These cases set the floor (see the mock at the top of this file)
 // and drive both branches.
+//
+// **They live here and not in `graph-read.test.ts`, which the implementation
+// plan names.** That file is the §6.22 graph **document decoder**'s suite: it
+// takes documents and answers what the console makes of them, with no console
+// booted, no bridge and no screen, and every claim of IR4 is about the wiring --
+// which argv the tab builds, which read follows which, and what the entry does
+// with a refusal. Proving them there would mean standing up a whole console
+// inside the decoder's suite; the harness for that is this file's (`boot`,
+// `fakeBridge`, `graphBridge`) and the plan's file name is stale.
 // ---------------------------------------------------------------------------
 
 describe('the Graph canvas read before its merge state', () => {
@@ -8097,6 +8106,34 @@ describe('the Graph canvas read before its merge state', () => {
     )
     expect(mergeReads).toHaveLength(2)
     expect(mergeMarkOf(document, 'task-one')).toBe('')
+  })
+
+  it('re-reads the canvas with its merge state once that state is in hand', async () => {
+    // **A refresh is not a first paint.** The picture on screen already carries
+    // the merge state the tab read a moment ago, and re-reading the canvas
+    // without it would put every merged node back to `done` with the `merge
+    // unknown` mark -- a colour and a size change twice a minute, and a layout
+    // rebuilt for it -- only for the merge section to draw it merged again. So a
+    // read made while the session already holds this installation's merge state
+    // is the plain `--all` read, and the merge section does not follow it: the
+    // two reads are one.
+    const { bridge, calls } = mergesGraphBridge({
+      planStatus: (args) =>
+        (args as { noMerges?: boolean }).noMerges === true ? planStatusReply() : planStatusReply(withMergesRead()),
+    })
+    const document = await openGraph(bridge)
+    expect(mergeMarkOf(document, 'task-one')).toBe('')
+
+    const before = calls.filter((call) => call.name === 'planStatus').length
+    ;(classed(panelOf(document), 'graph-refresh')[0] as FakeNode).click()
+    await flush()
+
+    // The refresh read the canvas with its merge state, and nothing followed it.
+    expect(calls.filter((call) => call.name === 'planStatus').slice(before).map((call) => call.args)).toEqual([
+      { all: true },
+    ])
+    expect(mergeMarkOf(document, 'task-one'), 'the refresh put the unknown mark back').toBe('')
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
   })
 
   it('keeps the canvas and draws the sentence when the merge read is refused', async () => {
