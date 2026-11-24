@@ -5,13 +5,13 @@
 // changes (Change), the signature every item's planner has (Planner) and the
 // registry the planners hang on.
 //
-// It computes nothing itself. The planners (MC1, AB3, RG2, PR4, RC4, RT3) and
-// the stage that runs them (M2) are written against this package; until they
-// land, stubs.go registers a planner per item that answers an empty change.
+// It computes nothing itself: the planners (MC1, AB3, RG2, PR4, RC4, RT3) and
+// the stage that runs them (M2) are written against this package.
 package lift
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -149,8 +149,8 @@ type Source func(ctx context.Context) ([]Repo, []string, error)
 func RecordPath(slug string) string { return "fugaro/lift/l8/" + slug + ".json" }
 
 // The migration items, by the name each item's planner is registered under.
-// stubs.go registers a stub under each until I2's registry.go registers the
-// real planner under the same name, so the two sides agree on the set.
+// One planner per item: I2's registry.go registers the real one (MC1, AB3,
+// RG2, PR4, RC4, RT3) under each of these names.
 const (
 	PlannerModels  = "models"  // MC1: the model choice to the project (B3)
 	PlannerAB      = "ab"      // AB3: ab.rate to ab.repos (B9)
@@ -179,7 +179,7 @@ var (
 // to win.
 func Register(name string, p Planner) error {
 	if name == "" {
-		return fmt.Errorf("lift: a planner is registered under a migration item's name, and this one is empty")
+		return errors.New("lift: a planner is registered under a migration item's name, and this one is empty")
 	}
 	if p == nil {
 		return fmt.Errorf("lift: the planner of %s is nil", name)
