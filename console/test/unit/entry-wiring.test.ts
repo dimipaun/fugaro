@@ -3110,6 +3110,32 @@ describe('the Add project door', () => {
     expect(classed(panelOf(document), ADD_PROJECT_CLASS), 'the request opened no wizard').toHaveLength(1)
   })
 
+  it('opens the wizard at boot on a console whose installations are all unchosen', async () => {
+    // The picker's row is drawn on its rows alone, so the door is offered on a
+    // machine that has projects and none chosen -- and the request has to ride
+    // *that* answer too, or the button does nothing there while the rail's
+    // identical door opens the wizard in the same state (review of SW3c).
+    const first = { kind: 'first-installation', command: 'fugaro setup' }
+    const asked = railBridge([listRow('aurora'), listRow('segundo')], {}, first)
+    asked.bridge.getInstallation = (): unknown => ({
+      ok: true,
+      data: { chosen: false, sentence: 'no installation is chosen', addProject: true },
+    })
+    const document = await boot(asked.bridge, new FakeDocument())
+    expect(classed(panelOf(document), ADD_PROJECT_CLASS), 'the request opened no wizard').toHaveLength(1)
+    expect(classed(panelOf(document), ONBOARDING_CLASS)).toHaveLength(0)
+
+    // The same boot without the member: no door, which is what makes the case
+    // above a claim about the request rather than about the state.
+    const plain = railBridge([listRow('aurora'), listRow('segundo')], {}, first)
+    plain.bridge.getInstallation = (): unknown => ({
+      ok: true,
+      data: { chosen: false, sentence: 'no installation is chosen' },
+    })
+    const unchanged = await boot(plain.bridge, new FakeDocument())
+    expect(classed(panelOf(unchanged), ADD_PROJECT_CLASS)).toHaveLength(0)
+  })
+
   it('reads the installation list again when a setup run ends, so the new one is a row', async () => {
     const aurora = listRow('aurora', { open: true })
     const segundo = listRow('segundo')
@@ -3149,6 +3175,10 @@ describe('the Add project door', () => {
     // answer that is not an object, and nothing at all.
     expect(addProjectRequested({ ok: true, data: { chosen: true, project: 'aurora' } })).toBe(false)
     expect(addProjectRequested({ ok: true, data: { chosen: false, sentence: 'none' } })).toBe(false)
+    // ...and the answer that names no installation does carry it when the picker
+    // asked there: the door is drawn on the picker's rows, and a console whose
+    // projects are all unchosen is a first run it is offered on.
+    expect(addProjectRequested({ ok: true, data: { chosen: false, sentence: 'none', addProject: true } })).toBe(true)
     expect(addProjectRequested({ ok: false, reason: 'the store could not be read' })).toBe(false)
     expect(addProjectRequested(null)).toBe(false)
     expect(addProjectRequested(undefined)).toBe(false)

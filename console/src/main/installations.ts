@@ -1296,6 +1296,11 @@ export type ActiveInstallation =
       readonly sentence: string
       readonly refusal?: string
       readonly path?: string
+      /** The picker's Add project request rides this arm too (SW3c): the first
+       * run is a console with unread rows and no installation chosen, and the
+       * dashboard draws the wizard there exactly as the rail's own door does.
+       * See the `chosen: true` arm for the member's whole rule. */
+      readonly addProject?: boolean
     }
   | {
       readonly chosen: true
@@ -1312,7 +1317,7 @@ export type ActiveInstallation =
       readonly mode: InstallationMode
       /** `addProject` is present exactly once, on the answer the dashboard reads
        * after the picker window's Add project door was used (SW3c, R4): it says
-       * that the operator asked for a second installation, and the dashboard
+       * that the operator asked for another installation, and the dashboard
        * opens the wizard on it. It is **not a stored fact** -- the picker's door
        * is a window request rather than a process, so main holds it as a flag
        * this read consumes, and every answer after that one carries nothing.

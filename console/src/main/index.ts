@@ -367,10 +367,12 @@ function installationState(): ActiveInstallation | undefined {
   // remaking the window. A later read (a reload, a second window) must not
   // open the wizard again, so the flag is cleared here and not kept.
   //
-  // **A read that answers no installation spends it too** (a store with nothing
-  // chosen, or a picker that does not exist yet): the wizard is the dashboard's
-  // screen, so a request no window can carry out is over rather than waiting for
-  // the next window the console opens.
+  // **Which answer it rides is not the door's business**: the first run's answer
+  // carries it too, because the picker draws its row whenever it has
+  // installations to add a project beside and a machine whose projects are all
+  // unchosen is that same console -- the one the rail's own door opens the wizard
+  // on. A request spent on an answer that names no installation is a button that
+  // does nothing, repeatably.
   const asked = addProjectPlease
   addProjectPlease = false
   const chosen = picker?.installation()
@@ -379,7 +381,6 @@ function installationState(): ActiveInstallation | undefined {
   // unit-tested; this file only supplies the two values.
   const resolved = chosen.chosen ? resolvedBinaries.get(chosen.project) : undefined
   const active = withResolvedBinary(chosen, resolved)
-  if (!active.chosen) return active
   return asked ? { ...active, addProject: true } : active
 }
 

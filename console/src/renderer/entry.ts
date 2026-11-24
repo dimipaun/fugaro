@@ -3081,9 +3081,11 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
 
 /** addProjectRequested reads the one member main adds to `installation.current`
  * for the window the picker's Add project door asked for (SW3c, R4). It is
- * `true` only when the answer says so: any other answer -- no installation, a
- * read that failed, an older main process -- leaves the console opening where it
- * always opens. */
+ * `true` only when the answer says so: any other answer -- a read that failed, an
+ * older main process -- leaves the console opening where it always opens. The
+ * member rides the answer that names no installation too, because the picker's
+ * door is drawn on its rows and a console whose projects are all unchosen is a
+ * first run that can still be asked for one more. */
 export function addProjectRequested(installation: unknown): boolean {
   const answer = replyData(installation)
   if (!answer.ok || typeof answer.data !== 'object' || answer.data === null) return false
