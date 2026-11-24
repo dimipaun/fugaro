@@ -500,11 +500,20 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 				// refused by name (refuseConvergeFlags) rather than ignored.
 				err = runUpdateCheck(cmd, o, args)
 			case o.repo:
-				err = runInitRepo(r, args)
+				// The door's own fence (T4, D3266, R8), on both of the arms
+				// that write: an installation a newer fugaro updated refuses
+				// an older binary here, before its first write, whatever mode
+				// it was asked for. --check above and --print-vars (inside the
+				// two arms' own runs) make no cloud call and are not fenced.
+				if err = refuseUpdateBelowTheStamp(cmd, o); err == nil {
+					err = runInitRepo(r, args)
+				}
 			case len(args) > 0:
 				err = userErr("a checkout path is for --repo; fugaro %s takes no argument", d.name)
 			default:
-				err = runInit(r)
+				if err = refuseUpdateBelowTheStamp(cmd, o); err == nil {
+					err = runInit(r)
+				}
 			}
 			if r.events != nil {
 				// The run asked for lines instead of the document
