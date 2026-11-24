@@ -1262,6 +1262,28 @@ func schemaCatalog(t *testing.T) (consts map[string]int64, fields, required, kin
 	return consts, fields, required, kinds
 }
 
+// rulesOnlyFields are the fields the rules gate that the shared schema does not
+// name — the one licence this test gives the rules to lead the schema by, and
+// it is a named field rather than a blanket tolerance. `sig` is the whole of
+// it: mobile plan task J5r (O6) makes the document accept a signed message
+// before the phone can write one, and J5b is the task that adds the field to
+// shared/mailbox-schema. A second entry here is a decision, which is what the
+// map's shape is for.
+var rulesOnlyFields = map[string]bool{"sig": true}
+
+// withoutTag is the schema's required-field list minus the tag, which the
+// message's own validator states beside it as TAGOK rather than in the list
+// (J5r): `mac` is the schema's name for a tag it does not yet call one.
+func withoutTag(required []string) []string {
+	out := make([]string, 0, len(required))
+	for _, f := range required {
+		if f != "mac" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 // TestMailboxRulesAgreeWithTheSharedSchema pins, without the emulator, the part
 // of §6.4's "the two artifacts cannot disagree" that can be pinned in Go: the
 // four bounds the rules apply to a message are the schema's own numbers, and
@@ -1411,11 +1433,19 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	}
 
 	// The required fields, from the schema's own list rather than from a literal
-	// here: `hasChildren([...])` is what refuses a message with no tag, and a
-	// tag is required on every message of every kind and on the heartbeat. The
+	// here: `hasChildren([...])` is what refuses a message with a required field
+	// missing, and a tag is required on every message of every kind and on the
+	// heartbeat. The
 	// heartbeat's list is three of the four (it has no `id`), which the schema
 	// states separately (HEARTBEAT_REQUIRED).
-	msgRequired := "newData.hasChildren(['" + strings.Join(required, "', '") + "'])"
+	//
+	// The tag itself is the one required field the list no longer names: J5r
+	// (O6) replaces the `mac` member with TAGOK, which requires exactly one of
+	// `mac` and `sig`, because a phone paired the new way writes a signature and
+	// has no MAC to offer. The schema still calls it `mac`, so the list this
+	// builds is the schema's minus that one word, and the tag clause is asserted
+	// beside it: the requirement moved, it did not weaken.
+	msgRequired := "newData.hasChildren(['" + strings.Join(withoutTag(required), "', '") + "']) && " + exactlyOneTag("newData")
 	for _, p := range []string{`mailbox/$mb/inbox/$msg`, `mailbox/$mb/outbox/$msg`} {
 		attrs, ok := paths[p]
 		if !ok {
@@ -1424,12 +1454,12 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		}
 		v, _ := attrs[".validate"].(string)
 		if !strings.Contains(v, msgRequired) {
-			t.Errorf("/%s .validate = %q, want the schema's required fields (%q)", p, v, msgRequired)
+			t.Errorf("/%s .validate = %q, want the schema's required fields with the tag clause in place of `mac` (%q)", p, v, msgRequired)
 		}
 	}
 	if attrs, ok := paths[`mailbox/$mb/heartbeat`]; !ok {
 		t.Error("the template does not generate /mailbox/$mb/heartbeat")
-	} else if v, _ := attrs[".validate"].(string); !strings.Contains(v, "newData.hasChildren(['at', 'boot', 'mac'])") {
+	} else if v, _ := attrs[".validate"].(string); !strings.Contains(v, "newData.hasChildren(['at', 'boot']) && "+exactlyOneTag("newData")) {
 		t.Errorf("/mailbox/$mb/heartbeat .validate = %q, want the tag required beside at and boot", v)
 	}
 
@@ -1437,7 +1467,10 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	// from the schema (ACTION_REQUIRED is not exported and this reader does not
 	// follow a local constant), so these are pins: a record without its
 	// confirmation is the shape G11 calls prose, and a merge without the head it
-	// read back is one the consumer cannot check.
+	// read back is one the consumer cannot check. J5r (O10) moves the
+	// confirmation out of that list for `launch` alone — which modes need a
+	// read-back is the gate's decision, not this document's — and gives the verb
+	// its `mode`, so the two clauses are pinned beside the merge's own.
 	for _, p := range []string{`mailbox/$mb/inbox/$msg/action`, `mailbox/$mb/outbox/$msg/action`} {
 		attrs, ok := paths[p]
 		if !ok {
@@ -1446,8 +1479,10 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		}
 		v, _ := attrs[".validate"].(string)
 		for _, frag := range []string{
-			"newData.hasChildren(['id', 'verb', 'target', 'confirmation'])",
+			"newData.hasChildren(['id', 'verb', 'target'])",
+			"newData.hasChildren(['confirmation'])",
 			"newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true",
+			"newData.child('verb').val() == 'launch' ? newData.child('mode').exists() :",
 			"== 'action'",
 		} {
 			if !strings.Contains(v, frag) {
@@ -1482,14 +1517,15 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 	// lives on an outbox message), and an outbox message has all of them. The
 	// registration's three (P5.2.2) are on both: the app writes its registration
 	// into its own inbox, and the consumer's messages travel the other way
-	// through the same document.
+	// through the same document. `sig` (J5r, O6) is on both as well, and it is
+	// the one field here the schema does not name yet.
 	gated := map[string]bool{}
 	for _, c := range []struct {
 		path string
 		want []string
 	}{
-		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at", "mac", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}},
-		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "mac", "acked", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}},
+		{`mailbox/$mb/inbox/$msg`, []string{"id", "sender", "text", "at", "mac", "sig", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}},
+		{`mailbox/$mb/outbox/$msg`, []string{"id", "sender", "text", "at", "mac", "sig", "acked", "agent", "kind", "options", "reply_to", "action", "token", "platform", "prefs"}},
 	} {
 		if _, ok := paths[c.path]; !ok {
 			t.Errorf("the template does not generate /%s", c.path)
@@ -1511,7 +1547,7 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 		}
 		for _, field := range got {
 			gated[field] = true
-			if !slices.Contains(fields, field) {
+			if !slices.Contains(fields, field) && !rulesOnlyFields[field] {
 				t.Errorf("/%s gates %q, which the shared schema does not name: the rules may gate fewer fields than the schema, never one it does not have", c.path, field)
 			}
 		}
@@ -1537,7 +1573,8 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 // carries, in the macros' own spelling: the message's kind read from the field
 // (`PARENTKIND`), the field's own bound, and — on the three the schema makes
 // required or optional of that kind — the tag of the message it sits on
-// (`PARENTMACOK`). Mobile plan task P5.2.2.
+// (`PARENTMACOK`, or `PARENTSIGOK` for a phone that signs; mobile plan task
+// P5.2.2, and J5r for the second scheme). Mobile plan task P5.2.2.
 //
 // Built through expand rather than written out, registrationRequiredClause's
 // reason: the macro writes the expression, and a second spelling of it here
@@ -1549,9 +1586,9 @@ func TestMailboxRulesAgreeWithTheSharedSchema(t *testing.T) {
 // any kind. Each entry is compared as a whole, so a change to a bound, to an
 // arm or to the conjunction fails here and not only in the golden.
 var registrationFieldValidators = []struct{ field, expr string }{
-	{"token", "PARENTKIND == 'registration' && TOKENOK && PARENTMACOK"},
-	{"platform", "PARENTKIND == 'registration' && PLATFORMOK && PARENTMACOK"},
-	{"prefs", "PARENTKIND == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && PARENTMACOK"},
+	{"token", "PARENTKIND == 'registration' && TOKENOK && (PARENTMACOK || PARENTSIGOK)"},
+	{"platform", "PARENTKIND == 'registration' && PLATFORMOK && (PARENTMACOK || PARENTSIGOK)"},
+	{"prefs", "PARENTKIND == 'registration' && newData.hasChildren(['kill_switch', 'cap_reached', 'consumer_offline', 'cap_near', 'prompt']) && (PARENTMACOK || PARENTSIGOK)"},
 	{"prefs/quiet_hours", "newData.hasChildren(['zone', 'start', 'end'])"},
 	{"prefs/quiet_hours/zone", "ZONEOK"},
 	{"prefs/quiet_hours/start", "MINUTEOK"},
@@ -1751,6 +1788,15 @@ func TestMailboxRulesCheckTheSchemasCharacters(t *testing.T) {
 		m := `mailbox/$mb/` + dir + `/$msg`
 		for _, c := range []struct{ path, frag string }{
 			{m + `/mac`, ".matches(" + patternHex + ")"},
+			// J5r's signature: the other scheme's tag, at its own length and in
+			// its own character set (unpadded base64url), and the launch's mode
+			// as a bounded identity string. The signature has no pattern in the
+			// schema yet — J5b is the task that gives it one — so these are the
+			// rules' own numbers, pinned here rather than read from the schema.
+			{m + `/sig`, ".matches(" + patternSignature + ")"},
+			{m + `/sig`, "newData.val().length == " + strconv.Itoa(MaxSigLength)},
+			{m + `/action/mode`, "newData.parent().child('verb').val() == 'launch'"},
+			{m + `/action/mode`, "newData.val().length <= " + strconv.Itoa(MaxModeLength)},
 			{m + `/agent`, ".matches(" + patternIdentity + ")"},
 			{m + `/action/head_sha`, ".matches(" + patternHex + ")"},
 			{m + `/action/target/run`, ".matches(" + patternRun + ")"},
@@ -1776,6 +1822,8 @@ func TestMailboxRulesCheckTheSchemasCharacters(t *testing.T) {
 	}
 	for _, c := range []struct{ path, frag string }{
 		{`mailbox/$mb/heartbeat/mac`, ".matches(" + patternHex + ")"},
+		{`mailbox/$mb/heartbeat/sig`, ".matches(" + patternSignature + ")"},
+		{`mailbox/$mb/heartbeat/sig`, "newData.val().length == " + strconv.Itoa(MaxSigLength)},
 		{`mailbox/$mb/heartbeat/boot`, ".matches(" + patternIdentity + ")"},
 		{`mailbox/$mb/heartbeat/boot`, "newData.val().length <= " + strconv.Itoa(MaxBootLength)},
 		{`mailbox/$mb/heartbeat/agents`, "newData.hasChildren()"},
@@ -1825,6 +1873,18 @@ func wantFrag(t *testing.T, paths map[string]map[string]any, path, frag string) 
 	}
 }
 
+// The three arms TARGETOK's ternary is written from, in the template's own
+// spelling, and the verb read they hang off. They are consts rather than typed
+// twice because TestConfirmTargetsCarryOneShape and the named rule change below
+// both read them, and a second spelling would be a second thing to keep in
+// step.
+const (
+	targetVerb   = "newData.parent().child('verb').val()"
+	targetMerge  = "(newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists())"
+	targetCancel = "(newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists())"
+	targetLaunch = "(newData.hasChildren(['repo']) && !newData.child('run').exists() && !newData.child('pr').exists())"
+)
+
 // TestConfirmTargetsCarryOneShape pins TARGETOK's per-verb arms, and the
 // `confirm` arm in particular.
 //
@@ -1835,18 +1895,23 @@ func wantFrag(t *testing.T, paths map[string]map[string]any, path, frag string) 
 // arm written as an either-shape test — `hasChildren(['run']) ||
 // hasChildren(['repo', 'pr'])` — answers yes to `{run, repo, pr}` and to
 // `{run, repo}`, and the emulator accepts both. The negative half of each arm
-// is what refuses them, so each arm is pinned whole.
+// is what refuses them, so each arm is pinned whole. The launch arm (J5r, O10)
+// is the fourth and the narrowest: a start names a repository and neither a run
+// nor a pull request.
 //
 // This is the static half: `emulator_pairing_test.go` writes the two both-shapes
-// targets and watches the database refuse them.
+// targets and watches the database refuse them, and
+// `emulator_mailbox_test.go` writes a launch whose target carries a run or a
+// pull request and watches the same.
 func TestConfirmTargetsCarryOneShape(t *testing.T) {
 	paths := generatedPaths(t)
 	for _, dir := range []string{"inbox", "outbox"} {
 		p := `mailbox/$mb/` + dir + `/$msg/action/target`
 		for _, c := range []struct{ verb, frag string }{
-			{"merge", "== 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists())"},
-			{"cancel", "== 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists())"},
-			{"confirm", "((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()))"},
+			{"merge", "== 'merge' ? " + targetMerge},
+			{"cancel", "== 'cancel' ? " + targetCancel},
+			{"launch", "== 'launch' ? " + targetLaunch},
+			{"confirm", "(" + targetCancel + " || " + targetMerge + ")"},
 		} {
 			wantFrag(t, paths, p, c.frag)
 			t.Logf("/%s: the %s arm carries %s", p, c.verb, c.frag)
@@ -2149,7 +2214,7 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 		Coder: "m", Reviewer: "m", Recipe: "r", Auth: "cascade", PRURL: "https://example.invalid/1",
 		Action: "tool Bash", Tokens: 1, StartedAt: 1, StageStartedAt: 1, StageDeadline: 1, UpdatedAt: 1,
 		Spent: 1, Halted: "budget", Credential: "a1", WaitingUntil: 2, RequestedBy: "alice@example.invalid",
-		Mode: "critical", From: "area",
+		Mode: "critical", From: "area", Source: "pool:team", Fallback: true,
 	}
 	b, err := json.Marshal(entry)
 	if err != nil {
@@ -2166,9 +2231,12 @@ func TestAgentEntryFieldsAreTemplateChildren(t *testing.T) {
 			t.Errorf("budget.AgentEntry marshals %q and the template does not generate /%s: the entry's $other guard refuses the write", f, parent+"/"+f)
 		}
 	}
-	// The interesting two, named so that a rename has to be argued: the
-	// cascade's current credential and the instant it expects to resume at.
-	for _, f := range []string{"credential", "waiting_until"} {
+	// The interesting ones, named so that a rename has to be argued: the
+	// cascade's current credential and the instant it expects to resume at,
+	// and the routing table's source — whose name the contract fixes for
+	// `fugaro watch --json` (contract-table.md), so it is not this package's
+	// to rename in passing either.
+	for _, f := range []string{"credential", "waiting_until", "source"} {
 		if _, ok := fields[f]; !ok {
 			t.Errorf("budget.AgentEntry no longer marshals %q", f)
 		}
@@ -2264,6 +2332,19 @@ func TestRulesPreexistingPathsUnchanged(t *testing.T) {
 	if _, ok := after[escalationLedgerPath]; !ok {
 		t.Errorf("the generated rules carry no /%s node: the reports job's read of the ledger's escalation block is what E12 adds", escalationLedgerPath)
 	}
+	// And J5r's, per node: an addition loop that only looks at what appeared
+	// passes a document that never gained any of them.
+	for _, p := range []string{
+		"mailbox/$mb/inbox/$msg/sig",
+		"mailbox/$mb/outbox/$msg/sig",
+		"mailbox/$mb/heartbeat/sig",
+		"mailbox/$mb/inbox/$msg/action/mode",
+		"mailbox/$mb/outbox/$msg/action/mode",
+	} {
+		if _, ok := after[p]; !ok {
+			t.Errorf("the generated rules carry no /%s node: the tag a device signs with, and the mode a typed launch carries, are the whole of what J5r adds", p)
+		}
+	}
 }
 
 // outcomeStatusPath is the one existing rule this branch changes, spelled as
@@ -2292,21 +2373,94 @@ const stopKindClause = " || newData.val() == 'stop'"
 // would be a second thing to keep in step.
 var registrationRequiredClause = " && (" + kindOf("newData") + " == 'registration' ? (newData.child('token').exists() && newData.child('platform').exists()) : true)"
 
+// launchVerbClause is the disjunct J5r adds to the action verb enumeration
+// (O10), with the spacing the template writes it in: the typed start, the
+// fourth member of the mailbox schema's VERBS.
+const launchVerbClause = " || newData.val() == 'launch'"
+
+// msgRequired is the message's own hasChildren list as J5r writes it: the four
+// fields generation 3 required, and a tag that is exactly one of `mac` and
+// `sig` in place of the `mac` member it required. Built from withoutTag and
+// exactlyOneTag rather than typed twice, because the template's list and this
+// one are the same list and a second spelling would be a second thing to keep
+// in step.
+var msgRequired = "newData.hasChildren(['" + strings.Join(withoutTag(msgRequiredFields), "', '") + "']) && " + exactlyOneTag("newData")
+
+// msgRequiredFields is the four fields a message carries whatever its kind;
+// withoutTag drops `mac` from the list generation 3 required, because a message
+// now carries its tag as one of two members and neither is a required one.
+var msgRequiredFields = []string{"id", "sender", "text", "at", "mac"}
+
+// actionRequiredWas and actionRequiredNow are the two halves of the one change
+// J5r moves on the action node's own validator: a `launch` carries its `mode`
+// and needs no `confirmation` (O10 — which modes need a read-back at the gate
+// is J5a's, so a plain start needs none of it here), while every other verb
+// keeps `confirmation` exactly as generation 3 wrote it.
+//
+// They are a pair and not a clause insertion, because `confirmation` moves out
+// of the hasChildren list as the verb test grows around it: the list, the
+// launch arm and the confirmation arm in the new string together have to leave
+// the old one byte for byte.
+var (
+	actionRequiredWas = "newData.hasChildren(['id', 'verb', 'target', 'confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)"
+	actionRequiredNow = "newData.hasChildren(['id', 'verb', 'target']) && (newData.child('verb').val() == 'launch' ? newData.child('mode').exists() : (newData.hasChildren(['confirmation']) && (newData.child('verb').val() == 'merge' ? newData.child('head_sha').exists() : true)))"
+)
+
 // namedRuleChanges is the whole of what this document's existing rules may
-// change: each path, and the one clause the change adds to its validator. Every
-// other path stays as it was, and removing the clause from the new string has
-// to leave the generation-3 one byte for byte — so a change that also moved a
-// bound, dropped a conjunct or reworded an arm is not one of these.
-var namedRuleChanges = map[string]string{
+// change: each path, and the edits the change makes to its validator, each one
+// a substring the new string carries and the substring — often nothing — that
+// it puts in its place. Applying every edit at its path has to leave the
+// generation-3 validator byte for byte, so a change that also moved a bound,
+// dropped a conjunct or reworded an arm is not one of these, and neither is one
+// that edits a string nobody named.
+//
+// It is a list per path and no longer a single clause, because J5r's change to
+// a message is two edits: the tag clause is inserted, and the `mac` member is
+// taken out of the hasChildren list beside it.
+type ruleChange struct {
+	was, now string
+}
+
+var namedRuleChanges = map[string][]ruleChange{
 	// The outcome's status gains the run status 'unreviewed' (docs/
 	// binary-allow-rule's NV0, D994).
-	outcomeStatusPath: unreviewedClause,
+	outcomeStatusPath: {{now: unreviewedClause}},
 	// The two messages gain the registration kind (mobile plan task P5.2.2):
-	// the word in the enumeration, and the required fields on the message.
-	"mailbox/$mb/inbox/$msg":       registrationRequiredClause,
-	"mailbox/$mb/outbox/$msg":      registrationRequiredClause,
-	"mailbox/$mb/inbox/$msg/kind":  registeredKindClause + stopKindClause,
-	"mailbox/$mb/outbox/$msg/kind": registeredKindClause + stopKindClause,
+	// the word in the enumeration, and the required fields on the message —
+	// and, for J5r, a tag that is one of `mac` and `sig` in place of the `mac`
+	// the list used to require (O6). The same two edits on the outbox, which
+	// carries the same shape in the other direction.
+	"mailbox/$mb/inbox/$msg": {
+		{now: registrationRequiredClause},
+		{was: "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac'])", now: msgRequired},
+	},
+	"mailbox/$mb/outbox/$msg": {
+		{now: registrationRequiredClause},
+		{was: "newData.hasChildren(['id', 'sender', 'text', 'at', 'mac'])", now: msgRequired},
+	},
+	"mailbox/$mb/inbox/$msg/kind":  {{now: registeredKindClause + stopKindClause}},
+	"mailbox/$mb/outbox/$msg/kind": {{now: registeredKindClause + stopKindClause}},
+	// And J5r's two other moves: the typed launch verb, and the action
+	// validator that lets a launch carry its mode where every other verb
+	// carries its confirmation.
+	"mailbox/$mb/inbox/$msg/action/verb":  {{now: launchVerbClause}},
+	"mailbox/$mb/outbox/$msg/action/verb": {{now: launchVerbClause}},
+	"mailbox/$mb/inbox/$msg/action": {
+		{was: actionRequiredWas, now: actionRequiredNow},
+	},
+	"mailbox/$mb/outbox/$msg/action": {
+		{was: actionRequiredWas, now: actionRequiredNow},
+	},
+	"mailbox/$mb/inbox/$msg/action/target": {
+		{was: "(" + targetCancel + " || " + targetMerge + ")", now: "(" + targetVerb + " == 'launch' ? " + targetLaunch + " : (" + targetCancel + " || " + targetMerge + "))"},
+	},
+	"mailbox/$mb/outbox/$msg/action/target": {
+		{was: "(" + targetCancel + " || " + targetMerge + ")", now: "(" + targetVerb + " == 'launch' ? " + targetLaunch + " : (" + targetCancel + " || " + targetMerge + "))"},
+	},
+	// The heartbeat's tag, written the same way as a message's (O6).
+	"mailbox/$mb/heartbeat": {
+		{was: "newData.hasChildren(['at', 'boot', 'mac'])", now: "newData.hasChildren(['at', 'boot']) && " + exactlyOneTag("newData")},
+	},
 }
 
 // TestOutcomeRuleAcceptsEveryRunStatus: the outcome's status validator accepts
@@ -2370,28 +2524,38 @@ const outcomeStatusNone = "none"
 
 // isNamedRuleChange reports whether the change to the rule at p — from want
 // (generation 3) to got (what this branch generates) — is this branch's own and
-// nothing besides: the outcome's status validator gains the run status
-// 'unreviewed', the label of a run that finished and pushed with no review
-// verdict (docs/binary-allow-rule/implementation-plan.md's NV0, D994).
+// nothing besides: one of the edits named in namedRuleChanges, on one of the
+// paths named there, and every other path as it was.
 //
-// The rule is what a client writes through, so the word a run's own record now
-// carries is refused by a document that does not spell it: internal/budget's
-// Finish would file the outcome as an infrastructure error — a fault that never
-// happened, on the page a person reads to see what their runs did. Widening the
-// validator is what stops that, and it is deliberately not a rules generation:
-// RulesVersion moves for a change that opens a family to a client or moves what
-// one may reach (internal/projectpolicy/version.go's generation-4 note), while
-// this admits one more value under a `.write` that does not move. `fugaro
-// update` carries it — its rules stage redeploys a document infra.SameJSON
-// reports as different, whatever the marker says (internal/infra's DB.Plan) —
-// and doctor's policy-rules-skew already reports the installation that has not
-// run it yet.
+// Two of the paths it names are the outcome's status, which gains the run
+// status 'unreviewed' — the label of a run that finished and pushed with no
+// review verdict (docs/binary-allow-rule/implementation-plan.md's NV0, D994) —
+// and, for J5r, the mailbox: a message and the heartbeat carry a tag that is
+// one of `mac` and `sig` (O6), and an inbox action may be a typed launch
+// carrying a `mode` (O10). The others are earlier tasks' (P5.2.2's registration
+// kind, P5.1g's stop kind).
+//
+// The outcome's is the one whose reason is worth writing down, because it is
+// the one a rules generation would be wrong to carry: the rule is what a client
+// writes through, so the word a run's own record now carries is refused by a
+// document that does not spell it — internal/budget's Finish would file the
+// outcome as an infrastructure error, a fault that never happened, on the page
+// a person reads to see what their runs did. Widening the validator is what
+// stops that, and RulesVersion moves for a change that opens a family to a
+// client or moves what one may reach (internal/projectpolicy/version.go's
+// generation-4 note), while this admits one more value under a `.write` that
+// does not move. `fugaro update` carries it — its rules stage redeploys a
+// document infra.SameJSON reports as different, whatever the marker says
+// (internal/infra's DB.Plan) — and doctor's policy-rules-skew already reports
+// the installation that has not run it yet.
 //
 // The check is exact: one of the named paths, the `.validate` attribute of it
-// alone, and removing that path's own clause from the new string leaving the
-// generation-3 one byte for byte.
+// alone, and applying that path's own edits to the new string leaving the
+// generation-3 one byte for byte. An edit is a pair — the substring the new
+// string carries and the one it puts in its place — so an edit that quietly
+// takes out a bound or a conjunct beside the one it names fails here.
 func isNamedRuleChange(p string, want, got map[string]any) bool {
-	clause, named := namedRuleChanges[p]
+	changes, named := namedRuleChanges[p]
 	if !named || len(want) != len(got) {
 		return false
 	}
@@ -2403,7 +2567,13 @@ func isNamedRuleChange(p string, want, got map[string]any) bool {
 	if !wok || !gok {
 		return false
 	}
-	return strings.Contains(gs, clause) && strings.Replace(gs, clause, "", 1) == ws
+	for _, c := range changes {
+		if c.now == "" || !strings.Contains(gs, c.now) {
+			return false
+		}
+		gs = strings.Replace(gs, c.now, c.was, 1)
+	}
+	return gs == ws
 }
 
 // outcomeReadPath is the one existing rule J1 *adds* an attribute to, spelled as
@@ -2464,9 +2634,10 @@ func withoutAttr(m map[string]any, key string) map[string]any {
 // (docs/no-prompt-policy/implementation-plan.md's T8, D1543, F22), the
 // stateless orchestrator's (docs/stateless-orchestrator/implementation-plan.md's
 // O2, D1220), the workspace family's (docs/workspaces/implementation-plan.md's
-// W3, workspace.go) or a registration message's own fields (mobile plan task
-// P5.2.2). Anything else that appears in the document is a rules change nobody
-// asked for.
+// W3, workspace.go), a registration message's own fields (mobile plan task
+// P5.2.2), or the tag a message and the heartbeat carry and the mode a typed
+// launch carries (mobile plan task J5r, O6 and O10). Anything else that appears
+// in the document is a rules change nobody asked for.
 //
 // They are equalities and not prefixes, for the reason isNewCredsPath gives
 // below: P3 adds the family's own node and nothing under it, so a path *under*
@@ -2480,11 +2651,32 @@ func withoutAttr(m map[string]any, key string) map[string]any {
 // would otherwise make look legitimate. E12 (F27) makes exactly that change,
 // deliberately and for the reports job alone, so its five nodes are named in
 // isNewEscalationReadPath and the diff is what a reviewer reads.
+// isNewSignaturePath reports whether p is one of the five nodes J5r adds to the
+// mailbox: the `sig` a message or the heartbeat may carry in place of `mac` and
+// the `mode` a typed launch carries (O6 and O10, the mobile identity-pairing
+// plan's J5r).
+//
+// They are equalities and not prefixes, for isNewCredsPath's reason: each is a
+// leaf whose parent generation 3 already carried, so a path under one of them
+// would be a rule inside a field — a child of `sig`, say, which is a shape the
+// message has no room for and a reviewer has to see.
+//
+// The three tags are here and not in namedRuleChanges for the same reason the
+// launch envelope's nodes are in isNewLaunchPath: a `sig` node is a field a
+// client writes where nothing was written before, which is an addition, while
+// the `mac` member leaving the message's hasChildren list is a change to a rule
+// that existed and is named there.
+func isNewSignaturePath(p string) bool {
+	return p == "mailbox/$mb/inbox/$msg/sig" || p == "mailbox/$mb/outbox/$msg/sig" ||
+		p == "mailbox/$mb/heartbeat/sig" || p == "mailbox/$mb/inbox/$msg/action/mode" ||
+		p == "mailbox/$mb/outbox/$msg/action/mode"
+}
+
 func isNamedAddition(p string) bool {
 	return isNewCredsPath(p) || p == coordpath.PathRoot || p == PathMCPAuth ||
 		p == PathBuildLeases || p == PathOrchestrator || isNewWorkspacePath(p) || isNewVoicePath(p) ||
 		isNewRegistrationPath(p) || isNewEscalationReadPath(p) || isNewSpendAccuracyPath(p) ||
-		isNewRoutePath(p) || isNewLaunchPath(p)
+		isNewRoutePath(p) || isNewLaunchPath(p) || isNewSignaturePath(p)
 }
 
 // isNewLaunchPath reports whether p is one of the four nodes the launch
@@ -2793,10 +2985,14 @@ func isNewCredsPath(p string) bool {
 	// (rigor-modes plan T1.7, F40 of its reconciliation): the mode a live run
 	// resolved and the layer that decided it, which the runner writes into its
 	// own registry entry from its record so `fugaro watch` can show them. Both
-	// are equalities, for the reason above.
+	// are equalities, for the reason above. `source` and its `fallback` flag
+	// are the next pair of the same shape (model-credentials-routing CS9,
+	// D3070): what the run's running stage goes out on, as the live views print
+	// it.
 	entry := "agents/" + slugForPath + "/$run/"
 	return p == entry+"credential" || p == entry+"waiting_until" ||
-		p == entry+"mode" || p == entry+"from"
+		p == entry+"mode" || p == entry+"from" ||
+		p == entry+"source" || p == entry+"fallback"
 }
 
 // TestRulesVersionUnchanged: the generations an installation compares, asserted
@@ -2852,7 +3048,16 @@ func isNewCredsPath(p string) bool {
 //     entry refuses every launch rather than launching unbounded). The rules do
 //     not enforce the envelope; the values are the consumer's and the app's
 //     (Q9's consequence), and what the generation records is the read and the
-//     write the phone needs to take part at all.
+//     write the phone needs to take part at all. J5r (mobile identity-pairing,
+//     O6 and O10 — the owner's answer of 2026-11-21 that a device signs with
+//     Ed25519, amending D171) moves it to 11 for two of those reasons again: a
+//     device's `sig` is a **field it writes** into a message and the heartbeat,
+//     so under the document behind every message and every heartbeat it signs
+//     is refused at the database with no error (P5.2.2's reason, and the
+//     registration's fields accept either scheme for the same reason J5b's
+//     device node decides which one), and `launch` is a **verb it writes** — a
+//     word the older document's enumeration does not carry, so a phone's start
+//     is refused there (P5.1g's reason one shape along).
 //   - projectpolicy.PolicyRulesVersion gates the policy nodes, which neither
 //     change touches. It stays 1.
 //   - rules.CredsRulesVersion is the credentials family's own generation, at 1,
@@ -2871,8 +3076,8 @@ func isNewCredsPath(p string) bool {
 // Hand mutation this fails on: bumping any of the four (or lowering one of the
 // family versions), which is what a reviewer must see argued for.
 func TestRulesVersionUnchanged(t *testing.T) {
-	if projectpolicy.RulesVersion != 10 {
-		t.Errorf("projectpolicy.RulesVersion = %d, want 10: the generation that carries the phone's stop request (the schema's sixth kind) and the launch envelope's read at config/policy/shared/launch (mobile plan task P5.1g, Q9, Q10(c), Q11)", projectpolicy.RulesVersion)
+	if projectpolicy.RulesVersion != 11 {
+		t.Errorf("projectpolicy.RulesVersion = %d, want 11: the generation that carries the device's signature in place of the tag and the typed launch action (mobile identity-pairing tasks J5r, O6 and O10)", projectpolicy.RulesVersion)
 	}
 	if projectpolicy.PolicyRulesVersion != 1 {
 		t.Errorf("projectpolicy.PolicyRulesVersion = %d, want 1: this change does not touch the policy nodes", projectpolicy.PolicyRulesVersion)

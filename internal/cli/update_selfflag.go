@@ -273,7 +273,7 @@ func (e *initEngine) selfFlagUnmanaged(ctx context.Context) error {
 				r.gcpProject, managedReasonFor(answer), why, safetext.Field(fact.Reason), bucket, managed.MarkerObject))
 			return nil
 		case fact.Budget != budget:
-			r.warn(fmt.Sprintf("this run was given a budget and %s is %s, so it was not flagged: %v. The fact where the object is records the budget amount %d %s, and this run was given %d %s — a flag records an amount, it does not edit one — so neither mark was written and the installation stays as it is. Run `fugaro update --budget %d --budget-currency %s --billing-account <account>` again if that is the amount meant: that run finds the fact recording it, writes the missing %s=%s label, and flags the installation in the same command",
+			r.warn(fmt.Sprintf("this run was given a budget and %s is %s, so it was not flagged: %v. The fact where the object is records the budget amount %d %s, and this run was given %d %s — this step adds an amount to a fact that records none and never replaces a figure a fact already holds; a recorded amount is replaced by `fugaro managed flag` run with --budget naming the new figure (D2215) — so neither mark was written and the installation stays as it is. Run `fugaro update --budget %d --budget-currency %s --billing-account <account>` again if that is the amount meant: that run finds the fact recording it, writes the missing %s=%s label, and flags the installation in the same command",
 				r.gcpProject, managedReasonFor(answer), why, fact.Budget.Amount, safetext.Field(fact.Budget.Currency), o.budget, safetext.Field(o.budgetCurrency), fact.Budget.Amount, safetext.Field(fact.Budget.Currency), managed.ProjectLabelKey, managed.ProjectLabelValue))
 			return nil
 		}

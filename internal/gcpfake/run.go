@@ -184,8 +184,12 @@ type runJob struct {
 	labels      map[string]string
 	image       string
 	env         map[string]string // the container's env
-	n           int
-	etag        int
+	// secretRefs are the env entries that mount a secret, by variable: they
+	// stand beside env in jobs get's answer, under the same field, and a job
+	// carries both (deploy/terraform/gcp/modules/workflow/job.tf).
+	secretRefs map[string]string
+	n          int
+	etag       int
 	// raw, when set, is the whole job as jobs get returns it (etag aside):
 	// what SetJobJSON stored or a patch sent. It wins over the fields above
 	// for jobs get.
@@ -352,6 +356,24 @@ func (f *Run) SetJobEnv(job string, env map[string]string) {
 		f.t.Fatalf("gcpfake: SetJobEnv(%q): no such job", job)
 	}
 	j.env, j.raw = maps.Clone(env), nil
+}
+
+// SetJobSecretRefs sets the secret-backed env of job's container, as jobs get
+// reports it: one env entry per variable, each a value_source.secret_key_ref
+// naming container and version latest, and no value at all — the shape a real
+// job's mounted secret has (deploy/terraform/gcp/modules/workflow/job.tf), and
+// the shape doctor's workflow-secret-mount report reads. It stands beside
+// SetJobEnv rather than replacing it: a job's container carries both kinds of
+// entry in one env list, which is what a real job's does, so a test can set the
+// plain variables and the mounts of one job and read them back together.
+func (f *Run) SetJobSecretRefs(job string, refs map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.jobs[job]
+	if j == nil {
+		f.t.Fatalf("gcpfake: SetJobSecretRefs(%q): no such job", job)
+	}
+	j.secretRefs, j.raw = maps.Clone(refs), nil
 }
 
 // SetJobTimeout sets the task timeout the fake reports for job in jobs.list.
@@ -776,9 +798,24 @@ func (f *Run) jobBody(project, region, name string) map[string]any {
 		"image":     j.image,
 		"resources": map[string]any{"limits": map[string]any{"cpu": j.cpu, "memory": j.memory}},
 	}
-	if len(j.env) > 0 {
+	if len(j.env) > 0 || len(j.secretRefs) > 0 {
+		names := make([]string, 0, len(j.env)+len(j.secretRefs))
+		for k := range j.env {
+			names = append(names, k)
+		}
+		for k := range j.secretRefs {
+			names = append(names, k)
+		}
+		slices.Sort(names)
 		var env []any
-		for _, k := range slices.Sorted(maps.Keys(j.env)) {
+		for _, k := range slices.Compact(names) {
+			// A name both maps carry is one entry, and a mount is what a job
+			// that names a secret container for a variable has.
+			if secret, ok := j.secretRefs[k]; ok {
+				env = append(env, map[string]any{"name": k, "valueSource": map[string]any{
+					"secretKeyRef": map[string]any{"secret": secret, "version": "latest"}}})
+				continue
+			}
 			env = append(env, map[string]any{"name": k, "value": j.env[k]})
 		}
 		container["env"] = env

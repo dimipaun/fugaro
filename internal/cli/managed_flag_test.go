@@ -231,10 +231,11 @@ func TestManagedFlagWritesTheLabelToo(t *testing.T) {
 // finding 14) can leave half of it written. The command must not report that
 // as done — the read requires both marks, so the project is not managed — must
 // not take the marker back (the object is the authority and it is there), and
-// must say which half is missing and where the owner's one line is, because
-// here the operator runs this command themselves and the recovery is theirs.
-// It also must not be mistaken for a state a second flag finishes: the marker
-// is now the version this command refuses to replace.
+// must say which half is missing, which permission that half needs and where
+// the owner's one line is, because here the operator runs this command
+// themselves and the recovery is theirs. The half a second run can finish is
+// the label and not the object, and the refusal says so rather than telling
+// the operator that a second run is pointless.
 func TestManagedFlagSaysWhichHalfIsMissingWhenTheLabelIsRefused(t *testing.T) {
 	r := managedFlagRig(t)
 	r.crm.DenyUpdate(initProject)
@@ -264,14 +265,13 @@ func TestManagedFlagSaysWhichHalfIsMissingWhenTheLabelIsRefused(t *testing.T) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
 	}
-	// The recovery: the owner's own terminal, and the doc with the line.
-	for _, want := range []string{"owner's own terminal", "docs/managed-projects/spec.md"} {
+	// The recovery: the permission the failed half needs, the owner's own
+	// terminal, the doc with the line, and that a second run retries that
+	// write rather than being refused by the object.
+	for _, want := range []string{"resourcemanager.projects.update", "owner's own terminal", "docs/managed-projects/spec.md", "retries exactly that write"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
-	}
-	if !strings.Contains(err.Error(), "running this command again does not put it there") {
-		t.Errorf("the refusal does not say a second flag cannot finish it: %v", err)
 	}
 	// And the truth of it: the project is not managed, whatever the object
 	// says. This is the fail-closed direction, and it is what makes the
@@ -279,10 +279,11 @@ func TestManagedFlagSaysWhichHalfIsMissingWhenTheLabelIsRefused(t *testing.T) {
 	if managedFlagIsManaged(t, r) {
 		t.Error("the managed read believed a project whose label was never written")
 	}
-	// A second run does not finish the state either, and it does not edit the
-	// amount it left: the figures it states are the ones the object records, so
-	// the rewrite writes nothing, and the write that still fails is the label
-	// — the same failure, for the same credential.
+	// The second run reaches the label and not the object, and it fails there
+	// again because this credential still may not update the project's labels:
+	// the same failure, for the same permission — which is what makes the
+	// refusal's "run it again" an instruction about a credential rather than a
+	// claim that the object blocks it.
 	before, _ := managedFlagAt(t, r.gcs, initRunsBucket)
 	out, _, err = executeStdin(t, initProject+"\n", managedFlagArgs()...)
 	if err == nil {
