@@ -20,11 +20,13 @@ import (
 	"golang.org/x/oauth2"
 	secretmanager "google.golang.org/api/secretmanager/v1"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	infraTF "github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/workspace"
 )
@@ -376,10 +378,10 @@ func TestCredentialsServiceReviewJobAccountsReachTheAuthenticator(t *testing.T) 
 // statement rather than two.
 //
 // The third half is the optional and the empty half of the wiring: with the
-// document absent — the state of every installation whose module does not
-// render the entry yet, which is every installation today — and with an empty
-// array, the configuration builds and the service starts with no shared job at
-// all. That is what makes the absent value a class refused whole rather than a
+// document absent — an installation carried from a release whose module did
+// not render the entry yet — and with an empty array, the configuration builds
+// and the service starts with no shared job at all. That is what makes the
+// absent value a class refused whole rather than a
 // process that will not bind a port.
 //
 // Mutation (verified, run and restored): dropping SharedJobAccounts from the
@@ -439,6 +441,99 @@ func TestCredentialsServiceSharedJobAccountsReachTheService(t *testing.T) {
 		}
 		if _, err := credsvc.NewServer(cfg); err != nil {
 			t.Fatalf("NewServer with %s = %q: %v", envSharedJobAccounts, raw, err)
+		}
+	}
+}
+
+// The value of FUGARO_SHARED_JOB_ACCOUNTS is written by ONE half of this
+// program and read by the other, through a file, a Terraform variable and a
+// Cloud Run container — internal/infra renders the installation's shared jobs
+// into the tfvars (CredentialsSharedJobAccounts) and the module carries them
+// into this service's environment, and this command parses them back at
+// start-up (credentialsServiceSharedJobAccounts). Nothing in between is typed
+// by hand, so the two halves of the document have no compiler between them:
+// the writer's json tags and the reader's are string-matched, the reader
+// refuses an unknown field and a row without repos, and a member either side
+// renames is a service that refuses to bind a port — or, worse, one that
+// starts with a table that names no account the deployment created.
+//
+// The round trip is therefore asserted end to end: a real local config is
+// derived into rows, the rows are marshalled exactly as they are written (the
+// struct, not a hand-built document), and the command's own reader is handed
+// the result. Every row has to come back, carrying the same repositories — a
+// pattern among them, because allow_repos is matched as a pattern and a list
+// this side rewrote or dropped would be a shared caller refused for a
+// repository its profile admits — and each account has to be the service
+// account the deployer creates for that triple (gcp.ProjectServiceAccountID),
+// which is the whole of what the caller's class rests on.
+func TestCredentialsSharedJobAccountsRoundTrip(t *testing.T) {
+	// Two profiles and both providers: the GitHub one names an allow_repos list
+	// with a named account beside its default, the Bitbucket one names none, so
+	// its row takes the repositories this machine's config records for
+	// Bitbucket — the two derivations the writer makes, and the two the reader
+	// has to receive.
+	const local = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry: us-east5-docker.pkg.dev/proj-1234/fugaro
+user: test@example.com
+repos:
+  acme/webapp: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456789" }
+  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }
+claude_accounts:
+  acme-personal: { allow_data_to: [acme/webapp] }
+project_secrets:
+  claude-oauth-token: { allow_data_to: [acme/webapp] }
+profiles:
+  standard: { provider: github, cpu: 1, memory: 2Gi, timeout_class: 1h, allow_repos: [github/acme/webapp, github/acme/*], claude_accounts: [acme-personal, default] }
+  bbshared: { provider: bitbucket, cpu: 2, memory: 4Gi, timeout_class: 6h }
+`
+	lc, err := localcfg.Parse([]byte(local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := infra.CredentialsSharedJobAccounts(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRows := []infra.CredentialsSharedJob{
+		{Profile: "bbshared", Provider: "bitbucket", Account: "", Repos: []string{"bitbucket/acme/sandbox"}},
+		{Profile: "standard", Provider: "github", Account: "", Repos: []string{"github/acme/webapp", "github/acme/*"}},
+		{Profile: "standard", Provider: "github", Account: "acme-personal", Repos: []string{"github/acme/webapp", "github/acme/*"}},
+	}
+	if !slices.EqualFunc(rows, wantRows, func(a, b infra.CredentialsSharedJob) bool {
+		return a.Profile == b.Profile && a.Provider == b.Provider && a.Account == b.Account && slices.Equal(a.Repos, b.Repos)
+	}) {
+		t.Fatalf("the installation's shared jobs = %+v, want %+v", rows, wantRows)
+	}
+	raw, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := credentialsServiceSharedJobAccounts(string(raw), credentialsServeEnv[envGCPProject])
+	if err != nil {
+		t.Fatalf("the service refused the value this program renders for its own installation (%s): %v", raw, err)
+	}
+	if len(accounts) != len(wantRows) {
+		t.Fatalf("the service read %d rows out of %d: %+v", len(accounts), len(wantRows), accounts)
+	}
+	gcpProject := credentialsServeEnv[envGCPProject]
+	slices.SortFunc(accounts, func(a, b credsvc.SharedJobAccount) int { return strings.Compare(a.Email, b.Email) })
+	for _, r := range wantRows {
+		// The account the deployer creates for this triple, spelled here the
+		// way the reader derives it (credsvc.SharedJobAccountFor is the one
+		// derivation both sides share) and checked against the email the row
+		// really carries: a table naming an account no job runs as is a class
+		// no caller can be verified into.
+		want := gcp.ProjectServiceAccountID(r.Profile, r.Provider, r.Account) + "@" + gcpProject + ".iam.gserviceaccount.com"
+		i := slices.IndexFunc(accounts, func(a credsvc.SharedJobAccount) bool { return a.Email == want })
+		if i < 0 {
+			t.Fatalf("the service read %+v and none of them is %s, the account the deployer creates for (%s, %s, %q)", accounts, want, r.Profile, r.Provider, r.Account)
+		}
+		if got := accounts[i]; got.Profile != r.Profile || !slices.Equal(got.Repos, r.Repos) {
+			t.Errorf("row %s came back as %+v, want the profile %s and the repositories %v it was written with: the writer's list IS the admission the service binds a shared caller to", got.Email, got, r.Profile, r.Repos)
 		}
 	}
 }
