@@ -78,7 +78,7 @@ func (e *initEngine) backfillRunSummary(ctx context.Context) {
 	if written == 0 {
 		return
 	}
-	fmt.Fprintf(r.w, "run summaries: %d run(s) of the last %s now carry one, so `runs ls` reads two objects a row instead of three. Nothing a run holds was rewritten and no run was waited for; a second `fugaro update` writes nothing.\n",
+	fmt.Fprintf(r.w, "run summaries: %d run(s) of the last %s now carry one, so `runs ls` reads two objects a row instead of three. Nothing a run holds was rewritten and no run was waited for.\n",
 		written, prLookback)
 }
 
