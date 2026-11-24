@@ -25397,9 +25397,11 @@ The record is a node of its own (`creds/observed/<name>`) and not a member of th
 what makes it safe to add: the marks are decoded **strictly** by every reader — `fugaro review`, `doctor`,
 `accounts ls` and `accounts clear` all refuse a mark node carrying a member their release does not model — so a
 member added to the mark would make every release behind this one unable to read the marks this service writes. The
-observation is read by no selection and no command but this check, so it costs the call path no read and changes no
-wire shape. The hold a limit writes is written beside it and moves none of the names: the answer this check is read
-after is exactly the limit that ended the run.
+observation is read by no selection and by no command but this check, so it changes no wire shape. It is not free,
+though: recording is a conditional write made on the answer path, synchronously with the answer the run is given
+(an ETag read of the node and a put-if-match, the same CAS the marks use), so **every answer the service serves
+costs one extra Realtime Database read and one conditional write**. The hold a limit writes is written beside it
+and moves none of the names: the answer this check is read after is exactly the limit that ended the run.
 
 It reads the installation's local config (`name`, `budget.rtdb_url`) and the Realtime Database node
 `creds/observed`, whose every value is a list of header names and nothing else. For each source under test it
