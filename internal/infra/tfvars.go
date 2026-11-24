@@ -1140,13 +1140,9 @@ func CredentialsSharedJobAccounts(lc *localcfg.Config) ([]CredentialsSharedJob, 
 		if !SharedJobProvider(pr.Provider) {
 			continue
 		}
-		axis := config.ProjectJobAccounts(pr)
-		keyAccounts := config.ClaudeAccountTokenNames(lc.Credentials, axis)
+		served := config.ClaudeAccountTokenNames(lc.Credentials, config.ProjectJobAccounts(pr))
 		repos := sharedJobRepos(lc, pr)
-		for _, account := range axis {
-			if slices.Contains(keyAccounts, account) {
-				continue
-			}
+		for _, account := range served {
 			out = append(out, CredentialsSharedJob{Profile: name, Provider: pr.Provider, Account: account, Repos: repos})
 		}
 	}
