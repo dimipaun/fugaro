@@ -262,8 +262,11 @@ this document.
   calls "the one widening this list is never meant to make". The plan keeps that rule for the local
   block and stores all-repos as its own member of the project record only. The owner confirms the
   cross-owner reach, or narrows `--all-repos` to one owner.
+  **Answered 2026-11-23: every repository, any owner** — not the recommendation (one owner only).
+  The record-only `all_repos` member stands as planned; the local block keeps its owner-literal rule.
 - **O1.** The owner confirms that the new allow-list being repository-wide (D3333) is meant to
   replace the per-workflow binding S3 enforced (G19). Recorded as accepted; listed so a reviewer sees it.
+  **Answered 2026-11-23: accepted, as recommended.**
 
 ## 6. UNVERIFIED
 

@@ -152,8 +152,8 @@ mount goes (`internal/runner/workflowsecrets.go`, the `sess == nil` refusal).
   entry, empty, so update cannot re-seed it (F23); `--all-repos` sets the record's own `all_repos`
   member for the name (every repository enrolled in the project, whatever its owner) and writes
   nothing to the local block, whose owner-literal rule (`internal/config/project_secrets.go`
-  `ValidateProjectSecrets`) still refuses `*` and a wildcard owner — the cross-owner reach is O2, for
-  the owner to confirm; refused in an agent's session with the command to run
+  `ValidateProjectSecrets`) still refuses `*` and a wildcard owner — the cross-owner reach is O2, which
+  the owner confirmed on 2026-11-23; refused in an agent's session with the command to run
   (D1552); no prompt; nothing reads or prints a value.
 - Files: `internal/creds/projectsecrets.go` (new), `internal/creds/projectsecrets_test.go` (new),
   `internal/cli/secrets_allow.go`, `internal/cli/secrets_allow_test.go`,
