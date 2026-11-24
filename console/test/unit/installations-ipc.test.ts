@@ -53,6 +53,8 @@ import { UPDATES_SWITCH_UNWRITTEN, createUpdateSettings, nodeUpdatesFs, readUpda
 import type { UpdateController } from '../../src/main/updates'
 import { TEMP_ROOTS } from '../../src/main/installationstate'
 import {
+  ADD_PROJECT_NOT_READY,
+  ADD_PROJECT_REFUSED,
   ADD_PROJECT_UNWIRED,
   DISTROS_NOT_WINDOWS,
   INSTALLATIONS_MENU_LABEL,
@@ -62,6 +64,7 @@ import {
   CRASH_SEND_ITEM_LABEL,
   UPDATE_AUTO_LABEL,
   UPDATE_NOW_LABEL,
+  addProjectRefusal,
   pickerOptions,
   pickerPreloadPath,
 } from '../../src/main/picker'
@@ -205,8 +208,9 @@ function pickerOver(
     readonly spawnLog?: unknown
     /** onAddProject is the entry point's seam for the picker's Add project door
      * (SW3c): the picker hands the request over and the window that holds the
-     * wizard opens. */
-    readonly onAddProject?: () => void
+     * wizard opens -- or the entry point answers a sentence, which is a console
+     * with no dashboard to draw it in. */
+    readonly onAddProject?: () => string | undefined
     readonly onChosen?: Parameters<typeof createInstallationPicker>[0]['onChosen']
     readonly onRemoved?: Parameters<typeof createInstallationPicker>[0]['onRemoved']
     readonly onRecordRemoved?: Parameters<typeof createInstallationPicker>[0]['onRecordRemoved']
@@ -519,7 +523,10 @@ describe('the picker’s Add project row', () => {
     const stub = listableStub()
     const { ipcMain } = pickerOver({
       prefixes: [stub.directory],
-      onAddProject: () => asked.push('asked'),
+      onAddProject: () => {
+        asked.push('asked')
+        return undefined
+      },
       spawnLog: {
         enabled: true,
         path: null,
@@ -544,6 +551,38 @@ describe('the picker’s Add project row', () => {
   it('refuses when the entry point wired no door', async () => {
     const { ipcMain } = pickerOver()
     expect(await answer(ipcMain, 'addProject')).toEqual({ ok: false, reason: ADD_PROJECT_UNWIRED })
+  })
+
+  it('shows the sentence the entry point refuses with', async () => {
+    // The entry point answers a sentence on a console with no dashboard to draw
+    // the wizard in -- one still reading its `fugaro`, and a refused one -- and
+    // the row shows it: the renderer draws `reason` and only `reason`
+    // (`src/renderer/installations.ts`), so an `ok` here would be a click that
+    // opened nothing, which is the one answer this row must not give.
+    for (const sentence of [ADD_PROJECT_REFUSED, ADD_PROJECT_NOT_READY]) {
+      let asked = 0
+      const { ipcMain } = pickerOver({
+        onAddProject: () => {
+          asked += 1
+          return sentence
+        },
+      })
+      expect(await answer(ipcMain, 'addProject'), sentence).toEqual({ ok: false, reason: sentence })
+      expect(asked, sentence).toBe(1)
+    }
+  })
+
+  it('refuses the door on a console that is refused or has not read a fugaro yet', () => {
+    // `addProjectRefusal` is the entry point's decision, and it lives here
+    // because `src/main/index.ts` cannot be imported: what it is handed is the
+    // handshake's answer as the console holds it. Neither of the two refusals
+    // may set the flag -- the flag is main's (`addProjectPlease`), and the one
+    // window that would spend it is the dashboard a refused console never gets.
+    expect(addProjectRefusal(null)).toBe(ADD_PROJECT_NOT_READY)
+    expect(addProjectRefusal(classifyCliVersion('not a version'))).toBe(ADD_PROJECT_REFUSED)
+    // The non-vacuity half: the door is *not* refused on a console that may
+    // drive its fugaro, which is the case the whole row exists for.
+    expect(addProjectRefusal(classifyCliVersion(CLOCKED))).toBeUndefined()
   })
 })
 

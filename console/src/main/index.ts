@@ -39,7 +39,7 @@ import { app, BrowserWindow, Menu, ipcMain, protocol, session, shell } from 'ele
 
 import { APP_ENTRY_URL, handleAppRequests, registerAppScheme } from './protocol'
 import { consoleIconPath, installDevDockIcon } from './icon'
-import { installInstallationPicker } from './picker'
+import { addProjectRefusal, installInstallationPicker } from './picker'
 import type { InstallationPicker } from './picker'
 import {
   createConsoleLifecycle,
@@ -1431,20 +1431,30 @@ async function main(): Promise<void> {
     },
     // The picker window's Add project door (SW3c, R4). It opens no child and
     // writes no record: the wizard is the **dashboard's** screen, so what this
-    // hands over is a window. The flag goes up first, because the boot that
-    // reads it is the one `choose` is about to cause -- a remade window reads
-    // `installation.current` once, and that read is the door's whole delivery.
-    // The same call a re-choice makes, with the answer the console already
-    // holds: nothing about which installation is active changes, and the
+    // hands over is a window. The flag goes up before `choose`, because the boot
+    // that reads it is the one `choose` is about to cause -- a remade window
+    // reads `installation.current` once, and that read is the door's whole
+    // delivery. The same call a re-choice makes, with the answer the console
+    // already holds: nothing about which installation is active changes, and the
     // operator is put back on the console with the wizard in its main area.
     onAddProject: () => {
+      // **A console with no dashboard refuses, and holds nothing.** Neither a
+      // handshake still in flight (`current` is null: `storedCompatibility`
+      // would throw, and the throw would come after the flag went up) nor a
+      // refused one has a dashboard for the wizard to be drawn in -- the refusal
+      // window registers no `installation.current` read at all, so a flag set
+      // here would be spent by whatever reads next, and the row would answer
+      // `ok` for a door that opened nothing, repeatably.
+      const refusal = addProjectRefusal(current)
+      if (refusal !== undefined) return refusal
       // A request already waiting for the window it asked for is not asked a
       // second time: a second `choose` remakes the window the first one opened,
       // and which of the two boots spends the flag is a race the operator would
       // see as a console that flashed and came up on Live.
-      if (addProjectPlease) return
+      if (addProjectPlease) return undefined
       addProjectPlease = true
       void lifecycle.choose(storedCompatibility()).catch(reportAndQuit)
+      return undefined
     },
     // A removal that took the active installation drops the bound source (Task
     // 3.4c; the seam 3.4b left for it). Without this the surface would keep

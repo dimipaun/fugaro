@@ -191,6 +191,43 @@ export const DISTROS_NOT_WINDOWS = 'this machine is not Windows, so it has no WS
  */
 export const ADD_PROJECT_UNWIRED = 'this console cannot open the setup wizard'
 
+/**
+ * ADD_PROJECT_NOT_READY is what the row answers when the console has not read a
+ * `fugaro` yet -- the startup handshake is still in flight, and the window the
+ * row would ask for reads an answer that does not exist. The request is put off
+ * rather than held: a flag set now would be spent by whichever window reads
+ * first, which is not the window the operator asked for.
+ */
+export const ADD_PROJECT_NOT_READY = 'this console is still reading its fugaro: try again in a moment'
+
+/**
+ * ADD_PROJECT_REFUSED is what the row answers on a console driving a `fugaro` it
+ * may not (SW3c). A refused console is the refusal window and no dashboard at
+ * all -- it registers no read for the request to ride -- so the door refuses in
+ * a sentence, and the operator's way on is the row that chooses another
+ * installation.
+ */
+export const ADD_PROJECT_REFUSED = 'this console cannot drive the fugaro it is on: choose an installation it can'
+
+/**
+ * addProjectRefusal is the decision behind `onAddProject`: the sentence the Add
+ * project row refuses with, or `undefined` when the request is one the console
+ * can carry out.
+ *
+ * It is a function here rather than three lines in the entry point because the
+ * entry point cannot be imported by a test and this is the row's rule, not the
+ * startup's: what it is handed is the handshake's answer as the console holds it
+ * (`current` in `src/main/index.ts`), and `null` is that answer not existing yet.
+ * A console with no dashboard -- a read still in flight, or a `fugaro` this
+ * console may not drive -- has nowhere to draw the wizard, so the door says so
+ * instead of raising a flag no window ever reads.
+ */
+export function addProjectRefusal(compatibility: CliCompatibility | null): string | undefined {
+  if (compatibility === null) return ADD_PROJECT_NOT_READY
+  if (compatibility.mode === 'refused') return ADD_PROJECT_REFUSED
+  return undefined
+}
+
 /** UpdateMenuOptions is the off switch as the menu sees it: the value the
  * checkbox draws, and the two things the items do with it. Plain values and
  * callbacks rather than the store itself, so that the template stays a plain
@@ -333,8 +370,16 @@ export interface InstallationPickerDeps {
    * dashboard's window comes up over it and the operator closes the picker when
    * they are done with it. Nothing here closes it -- `close()` below is the
    * entry point's seam and not a control this row has.
+   *
+   * **The seam answers, and a sentence it returns is a refusal.** The entry
+   * point is the only one that knows whether the console has a dashboard to draw
+   * the wizard in -- one still reading its `fugaro`, and a refused one, have
+   * none (`ADD_PROJECT_NOT_READY`, `ADD_PROJECT_REFUSED`) -- and it decides
+   * *before* the request is held, so a refusal sets no flag and leaves nothing
+   * behind for a later window to spend. `undefined` is the ordinary answer: the
+   * request is handed over, and the window it asked for is coming.
    */
-  readonly onAddProject?: () => void
+  readonly onAddProject?: () => string | undefined
   /** onRemoved is the same seam for a removal that took the active installation
    * away: the console has none, and its dashboard must say so. */
   readonly onRemoved?: (id: string) => void
@@ -1323,9 +1368,13 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         // and checkout directories, which is not a shape five answers fit in).
         //
         // A picker whose entry point wired no door refuses: the operator asked
-        // for a wizard, and an `ok` here would close the window on nothing.
+        // for a wizard, and an `ok` here would close the window on nothing. So
+        // does an entry point that answers a sentence -- a console with no
+        // dashboard to draw the wizard in, which is the same defect one step
+        // further in: the request would be held for a window that never reads it.
         if (deps.onAddProject === undefined) return { ok: false, reason: ADD_PROJECT_UNWIRED }
-        deps.onAddProject()
+        const refusal = deps.onAddProject()
+        if (refusal !== undefined) return { ok: false, reason: refusal }
         return { ok: true, data: null }
       case 'distros':
         // The one row whose subject is not this console's record of anything:

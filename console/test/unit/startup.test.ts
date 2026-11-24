@@ -962,6 +962,17 @@ describe('the entry point is wired to the handshake', () => {
     expect(indexSource).not.toMatch(/let startup\b/)
   })
 
+  it('refuses the picker’s Add project door on a console that is refused, or has read nothing', () => {
+    // The rule is `addProjectRefusal` (`src/main/picker.ts`, tested in
+    // `installations-ipc.test.ts`); what only the entry point can get wrong is
+    // the answer it hands it. `current` is the handshake's own, read at the
+    // click rather than captured when the picker was wired -- a captured answer
+    // would refuse the door for the rest of the run after one refusal. A door
+    // that answered `ok` without asking would hold a request no window reads: a
+    // refused console has no dashboard, and a handshake in flight has none yet.
+    expect(indexSource).toContain('addProjectRefusal(current)')
+  })
+
   it('stops the child the console started before the process quits', () => {
     // The one long-lived child this app has is the Live screen's `fugaro watch`,
     // started through the source bound to the active installation. Nothing else
