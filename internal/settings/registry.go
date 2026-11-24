@@ -908,6 +908,7 @@ var layerRows = []Row{
 	layerRow("governance.tiers.large.max_subagents", "Fugaro's own tiers", "settings set", docLayer),
 
 	layerRow("ab.rate", "0: no run is a challenger", "models", docModels),
+	layerRow("ab.repos", "none: every repository runs at the block's own rate", "models", docModels),
 	layerRow("ab.max_pairs_per_day", "the A/B design's own cap", "models", docModels),
 	layerRow("ab.challengers", "none", "models", docModels),
 	layerRow("ab.judge_model", "the A/B design's own judge", "models", docModels),
