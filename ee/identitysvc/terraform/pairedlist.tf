@@ -14,15 +14,21 @@
 # **The database is created locked, and that is the client rule.** Firebase
 # creates an instance whose rules grant nothing, and rtdb.rules.json beside this
 # directory — `.read` and `.write` false at the root, granting nothing anywhere
-# — is the document that says so. No Terraform resource deploys Realtime
-# Database rules: they are published over the database's own REST API
-# (`/.settings/rules`, internal/rtdb's PutRules), which is the owner's step at
-# Check 730's deploy and not an apply's. What reads and writes a node is the
-# signer account below, which holds a database role and therefore passes the
-# rules rather than being governed by them; a phone holds a Firebase ID token
-# and the project's API key and is refused. That asymmetry is the acceptance's
-# "only the function decrypts and only for its owner": the function is the only
-# reader, and it serves the uid its caller's verified ID token attests.
+# — is the reviewed statement of that rule. **Nothing in this tree applies it,
+# and that is a deferral rather than a step** (recorded here, K1, and in the
+# pull request's own deferred list): no Terraform resource deploys Realtime
+# Database rules — they are published over the database's own REST API
+# (`/.settings/rules`, internal/rtdb's PutRules) — no command of the CLI
+# publishes them, and Check 730 (docs/gcp-live-checklist.md) is a read-only check
+# by design, so it carries no publish step either. What denies a client today is
+# the instance's own Firebase default, which is the same document; a publish and
+# a read-back are a step the owner takes until one is wired somewhere that runs
+# for them. What reads and writes a node is the signer account below, which holds
+# a database role and therefore passes the rules rather than being governed by
+# them; a phone holds a Firebase ID token and the project's API key and is
+# refused. That asymmetry is the acceptance's "only the function decrypts and
+# only for its owner": the function is the only reader, and it serves the uid its
+# caller's verified ID token attests.
 
 # The identity project's Realtime Database instance. `DEFAULT_DATABASE` and the
 # `<project>-default-rtdb` id are what Firebase itself names the one instance a
@@ -47,7 +53,11 @@ resource "google_firebase_database_instance" "pairedlist" {
     ignore_changes  = [region]
   }
 
-  depends_on = [google_firebase_project.this]
+  # Both, and not the Firebase link alone: creating an instance needs
+  # firebasedatabase.googleapis.com, which main.tf enables (a project linked to
+  # Firebase has not necessarily ever used Realtime Database, and the apply is
+  # what fails with SERVICE_DISABLED when it has not).
+  depends_on = [google_firebase_project.this, google_project_service.this]
 }
 
 # The list's key ring, and deliberately a second ring beside the signing one

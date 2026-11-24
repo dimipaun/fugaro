@@ -1029,7 +1029,9 @@ func TestInfraTheSigningKeyIsNonExportable(t *testing.T) {
 // one grant reaches both), its purpose or algorithm moved onto the signing pair,
 // a lifecycle without prevent_destroy, a rotation period nobody set, a second
 // database, a grant made at the project rather than at the ring, a permission
-// beyond seal and open, and a second member on the grant.
+// beyond seal and open, a second member on the grant, the Realtime Database API
+// dropped from the root's API set, and the instance's dependency on that
+// enablement removed.
 func TestInfraThePairedListIsSealedUnderItsOwnKey(t *testing.T) {
 	db := tfBlock(t, `resource "google_firebase_database_instance" "pairedlist"`)
 	tfAttrsAre(t, db, "the paired-list database", []tfWant{
@@ -1037,6 +1039,23 @@ func TestInfraThePairedListIsSealedUnderItsOwnKey(t *testing.T) {
 		{"instance_id", `"${var.project}-default-rtdb"`},
 		{"type", `"DEFAULT_DATABASE"`},
 	}, "the identity project has one Realtime Database and Firebase names it `<project>-default-rtdb`; the list is the only thing it holds, and a second instance or another type is a store no rule here and no document below describes (K1, D2798)")
+
+	// The API that creates an instance is not implied by anything else here:
+	// linking the project to Firebase (auth.tf) does not enable Realtime
+	// Database, and the instance is the first thing in this project to use it,
+	// so an apply against a new identity project fails with SERVICE_DISABLED
+	// unless main.tf turns the API on and the instance waits for it. The
+	// installation module enables the same API for its own database
+	// (deploy/terraform/gcp/modules/firebase/apis.tf), which is what the root
+	// said it would do when it took over the APIs it needs.
+	apis := tfBlock(t, `resource "google_project_service" "this"`)
+	if !strings.Contains(tfCompact(apis), `"firebasedatabase.googleapis.com"`) {
+		t.Errorf("the root's API set does not enable firebasedatabase.googleapis.com: the Realtime Database instance below is created by an API nothing else in the project turns on, so the first apply against a new identity project fails with SERVICE_DISABLED (K1, A3)")
+	}
+	depends, _ := tfAttr(db, "depends_on")
+	if !strings.Contains(tfCompact(depends), "google_project_service.this") {
+		t.Errorf("the paired-list database depends on %s, which is not the root's API enablement: an instance created before firebasedatabase.googleapis.com is on is the same SERVICE_DISABLED apply, and the dependency on the Firebase link alone does not order it (K1, A3)", tfCompact(depends))
+	}
 	tfAttrsAre(t, tfNested(t, db, "lifecycle"), "the paired-list database's lifecycle", []tfWant{
 		{"prevent_destroy", "true"},
 	}, "every person's paired list lives in this instance, so losing it loses their projects: a destroy is a step a person takes on purpose and never an apply's side effect (K1, O16)")

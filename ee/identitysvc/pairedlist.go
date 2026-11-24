@@ -27,7 +27,10 @@ package identitysvc
 //
 // **Client rules deny all of it.** rtdb.rules.json is `.read` and `.write`
 // false at the root and grants nothing anywhere: a phone carries a Firebase ID
-// token and the project's API key, and both are refused by those rules. What
+// token and the project's API key, and both are refused by those rules — the
+// instance's own default today, since nothing in this tree publishes the
+// document (a deferral recorded in pairedlist.tf; K1 keeps no command that
+// writes it). What
 // reaches a node is this service's own account, which holds the database role
 // the root grants it (pairedlist.tf) and so passes the rules rather than being
 // governed by them — which is what "only the function decrypts, and only for
