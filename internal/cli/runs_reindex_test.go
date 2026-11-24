@@ -22,7 +22,7 @@ func reindexRig(t *testing.T) (*cloudFixture, *gcpfake.Firestore) {
 	t.Helper()
 	fs := gcpfake.NewFirestore(t)
 	f := newCloudFixture(t, "firestore: "+fs.URL+"/")
-	f.rewriteConfig(t, "rtdb_url: "+f.budget.DB.URL+" }", "rtdb_url: "+f.budget.DB.URL+", firebase_project: proj-1234 }")
+	f.rewriteConfig(t, "rtdb_url: "+f.budget.DB.URL+",", "rtdb_url: "+f.budget.DB.URL+", firebase_project: proj-1234,")
 	f.run.AddJob(infra.HistoryJob, "1", "2Gi")
 	return f, fs
 }
