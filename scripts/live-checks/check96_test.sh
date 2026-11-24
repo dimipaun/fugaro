@@ -1228,9 +1228,11 @@ test_a_job_that_has_no_service_url_while_the_config_records_one_is_a_fail() {
 test_the_switch_written_True_is_the_switch_on() {
   setup_case switchtrue
   JOB_URL=no write_job "$dir"
-  sed -i 's/^        credentials_service_ready: true$/        credentials_service_ready: True/' "$dir/state/fugaro.yaml"
+  # perl and not sed: BSD sed's -i takes the next word as a backup suffix, so a
+  # bare `sed -i` ends the whole suite on a Mac rather than this test.
+  perl -pi -e 's/^        credentials_service_ready: true$/        credentials_service_ready: True/' "$dir/state/fugaro.yaml"
   if ! grep -q 'credentials_service_ready: True' "$dir/state/fugaro.yaml"; then
-    fail "the switch written True: the fixture is not the one this case is about (the sed found no lower-case true to rewrite)"
+    fail "the switch written True: the fixture is not the one this case is about (the rewrite found no lower-case true to rewrite)"
   fi
   run96
   expect_status "$status" 1 "the switch written True"
@@ -1243,7 +1245,7 @@ test_the_switch_written_True_is_the_switch_on() {
 test_a_switch_that_is_not_a_boolean_stops_the_read() {
   setup_case switchnotbool
   JOB_URL=no write_job "$dir"
-  sed -i 's/^        credentials_service_ready: true$/        credentials_service_ready: maybe/' "$dir/state/fugaro.yaml"
+  perl -pi -e 's/^        credentials_service_ready: true$/        credentials_service_ready: maybe/' "$dir/state/fugaro.yaml"
   run96
   expect_status "$status" 2 "a switch that is not a boolean"
   expect_contains "$out" "is not a boolean" "a switch that is not a boolean: the reader says why"
@@ -1260,7 +1262,7 @@ test_a_switch_that_is_not_a_boolean_stops_the_read() {
 test_a_repos_entry_written_on_one_line_stops_the_read() {
   setup_case flowstyle
   JOB_URL=no write_job "$dir"
-  sed -i '/^repos:/,$d' "$dir/state/fugaro.yaml"
+  perl -ni -e 'print unless $drop; $drop = 1 if /^repos:/' "$dir/state/fugaro.yaml"
   printf 'repos:\n    %s: {provider: github, workflows: [default], credentials_service_ready: true}\n    %s: {provider: github, workflows: [default]}\n' \
     "$SANDBOX_REPO" "$OTHER_REPO" >>"$dir/state/fugaro.yaml"
   if ! grep -q "{provider: github" "$dir/state/fugaro.yaml"; then
