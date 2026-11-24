@@ -2,6 +2,7 @@ package mailbox
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -578,6 +579,10 @@ func TestConfirmValidateActionRefusesARecordWithoutAConfirmation(t *testing.T) {
 		{"no confirmation id", func(a *Action) { a.Confirmation.ID = "" }, CodeMissingField, "action.confirmation.id"},
 		{"no confirmation time", func(a *Action) { a.Confirmation.At = 0 }, CodeBadTimestamp, "action.confirmation.at"},
 		{"no action id", func(a *Action) { a.ID = "" }, CodeMissingField, "action.id"},
+		// A launch is a mailbox action now (J5a, O10) and a destructive verb
+		// this allow-list does not authorise: O10's own gate --
+		// ConfirmValidateLaunch -- is what reads a start, so a record that
+		// carries one here authorises nothing.
 		{"a launch", func(a *Action) { a.Verb = ConfirmVerbLaunch }, CodeConfirmRefusedVerb, "action.verb"},
 		{"the kill switch", func(a *Action) { a.Verb = "kill-switch" }, CodeConfirmRefusedVerb, "action.verb"},
 		{"a verb outside the set", func(a *Action) { a.Verb = "explode" }, CodeUnknownVerb, "action.verb"},
@@ -637,6 +642,172 @@ func TestConfirmValidateActionBindsTheHeadReadBack(t *testing.T) {
 	back := record.Action()
 	if !back.Target.IsRepo || back.Target.Repo != "dimipaun/fugaro" || back.Target.PR != 568 || !back.HasHeadSHA || back.HeadSHA != head {
 		t.Errorf("the record as an action is %+v", back)
+	}
+}
+
+// TestActionLaunchGateRefusesACostlyStartWithNoConfirmation is O10's red step:
+// the gate this task owns refuses a start in a mode the session calls costly
+// when the record carries no confirmation. A modified client -- one that
+// skipped the read-back, or one that was told to -- is the case the gate exists
+// for, and the modes it judges by are the session's own, so a mode the session
+// does not name passes through unread.
+func TestActionLaunchGateRefusesACostlyStartWithNoConfirmation(t *testing.T) {
+	start := func(mode string) *Action {
+		return &Action{ID: "act_1", Verb: ConfirmVerbLaunch, Mode: mode, Target: Target{Repo: "dimipaun/fugaro", IsRepo: true}}
+	}
+	// The default policy is P6's: `pro` and `critical` are costly, and every
+	// other mode is D162's pass-through.
+	for _, mode := range ConfirmDefaultCostlyModes {
+		if _, refusal := ConfirmValidateLaunch(start(mode), ConfirmLaunchOptions{}); refusal == nil {
+			t.Errorf("a start in %q with no confirmation was honoured", mode)
+		} else if refusal.Code != CodeMissingField || refusal.Field != "action.confirmation" {
+			t.Errorf("a start in %q was refused %s/%s, want %s/action.confirmation", mode, refusal.Code, refusal.Field, CodeMissingField)
+		}
+	}
+	for _, mode := range []string{"default", "fast", "cheap"} {
+		if _, refusal := ConfirmValidateLaunch(start(mode), ConfirmLaunchOptions{}); refusal != nil {
+			t.Errorf("a start in %q was refused: %s (D162: only a costly mode is read back)", mode, refusal)
+		}
+	}
+	// The session's own list decides, not the default: a mode the session added
+	// is costly, and a default mode the session dropped is not.
+	if _, refusal := ConfirmValidateLaunch(start("turbo"), ConfirmLaunchOptions{CostlyModes: []string{"turbo"}}); refusal == nil {
+		t.Error("a session-declared costly mode was started with no confirmation")
+	}
+	if _, refusal := ConfirmValidateLaunch(start("pro"), ConfirmLaunchOptions{CostlyModes: []string{"turbo"}}); refusal != nil {
+		t.Errorf("a mode the session does not call costly was refused: %s", refusal)
+	}
+	// A session that names no costly mode is the empty list, which is read as
+	// what it says -- the same reading ConfirmInitialState gives it.
+	if _, refusal := ConfirmValidateLaunch(start("pro"), ConfirmLaunchOptions{CostlyModes: []string{}}); refusal != nil {
+		t.Errorf("an empty costly list was read as a refusal: %s", refusal)
+	}
+}
+
+// TestActionLaunchGateBindsTheModeAndSpendsTheConfirmation: what the gate hands
+// back is the record a consumer starts from, and the two things it has to carry
+// are the mode the record named -- bound as J3's machine binds a costly start's
+// target, so a caller reads one shape whatever produced it -- and the
+// confirmation the phone wrote, for the caller to spend against its own memory
+// before anything runs.
+func TestActionLaunchGateBindsTheModeAndSpendsTheConfirmation(t *testing.T) {
+	a := &Action{
+		ID: "act_1", Verb: ConfirmVerbLaunch, Mode: "pro",
+		Target:          Target{Repo: "dimipaun/fugaro", IsRepo: true},
+		Confirmation:    Confirmation{ID: "conf_1", At: testNow},
+		HasConfirmation: true,
+	}
+	record, refusal := ConfirmValidateLaunch(a, ConfirmLaunchOptions{})
+	if refusal != nil {
+		t.Fatalf("a read-back costly start was refused: %s", refusal)
+	}
+	if record.Verb != ConfirmVerbLaunch || record.ID != "act_1" {
+		t.Errorf("the record is %+v", record)
+	}
+	if record.Target.Kind != ConfirmTargetMode || record.Target.Mode != "pro" {
+		t.Errorf("the record's target is %+v, want the mode %q bound", record.Target, "pro")
+	}
+	if record.Confirmation.ID != "conf_1" || record.Confirmation.At != testNow {
+		t.Errorf("the record's confirmation is %+v", record.Confirmation)
+	}
+	// A plain start's record carries no confirmation at all: there is nothing to
+	// spend, and a zero Confirmation would be one the caller might try to.
+	a.Mode, a.HasConfirmation = "default", false
+	record, refusal = ConfirmValidateLaunch(a, ConfirmLaunchOptions{})
+	if refusal != nil {
+		t.Fatalf("a plain start was refused: %s", refusal)
+	}
+	if record.Confirmation != (ConfirmConfirmation{}) {
+		t.Errorf("a plain start's record carries the confirmation %+v", record.Confirmation)
+	}
+	if record.Target.Mode != "default" {
+		t.Errorf("a plain start's record binds %q", record.Target.Mode)
+	}
+}
+
+// TestActionLaunchGateRefusesWhatIsNotALaunch: the gate answers one verb, and
+// the destructive records are ConfirmValidateAction's. Each refuses the other's
+// verbs, so a caller that hands a record to the wrong one is refused rather
+// than answered with a record that authorises nothing.
+func TestActionLaunchGateRefusesWhatIsNotALaunch(t *testing.T) {
+	for _, verb := range []string{ConfirmVerbCancel, ConfirmVerbMerge, ConfirmVerbConfirm} {
+		a := &Action{
+			ID: "act_1", Verb: verb, Mode: "pro",
+			Target:          Target{Run: "20261018-125859-d3c8"},
+			Confirmation:    Confirmation{ID: "conf_1", At: testNow},
+			HasConfirmation: true,
+		}
+		if _, refusal := ConfirmValidateLaunch(a, ConfirmLaunchOptions{}); refusal == nil {
+			t.Errorf("a %s record was honoured by the launch gate", verb)
+		} else if refusal.Code != CodeConfirmRefusedVerb || refusal.Field != "action.verb" {
+			t.Errorf("a %s record was refused %s/%s, want %s/action.verb", verb, refusal.Code, refusal.Field, CodeConfirmRefusedVerb)
+		}
+	}
+	if _, refusal := ConfirmValidateLaunch(nil, ConfirmLaunchOptions{}); refusal == nil {
+		t.Error("a nil record was honoured")
+	}
+}
+
+// TestActionLaunchGateRefusesAPolicyItCannotRead: the costly list is the one
+// input the gate takes from outside, and a list it cannot read is refused
+// rather than read as "no mode is costly". The lenient reading of a defect is
+// exactly the reading that lets a costly start through with no read-back, so
+// each of the module's own refusals for the list is pinned here.
+func TestActionLaunchGateRefusesAPolicyItCannotRead(t *testing.T) {
+	a := &Action{ID: "act_1", Verb: ConfirmVerbLaunch, Mode: "pro", Target: Target{Repo: "dimipaun/fugaro", IsRepo: true}}
+	for _, c := range []struct {
+		name  string
+		modes []string
+		code  Code
+		field string
+	}{
+		{"a mode carrying a control character", []string{"pro\u0000"}, CodeBadCharacter, "costlyModes"},
+		{"a mode past the length bound", []string{strings.Repeat("x", ConfirmMaxModeLen+1)}, CodeTooLong, "costlyModes"},
+		{"an empty mode", []string{""}, CodeMissingField, "costlyModes"},
+		{
+			"more modes than a session may name",
+			func() []string {
+				modes := make([]string, ConfirmMaxCostlyModes+1)
+				for i := range modes {
+					modes[i] = fmt.Sprintf("m-%d", i)
+				}
+				return modes
+			}(),
+			CodeTooLong, "costlyModes",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, refusal := ConfirmValidateLaunch(a, ConfirmLaunchOptions{CostlyModes: c.modes}); refusal == nil {
+				t.Fatal("an unreadable costly list was read as a policy")
+			} else if refusal.Code != c.code || refusal.Field != c.field {
+				t.Errorf("refused %s/%s, want %s/%s", refusal.Code, refusal.Field, c.code, c.field)
+			}
+		})
+	}
+	// The list at its own bounds is a policy like any other, and a costly mode
+	// in it still needs its confirmation.
+	modes := make([]string, ConfirmMaxCostlyModes)
+	for i := range modes {
+		modes[i] = fmt.Sprintf("m-%d", i)
+	}
+	if _, refusal := ConfirmValidateLaunch(a, ConfirmLaunchOptions{CostlyModes: modes}); refusal != nil {
+		t.Errorf("a list at the count bound was refused: %s", refusal)
+	}
+	// A record whose confirmation is present but not one is refused rather than
+	// handed back for a caller to spend: the gate re-reads the shape of what it
+	// answers with.
+	broken := &Action{
+		ID: "act_1", Verb: ConfirmVerbLaunch, Mode: "pro",
+		Target:          Target{Repo: "dimipaun/fugaro", IsRepo: true},
+		Confirmation:    Confirmation{ID: "", At: testNow},
+		HasConfirmation: true,
+	}
+	if _, refusal := ConfirmValidateLaunch(broken, ConfirmLaunchOptions{}); refusal == nil || refusal.Field != "action.confirmation.id" {
+		t.Errorf("a confirmation with no id: %v", refusal)
+	}
+	broken.Confirmation = Confirmation{ID: "conf_1"}
+	if _, refusal := ConfirmValidateLaunch(broken, ConfirmLaunchOptions{}); refusal == nil || refusal.Code != CodeBadTimestamp {
+		t.Errorf("a confirmation with no time: %v", refusal)
 	}
 }
 
