@@ -962,8 +962,8 @@ row that used to repeat it went with the run list.
 
 Reached from a `live-run` row. The header, its status strip and its halt banner sit above
 the two columns: the main column (stages → spend by stage → tolerated by the mode →
-diagnosis → logs → replay) beside the aside (ledger → pull request), with the warnings
-after both. Two steps drew it — 3a the header, at a glance at the run, the timeline and
+review levels → diagnosis → logs → replay) beside the aside (ledger → pull request), with
+the warnings after both. Two steps drew it — 3a the header, at a glance at the run, the timeline and
 the log window, 3b the ledger, the pull request and the replay scrubber.
 
 | Group | Class hooks |
@@ -978,6 +978,7 @@ the log window, 3b the ledger, the pull request and the replay scrubber.
 | Spend splits | `run-split`, `run-split-word`, `run-split-caption`, `run-split-absent`, `run-route`, `run-route-name`, `run-route-usd`, `run-model`, `run-model-name`, `run-model-usd` |
 | Spend by stage | `run-spend-stages`, `run-spend-stage-list`, `run-spend-stage`, `run-spend-stage-name`, `run-spend-stage-duration`, `run-spend-stage-calls`, `run-spend-stage-agents`, `run-spend-stage-usd`, `run-spend-stage-notional`, `run-spend-stages-more`, `run-spend-stage-more` |
 | Tolerated by the mode | `run-tolerated`, `run-tolerated-total`, `run-tolerated-count`, `run-tolerated-list`, `run-tolerated-finding`, `run-tolerated-title`, `run-tolerated-label`, `run-tolerated-mode`, `run-tolerated-likelihood`, `run-tolerated-impact`, `run-tolerated-fix-cost`, `run-tolerated-class`, `run-tolerated-more`, `run-tolerated-dropped`, `run-tolerated-absent` |
+| Review levels | `run-levels`, `run-level-list`, `run-level`, `run-level-name`, `run-level-bar`, `run-level-bar-absent`, `run-level-cap-mark`, `run-level-figures`, `run-level-rounds`, `run-level-of`, `run-level-cap`, `run-level-rounds-word`, `run-levels-absent` |
 | Stages | `run-stages`, `run-stage-list`, `run-stage`, `run-stage-icon`, `run-stage-dot`, `run-stage-check`, `run-stage-cross`, `run-stage-name`, `run-stage-body`, `run-stage-passed`, `run-stage-bar`, `run-stage-track`, `run-stage-fill`, `run-stage-fill-failed`, `run-stage-count`, `run-stage-tests`, `run-stage-tests-word`, `run-stage-failures`, `run-stage-failures-word`, `run-stage-meta`, `run-stage-duration`, `run-stage-spend`, `run-stage-deadline` |
 | Pull request | `run-pr`, `run-pr-repo`, `run-pr-number`, `run-pr-sep`, `run-pr-url`, `run-pr-reason` |
 | Logs | `run-logs`, `run-log-list`, `run-log-line`, `run-log-time`, `run-log-severity`, `run-log-stage`, `run-log-message`, `run-log-note`, `run-log-dropped`, `run-log-of`, `run-log-total`, `run-log-refused`, `run-log-refused-count`, `run-log-link`, `run-log-link-note`, `run-log-tail`, `run-log-tail-line` |
@@ -1015,7 +1016,14 @@ be (`svg.run-ledger-bar` is absent when the total is not a measured figure above
 the model line is not billed money or when the compute is neither measured nor estimated);
 the reconciliation's difference drawn only when both figures were measured, in
 `p.run-recon-diff-warn` only when it is not zero; an empty or absent spend split as the
-console's `n/a` with its reason (`p.run-split-absent`); a pull
+console's `n/a` with its reason (`p.run-split-absent`); a review level's rounds against its
+cap (`div.run-level-bar`, its text the share or the console's `n/a` and its tone carried by
+the class `run-level-bar-absent` where there is no share to draw -- §2.9's rule holds here as
+everywhere on this screen: the availability of the figure is the text and, where there is no
+number, the reason in `title`, and the class only paints it), and **the cap's own edge on that
+track drawn only where the cap is a number** (`span.run-level-cap-mark` is absent for a level
+whose cap the record does not resolve, so a bar can never look full against a cap nobody set);
+a pull
 request with **no link at all** (`run.link` is typed `null`, and `PR_NO_LINK_REASON`
 explains why); logs bounded ("lines not drawn: N of M") and a count of refused lines; replay
 scrubbed / not scrubbed (`p.run-replay-scrubbed`), a window with fewer than two distinct
@@ -1026,7 +1034,9 @@ the position is what carries the fact and the tone is the second channel).
 Readings: money (`usd`) throughout the ledger (the hero, the two legend rows, the plan's
 part and the reconciliation's three lines), the spend-by-stage rows, the spend splits; counts for tests, failures, dropped lines,
 calls, sub-agents, tolerated findings and their score axes, follow-up PRs and comments,
-replay records; **seconds** for a stage's duration and the replay window.
+replay records, and **the review levels' rounds and their caps**; **seconds** for a stage's
+duration and the replay window; **percent** for the one share this screen draws, the
+iterations bar's fill, which is the CLI's own two figures divided and nothing else.
 
 **The ledger is one billed total and everything else read against it.** `p.run-ledger-hero`
 carries the caption `TOTAL CHARGED` and `total_usd` -- the dollars the table **billed**,
@@ -1230,11 +1240,11 @@ carry `data-theme` from code — see [§3.6](#36-how-the-theme-is-chosen).
 | Kind | Unit | Where | Format |
 |---|---|---|---|
 | **Money** | `usd` | Live (spend, counted, cap, notional, burn rate, sparkline title), Spend (points, peaks, rows, totals, every cap), Projects (reserve, caps, job model/compute/total), Run (ledger, stage spend, reported, charged, routes, models), degraded (all totals) | `$` + grouping + **2 decimals**, sign before the `$` |
-| **Share** | `percent` | Live (cap percent, bar fills), Spend (`data-height`) | 1 decimal + `%` |
+| **Share** | `percent` | Live (cap percent, bar fills), Spend (`data-height`), Run (the iterations bar's fill, drawn as that bar's own text) | 1 decimal + `%` |
 | **Duration / time** | `seconds` | Live (connection age, silence), Run (stage duration, replay window), degraded (feed age) | 0 decimals + ` s` |
 | **A span, as a person says it** | `duration` | Live (**a run's age only**, the ELAPSED column of the runs table) | `21s`, `29m 21s`, `1h 02m` — the three scales, never a raw count |
 | **Time (money-shaped)** | `hours` | Spend (run hours, totals) | 2 decimals + ` h` |
-| **Count** | `count` | Live (the review inbox's three, the fleet panel's ACTIVE and QUEUED, and the `max_parallel` limit beside the runs cap bar), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records), Coordinator (a repository's records, how many of them are in flight, its collisions, and what a bound left out), degraded (runs, searched) | 0 decimals + grouping |
+| **Count** | `count` | Live (the review inbox's three, the fleet panel's ACTIVE and QUEUED, and the `max_parallel` limit beside the runs cap bar), Spend (runs, tokens), Projects (counts, versions), Run (tests, lines, records, the review levels' rounds and caps), Coordinator (a repository's records, how many of them are in flight, its collisions, and what a bound left out), degraded (runs, searched) | 0 decimals + grouping |
 
 **Live's money, shares and durations are what its *run* rows are made of.** Its `count`
 readings are the review inbox's three (v2 plan Task V2.7.1), the fleet panel's `ACTIVE` and
@@ -1850,6 +1860,88 @@ body, and not as a `div`.
   `readKind(id)` are the caller's doors; `end()` stops the section's reads when the tab is
   left). Jobs are the other thing that is never in the first paint (§2.5), for the same
   reason: a read nobody asked for is a child process nobody asked for.
+
+### 2.16 The setup wizard — `console/src/renderer/wizard/wizard.ts`
+
+**The wizard is the first-run screen, and it replaces the command line §2.1 already lists.**
+With no installation the onboarding view draws it where `fugaro setup`'s command line used to
+stand (the console-improvements plan's task SW3b, D2904): the five questions of
+`src/shared/new-ops.ts`'s `SETUP_ANSWER_KEYS` with the CLI's own defaults, and then the
+`setup.plan` feed drawn line by line as it arrives. **It is one screen with no onboarding
+state**, so the rail's "Add project" opens the same module under its own heading — which is why
+it draws **no `h1`** and takes no title: the view that mounts it owns the heading, and the
+wizard drawing a second one with the same words would be a bug.
+
+**Every rule for it is the class alone.** The module draws through one helper,
+`make(factory, tag, className)`, whose tag is its caller's, so one class is drawn as more than
+one element: `console-wizard-command` is a `code` where a Copy stands beside it and a `p` where
+the line is displayed only, and `console-wizard-event-text` is a `span` beside its kind word
+and a `div` under it. A stylesheet that qualified these with a tag would be a stylesheet about
+the branch it happened to read, and the pairing a rule is written from cannot be read back out
+of such a helper — so these are the one part of §2 whose hooks stand unqualified, and the
+element column below is what the module draws today rather than what a rule may assume. **The
+only attributes any rule here keys on are `:disabled` and `aria-busy`** (all four of the
+module's own attributes — `data-wizard-question`, `data-wizard-event` and the two `aria-busy`
+marks — are licensed by §3.1's list and are named in the rows below; the `id` a box carries
+and the `for` its label does are not attributes a rule reads at all, they are the pairing
+that gives the box its accessible name); the screen deliberately
+sets **no `data-busy`**, because `flight-deck.css`'s rule for a busy section fades every child
+that is not the busy slot, and the operator's own typed answers fading for the up-to-an-hour a
+setup may take is not what a read in flight should look like here.
+
+| Hook | Element | What it is |
+|---|---|---|
+| `console-wizard` | the screen's root, a `section` | the questions and the attempts and nothing else. No heading, no card, no `h1`: the view that mounts it owns the title, and SW3c's dialog will draw its own. It carries `aria-busy="true"` while an attempt is in flight, and never `data-busy` |
+| `console-wizard-lead` | the sentence above the questions | the console's own words for what is about to happen, muted. It is `max-width`-capped like the prose below it rather than stretched across a wide window |
+| `console-wizard-questions` | the questions' column | the five questions as a grid, narrower than the events below them: a form is read in one column and a feed is read across |
+| `console-wizard-question` | one question, a `div` | the label and its box as one unit, with `data-wizard-question` naming the answer key it collects so the tree can be read back against `SETUP_ANSWER_KEYS` |
+| `console-wizard-label` | a question's label, a `label` | the question in the operator's words, drawn `for` its own control's id (`for` before the box, the way the launch window's form does it, `launch.ts`'s `field`), so every box has an accessible name. The pairing is a label and an id rather than nesting: a `select` inside a `label` is a target a click on the label opens, which is not what a click on a question should do |
+| `console-wizard-note` | a question's note, a `p` | the smaller line under a question — the default it takes when the operator types nothing, and why one question has none. Muted, and the console's words, never a document's |
+| `console-wizard-input` | a text question's box, an `input` | `type="text"`, with the CLI's default as its `value` and a placeholder naming that default. Its `id` is `console-wizard-field-` and the row's own answer key, which is the string its label's `for` carries; the box is typed into, never filled from a document |
+| `console-wizard-option` | a choice question's option, an `option` | one member of a `select`. The popup it opens is the platform's and is not styled here; the rule sets the closed state's colours so an option does not read as a native widget inside a themed panel |
+| `console-wizard-submit` | the one control that sends the answers, a `button` | a `type="button"` — the questions are drawn in a plain container and **not** in a `form`, so Enter is not a second way to send an answer. It is `disabled` for as long as the send it started is unanswered: this screen's answer can take up to an hour |
+| `console-wizard-follow` | the control that follows the run, a `button` | a `type="button"` in the same shape, asking for the run the confirmation window's yes started. Held `disabled` with the submit while an attempt is in flight, for the same reason |
+| `console-wizard-busy` | the line naming the attempt in flight, a `p` | one line for the screen rather than one per attempt: it is written when a send starts — `Planning the setup…`, `Following the run…`, in the register §2.5's busy marks already use — and cleared when its answer lands, on every path, a thrown bridge included |
+| `console-wizard-answer` | one answer line, a `p` | the console's own whole-sentence answers: the CLI's refusal for the attempt that refused, the done line, the hand-off line for a feed that left the operator something to run, and `STREAM_INTERRUPTED_WORD` for a read with no last line |
+| `console-wizard-attempts` | the column of attempts, a `div` | one block per send, in the order they were sent: a second attempt beside the first is what this screen draws for a read that stopped, so nothing is replaced |
+| `console-wizard-attempt` | one send's whole output, a `div` | the block its lines and its answer land in. It too carries `aria-busy="true"` while its own send is outstanding |
+| `console-wizard-lines` | one attempt's event lines, a `div` | the feed, in arrival order, one line per paint tick |
+| `console-wizard-event` | one event line, a `div` | a `step`, a `stage`, a `left_for_you`, a `done` or an `error`, with `data-wizard-event` naming its type. It is the row a person scans down, so the line is a block rather than a list item |
+| `console-wizard-event-kind` | the kind word, a `span` | the event's type in the console's own vocabulary (`working`, `stage`, `for you`, `done`, `failed`), uppercased and letter-spaced — the smallest thing read in this block |
+| `console-wizard-event-stage` | the stage's name, a `span` | which stage the CLI is on, in the medium step: the one word a person watching a long setup actually reads |
+| `console-wizard-event-state` | a stage's state, a `span` | the stage's own state word, and `undone` where the stage has not happened, muted |
+| `console-wizard-event-after` | the stage waited for, a `span` | the stage this one followed, so a feed out of order is legible, muted and small |
+| `console-wizard-event-text` | a line's document text, a `span` or a `div` | the CLI's own sentence, through the class its event declared in `TEXT_CLASSES` (`putText`): a value the class refuses never reaches the element. It is a `span` on the row of the kind words and a `div` under it where the line carries a command |
+| `console-wizard-command` | the command a `left_for_you` line names, a `code` or a `p` | the argv MG0's `manage/command.ts` assembled, drawn in a block of its own. It is a `code` beside a Copy and a `p` where the builder refused the line or where the line is the step's own text — a `command` step with no `commands` is itself its one command (`fugaro update`, `fugaro update-skills`, `fugaro orchestrator install`, the CLI's own `PrintedCommands` rule), and that line is drawn once, in this element, with its Copy beside it rather than repeated as a `code` under itself |
+| `console-wizard-copy` | that line's Copy, a `button` | a `type="button"` whose label **is** the joined argv, copying that text through the caller's seam. Mono (§3.7), for the same reason §2.15's `manage-copy` is: its whole value is that a person compares it character by character with the command they are about to run |
+| `console-wizard-copy-refusal` | a command the builder would not assemble, a `p` | the builder's own reason beside the displayed line, muted. The console never repairs a command it will not copy |
+
+- **The failed stage comes from the feed, not from the sentence.** An `error` line draws the stage
+  the run stopped at in `console-wizard-event-stage` and the CLI's sentence in
+  `console-wizard-event-text`; nothing here re-reads the sentence to guess a stage, and an error
+  that named none draws the sentence alone.
+- **A `left_for_you` line is displayed whichever way it goes.** A line whose first word is `fugaro`
+  or `gcloud` is assembled and gets the Copy; any other word is drawn as text with no control
+  beside it — a `left_for_you` line is the CLI telling the operator what is left, so dropping the
+  ones this console cannot act on would be dropping the answer. A builder refusal takes the Copy
+  away and keeps the line, with the builder's reason under it.
+- **A `command` step with no commands is its own command.** The CLI's `PrintedCommands`
+  (`initflow/stage.go`) answers the step's own text as its one command line, and that is the shape
+  of the steps a first setup leaves constantly (`fugaro update`, `fugaro update-skills`,
+  `fugaro orchestrator install`), so the line above is what gets the Copy. Every other kind's text
+  is a sentence — a step in a web console, a refusal — and keeps the console's own "no command to
+  run" note.
+- **No question carries a secret, and no control opens a prompt.** There is no `password` box, no
+  path, no flag and no second window: a question whose answer is a secret is asked by
+  `fugaro setup`'s own terminal prompt, which this screen never opens and never imitates.
+- **The busy line is one line for the screen, and the two controls it started are the ones it
+  holds.** The Retry a finished attempt drew is **not** held: a second attempt beside the first is
+  what this screen draws for a read that stopped, so holding it would deny the person the only way
+  forward.
+- **The wizard draws its own busy line rather than calling `sectionRead`.** The helper's mark, its
+  skeleton and its Retry belong to a section with one read and a refusal of its own (§2.15); this
+  screen draws a feed of lines from one child that answers once, so its mark is a sentence and an
+  `aria-busy` on the block whose send is outstanding.
 
 ## 3. The theme system
 

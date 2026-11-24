@@ -14,7 +14,7 @@ import (
 // by the same scanner as queued runs (design generic-tool §10.1).
 type FinishedRun struct {
 	Run, Slug, Title, Workflow string
-	Status                     string // runstore status: succeeded, failed, unreviewed, halted, cancelled, infra_error
+	Status                     string // runstore status: succeeded, failed, unreviewed, halted, cancelled, infra_error, paused
 	Outcome                    string // ready, draft, none, reviewed, artifacts
 	PRNumber                   int
 	PRURL                      string
@@ -54,11 +54,12 @@ func isFailure(status string) bool {
 func finishedRow(f FinishedRun, now time.Time) RunRow {
 	return RunRow{
 		Run: clean(f.Run), Slug: budget.Key(f.Slug), Title: dash(clean(f.Title)), Stage: clean(f.Status),
-		Round: "-", Verify: "-", Models: "-", Auth: "-", Workflow: clean(f.Workflow),
+		Round: "-", Verify: "-", Models: "-", Auth: "-", Source: "-", Workflow: clean(f.Workflow),
 		LaunchedBy: safetext.Field(f.LaunchedBy),
 		Age:        max(now.Sub(f.FinishedAt), 0), HasAge: true,
 		Finished: true, Failed: isFailure(f.Status), Outcome: clean(f.Outcome),
 		PRURL: cleanURL(f.PRURL), PRNumber: f.PRNumber, StartedAt: f.FinishedAt.UnixMilli(),
+		Paused: f.Status == string(runstore.StatusPaused),
 	}
 }
 

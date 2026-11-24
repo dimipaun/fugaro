@@ -90,7 +90,7 @@ func TestNoCompressionWhenConfigUnreadable(t *testing.T) {
 		t.Helper()
 		f := newCloudFixture(t)
 		t.Chdir(t.TempDir())
-		writeBuildRecord(t, f, appSlug, "web", release060)
+		writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 		return f
 	}
 	// refuse runs a launch that must be refused for the unreadable
@@ -178,11 +178,9 @@ func TestCompressionImageGateRefusesOldBuild(t *testing.T) {
 	t.Run("follow-up", func(t *testing.T) {
 		f := newCloudFixture(t)
 		compressionOnForTest(t)
-		// release085 and not release060: this case drives a --pr follow-up,
-		// which inherits its chain's title and is gated on an image whose
-		// runner knows titles (titlesSince, 0.8.5) before the compression gate
-		// below is reached. 0.8.5 is still older than the compression gate's
-		// own release (0.12.0), which is the refusal this case is about.
+		// A follow-up carries the title its brief's line gives it (titlesSince),
+		// so the image has to know titles and still predate compressionSince:
+		// the title gate is judged first and would otherwise be the refusal.
 		writeBuildRecord(t, f, appSlug, "web", release085)
 		seedSpec(t, f, firstRunSpec(rootID), false)
 		rec := prRecord(rootID, "", 7, 1)
@@ -226,6 +224,8 @@ func TestCompressionImageGateRefusesOldBuild(t *testing.T) {
 	})
 	// No compressionOnForTest here: the repository turns compression off, and
 	// the field the follow-up inherits is the whole reason the launch is gated.
+	// The image knows titles (the follow-up carries one) and predates
+	// compressionSince, which is the gate this case is about.
 	t.Run("a follow-up inheriting the field after the key was removed", func(t *testing.T) {
 		f := newCloudFixture(t)
 		writeBuildRecord(t, f, appSlug, "web", release085)
@@ -270,7 +270,7 @@ func TestCompressionImageGateNotTriggeredWithoutCompression(t *testing.T) {
 	f := newCloudFixture(t)
 	appRepoCheckout(t, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\n" +
 		"workflows:\n  web: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
-	writeBuildRecord(t, f, appSlug, "web", release060)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	runID := wallRunID(t, time.Minute, "c2a1")
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", runID, "--no-compression", "A task"); err != nil {
 		t.Fatal(err)

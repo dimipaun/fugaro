@@ -27,15 +27,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  CONVERSATION_LIMIT,
   DESTRUCTIVE_WORD,
   INPUT_HINT,
+  NO_CONVERSATION,
   NO_PROMPTS,
   NO_SUMMARIES,
   RECENT_LABEL,
   RECENT_SUMMARY_LIMIT,
   SCREEN,
+  SPEAKER_WORD,
   TEXT_TITLE,
   TYPE_CUE,
+  conversationLines,
   createTextScreen,
   recentSummaries,
   typedReadBack,
@@ -419,3 +423,67 @@ test('the screen draws no secret, and no installation but the ones it was given'
     assert.equal(joined.includes(token), false, token);
   }
 });
+
+// ---------------------------------------------------------------------------
+// The one conversation voice and text share (X1, D2788).
+// ---------------------------------------------------------------------------
+
+/** A transcript line, shaped as `transcript.js` records it. */
+const line = (id, who, text, over = {}) =>
+  Object.freeze({ id, at: 1_700_000_000_000, who, source: 'voice', text, engine: null, ...over });
+
+/** The conversation as this screen draws it: one `[who, words]` pair per line. */
+function drawn(props) {
+  return elementsOf(makeScreen(), SCREEN.LINE, props).map((one) =>
+    one.children.flatMap((child) => child.children.filter((child) => typeof child === 'string')),
+  );
+}
+
+test('the conversation is drawn with its speaker and its words, in the order it was said', () => {
+  const conversation = [
+    line('l-1', 'operator', 'run the tests'),
+    line('l-2', 'agent', 'Run 42 finished.', { source: 'outbox' }),
+    line('l-3', 'operator', 'and the linter', { source: 'text' }),
+  ];
+  assert.deepEqual(drawn({ conversation }), [
+    [SPEAKER_WORD.operator, 'run the tests'],
+    [SPEAKER_WORD.agent, 'Run 42 finished.'],
+    [SPEAKER_WORD.operator, 'and the linter'],
+  ]);
+  // The source is a record and not something the owner is shown: where a line
+  // came from is D2788's bookkeeping, and the whole point of one transcript is
+  // that a line is a line.
+  const joined = render(makeScreen(), { conversation }).join('\n');
+  for (const token of ['voice', 'text', 'outbox']) assert.equal(joined.includes(token), false, token);
+  // And with nothing said, the section says so rather than drawing a blank.
+  assert.equal(render(makeScreen(), { conversation: [] }).includes(NO_CONVERSATION), true);
+  assert.deepEqual(drawn({ conversation: [] }), []);
+});
+
+test('the conversation is the most recent lines, and a line it cannot read is dropped', () => {
+  const said = Array.from({ length: 8 }, (unused, index) => line(`l-${index}`, 'operator', `line ${index}`));
+  assert.deepEqual(
+    conversationLines(said, 3).map((one) => one.text),
+    ['line 5', 'line 6', 'line 7'],
+    'the tail: after a switch the owner is looking for the newest words, not the first ones',
+  );
+  assert.deepEqual(conversationLines(said).length, 8, 'and the screen\'s own bound is not reached yet');
+  const many = Array.from({ length: CONVERSATION_LIMIT + 1 }, (unused, index) => line(`l-${index}`, 'operator', `line ${index}`));
+  assert.equal(conversationLines(many).length, CONVERSATION_LIMIT, 'the default bound is the named one');
+  assert.deepEqual(conversationLines(many)[0].text, 'line 1', 'and it is the tail, not the head');
+  assert.deepEqual(conversationLines(said, 0), []);
+  assert.deepEqual(conversationLines(said, -1), []);
+  assert.deepEqual(conversationLines('not a list'), []);
+  // A line with no words, no speaker, or a speaker this screen has no word for
+  // is not drawn: a blank row reads as a bug, and an unnamed line reads as one
+  // voice -- `recentSummaries` refuses the first for the same reason.
+  assert.deepEqual(
+    conversationLines([null, {}, { who: 'operator', text: '' }, line('l-1', 'ghost', 'hello'), line('l-2', 'agent', 'real')],
+    ).map((one) => one.text),
+    ['real'],
+  );
+  // The list handed back is frozen: a view cannot append to the conversation by
+  // pushing on what it was handed to draw.
+  assert.equal(Object.isFrozen(conversationLines(said)), true);
+});
+

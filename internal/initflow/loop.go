@@ -252,11 +252,6 @@ type loop struct {
 	o           Options
 	res         *Result
 	interactive bool
-	// failedContext is the failed stage's error under its first line: the
-	// lines the reporter prints on the screen beside the message, because a
-	// coding agent's session often cannot open the log (G8). It is not part
-	// of the Result: --json carries the error and the fix, as it always has.
-	failedContext []string
 	// refused is set when converge stopped on a refusal rather than on a
 	// stage's own result: the error is the caller's, and the exit code that
 	// goes with it is not the account's, so the reporter has no outcome to
@@ -274,10 +269,12 @@ type loop struct {
 	step      *report.Step
 	stepStage string
 	// waits holds the stages that wait for a stop, in the order the loop
-	// reached them: one line prints for the whole run of them, when the run of
-	// them ends (flushWaits). A run that stopped at a stage leaves every stage
+	// reached them: the run's end prints one line per thing waited for, with
+	// the count (flushWaits). A run that stopped at a stage leaves every stage
 	// behind it saying the same thing, and the account is not eleven copies of
-	// it (the owner's feedback of 2026-11-09).
+	// it (the owner's feedback of 2026-11-09). They are all buffered to the
+	// end rather than flushed as the loop passes them, so a run that stopped
+	// early counts every step it never reached once, in one place.
 	waits []StageResult
 	// ranPast is the stop the stage being recorded ran past, and it is set for
 	// that stage alone: the loop holds no reporter's state, and what the line
@@ -285,6 +282,13 @@ type loop struct {
 	// plan view does not read it: it runs nothing, so nothing runs past a stop
 	// there, and what a reader of the plan sees is what the run would do.
 	ranPast *stop
+	// stageFix is the way out the failed stage itself gave (StageError.Fix),
+	// or "" when it gave none. It is the failure block's own line under the
+	// message (endStep): what a person does next is the stage's sentence where
+	// there is one, and where there is none the closing line's rerun is the
+	// whole of it — the generic fix the record carries (Failure.Fix) is that
+	// same sentence and not a second one to print beside it.
+	stageFix string
 }
 
 // defaultProgram is what the run's lines name when the caller names no
@@ -526,35 +530,12 @@ func (l *loop) fail(stage string, err error) {
 	var se *StageError
 	if errors.As(err, &se) && se.Fix != "" {
 		f.Fix = l.redact(oneLine(se.Fix))
+		l.stageFix = f.Fix
+	} else {
+		l.stageFix = ""
 	}
 	l.res.Failed, l.res.Cause = f, l.redactedCause(err)
-	l.failedContext = l.failureContext(err)
-	// After the context, which the line the reporter prints carries under it.
 	l.record(StageResult{Name: stage, State: Failed, Detail: f.Error})
-}
-
-// failureContext is a stage's error under its first line: the last lines of
-// what went wrong, which the failure block prints on the screen. The first
-// line is the message the result carries (oneLine keeps it to one), so what
-// is left here is the context behind it.
-func (l *loop) failureContext(err error) []string {
-	lines := strings.Split(err.Error(), "\n")
-	// The message is the first line oneLine does not trim away, so the blank
-	// lines above it are not context — and taking the line after them is what
-	// keeps the message from printing twice under the cross.
-	for len(lines) > 0 && strings.Trim(lines[0], "\r\n \t") == "" {
-		lines = lines[1:]
-	}
-	if len(lines) == 0 {
-		return nil
-	}
-	var out []string
-	for _, ln := range lines[1:] {
-		if s := l.redact(oneLine(ln)); s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 // stop is a stage the run stopped at, and whether what stopped it is the
@@ -647,7 +628,7 @@ func (l *loop) pastStops(s Stage, name string, stops []stop) {
 // run past that stop (RunsPastStop).
 func (l *loop) converge(ctx context.Context, stages []Stage) error {
 	l.res.Stages, l.res.Left, l.res.Failed, l.res.Cause = nil, []Left{}, nil, nil
-	l.failedContext = nil
+	l.stageFix = ""
 	l.executing = true
 	var stops []stop // the stages the run stopped at: what everything after waits for
 	paused := ""     // the stage that paused for billing: what needs billing waits for it
@@ -926,11 +907,14 @@ func (l *loop) needsYou(stage, detail string, lf Left) {
 // the run in the middle of an apply. A run with no reporter records exactly
 // what it recorded before, and the plan view's rows are not a run at all.
 func (l *loop) record(r StageResult) {
+	shown := r.Detail
 	if l.ranPast != nil && !waitingState(r.State) {
-		// The stage ran although the run was stopped: the line says so before
-		// whatever the stage has to say about itself, because that is the fact
-		// a reader of this run cannot get anywhere else — every stage behind a
-		// stop says it waited, and this one did not.
+		// The stage ran although the run was stopped: the result says so
+		// before whatever the stage has to say about itself, because that is
+		// the fact a reader of the run record cannot get anywhere else —
+		// every stage behind a stop says it waited, and this one did not.
+		// The screen's own line says only what the stage did — the stop it ran
+		// past is the line above it — which is what shown carries.
 		if r.Detail == "" {
 			r.Detail = ranPastText(l.ranPast)
 		} else {
@@ -946,8 +930,7 @@ func (l *loop) record(r StageResult) {
 		l.waits = append(l.waits, r)
 		return
 	}
-	l.flushWaits()
-	l.endStep(r)
+	l.endStep(r, shown)
 }
 
 // waitingState is a stage that did not run and is not this run's to give: it
@@ -1127,8 +1110,10 @@ func (l *loop) row(r StageResult, detail string, plain bool) string {
 // endStep prints one stage's line through the reporter: the marker the
 // stage's state earns, which is the line the run's account has always been,
 // printed where the stage ends instead of at the end of the run. The stage's
-// own line in flight, when there is one, is the line it replaces.
-func (l *loop) endStep(r StageResult) {
+// own line in flight, when there is one, is the line it replaces. shown is
+// the stage's detail as the screen has it, which is the result's own except
+// for a machine-local stage that ran past a stop (record).
+func (l *loop) endStep(r StageResult, shown string) {
 	s := l.step
 	if s == nil || l.stepStage != r.Name {
 		// A stage nothing was opened for: one that waits for a stage before
@@ -1143,14 +1128,27 @@ func (l *loop) endStep(r StageResult) {
 			// for the user (Outcome.Left): the result carries the entry and
 			// the run exits 1, so a tick here would say the run is done when
 			// it is not (G3).
-			s.Left(l.stageText(r))
+			s.Left(l.stageText(r, shown))
 		} else {
-			s.Done(r.Detail)
+			s.Done(shown)
 		}
 	case Failed:
-		// The stage's detail is the error's first line; the lines under it
-		// are the context the failure block prints (G8).
-		s.Failed(errors.New(r.Detail), l.failedContext)
+		// The whole error, under the cross, and not the one line the result
+		// carries: the step that stopped the run is the one thing its reader
+		// has to read in full, and the message's own later lines are the
+		// context that goes under it (G8). The way out the stage gave follows
+		// them, as the last of that context: the block reads what went wrong
+		// and then what to do about it, before the paths to the run's log and
+		// to the command that explains it.
+		err := l.res.Cause
+		if err == nil {
+			err = errors.New(r.Detail)
+		}
+		var context []string
+		if l.stageFix != "" {
+			context = append(context, l.stageFix)
+		}
+		s.Failed(err, context)
 	case NeedsYou, BillingPending, WaitingForBilling:
 		// The user still owes this stage — a confirmation, a billing
 		// account — so it is never a tick, whatever it says (G3).
@@ -1159,14 +1157,14 @@ func (l *loop) endStep(r StageResult) {
 			// is drawn as the refusal it is: the left-for-you marker says
 			// "you owe this", which is true of every other stage here and
 			// false of this one.
-			s.Refused(l.stageText(r))
+			s.Refused(l.stageText(r, shown))
 		} else {
-			s.Left(l.stageText(r))
+			s.Left(l.stageText(r, shown))
 		}
 	default:
 		// Skipped and blocked: the stage did not run, and what it waits for
 		// is not this session's to give.
-		s.Skipped(r.Detail)
+		s.Skipped(shown)
 	}
 }
 
@@ -1186,9 +1184,9 @@ func (l *loop) leftFor(stage string) *Left {
 // stageText is the one-line tail of a stage the user owes: what the stage
 // said about itself, or, when it said nothing — a stage that only refused —
 // the instruction its left-for-you entry carries.
-func (l *loop) stageText(r StageResult) string {
-	if r.Detail != "" {
-		return r.Detail
+func (l *loop) stageText(r StageResult, shown string) string {
+	if shown != "" {
+		return shown
 	}
 	if lf := l.leftFor(r.Name); lf != nil {
 		return lf.Text
@@ -1205,9 +1203,9 @@ func (l *loop) finish() {
 		}
 	} else if l.o.Report != nil {
 		// The account is already on the screen: every step printed as its
-		// stage ended (record), so what is left is the closing line below
-		// and the blocks a run owes the user — and the stages still waiting
-		// at the end, which no result behind them flushed (record).
+		// stage ended (record), so what is left is the closing line below,
+		// the blocks a run owes the user, and the steps the run never reached,
+		// which print here as one line each per thing they wait for.
 		l.flushWaits()
 		l.closeStep()
 	} else {
@@ -1248,11 +1246,15 @@ func (l *loop) finish() {
 			fmt.Fprintf(l.o.Out, "    %s\n", c)
 		}
 	}
-	if f := l.res.Failed; f != nil {
-		// The error itself is the caller's to print (the CLI returns it).
-		fmt.Fprintf(l.o.Out, "stopped at %s; fix: %s\n", f.Stage, f.Fix)
-	}
 	if l.o.Report != nil && !l.o.PlanOnly && !l.refused && !l.o.ReportBorrowed {
+		if f := l.res.Failed; f != nil {
+			// The step the run stopped at and the command that picks it up
+			// there are the closing line's own, below: a stopped run says them
+			// once, and its fix is in the error the caller prints (res.Failed,
+			// --json) rather than on a line of its own. The error block above
+			// already says what went wrong and where the whole of it is.
+			l.o.Report.RerunFrom(l.program(), f.Stage)
+		}
 		// Last, so the closing line is the last thing the run says: the
 		// reporter counts the steps it was given and names the outcome.
 		// A refused run has no outcome to name — the caller's exit code is
@@ -1260,6 +1262,13 @@ func (l *loop) finish() {
 		// borrowed reporter, whose owner prints the line where its own run
 		// ends (ReportBorrowed).
 		l.o.Report.Summary()
+	} else if f := l.res.Failed; f != nil {
+		// The account a reporter is not drawing a closing line for — the
+		// loop's own, a plan-only run, a refusal, a borrowed reporter — says
+		// the step and the fix itself, where it always has: there is no
+		// closing line to resume from, so the fix is on no other one.
+		// The error itself is the caller's to print (the CLI returns it).
+		fmt.Fprintf(l.o.Out, "stopped at %s; fix: %s\n", f.Stage, f.Fix)
 	}
 }
 

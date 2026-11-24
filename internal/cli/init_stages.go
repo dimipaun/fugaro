@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"maps"
 	"os"
 	"slices"
+	"strings"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/apply"
@@ -16,6 +19,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // The converge (internal/initflow) over the engines the converge already
@@ -66,6 +71,16 @@ type initEngine struct {
 	images    *imagesStage
 	repo      *repositoryStage
 	policy    *policyMigrateStage
+
+	// The lift stage and the layer stage after it: the migration of what a
+	// repository's own file declares into the project holds the first, and the
+	// second publishes the layer file it edited. The engine keeps both because
+	// the two are one write from the outside — the lift stage forgets the layer
+	// stage's cached read of the file it just changed, and the records it
+	// migrated are written after the loop, once the publish has landed
+	// (update_lift.go).
+	lift  *liftStage
+	layer *layerStage
 
 	// The credentials service's image as this run resolved it
 	// (credentialsResolve): the policy stage asks for it before it raises the
@@ -326,6 +341,16 @@ func initStages(e *initEngine) []initflow.Stage {
 	// both doors, like the service's own stage: an installation that has not
 	// turned the service on skips it with one line.
 	stages = append(stages, newCredentialsCopyStage(e))
+	// The required-CLI stamp, registered for both doors and immediately after
+	// the credentials copy: it is the last stage of the run that writes
+	// something a deployed reader sees, and it raises the node that refuses
+	// every fugaro below this release (update_version_stamp.go, D3260, R1). It
+	// is registered unconditionally because the stage's own Check is what
+	// decides whether this installation has a stamp to raise — a project whose
+	// database is not this installation's, or that records no shared backend at
+	// all, skips it with that reason rather than with a registration it does
+	// not have.
+	stages = append(stages, newVersionStampStage(e))
 	// The workspace's own project's root BEFORE the record, and both after the
 	// policy one: this stage creates the identity the workspace's own service
 	// runs as — its own service account and the one grant that reaches the
@@ -361,7 +386,16 @@ func initStages(e *initEngine) []initflow.Stage {
 	// publish is read under the node the policy stage just moved in place, so a
 	// layer whose claims the older node could not carry is judged by the same
 	// installation it is published for (init_layer_stage.go).
-	stages = append(stages, newLayerStage(e))
+	//
+	// The lift stage comes immediately before it, and the order between these
+	// two is the whole of the migration's promise: the lift stage moves what a
+	// repository's own file declares into this same layer file, so the document
+	// the layer stage publishes is the one the migration just wrote, and the
+	// records it keeps wait for that publish (update_lift.go, L8, D3305).
+	e.lift = newLiftStage(e)
+	stages = append(stages, e.lift)
+	e.layer = newLayerStage(e)
+	stages = append(stages, e.layer)
 	// The checkout's own steps (the cloud half; the pin and the plugin are
 	// are a stage of this run too: fugaro update is the whole upgrade, so the
 	// one command the user runs may not leave the checkout it runs in behind
@@ -535,6 +569,14 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// identical to these, so a step queued while the run was going — which no
 	// stage of this run published — stays owed (D1563).
 	e.readOwedBefore()
+	// The run's own heading, and the section its steps are read under: a first
+	// run's header went out with its first question (printRunHeader prints it
+	// once either way), and everything the converge says on its own way here —
+	// the roles step's warnings, the budget stops, the runs in flight — is
+	// above the heading in the block it belongs to, so what a reader sees under
+	// it is the steps themselves.
+	e.r.printRunHeader(e.lc.Name, "")
+	fmt.Fprintln(e.r.w, e.r.qs.Header(convergeSection(e.r.o)))
 	res, err := initflow.Run(ctx, stages, e.options())
 	// The steps this run answered are steps nothing owes any more: `update`
 	// runs every stage, and the entries of the stages it ran successfully are
@@ -543,10 +585,28 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// leaves its step owed — and it never touches a catalog build, which
 	// `update` does not run (D1577).
 	e.clearAnsweredSteps(res)
+	// The migration records this run may write, and they are written HERE
+	// rather than by the stage that planned them: a record claims that a
+	// repository's migration has landed, and the layer half of it lands in the
+	// layer stage's publish of the document the lift stage edited, which runs
+	// after it — so a publish that was refused, skipped or never reached writes
+	// no record and the next update migrates the repository again
+	// (update_lift.go, D3305).
+	e.writeLiftRecords(ctx, res)
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)
 	}
 	return e.outcome(ctx, res, err)
+}
+
+// convergeSection is the heading the converge's own steps are read under, and
+// it follows what the run does: a run that applies says so, and --plan-only,
+// which shows what would be applied and applies nothing, does not.
+func convergeSection(o *initOptions) string {
+	if o.planOnly {
+		return "Planning"
+	}
+	return "Applying"
 }
 
 // outcome maps a loop result to init's error, keeping the exit codes the
@@ -647,6 +707,18 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// this run leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
+	// And D3087's: where the installation's located things are, read from the
+	// cloud and written down in this machine's own config (LP14 of
+	// docs/location-preference/, docs/location-preference/record.md). It is
+	// here for the reason the seven above are — the converge has applied
+	// everything it had, so what this reads is the installation this run
+	// leaves behind — and it is receptive rather than authoritative: nothing
+	// reads the block back as an input (R5), so a record that could not be
+	// written or read is a warning and never a failed upgrade (the HARD RULE),
+	// and it never asks a question. It is the one step here whose writer is
+	// both doors — `fugaro setup` creates the installation whose record this
+	// is, and `fugaro update` is the command that keeps it true.
+	e.recordLocations(ctx)
 	// And D2965's, the seventh: the runs that opened, followed or reviewed a
 	// pull request before this release wrote an entry as it came to be on one,
 	// so `runs ls --pr N` finds them in the index instead of scanning the
@@ -668,6 +740,14 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// one step here that reads the checkout this run was started in, and the one
 	// that does nothing at all outside one.
 	e.foldBacklog(ctx)
+	// And RI5's: the run index an installation of an earlier release has never
+	// built, marked for a rebuild and started once (update_runindex.go). It is
+	// here for the reason the six above are -- the converge has applied
+	// everything it had, so the installation this run leaves behind is the one
+	// whose index is walked -- and it returns no error either: the index is a
+	// derived object, the mark it leaves is what every later sweep continues on
+	// its own, and failing an upgrade over one is what the HARD RULE forbids.
+	e.reindexRunIndex(ctx)
 	// And T-RU5's, the sixth and last: what this release fixes about the
 	// project's filed issues, which is a step of the run and not of the door
 	// (update_resolved.go) because --json's document carries it and is printed
@@ -683,10 +763,218 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// The run's last line, on the door whose job it is to say it: what filing
 	// an issue on GitHub needs (`gh`), and that nothing else about issues does.
 	e.announceGhHint()
+	// And the other end-of-run line, for the installation set up outside any
+	// checkout: how a repository is enrolled, which only a run that converged
+	// says (announceEnrolNote). It is here rather than above the steps because
+	// a run that fails was asked for no repository, and a line telling its
+	// reader to enrol one belongs to no failure.
+	e.announceEnrolNote()
 	if len(res.Left) > 0 && !o.planOnly {
 		return &notFinished{userErr("%s is not finished: %d step(s) left for you, listed above", o.doorProgram(), len(res.Left))}
 	}
 	return nil
+}
+
+// recordLocations is D3087's step: the converge reads where the installation's
+// located things are and writes the answer into this machine's own project
+// config as the `locations` block (docs/location-preference/record.md).
+//
+// It is a record and never an input. Every plan asks the cloud itself for the
+// thing it is about (R5), so nothing here decides anything: a record that is
+// wrong, stale or hand-edited changes no plan, no import and no apply, and a
+// member the cloud could not be read for is left absent rather than guessed at.
+// The one reader is `fugaro doctor` (LP12), which prints where the data is.
+//
+// Nothing here may fail the run, for the reason update.go's writeAdminList may
+// not: this is a step of the upgrade, and a record that could not be written is
+// a record the next `fugaro update` writes. Every state is therefore a warning
+// or silence, and which of the two is the state's own answer. The states a
+// recording never started in — no local config file of this machine's own (a
+// shared selection), no cloud clients at all (a run that never opened the
+// installation), no Firebase project, no Firestore client to read with — are
+// silence: nothing was read and nothing failed, and a config that cannot reach
+// its own project's cloud is the config the record would say nothing about. A
+// read that WAS made and came back an error, and a file that refused the write,
+// are warnings, because there the record is missing and a person is owed the
+// reason. It asks nothing (docs/no-prompt-policy/): a run has already answered
+// every step it was going to by the time the converge applies, and a question
+// here would be asked at the one moment nobody is looking.
+func (e *initEngine) recordLocations(ctx context.Context) {
+	r, o := e.r, e.r.o
+	// A run that planned wrote nothing at all, and one whose stages left
+	// something for the person has not converged the installation: the record
+	// is written by the run that applied everything (as writeAdminList's left
+	// guard says), and the leftovers are named above so the next run is the one
+	// that writes it.
+	if o.planOnly || len(r.res.LeftForYou) > 0 {
+		return
+	}
+	// The file this machine's own config is in, as the converge wrote it
+	// (writeLocalConfig) — the path of the file the write below reads again,
+	// and not the converge's copy of what is in it. A shared selection has
+	// none, and an installation reached through one has no record of its own
+	// to keep.
+	path := r.res.Config
+	if path == "" || e.lc == nil || e.c == nil {
+		return
+	}
+	fp := e.firebaseProject()
+	if fp == "" {
+		return
+	}
+	// The Firestore client is the CLI's own REST client rather than one of
+	// Clients' (internal/infra's ObserveInputs), so it is built the way the
+	// Firebase stage builds it — one construction, so a fake endpoint and a
+	// real credential resolve here exactly as they do there.
+	//
+	// Not building it is silence and not a warning, for the reason the guard
+	// above is: this step's whole input is a read of the installation's cloud,
+	// and a client Fugaro cannot build at all is a config with no Firestore to
+	// read (a machine whose config carries no endpoint for it, or no
+	// credential) — a run with nothing to say about where anything is rather
+	// than a run whose recording failed. A converge that could not reach
+	// Google's APIs fails long before this step, and doctor's own row says this
+	// machine has no record yet, which is what is true of it.
+	fs, err := r.firestoreStep(ctx, e.lc, fp)
+	if err != nil {
+		return
+	}
+	obs, err := infra.ObserveLocations(ctx, infra.ObserveInputs{Clients: e.c, Firestore: fs.FS, Spec: e.spec, FirebaseProject: fp})
+	if err != nil {
+		r.warn(fmt.Sprintf("the locations record was not written: the installation's located things could not be read (%s), so the config keeps the record it has", safetext.FieldErr(err)))
+		return
+	}
+	record := recordedLocations(obs)
+	changed, err := r.writeRecordedLocations(record, path)
+	if err != nil {
+		r.warn(fmt.Sprintf("the locations record was not written: %s", safetext.FieldErr(err)))
+		return
+	}
+	// The line is the reason the file a person may open afterwards changed, so
+	// it is said exactly then: a converge that read the same installation again
+	// writes the same record, and repeating it every update would be a line
+	// about nothing happening. It goes to the run's own writer, as the admin
+	// list's line beside it does: the steps of the converge have all ended by
+	// here, so a stage's detail writer is no longer a place a person reads.
+	if changed {
+		if line := recordLine(record); line != "" {
+			fmt.Fprintf(r.w, "%s\n", line)
+		}
+	}
+}
+
+// writeRecordedLocations writes the record the converge just read off the cloud
+// into this machine's config, through the one writer every local-config write
+// goes through, and only when it changes the file. It says whether it did, which
+// is what the caller's line about the record is owed to.
+//
+// The document is built from the file as it is at this moment and not from the
+// engine's own copy of the config, for the reason init_compute.go's batch block
+// is (the same read, the same parse, the same one member set): the file is
+// written by more than one engine of a run, and the other writers write from
+// copies that never reach this one. The repository stage resolves a checkout's
+// entry and writes it from the config IT read (init.go's repoEngine,
+// loadRepoConfig and writeRepoConfig — base_branch, the checkout's workflows,
+// the flags an earlier run of the entry's own), and refreshLocalOptIn writes
+// the batch block from a read of its own. initEngine's e.lc was loaded before
+// any of them, so a record written from it would put the whole entry back to
+// what the run found — silently undoing the repository stage's own write in the
+// same command. Reading here is what makes the step a writer of one member.
+//
+// The unchanged check is the writer's own, made here so that the ordinary case
+// is silent: an installation whose record this run rewrote with what it read is
+// an installation whose file does not change, and a converge that printed a
+// diff of the file twice for nothing would be noise on every update. It is the
+// same comparison writeLocalConfig makes, for the same reason.
+func (r *initRun) writeRecordedLocations(record *localcfg.Locations, path string) (bool, error) {
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	cur, err := localcfg.Parse(old)
+	if err != nil {
+		return false, err
+	}
+	next := *cur
+	next.Locations = record
+	data, err := next.Marshal()
+	if err != nil {
+		return false, err
+	}
+	if bytes.Equal(old, data) {
+		return false, nil
+	}
+	if err := r.writeLocalConfig(&next, path, old, true); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// firebaseProject is the Firebase project the installation's Firestore database
+// and default Realtime Database live in: the one the config records, else the
+// one this run was pointed at (--firebase-project), else the installation's own
+// GCP project, which is the pair setup makes one project (D7). It is empty only
+// for a config that names no project at all, and a run with no Firebase project
+// is a run with no located thing to read.
+func (e *initEngine) firebaseProject() string {
+	if e.lc == nil {
+		return ""
+	}
+	var recorded string
+	if e.lc.Budget != nil {
+		recorded = e.lc.Budget.FirebaseProject
+	}
+	return cmp.Or(recorded, e.r.o.firebaseProject(), e.lc.GCPProject)
+}
+
+// recordedLocations is one observation as the record's block. Every member the
+// cloud answered for is written, and a thing that does not exist, a thing the
+// read could not be made for and a thing this installation has none of all come
+// out the same way: absent, which is what the block says for "not known yet".
+func recordedLocations(obs infra.Observed) *localcfg.Locations {
+	l := &localcfg.Locations{
+		Firestore: obs.Firestore.Location,
+		RTDB:      obs.Database.Location,
+		LogBucket: obs.LogBucket.Location,
+	}
+	// The three answers the observation gives for a set of containers are the
+	// two words the block spells and a list of regions (localcfg
+	// .SecretsReplication, whose writer and reader hold the same three).
+	switch obs.Secrets.Replication {
+	case infra.ReplicationAutomatic:
+		l.Secrets.Kind = localcfg.ReplicationAutomatic
+	case infra.ReplicationMixed:
+		l.Secrets.Kind = localcfg.ReplicationMixed
+	default:
+		l.Secrets.Regions = obs.Secrets.Regions
+	}
+	if l.IsZero() {
+		// Nothing was read: the record says nothing, which is the same
+		// statement the block absent from the file makes. A nil block is what
+		// omitempty drops, so an installation this run could read nothing of
+		// gets the file it had rather than a written `locations: {}`.
+		return nil
+	}
+	return l
+}
+
+// recordLine is the record as the one line the run says it wrote, or "" when
+// there is no record. A person who sees their config change at the end of an
+// update is owed the sentence that says why.
+func recordLine(l *localcfg.Locations) string {
+	if l.IsZero() {
+		return ""
+	}
+	var parts []string
+	for _, m := range []struct{ name, at string }{
+		{"firestore", l.Firestore}, {"rtdb", l.RTDB},
+		{"secrets", l.Secrets.String()}, {"log bucket", l.LogBucket},
+	} {
+		if m.at != "" {
+			parts = append(parts, m.name+" "+m.at)
+		}
+	}
+	return "recorded where the installation's data is: " + strings.Join(parts, ", ")
 }
 
 // notFinished is a run's own end with steps left for the user: it applied
@@ -753,8 +1041,15 @@ type engineStage struct {
 	name string
 	// skip is why the stage does not apply to this run ("" when it does).
 	skip func() string
-	run  func(ctx context.Context) error
-	left initflow.Left
+	// check, when set, is the stage's Check instead of skip, for a reply that
+	// costs a read and so cannot be given without one: the Firebase stage's,
+	// whose skip holds only while the Firebase root's state carries the run
+	// index's composite indexes (RI2). It answers the same two states skip can
+	// answer (skipped, will-do) and never an error for a read that did not
+	// answer — a plain update must not fail over one (firebaseSkip).
+	check func(ctx context.Context) (initflow.Status, error)
+	run   func(ctx context.Context) error
+	left  initflow.Left
 	// leftFor, when set, is the stage's left-for-you as a function of the run's
 	// own arm instead of one fixed line: the installation-2 stage has two, and
 	// the command they name differs (--firebase-project's history job, the
@@ -793,7 +1088,10 @@ func (s *engineStage) Left() initflow.Left {
 	return s.left
 }
 
-func (s *engineStage) Check(context.Context) (initflow.Status, error) {
+func (s *engineStage) Check(ctx context.Context) (initflow.Status, error) {
+	if s.check != nil {
+		return s.check(ctx)
+	}
 	if why := s.skip(); why != "" {
 		return initflow.Status{State: initflow.Skipped, Detail: why}, nil
 	}
@@ -942,9 +1240,9 @@ func (e *initEngine) ensureCredentialsService(ctx context.Context) error {
 }
 
 // writeCarriedCredentials writes the carried block back into the installation
-// root's tfvars, with its two job tables — the coding one and the review-only
-// one — brought up to date with this machine's config, and returns the document
-// it wrote.
+// root's tfvars, with the members this side composes out of the local config —
+// the two job tables, and the identity half's three names — brought up to date,
+// and returns the document it wrote.
 //
 // The document goes back on disk BEFORE anything that can fail and return.
 // prepare (init.go) is what rewrites the installation's tfvars from this run's
@@ -992,6 +1290,21 @@ func (e *initEngine) writeCarriedCredentials(ctx context.Context, doc []byte) ([
 			fmt.Fprintf(e.r.w, "the credentials service's job table was not refreshed: %v\n", err)
 		} else {
 			next = refreshed
+		}
+		// And the identity half's three names, which no release before this one
+		// wrote: the deploy is their only other writer, and every installation
+		// that has the block carries one without them — byte for byte, so
+		// nothing else ever adds them. Without this refresh the roster's
+		// service accounts and the implicit admins never reach the service at
+		// exactly the installations that have it, and the runs' signer never
+		// reaches it either, which is the name LM14's probe reads to decide
+		// whether the minter grant can move. Refreshed from `next` rather than
+		// from the document the job-table refresh was handed, so a refusal
+		// there does not also cost this one.
+		if named, err := infra.RefreshCredentialsServiceIdentity(next, e.lc); err != nil {
+			fmt.Fprintf(e.r.w, "the credentials service's identity names were not refreshed: %v\n", err)
+		} else {
+			next = named
 		}
 	}
 	// And the intake, which the same apply deploys and which no earlier release
@@ -1661,6 +1974,14 @@ func (e *initEngine) recordedCredentialsImage() ([]byte, string, error) {
 // URL applies nothing at all — that is every run after the first, because
 // prepare carries the URL forward.
 //
+// The intake's SECOND class list rides the same apply (renderIntakePeople,
+// WC3/R5): a workspace's own project renders the roster's people into the
+// intake's block here, and that alone is a reason to apply — a person the
+// roster gained between two updates changes no URL, and an apply gated on the
+// audience would leave them refused by the intake until the next release. On
+// every other installation there is nothing of that list to write and this
+// function is what it was.
+//
 // An output with no URL is refused rather than skipped: the module's output
 // reads the service's own uri, so an empty one means the service in the state
 // is not the one this run's apply made, and a revision whose audience is not
@@ -1747,7 +2068,19 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 	if err != nil {
 		return false, userErr("reading the installation's tfvars: %v", err)
 	}
-	if current == url && currentIntake == intakeURL {
+	// And the intake's second class list, which is the same write for the same
+	// reason one step over (WC3, R5, D3143): the people of the workspace's
+	// roster, rendered from the roster itself and written into the intake's own
+	// block. It rides this apply because this is the apply that carries the
+	// install's own block onto the revision — the block the installation stage
+	// wrote a few steps before — and because a person the roster gains between
+	// two runs changes no URL at all: a step gated on the audience alone would
+	// leave them refused until the next release.
+	vars, peopleChanged, err := e.renderIntakePeople(ctx, vars)
+	if err != nil {
+		return false, err
+	}
+	if current == url && currentIntake == intakeURL && !peopleChanged {
 		return false, nil
 	}
 	updated, err := infra.SetCredentialsServiceURL(vars, url)
@@ -1798,6 +2131,100 @@ func (e *initEngine) fillCredentialsAudience(ctx context.Context) (bool, error) 
 		fmt.Fprintf(r.w, "the secrets intake's audience is its own URL: %s\n", intakeURL)
 	}
 	return true, nil
+}
+
+// renderIntakePeople is vars with the intake's second class list rendered from
+// the workspace's roster, and whether it changed (WC3, R5).
+//
+// WHO IT IS FOR. The roster's people are the workspace's, and their tokens live
+// in the workspace project's own intake (D3143): a person the roster names is
+// admitted to that installation's `fugaro_u_` half under their own sub, and to
+// nothing else of it. So this runs on ONE installation — a workspace's own
+// project, which is the installation whose config declares the owner's half of
+// the membership (workspaceDeclared) — and every other installation, every
+// member's included, writes nothing here. A member holds no grant on the
+// workspace's project at all (spec §5), so its run must not reach for the
+// workspace's database: the predicate is asked before any database is opened,
+// which is the workspace record stage's own rule (update_workspace.go).
+//
+// A read that fails leaves the list where it is and does not stop the upgrade,
+// which is the fail-closed direction and this file's own rule for the intake's
+// block (writeCarriedCredentials): an installation whose roster cannot be read
+// keeps the people it admits, and the next run tries again. A roster that is
+// NOT THERE is a different answer and an empty list: the node is what
+// `fugaro workspace init` writes first (WU24), a workspace without one names
+// nobody, and keeping the grants of a roster that is gone would be the widening
+// nothing asks for.
+//
+// The write is omitted when the CLASS the module reads already says this: the
+// block's people list is only half of it, because the module composes the class
+// the revision is handed from the launchers and this list together
+// (infra.IntakeClass, intake.tf's local.intake_accounts). So a roster that
+// gained or lost a person the launchers already carry changes the list and not
+// the class, and writing the block for one would leave the apply with no plan to
+// make — which is the state the fill's own refusal reads as the module not
+// carrying the class onto the revision at all, and blames the audience for. An
+// ordinary update of a workspace's project writes nothing and applies nothing
+// here, and so does one whose roster moved only over a launcher.
+func (e *initEngine) renderIntakePeople(ctx context.Context, vars []byte) ([]byte, bool, error) {
+	if e.lc == nil || !workspaceDeclared(e.lc) {
+		return vars, false, nil
+	}
+	spec, have, err := infra.IntakeOf(vars)
+	if err != nil || !have {
+		return vars, false, nil
+	}
+	people, err := e.rosterPeople(ctx)
+	if err != nil {
+		fmt.Fprintf(e.r.w, "the secrets intake's people were not read from the workspace's roster: %v\n", err)
+		return vars, false, nil
+	}
+	launchers, err := infra.LauncherAccountsOf(vars)
+	if err != nil {
+		return vars, false, nil
+	}
+	if slices.Equal(infra.IntakeClass(launchers, people), infra.IntakeClass(launchers, spec.People)) {
+		return vars, false, nil
+	}
+	next, err := infra.SetIntakePeople(vars, people)
+	if err != nil {
+		return vars, false, userErr("setting the secrets intake's people in the installation's %s: %v", infra.VarsFile, err)
+	}
+	return next, true, nil
+}
+
+// rosterPeople is the workspace's roster as the intake's class list: the
+// canonical addresses of its humans (infra.IntakePeople), read from the
+// workspace's own database.
+//
+// The database is this installation's own budget backend, which for a
+// workspace's own project IS the workspace's (the workspace is named after that
+// project, F21/D1290): the roster is the node at workspaceRosters/<name> in it
+// (workspace.PathRoster), and the name is the config's own (workspaceNameOf).
+// The node is read rather than resolved through workspaceRosterAt, which
+// REFUSES an absent one: a workspace whose roster is not written yet is a
+// workspace with no people, and an update is not the command that fails over it.
+func (e *initEngine) rosterPeople(ctx context.Context) ([]string, error) {
+	lc, db, err := budgetDBFor(ctx, e.lc)
+	if err != nil {
+		return nil, err
+	}
+	store, err := workspace.NewRosterStore(db, workspaceNameOf(lc))
+	if err != nil {
+		return nil, err
+	}
+	node, found, err := store.Read(ctx)
+	if err != nil {
+		return nil, dbErr(lc, err, false)
+	}
+	if !found {
+		return []string{}, nil
+	}
+	roster, err := workspace.DecodeRoster(node.Raw)
+	if err != nil {
+		return nil, userErr("%s: %v", store.Path(), err)
+	}
+	return infra.IntakePeople(roster), nil
 }
 
 // newInstallationStage is stage 3: init's installation engine. With
@@ -1866,9 +2293,10 @@ func firebaseProjectIDWord(id string) string {
 // flag asked for the history job, whose apply is the one that reads them.
 //
 // What it is NOT is "the installation has a budget backend": an installation
-// whose config already records the database never reaches the Firebase root in
-// a plain update (the stage is skipped, F34), and the history job for such a
-// run is composed by the FIRST apply from the recorded backend
+// whose config already records the database reaches the Firebase root in a
+// plain update only while that root's state is still missing the run index's
+// composite indexes (RI2, firebaseSkip), and the history job for every other
+// such run is composed by the FIRST apply from the recorded backend
 // (installOptionsCarrying) and deployed there.
 func (e *initEngine) historyJobOfThisRun() bool {
 	return e.r.fb != nil || e.r.o.firebase != ""
@@ -1880,7 +2308,10 @@ func (e *initEngine) historyJobOfThisRun() bool {
 // machine (F6 — the address is what a run's session is opened against, and the
 // Firebase project alone is what a config that has never seen one names). The
 // stage that adopts or creates a database is skipped where this answers true
-// (F34), which is every converged installation after this release.
+// (F34), which is every converged installation — except for the one thing such
+// an installation can still owe, the Firebase root's run index composite
+// indexes, which firebaseSkip decides on the state because nothing else can
+// create them (RI2).
 func (e *initEngine) budgetDatabaseKnown() bool {
 	return e.lc.Budget != nil && e.lc.Budget.RTDBURL != ""
 }
@@ -1914,24 +2345,51 @@ func (e *initEngine) budgetBackendOn() bool {
 // database (F34) and where nothing would answer the confirmation a creation
 // needs (F4, cannotCreateTheDatabase), and the flag's own path — the one value
 // it could always take, the installation's own project — is untouched.
+// The skip is the one that reads (Check and not skip): the run index's
+// composite indexes are the Firebase root's and only its apply creates them
+// (RI2, F10), so a converged installation is still this stage's while the
+// root's state does not carry them — and while the credential may make the
+// IAM changes that root's apply makes, which is F34's own operator case.
+//
+// firebaseSkip answers it, and everything it cannot read leaves F34's line
+// standing, because the update of a converged installation must not fail over
+// a read the stage does not need to run: the indexes it does not create this
+// time are created by the update that can read them.
+func (e *initEngine) firebaseSkip(ctx context.Context) string {
+	if e.r.o.firebase != "" {
+		return ""
+	}
+	if e.budgetDatabaseKnown() {
+		const known = "the project config already records the budget database: this stage with no --firebase-project only adopts or creates one, and there is one"
+		// setup's own failure is the run's to report and not this check's: every
+		// stage that, unlike this one, has to run calls it too.
+		if err := e.setup(ctx); err != nil {
+			return known
+		}
+		wait, why := e.r.runIndexIndexesWait(ctx, e.c, e.bin, e.spec.StateBucket, cmp.Or(e.r.o.firebaseProject(), e.lc.GCPProject))
+		if !wait {
+			return known + why
+		}
+		return ""
+	}
+	// F4/R2's answer is asked HERE and not in the stage's own arm,
+	// because the arm is only reached by a run that can answer: the
+	// loop leaves a stage whose steps nothing can confirm to the user,
+	// which is the stop R2 replaces with one line and a run that
+	// carries on.
+	if why, yes := e.r.cannotCreateTheDatabase(); yes {
+		return why
+	}
+	return ""
+}
+
 func newFirebaseStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Firebase,
-		skip: func() string {
-			if e.r.o.firebase != "" {
-				return ""
+		check: func(ctx context.Context) (initflow.Status, error) {
+			if why := e.firebaseSkip(ctx); why != "" {
+				return initflow.Status{State: initflow.Skipped, Detail: why}, nil
 			}
-			if e.budgetDatabaseKnown() {
-				return "the project config already records the budget database: this stage with no --firebase-project only adopts or creates one, and there is one"
-			}
-			// F4/R2's answer is asked HERE and not in the stage's own arm,
-			// because the arm is only reached by a run that can answer: the
-			// loop leaves a stage whose steps nothing can confirm to the user,
-			// which is the stop R2 replaces with one line and a run that
-			// carries on.
-			if why, yes := e.r.cannotCreateTheDatabase(); yes {
-				return why
-			}
-			return ""
+			return initflow.Status{State: initflow.Todo, Detail: "plans when applied"}, nil
 		},
 		run: func(ctx context.Context) error {
 			// This run's own answer, cleared before the stage speaks: the plan
@@ -2013,7 +2471,7 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			// first apply's jobs carry the image the run started with. The same
 			// lag, and the same apply to close it, as the scheduled jobs beside
 			// them.
-			next, err := installSpec(e.r.o, e.lc, e.r.warn)
+			next, err := installSpec(e.r.o, e.lc, e.r.withheld)
 			if err != nil {
 				return err
 			}

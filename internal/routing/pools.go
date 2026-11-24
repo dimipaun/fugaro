@@ -177,6 +177,9 @@ var PrincipalKinds = []PrincipalKind{PrincipalPerson, PrincipalServiceAccount, P
 // [contract-pools.md](../../docs/model-credentials-routing/contract-pools.md)
 // and deliberately not here: that guard fails a Go file of this module which
 // names it, which is what keeps it out of every decision.
+// Its json tags are the wire's own (the slip a launcher and a service exchange,
+// internal/creds): the config's `pools:` block decodes config.PoolPrincipal, not
+// this type (PL1), so nothing here is written to or read from a yaml document.
 type Principal struct {
 	// Kind is one of PrincipalKinds.
 	Kind PrincipalKind `json:"kind"`

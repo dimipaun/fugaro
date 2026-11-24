@@ -512,9 +512,6 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 	recordsAddr := func(slug string) string {
 		return "module.installation.google_storage_bucket_iam_member.build_identity_records[\"" + slug + "\"]"
 	}
-	gitSecretAddr := func(slug string) string {
-		return "module.installation.google_secret_manager_secret_iam_member.build_identity_git_secret[\"" + slug + "\"]"
-	}
 	got := map[string]string{}
 	for addr, row := range p.rows {
 		// The account's own row carries the same member (the provider renders
@@ -540,12 +537,9 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 	}
 	for _, r := range p.repos {
 		want[recordsAddr(r.Slug)] = "roles/storage.objectUser"
-		if r.GitSecretID != "" {
-			want[gitSecretAddr(r.Slug)] = "roles/secretmanager.secretAccessor"
-		}
 	}
 	if !maps.Equal(got, want) {
-		t.Errorf("the plan grants the build identity %v, want exactly %v: the writer and the tag mover are the two roles the per-repository build account held on the shared registry, the invoker bit is the build route's class, the two readers are the registries a build's own steps pull from, the definitions read, the records write and the provider credential of one repository each are what a catalog build's own steps make as the account it runs as, and logging.logWriter is the one project-level role its own step logs need — a further grant here would be a reach this task did not carry over", got, want)
+		t.Errorf("the plan grants the build identity %v, want exactly %v: the writer and the tag mover are the two roles the per-repository build account held on the shared registry, the invoker bit is the build route's class, the two readers are the registries a build's own steps pull from, the definitions read and the records write are what a catalog build's own steps make as the account it runs as, and logging.logWriter is the one project-level role its own step logs need — a further grant here would be a reach this task did not carry over, and a secretAccessor would be the mount this task took away (IS8, D3330)", got, want)
 	}
 	for _, addr := range []string{writer, tagMover} {
 		row, ok := p.rows[addr]
@@ -585,10 +579,13 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 	}
 }
 
-// The identity's reach INSIDE the runs bucket and inside Secret Manager, which
-// is what a catalog build's own steps use and what a build that ran as the
-// per-repository account used to have: the definition it describes, the record
-// it writes back and the provider credential it clones with. A code review of
+// The identity's reach INSIDE the runs bucket, which is what a catalog build's
+// own steps use and what a build that ran as the per-repository account used
+// to have: the definition it describes and the record it writes back. The
+// third thing that account held — the provider credential it cloned with — is
+// gone from the identity entirely (IS8, D3330): the build fetches it from the
+// credentials service, so the last block below reads the plan for a Secret
+// Manager accessor and requires none. A code review of
 // B6's first cut found this missing — the identity held the registry roles and
 // nothing else, so every catalog build and every nightly rebuild failed on the
 // first of these steps it reached — and this test is the shape of the fix.
@@ -675,38 +672,24 @@ func TestBuildIdentityBucketGrantsAreTheConditions(t *testing.T) {
 		t.Errorf("the plan carries %d records grants, want one per repository the catalog names (%d): %v", records, len(p.repos), p.repos)
 	}
 
-	// The provider credential, one secretAccessor per repository whose entries
-	// this project builds. Cloud Build resolves AvailableSecrets as the account
-	// the build runs as, so without this the clone step of every catalog build
-	// is refused; a project-wide secretAccessor instead would reach the
-	// credentials bundle and every repository's webhook secret with it.
-	for _, r := range p.repos {
-		addr := "module.installation.google_secret_manager_secret_iam_member.build_identity_git_secret[\"" + r.Slug + "\"]"
-		row, ok := p.rows[addr]
-		if r.GitSecretID == "" {
-			if ok {
-				t.Errorf("the plan carries %s for a repository whose provider credential this installation cannot name: no build of its entries is submitted, so it needs no reach on one", addr)
-			}
+	// And no Secret Manager reach, which is the point of the account (IS8,
+	// D3330): a catalog build used to mount the repository's git credential as
+	// its AvailableSecrets and Cloud Build resolves those as the account the
+	// build runs as, so the identity held one secretAccessor per repository
+	// whose entries this project builds. The build asks the installation's
+	// credentials service for that credential now, so it reads no secret at
+	// all and the plan must hold none — a leftover accessor would be a reach
+	// the build no longer has a use for, on the one secret a project-wide
+	// reach would take the credentials bundle and every repository's webhook
+	// secret with.
+	for addr, row := range p.rows {
+		if !strings.HasPrefix(row.Type, "google_secret_manager") {
 			continue
 		}
-		if !ok {
-			t.Fatalf("the plan carries no %s, so the clone step of a build of %s is refused its credential", addr, r.Slug)
+		if member, _ := row.After["member"].(string); member != p.identityMember {
+			continue
 		}
-		if row.Type != "google_secret_manager_secret_iam_member" {
-			t.Errorf("%s is a %s, want the secret IAM member", addr, row.Type)
-		}
-		if role, _ := row.After["role"].(string); role != "roles/secretmanager.secretAccessor" {
-			t.Errorf("%s grants %q, want roles/secretmanager.secretAccessor: the build reads the credential and never writes it", addr, role)
-		}
-		if got, _ := row.After["member"].(string); got != p.identityMember {
-			t.Errorf("%s grants to %q, want %q", addr, got, p.identityMember)
-		}
-		if got, _ := row.After["secret_id"].(string); got != r.GitSecretID {
-			t.Errorf("%s grants on secret %q, want %q (the repository's own provider credential, resolved the way its jobs resolve it)", addr, got, r.GitSecretID)
-		}
-		if got, _ := row.After["project"].(string); got != p.project {
-			t.Errorf("%s grants in project %q, want %q", addr, got, p.project)
-		}
+		t.Errorf("the plan carries %s (%s), an accessor this identity must not hold any more: a catalog build's credential comes from the credentials service and not from a secret the account it runs as may read", addr, row.Type)
 	}
 }
 

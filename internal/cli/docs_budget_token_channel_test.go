@@ -144,10 +144,12 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 		"Batch runs no sealed budget run",
 		"cannot launch any run on Batch",
 		"has to stay on `backend: cloud-run`",
-		// The full minting condition, which the earlier text left short: the
-		// code mints for a budget database with the mode on OR a published
-		// policy (internal/cli/launch_budget.go's budgetMintOn).
-		"a budget database with budget mode on, or a published policy",
+		// The full minting condition, which the earlier texts left short and
+		// then stated the wrong way round: the code mints for a configuration
+		// with a budget database and the signer account it mints through,
+		// whatever the mode is (internal/cli/launch_budget.go's budgetMintOn,
+		// AB4).
+		"names a budget database, with the signer account it mints through",
 		// The reason, which is what makes the answer a limit rather than a
 		// missing mechanism: the key would live in the job's definition.
 		"the job's definition",
@@ -198,7 +200,7 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 	for _, want := range []string{
 		"Batch runs no sealed budget run",
 		"cannot launch any run on Batch",
-		"a budget database with budget mode on, or a published policy",
+		"names a budget database, with the signer account it mints through",
 	} {
 		if !strings.Contains(sec16, want) {
 			t.Errorf("%s §1.6 does not say %q: §1.6 is where a reader learns what this backend does with a secret, and the seal's answer belongs beside the secretVariables paragraph", cbDesign, want)
@@ -240,9 +242,9 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 	if start < 0 {
 		t.Fatalf("internal/backend/batch/seal.go no longer builds the seal's refusal with %s: this test reads that message", opens)
 	}
-	end := strings.Index(code[start:], "full, kv.Name)")
+	end := strings.Index(code[start:], "full, entry)")
 	if end < 0 {
-		t.Fatalf("internal/backend/batch/seal.go's seal refusal no longer ends at `full, kv.Name)`: this test cannot find the message's end")
+		t.Fatalf("internal/backend/batch/seal.go's seal refusal no longer ends at `full, entry)`: this test cannot find the message's end")
 	}
 	message := code[start : start+end]
 	for _, want := range []string{
@@ -253,7 +255,7 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 		// has to do instead. This is the phrase the review of this branch
 		// found missing from the refusal.
 		"cannot launch any run on Batch",
-		"a budget database with budget mode on, or a published policy",
+		"names a budget database, with the signer account it mints through",
 	} {
 		if !strings.Contains(message, want) {
 			t.Errorf("internal/backend/batch/seal.go's refusal does not carry %q, which %s's answer does: the document and the message an operator actually sees have to say the same thing\n\nmessage: %s", want, design, message)
@@ -276,17 +278,21 @@ func TestDocsBudgetTokenChannelAnswersTheBatchSeal(t *testing.T) {
 // TestDocsBudgetTokenChannelNamesTheMintingCondition: the condition under which
 // a launch is sealed is the code's, held to it rather than typed twice. The
 // document's earlier text said "a budget database, a published policy and a
-// signer", which is short of the code in a way that misleads an operator: a
-// configuration with the budget mode on and **no** published policy mints too
-// (the review of this branch found it).
+// signer", and then "a budget database with budget mode on, or a published
+// policy"; the first was short of the code in a way that misleads an operator —
+// a configuration with the mode on and **no** published policy minted too, which
+// the review of that branch found — and the second is now wrong in the other
+// direction: the mode is not read at all any more (the always-a-budget plan's
+// AB4), so a database whose mode said `off` mints exactly like one that
+// enforces, and whether a policy is published decides nothing.
 //
 // The pin is two-sided, because either side can drift alone: the document has
-// to state both disjuncts, and internal/cli/launch_budget.go has to still have
-// them — a code change that drops the mode branch, or makes an absent policy
-// mint, fails here and sends whoever made it back to the paragraph.
+// to state the condition — a budget database, with the signer account the
+// launch mints through — and internal/cli/launch_budget.go has to decide it
+// that way, with no mode in it.
 func TestDocsBudgetTokenChannelNamesTheMintingCondition(t *testing.T) {
-	// The document's half: both disjuncts, in the words the message and this
-	// test use, and the signer that both branches need.
+	// The document's half: the condition the code decides with, in the words the
+	// message and this test use.
 	const design = "docs/budget-token-channel/spec.md"
 	doc := readDoc(t, design)
 	i := strings.Index(doc, "**The owner's answer: Batch runs no sealed budget run")
@@ -296,8 +302,8 @@ func TestDocsBudgetTokenChannelNamesTheMintingCondition(t *testing.T) {
 	}
 	sec := strings.Join(strings.Fields(doc[i:j]), " ")
 	for _, want := range []string{
-		"a budget database with budget mode on, or a published policy",
-		"a signer is required in both cases",
+		"names a budget database, with the signer account it mints through",
+		"the budget mode is not read at all",
 		"budgetMintOn",
 	} {
 		if !strings.Contains(sec, want) {
@@ -311,20 +317,22 @@ func TestDocsBudgetTokenChannelNamesTheMintingCondition(t *testing.T) {
 	if k < 0 || l < k {
 		t.Fatalf("docs/compute-backend/spec.md has no §1.6 followed by §1.7: the section that states the condition is gone")
 	}
-	if sec16 := strings.Join(strings.Fields(cb[k:l]), " "); !strings.Contains(sec16, "a budget database with budget mode on, or a published policy") {
-		t.Errorf("docs/compute-backend/spec.md §1.6 does not state the full minting condition (\"a budget database with budget mode on, or a published policy\"): a project whose budget mode is on with no published policy still gets every launch refused, and §1.6 is where that project's operator reads why")
+	if sec16 := strings.Join(strings.Fields(cb[k:l]), " "); !strings.Contains(sec16, "names a budget database, with the signer account it mints through") {
+		t.Errorf("docs/compute-backend/spec.md §1.6 does not state the full minting condition (\"names a budget database, with the signer account it mints through\"): every launch of a configuration with a database mints, whatever its mode (AB4), and §1.6 is where that project's operator reads why Batch refuses it")
 	}
 
-	// The code's half: the two disjuncts, read out of the functions that
-	// decide them. A rewrite that removes either one changes what "minting"
-	// means, and this assertion is what makes that a red test rather than a
-	// paragraph that quietly stops being true.
+	// The code's half: what the code decides the condition with, read out of the
+	// functions that decide it. A rewrite that reads the mode again, or that
+	// mints for an installation with no database, changes what "minting" means,
+	// and this assertion is what makes that a red test rather than a paragraph
+	// that quietly stops being true.
 	src, err := os.ReadFile("../../internal/cli/launch_budget.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	code := strings.Join(strings.Fields(string(src)), " ")
-	// budgetBackendOn: the mode branch, and the database it needs.
+	// budgetBackendOn: the database, and the signer a run's identity is minted
+	// through.
 	bs := strings.Index(code, "func budgetBackendOn(lc *localcfg.Config) (bool, error) {")
 	if bs < 0 {
 		t.Fatalf("internal/cli/launch_budget.go no longer has budgetBackendOn, which %s's minting condition is written from", design)
@@ -334,8 +342,8 @@ func TestDocsBudgetTokenChannelNamesTheMintingCondition(t *testing.T) {
 		t.Fatalf("internal/cli/launch_budget.go no longer has budgetSignerOn after budgetBackendOn: this test cannot find the end of the condition it reads")
 	}
 	backendOn := code[bs : bs+be]
-	// budgetMintOn: the policy branch.
-	ms := strings.Index(code, "func (e *cloudEnv) budgetMintOn(ctx context.Context) (bool, error) {")
+	// budgetMintOn: the launch's own question, which is that condition's answer.
+	ms := strings.Index(code, "func (e *cloudEnv) budgetMintOn(context.Context) (bool, error) {")
 	if ms < 0 {
 		t.Fatalf("internal/cli/launch_budget.go no longer has budgetMintOn, which %s's minting condition names", design)
 	}
@@ -345,17 +353,24 @@ func TestDocsBudgetTokenChannelNamesTheMintingCondition(t *testing.T) {
 	}
 	mintOn := code[ms : ms+me]
 	for _, want := range []string{
-		// "budget mode on": the mode is what the first branch turns on.
-		"lc.BudgetMode() == localcfg.BudgetOff",
-		// "a budget database": both branches need the address.
+		// "a budget database": the address, and the whole of the condition.
 		"lc.Budget.RTDBURL == \"\"",
-		// "a published policy": the second branch's own read.
-		"p, found, err := e.policy.read(ctx, e.lc)",
-		// still mode-or-policy and not mode-and-policy.
-		"if on, err := budgetBackendOn(e.lc); err != nil || on {",
+		// "the signer account it mints through": the other thing a launch needs,
+		// and the one it is refused for.
+		"return true, budgetSignerOn(lc)",
+		// and the launch's question is that answer, not a second decision of its
+		// own.
+		"return budgetBackendOn(e.lc)",
 	} {
 		if !strings.Contains(backendOn, want) && !strings.Contains(mintOn, want) {
-			t.Errorf("internal/cli/launch_budget.go no longer has %q, which %s's minting condition (\"a budget database with budget mode on, or a published policy\") is written from: the code and the document have to change together", want, design)
+			t.Errorf("internal/cli/launch_budget.go no longer has %q, which %s's minting condition (\"names a budget database, with the signer account it mints through\") is written from: the code and the document have to change together", want, design)
+		}
+	}
+	// And the mode is not read (AB4): the documents state a condition with no
+	// mode in it, so neither may the two functions that decide it.
+	for _, gone := range []string{"BudgetMode()", "BudgetOff", "ModeOff", "policy.read"} {
+		if strings.Contains(backendOn+mintOn, gone) {
+			t.Errorf("internal/cli/launch_budget.go still decides the minting condition with %q: %s says a launch mints for a budget database and its signer, whatever the mode is and whether or not a policy was published (AB4)", gone, design)
 		}
 	}
 }
