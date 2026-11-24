@@ -2174,18 +2174,11 @@ func (o *initOptions) check() error {
 		}
 	}
 	// The account a creating run's budget alert is on is the one the run links
-	// (D2216 of docs/managed-flag-ergonomics): --billing-account where the
-	// caller gave one, --link-billing otherwise, so a caller names the account
-	// once instead of twice. It lands on the flag's own field only where the
-	// run also named the amount, because that is what the two checks below
-	// read: the trio check is the caller's flags and nothing else (R2, so a
-	// default never trips it), and checkCreateProject refuses an explicit
-	// amount with no account, this run having no installation whose state
-	// records one. A run that named no amount leaves the field empty: its
-	// figures are the defaults (budgetFigures) and the link is where they are
-	// created (creationBudgetAccount).
-	if o.createProject && o.budget > 0 && o.billingAccount == "" {
-		o.billingAccount = o.linkBilling
+	// (takeLinkedBudgetAccount), where --create-project says this run creates.
+	// A first run of fugaro setup creates without the flag, and its creation is
+	// settled in the wizard's settleCreation, which takes the account there.
+	if o.createProject {
+		o.takeLinkedBudgetAccount()
 	}
 	// The creation's own flags are checked here only where --create-project
 	// says this run creates: whether a run without it creates (a first run of
@@ -2263,6 +2256,27 @@ func (o *initOptions) budgetFigures() (int64, string) {
 		return o.budget, o.budgetCurrency
 	}
 	return managed.DefaultBudgetAmount, managed.DefaultBudgetCurrency
+}
+
+// takeLinkedBudgetAccount points a creating run's budget at the account it
+// links (D2216 of docs/managed-flag-ergonomics): --billing-account where the
+// caller gave one, --link-billing otherwise, so a caller names the account once
+// instead of twice. It lands on the flag's own field only where the run also
+// named the amount, because that is what the checks read: the door's trio check
+// is the caller's flags and nothing else (R2, so a default never trips it), and
+// checkCreateProject refuses an explicit amount with no account — a run that
+// named no amount leaves the field empty, its figures being the defaults
+// (budgetFigures) and the link where they are created (creationBudgetAccount).
+//
+// The callers are the two places a run's creation is settled, and there are two
+// because a first run of fugaro setup creates without --create-project: the
+// door, for a run that names the creation (check), and the wizard's
+// settleCreation, for the creation it settles there. Both come before the
+// checkCreateProject that refuses an amount with no account to put an alert on.
+func (o *initOptions) takeLinkedBudgetAccount() {
+	if o.budget > 0 && o.billingAccount == "" {
+		o.billingAccount = o.linkBilling
+	}
 }
 
 // creationBudgetAccount is the account a creating run's budget alert is on

@@ -296,6 +296,36 @@ func TestSetupBillingAccountDefaultsToLinked(t *testing.T) {
 	}
 }
 
+// TestSetupFirstRunTakesTheLinkedAccount: the account comes from the run's own
+// link on every creating run, and a first run of `fugaro setup` creates without
+// --create-project — settleCreation settles the creation the flags imply. That
+// is the run this pins: the account it links is taken there, before
+// checkCreateProject, which refused the run for a budget with no account on a
+// run that had one to put the alert on. A first run nobody is at (no terminal,
+// --json) reaches the same settle, because the flags are the whole answer.
+func TestSetupFirstRunTakesTheLinkedAccount(t *testing.T) {
+	o := &initOptions{door: setupDoor.name, linkBilling: billingAcc,
+		budget: 7, budgetCurrency: "EUR", cloud: cloudOptions{gcpProject: newProj}}
+	r := &initRun{o: o, w: &strings.Builder{}, cmd: NewRootCmd()}
+	if err := r.settleCreation(true); err != nil {
+		t.Fatalf("a first run that links billing and names a budget: %v", err)
+	}
+	if !o.createProject {
+		t.Fatalf("a first run of fugaro setup creates: createProject = %v", o.createProject)
+	}
+	if o.billingAccount != billingAcc {
+		t.Errorf("the run's budget account = %q, want the account it links, %q (D2216)", o.billingAccount, billingAcc)
+	}
+	// And what the run then creates an alert with is what it was told: the
+	// account the creation settled, and the flags' own figures.
+	if amount, currency := o.budgetFigures(); amount != 7 || currency != "EUR" {
+		t.Errorf("the run's budget figures = %d %s, want the flags' 7 EUR", amount, currency)
+	}
+	if got := o.creationBudgetAccount(); got != billingAcc {
+		t.Errorf("the account the installation's block is built on = %q, want %q", got, billingAcc)
+	}
+}
+
 // TestSetupExplicitBudgetWins: the flags are what a run was told, and the
 // defaults are only what it takes where nobody chose (D2212) — an explicit
 // amount and currency are the ones recorded and the ones the alert is created
