@@ -516,7 +516,7 @@ func TestInputsNamedTwiceAreRefused(t *testing.T) {
 // and the name refusals above (which judge the NAME) would have had nothing to
 // say about it: this is the mirror of the traversal hole and is closed the
 // same way, by refusing a link rather than following it, which is how
-// readRepoRecipe reads a repository file.
+// recipe.ReadRepoFile reads a repository file.
 //
 // Mutation (restore the MkdirAll calls in downloadInputs, i.e. drop the
 // !st.IsDir() arm of prepareInputDir / mkdirInputParents): the run succeeds and

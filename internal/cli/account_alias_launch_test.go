@@ -44,7 +44,7 @@ func TestLaunchResolvesAnAliasOnEveryRung(t *testing.T) {
 		f := newCloudFixture(t)
 		f.appendConfig(t, claudeAccountsConfig+aliasBlock("reviewer", "acme-overflow"))
 		oauthCheckout(t, f, "")
-		writeBuildRecord(t, f, otherSlug, "svc", release065)
+		writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 		f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 		if _, _, err := execute(t, "run", "--run-id", "20261111-120000-a1a1", "--token", "reviewer", "A task"); err != nil {
 			t.Fatal(err)
@@ -76,7 +76,7 @@ func TestLaunchResolvesAnAliasOnEveryRung(t *testing.T) {
 		f := newCloudFixture(t)
 		f.appendConfig(t, claudeAccountsConfig+aliasBlock("reviewer", "acme-overflow")+"default_claude_account: reviewer\n")
 		oauthCheckout(t, f, "")
-		writeBuildRecord(t, f, otherSlug, "svc", release065)
+		writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 		f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 		if _, _, err := execute(t, "run", "--run-id", "20261111-120000-a1a2", "A task"); err != nil {
 			t.Fatal(err)
@@ -97,7 +97,7 @@ func TestLaunchRefusesAnAliasWhoseTargetIsNotAdmitted(t *testing.T) {
 	f.appendConfig(t, "claude_accounts:\n  acme-elsewhere:\n    allow_data_to: [\"acme/person-1\"]\n"+
 		aliasBlock("reviewer", "acme-elsewhere")+"default_claude_account: reviewer\n")
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	_, _, err := execute(t, "run", "--run-id", "20261111-120000-a2a2", "A task")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user refusal", err)
@@ -121,7 +121,7 @@ func TestLaunchTaskCarriesTheResolvedAccount(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, claudeAccountsConfig+aliasBlock("reviewer", "acme-overflow")+"default_claude_account: reviewer\n")
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 	if _, _, err := execute(t, "run", "--run-id", "20261111-120000-a3a3", "A task"); err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestLaunchLineNamesTheAliasAndItsAccount(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, claudeAccountsConfig+aliasBlock("reviewer", "acme-overflow")+"default_claude_account: reviewer\n")
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 	out, _, err := execute(t, "run", "--run-id", "20261111-120000-a4a4", "A task")
 	if err != nil {
@@ -162,7 +162,7 @@ func TestLaunchLineNamesTheAliasAndItsAccount(t *testing.T) {
 	f2 := newCloudFixture(t)
 	f2.appendConfig(t, claudeAccountsConfig)
 	oauthCheckout(t, f2, "")
-	writeBuildRecord(t, f2, otherSlug, "svc", release065)
+	writeBuildRecord(t, f2, otherSlug, "svc", releaseSeal)
 	f2.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 	out, _, err = execute(t, "run", "--run-id", "20261111-120000-a5a5", "A task")
 	if err != nil {
@@ -184,7 +184,7 @@ func TestFollowUpLaunchLineNamesTheAliasItRead(t *testing.T) {
 	f.appendConfig(t, "claude_accounts:\n  acme-team:\n    allow_data_to: [\"acme/app\"]\n"+aliasBlock("reviewer", "acme-team"))
 	oauthCheckout(t, f, "")
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-team")), "2", "4Gi")
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--token", "reviewer", "--run-id", fuID, "A follow-up")
 	if err != nil {
@@ -204,7 +204,7 @@ func TestBatchLaunchLineNamesTheAliasOnEveryAttempt(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, claudeAccountsConfig+aliasBlock("reviewer", "acme-overflow"))
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	f.run.AddJob(gcp.JobName(otherSlug, gcp.WorkflowVariant("svc", "acme-overflow")), "2", "4Gi")
 	out, _, err := execute(t, "run", "--repo", "acme/other", "--attempts", "2", "--token", "reviewer", "A task")
 	if err != nil {
@@ -225,7 +225,11 @@ func TestReviewLaunchLineNamesTheAliasItRead(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, "claude_accounts:\n  acme-overflow: { allow_data_to: [\"acme/app\"] }\n"+aliasBlock("reviewer", "acme-overflow"))
 	baseBranchCheckout(t, "acme/app", aliasChainYAML, "main")
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	// releaseSeal and not release070: the launch mints, so the seal gate judges
+	// the job image (AB4, F7) and every fixture that launches needs an image at
+	// or above the seal. It is also above the alias accounts' own floor, which
+	// is the only other thing this line's subject turns on.
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-overflow")), "2", "4Gi")
 	const reviewRun = "20261007-100000-abcd"
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", reviewRun, "--recipe", "review-only", "--pr", "7", "--token", "reviewer")
@@ -337,7 +341,7 @@ func aliasRenameFixture(t *testing.T) *cloudFixture {
 	f.appendConfig(t, "claude_accounts:\n  acme-personal: { allow_data_to: [\"acme/app\"] }\n"+
 		aliasBlock("acme-overflow", "acme-personal"))
 	baseBranchCheckout(t, "acme/app", aliasChainYAML, "main")
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	// Both variants exist, so a launch that resolved the recorded name through
 	// the alias block would start on the other one rather than fail for a job
 	// the installation does not have: the refusal below is the alias rule's and
@@ -505,7 +509,7 @@ func followUpOnAliasedPR(t *testing.T, token, id string) (*cloudFixture, string)
 	f.appendConfig(t, "claude_accounts:\n  acme-overflow: { allow_data_to: [\"acme/app\"] }\n  acme-personal: { allow_data_to: [\"acme/app\"] }\n"+
 		"claude_account_aliases:\n  reviewer: acme-overflow\n  reviewer-other: acme-personal\n")
 	baseBranchCheckout(t, "acme/app", aliasChainYAML, "main")
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-overflow")), "2", "4Gi")
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-personal")), "2", "4Gi")
 	spec := firstRunSpec(rootID)
@@ -533,7 +537,7 @@ func aliasChainFixture(t *testing.T) *cloudFixture {
 	f.appendConfig(t, "claude_accounts:\n  acme-overflow: { allow_data_to: [\"acme/app\"] }\n  acme-personal: { allow_data_to: [\"acme/app\"] }\n"+
 		aliasBlock("reviewer", "acme-overflow")+"default_claude_account: reviewer\n")
 	baseBranchCheckout(t, limitsRepo, aliasChainYAML, "main")
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", releaseSeal)
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-overflow")), "2", "4Gi")
 	seedChainRun(t, f, chainRun, 0, task.Overrides{})
 	return f

@@ -1034,7 +1034,7 @@ func (rr *restoreRun) say(format string, args ...any) {
 // sayThrough is the writer a command prints its own lines through: the writer
 // it was given — a person's stdout, or the stderr a warning belongs on — and
 // the run's log beside it (D1352, Reporter.Log), so the log is the run's full
-// output and not only its steps, and a failure's "full output:" path holds the
+// output and not only its steps, and a failure's "Log:" path holds the
 // sentences the run printed under its step.
 func sayThrough(rep *report.Reporter, w io.Writer) io.Writer {
 	return through(rep, w, true)

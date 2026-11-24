@@ -52,6 +52,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/mobilesession"
 )
 
 const (
@@ -423,28 +425,28 @@ func ParseServedSet(doc []byte) (ServedSet, error) {
 	if err != nil {
 		return ServedSet{}, errors.New("identitysvc: the served key set's payload is not base64url")
 	}
-	var envelope struct {
-		Keys []struct {
-			KID string `json:"kid"`
-		} `json:"keys"`
-		ExpiresAt int64 `json:"exp"`
-	}
+	// The payload is C1's envelope (internal/mobilesession) — `format`, `seq`,
+	// `iat`, `exp`, and the project's key set nested under `jwks` — which is the
+	// shape A4's command writes, so the document is read as the contract's own
+	// type rather than as a second copy of it here that can drift from what is
+	// published.
+	var envelope mobilesession.KeySet
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		return ServedSet{}, errors.New("identitysvc: the served key set's payload is not a key set")
 	}
-	kids := make([]string, 0, len(envelope.Keys))
-	for _, k := range envelope.Keys {
-		if k.KID != "" {
-			kids = append(kids, k.KID)
+	kids := make([]string, 0, len(envelope.JWKS.Keys))
+	for _, k := range envelope.JWKS.Keys {
+		if k.Kid != "" {
+			kids = append(kids, k.Kid)
 		}
 	}
 	if len(kids) == 0 {
 		return ServedSet{}, errors.New("identitysvc: the served key set publishes no key")
 	}
-	if envelope.ExpiresAt <= 0 {
+	if envelope.Exp <= 0 {
 		return ServedSet{}, errors.New("identitysvc: the served key set carries no expiry, and a set that never ends is one the signer could never stop using")
 	}
-	return ServedSet{KIDs: kids, ExpiresAt: time.Unix(envelope.ExpiresAt, 0).UTC()}, nil
+	return ServedSet{KIDs: kids, ExpiresAt: time.Unix(envelope.Exp, 0).UTC()}, nil
 }
 
 // freshID is a fresh assertion id: 32 random bytes, hex. It is a value and

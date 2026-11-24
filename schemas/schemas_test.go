@@ -578,6 +578,97 @@ func TestTaskSchemaTierMatchesTheGoRules(t *testing.T) {
 	}
 }
 
+// TestRecipeNamePatternsMatchTheGoRule is the same tie for R19's name rule,
+// which three schemas carry: the recipe schema's own `name`, and the
+// `recipe.name` a task and a run record hold. The rule is recipe.IsNameOrCopy —
+// a recipe name, or the project's copy of one (PR0's grammar, D3302) — and the
+// two records' schemas are the surface a repository's CI and every external
+// reader check a run against, so a copy the launcher embeds in a task.json and
+// the runner writes into a run record has to be a name they accept; a schema
+// left on the flat name would refuse a migrated repository's own records. The
+// three are the same grammar as schemas/recipe.schema.json, held to it name by
+// name so they cannot drift apart.
+//
+// Mutation (put any of the three patterns back to the flat name): the copy
+// names below are refused by that schema and this test fails.
+func TestRecipeNamePatternsMatchTheGoRule(t *testing.T) {
+	patternOf := func(file string, path ...string) string {
+		t.Helper()
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatal(err)
+		}
+		raw, ok := doc.Properties[path[0]]
+		if !ok {
+			t.Fatalf("%s has no %s property", file, path[0])
+		}
+		for _, key := range path[1:] {
+			var step struct {
+				Properties map[string]json.RawMessage `json:"properties"`
+			}
+			if err := json.Unmarshal(raw, &step); err != nil {
+				t.Fatal(err)
+			}
+			if raw, ok = step.Properties[key]; !ok {
+				t.Fatalf("%s's %s has no %s property", file, strings.Join(path[:len(path)-1], "."), key)
+			}
+		}
+		var prop struct {
+			Pattern string `json:"pattern"`
+		}
+		if err := json.Unmarshal(raw, &prop); err != nil {
+			t.Fatal(err)
+		}
+		if prop.Pattern == "" {
+			t.Fatalf("%s's %s property carries no pattern", file, strings.Join(path, "."))
+		}
+		return prop.Pattern
+	}
+	maxCopy := recipe.CopyName(strings.Repeat("n", 40), "github", "acme/"+strings.Repeat("m", 60))
+	bounds := []struct {
+		name string
+		ok   bool
+	}{
+		{"solo", true},
+		{recipe.CopyName("review", "github", "acme/app-web"), true},
+		{maxCopy, true},
+		{"Review.acme-app-web-12345678", false},
+		{"review.acme-app-web", false},
+		{"review..acme-app-web-12345678", false},
+		{"solo.acme-app-web-12345678.yaml", false},
+		{strings.Repeat("n", 41) + ".acme-app-web-12345678", false},
+		{maxCopy + "m", false},
+	}
+	want := patternOf("recipe.schema.json", "name")
+	for _, h := range []struct {
+		file string
+		path []string
+	}{
+		{"recipe.schema.json", []string{"name"}},
+		{"task.schema.json", []string{"recipe", "name"}},
+		{"result.schema.json", []string{"recipe", "name"}},
+	} {
+		got := patternOf(h.file, h.path...)
+		if got != want {
+			t.Errorf("%s's %s pattern %q is not the recipe schema's name pattern %q", h.file, strings.Join(h.path, "."), got, want)
+			continue
+		}
+		pattern := regexp.MustCompile(got)
+		for _, b := range bounds {
+			if recipe.IsNameOrCopy(b.name) != b.ok || pattern.MatchString(b.name) != b.ok {
+				t.Errorf("%s's %s pattern says %v of %q, want %v (recipe.IsNameOrCopy says %v)",
+					h.file, strings.Join(h.path, "."), pattern.MatchString(b.name), b.name, b.ok, recipe.IsNameOrCopy(b.name))
+			}
+		}
+	}
+}
+
 // TestTaskSchemaInputs: the attached-files list a launcher writes (design
 // artifact-runs.md §4, plan Task 6) is an array of closed {name, bytes,
 // sha256} objects, and an absent list stays absent. The name's own shape
@@ -954,6 +1045,16 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			},
 			At:       runstore.RigorAtFinalize,
 			Revision: "origin/main"},
+		// And the plan (docs/review-levels-ab-jobmax V1.3): one entry per
+		// step of the loop after implement, each the rounds resolved for it
+		// -- the figures the Run screen draws a level's bar against. It
+		// rides the fully-populated record so a schema that did not name it
+		// would reject a record the runner writes.
+		Plan: &runstore.PlanRecord{Steps: []runstore.PlanStepRecord{
+			{Kind: "first_line", Rounds: 3},
+			{Kind: "review", Rounds: 2},
+			{Kind: "adversarial", Rounds: 2},
+		}},
 		// And the escalation (docs/security-classification SC6, D1509): the
 		// row of the list in force whose match turned review level 3 on for
 		// the run, and the seam it was decided at.

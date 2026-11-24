@@ -35,7 +35,7 @@ const vectorsPath = "../../shared/mailbox-schema/vectors.json"
 // map is T1's reading of the module's own rules rather than a quote of the
 // file — and it is here rather than omitted because "every accepted vector's
 // record validates" is only half a statement without the other half. The
-// remaining 22 cases are asserted to validate.
+// remaining 26 cases are asserted to validate.
 //
 // `field` is pinned as well, and it is the only refusal in the whole replay
 // whose field the two ends could answer differently: the code-point vector
@@ -73,8 +73,8 @@ func TestSchemaVectorsReplay(t *testing.T) {
 		t.Fatalf("the vectors' key is %q: the file's own rule is a readable placeholder, never a credential", key)
 	}
 	cases := list(t, file["cases"], "cases")
-	if len(cases) != 26 {
-		t.Fatalf("vectors.json carries %d cases, not 26: the file, not the replay, is what changed", len(cases))
+	if len(cases) != 29 {
+		t.Fatalf("vectors.json carries %d cases, not 29: the file, not the replay, is what changed", len(cases))
 	}
 
 	for _, entry := range cases {
@@ -219,8 +219,8 @@ func TestRecordsNestedInRecordsValidate(t *testing.T) {
 			}
 		})
 	}
-	if accepted != 23 {
-		t.Fatalf("%d cases were accepted, not the 23 the schema accepts", accepted)
+	if accepted != 26 {
+		t.Fatalf("%d cases were accepted, not the 26 the schema accepts", accepted)
 	}
 }
 
@@ -255,8 +255,8 @@ func TestSchemaVectorDirectionPairs(t *testing.T) {
 func TestSchemaVectorRefusals(t *testing.T) {
 	file := loadVectors(t)
 	refusals := list(t, file["refusals"], "refusals")
-	if len(refusals) != 40 {
-		t.Fatalf("vectors.json carries %d refusals, not 40: the file, not the replay, is what changed", len(refusals))
+	if len(refusals) != 48 {
+		t.Fatalf("vectors.json carries %d refusals, not 48: the file, not the replay, is what changed", len(refusals))
 	}
 	for _, entry := range refusals {
 		vector := object(t, entry, "refusal")
@@ -1844,6 +1844,7 @@ func TestBoundsMatchTheSharedModule(t *testing.T) {
 		"OPTIONS_MAX": OptionsMax, "OPTION_MAX": OptionMax, "TARGET_MAX": TargetMax,
 		"SHA_MIN": SHAMin, "SHA_MAX": SHAMax, "MAC_MAX": MACMax, "BOOT_MAX": BootMax,
 		"TOKEN_MAX": TokenMax, "ZONE_MAX": ZoneMax, "MINUTE_MAX": MinuteMax,
+		"MODE_MAX": ModeMax,
 	} {
 		got, ok := declared[name]
 		if !ok {
@@ -1854,8 +1855,8 @@ func TestBoundsMatchTheSharedModule(t *testing.T) {
 			t.Errorf("%s is %d in this package and %d in the module: the two ends disagree about a bound", name, want, got)
 		}
 	}
-	if len(declared) != 16 {
-		t.Errorf("the module declares %d numeric bounds and this test knows 16: a new one is a bound to bind, not to ignore", len(declared))
+	if len(declared) != 17 {
+		t.Errorf("the module declares %d numeric bounds and this test knows 17: a new one is a bound to bind, not to ignore", len(declared))
 	}
 
 	vocabulary := map[string][]string{
@@ -2202,8 +2203,8 @@ func TestTheSharedBoundVectorsHold(t *testing.T) {
 	file := loadBoundVectors(t)
 	accepts := list(t, file["accepts"], "accepts")
 	refusals := list(t, file["refusals"], "refusals")
-	if len(accepts) != 16 || len(refusals) != 11 {
-		t.Fatalf("vectors.bounds.json carries %d accepts and %d refusals, not 16 and 11: the file, not the replay, is what changed",
+	if len(accepts) != 17 || len(refusals) != 11 {
+		t.Fatalf("vectors.bounds.json carries %d accepts and %d refusals, not 17 and 11: the file, not the replay, is what changed",
 			len(accepts), len(refusals))
 	}
 
@@ -2234,8 +2235,8 @@ func TestTheSharedBoundVectorsHold(t *testing.T) {
 			}
 		})
 	}
-	if past != 15 {
-		t.Errorf("the file carries %d rows with a bound to walk, not 15: the file, not the replay, is what changed", past)
+	if past != 16 {
+		t.Errorf("the file carries %d rows with a bound to walk, not 16: the file, not the replay, is what changed", past)
 	}
 
 	for _, entry := range refusals {
