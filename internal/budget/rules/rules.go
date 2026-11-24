@@ -611,6 +611,12 @@ func wordMacro(m string, depth int) (string, error) {
 	case "KILLS_OFF":
 		return "(root.child('config/kill/global/on').val() != true && root.child('config/kill/repos').child($slug).child('on').val() != true)", nil
 	case "REPODAILY":
+		// The repository's daily cap, unclamped, unlike the per-run comparison
+		// (perRunClamp, spec §5.6 B18): B18's clamp is on the *lease check* --
+		// the lease leaf's per-run comparison -- and this leaf is the day
+		// counter a run's spend moves, over which the global comparison beside
+		// it already holds wherever a global cap is set (spec §5.6, Migration:
+		// "with a global cap set this changes nothing a run meets").
 		return fallback("dailyMicros", "repoDailyMicros"), nil
 	case "KINDREQ":
 		// The per-kind *required* half of a message's shape (P6.3's
@@ -1006,10 +1012,65 @@ func fallback(own, def string) string {
 // no coalesce, so a fallback is written as one of these.
 func tern(cond, a, b string) string { return "(" + cond + " ? " + a + " : " + b + ")" }
 
+// The three cap nodes the lease's per-run comparison reads: the repository's
+// own node, the default repository cap, and the project's global cap.
+const (
+	perRunOwnSnap     = "root.child('config/caps/repos').child($slug).child('perRunMicros')"
+	perRunDefaultSnap = "root.child('config/caps/defaults/repoPerRunMicros')"
+	perRunGlobalSnap  = "root.child('config/caps/global/perRunMicros')"
+)
+
+// perRunCeiling is the repository's per-run node's ceiling (spec §5.6, B18):
+// the project's global per-run cap where it is set, else the default
+// repository cap. It is *not* `fallback`, which reads the node first -- the
+// node is what is being clamped here. Where neither is set the ceiling is the
+// node itself, which leaves the node standing: a repository with a cap of its
+// own in a project with none is bounded by its own cap alone (the owner's
+// ruling of 2026-10-15, D6), and a comparison that read a missing default as
+// null would deny every lease there instead.
+func perRunCeiling() string {
+	return tern(perRunGlobalSnap+".exists()", perRunGlobalSnap+".val()",
+		tern(perRunDefaultSnap+".exists()", perRunDefaultSnap+".val()", perRunOwnSnap+".val()"))
+}
+
+// perRunClamp is the conjunct the lease's per-run comparison adds where the
+// repository's own node is the side that binds: the run's outstanding against
+// that node's ceiling, so a node above its ceiling counts as the ceiling (spec
+// §5.6, B18). It is a second comparison and not a minimum, because the rules
+// language has no minimum.
+//
+// Only that arm needs it. Where the repository has no node the side that binds
+// is the default, whose ceiling is the global cap -- which the comparison
+// beside it already applies -- or the default itself: either way the bound is
+// the ceiling. The repository's own arm is the one that can read a node above
+// its ceiling, which is exactly the write an admin lands over IAM, past the
+// refusals `fugaro budget set --repo` makes.
+//
+// `budget.Caps.RepoPerRun` clamps the same way (plan task RC1): one behaviour
+// with a reading on each side, and the rules' side is the one that holds
+// against a writer that is not the Go client.
+func perRunClamp(delta string) string {
+	return " && (" + delta + " <= " + perRunCeiling() + ")"
+}
+
+// perRunDelta is the run's lifetime outstanding after this write: the new
+// reserved less what it released. Written out rather than as the NEW macro, so
+// that expansion stays a single pass (a macro's expansion is never re-scanned).
+// Split from perRunOK so that rules_test.go can name the clause this branch
+// adds to the lease's validator without spelling the delta a second time.
+func perRunDelta(depth int) (string, error) {
+	released, err := pathMacro("N", "runs/$slug/$run/released", depth)
+	if err != nil {
+		return "", err
+	}
+	return "(newData.val() - " + released + ")", nil
+}
+
 // perRunOK is the lease's per-run cap comparison, the rules' half of
 // Caps.PerRun (design D6): the effective cap is the smaller of the
 // repository's own cap -- its node, else the default -- and the project's
-// global one, and a side that is not set does not bound the run. With no
+// global one, a repository node above its ceiling counts as the ceiling (spec
+// §5.6, B18), and a side that is not set does not bound the run. With no
 // per-run cap set anywhere the expression is false and the rules deny the
 // lease (fail closed: a missing node reads null and every comparison against
 // it is false).
@@ -1018,30 +1079,23 @@ func tern(cond, a, b string) string { return "(" + cond + " ? " + a + " : " + b 
 // unset side must not deny on its own: the global cap is the fallback of a
 // repository that has none, and the default is the fallback of a global one.
 func perRunOK(depth int) (string, error) {
-	released, err := pathMacro("N", "runs/$slug/$run/released", depth)
+	delta, err := perRunDelta(depth)
 	if err != nil {
 		return "", err
 	}
-	// The run's lifetime outstanding after this write: the new reserved less
-	// what it released. Written out rather than as the NEW macro, so that
-	// expansion stays a single pass (a macro's expansion is never re-scanned).
-	delta := "(newData.val() - " + released + ")"
-	own := "root.child('config/caps/repos').child($slug).child('perRunMicros')"
-	def := "root.child('config/caps/defaults/repoPerRunMicros')"
-	global := "root.child('config/caps/global/perRunMicros')"
 	// within is one side's bound: the run's outstanding, against the cap
 	// that node holds.
 	within := func(snap string) string { return "(" + delta + " <= " + snap + ".val())" }
-	hasOwn, hasDef, hasGlobal := own+".exists()", def+".exists()", global+".exists()"
-	// The repository's side is its own cap, else the default; the global
-	// side, where it is set, must hold too. A side that is not set does not
-	// bound the run: the global one is the fallback of a repository whose
-	// own side is unset, and with nothing set anywhere the expression is
-	// false (deny).
-	repoSide := tern(hasOwn, within(own), within(def))
+	hasOwn, hasDef, hasGlobal := perRunOwnSnap+".exists()", perRunDefaultSnap+".exists()", perRunGlobalSnap+".exists()"
+	// The repository's side is its own cap clamped to its ceiling, else the
+	// default; the global side, where it is set, must hold too. A side that is
+	// not set does not bound the run: the global one is the fallback of a
+	// repository whose own side is unset, and with nothing set anywhere the
+	// expression is false (deny).
+	repoSide := tern(hasOwn, within(perRunOwnSnap)+perRunClamp(delta), within(perRunDefaultSnap))
 	return tern(hasOwn+" || "+hasDef,
-		repoSide+" && "+tern(hasGlobal, within(global), "true"),
-		tern(hasGlobal, within(global), "false")), nil
+		repoSide+" && "+tern(hasGlobal, within(perRunGlobalSnap), "true"),
+		tern(hasGlobal, within(perRunGlobalSnap), "false")), nil
 }
 
 // MaxTokenLength bounds a registration's push token (mobile plan task P5.2.2,
