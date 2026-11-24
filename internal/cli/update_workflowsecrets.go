@@ -216,11 +216,14 @@ func workflowSecretMountID(ready infra.RepoSpec, logical string) string {
 // the enabled one.
 //
 // A name whose `fugaro_p_` container is ALREADY there with the intake's shape
-// gets no version from this step. Two states reach that branch and both are the
-// same answer: a previous update copied it, or the owner stored the name with
-// `fugaro secrets set` since, which is newer than anything the project copy
-// holds (D3323 made that store the intake's). Which of the two it is does not
-// matter — the container's own version is the one a run reads from now on.
+// AND holds an enabled version gets no version from this step. Two states reach
+// that branch and both are the same answer: a previous update copied it, or the
+// owner stored the name with `fugaro secrets set` since, which is newer than
+// anything the project copy holds (D3323 made that store the intake's). Which
+// of the two it is does not matter — the container's own version is the one a
+// run reads from now on. A container of that shape with no enabled version is
+// filled, which is the one state the step writes into a container it did not
+// make itself.
 //
 // # Never a value
 //
