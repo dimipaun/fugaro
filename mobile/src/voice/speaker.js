@@ -28,9 +28,12 @@
 // a barge-in (`interrupted`), an utterance already in flight
 // (`already-speaking`), a voice the engine would not start. Only `bad-text` is
 // carried through as itself, because "there was nothing to say" is the one
-// refusal the client's caller can fix. Nothing here reads a clock, a device or
-// a network, and nothing is logged: an utterance is text, and text is what the
-// mailbox carries (D118).
+// refusal the client's caller can fix. The port's optional second argument --
+// the client's word on what it is saying, its own refusal sentence or a reply
+// -- is provenance and not audio, so it stops here: the pipeline says the text
+// and nothing else. Nothing here reads a clock, a device or a network, and
+// nothing is logged: an utterance is text, and text is what the mailbox carries
+// (D118).
 
 import { TTS_CODES, isVoicePipeline } from '../audio/index.js';
 import { SPEAK_CODES } from '../mailbox/index.js';
@@ -53,6 +56,8 @@ export function createPipelineSpeaker({ pipeline } = {}) {
      * Speak one reply, and answer whether the owner heard it.
      *
      * @param {string} text what to say
+     * @param {object} [speech] the client's word on what it is saying, which is
+     *   not audio and is dropped here (see the header)
      * @returns {Promise<{ ok: true } | { ok: false, code: string, field: string }>}
      */
     async speak(text) {
