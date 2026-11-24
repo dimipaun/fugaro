@@ -594,8 +594,7 @@ func (k cg4NoStrayKeys) Keys(ctx context.Context, path string) ([]string, error)
 
 // TestClaimRefresh is the holder's own half of a claim's life: the node records
 // the server time its holder last confirmed the item was still its own, and the
-// beat is what re-writes that stamp (Refresh with nothing settled), so a daemon
-// that is driving never looks like one that stopped.
+// beat is what re-writes that stamp (Refresh with nothing settled).
 //
 // What it re-stamps is only its own. A claim a rival holds is left alone (a
 // refresh is not a takeover), a claim node this release cannot read is left for
@@ -673,7 +672,7 @@ func TestClaimRefresh(t *testing.T) {
 			t.Errorf("%s is claimed by %q after the refresh, not %q", tc.what, holder, tc.by)
 		}
 		if at != later.UTC().Format(time.RFC3339) {
-			t.Errorf("%s is stamped %q after the refresh, not the beat's own server time (%s): a rival measures a missing lease node from this", tc.what, at, later.UTC().Format(time.RFC3339))
+			t.Errorf("%s is stamped %q after the refresh, not the beat's own server time (%s): the node records when its holder last confirmed the item was still its own", tc.what, at, later.UTC().Format(time.RFC3339))
 		}
 	}
 	for _, tc := range []struct {
@@ -719,73 +718,79 @@ func cg4PathOf(t *testing.T, ref orchestrator.ItemRef) string {
 // leaves the claim of an item that settled before the read standing for ever.
 func TestClaimReleasedWhenTheItemSettles(t *testing.T) {
 	ctx := context.Background()
-	f := gcpfake.NewRTDB(t)
 	now := o6Now()
 
-	item := workItemOf("wi-1")
-	item.PlanTask = cg4PlanTask
-	item.Phase = orchestrator.PhaseRunning
-	item.RunID = "20261107-120000-aaaa"
-	item.Attempts = 1
-	s := o6Node(t, now, item)
-	s.AgentID = cg4First
+	// Both phases that finish an item: a task whose run landed its work and one
+	// a person cancelled are the same thing to the claim — work nobody is on.
+	for _, phase := range []orchestrator.Phase{orchestrator.PhaseDone, orchestrator.PhaseCancelled} {
+		t.Run(string(phase), func(t *testing.T) {
+			f := gcpfake.NewRTDB(t)
+			item := workItemOf("wi-1")
+			item.PlanTask = cg4PlanTask
+			item.Phase = orchestrator.PhaseRunning
+			item.RunID = "20261107-120000-aaaa"
+			item.Attempts = 1
+			s := o6Node(t, now, item)
+			s.AgentID = cg4First
 
-	claims := cg4Claim(t, rtdbClient(t, f), cg4First, clockAt(now))
-	ref := orchestrator.ClaimRef(cg4First, item)
-	if took, err := claims.Take(ctx, ref); err != nil || !took {
-		t.Fatalf("the take before the item settles: took=%v, err=%v", took, err)
-	}
-	path, err := orchestrator.ClaimPath(ref)
-	if err != nil {
-		t.Fatalf("building the claim path: %v", err)
-	}
+			claims := cg4Claim(t, rtdbClient(t, f), cg4First, clockAt(now))
+			ref := orchestrator.ClaimRef(cg4First, item)
+			if took, err := claims.Take(ctx, ref); err != nil || !took {
+				t.Fatalf("the take before the item settles: took=%v, err=%v", took, err)
+			}
+			path, err := orchestrator.ClaimPath(ref)
+			if err != nil {
+				t.Fatalf("building the claim path: %v", err)
+			}
 
-	// What a cycle reads at its own last step: the claim path of every item its
-	// nodes carry finished.
-	done := orchestrator.PhaseDone
-	after := o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{ID: item.ID, Phase: &done}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
-	settled := map[string]bool{}
-	for _, w := range after.WorkItems {
-		if !w.Phase.Done() {
-			continue
-		}
-		p, err := orchestrator.ClaimPath(orchestrator.ClaimRef(after.AgentID, w))
-		if err != nil {
-			t.Fatalf("building the claim path of %q: %v", w.ID, err)
-		}
-		settled[p] = true
-	}
-	if !settled[path] {
-		t.Fatalf("the node's finished item is claimed at %v, and the cycle's own reading does not name it", settled)
-	}
+			// What a cycle reads at its own last step: the claim path of every
+			// item its nodes carry finished.
+			settledPhase := phase
+			after := o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpWorkItemUpsert, WorkItem: &orchestrator.WorkItemOp{ID: item.ID, Phase: &settledPhase}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
+			settled := map[string]bool{}
+			for _, w := range after.WorkItems {
+				if !w.Phase.Done() {
+					continue
+				}
+				p, err := orchestrator.ClaimPath(orchestrator.ClaimRef(after.AgentID, w))
+				if err != nil {
+					t.Fatalf("building the claim path of %q: %v", w.ID, err)
+				}
+				settled[p] = true
+			}
+			if !settled[path] {
+				t.Fatalf("the node's %s item is claimed at %v, and the cycle's own reading does not name it", phase, settled)
+			}
 
-	if err := claims.Refresh(ctx, settled); err != nil {
-		t.Fatalf("releasing the claims of what settled: %v", err)
-	}
-	if v := f.Value(path); v != nil {
-		t.Errorf("the claim is still on the node as %#v after the item settled", v)
-	}
+			if err := claims.Refresh(ctx, settled); err != nil {
+				t.Fatalf("releasing the claims of what settled: %v", err)
+			}
+			if v := f.Value(path); v != nil {
+				t.Errorf("the claim is still on the node as %#v after the item settled", v)
+			}
 
-	// The same read again releases nothing and fails nothing: the node is gone,
-	// which is the state a release that already landed left behind.
-	if err := claims.Refresh(ctx, settled); err != nil {
-		t.Fatalf("the second release pass: %v", err)
-	}
-	if v := f.Value(path); v != nil {
-		t.Errorf("the claim came back as %#v on a second pass over the same finished item", v)
-	}
+			// The same read again releases nothing and fails nothing: the node is
+			// gone, which is the state a release that already landed left behind.
+			if err := claims.Refresh(ctx, settled); err != nil {
+				t.Fatalf("the second release pass: %v", err)
+			}
+			if v := f.Value(path); v != nil {
+				t.Errorf("the claim came back as %#v on a second pass over the same finished item", v)
+			}
 
-	// And a claim taken on an item that settled before the read is released by
-	// it: the item is finished whatever cycle wrote it, so the claim of a holder
-	// that died after the write landed does not stand for ever.
-	if took, err := claims.Take(ctx, ref); err != nil || !took {
-		t.Fatalf("the take of a settled item: took=%v, err=%v", took, err)
-	}
-	if err := claims.Refresh(ctx, settled); err != nil {
-		t.Fatalf("the pass over a node whose item had already settled when the cycle read it: %v", err)
-	}
-	if v := f.Value(path); v != nil {
-		t.Errorf("the claim is still on the node as %#v, and the item was finished before the read that releases it", v)
+			// And a claim taken on an item that settled before the read is released
+			// by it: the item is finished whatever cycle wrote it, so the claim of
+			// a holder that died after the write landed does not stand for ever.
+			if took, err := claims.Take(ctx, ref); err != nil || !took {
+				t.Fatalf("the take of a settled item: took=%v, err=%v", took, err)
+			}
+			if err := claims.Refresh(ctx, settled); err != nil {
+				t.Fatalf("the pass over a node whose item had already settled when the cycle read it: %v", err)
+			}
+			if v := f.Value(path); v != nil {
+				t.Errorf("the claim is still on the node as %#v, and the item was finished before the read that releases it", v)
+			}
+		})
 	}
 }
 

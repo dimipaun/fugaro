@@ -1119,9 +1119,9 @@ func (d *orchestratorDaemon) loop(ctx context.Context) error {
 // A refresh that failed is not the lease's failure, and this does not answer it
 // the way the loop answers a beat that failed: a lease failure has one answer
 // (the loop's own comment), while a claim whose stamp could not be written is a
-// stamp that goes stale — and stopping the daemon over it would cost the project
-// every other item it drives. It is said instead, once per failed beat, and the
-// beat goes on.
+// node that no longer says when its holder last confirmed the item was still its
+// own — and stopping the daemon over it would cost the project every other item
+// it drives. It is said instead, once per failed beat, and the beat goes on.
 func (d *orchestratorDaemon) beatAndRefresh(ctx context.Context) error {
 	if err := d.lease.Beat(ctx); err != nil {
 		return err
