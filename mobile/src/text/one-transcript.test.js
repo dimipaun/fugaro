@@ -49,6 +49,7 @@ import { createMailboxClient } from '../mailbox/client.js';
 import { MemoryConnection } from '../mailbox/connection.js';
 import { macOf } from '../mailbox/mac.js';
 import { MemoryMailboxStore } from '../mailbox/store.js';
+import { GATE_CODES, OFFLINE_SPEECH } from '../mailbox/gate.js';
 import { createPipelineSpeaker } from '../voice/speaker.js';
 import {
   NO_CONVERSATION,
@@ -207,6 +208,10 @@ async function harness() {
     db,
     /** Every path the store was written to, in order. */
     pathsWritten: () => db.writes().map((entry) => entry.path),
+    /** Move the clock, so P1.4's presence can age without a wait. */
+    advance: (ms) => {
+      nowMs += ms;
+    },
     /** Plant the orchestrator's signed heartbeat, the way `fugaro watch` does. */
     plantHeartbeat: async () => {
       const base = { at: nowMs - 1_000, boot: 'boot-0001' };
@@ -354,4 +359,29 @@ test('words the gate refused are absent from the conversation, and the view says
     'and the view says nothing has been said rather than drawing a line nobody heard',
   );
   assert.deepEqual(drawn(h.transcript.entries()), []);
+});
+
+// ---------------------------------------------------------------------------
+// 5. The app's own sentence is not the agent talking.
+// ---------------------------------------------------------------------------
+
+test('the refusal the app speaks over the same port is not an agent line in the text view', async () => {
+  const h = await harness();
+  await h.plantHeartbeat();
+  await h.screen.poll();
+  // The orchestrator's heartbeat goes quiet: P1.4's `stale`, which the screen
+  // does not call offline, so the words reach the client and the CLIENT refuses
+  // them -- speaking the gate's sentence through the very port the transcript
+  // sits behind (S6.3). The same port speaks the outbox's replies, so this is
+  // the case the wrapper must tell apart.
+  h.advance(5 * INTERVAL_MS);
+
+  await h.speak('run the tests');
+
+  assert.deepEqual(h.tts.spoken(), [OFFLINE_SPEECH[GATE_CODES.CONSUMER_STALE]], 'the owner was told why');
+  assert.deepEqual(h.pathsWritten().filter((path) => path.startsWith(`${INBOX}/`)), [], 'and nothing was sent');
+  assert.deepEqual(h.transcript.entries(), [],
+    'and the app telling the owner about itself is not the agent speaking');
+  assert.equal(shown(h.transcript.entries()).includes(NO_CONVERSATION), true,
+    'so the view still says nothing has been said');
 });

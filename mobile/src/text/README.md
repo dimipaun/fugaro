@@ -225,7 +225,12 @@ happened.
 the client refused appends nothing (D167's `unsent` is where refused text stays
 visible), and a reply the speaker could not speak appends nothing either (the
 client leaves the message unacked and the next poll says it again). The
-transcript is not a history of what the owner attempted.
+transcript is not a history of what the owner attempted. Nor is the **app's own
+speech** a line: the client says its refusal — "No connection. I have not sent
+that." — over the same speaker port it speaks replies through (S6.3), marks it
+as a refusal, and the transcript records nothing for it, because the agent never
+said it. What the owner heard is the voice and text views' own `refused` state,
+not a reply.
 
 **Who writes it, and why there are four seams and not one.** The voice view
 records its own spoken words (the engine tag is a fact only it holds at that

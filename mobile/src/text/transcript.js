@@ -42,7 +42,11 @@
 //     write path;
 //   * the agent's **reply**: `transcriptSpeaker` below, wrapped around the
 //     mailbox client's speaker port, so a reply spoken out of the outbox is the
-//     reply the transcript holds. One read, one path (D2788).
+//     reply the transcript holds. One read, one path (D2788). That port is the
+//     app's own voice as well as the agent's: the client says its refusal
+//     sentences through the same `speak` (S6.3), marks them as what they are,
+//     and `transcriptSpeaker` records none of them -- a refusal is the app
+//     telling the owner why nothing was sent, never the agent's words.
 //
 // **A refused line is not a line.** The transcript holds what reached the
 // session with the operator's session: an utterance the mailbox refused was not
@@ -278,14 +282,24 @@ export function createTranscript(options = {}) {
  * (D2788): the reply is not read a second time from anywhere, and there is no
  * second door into the transcript for the agent's words.
  *
- * A speak that did not happen records nothing -- see the header: the message
- * stays unacked and the next poll says it again, so a line recorded here would
- * be the same sentence in the transcript twice.
+ * **The app's own sentences are not lines.** The client speaks its refusals
+ * through this same port (S6.3), and one of those -- "No connection. I have not
+ * sent that." -- is the app telling the owner what it just did with their
+ * words. It marks that speech (`{ refusal: true }`, the port's second
+ * argument), and this wrapper records nothing for it: a refusal is the voice
+ * and text views' own `refused` state, and a line for it would be the
+ * transcript putting words in the agent's mouth. A port that says nothing about
+ * the speech is saying a reply.
+ *
+ * A speak that did not happen records nothing either -- see the header: the
+ * message stays unacked and the next poll says it again, so a line recorded
+ * here would be the same sentence in the transcript twice.
  *
  * @param {object} deps
  * @param {object} deps.transcript a transcript (`createTranscript`)
  * @param {object} deps.speaker the port the client speaks through
- *   (`{ speak(text) }`, e.g. `src/voice/speaker.js`'s `createPipelineSpeaker`)
+ *   (`{ speak(text, speech?) }`, e.g. `src/voice/speaker.js`'s
+ *   `createPipelineSpeaker`)
  * @returns {object} the port the app hands `createMailboxClient`
  * @throws {TypeError} for a transcript or a speaker that is not one
  */
@@ -297,14 +311,18 @@ export function transcriptSpeaker({ transcript, speaker } = {}) {
 
   return Object.freeze({
     /**
-     * Speak one reply and record it as the agent's line, if it was spoken.
+     * Speak one reply and record it as the agent's line, if it was spoken and
+     * it was the agent's.
      *
      * @param {string} text what to say
+     * @param {object} [speech] the client's word on what it is saying (S6.3):
+     *   `{ refusal: true }` for the app's own refusal sentence
      * @returns {Promise<object>} the wrapped port's own verdict, unchanged
      */
-    async speak(text) {
-      const said = await speaker.speak(text);
-      if (said !== null && typeof said === 'object' && said.ok === true) {
+    async speak(text, speech) {
+      const said = await speaker.speak(text, speech);
+      const isRefusal = speech !== null && typeof speech === 'object' && speech.refusal === true;
+      if (said !== null && typeof said === 'object' && said.ok === true && !isRefusal) {
         // The line the store refused is not this port's answer to give: the
         // client asks one question ("did the owner hear it?") and a refusal
         // here would be a reply the client would not ack over a fault that is

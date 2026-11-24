@@ -334,6 +334,29 @@ test('a reply that was not spoken is not a line', async () => {
   assert.deepEqual(h.transcript.entries(), []);
 });
 
+test('the app\'s own refusal sentence is spoken, and is not the agent\'s line', async () => {
+  // The client says its refusal through the same port it speaks replies
+  // through (S6.3), so the wrapper is handed a sentence the agent never said:
+  // it is what the owner is TOLD when their own words were not sent, and the
+  // client marks it as what it is.
+  const h = makeStore();
+  const speaker = fakeSpeaker();
+  const port = transcriptSpeaker({ transcript: h.transcript, speaker });
+  const sentence = 'No connection. I have not sent that.';
+
+  const said = await port.speak(sentence, { refusal: true });
+
+  assert.equal(said, speaker.verdict, 'the client\'s question is still answered by the port itself');
+  assert.deepEqual(speaker.spoken, [sentence], 'and the owner heard it');
+  assert.deepEqual(h.transcript.entries(), [], 'but the agent did not say it, so it is not a line');
+
+  // A reply spoken over the same port is unaffected -- the rule is the speech
+  // the client marked, not everything that is said while the app is talking.
+  await port.speak('Run 42 finished.');
+  assert.deepEqual(h.transcript.entries().map((one) => [one.who, one.source, one.text]),
+    [['agent', 'outbox', 'Run 42 finished.']]);
+});
+
 test('the speaker wrapper refuses a transcript or a port that is not one', () => {
   const speaker = fakeSpeaker();
   assert.throws(() => transcriptSpeaker(), TypeError);

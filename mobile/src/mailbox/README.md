@@ -17,7 +17,7 @@ const client = createMailboxClient({
   store,                      // { write(path, value), read(path) } -- the database, behind a port
   connection,                 // { isOnline() } -- the SDK's own "would this be sent" flag (P6.10)
   licence,                    // { at(now) } -- the app's licence state (S6.3; optional, see "The lapse")
-  speaker,                    // { speak(text) } -- P3.4's seam (see "The audio stub" below)
+  speaker,                    // { speak(text, speech?) } -- P3.4's seam (see "The audio stub" below)
   now,                        // D117's server-anchored now, in ms
   newId,                      // a fresh message id per call
   secrets,                    // P1.3's secret list (D118)
@@ -456,10 +456,17 @@ client, so a built app speaks through P3.4's pipeline and the client never
 learns what is behind the port. The port itself stays this module's own -- the
 mailbox module keeps its `MemorySpeaker`, and merging the two into one would be
 a second way to speak. So `speaker.js` is a one-method seam of this
-task's own -- `speak(text)` returning
+task's own -- `speak(text, speech?)` returning
 `{ ok: true }`, or `{ ok: false, code, field }` with a code from
 `SPEAK_CODES` (`bad-text`, `speak-failed`) -- with `MemorySpeaker` as its
-double. (The refusal shape was written as `{ id, code }` here until the
+double. The optional `speech` is the client's word on WHAT it is saying, and it
+is provenance rather than audio: the client speaks two things over this one
+port, a reply it read out of the outbox and -- when the owner's message was not
+sent -- the refusal sentence it looked up in `gate.js` or `licence/state.js`
+(S6.3), and `REFUSAL_SPEECH` is how a port that keeps the conversation
+(`src/text/transcript.js`, X1/D2788) tells them apart without reaching into
+either table. A port that keeps no conversation ignores it, as the pipeline
+adapter and `MemorySpeaker` do. (The refusal shape was written as `{ id, code }` here until the
 review's last round; that is the shape of the client's own `unspoken` list,
 which names the message the refusal is about, not the port's.) What
 P3.6 needs from it is exactly one thing: **whether the utterance was spoken**,

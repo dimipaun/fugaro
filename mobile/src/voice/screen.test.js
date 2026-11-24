@@ -54,6 +54,7 @@ import { QUEUE_CAP, SCREEN_CODES, createVoiceScreen } from './screen.js';
 import { DIALOGUE_OUTCOME, createVoiceDialogue } from './dialogue.js';
 import { INTERRUPT_SWITCH } from './interrupt.js';
 import { createPipelineSpeaker } from './speaker.js';
+import { createTranscript } from '../text/index.js';
 
 /** A mailbox id shaped like an Auth uid, and never a real one. */
 const UID = 'AbCdEf0123456789ghIJkl';
@@ -151,6 +152,9 @@ async function harness(options = {}) {
     ...(options.utterance === undefined ? {} : { utterance: options.utterance }),
     ...(options.indicator === undefined ? {} : { indicator: options.indicator }),
     ...(options.engine === undefined ? {} : { engine: options.engine }),
+    // X1's conversation (D2788): wired only where a test asks for one, because
+    // the store is the test's own and the screen is handed its list.
+    ...(options.transcript === undefined ? {} : { transcript: options.transcript }),
   });
   return {
     audioIn,
@@ -529,6 +533,41 @@ test('stale is not offline for the screen, and P6.10 is what refuses it', async 
     [],
     'and nothing was written',
   );
+});
+
+test('a send the client refused is not a line in the one conversation, and one it accepted is', async () => {
+  // X1's recording rule (D2788) at the door the voice view writes through: the
+  // conversation holds the words that REACHED the session. A refusal is not a
+  // line -- D167's `unsent` is where refused text stays visible -- so the guard
+  // sits at the accept, before anything is recorded. This is the guard a
+  // reader cannot see: `record` is three lines below the refusal's return, and
+  // moving it up one statement would put words in the conversation that the
+  // agent was never sent.
+  const transcript = createTranscript({ now: () => T0, newId: () => 'l-1' });
+  const h = await harness({ transcript });
+  await h.plantHeartbeat();
+  h.advance(5 * INTERVAL_MS);
+  await h.screen.poll();
+
+  // P6.10's gate refuses the stale consumer, and the refusal SPEAKS (`gate.js`'s
+  // sentence), so the utterance is played out the way every other one here is.
+  const refused = h.screen.accept('run the tests');
+  await settle();
+  h.tts.finish();
+  assert.equal((await refused).ok, false, 'the client refused it');
+  await settle();
+  assert.deepEqual(h.pathsWritten().filter((path) => path.includes('/inbox/')), []);
+  assert.deepEqual(transcript.entries(), [], 'and the conversation did not take it');
+
+  // The same phone with a live consumer: the words reach the session, and the
+  // line is the operator's own -- so the assertion above is about the refusal
+  // and not about a screen that records nothing at all.
+  h.setNow(T0);
+  const sent = await h.screen.accept('ship the release notes');
+  await settle();
+  assert.equal(sent.ok, true, 'and the same door sends when nothing refuses it');
+  assert.deepEqual(transcript.entries().map((one) => [one.who, one.source, one.text]),
+    [['operator', 'voice', 'ship the release notes']]);
 });
 
 test('a transcript that arrives while offline is refused too, and nothing is written', async () => {
