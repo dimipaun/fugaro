@@ -242,7 +242,7 @@ const (
 	// this service serves a workflow secret from (F18, G2): no marker, so it is
 	// the project's own credential of that name rather than a workflow secret's.
 	// The fix is the operator's, and the sentence names it.
-	workflowSecretUnmarked = "that workflow secret's container is not marked as one, so this service does not serve it: an operator runs `fugaro update --repo` or `fugaro secrets shared set NAME`"
+	workflowSecretUnmarked = "that container is not marked as a workflow secret's, so this service does not serve it: an operator runs `fugaro secrets shared set NAME`"
 	// workflowSecretFlipPending answers version 2 while `config.RepoSecretsOff`
 	// is false (G9, F24): a repository's own copies are still in force, so a
 	// project copy would shadow them. Nothing a caller can do; the sentence

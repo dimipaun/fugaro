@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,10 @@ func newBuildCredsSvc(t *testing.T, extra ...func(*svc, *Config)) *buildCredsFix
 		// document, the workflow secrets' values beside it.
 		cfg.Bundles = &BundleLoader{Source: reads.dyn, Now: func() time.Time { return s.now }}
 		cfg.WorkflowSecrets = reads.records
+		// The project record too: a build's own mounts can name a `fugaro_p_`
+		// container, and F13 holds that route to the same fence the by-name
+		// route is held to (IS1).
+		cfg.ProjectSecrets = reads.projects
 		// The class is rebuilt rather than added to, because a class is decided
 		// from the verified email and the fixture's own verifier would otherwise
 		// refuse every one of these three accounts as an unknown caller — the
@@ -1031,3 +1036,115 @@ func TestBuildCredentialsRoutePathIsTheServicesOwn(t *testing.T) {
 // so that "the reader failed" is a state a test can set with no cloud and no
 // transport.
 var errBuildCredsFixtureRead = errors.New("the fixture's container reader failed")
+
+// TestBuildCredentialsV2 is F13 (D3328, D3333, G2): a build's own mounts can
+// name a `fugaro_p_<name>` container, and the route that reads it is held to the
+// SAME fence the version-2 workflow-secrets route is held to — the owner's
+// record must admit the caller's own repository to the name, and the container
+// must carry the workflow-secret marker — so the two routes that can reach a
+// project container cannot disagree about who may.
+//
+// The gate is NOT the one G9 names: `config.RepoSecretsOff` is a property of
+// version 2 and is deliberately not read here, because this route's container is
+// the one the repository's own record named and the operator's `update` controls.
+// The first case is served with the door SHUT, which is what pins that.
+func TestBuildCredentialsV2(t *testing.T) {
+	if !config.RepoSecretsOff {
+		t.Fatalf("config.RepoSecretsOff is false in this package, so this test cannot see the door it is about")
+	}
+	// The caller's own record puts its variable in the PROJECT container — the
+	// shape a repository whose workflow mounts a shared secret has.
+	projectRow := func(f *buildCredsFixture) {
+		mine := f.rows[testRepoPath]
+		f.reads.records.recs[mine.Slug] = creds.WorkflowSecrets{
+			Version: creds.WorkflowSecretsVersion,
+			Workflows: map[string][]creds.WorkflowSecret{
+				testWorkflow: {{Env: testWorkflowEnv, ID: testSharedContainer}},
+			},
+		}
+	}
+
+	t.Run("a project container the record admits and the intake marked", func(t *testing.T) {
+		f := newBuildCredsSvc(t)
+		projectRow(f)
+		mine := f.rows[testRepoPath]
+		resp, raw := f.call(t, mine, buildCredsBody(testWorkflow, []string{testWorkflowEnv}, testAppID))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("a build was refused its own repository's project secret: %d %s", resp.StatusCode, raw)
+		}
+		ans := readBuildCredsAnswer(t, raw)
+		if len(ans.Secrets) != 1 || ans.Secrets[0].Env != testWorkflowEnv || ans.Secrets[0].Value != f.reads.sharedValue {
+			t.Errorf("the answer's secrets = %+v, want the project container's value", ans.Secrets)
+		}
+		if f.reads.projects.reads != 1 {
+			t.Errorf("the project record was read %d times, want once: the allow-list is the fence", f.reads.projects.reads)
+		}
+		if want := []string{testSharedContainer}; !slices.Equal(f.reads.dyn.markerReads, want) {
+			t.Errorf("the markers read = %v, want %v", f.reads.dyn.markerReads, want)
+		}
+		f.onlyAuditLine(t)
+		if strings.Contains(f.audit.String(), f.reads.sharedValue) {
+			t.Errorf("an audit line carries the project secret's value")
+		}
+	})
+
+	t.Run("a repository the record does not admit", func(t *testing.T) {
+		f := newBuildCredsSvc(t)
+		projectRow(f)
+		f.reads.projects.rec = projectRecord(testOtherRepoPath)
+		mine := f.rows[testRepoPath]
+		resp, raw := f.call(t, mine, buildCredsBody(testWorkflow, []string{testWorkflowEnv}, testAppID))
+		if resp.StatusCode != StatusUnverified {
+			t.Fatalf("a build of an unlisted repository was answered %d %s", resp.StatusCode, raw)
+		}
+		if e := refusal(t, resp.StatusCode, raw); e.Error != ErrorWorkflowSecretNotAllowed {
+			t.Errorf("the refusal = %q, want %q", e.Error, ErrorWorkflowSecretNotAllowed)
+		}
+		if len(f.reads.dyn.reads) != 0 {
+			t.Errorf("a refused build read the container's value (%v)", f.reads.dyn.reads)
+		}
+		if len(f.reads.dyn.markerReads) != 0 {
+			t.Errorf("a refused build read the container's marker (%v)", f.reads.dyn.markerReads)
+		}
+		f.onlyAuditLine(t)
+	})
+
+	t.Run("a container with no marker", func(t *testing.T) {
+		f := newBuildCredsSvc(t)
+		projectRow(f)
+		delete(f.reads.dyn.marked, testSharedContainer)
+		mine := f.rows[testRepoPath]
+		resp, raw := f.call(t, mine, buildCredsBody(testWorkflow, []string{testWorkflowEnv}, testAppID))
+		if resp.StatusCode != StatusUnavailable {
+			t.Fatalf("a build was answered %d for an unmarked container %s", resp.StatusCode, raw)
+		}
+		if e := refusal(t, resp.StatusCode, raw); e.Error != ErrorWorkflowSecretUnmarked {
+			t.Errorf("the refusal = %q, want %q", e.Error, ErrorWorkflowSecretUnmarked)
+		}
+		if len(f.reads.dyn.reads) != 0 {
+			t.Errorf("the value of an unmarked container was read (%v); the marker is asked for first", f.reads.dyn.reads)
+		}
+		f.onlyAuditLine(t)
+	})
+
+	t.Run("a container outside the grammar is served as today", func(t *testing.T) {
+		f := newBuildCredsSvc(t)
+		mine := f.rows[testRepoPath]
+		// The fixture's own record names `aurora-implement-deploy`, which is not
+		// in the grammar: it is the project copy `update` derives under D2313, or
+		// a repository's own copy, and neither is served through the fence.
+		resp, raw := f.call(t, mine, buildCredsBody(testWorkflow, []string{testWorkflowEnv}, testAppID))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("a build was refused its own record's container: %d %s", resp.StatusCode, raw)
+		}
+		if ans := readBuildCredsAnswer(t, raw); len(ans.Secrets) != 1 || ans.Secrets[0].Value != f.reads.value {
+			t.Errorf("the answer's secrets = %+v, want the record's own container's value", ans.Secrets)
+		}
+		if f.reads.projects.reads != 0 {
+			t.Errorf("the project record was read %d times for a container outside the grammar", f.reads.projects.reads)
+		}
+		if len(f.reads.dyn.markerReads) != 0 {
+			t.Errorf("a marker was read (%v) for a container outside the grammar", f.reads.dyn.markerReads)
+		}
+	})
+}

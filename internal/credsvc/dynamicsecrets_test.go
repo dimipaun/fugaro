@@ -22,6 +22,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -105,7 +106,7 @@ type perSecretSvc struct {
 func newPerSecretSvc(t *testing.T) *perSecretSvc {
 	t.Helper()
 	f := &perSecretSvc{
-		dyn:    &dynReader{doc: testBundleDoc(t), values: map[string]string{}},
+		dyn:    &dynReader{doc: testBundleDoc(t), values: map[string]string{}, marked: map[string]bool{}},
 		loader: &BundleLoader{},
 	}
 	f.loader.Source = f.dyn
@@ -704,5 +705,54 @@ func TestPerSecretValueClassifiesEveryAnswer(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestCascadeReadRefusesAMarkedContainer is G2 read from the other side
+// (F18, D3328): a candidate whose container carries the intake's workflow-secret
+// marker holds a WORKFLOW secret, and this half of the resolution serves model
+// credentials — so the call is refused and the bundle's entry under the same
+// name is NOT served in its place.
+//
+// The refusal is not a fall, and that is the whole point: `fugaro_p_` is also
+// the grammar of the project's model keys, so a name can be both a workflow
+// secret's and an entry an operator wrote, and serving that entry for a marked
+// container would be the shadowing the marker keeps apart, in the other
+// direction.
+//
+// The value is never read: the marker is asked for BEFORE the value, so a
+// workflow secret's value does not enter this process on this path at all, which
+// the two read lists say apart.
+func TestCascadeReadRefusesAMarkedContainer(t *testing.T) {
+	s := newPerSecretSvc(t)
+	shared, err := secretname.Project(testSharedName)
+	if err != nil {
+		t.Fatalf("the grammar refuses the fixture's project name: %v", err)
+	}
+	held := fakeCred(t, "workflow-secret")
+	s.dyn.values[shared] = held
+	s.dyn.marked[shared] = true
+
+	rec, _ := s.serve(t, creds.Credential{Name: shared, Tier: creds.TierA})
+	if rec.Code != StatusUnavailable {
+		t.Fatalf("a marked container was answered %d, want %d: %s", rec.Code, StatusUnavailable, rec.Body)
+	}
+	if e := refusal(t, rec.Code, rec.Body.Bytes()); e.Message != perSecretRefusal {
+		t.Errorf("the refusal is %q, want the class's own %q", e.Message, perSecretRefusal)
+	}
+	if len(s.dyn.reads) != 0 {
+		t.Errorf("the service read the value of %v; the marker is asked for FIRST, so a workflow secret's value never enters this process here", s.dyn.reads)
+	}
+	if want := []string{shared}; !slices.Equal(s.dyn.markerReads, want) {
+		t.Errorf("the markers read = %v, want %v", s.dyn.markerReads, want)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Errorf("the upstream saw %d requests; a refused call sends nothing", n)
+	}
+	if strings.Contains(rec.Body.String(), held) {
+		t.Errorf("the refusal carries the workflow secret's value")
+	}
+	if got := len(auditLines(t, s.auditLog)); got != 1 {
+		t.Errorf("the refusal wrote %d audit lines, want 1", got)
 	}
 }
