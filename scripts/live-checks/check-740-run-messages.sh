@@ -42,7 +42,11 @@
 # `roles/storage.objectViewer` on `tokens/`, which carries no write at all. The
 # question is at BUCKET level because the Troubleshooter refuses an object-level
 # resource name, so the object-name fence is read off the condition the answer
-# explains rather than off the decision. A throwaway account given only
+# explains rather than off the decision — and the row refuses a pass where the
+# same answer explains a conditional binding whose role does carry
+# `storage.objects.create`, because a condition the bucket-level question cannot
+# evaluate is exactly what such a role would hide behind. A throwaway account
+# given only
 # `objectViewer` would prove nothing — the role cannot write by definition —
 # which is why the accounts this check asks about are the installation's own.
 #
@@ -573,14 +577,14 @@ def cmd_doctor(path):
     print("region=%s" % clip(project.get("region") or ""))
 
 
-def cmd_row(path):
+def cmd_row(path, *rest):
     """`fugaro runs ls --json` -- the row of the run this check launched, by its
     run_id. Every field is the CLI's own view of the run's record."""
     doc = load(path)
     rows = doc.get("runs") if isinstance(doc, dict) else None
     if not isinstance(rows, list):
         fail("not a runs document")
-    want = sys.argv[3] if len(sys.argv) > 3 else ""
+    want = rest[0] if rest else ""
     for row in rows:
         if (row.get("run_id") or "") != want:
             continue
@@ -678,25 +682,33 @@ def cmd_jobs(path):
         print("job=%s|%s" % (clip(name), clip(sa)))
 
 
-def cmd_troubleshoot(path):
-    """The Policy Troubleshooter's answer. The decision is read in both
-    spellings the API has carried it in -- v3 answers `accessDecision` and v1
-    answers `access` -- and anything that is not one of the answers this check
-    knows is reported as it stands, so a run that could not measure prints what
-    it got rather than a guess.
+def cmd_troubleshoot(path, *rest):
+    """The Policy Troubleshooter's answer, in the spelling the command this check
+    calls really answers in. `gcloud policy-troubleshoot iam` asks the v3
+    Explainer, whose overall decision is `overallAccessState`: CAN_ACCESS for a
+    grant, CANNOT_ACCESS for a denial, and the UNKNOWN_* states for an answer
+    that settled nothing. The older `accessDecision`/`access` spelling (GRANTED /
+    NOT_GRANTED) is read too, so a surface that answers the older shape does not
+    blind the reader; anything that is neither is printed as it stands, and the
+    row that reads it comes out unmeasured rather than a guess.
 
     The `fence` line is the other half, and the half the question is asked about
     here: the resource is the BUCKET (the API refuses an object-level full
     resource name), so the condition on the object name -- the tokens/ prefix
     fence D2941 pins -- is not evaluated by the decision. What the answer does
     explain is the binding's own condition, wherever the payload carries one
-    (v3 `explainedPolicies[].explainedBindings[]`, v1 `policy.bindings[]`, and
+    (v3 `explainedPolicies[].bindingExplanations[]`, v1 `policy.bindings[]`, and
     any nested `bindings`), and the rows report that text instead of a verdict
-    about an object."""
+    about an object.
+
+    `writer_roles` is the line that keeps a bucket-level NOT_GRANTED from reading
+    as the fence: a role that carries `storage.objects.create` under a condition
+    the answer could not evaluate at that level leaves the decision unable to say
+    whether the message object is writable, which is what the row must read
+    before it reads a pass."""
     doc = load(path)
-    decision = one(doc, "accessDecision", "access")
-    if isinstance(decision, dict):
-        decision = decision.get("accessDecision") or decision.get("access") or decision.get("state")
+    principal = rest[0] if rest else ""
+    decision = overall_decision(doc)
     print("decision=%s" % clip(decision if decision is not None else "none"))
     errors = doc.get("errors") or []
     print("errors=%d" % len(errors))
@@ -712,6 +724,98 @@ def cmd_troubleshoot(path):
             seen.append(text)
     print("conditions=%d" % len(seen))
     print("fence=%s" % clip(" ; ".join(seen), 600))
+    roles, role_conditions = writer_bindings(doc, principal)
+    print("writer_roles=%s" % clip(" ; ".join(roles), 300))
+    print("writer_condition=%s" % clip(" ; ".join(role_conditions), 400))
+
+
+def overall_decision(doc):
+    """The v3 overall state mapped onto the two words the rows read, and the v1
+    spelling after it. A v3 state that is neither (UNKNOWN_INFO_DENIED,
+    UNKNOWN_CONDITIONAL, UNKNOWN_UNSUPPORTED) is returned as it stands: the rows
+    print it and come out unmeasured, because an answer that could not decide is
+    not a denial."""
+    state = find_value(doc, "overallAccessState", "overall_access_state")
+    if isinstance(state, str) and state:
+        return {"CAN_ACCESS": "GRANTED", "CANNOT_ACCESS": "NOT_GRANTED"}.get(state.upper(), state)
+    decision = one(doc, "accessDecision", "access")
+    if isinstance(decision, dict):
+        decision = decision.get("accessDecision") or decision.get("access") or decision.get("state")
+    return decision
+
+
+INCLUDED = "ROLE_PERMISSION_INCLUDED"
+
+
+def writer_bindings(doc, principal):
+    """(roles, conditions): every CONDITIONAL binding the answer explains whose
+    role includes the permission asked about. v3 marks that with
+    `rolePermission: ROLE_PERMISSION_INCLUDED` -- a role that does not carry the
+    permission is marked ROLE_PERMISSION_NOT_INCLUDED (or EXCLUDED) and is not
+    read as a writer. Where the answer says who a binding is for (`memberships`,
+    keyed by member), only a binding naming the principal counts: the payload
+    explains the policies on the resource, and another member's binding is not a
+    statement about this account."""
+    roles, conditions = [], []
+    for node in walk_dicts(doc, []):
+        role = node.get("role")
+        if not isinstance(role, str) or not role:
+            continue
+        permission = one(node, "rolePermission", "role_permission")
+        if not (isinstance(permission, str) and permission.upper() == INCLUDED):
+            continue
+        cond = node.get("condition")
+        if not (isinstance(cond, dict) and (cond.get("expression") or cond.get("title"))):
+            continue
+        if not binding_names_principal(node, principal):
+            continue
+        if role not in roles:
+            roles.append(role)
+        text = " ".join(str(cond.get("expression") or cond.get("title") or "").split())
+        if text and text not in conditions:
+            conditions.append(text)
+    return roles, conditions
+
+
+def binding_names_principal(node, principal):
+    """Whether the answer says this binding is the principal's. An answer that
+    says nothing about who a binding is for is read as the principal's, since
+    that is the binding the question was about; one whose member list names
+    somebody else is not."""
+    members = node.get("memberships")
+    if not isinstance(members, dict) or not members:
+        return True
+    keys = [key for key in members if isinstance(key, str) and ":" in key]
+    if not keys or not principal:
+        return True
+    want = principal.strip().lower()
+    return any(key.split(":", 1)[1].strip().lower() == want for key in keys)
+
+
+def walk_dicts(node, found):
+    """Every mapping in a payload, in the order the payload carries them. The
+    payload puts its bindings under different keys across spellings and nests
+    them differently, so a reader that walked a fixed path would find no binding
+    on the shape it did not expect."""
+    if isinstance(node, dict):
+        found.append(node)
+        for value in node.values():
+            walk_dicts(value, found)
+    elif isinstance(node, list):
+        for value in node:
+            walk_dicts(value, found)
+    return found
+
+
+def find_value(doc, *spellings):
+    """The first value a payload carries under any of these names, wherever it
+    sits: a gcloud surface wraps the response it printed and the wrapper's depth
+    is not a fact this check should depend on."""
+    for node in walk_dicts(doc, []):
+        for name in spellings:
+            if name in node and node[name] is not None:
+                return node[name]
+    return None
 
 
 def walk_conditions(node, found):
@@ -802,7 +906,7 @@ CMDS = {
 if len(sys.argv) < 3 or sys.argv[1] not in CMDS:
     fail("usage: reader.py <%s> FILE [ARG]" % "|".join(sorted(CMDS)))
 try:
-    CMDS[sys.argv[1]](sys.argv[2])
+    CMDS[sys.argv[1]](*sys.argv[2:])
 except SystemExit:
     raise
 except Exception as exc:  # noqa: BLE001 - the caller reports it as an unread answer
@@ -1277,7 +1381,10 @@ step_messages() {
 # more (D2941), and that role carries no create at all. The question is at BUCKET
 # level because the Troubleshooter refuses an object-level name; the object-name
 # fence is read off the answer's explained binding condition, which the row
-# reports as it stands.
+# reports as it stands — and a NOT_GRANTED is not read as the fence where the
+# same answer explains a conditional binding whose role does carry
+# `storage.objects.create`, since the condition is what the bucket-level
+# question cannot evaluate.
 step_workflow_iam() {
   if [ -z "${EXECUTION:-}" ]; then
     unmeasured iam-workflow-job "the record carries no execution, so this check cannot name the job the run landed on and cannot ask about its account. Read it yourself with 'gcloud storage cat gs://${BUCKET}/runs/${SLUG:-<slug>}/${RUN_ID:-<run>}/result.json'"
@@ -1309,7 +1416,11 @@ step_workflow_iam() {
   fi
   case "$TS_DECISION" in
   NOT_GRANTED)
-    fact iam-workflow-job PASS "the IAM Policy Troubleshooter says NOT_GRANTED for storage.objects.create by ${WORKFLOW_SA} — the job's OWN service account, the one the run this check launched really ran as (${EXEC_JOB}) — on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}. That is D2941's fence read off the installation's own account and not off a throwaway one: a job account holds roles/storage.objectViewer on tokens/, which carries no write at all. The question is asked at BUCKET level — the Troubleshooter refuses an object-level resource name (INVALID_RESOURCE_NAME), so the object-name condition is not evaluated by this answer — and ${TS_FENCE}${TS_NOTE:+ (${TS_NOTE})}. The object the fence is about is ${MESSAGE_KEY}"
+    if [ -n "$TS_WRITE_ROLES" ]; then
+      unmeasured iam-workflow-job "the answer says NOT_GRANTED for storage.objects.create by ${WORKFLOW_SA} — the job's OWN service account, the one the run this check launched really ran as (${EXEC_JOB}) — on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}, but the same answer explains a CONDITIONAL binding whose role INCLUDES storage.objects.create (${TS_WRITE_ROLES}${TS_WRITE_COND:+ under the condition ${TS_WRITE_COND}}). The question is asked at BUCKET level — the Troubleshooter refuses an object-level resource name (INVALID_RESOURCE_NAME) — and a condition on the object's name is not evaluated there, so a role that carries the permission under a condition could still reach the object the fence is about (${MESSAGE_KEY}), and this answer cannot say either way. D2941's fence is NOT measured by it: read the bucket's IAM with 'gcloud storage buckets get-iam-policy gs://${BUCKET} --project=${PROJECT}' and the condition above"
+    else
+      fact iam-workflow-job PASS "the IAM Policy Troubleshooter says NOT_GRANTED for storage.objects.create by ${WORKFLOW_SA} — the job's OWN service account, the one the run this check launched really ran as (${EXEC_JOB}) — on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}. That is D2941's fence read off the installation's own account and not off a throwaway one: a job account holds roles/storage.objectViewer on tokens/, which carries no write at all, and the answer explains no conditional binding whose role carries storage.objects.create at all. The question is asked at BUCKET level — the Troubleshooter refuses an object-level resource name (INVALID_RESOURCE_NAME), so the object-name condition is not evaluated by this answer — and ${TS_FENCE}${TS_NOTE:+ (${TS_NOTE})}. The object the fence is about is ${MESSAGE_KEY}"
+    fi
     ;;
   GRANTED)
     fact iam-workflow-job FAIL "the IAM Policy Troubleshooter says GRANTED for storage.objects.create by ${WORKFLOW_SA} — the account the run this check launched really ran as — on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}: an agent running as its job account can write an object on the bucket the messages live in, and, on a shared project job, into another repository's run. D2941's whole fence is that this is denied (its grant on tokens/ is objectViewer, gcp.TokenBucketCondition, which carries no create at all); the question is at BUCKET level, so ${TS_FENCE}. Read the bucket's IAM with 'gcloud storage buckets get-iam-policy gs://${BUCKET} --project=${PROJECT}'${TS_NOTE:+ (${TS_NOTE})}"
@@ -1362,7 +1473,11 @@ step_project_iam() {
   fi
   case "$TS_DECISION" in
   NOT_GRANTED)
-    fact iam-project-job PASS "the IAM Policy Troubleshooter says NOT_GRANTED for storage.objects.create by ${sa} — the account of ${name}, the installation's own shared project job (of ${PROJECT_JOBS} deployed) — on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}. A project job's grant on tokens/ is roles/storage.objectViewer with no slug (gcp.ProjectTokenBucketCondition), so the wider reach it carries is over reads and never over writes. The question is asked at BUCKET level — the Troubleshooter refuses an object-level resource name (INVALID_RESOURCE_NAME), so the object-name condition is not evaluated by this answer — and ${TS_FENCE}${TS_NOTE:+ (${TS_NOTE})}"
+    if [ -n "$TS_WRITE_ROLES" ]; then
+      unmeasured iam-project-job "the answer says NOT_GRANTED for storage.objects.create by ${sa} — the account of ${name}, the installation's own shared project job (of ${PROJECT_JOBS} deployed) — on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}, but the same answer explains a CONDITIONAL binding whose role INCLUDES storage.objects.create (${TS_WRITE_ROLES}${TS_WRITE_COND:+ under the condition ${TS_WRITE_COND}}). The question is asked at BUCKET level, where a condition on the object's name is not evaluated, so a role that carries the permission under a condition could reach another repository's message object and this answer cannot say whether it does: D2941's wider case is NOT measured by it. Read the bucket's IAM with 'gcloud storage buckets get-iam-policy gs://${BUCKET} --project=${PROJECT}' and the condition above"
+    else
+      fact iam-project-job PASS "the IAM Policy Troubleshooter says NOT_GRANTED for storage.objects.create by ${sa} — the account of ${name}, the installation's own shared project job (of ${PROJECT_JOBS} deployed) — on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}. A project job's grant on tokens/ is roles/storage.objectViewer with no slug (gcp.ProjectTokenBucketCondition), so the wider reach it carries is over reads and never over writes, and the answer explains no conditional binding whose role carries storage.objects.create at all. The question is asked at BUCKET level — the Troubleshooter refuses an object-level resource name (INVALID_RESOURCE_NAME), so the object-name condition is not evaluated by this answer — and ${TS_FENCE}${TS_NOTE:+ (${TS_NOTE})}"
+    fi
     ;;
   GRANTED)
     fact iam-project-job FAIL "the IAM Policy Troubleshooter says GRANTED for storage.objects.create by ${sa}, the account of the shared project job ${name}, on the runs bucket //storage.googleapis.com/projects/_/buckets/${BUCKET}: an agent on a shared project job can write an object into ANOTHER repository's running run — the reach D2941 exists to bound. The question is at BUCKET level, so ${TS_FENCE}. Read the bucket's IAM with 'gcloud storage buckets get-iam-policy gs://${BUCKET} --project=${PROJECT}'${TS_NOTE:+ (${TS_NOTE})}"
@@ -1384,7 +1499,13 @@ step_project_iam() {
 # accepts `//storage.googleapis.com/projects/_/buckets/<bucket>`. The object-name
 # fence the plan pins (the tokens/ prefix) is therefore not evaluated at the
 # level asked: what the answer explains is the binding's own condition, and the
-# rows report that text rather than a verdict about an object. The call is tried
+# rows report that text rather than a verdict about an object — and a row whose
+# answer explains a conditional binding whose role carries
+# `storage.objects.create` comes out unmeasured rather than PASS, because at
+# that level the answer cannot say whether the condition lets the role reach the
+# object. The decision is read as the v3 Explainer states it
+# (`overallAccessState`: CAN_ACCESS / CANNOT_ACCESS / UNKNOWN_*), with the older
+# `accessDecision` spelling kept. The call is tried
 # on gcloud's GA surface first and on its alpha surface after, because the verb
 # has moved between them across gcloud releases: a gcloud that does not know the
 # GA verb says so at once, and an answer that is not a document is reported as
@@ -1396,12 +1517,16 @@ TS_DECISION=""
 TS_NOTE=""
 TS_ASK=""
 TS_FENCE=""
+TS_WRITE_ROLES=""
+TS_WRITE_COND=""
 ask_troubleshooter() { # ask_troubleshooter PRINCIPAL PREFIX
   local principal=$1 prefix=$2 status=0 verb
   local resource="//storage.googleapis.com/projects/_/buckets/${BUCKET}"
   TS_DECISION=""
   TS_NOTE=""
   TS_FENCE=""
+  TS_WRITE_ROLES=""
+  TS_WRITE_COND=""
   # What the owner is handed when the answer does not come. It is built from the
   # bucket the installation records and the account the documents name, never
   # from a value read out of the run's record.
@@ -1432,9 +1557,15 @@ ask_troubleshooter() { # ask_troubleshooter PRINCIPAL PREFIX
     return 0
   fi
   local answer
-  answer=$(reader troubleshoot "$prefix.out" 2>/dev/null || true)
+  answer=$(reader troubleshoot "$prefix.out" "$principal" 2>/dev/null || true)
   TS_DECISION=$(field_of decision "$answer")
   TS_FENCE=$(field_of fence "$answer")
+  # A role that carries storage.objects.create under a condition, explained for
+  # this principal, is the one thing a bucket-level NOT_GRANTED must not be read
+  # past: the condition is not evaluated at that level, so the answer cannot say
+  # whether the message object is writable through it.
+  TS_WRITE_ROLES=$(field_of writer_roles "$answer")
+  TS_WRITE_COND=$(field_of writer_condition "$answer")
   case "$TS_DECISION" in
   "" | none)
     TS_DECISION=""
@@ -1593,7 +1724,9 @@ What the run will do, in this order:
      objectViewer, which carries no write). The question is asked of the BUCKET
      (gcloud policy-troubleshoot iam <resource> takes the resource positionally,
      and the Troubleshooter refuses an object-level name), so the object-name
-     fence is read off the condition the answer explains and the row reports it;
+     fence is read off the condition the answer explains and the row reports it —
+     and a row whose answer also explains a conditional binding whose role
+     carries storage.objects.create comes out not measured rather than a pass;
   7. ask the same question about the account of a shared project job, where
      'gcloud run jobs list' shows the installation deploys one (its reach on tokens/
      is wider and still read-only);

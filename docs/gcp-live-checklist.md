@@ -24720,14 +24720,22 @@ dropped rather than refused).
   `--resource=` flag — and the resource asked is the **bucket**, because the Troubleshooter refuses an
   object-level full resource name (`INVALID_ARGUMENT INVALID_RESOURCE_NAME`). The object-name condition, the
   `tokens/` prefix fence, is therefore **not evaluated** by the decision; the check reads the condition the
-  answer explains (`explainedPolicies[].explainedBindings[].condition`, and v1's `policy.bindings`) and the
-  row reports that text rather than a verdict about an object, saying so where the answer explains none. A
-  refusal naming `SERVICE_DISABLED` (the API not enabled on the project) is written **not measured** with the
-  one command that fixes it, `gcloud services enable policytroubleshooter.googleapis.com --project=<project>`.
+  answer explains (`explainedPolicies[].bindingExplanations[].condition`, and v1's `policy.bindings`) and the
+  row reports that text rather than a verdict about an object, saying so where the answer explains none.
+  The decision itself is read the way the v3 Explainer the command asks states it: `overallAccessState`,
+  where `CAN_ACCESS` is a pass and `CANNOT_ACCESS` — the older `accessDecision` spelling of the same
+  answer is **NOT_GRANTED** — is the denial D2941 needs, and any `UNKNOWN_*` means the
+  answer settled nothing and the row is **not measured**, never a pass. An answer that is not a denial but
+  **also** explains a **conditional** binding whose role **includes** `storage.objects.create`
+  (`rolePermission: ROLE_PERMISSION_INCLUDED`, for the account asked about) is **not measured** too, and the
+  row prints that role and its condition: the condition is exactly what a bucket-level answer does not
+  evaluate, so a role carrying the permission behind it could still write the message object, and reading
+  `CANNOT_ACCESS` there as the fence would hide precisely the change D2941 exists to catch. A refusal naming
+  `SERVICE_DISABLED` (the API not enabled on the project) is written **not measured** with the one command
+  that fixes it, `gcloud services enable policytroubleshooter.googleapis.com --project=<project>`.
   A throwaway account given only `objectViewer` would prove nothing — the role cannot write **by definition**
-  — which is why the accounts this check asks about are the installation's own. An answer that is neither
-  GRANTED nor NOT_GRANTED (UNKNOWN, UNKNOWN_INFO_DENIED) is written **not measured**, never a pass, and
-  GRANTED is a failure naming the account and the bucket.
+  — which is why the accounts this check asks about are the installation's own, and a grant of
+  `storage.objects.create` on the bucket at all is a failure naming the account and the bucket.
 - **U4 — the bucket's rule for the message objects** (step 4). `gcloud storage buckets describe` reads the
   runs bucket's lifecycle configuration, and the check requires a rule whose action is **Delete**, whose
   `age` is the installation's `messages_days`, and which carries `matches_prefix = ["tokens/"]` with

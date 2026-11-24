@@ -376,16 +376,40 @@ EOF
   fi
 }
 
-write_ts() { # dir DECISION [no-condition]
-  # The answer explains the binding's own condition -- the tokens/ prefix fence
-  # on the object name -- which is what a question asked at BUCKET level leaves
-  # the row to report. A case that wants an answer explaining no condition passes
-  # 'no-condition'.
+write_ts() { # dir OVERALL_ACCESS_STATE [variant]
+  # The answer the command really prints: the v3 Explainer, whose overall
+  # decision is `overallAccessState` (CAN_ACCESS / CANNOT_ACCESS / UNKNOWN_*)
+  # and whose bindings sit in
+  # allowPolicyExplanation.explainedPolicies[].bindingExplanations[], each with a
+  # `rolePermission` mark saying whether its role carries the permission asked
+  # about and a `memberships` map saying whose binding it is. The binding carries
+  # the tokens/ prefix condition on the object name, which is what a question
+  # asked at BUCKET level leaves the row to report.
+  #
+  # Variants: 'no-condition' answers with no condition at all, 'writer-role'
+  # makes the role one that DOES carry storage.objects.create
+  # (roles/storage.objectCreator, ROLE_PERMISSION_INCLUDED) instead of
+  # objectViewer, which does not, and 'writer-other-member' makes that writer
+  # binding belong to somebody who is not the account asked about.
+  local variant=${3:-} role=roles/storage.objectViewer permission=ROLE_PERMISSION_NOT_INCLUDED
+  case "$variant" in
+  writer-role | writer-other-member)
+    role=roles/storage.objectCreator
+    permission=ROLE_PERMISSION_INCLUDED
+    ;;
+  esac
+  local members
+  if [ "$variant" = writer-other-member ]; then
+    members=$(printf '"serviceAccount:someone-else@example.com":{"membership":"MEMBERSHIP_MATCHED"}')
+  else
+    members=$(printf '"serviceAccount:%s":{"membership":"MEMBERSHIP_MATCHED"},"serviceAccount:%s":{"membership":"MEMBERSHIP_MATCHED"}' "$WORKFLOW_SA" "$PROJECT_SA")
+  fi
   local cond=""
   if [ "${3:-}" != no-condition ]; then
-    cond=$(printf ',"explainedPolicies":[{"explainedBindings":[{"role":"roles/storage.objectViewer","members":["serviceAccount:%s"],"condition":{"expression":"resource.name.startsWith(\\"projects/_/buckets/%s/objects/tokens/\\")"}}]}]' "$WORKFLOW_SA" "$BUCKET")
+    cond=$(printf ',"condition":{"expression":"resource.name.startsWith(\\"projects/_/buckets/%s/objects/tokens/\\")"}' "$BUCKET")
   fi
-  printf '{"accessDecision":"%s","errors":[]%s}\n' "$2" "$cond" >"$1/state/ts.out"
+  printf '{"accessTuple":{"fullResourceName":"//storage.googleapis.com/projects/_/buckets/%s","permission":"storage.objects.create"},"allowPolicyExplanation":{"explainedPolicies":[{"bindingExplanations":[{"role":"%s","rolePermission":"%s","memberships":{%s}%s}]}]},"overallAccessState":"%s","errors":[]}\n' \
+    "$BUCKET" "$role" "$permission" "$members" "$cond" "$2" >"$1/state/ts.out"
 }
 
 write_bucket() { # dir yes|no-token|no-rule|not-delete
@@ -435,7 +459,7 @@ setup_case() { # name
   write_record "$dir"
   write_job "$dir"
   write_jobs "$dir" yes
-  write_ts "$dir" NOT_GRANTED
+  write_ts "$dir" CANNOT_ACCESS
   write_bucket "$dir" yes
 }
 
@@ -687,7 +711,7 @@ case_record_unreadable() {
 
 case_iam_granted() {
   setup_case iam-granted
-  write_ts "$dir" GRANTED
+  write_ts "$dir" CAN_ACCESS
   run740 --installation "$INSTALLATION" --repo "$REPO"
   expect_status "$status" 1 "iam-granted: a job account that may write its own inbox"
   expect_fact iam-workflow-job FAIL "iam-granted"
@@ -698,7 +722,7 @@ case_iam_granted() {
 
 case_iam_unknown() {
   setup_case iam-unknown
-  # An answer that is neither GRANTED nor NOT_GRANTED settles nothing, and must
+  # An answer that is neither an access nor a denial settles nothing, and must
   # never read as a pass.
   write_ts "$dir" UNKNOWN_INFO_DENIED
   run740 --installation "$INSTALLATION" --repo "$REPO"
@@ -706,6 +730,36 @@ case_iam_unknown() {
   expect_fact iam-workflow-job UNVERIFIED "iam-unknown"
   expect_fact iam-project-job UNVERIFIED "iam-unknown"
   expect_contains "$out" "UNKNOWN_INFO_DENIED" "iam-unknown: the answer is quoted as it stands"
+}
+
+case_iam_conditional_writer() {
+  setup_case iam-conditional-writer
+  # CANNOT_ACCESS, but the same answer explains a CONDITIONAL binding whose role
+  # DOES carry storage.objects.create -- the account's grant on tokens/ become
+  # objectCreator under the same condition, which is exactly the change D2941
+  # exists to catch. The bucket-level answer cannot evaluate that condition, so
+  # the row must not read the denial as the fence: it names the role and the
+  # condition and comes out not measured.
+  write_ts "$dir" CANNOT_ACCESS writer-role
+  run740 --installation "$INSTALLATION" --repo "$REPO"
+  expect_status "$status" 3 "iam-conditional-writer"
+  expect_fact iam-workflow-job UNVERIFIED "iam-conditional-writer: a conditional role that carries the permission is not a pass"
+  expect_fact iam-project-job UNVERIFIED "iam-conditional-writer"
+  expect_contains "$out" "roles/storage.objectCreator" "iam-conditional-writer: the row prints the role the answer explains"
+  expect_contains "$out" "NOT measured by it" "iam-conditional-writer: the row says the fence was not measured"
+}
+
+case_iam_writer_other_member() {
+  setup_case iam-writer-other-member
+  # The same conditional writer role, but the answer says the binding is
+  # somebody else's (its memberships name neither of the accounts asked about),
+  # so it is not a statement about the job account and the denial stands as the
+  # fence.
+  write_ts "$dir" CANNOT_ACCESS writer-other-member
+  run740 --installation "$INSTALLATION" --repo "$REPO"
+  expect_status "$status" 0 "iam-writer-other-member"
+  expect_fact iam-workflow-job PASS "iam-writer-other-member: another member's writer binding is not the job account's"
+  expect_fact iam-project-job PASS "iam-writer-other-member"
 }
 
 case_no_project_job() {
@@ -1089,6 +1143,8 @@ t case_record_not_accepting
 t case_record_unreadable
 t case_iam_granted
 t case_iam_unknown
+t case_iam_conditional_writer
+t case_iam_writer_other_member
 t case_no_project_job
 t case_job_unreadable
 t case_lifecycle_absent
