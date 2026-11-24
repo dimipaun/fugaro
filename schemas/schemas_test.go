@@ -3523,6 +3523,61 @@ func TestProjectLayerSchemaRigorMembers(t *testing.T) {
 	}
 }
 
+// TestProjectLayerSchemaABRepos keeps the layer's per-repository sampling rate
+// (D3297) in step with the Go reader, the way TestProjectLayerSchemaRigorMembers
+// keeps LD4's shapes: the schema an editor validates against must accept the
+// map, refuse a key that is no repository name and a value over the block's
+// ceiling, and the Go decoder must refuse the same three. The relational half of
+// the rule is the one a schema of this shape cannot state — [0, ab.rate] needs
+// the block's own rate — so a value over the block's rate but inside 0.1 is
+// pinned below as the asymmetry it is, judged by the decoder alone.
+func TestProjectLayerSchemaABRepos(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	const head = "version: 1\nproject: aurora\ngcp_project: proj-1234\nab:\n"
+	anchor := config.LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, c := range []struct {
+		name string
+		body string
+		ok   bool
+	}{
+		{"a rate per repository", "  rate: 0.05\n  repos:\n    acme/web: 0.02\n    acme/legacy: 0\n", true},
+		{"an empty map", "  rate: 0.05\n  repos: {}\n", true},
+		{"a map that is null", "  repos: null\n", true},
+		{"a key that is a bare name", "  rate: 0.05\n  repos:\n    console-web: 0.01\n", false},
+		{"a key with three segments", "  rate: 0.05\n  repos:\n    acme/web/api: 0.01\n", false},
+		{"a negative value", "  rate: 0.05\n  repos:\n    acme/web: -0.01\n", false},
+		{"a value over the ceiling", "  rate: 0.05\n  repos:\n    acme/web: 0.11\n", false},
+	} {
+		text := head + c.body
+		schemaOK := sch.Validate(yamlInstance(t, []byte(text))) == nil
+		_, ps := config.ParseProjectLayer([]byte(text), anchor)
+		if schemaOK != (len(ps) == 0) {
+			t.Errorf("%s: the schema says ok=%v and config.ParseProjectLayer gives %v", c.name, schemaOK, ps)
+		}
+		if schemaOK != c.ok {
+			t.Errorf("%s: the schema says ok=%v; want %v", c.name, schemaOK, c.ok)
+		}
+	}
+	// A key with three segments: the schema's propertyNames pattern and the
+	// decoder's rigor.Member rule refuse it for the same reason, and the fixture
+	// the corpus carries is the two-segment case beside it.
+	bad := head + "  rate: 0.05\n  repos:\n    acme/web/api: 0.01\n"
+	if err := sch.Validate(yamlInstance(t, []byte(bad))); err == nil {
+		t.Fatal("the schema accepts a key that is no repository name")
+	} else if !strings.Contains(err.Error(), "invalid propertyName 'acme/web/api'") {
+		t.Errorf("the schema refuses the key as something other than a property name no repository pattern matches: %v", err)
+	}
+	// The decoder's bound is the block's own rate; the schema's is the shipped
+	// ceiling. Both halves are asserted so the looseness is a pinned fact.
+	over := head + "  rate: 0.02\n  repos:\n    acme/web: 0.05\n"
+	if _, ps := config.ParseProjectLayer([]byte(over), anchor); len(ps) == 0 {
+		t.Error("the decoder accepted a rate above the block's own ab.rate")
+	}
+	if err := sch.Validate(yamlInstance(t, []byte(over))); err != nil {
+		t.Errorf("the schema refused it, and it is the looser side here: %v", err)
+	}
+}
+
 // TestProjectLayerSchemaCommandsLintFix checks the profile schema's
 // commands.lint and commands.fix the same way TestSchemaBudgetBlock checks
 // budget: inline snippets, not the shared testdata/project-layer corpus.

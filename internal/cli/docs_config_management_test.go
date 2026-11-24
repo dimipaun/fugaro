@@ -359,8 +359,15 @@ const (
 // writer is the converge — `fugaro update`'s migration writes a project's first
 // table (MG2) and `fugaro routing set` edits one after that (RT5) — so neither a
 // name in the allowlist nor a prefix of it reaches a row of it.
+//
+// AB1 of docs/repo-override-rulings/ is the last mover after it, by one row and by
+// none: the project layer's ab: block gains ab.repos (D3297), the per-repository
+// sampling rate inside the block's own ab.rate, whose row is `layer.ab.repos` —
+// the `models` family's, since the layer file is what `fugaro config publish`
+// carries and not the generic path, whose allowlist reaches no key of that
+// family — so the rows without a generic writer move by the one.
 const (
-	cfmRegistryRows   = 536
+	cfmRegistryRows   = 537
 	cfmAllowlistNamed = 121
 )
 
