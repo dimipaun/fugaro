@@ -143,7 +143,7 @@ update)
       printf 'Failed in 1.2s, 2 steps\n'
     } >"$logs/${FAKE_RUN_ID}.log"
   fi
-  printf 'Something went wrong. Run: fugaro troubleshoot %s\n' "$FAKE_RUN_ID"
+  printf '  Help: fugaro troubleshoot %s\n' "$FAKE_RUN_ID"
   exit 2
   ;;
 troubleshoot)

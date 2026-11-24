@@ -257,6 +257,15 @@ const (
 	configSkewWorkflow = "workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 )
 
+// configSkewPins is a configSkewHead whose agent names the three role models,
+// for the tests that validate the file with the project's own config in reach:
+// the price rules hold in every mode (AB3, D3020), so a file that names no
+// model is refused there.
+func configSkewPins(head string) string {
+	return strings.Replace(head, "agent: { auth: api-key }",
+		"agent: { auth: api-key, model: claude-sonnet-5-5, models: { background: claude-haiku-4-5 } }", 1)
+}
+
 // configSkewCheckout makes the working directory a checkout of acme/other whose
 // fugaro.yaml is repoYAML, committed at the ref a launch of it resolves
 // (configSkewHead's git.base_branch: develop), and returns the directory.
@@ -509,7 +518,7 @@ func TestValidateWarnsWhenTheProjectLayerSetsRigor(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, layerWithDefaults("  rigor: { default: critical }\n"))
-	layerCheckout(t, f, minimalAnchored)
+	layerCheckout(t, f, pinnedMinimal)
 	_, errOut, err := execute(t, "validate")
 	if err != nil {
 		t.Fatalf("a file that resolves over the layer is valid: %v", err)

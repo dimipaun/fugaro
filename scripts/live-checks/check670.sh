@@ -748,7 +748,7 @@ step_empty_container() {
   fact empty-container PASS "F11's premise held: $REPO's github-app-key container ($SECRET_ID) exists and holds no enabled version, which is the state Terraform leaves and the readiness gate plans no job for"
 
   say "reading 'fugaro project repos status $REPO' with the container empty"
-  run_bounded "$CLI_TIMEOUT" status-empty "$FUGARO_BIN" project repos status "$REPO" --project "$INSTALLATION" || true
+  run_bounded "$CLI_TIMEOUT" status-empty "$FUGARO_BIN" project repos status "$REPO_CANON" --project "$INSTALLATION" || true
   local status=$BOUNDED_STATUS out="$SCRATCH/status-empty.out"
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     unmeasured status-exit "'fugaro project repos status $REPO' did not answer inside ${CLI_TIMEOUT}s and was ended"
@@ -771,7 +771,7 @@ step_empty_container() {
   # where it survives whole — and it is the document the console reads. The
   # document's own exit status is the same failing one the screen's read gave
   # above, so it is not read again here: what is read is the row.
-  run_bounded "$CLI_TIMEOUT" status-empty-json "$FUGARO_BIN" project repos status "$REPO" --json --project "$INSTALLATION" || true
+  run_bounded "$CLI_TIMEOUT" status-empty-json "$FUGARO_BIN" project repos status "$REPO_CANON" --json --project "$INSTALLATION" || true
   if ! read_json status "$SCRATCH/status-empty-json.out" "$SCRATCH/status-empty-json.txt"; then
     unmeasured status-fix "the status document is one this check could not read: what it printed is in $SCRATCH/status-empty-json.out"
     stop "the status command printed a document this check could not read"
@@ -840,7 +840,7 @@ step_fill() {
   if ! grep -qF -- "enrolled $CANONICAL in project $INSTALLATION: " "$SCRATCH/enrol-again.out" 2>/dev/null; then
     stop "the second converge printed no 'enrolled $CANONICAL in project $INSTALLATION: ' closing line: $(last_lines "$SCRATCH/enrol-again.out")"
   fi
-  run_bounded "$CLI_TIMEOUT" status-green "$FUGARO_BIN" project repos status "$REPO" --project "$INSTALLATION" || true
+  run_bounded "$CLI_TIMEOUT" status-green "$FUGARO_BIN" project repos status "$REPO_CANON" --project "$INSTALLATION" || true
   local status=$BOUNDED_STATUS out="$SCRATCH/status-green.out"
   local bad=""
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then bad="$bad [it did not answer inside ${CLI_TIMEOUT}s]"; fi
@@ -968,7 +968,7 @@ step_removal() {
   # cannot wait for an answer, and its exit is nonzero with nothing written: the
   # question comes after every read and before the first write.
   say "reading the strict confirmation: the same removal, with no terminal at all, has to refuse it"
-  run_bounded "$CLI_TIMEOUT" rm-strict "$FUGARO_BIN" project repos rm "$REPO" --project "$INSTALLATION" || true
+  run_bounded "$CLI_TIMEOUT" rm-strict "$FUGARO_BIN" project repos rm "$REPO_CANON" --project "$INSTALLATION" || true
   local status_strict=$BOUNDED_STATUS
   local out="$SCRATCH/rm-strict.txt"
   cat "$SCRATCH/rm-strict.out" "$SCRATCH/rm-strict.err" >"$out" 2>/dev/null || true
@@ -1004,7 +1004,7 @@ step_removal() {
   fi
 
   say "removing $REPO from project $INSTALLATION while run $RUN2_ID is going — the CLI asks you for the project's name at your terminal"
-  run_tee rm "$FUGARO_BIN" project repos rm "$REPO" --project "$INSTALLATION" || true
+  run_tee rm "$FUGARO_BIN" project repos rm "$REPO_CANON" --project "$INSTALLATION" || true
   local status_rm=$BOUNDED_STATUS
   out="$SCRATCH/rm.out"
   missing=""
@@ -1024,7 +1024,7 @@ step_removal() {
   fi
 
   if [ "$status_rm" != 0 ]; then
-    fact removal FAIL "'fugaro project repos rm $REPO --project $INSTALLATION' exited $status_rm: $(last_lines "$out") — the removal is the whole of this step, and the six rows after it would be about a repository nothing removed"
+    fact removal FAIL "'fugaro project repos rm $REPO_CANON --project $INSTALLATION' exited $status_rm: $(last_lines "$out") — the removal is the whole of this step, and the six rows after it would be about a repository nothing removed"
   else
     local removed=""
     if grep -qF -- ": removed" "$out" 2>/dev/null; then removed="$removed [this machine's config: the repos: entry and the image map]"; fi
@@ -1364,6 +1364,7 @@ done
 
 INSTALLATION=${CHECK670_INSTALLATION:-${INSTALLATION_CLI:-}}
 REPO=${CHECK670_REPO:-${REPO_CLI:-dimipaun/fugarosandbox}}
+case "$REPO" in */*/*) REPO_CANON=$REPO ;; *) REPO_CANON=github/$REPO ;; esac
 APP_KEY_FILE=${CHECK670_APP_KEY_FILE:-${APP_KEY_CLI:-}}
 TASK_FILE=${CHECK670_TASK:-${TASK_CLI:-}}
 BASE=${CHECK670_BASE:-${BASE_CLI:-}}

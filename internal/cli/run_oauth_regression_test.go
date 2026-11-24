@@ -27,7 +27,7 @@ func TestRunTokenRepeatSameRunIDReportsAlreadyLaunched(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, claudeAccountsConfig)
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	variant := gcp.WorkflowVariant("svc", "acme-personal")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 	args := []string{"run", "--run-id", "20261012-100000-b1b1", "--token", "acme-personal", "--json", "A task"}
@@ -65,7 +65,7 @@ func TestLsNamedRunIsPendingNotError(t *testing.T) {
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
 	f.appendConfig(t, claudeAccountsConfig)
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release065)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	variant := gcp.WorkflowVariant("svc", "acme-personal")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 	// A run minted inside ls's default --since window: a fixed date would
@@ -115,7 +115,7 @@ func TestFollowUpAfterRealNamedLaunch(t *testing.T) {
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
 	f.appendConfig(t, claudeAccountsConfig)
 	oauthCheckout(t, f, "")
-	writeBuildRecord(t, f, otherSlug, "svc", release085)
+	writeBuildRecord(t, f, otherSlug, "svc", releaseSeal)
 	variant := gcp.WorkflowVariant("svc", "acme-personal")
 	f.run.AddJob(gcp.JobName(otherSlug, variant), "2", "4Gi")
 

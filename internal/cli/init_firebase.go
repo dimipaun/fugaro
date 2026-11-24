@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/place"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/runindex"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -271,9 +272,26 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	// BEFORE this stage's first apply, so a run that may not create a database
 	// leaves the installation exactly as it found it.
 	if r.o.firebase == "" {
-		done, err := r.noFlagBudgetDatabase(ctx, c, t, wd, bin, lc, spec, path, old, fp)
-		if err != nil {
-			return err
+		// RI2: a converged installation is still this stage's while the Firebase
+		// root's state does not carry the run index's composite indexes, which
+		// nothing but this stage's apply creates (F10) — that is the one case
+		// the stage's check lets through with the database recorded
+		// (init_stages.go's firebaseSkip, and this call is the same question
+		// asked again at the arm it decides). There is nothing to adopt or
+		// create then, because the database is this machine's, so the arm below
+		// is left out and the flag's own flow runs: the same discovery, the same
+		// apply of the root, the same database steps.
+		indexesMissing := false
+		if lc.Budget != nil && lc.Budget.RTDBURL != "" {
+			indexesMissing, _ = r.runIndexIndexesWait(ctx, c, bin, spec.StateBucket, fp)
+		}
+		done := false
+		if !indexesMissing {
+			var err error
+			done, err = r.noFlagBudgetDatabase(ctx, c, t, wd, bin, lc, spec, path, old, fp)
+			if err != nil {
+				return err
+			}
 		}
 		// r.declined is the whole of what a run that changed nothing has to say
 		// (R2), and its spec stays the engine's own: it has no database here, so
@@ -381,6 +399,21 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 			fmt.Fprintf(r.w, "  %s\n", l)
 		}
 	}
+	// Whether the FP has its Firestore database, for the Firebase root's tfvars
+	// (RI2, FirestoreStep.DatabaseExists). It is read from the plan made BEFORE
+	// the apply below, which is the only one that says anything about the
+	// database the apply will meet: the root's composite indexes are refused
+	// under a database that is not there, and this stage creates the database
+	// LAST, long after that apply (D3027). The step is planned again after the
+	// apply and that second plan is the one deployFirestore acts on.
+	//
+	// This is the answer of a read that answered. One that did not — the API not
+	// enabled yet, or a permission or Rules-API failure on the reads after the
+	// database's own — answers false here, and false is the last thing the tfvars
+	// may say for an installation that already has the indexes: an empty for_each
+	// is a plan to destroy them. That case is decided from the Firebase state,
+	// further down (runIndexIndexesManaged).
+	dbExists := fsStep.DatabaseExists()
 
 	// 1. The installation root.
 	outs, stop, err := r.installRoot(ctx, c, t, wd, lc, spec)
@@ -424,16 +457,9 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return err
 	}
-	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount, IssuerAccount: issuer})
+	fspec, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), HistoryAccount: outs.HistoryServiceAccount, CoordinatorAccount: outs.CoordinatorServiceAccount, WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount, IssuerAccount: issuer, FirestoreDatabaseExists: dbExists})
 	if err != nil {
 		return initErr(err)
-	}
-	vars, err := infra.FirebaseVars(fspec)
-	if err != nil {
-		return err
-	}
-	if err := fwd.WriteVars(vars); err != nil {
-		return userErr("writing the Firebase tfvars: %v", err)
 	}
 	backend, err := fwd.WriteBackend(spec.StateBucket, infra.StatePrefixFirebase)
 	if err != nil {
@@ -461,6 +487,26 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	managed := map[string]bool{}
 	for _, a := range st.Addresses() {
 		managed[a] = true
+	}
+	// The run index's gate (RI2), decided here because this is where the state is
+	// known — and the tfvars are written here, and not before the state was read,
+	// for that reason: nothing in between reads the file (terraform init and show
+	// take no variables) and the plan below does. The plan above answers only when
+	// its read of the database answered at all; when it did not, the tfvars must
+	// not say there is no database, because the module's for_each would then plan
+	// away the composite indexes an installation already has. A state that manages
+	// one is an installation that has them, and it keeps them. A state that
+	// manages none keeps the plan's false, which is the direction that costs a
+	// read and never a failed apply.
+	if !fsStep.DatabaseKnown() {
+		fspec.FirestoreDatabaseExists = runIndexIndexesManaged(managed)
+	}
+	vars, err := infra.FirebaseVars(fspec)
+	if err != nil {
+		return err
+	}
+	if err := fwd.WriteVars(vars); err != nil {
+		return userErr("writing the Firebase tfvars: %v", err)
 	}
 	// Read-only discovery of the Firebase project's own singletons that the
 	// state does not manage: a look-alike is refused before any plan or
@@ -564,6 +610,123 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	// installation has its budget database, this machine records it, and what
 	// waits is the database the history job writes into.
 	return r.deployFirestore(ctx, fsStep)
+}
+
+// runIndexIndexesManaged reports whether the Firebase root's state manages any
+// of the run index's composite indexes (RI2). It is the fallback for the gate
+// the root's tfvars carry (FirestoreStep.DatabaseKnown), and it asks about any
+// of them and not all: a run whose Firestore read did not answer must not plan
+// away the indexes an installation already has — the module's for_each would be
+// empty and the apply would destroy them — so one address in the state is
+// enough to say they are there. Which of them are there is
+// runIndexIndexesMissing's question, and it is the one the plain update's skip
+// is decided by.
+//
+// firebaseIndexesInState reads the addresses the Firebase root's state manages,
+// and whether that could be read at all (RI2). It is the read the plain
+// update's Firebase stage is decided by — in front of the stage
+// (init_stages.go's firebaseSkip) and again in its no-flag arm, so that a
+// converged installation whose state does not carry them gets the apply that
+// creates them.
+//
+// Every way it can fail answers "could not read", and the caller then leaves
+// the installation exactly as it is. That direction is the whole of the safety:
+// the update of a converged installation must not fail over a read the stage
+// did not have to make, and it must not hand the root a state nobody could read
+// either, because what a root plans under a state it never saw is the resources
+// that are already there. The indexes such an update does not create are
+// created by the update that can read.
+func (r *initRun) firebaseIndexesInState(ctx context.Context, c *infra.Clients, bin, stateBucket, gcpProject string) (addresses map[string]bool, ok bool) {
+	has, err := infra.StateExists(ctx, c, stateBucket, infra.StatePrefixFirebase)
+	if err != nil || !has {
+		return nil, false
+	}
+	fdir, err := infra.FirebaseWorkdir(os.Getenv, gcpProject)
+	if err != nil {
+		return nil, false
+	}
+	fwd, ft, err := r.terraform(bin, fdir, "firebase")
+	if err != nil {
+		return nil, false
+	}
+	backend, err := fwd.WriteBackend(stateBucket, infra.StatePrefixFirebase)
+	if err != nil {
+		return nil, false
+	}
+	if err := ft.Init(ctx, backend); err != nil {
+		return nil, false
+	}
+	st, err := ft.ShowState(ctx)
+	if err != nil {
+		return nil, false
+	}
+	addresses = make(map[string]bool)
+	for _, a := range st.Addresses() {
+		addresses[a] = true
+	}
+	return addresses, true
+}
+
+// runIndexIndexesMissing lists the run index's composite indexes the Firebase
+// root's state does not manage (RI2): the module's declared set
+// (runindex.Indexes) minus the addresses the state holds. It is the whole of
+// the answer to "does this installation carry the indexes yet" — all of them,
+// not any of them — because a contract row added by a later release reaches a
+// converged installation only through an apply of that root, and a state that
+// carries the rows of the release before is exactly what such an installation
+// has. The update that finds a row missing runs the stage; the one that finds
+// none does not.
+func runIndexIndexesMissing(managed map[string]bool) []string {
+	var missing []string
+	for _, key := range runindex.Indexes {
+		if !managed[runindex.IndexAddress(key)] {
+			missing = append(missing, key)
+		}
+	}
+	return missing
+}
+
+// runIndexIndexesWait is RI2's question at the plain update's own door, and the
+// reason it is answered no. The eleven composite indexes are the Firebase
+// root's and only an apply of that root creates them (F10), so a converged
+// installation — F34's skip, and its caller has already read that this machine's
+// config records the database — owes that apply while its root's state is
+// readable, does not manage all of them (runIndexIndexesMissing: a row a later
+// release added is a row such an installation has not been given yet), and this
+// credential may make the project's IAM changes.
+//
+// The last of those is F34's own reason for the skip, and it is the run
+// that skip was written for: an operator's update, whose credential may not
+// make the project's IAM changes an apply of that root makes, would fail there
+// instead of converging. So such a run keeps the skip — with the reason, which
+// firebaseSkip prints as its line — and a project owner's update creates the
+// indexes.
+//
+// Every way it can fail answers no, and every such run is left exactly as it
+// was: an update that cannot read the state, or cannot ask about the
+// credential, does not fail over it — the indexes it does not create are created
+// by the update that can.
+func (r *initRun) runIndexIndexesWait(ctx context.Context, c *infra.Clients, bin, stateBucket, fp string) (wait bool, why string) {
+	managed, ok := r.firebaseIndexesInState(ctx, c, bin, stateBucket, fp)
+	if !ok {
+		return false, " (the Firebase root's state could not be read, so the run index's composite indexes wait for the update that can)"
+	}
+	if len(runIndexIndexesMissing(managed)) == 0 {
+		return false, " (and the state already carries the run index's composite indexes)"
+	}
+	if may, err := infra.CanMakeIAMChanges(ctx, c, fp); err != nil || !may {
+		return false, " (and the run index's composite indexes wait for an update that may make project " + fp + "'s IAM changes, which an apply of the Firebase root does)"
+	}
+	return true, ""
+}
+
+func runIndexIndexesManaged(managed map[string]bool) bool {
+	for a := range managed {
+		if strings.HasPrefix(a, "module.firebase.google_firestore_index.") {
+			return true
+		}
+	}
+	return false
 }
 
 // discoveryClients are the clients that read the Firebase project's

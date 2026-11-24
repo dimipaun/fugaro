@@ -16,6 +16,11 @@ import (
 // The jobs of acme-app's web and api workflows.
 var webJob, apiJob = JobName("acme-app", "web"), JobName("acme-app", "api")
 
+// historyJob is the history job's own name (internal/infra.HistoryJob),
+// spelled rather than imported: this package's tests do not import
+// internal/infra, and StartJob reads no name but the one it is handed.
+const historyJob = "fugarohist"
+
 func newTestBackend(t *testing.T) (*Backend, *gcpfake.Run, *gcpfake.Logging) {
 	t.Helper()
 	fr, fl := gcpfake.NewRun(t), gcpfake.NewLogging(t)
@@ -404,6 +409,24 @@ func TestLaunchUnreadableMetadataIsAmbiguous(t *testing.T) {
 	_, err := b.Launch(context.Background(), launchSpec())
 	if err == nil || errors.Is(err, backend.ErrRejected) || errors.Is(err, backend.ErrNotFound) || len(fr.Executions()) != 1 {
 		t.Fatalf("err = %v, executions %v", err, fr.Executions())
+	}
+}
+
+// StartJob's own half of that path: :run succeeded, so the execution exists,
+// and an unreadable operation must not read as a start that did not happen -- a
+// caller that took it for one would start a second execution. The name it
+// cannot read is what ErrStartedUnnamed says, so a caller that only prints the
+// execution says that instead of printing an empty name.
+func TestStartJobUnreadableMetadataIsStartedUnnamed(t *testing.T) {
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob(historyJob, "1", "2Gi")
+	fr.BadRunMetadata = true
+	name, err := b.StartJob(context.Background(), historyJob, []string{"budget", "history", "--reindex"})
+	if !errors.Is(err, ErrStartedUnnamed) || name != "" {
+		t.Fatalf("StartJob = %q, %v, want no name and ErrStartedUnnamed", name, err)
+	}
+	if got := len(fr.Executions()); got != 1 {
+		t.Fatalf("executions = %v, want the one the start created", fr.Executions())
 	}
 }
 

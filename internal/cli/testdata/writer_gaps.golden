@@ -273,7 +273,11 @@ pools.conformance.legacy_open	open:no-writer
 pools.conformance.members	open:writer-unproven
 pools.conformance.name	open:writer-unproven
 pools.conformance.owner	open:writer-unproven
+pools.conformance.principal.id	open:no-writer
+pools.conformance.principal.kind	open:no-writer
+pools.conformance.rule	open:no-writer
 pools.conformance.strategy	open:writer-unproven
+pools.conformance.threshold	open:no-writer
 profile	label:file
 project	label:file
 project_secrets.CONFORMANCE.allow_data_to	open:no-writer

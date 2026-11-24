@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -112,7 +113,7 @@ func runRunsReindex(cmd *cobra.Command, o *cloudOptions) error {
 		fmt.Fprintf(out, "index: no execution was started (%s). The reindex stands all the same: the next sweep of the history job walks the index\n", oneLine(err.Error()))
 		return nil
 	}
-	fmt.Fprintf(out, "index: reindexing now as %s, resuming from its own cursor until it reaches the end of history\n", oneLine(exec))
+	fmt.Fprintf(out, "index: reindexing now%s, resuming from its own cursor until it reaches the end of history\n", reindexExecClause(exec))
 	return nil
 }
 
@@ -142,8 +143,10 @@ func reindexHolder(ctx context.Context, lc *localcfg.Config) string {
 }
 
 // startHistoryReindex starts one execution of the installation's history job
-// in --reindex mode, and answers its name ("" when the platform started it but
-// the name could not be read).
+// in --reindex mode, and answers its name: "" when the platform started the
+// execution but reported no readable name for it (gcp.ErrStartedUnnamed), which
+// the callers' line says (reindexExecClause) rather than leaving "reindexing
+// now as" with nothing after it. A non-nil error means nothing was started.
 //
 // It is the gcp backend's own job start rather than a launch: there is no run
 // and nothing to record, so the project config's backend endpoint is built
@@ -156,5 +159,21 @@ func startHistoryReindex(ctx context.Context, lc *localcfg.Config) (string, erro
 	if err != nil {
 		return "", err
 	}
-	return be.StartJob(ctx, infra.HistoryJob, reindexJobArgs)
+	name, err := be.StartJob(ctx, infra.HistoryJob, reindexJobArgs)
+	if errors.Is(err, gcp.ErrStartedUnnamed) {
+		// The execution is running; only its name could not be read.
+		return "", nil
+	}
+	return name, err
+}
+
+// reindexExecClause is the clause both callers print after "reindexing now":
+// the execution's own name, or -- when the platform started the execution but
+// reported no readable one -- a note that says so, because "reindexing now as"
+// with nothing after it names no execution at all.
+func reindexExecClause(name string) string {
+	if name == "" {
+		return " (the platform started the execution but did not report its name)"
+	}
+	return " as " + oneLine(name)
 }

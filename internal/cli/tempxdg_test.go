@@ -58,7 +58,7 @@ func TestTempXDGInInitAndDoctor(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", "/home/u/.cache")
 	e, out := stageEngine(t, "", &initOptions{})
 	e.r.warnTempXDG()
-	if len(e.r.res.Warnings) != 1 || !strings.Contains(e.r.res.Warnings[0], "XDG_CONFIG_HOME") || !strings.HasSuffix(e.r.res.Warnings[0], "unset it if you did not mean this") || !strings.Contains(out.String(), "warning: ") {
+	if len(e.r.res.Warnings) != 1 || !strings.Contains(e.r.res.Warnings[0], "XDG_CONFIG_HOME") || !strings.HasSuffix(e.r.res.Warnings[0], "unset it if you did not mean this") || !strings.Contains(out.String(), "Warning: ") {
 		t.Fatalf("warnings %q, output %q", e.r.res.Warnings, out.String())
 	}
 	cs := tempXDGChecks(os.Getenv)
