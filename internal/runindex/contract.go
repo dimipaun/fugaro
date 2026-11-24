@@ -51,6 +51,42 @@ import (
 // versions are the record's and the launch's.
 const Version = 1
 
+// Indexes is the closed set of the index's composite indexes (RI2), named the
+// way the Firebase module names them: its `run_index_indexes` map's keys are
+// one contract-index.md table row each, and a key is that row's field paths
+// joined with "_" in the order the query orders by them. The module's
+// `google_firestore_index` resources are a `for_each` over exactly this set, so
+// an index's address in the Firebase root's state is IndexAddress(key).
+//
+// It is here, and not in the CLI that asks the question, because it is part of
+// the contract the Terraform module is written against: `fugaro update` decides
+// whether a converged installation carries the indexes by comparing this set
+// with that state, and a row this list does not carry is a row such an
+// installation would never be given. The pin is two-directional, in the
+// terraform-tagged TestFirebaseModulePlansRunIndexes: it reads
+// contract-index.md's table and the plan of the Firebase root, and fails when
+// this list, the contract and the module's keys are not three spellings of one
+// set.
+var Indexes = []string{
+	"slug_updated_at",
+	"status_updated_at",
+	"slug_status_updated_at",
+	"plan_task_updated_at",
+	"slug_plan_task_updated_at",
+	"pr_updated_at",
+	"requested_by_updated_at",
+	"batch_updated_at",
+	"slug_pr_updated_at",
+	"slug_requested_by_updated_at",
+	"slug_batch_updated_at",
+}
+
+// IndexAddress is one of Indexes' addresses in the Firebase root's state
+// (module.firebase, the `run` resource, keyed by the map above).
+func IndexAddress(key string) string {
+	return `module.firebase.google_firestore_index.run["` + key + `"]`
+}
+
 // The two collections the index lives in, named as contract-index.md fixes
 // them. They are declared here because a reader and the writer are not always
 // the same release -- the history job's image may lag the CLI a person runs --
