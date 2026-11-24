@@ -3464,10 +3464,13 @@ func (c Cover) mobileMinterGrant(ch Change) string {
 // consumer's one grant is on THIS installation's one key, in this
 // installation's own project, under no condition, and on nothing else.
 //
-// Why the target is the whole of the check here. The row already says the
+// Why the key is the check that matters here. The row already says the
 // consumer's account may hold the signer's role, and the role is the whole of
-// what that account may do with a key: make a signature with it. What the row
-// cannot say is WHICH key, and the difference matters more than it looks — a
+// what that account may do with a key: make a signature with it. It does not
+// say which role of which project — roleKey resolves a custom role by its ID in
+// any project of this run — so the grant is held to this installation's own
+// role as well. What the row cannot say at all is WHICH key, and the difference
+// matters more than it looks — a
 // grant on another key of the same project is a signature the phones of this
 // installation do not verify (they pinned the public half of this key, O16),
 // made with material no step of this tree published or can revoke, and a grant
@@ -3489,6 +3492,16 @@ func (c Cover) mailboxSignerGrant(ch Change) string {
 	project := c.installationProject()
 	if project == "" {
 		return "grants the consumer's signing role in no project of this run"
+	}
+	// The role's OWN project, which roleKey does not decide: that lookup admits
+	// a custom role of any project of this run (Cover.Projects — the
+	// installation's own and a verified Firebase project beside it), so a plan
+	// could bind an identically named role of the Firebase project to this
+	// account on this installation's key. The name is not the role: the other
+	// project's is a different role with that project's own permission list,
+	// and O17's row is the role the installation root creates.
+	if got, want := str(ch.After["role"]), "projects/"+project+"/roles/"+MailboxSignerRole; got != want {
+		return fmt.Sprintf("grants %s, and the installation's own signer role is %s: a role of the same ID in another project of this run is another project's rule with its own permission list, and the row O17 names is the one the installation creates", got, want)
 	}
 	if unknown(ch, "crypto_key_id") {
 		return fmt.Sprintf("grants the consumer's signing role on a key that is not known: the design's row is the installation's one consumer key (%s), written out in mailbox_key.tf, and a plan that computes the key is one whose key nobody can name", mailboxCryptoKeyPath(project, c.Region))

@@ -375,6 +375,17 @@ func TestMailboxKeyGrantIsRefusedWhenItMoves(t *testing.T) {
 			unknown: map[string]any{},
 		},
 		{
+			// The other project here is one the cover ADMITS (the installation's
+			// Firebase project, which Cover.Projects carries), so roleKey
+			// resolves the ID and opens the cell: what refuses the row is
+			// mailboxSignerGrant reading the role's own project. A case only of
+			// proj-9999 would be refused by roleKey's unknown-project branch
+			// instead, and would stay green with the role check dead.
+			what:    "the signer's role of the Firebase project beside the installation",
+			after:   withGrant(grant, "role", "projects/"+spec.History.FirebaseProject+"/roles/"+tf.MailboxSignerRole),
+			unknown: map[string]any{},
+		},
+		{
 			what:    "a predefined signing role, which carries the verify half",
 			after:   withGrant(grant, "role", "roles/cloudkms.signerVerifier"),
 			unknown: map[string]any{},
