@@ -1689,6 +1689,12 @@ PY
   expect_absent "$out" "the service's audit lines for the second run could not be read" \
     "a refusal whose audit line is missing: the diagnosis line did not stop the reader"
   expect_contains "$out" "FACT pairing: FAIL — " "a refusal whose audit line is missing: the row"
+  # The COUNT is the assertion, and it is the one thing that tells the two
+  # readers apart: a reader that counted every line the run id appears on reads
+  # this document as 1 — the diagnosis line, which is not an audited act — and
+  # the sentence below would then be about the wrong refusal.
+  expect_contains "$out" "the pairing refusal's audit line is not the route's: 0 line(s)" \
+    "a refusal whose audit line is missing: the row counts the diagnosis line as no act at all"
   expect_contains "$out" "a 0 here would be the finding" "a refusal whose audit line is missing: why it is a finding"
 }
 
