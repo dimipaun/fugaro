@@ -490,7 +490,8 @@ export const NON_TEXT_STRING_KEYS: readonly string[] = Object.freeze([
   // kill's `at`), so a fixture's copy is a reading and not the wire's own value.
   'waiting_until',
   // PR7 of model-credentials-routing: when a paused run's chain comes back,
-  // RFC 3339 UTC, on a finished row whose record ended `paused`. It is
+  // RFC 3339 UTC, on a finished row of the feed and on a `runs ls` row whose
+  // record ended `paused`. It is
   // `waiting_until`'s kind exactly -- a stamp a reader places in time next to
   // `now`, and one whose presence is the state -- and it is exempted here for
   // the same reason, rather than classified. The screens that draw it (VS3's
