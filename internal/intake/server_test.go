@@ -1000,8 +1000,8 @@ func TestIntakeRefusesUnmarkedExistingContainer(t *testing.T) {
 	if w.Code != http.StatusConflict || errorType(t, w) != ErrorForeignContainer {
 		t.Fatalf("a marked container with a TTL: got %d %s, want 409 %s", w.Code, errorType(t, w), ErrorForeignContainer)
 	}
-	if msg := errorMessage(t, w); !strings.Contains(msg, "which the intake never writes") {
-		t.Errorf("the refusal of a marked container with a TTL does not name the shape: %q", msg)
+	if msg := errorMessage(t, w); !strings.Contains(msg, "which the intake never writes") || !strings.Contains(msg, "fugaro secrets shared rm <name>") {
+		t.Errorf("the refusal of a marked container with a TTL does not name the shape and the fix: %q", msg)
 	}
 	if len(f.store.values) != 0 {
 		t.Fatalf("a refused call wrote %v", f.store.values)

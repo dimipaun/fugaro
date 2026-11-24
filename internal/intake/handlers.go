@@ -497,33 +497,43 @@ func ours(sec Secret, scope Scope) bool {
 // belongs to when a sweep looks it up.
 func checkShape(id string, got Secret, o owner) error {
 	if !got.Shape.Empty() {
-		return fmt.Errorf("%w: %s carries %s, which the intake never writes", errForeignContainer, id, got.Shape)
+		return fmt.Errorf("%w: %s carries %s, which the intake never writes%s", errForeignContainer, id, got.Shape, notOurs)
 	}
 	for _, k := range slices.Sorted(maps.Keys(got.Annotations)) {
 		if !intakeAnnotation(k) {
-			return fmt.Errorf("%w: %s carries the annotation %q, which the intake does not write", errForeignContainer, id, k)
+			return fmt.Errorf("%w: %s carries the annotation %q, which the intake does not write%s", errForeignContainer, id, k, notOurs)
 		}
 	}
 	if got.Annotations[AnnotationCreatedBy] == "" {
-		return fmt.Errorf("%w: %s carries no %s annotation, so this intake did not make it", errForeignContainer, id, AnnotationCreatedBy)
+		return fmt.Errorf("%w: %s carries no %s annotation, so this intake did not make it%s", errForeignContainer, id, AnnotationCreatedBy, notOurs)
 	}
 	if o.shared {
 		// A shared container has no owner: an owner annotation on one was
 		// written by someone else, and this intake does not write it.
 		if got.Annotations[AnnotationOwnerSub] != "" || got.Annotations[AnnotationOwnerEmail] != "" {
-			return fmt.Errorf("%w: %s is a project-shared container and carries an owner's annotations", errForeignContainer, id)
+			return fmt.Errorf("%w: %s is a project-shared container and carries an owner's annotations%s", errForeignContainer, id, notOurs)
 		}
 		return nil
 	}
 	if got.Annotations[AnnotationOwnerSub] != o.sub {
-		return fmt.Errorf("%w: %s carries the owner account %s and its name is the owner account %s", errForeignContainer, id,
-			pluginwire.Printable(got.Annotations[AnnotationOwnerSub]), pluginwire.Printable(o.sub))
+		return fmt.Errorf("%w: %s carries the owner account %s and its name is the owner account %s%s", errForeignContainer, id,
+			pluginwire.Printable(got.Annotations[AnnotationOwnerSub]), pluginwire.Printable(o.sub), notOurs)
 	}
 	if got.Annotations[AnnotationOwnerEmail] != o.email || got.Annotations[AnnotationCreatedBy] != o.creator {
-		return fmt.Errorf("%w: %s carries annotations that are not the ones this call would have written, so another writer made it", errForeignContainer, id)
+		return fmt.Errorf("%w: %s carries annotations that are not the ones this call would have written, so another writer made it%s", errForeignContainer, id, notOurs)
 	}
 	return nil
 }
+
+// notOurs is the fix every checkShape refusal carries. The grant holds no
+// secrets.update and no secrets.patch, so a container that is not this
+// intake's own can never be brought to its shape: the shape check describes
+// what is wrong and this says what can be done about it, which is the whole
+// difference between a refusal a person can act on and one they can only
+// report. Both remove verbs are named because both prefixes reach this check:
+// a member's own container, and — through a sweep or a shared store — the
+// project's.
+const notOurs = "; the intake holds no write that changes a container, so a value is stored only in one this intake made: remove this container (`fugaro secrets shared rm <name>` for the project's prefix, `fugaro secrets user rm <name>` for your own) and store the value again"
 
 // ownerOf is the owner a container's own name and annotations say, for the
 // sweep: the account id from the NAME (which is the truth, R12), and the
