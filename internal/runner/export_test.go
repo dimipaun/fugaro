@@ -419,3 +419,14 @@ func ResetGatewayStageLimitHook(t *testing.T) {
 	gatewayStageLimitFunc = nil
 	t.Cleanup(func() { gatewayStageLimitFunc = nil })
 }
+
+// SetSecretFileHook makes every file secret of t call f as its value is
+// registered with the redactor and before the file is written: the one moment
+// G3's ordering is observable, since a written file shows the value and not
+// whether the redactor held it first.
+func SetSecretFileHook(t *testing.T, f func(value string, registered bool)) {
+	t.Helper()
+	prev := secretFileHook
+	secretFileHook = f
+	t.Cleanup(func() { secretFileHook = prev })
+}

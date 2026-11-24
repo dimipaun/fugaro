@@ -51,6 +51,10 @@ import (
 // tests pass with, which is what makes one usable as a secret here.
 const secretEnvVar = "FIXTURE_FAILS_FILE"
 
+// secretName is that secret's LOGICAL name, the spelling version 2 asks by
+// (config.Secret.Name, D3333): the call names this and no variable.
+const secretName = "fixture-fails"
+
 // fetchedSecretValue is what the stand-in service answers for secretEnvVar, and
 // mountedSecretValue what a job that still mounts it carries: two different
 // values, so a run that took the wrong one shows.
@@ -59,10 +63,10 @@ const (
 	mountedSecretValue = "mounted-workflow-secret-4a20"
 )
 
-// otherSecretEnvVar is a variable that is not the one a call asks for: what a
-// service answers when the answer belongs to another variable, which the run
-// may not read as the one it asked for.
-const otherSecretEnvVar = "SOME_OTHER_VARIABLE"
+// otherSecretName is a secret that is not the one a call asks for: what a
+// service answers when the answer belongs to another secret, which the run may
+// not read as the one it asked for.
+const otherSecretName = "some-other-secret"
 
 // shortSecretValue is under the floor a value must clear before a run may
 // register it for redaction: a service that answered it is refused rather than
@@ -76,34 +80,42 @@ const shortSecretValue = "abc"
 const minFetchedSecretLen = 4
 
 // secretsCall is one call the stand-in service received, kept whole: what the
-// call asked for and what it presented, which is what a test asserts the fetch
-// is signed by.
+// call asked for -- the variable (version 1) or the logical name (version 2) --
+// and what it presented, which is what a test asserts the fetch is signed by.
 type secretsCall struct {
-	env    string
-	header http.Header
-	body   string
+	env     string
+	name    string
+	version int
+	header  http.Header
+	body    string
 }
 
 // secretsService is the credentials service's stand-in: the workflow-secrets
-// route (B3.2's contract) answered from values, and every other path relayed to
-// upstream, the model upstream's own stand-in -- the real service carries a
-// run's model calls too, and a stand-in that refused them would turn a stray
-// call into a mystery.
+// route (B3.2's contract) answered from names, version 2 by logical name and
+// version 1 by variable, and every other path relayed to upstream, the model
+// upstream's own stand-in -- the real service carries a run's model calls too,
+// and a stand-in that refused them would turn a stray call into a mystery.
+//
+// The two served cases are C1's own stub (credsvc.WorkflowSecretsStub), so the
+// shape, the echo and version 2's "not in the record" refusal are held to one
+// implementation rather than to two readers agreeing with a comment (the
+// plan's stub, which I1 deletes when the route itself lands).
 //
 // status, body and malformed are the three ways a call is not served: a typed
 // refusal with status, a 200 whose body is not this contract's, and (with no
-// value under the variable asked for) the state_unavailable refusal the route
-// writes for a record that holds nothing there. answerEnv is the fourth, the
-// one the contract itself forbids: a 200 that names some other variable than
-// the one the call asked for.
+// value under what the call asked for) the refusal the stub writes for a
+// record that holds nothing there. answerAs is the fourth, the one the contract
+// itself forbids: a 200 that names some other secret than the one the call
+// asked for.
 type secretsService struct {
 	mu        sync.Mutex
-	values    map[string]string
+	names     map[string]string
+	envs      map[string]string
 	calls     []secretsCall
 	status    int
 	body      string
 	malformed string
-	answerEnv string
+	answerAs  string
 	upstream  string
 }
 
@@ -115,25 +127,34 @@ func (s *secretsService) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	s.calls = append(s.calls, secretsCall{env: req.Env, header: r.Header.Clone(), body: string(raw)})
-	value, ok := s.values[req.Env]
-	status, refusal, malformed, answerEnv := s.status, s.body, s.malformed, s.answerEnv
+	s.calls = append(s.calls, secretsCall{
+		env: req.Env, name: req.Name, version: req.VersionOf(), header: r.Header.Clone(), body: string(raw),
+	})
+	status, refusal, malformed, answerAs := s.status, s.body, s.malformed, s.answerAs
+	stub := credsvc.WorkflowSecretsStub{Values: s.names, Envs: s.envs}
 	s.mu.Unlock()
-	w.Header().Set("Content-Type", "application/json")
 	switch {
 	case malformed != "":
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, malformed)
 	case status != 0:
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, refusal)
-	case !ok:
-		w.WriteHeader(credsvc.StatusUnavailable)
-		_, _ = fmt.Fprintf(w, `{"error":%q,"message":"the record holds nothing under that name"}`, credsvc.ErrorStateUnavailable)
-	default:
-		if answerEnv != "" {
-			req.Env = answerEnv
+	case answerAs != "":
+		var resp credsvc.WorkflowSecretsResponse
+		if req.VersionOf() == credsvc.WorkflowSecretsVersion2 {
+			resp = credsvc.WorkflowSecretsResponse{Name: answerAs, Value: s.names[req.Name]}
+		} else {
+			resp = credsvc.WorkflowSecretsResponse{Env: answerAs, Value: s.envs[req.Env]}
 		}
-		_ = json.NewEncoder(w).Encode(credsvc.WorkflowSecretsResponse{Env: req.Env, Value: value})
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	default:
+		// The stub reads the body it is handed, and the call above has already
+		// read it: it is handed the same bytes again.
+		r.Body = io.NopCloser(bytes.NewReader(raw))
+		stub.ServeHTTP(w, r)
 	}
 }
 
@@ -165,13 +186,25 @@ func (s *secretsService) relay(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
-// asked is the variable of every call the service received, in order.
+// asked is the variable of every version-1 call the service received, in order.
 func (s *secretsService) asked() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]string, 0, len(s.calls))
 	for _, c := range s.calls {
 		out = append(out, c.env)
+	}
+	return out
+}
+
+// askedNames is the logical name of every call the service received, in order:
+// the version-2 question, and "" for a version-1 one.
+func (s *secretsService) askedNames() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.calls))
+	for _, c := range s.calls {
+		out = append(out, c.name)
 	}
 	return out
 }
@@ -196,6 +229,50 @@ func secretsConfig(t *testing.T, extra string) string {
 	return cfg
 }
 
+// otherFetchedValue is what the service answers for the second declared secret
+// twoSecretsConfig adds: two values, so an answer read as the other secret's
+// shows.
+const otherFetchedValue = "fetched-marker-secret-77b3"
+
+// twoSecretsConfig is the fixture's configuration with a second declared
+// secret: a run that declares more than one is asked about each of them, by its
+// own name.
+func twoSecretsConfig(t *testing.T) string {
+	t.Helper()
+	const declared = "      - { name: fixture-fails, env: FIXTURE_FAILS_FILE }"
+	cfg := secretsConfig(t, "  first_line_review: off\n")
+	out := strings.Replace(cfg, declared,
+		declared+"\n      - { name: fixture-marker, env: FIXTURE_MARKER }", 1)
+	if out == cfg {
+		t.Fatal("the fixture's declared secret moved: this is not adding a second one")
+	}
+	return out
+}
+
+// fileSecretsConfig is the fixture's configuration with its declared secret
+// exposed as a file (config.Secret.File, D3327): the variable is the path the
+// value was written to rather than the value.
+func fileSecretsConfig(t *testing.T, extra string) string {
+	t.Helper()
+	const (
+		declared = "      - { name: fixture-fails, env: FIXTURE_FAILS_FILE }"
+		asAFile  = "      - { name: fixture-fails, env: FIXTURE_FAILS_FILE, file: true }"
+	)
+	cfg := secretsConfig(t, extra)
+	out := strings.Replace(cfg, declared, asAFile, 1)
+	if out == cfg {
+		t.Fatal("the fixture's declared secret moved: this is not exposing it as a file")
+	}
+	return out
+}
+
+// fileSecretsRun is secretsRun for a repository whose secret is exposed as a
+// file.
+func fileSecretsRun(t *testing.T, extra string, spec *task.Spec, svc *secretsService) *bk {
+	t.Helper()
+	return secretsRunConfig(t, fileSecretsConfig(t, extra), spec, svc)
+}
+
 // secretsRun is the whole run these tests are about: the fixture repository's
 // job run whose environment carries the credentials service's URL (so the run
 // is on the switch and its model path is the service, B2.2), its own account of
@@ -210,7 +287,15 @@ func secretsConfig(t *testing.T, extra string) string {
 // empty variable where the fetch is what answers for it.
 func secretsRun(t *testing.T, extra string, spec *task.Spec, svc *secretsService) *bk {
 	t.Helper()
-	h := newHarnessFiles(t, secretsConfig(t, extra), spec, nil)
+	return secretsRunConfig(t, secretsConfig(t, extra), spec, svc)
+}
+
+// secretsRunConfig is secretsRun with the configuration handed in whole, for a
+// case whose declaration is not the fixture's own (a secret exposed as a file,
+// a second declared secret).
+func secretsRunConfig(t *testing.T, cfg string, spec *task.Spec, svc *secretsService) *bk {
+	t.Helper()
+	h := newHarnessFiles(t, cfg, spec, nil)
 	fake, up := anthropicfake.New(t)
 	fake.Func = func(*http.Request, []byte) anthropicfake.Reply {
 		rep := anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1000, Output: 3})
@@ -286,15 +371,16 @@ const imageEntryName = "fixture-entry"
 //
 // What is asserted is the whole of it: the run reaches its stages and ends
 // ready, the agent's own environment carries the fetched value, the service was
-// asked for exactly the one variable the job does not carry, and the call it
-// was asked with is signed the way every call to the service is -- the job's
-// own ID token as the bearer, the run's identity, the job's name -- and carries
-// no credential of the job's own (D143).
+// asked once -- for the declared secret's logical name, in the contract's
+// version-2 shape -- and the call it was asked with is signed the way every
+// call to the service is -- the job's own ID token as the bearer, the run's
+// identity, the job's name -- and carries no credential of the job's own
+// (D143).
 //
 // Hand mutation this fails on: dropping the call from bootstrap (the run stops
 // on BuildEnv's refusal), or fetching a variable the job already carries.
 func TestBootstrapFetchesMissingWorkflowSecretsFromTheService(t *testing.T) {
-	svc := &secretsService{values: map[string]string{secretEnvVar: fetchedSecretValue}}
+	svc := &secretsService{names: map[string]string{secretName: fetchedSecretValue}}
 	b := secretsRun(t, "  first_line_review: off\n", nil, svc)
 
 	var seen string
@@ -308,12 +394,18 @@ func TestBootstrapFetchesMissingWorkflowSecretsFromTheService(t *testing.T) {
 	if seen != fetchedSecretValue {
 		t.Errorf("the agent's environment carries %s=%q, want the value the service answered", secretEnvVar, seen)
 	}
-	if got := svc.asked(); len(got) != 1 || got[0] != secretEnvVar {
-		t.Fatalf("the service was asked for %v, want exactly %s", got, secretEnvVar)
+	if got := svc.askedNames(); len(got) != 1 || got[0] != secretName {
+		t.Fatalf("the service was asked for %v, want exactly %s", got, secretName)
 	}
 	call := svc.callsOf()[0]
-	if want := `{"env":"` + secretEnvVar + `"}`; call.body != want {
-		t.Errorf("the call carried %q, want the contract's one field for %s", call.body, secretEnvVar)
+	if want := `{"name":"` + secretName + `","version":2}`; call.body != want {
+		t.Errorf("the call carried %q, want the contract's version-2 body for %s", call.body, secretName)
+	}
+	if call.version != credsvc.WorkflowSecretsVersion2 {
+		t.Errorf("the call declares version %d, want version %d", call.version, credsvc.WorkflowSecretsVersion2)
+	}
+	if call.env != "" {
+		t.Errorf("the call carries env=%q, which version 2 has no field for", call.env)
 	}
 	if got := call.header.Get("Authorization"); got != "Bearer job-id-token-from-the-metadata-stand-in" {
 		t.Errorf("the call's bearer is %q, want the job's own ID token", got)
@@ -340,7 +432,7 @@ func TestBootstrapFetchesMissingWorkflowSecretsFromTheService(t *testing.T) {
 // service is asked, and its answer would have to win over the mount), or
 // letting an answer overwrite a mounted value.
 func TestBootstrapPrefersTheMountedValue(t *testing.T) {
-	svc := &secretsService{values: map[string]string{secretEnvVar: fetchedSecretValue}}
+	svc := &secretsService{names: map[string]string{secretName: fetchedSecretValue}}
 	b := secretsRun(t, "  first_line_review: off\n", nil, svc)
 	// The mount is the environment entry the deploy leaves, which is the file
 	// the fixture's own tests read.
@@ -373,7 +465,7 @@ func TestBootstrapPrefersTheMountedValue(t *testing.T) {
 // mutation that stopped publishing the stage's output cannot pass this by
 // publishing nothing.
 func TestFetchedSecretsAreRedacted(t *testing.T) {
-	svc := &secretsService{values: map[string]string{secretEnvVar: fetchedSecretValue}}
+	svc := &secretsService{names: map[string]string{secretName: fetchedSecretValue}}
 	b := secretsRun(t, "  first_line_review: off\n", nil, svc)
 
 	leaky := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
@@ -415,7 +507,7 @@ func TestFetchedSecretsAreRedacted(t *testing.T) {
 // wf.Secrets (the value reaches the agent's environment), or skipping the fetch
 // in review mode (the registration's own refusal stops the run).
 func TestReviewRunFetchedSecretsNeverReachTheAgent(t *testing.T) {
-	svc := &secretsService{values: map[string]string{secretEnvVar: fetchedSecretValue}}
+	svc := &secretsService{names: map[string]string{secretName: fetchedSecretValue}}
 	spec := reviewTaskSpec("reviewonly", reviewOnlyYAML, 7)
 	// The workflow the task names is what places a job run in the job it is in
 	// (gcp.JobName of the slug and that workflow), and a review-only spec carries
@@ -447,8 +539,8 @@ func TestReviewRunFetchedSecretsNeverReachTheAgent(t *testing.T) {
 	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReviewed {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	if got := svc.asked(); len(got) != 1 || got[0] != secretEnvVar {
-		t.Fatalf("the service was asked for %v, want %s: a review run registers the value for redaction and fetches it like any other run", got, secretEnvVar)
+	if got := svc.askedNames(); len(got) != 1 || got[0] != secretName {
+		t.Fatalf("the service was asked for %v, want %s: a review run registers the value for redaction and fetches it like any other run", got, secretName)
 	}
 	if keys := objectsContaining(t, b.harness, fetchedSecretValue); len(keys) > 0 {
 		t.Fatalf("the fetched secret is stored in %v", keys)
@@ -467,12 +559,13 @@ func TestReviewRunFetchedSecretsNeverReachTheAgent(t *testing.T) {
 //
 // The ways the service does not serve the call are the ways the run's own
 // sentences tell apart: it cannot be reached at all, it refuses the call, and
-// it answers something the run may not read as this variable's value -- a body
+// it answers something the run may not read as this secret's value -- a body
 // that is not this contract's, one that carries a second document after it, one
-// that names another variable, and one whose value is too short to be redacted.
+// that names another secret, and one whose value is too short to be redacted.
 // Each of those stops the run here rather than handing the answer on: the
-// contract echoes the variable for exactly the third of them, and the floor of
-// the fourth is the same one agent.BuildEnv refuses a declared secret under.
+// contract echoes what the call named for exactly the third of them, and the
+// floor of the fourth is the same one agent.BuildEnv refuses a declared secret
+// under.
 func TestServiceDownHaltsTheRunBeforeTheAgent(t *testing.T) {
 	// A service that is not listening at all: a URL whose port nothing holds.
 	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
@@ -490,21 +583,21 @@ func TestServiceDownHaltsTheRunBeforeTheAgent(t *testing.T) {
 			s.status, s.body = credsvc.StatusUnavailable, fmt.Sprintf(`{"error":%q,"message":"the workflow records cannot be read"}`, credsvc.ErrorStateUnavailable)
 		}, wantInErr: "answered 503, refused: " + credsvc.ErrorStateUnavailable},
 		{name: "the answer is not this contract's", edit: func(s *secretsService) {
-			s.malformed = `{"env":"FIXTURE_FAILS_FILE","value":"x","extra":1}`
+			s.malformed = `{"name":"fixture-fails","value":"x","extra":1}`
 		}, wantInErr: "is not a workflow secret's"},
 		{name: "the answer carries more than one document", edit: func(s *secretsService) {
-			s.malformed = fmt.Sprintf(`{"env":%q,"value":%q}{"env":"SOME_OTHER_VARIABLE","value":%q}`, secretEnvVar, fetchedSecretValue, fetchedSecretValue)
+			s.malformed = fmt.Sprintf(`{"name":%q,"value":%q}{"name":%q,"value":%q}`, secretName, fetchedSecretValue, otherSecretName, fetchedSecretValue)
 		}, wantInErr: "carries more than one document"},
-		{name: "the answer names another variable", edit: func(s *secretsService) {
-			s.values[secretEnvVar] = fetchedSecretValue
-			s.answerEnv = otherSecretEnvVar
-		}, wantInErr: "is for another variable"},
+		{name: "the answer names another secret", edit: func(s *secretsService) {
+			s.names[secretName] = fetchedSecretValue
+			s.answerAs = otherSecretName
+		}, wantInErr: "is for another secret"},
 		{name: "the answer is a value too short to redact", edit: func(s *secretsService) {
-			s.values[secretEnvVar] = shortSecretValue
+			s.names[secretName] = shortSecretValue
 		}, wantInErr: fmt.Sprintf("answered a value shorter than %d bytes", minFetchedSecretLen)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := &secretsService{values: map[string]string{}}
+			svc := &secretsService{names: map[string]string{}, envs: map[string]string{}}
 			if tc.edit != nil {
 				tc.edit(svc)
 			}
@@ -525,6 +618,14 @@ func TestServiceDownHaltsTheRunBeforeTheAgent(t *testing.T) {
 			}
 			if len(b.provider.State.PRs) != 0 {
 				t.Fatal("a run that could not fetch its secret opened a pull request")
+			}
+			// No second call: version 2's not-in-the-record answer is the only
+			// one the runner asks again under version 1
+			// (TestFallsBackToV1WhenNotInRecord), and a refusal asked again
+			// would be the service's decision questioned twice. A service that
+			// was never reached is the one case with none.
+			if got := len(svc.callsOf()); got > 1 {
+				t.Errorf("the service was called %d times, want at most one", got)
 			}
 			if failed == nil || failed.Status != runstore.StatusInfraError || failed.Outcome != runstore.OutcomeNone {
 				t.Fatalf("record = %+v, want an infra error with no outcome", failed)
@@ -588,4 +689,123 @@ func TestNoServiceURLNoFetch(t *testing.T) {
 			t.Fatal("a local run reached a credentials service a developer's environment named (D149)")
 		}
 	})
+}
+
+// TestFetchWorkflowSecretsSendsName: the call names the LOGICAL secret
+// (config.Secret.Name), which is the unit the project record's allow-list is
+// written in (D3333), and not the variable the flip's own record is written in.
+// One call per declared secret, each carrying its own name, and each answer
+// landing in the variable that name's declaration exposes it as -- which is the
+// whole of what asking by name has to get right.
+//
+// Hand mutation this fails on: sending the variable where the name belongs (the
+// record holds no variable), or reading an answer into a variable the call did
+// not ask about.
+func TestFetchWorkflowSecretsSendsName(t *testing.T) {
+	svc := &secretsService{names: map[string]string{
+		"fixture-fails":  fetchedSecretValue,
+		"fixture-marker": otherFetchedValue,
+	}}
+	b := secretsRunConfig(t, twoSecretsConfig(t), nil, svc)
+
+	seen := map[string]string{}
+	rec, err := b.run(t,
+		func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			seen[secretEnvVar] = envValue(req.Env, secretEnvVar)
+			seen["FIXTURE_MARKER"] = envValue(req.Env, "FIXTURE_MARKER")
+			return implement("feature")(t, ctx, req)
+		},
+		review("ship", 0))
+	mustReady(t, rec, err)
+	if got := svc.askedNames(); len(got) != 2 || got[0] != secretName || got[1] != "fixture-marker" {
+		t.Fatalf("the service was asked for %v, want each declared secret by its own name", got)
+	}
+	for i, want := range []struct{ name, env, value string }{
+		{secretName, secretEnvVar, fetchedSecretValue},
+		{"fixture-marker", "FIXTURE_MARKER", otherFetchedValue},
+	} {
+		call := svc.callsOf()[i]
+		if body := `{"name":"` + want.name + `","version":2}`; call.body != body {
+			t.Errorf("call %d carried %q, want %q", i, call.body, body)
+		}
+		if seen[want.env] != want.value {
+			t.Errorf("the agent's environment carries %s=%q, want the value the service answered for %s", want.env, seen[want.env], want.name)
+		}
+	}
+}
+
+// TestNoV2WhileRepoSecretsOn: version 2 rests on D2313, so while the door that
+// ruling keeps is open -- config.RepoSecretsOff false, which is a repository
+// reading its own copy again -- the fetch asks the way it always has and
+// version 2 is never sent (G9, F24). Reversing D2313 is meant to be a visible
+// change, and this is the wire half of the visibility.
+//
+// Hand mutation this fails on: sending version 2 whatever the door says (the
+// call names a secret the record would answer the project's copy of), or never
+// sending it (TestBootstrapFetchesMissingWorkflowSecretsFromTheService fails).
+func TestNoV2WhileRepoSecretsOn(t *testing.T) {
+	repoSecretsOff(t)
+	svc := &secretsService{envs: map[string]string{secretEnvVar: fetchedSecretValue}}
+	b := secretsRun(t, "  first_line_review: off\n", nil, svc)
+
+	var seen string
+	rec, err := b.run(t,
+		func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			seen = envValue(req.Env, secretEnvVar)
+			return implement("feature")(t, ctx, req)
+		},
+		review("ship", 0))
+	mustReady(t, rec, err)
+	if seen != fetchedSecretValue {
+		t.Errorf("the agent's environment carries %s=%q, want the value the service answered", secretEnvVar, seen)
+	}
+	calls := svc.callsOf()
+	if len(calls) != 1 {
+		t.Fatalf("%d calls, want one: the door open means version 2 is never sent", len(calls))
+	}
+	if want := `{"env":"` + secretEnvVar + `"}`; calls[0].body != want {
+		t.Errorf("the call carried %q, want the version-1 body %q", calls[0].body, want)
+	}
+	if calls[0].version != credsvc.WorkflowSecretsVersion1 {
+		t.Errorf("the call declares version %d, want version %d", calls[0].version, credsvc.WorkflowSecretsVersion1)
+	}
+}
+
+// TestFallsBackToV1WhenNotInRecord: version 2's "this name is not in the project
+// record" (credsvc.ErrorWorkflowSecretNotAllowed) is the same answer a record
+// that does not hold the name YET gives, and every repository S3 already serves
+// is in exactly that state until update copies its names (D3325, D3328): the
+// runner asks version 1 for the same variable, which is the record that
+// repository is on today, and the run starts with the value.
+//
+// It is the ONE refusal with a fallback (contract.md): every other one is the
+// service's decision, and TestServiceDownHaltsTheRunBeforeTheAgent pins that
+// those stop the run on the first answer.
+func TestFallsBackToV1WhenNotInRecord(t *testing.T) {
+	// The name is not in the record and the variable is: the state of every
+	// repository whose names update has not copied yet.
+	svc := &secretsService{envs: map[string]string{secretEnvVar: fetchedSecretValue}}
+	b := secretsRun(t, "  first_line_review: off\n", nil, svc)
+
+	var seen string
+	rec, err := b.run(t,
+		func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			seen = envValue(req.Env, secretEnvVar)
+			return implement("feature")(t, ctx, req)
+		},
+		review("ship", 0))
+	mustReady(t, rec, err)
+	if seen != fetchedSecretValue {
+		t.Errorf("the agent's environment carries %s=%q, want the value version 1 answered", secretEnvVar, seen)
+	}
+	calls := svc.callsOf()
+	if len(calls) != 2 {
+		t.Fatalf("%d calls, want two: version 2, then the same secret's variable", len(calls))
+	}
+	if want := `{"name":"` + secretName + `","version":2}`; calls[0].body != want {
+		t.Errorf("the first call carried %q, want %q", calls[0].body, want)
+	}
+	if want := `{"env":"` + secretEnvVar + `"}`; calls[1].body != want {
+		t.Errorf("the fallback call carried %q, want the version-1 body %q", calls[1].body, want)
+	}
 }

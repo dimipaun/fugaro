@@ -293,6 +293,9 @@ type run struct {
 	stampHooks  string
 	runnerHooks string
 	stampAuthor *gitops.Person
+	// secretFiles is the directory the run's own file secrets were written in
+	// (secretfile.go's secretFileRoot), empty for a run that declares none.
+	secretFiles string
 	// secMu guards secrets: the budget session registers a refreshed ID
 	// token from its own goroutine.
 	secMu sync.RWMutex
@@ -847,6 +850,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		// in a temporary directory every run writes to, and a directory left
 		// behind is /tmp filling up with hooks of finished runs.
 		r.removeStampHooks()
+		// The values this run exposed as files go with it (G3): the directory
+		// holds credentials and nothing of a finished run is left to read them.
+		r.removeSecretFiles()
 		rctx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), releaseDeferredTimeout)
 		r.releaseLock(rctx)
 		cancelRelease()
@@ -3734,11 +3740,21 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// is the one exception, and stays reachable by a trusted author's own
 	// prompt injection: that is the residual risk the design accepts.
 	declared := r.declaredSecrets(wf)
-	var secretEnvs []string
+	var secretEnvs, fileSecretEnvs []string
 	if !r.review {
 		secretEnvs = make([]string, len(declared))
 		for i, s := range declared {
 			secretEnvs[i] = s.Env
+		}
+		// The entries exposed as a file are the ones whose variable holds the
+		// path their value was written to rather than the value itself
+		// (secretfile.go, D3327): the agent's own environment carries the path
+		// and the redactor already holds the value, so agent.BuildEnv must not
+		// take the path for a second secret to register.
+		for _, s := range declared {
+			if s.File {
+				fileSecretEnvs = append(fileSecretEnvs, s.Env)
+			}
 		}
 	} else {
 		// Keeping secretEnvs empty stops agent.BuildEnv from putting these
@@ -3846,7 +3862,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
-		Auth: r.servedAuth(), Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
+		Auth: r.servedAuth(), Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend, FileSecrets: fileSecretEnvs,
 		// The operator's own catalog image's variables, for a job whose image
 		// the catalog chose (agentenv.go's imageEnv): nil for every other job,
 		// whatever its environment holds.
