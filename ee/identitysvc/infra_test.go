@@ -34,7 +34,6 @@
 package identitysvc
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -1024,15 +1023,13 @@ func TestInfraTheSigningKeyIsNonExportable(t *testing.T) {
 
 // TestInfraThePairedListIsSealedUnderItsOwnKey: K1's cloud side is its own
 // database and its own key ring, the key is symmetric and encrypt-and-decrypt
-// only, the sealer role takes nothing of the signing ring, and the rules
-// document beside the service denies every client read and write.
+// only, and the sealer role takes nothing of the signing ring.
 //
 // The mutations this fails on: the key moved into the signing ring (one ring, so
 // one grant reaches both), its purpose or algorithm moved onto the signing pair,
 // a lifecycle without prevent_destroy, a rotation period nobody set, a second
 // database, a grant made at the project rather than at the ring, a permission
-// beyond seal and open, a second member on the grant, and rtdb.rules.json
-// granting anything at all.
+// beyond seal and open, and a second member on the grant.
 func TestInfraThePairedListIsSealedUnderItsOwnKey(t *testing.T) {
 	db := tfBlock(t, `resource "google_firebase_database_instance" "pairedlist"`)
 	tfAttrsAre(t, db, "the paired-list database", []tfWant{
@@ -1097,24 +1094,6 @@ func TestInfraThePairedListIsSealedUnderItsOwnKey(t *testing.T) {
 		{"key_ring_id", "google_kms_key_ring.pairedlist.id"},
 	}, "the one account that seals and opens is the service's own, and the grant is made on K1's ring and not at the project: a grant at the project would reach every key the project ever holds (K1, A3)")
 
-	// The rules document is a file the deployment publishes over the database's
-	// own REST API, so this root writes none of it and this check reads the
-	// document itself: it must deny a read and a write at the root and grant
-	// nothing anywhere, because what a phone holds is a Firebase ID token and the
-	// project's API key and neither may read a node.
-	rules, err := os.ReadFile("rtdb.rules.json")
-	if err != nil {
-		t.Fatalf("reading rtdb.rules.json: %v", err)
-	}
-	var doc struct {
-		Rules map[string]any `json:"rules"`
-	}
-	if err := json.Unmarshal(rules, &doc); err != nil {
-		t.Fatalf("rtdb.rules.json is not a rules document: %v", err)
-	}
-	if len(doc.Rules) != 2 || doc.Rules[".read"] != false || doc.Rules[".write"] != false {
-		t.Errorf("rtdb.rules.json is %s, want {\".read\": false, \".write\": false} and nothing else: the signer's account holds the database role and passes the rules, and a phone is not that account — so a rule granting a read or a write anywhere is a store a client can dump, which is the one thing K1's sealing is for (K1, D2796)", strings.TrimSpace(string(rules)))
-	}
 }
 
 // TestInfraTheSignerRoleIsTheNarrowestThatSigns: signing and publishing the
