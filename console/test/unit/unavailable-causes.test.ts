@@ -28,11 +28,22 @@
 //     `person` class refused a dotted local part and `launcher.ts` cut at the
 //     first `@` -- which is the red step the task names;
 //   - **the coverage itself is checked against the source** (`the scan`): every
-//     file under `src/renderer` that names the mark, plus the module that
+//     file under `src/renderer` that can draw the mark, plus the module that
 //     declares it, must be in the table, and the table may name no file that
-//     does not. A new screen that draws the mark therefore fails this file
+//     does not. **A file can draw the mark without ever naming it**: the door
+//     every mark on a screen comes through is `formatReading`, which reads
+//     `UNAVAILABLE_MARK` inside `availability.ts` -- so the scan counts the mark
+//     literal *and* a `formatReading(` call, and a screen wired to a reading is
+//     covered by it. A new screen that draws the mark therefore fails this file
 //     rather than slipping past it, and a file that stops drawing it fails too,
 //     so the table cannot rot into a list of places that no longer exist.
+//
+// **A `formatReading` call that cannot yield the mark is named, with its
+// guard**: `CANNOT_DRAW` is the pinned list of them (`spark`'s bars, which the
+// model makes a gap; the gauge's title, whose branch is guarded by the two
+// figures being numbers; a spend bar's height, which `barOf` makes a gap or a
+// measured share). Each line names the symbol it is about and the case asserts
+// the symbol is still in that file, so the list cannot rot into invented names.
 //
 // **Where a cause is not on screen, the table says so and says why.** An
 // element that carries the mark and no reason is listed in `NO_REASON_SENTENCE`
@@ -60,12 +71,22 @@ import {
   fillProjectsSettings,
 } from '../../src/renderer/screens/projects'
 import { GRAPH_INITIAL_STATE, renderGraph } from '../../src/renderer/screens/graph'
+import {
+  GRAPH_ESTIMATE_MINUTES,
+  GRAPH_ESTIMATE_NO_HISTORY,
+  GRAPH_ESTIMATE_READY,
+  GRAPH_ESTIMATE_TASKS,
+} from '../../src/renderer/screens/graph'
 import { GRAPH_NODE_HEIGHT, GRAPH_NODE_WIDTH, buildGraphModel } from '../../src/renderer/graph/model'
 import { nodeKey } from '../../src/renderer/graph/layout'
 import type { Positions } from '../../src/renderer/graph/layout-client'
 import { MOVE_TARGET_CLASS, MOVE_VALUE_CLASS, moveAnswerOf, moveSheet } from '../../src/renderer/graph/move'
 import type { MoveTarget } from '../../src/renderer/graph/move'
 import { KEYS_KIND } from '../../src/renderer/manage/kinds/keys'
+import { MODELS_KIND } from '../../src/renderer/manage/kinds/models'
+import { poolsKind } from '../../src/renderer/manage/kinds/pools'
+import { budgetKindFor } from '../../src/renderer/manage/kinds/budget'
+import { classifyCliVersion } from '../../src/shared/version'
 import { putLink, putReading, putText } from '../../src/renderer/app'
 import { UNAVAILABLE_MARK, readNumber } from '../../src/shared/availability'
 import { sanitizeText } from '../../src/shared/sanitize'
@@ -295,6 +316,97 @@ function graphPicture(): { readonly model: ReturnType<typeof buildGraphModel>; r
   }
 }
 
+/** ESTIMATE_RANGE_MARK is `graph.ts`'s own range separator (`GRAPH_ESTIMATE_RANGE`,
+ * which the screen keeps to itself), written as the code point so this file does
+ * not carry a second copy of the glyph. */
+const ESTIMATE_RANGE_MARK = '–'
+
+/** SUPPORTED is the handshake for a CLI inside this console's own range, which
+ * is the one the Manage kinds are asked with when nothing is withheld. */
+const SUPPORTED = classifyCliVersion('0.12.0')
+
+/** modelsDocument is `models ls --json` with one model the report cannot price:
+ * both rates are `null`, which is unknown and never zero. */
+function modelsDocument(): unknown {
+  return {
+    version: 1,
+    project: 'example-project',
+    catalog: null,
+    routes: [],
+    models: [
+      {
+        id: 'claude-sonnet-5',
+        route: 'gateway',
+        source: 'none',
+        input_per_m: null,
+        output_per_m: null,
+        catalog: null,
+        allowed_to: ['*'],
+        refused: 'no route serves it',
+        note: '',
+      },
+    ],
+    repositories: [],
+  }
+}
+
+/** poolsDocument is `accounts pools ls --json` with one member whose usage the
+ * document holds no counts in and whose headroom it does not carry at all: four
+ * figures the console has no number for, and four `n/a`s rather than four
+ * zeroes. */
+function poolsDocument(): unknown {
+  return {
+    version: 1,
+    project: 'example-project',
+    pools: [
+      {
+        name: 'example-pool',
+        rule: 'round-robin',
+        members: [
+          {
+            name: 'ana',
+            state: 'active',
+            next_reset: '2026-11-03T06:00:00Z',
+            usage: {},
+            headroom: null,
+          },
+        ],
+      },
+    ],
+  }
+}
+
+/** budgetDocument is `budget show --json` with one repository the document holds
+ * no figures for: both caps, the money counted and the headroom are absent, so
+ * every figure cell is a mark. The scopes are carried, so the two cap cells draw
+ * the console's own word for the scope beside the mark. */
+function budgetDocument(): unknown {
+  return {
+    project: 'example-project',
+    mode: 'enforce',
+    day: '2026-11-03',
+    max_reserve_usd: 12,
+    defaults: { repo_daily_cap_usd: 25, repo_per_run_cap_usd: 5 },
+    repos: [
+      {
+        slug: 'example-owner/example-repo',
+        repo: 'example-owner/example-repo',
+        daily_cap_usd: null,
+        daily_cap_source: 'repo',
+        per_run_cap_usd: null,
+        per_run_cap_source: 'repo',
+        counted_usd: null,
+        spent_usd: null,
+        notional_usd: 0,
+        leased_usd: null,
+        headroom_usd: null,
+        kill: null,
+        running: [],
+      },
+    ],
+  }
+}
+
 /** SITES is the table, one row per renderer site that can draw the mark. */
 const SITES: readonly Site[] = [
   {
@@ -498,6 +610,155 @@ const SITES: readonly Site[] = [
       return { text: pencil.getAttribute(SETTINGS_PENCIL_KEY), reason: null }
     },
   },
+  {
+    id: 'live.bar-fill',
+    file: 'renderer/screens/live.ts',
+    cause: 'missing-field',
+    text: UNAVAILABLE_MARK,
+    says: 'the document carries no total.max_parallel, so the console cannot say how full the concurrent-run cap is',
+    drive: () => {
+      // `bar` is the one place this file calls `formatReading` for a fill, and it
+      // draws the same reading twice: the text and its state through
+      // `putReading` (which is where the reason lands) and the share it is filled
+      // at through `data-fill`, which is the string a test reads. The invented
+      // feed carries no `total.max_parallel`, so the concurrent-run cap is the
+      // cap's own unavailable reading and the bar is the mark.
+      const element = one(renderLive(factory, buildLiveModel(liveFrame()), 'light'), 'live-fleet-runs-cap')
+      return { text: element.getAttribute('data-fill'), reason: element.getAttribute('title') }
+    },
+  },
+  {
+    id: 'models.input',
+    file: 'renderer/manage/kinds/models.ts',
+    cause: 'missing-field',
+    text: UNAVAILABLE_MARK,
+    says: null,
+    drive: () => {
+      const rows = MODELS_KIND.decode(modelsDocument())
+      return { text: rows[0]?.cells['input'] ?? null, reason: null }
+    },
+  },
+  {
+    id: 'models.output',
+    file: 'renderer/manage/kinds/models.ts',
+    cause: 'missing-field',
+    text: UNAVAILABLE_MARK,
+    says: null,
+    drive: () => {
+      const rows = MODELS_KIND.decode(modelsDocument())
+      return { text: rows[0]?.cells['output'] ?? null, reason: null }
+    },
+  },
+  {
+    id: 'pools.usage',
+    file: 'renderer/manage/kinds/pools.ts',
+    cause: 'missing-field',
+    text: `${UNAVAILABLE_MARK} calls, ${UNAVAILABLE_MARK} tokens`,
+    says: null,
+    drive: () => {
+      const rows = poolsKind.decode(poolsDocument())
+      return { text: rows[0]?.cells['usage'] ?? null, reason: null }
+    },
+  },
+  {
+    id: 'pools.headroom',
+    file: 'renderer/manage/kinds/pools.ts',
+    cause: 'missing-field',
+    text: UNAVAILABLE_MARK,
+    says: null,
+    drive: () => {
+      const rows = poolsKind.decode(poolsDocument())
+      return { text: rows[0]?.cells['headroom'] ?? null, reason: null }
+    },
+  },
+  {
+    id: 'budget.counted',
+    file: 'renderer/manage/kinds/budget.ts',
+    cause: 'missing-field',
+    text: UNAVAILABLE_MARK,
+    says: null,
+    drive: () => {
+      const rows = budgetKindFor(SUPPORTED).decode(budgetDocument())
+      return { text: rows[0]?.cells['counted'] ?? null, reason: null }
+    },
+  },
+  {
+    id: 'budget.left',
+    file: 'renderer/manage/kinds/budget.ts',
+    cause: 'missing-field',
+    text: UNAVAILABLE_MARK,
+    says: null,
+    drive: () => {
+      const rows = budgetKindFor(SUPPORTED).decode(budgetDocument())
+      return { text: rows[0]?.cells['left'] ?? null, reason: null }
+    },
+  },
+  {
+    id: 'budget.cap',
+    file: 'renderer/manage/kinds/budget.ts',
+    cause: 'missing-field',
+    text: `${UNAVAILABLE_MARK} (repo)`,
+    says: null,
+    drive: () => {
+      const rows = budgetKindFor(SUPPORTED).decode(budgetDocument())
+      return { text: rows[0]?.cells['daily'] ?? null, reason: null }
+    },
+  },
+  {
+    id: 'graph.release-bar',
+    file: 'renderer/screens/graph.ts',
+    cause: 'missing-field',
+    text: `${UNAVAILABLE_MARK} of 3 done`,
+    says: null,
+    drive: () => {
+      // A release's counters are the decoder's readings and the bar is one text
+      // run composed from them: a counter the document does not carry is a mark
+      // in the middle of the bar and never a `0`.
+      const model = buildGraphModel({
+        document: graphDocument(['plans', 0, 'releases', 0, 'done'], undefined),
+        tab: null,
+      })
+      const tree = renderGraph(
+        factory,
+        { model, positions: null, state: GRAPH_INITIAL_STATE, runs: [], notice: null },
+        'light',
+      )
+      // The mark sits inside the bar's own run ("n/a of 3 done"), so the bar is
+      // found by the run it carries rather than by being the mark itself.
+      const marked = all(tree, 'graph-release-bar').filter((each) =>
+        (each.textContent ?? '').includes(UNAVAILABLE_MARK),
+      )
+      expect(marked).toHaveLength(1)
+      const element = marked[0]
+      if (element === undefined) throw new Error('no refused release bar')
+      return { text: element.textContent, reason: element.getAttribute('title') }
+    },
+  },
+  {
+    id: 'graph.estimate-line',
+    file: 'renderer/screens/graph.ts',
+    cause: 'missing-field',
+    text: `${GRAPH_ESTIMATE_READY} ${UNAVAILABLE_MARK}${ESTIMATE_RANGE_MARK}${UNAVAILABLE_MARK} ${GRAPH_ESTIMATE_MINUTES}, ${GRAPH_ESTIMATE_NO_HISTORY} ${UNAVAILABLE_MARK} ${GRAPH_ESTIMATE_TASKS}`,
+    says: null,
+    drive: () => {
+      // The estimate line holds this file's other two `formatReading` sites: the
+      // range (`rangeText`) and the count of tasks with no figure
+      // (`unknownCostText`, D2723). `ready_in_minutes` is required by the
+      // decoder, so a range with no ends in it is how a document reaches the line
+      // with nothing to draw.
+      const model = buildGraphModel({
+        document: graphDocument(['plans', 0, 'estimate'], { ready_in_minutes: {} }),
+        tab: null,
+      })
+      const tree = renderGraph(
+        factory,
+        { model, positions: null, state: GRAPH_INITIAL_STATE, runs: [], notice: null },
+        'light',
+      )
+      const line = one(tree, 'graph-list-estimate')
+      return { text: line.textContent, reason: line.getAttribute('title') }
+    },
+  },
 ]
 
 /** settingsDocument is `settings --json` with one row whose key the `branch`
@@ -555,6 +816,55 @@ const NO_REASON_SENTENCE: Readonly<Record<string, string>> = Object.freeze({
     'the mark is a model cell (ManageRow.cells.scope) the shell draws as text: the cause is the row the contract leaves no scope on',
   'projects.setting-key':
     'the cell and the pencil\'s data-setting-key both read the mark, and neither has a title slot: the cause is the branch class refusing the key',
+  'models.input':
+    'the price is a table cell (ManageRow.cells.input) drawn as text, with no title slot: the cause is the document\'s missing models[].input_per_m, and where the CLI has a reason for a model it cannot price, that reason is the neighbouring notes cell (the document\'s `refused`)',
+  'models.output':
+    'the price is a table cell (ManageRow.cells.output) drawn as text, with no title slot: the cause is the document\'s missing models[].output_per_m, and the CLI\'s own reason, where it has one, is the notes cell',
+  'pools.usage':
+    'the counts are one table cell (ManageRow.cells.usage) drawn as text: the cause is the fields the document does not carry (pools[].members[].usage.calls and .tokens)',
+  'pools.headroom':
+    'the share is a table cell (ManageRow.cells.headroom) drawn as text: the cause is the pools[].members[].headroom the document does not carry',
+  'budget.counted':
+    'the figure is a table cell (ManageRow.cells.counted) drawn as text: the cause is the repos[].counted_usd the budget show document does not carry',
+  'budget.left':
+    'the figure is a table cell (ManageRow.cells.left) drawn as text: the cause is the repos[].headroom_usd the budget show document does not carry',
+  'budget.cap':
+    'the cap is a table cell (ManageRow.cells.daily and .perRun) drawn as text, and the scope word beside the mark is the cell\'s own: the cause is the repos[].daily_cap_usd the document does not carry',
+  'graph.release-bar':
+    'the bar is one text run ("n of m done") with no title slot: the cause is the reading the decoder made for a counter the document does not carry (release.done.because), which the model holds and the run cannot draw',
+  'graph.estimate-line':
+    'the line is one text run composed of readings with no title slot, except where a withheld figure sets one: the cause is the readings the decoder made for a range or a count the document does not carry',
+})
+
+// ---------------------------------------------------------------------------
+// The calls that cannot draw the mark
+// ---------------------------------------------------------------------------
+
+/**
+ * CANNOT_DRAW is every `formatReading` call this tree has that **cannot** yield
+ * the mark, keyed by `file:symbol`, with the guard that keeps it from one. The
+ * mark's door is `formatReading` (it reads the constant), so a file is caught by
+ * `the scan` whether it names the mark or only formats a reading -- and a call
+ * that cannot draw it has to be *named* rather than silently left out, which is
+ * what this list is for.
+ *
+ * Each line names the symbol it is about, and the scan asserts that symbol is
+ * still in that file, so an entry cannot rot into a name nobody has. An entry is
+ * only ever a *call site*; the file it lives in may still be tabled, and one is.
+ */
+const CANNOT_DRAW: Readonly<Record<string, string>> = Object.freeze({
+  'renderer/screens/live.ts:spark':
+    'a bar\'s height and the rate its title carries both come from `sparkline`, which makes a sample the document does not carry a gap (the em dash, `gap`) and every other sample a `measured` share: neither state can be the mark',
+  'renderer/screens/live.ts:staleBanner':
+    '`data-silence` draws `feedReading(feed)`, and the banner is drawn only for a feed `FeedHealth` calls `stale` -- which is a silence it measured, so the reading always has a value',
+  'renderer/screens/live.ts:reviewSection':
+    'the count is `measured(model.reviewCount)`, and `reviewCount` is this console\'s count of the list the document carries: `schema.ts` refuses a document with no list before a screen sees it, so the count is never a reading without a value',
+  'renderer/entry.ts:drawGauge':
+    'the title\'s three `formatReading` calls are inside the branch that draws one, and that branch is guarded by `counted` and `limit` both being numbers: the two figures it formats are the ones the guard just checked, and the third is `measured(share * 100)`',
+  'renderer/screens/spend.ts:barRect':
+    'the height is `bar.share`, which `barOf` makes `gap(reading.because)` for a value the document does not carry and `measured(share)` for every other -- a gap is the em dash, never the mark',
+  'renderer/manage/kinds/pools.ts:headroomText':
+    'the second `formatReading` in `headroomText` is `measured(reading.value * 100)`, a share of a value the line above just proved is not null',
 })
 
 // ---------------------------------------------------------------------------
@@ -671,19 +981,42 @@ describe('every n/a names its cause (ID5, F28)', () => {
     }
   })
 
-  it('covers every renderer file that names the mark, and only those', () => {
+  it('covers every renderer file that can draw the mark, and only those', () => {
+    // A file can draw the mark two ways: by naming it, or by formatting a
+    // reading, which is the one door the mark reaches a screen through
+    // (`availability.ts`'s `formatReading` reads the constant). Counting only the
+    // first is what would let a whole screen wired to a reading slip past this
+    // table, so both are counted.
     const files = readdirSync(SOURCE, { recursive: true })
       .map((each) => String(each))
       .filter((each) => each.endsWith('.ts'))
       .map((each) => ({ path: each, source: readFileSync(join(SOURCE, each), 'utf8') }))
-      .filter((each) => each.source.includes('UNAVAILABLE_MARK') || each.source.includes('ABSENT_MARK'))
+      .filter(
+        (each) =>
+          each.source.includes('UNAVAILABLE_MARK') ||
+          each.source.includes('ABSENT_MARK') ||
+          each.source.includes('formatReading('),
+      )
       .map((each) => each.path.replace(/\\/g, '/'))
       .sort()
 
-    const tabled = [...new Set(SITES.map((site) => site.file))].sort()
-    expect(tabled).toEqual(files)
+    // A file is covered by a row of the table, or by a `CANNOT_DRAW` line naming
+    // the call in it that cannot yield the mark -- never by neither.
+    const tabled = new Set(SITES.map((site) => site.file))
+    const excused = new Set(Object.keys(CANNOT_DRAW).map((key) => key.slice(0, key.lastIndexOf(':'))))
+    expect([...new Set([...tabled, ...excused])].sort()).toEqual(files)
+
     // Every row names a file that exists, so the table cannot point at a
     // module this tree no longer has.
     for (const site of SITES) expect(() => readFileSync(join(SOURCE, site.file), 'utf8'), site.id).not.toThrow()
+
+    // And every excuse names a symbol that file still has, so an entry cannot
+    // outlive the call it is about and quietly excuse whatever replaces it.
+    for (const [key, why] of Object.entries(CANNOT_DRAW)) {
+      const at = key.lastIndexOf(':')
+      const source = readFileSync(join(SOURCE, key.slice(0, at)), 'utf8')
+      expect(source, key).toContain(key.slice(at + 1))
+      expect(why, key).not.toBe('')
+    }
   })
 })
