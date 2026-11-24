@@ -202,6 +202,13 @@ func TestUpdateLeavesARunInFlightRunningThroughTheProxySwitch(t *testing.T) {
 	// projects directory, and registerInstallation is what puts this one there.
 	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
 	registerInstallation(t, r.initRig)
+	// The Cloud Run reads of the run: this fake speaks jobs and no service, so
+	// the credentials service's own paths are answered by this file's services
+	// skew and every other path by the jobs fake. Nothing is deployed in it —
+	// Cloud Run's 404 — which is the state the copy stage's guard reads the
+	// installation's own pin over, and that pin is a release newer than the
+	// family's (seedCredentialsService below).
+	providerKeyEndpoint(t, r.run, newRunServiceSkew(t))
 	// The service itself, as the release behind deployed it: the tfvars entry it
 	// holds, this release's image in the fake source so the credentials-service
 	// stage has a move to make, and the installation's own outputs, which is what
@@ -464,6 +471,80 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 	}
 }
 
+// TestUpdateInFlightLineCountsTheRunsOnTheOldRecord is MG3's own line under the
+// note, and the count the acceptance asks it for: this release keeps writing the
+// repository's old access record beside the routing table, and the line says how
+// many of the runs in flight are the ones it is written for — the runs whose job
+// image predates the table, which resolve from that record and from nothing else
+// (D3196, R25).
+//
+// The facts are the run's own record, which the runner writes at bootstrap out
+// of the build record inside its container (ImageInfo), and never the workflow's
+// current build record: an image rebuilt while a run flies leaves that run on the
+// one it started with. So the boundary is the run's own build time against the
+// moment the chain contract reached the branch (chainIntroduced), and the three
+// cases below are the two sides of it and the record that names no build time —
+// which counts, the direction the seal gate takes for an image it cannot show
+// knows the seal, because a run this door cannot place is one it cannot promise
+// the table is serving.
+//
+// A line whose count is zero is not printed at all: a machine whose runs all
+// carry the table has nothing to say about the record, and the note is the
+// count's line and one short line per fact, never a line that says nothing.
+func TestUpdateInFlightLineCountsTheRunsOnTheOldRecord(t *testing.T) {
+	line := func(t *testing.T, image *runstore.ImageInfo) string {
+		t.Helper()
+		prev := records
+		t.Cleanup(func() { records = prev })
+		r := newConvergeRig(t, v7Node())
+		run := startRunInFlight(t, r)
+		// Seeded after the run's own record is written, and in the map the fake
+		// bucket is built from (openFakeRecords): the door opens the bucket for
+		// itself, so the record it reads is the one standing here — which is the
+		// record the runner of that run left, image and all.
+		seedRunRecordImage(t, run.slug, inFlightRunID, image)
+		return inFlightLine(t, convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"}))
+	}
+	t.Run("an image built before the table is counted", func(t *testing.T) {
+		built := chainIntroduced.Add(-time.Hour)
+		got := line(t, &runstore.ImageInfo{BuiltAt: &built, BakedCommit: "0123456789abcdef"})
+		if !strings.Contains(got, "old access record: still written, so 1 of these runs resolve from it") {
+			t.Errorf("the note does not count the run whose image predates the table:\n%s", got)
+		}
+	})
+	t.Run("an image built after the table is not", func(t *testing.T) {
+		built := chainIntroduced.Add(time.Hour)
+		got := line(t, &runstore.ImageInfo{BuiltAt: &built, BakedCommit: "0123456789abcdef"})
+		if strings.Contains(got, "old access record") {
+			t.Errorf("the note says a run resolves from the old access record over a run whose image carries the table:\n%s", got)
+		}
+	})
+	t.Run("a record that names no build time counts", func(t *testing.T) {
+		got := line(t, &runstore.ImageInfo{BakedCommit: "0123456789abcdef"})
+		if !strings.Contains(got, "old access record: still written, so 1 of these runs resolve from it") {
+			t.Errorf("the note does not count a run whose record names no build time: a run this door cannot place is not one it can promise the table serves\n%s", got)
+		}
+	})
+}
+
+// seedRunRecordImage puts a run's record, naming the image it is running,
+// where the fixture's fake runs bucket reads it: the document the runner writes
+// (encodeRecord is a plain Marshal, internal/runstore/replace.go), so the door's
+// read is the read the runner's own write produces. A nil image is the record of
+// a run whose bootstrap named none.
+func seedRunRecordImage(t *testing.T, slug, runID string, image *runstore.ImageInfo) {
+	t.Helper()
+	data, err := json.Marshal(&runstore.Record{
+		Version: 1, RunID: runID, Repo: "acme/app", Workflow: "app",
+		Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone,
+		Image: image,
+	})
+	if err != nil {
+		t.Fatalf("encoding the run's record: %v", err)
+	}
+	records["runs/"+slug+"/"+runID+"/result.json"] = string(data)
+}
+
 // TestUpdateInFlightLineNamesTheCredentialsServiceWindow is the fourth step the
 // line names, and the one this release's reorder created: the update raises the
 // published node's version in the policy stage and replaces the service that
@@ -522,7 +603,9 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 		// update writes its block and the service takes the revision that names
 		// the daemon's account: the one step that does reach the run, and the
 		// line says it is served by either revision rather than refused.
-		if !strings.Contains(got, "resident orchestrator:") || strings.Count(got, "resident orchestrator:") != strings.Count(got, "\n  ") {
+		// The old access record's own step (MG3) is named beside it when the run
+		// resolves from that record, and is not the credentials service's window.
+		if !strings.Contains(got, "resident orchestrator:") || strings.Count(got, "resident orchestrator:") != strings.Count(got, "\n  ")-strings.Count(got, "old access record:") {
 			t.Errorf("the note names more or less than the orchestrator's revision over a run this update otherwise leaves where it is:\n%s", got)
 		}
 	})

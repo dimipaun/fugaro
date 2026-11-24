@@ -14,6 +14,7 @@ import (
 
 	"gocloud.dev/gcerrors"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
@@ -417,6 +418,16 @@ var consoleReadPaths = map[string]bool{
 // (localcfg.Select), from the flags, the working directory's checkout and
 // the environment, and applies --gcp-project and --region to it (announce).
 // Every refusal is a user error.
+//
+// It is also the fence's second call site (required_cli.go, R4). The root hook
+// fences the project a command's own flags and environment select, and there is
+// nothing to fence when they select none; the shared config this falls back to
+// is the project such a command actually acts on, and it is known only here,
+// after the fetch. So the check runs on the shared config, before anything of
+// the command has been printed, under the verdict the hook recorded for the
+// command: an exempt command (doctor) and a console read (runs ls) pass, the
+// read with its one stderr line, and a context with no verdict at all — a test
+// calling this directly — is not checked.
 func selectProject(ctx context.Context, o cloudOptions) (localcfg.Selection, *localcfg.Config, error) {
 	co, err := checkoutProject(ctx, "")
 	if err != nil {
@@ -428,6 +439,11 @@ func selectProject(ctx context.Context, o cloudOptions) (localcfg.Selection, *lo
 	sel, lc, err := selectWith(ctx, o, co, false, "")
 	if err != nil {
 		return sel, nil, err
+	}
+	if v, ok := fenceVerdictFrom(ctx); ok && v.checks() && sel.From == "shared config" && !backend.OnPlatform(os.Getenv) {
+		if err := requireCLI(ctx, lc, o.errw()); err != nil {
+			return sel, nil, err
+		}
 	}
 	return sel, lc, announce(o, sel, lc)
 }

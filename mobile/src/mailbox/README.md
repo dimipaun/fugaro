@@ -30,6 +30,7 @@ await client.poll();                    // reads, verifies, speaks, acks, report
 client.pending();                       // the records the outbox has not answered, still retried
 client.unsent();                        // D167's unsent text: what the gate or the licence refused
 client.licenceRefusal('run it', { verb: 'launch' });   // one write's answer, and NO write
+client.sendJob(session, { verb: 'cancel', text, record }); // J4: a start or a cancel, through this path
 ```
 
 ## The write set is exactly two paths (D113)
@@ -355,6 +356,28 @@ await client.send('cancel the docs refactor', { action: actionRecord });
   refusal the same way -- spoken, and the text kept as `unsent()` for a message.
 * **A refusal is a sentence, from the licence's table** -- see the gate's
   refusal-shape rule above, which now names both refusers.
+
+## A job command from the phone (J4; D2787, D162, D169)
+
+`sendJob(session, request)` sends a **start** or a **cancel** and nothing else:
+
+```js
+await client.sendJob(session, { verb: 'launch', text: 'fix the flaky test' });
+await client.sendJob(session, { verb: 'cancel', text: 'Cancel run run-42.', record: actionRecord });
+```
+
+The composition is `shared/command`'s `jobWrite`, which makes a start D162's plain launch message
+(`{ verb: 'launch' }`) and a cancel D169's action record, passed through as P6.2's machine built it
+(`{ action: record }`). It is pure, so a screen can ask it what to draw; the write is here, so
+redaction, the lapse, the gate, the tag, the schema and the store stay in one place and there is
+still one write path. A refusal from `jobWrite` comes back in `send`'s own shape
+(`{ ok, code, field }`).
+
+The `session` is C2's port value and only its `role` is read: a viewer's start and cancel are
+refused before anything is minted, which is the phone hiding what its session cannot do. That is a
+display claim and not an authorisation (F14, D2791) -- the P5.1 consumer refuses a viewer
+independently with `internal/access`, and nothing a role claims here can grant what the roster has
+not.
 
 ## The limits of the gate, named
 
