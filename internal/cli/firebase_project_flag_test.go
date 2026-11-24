@@ -396,12 +396,12 @@ func TestTheUpdateWarningsCarryAProject(t *testing.T) {
 	for _, c := range []struct{ name, warning, remedy string }{
 		{
 			"the history job",
-			"warning: the history job (the sweeper of crashed runs) is not deployed",
+			"Warning: the history job (the sweeper of crashed runs) is not deployed",
 			"then run fugaro update --firebase-project " + initProject + " again",
 		},
 		{
 			"the coordinator's aggregation job",
-			"warning: the coordinator's aggregation job is not deployed",
+			"Warning: the coordinator's aggregation job is not deployed",
 			"the next fugaro update --firebase-project " + initProject + " deploys the job",
 		},
 	} {
@@ -411,7 +411,7 @@ func TestTheUpdateWarningsCarryAProject(t *testing.T) {
 			continue
 		}
 		warn := out[at:]
-		if end := strings.Index(warn, "\nwarning: "); end > 0 {
+		if end := strings.Index(warn, "\nWarning: "); end > 0 {
 			warn = warn[:end]
 		}
 		if !strings.Contains(warn, c.remedy) {

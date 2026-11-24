@@ -128,9 +128,9 @@ update)
   printf '  something went wrong\n' >&2
   if [ "$mode" != no-line ]; then
     if [ "$mode" = wrong-id ]; then
-      printf 'Something went wrong. Run: fugaro troubleshoot update-20261111170000-1\n'
+      printf '  Help: fugaro troubleshoot update-20261111170000-1\n'
     else
-      printf 'Something went wrong. Run: fugaro troubleshoot %s\n' "$FAKE_RUN_ID"
+      printf '  Help: fugaro troubleshoot %s\n' "$FAKE_RUN_ID"
     fi
   fi
   exit 2
@@ -379,7 +379,7 @@ test_the_failure_line_absent_is_a_finding() {
   expect_status "$status" 1 "no failure line"
   expect_contains "$out" "FACT update-failed: PASS" "no failure line: the failure itself is still measured"
   expect_contains "$out" "FACT failure-line: FAIL" "no failure line: the row"
-  expect_contains "$out" "Something went wrong. Run: fugaro troubleshoot <id>" "no failure line: the sentence it looked for"
+  expect_contains "$out" "Help: fugaro troubleshoot <id>" "no failure line: the sentence it looked for"
   expect_contains "$out" "T-DG9" "no failure line: which task writes it"
   # Nothing was diagnosed: the command the check runs is the one the line names,
   # and there is no line, so it spends no model call on an ID of its own choosing.
