@@ -400,6 +400,80 @@ func TestChainIsWalkedAgainEachStep(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// 4b. A retry answers the reset of the source it has spent
+// ---------------------------------------------------------------------------
+
+// TestARetryAnswersTheResetTheSpentSourceHolds: a retry after a 401 or a usage
+// limit is a fresh walk that may not send again to a credential this call has
+// already used (forward's sent set) — and a chain whose every source is spent is
+// NOT a chain that serves nothing. The spent sources are judged once more, so
+// the reset a mark holds is the call's answer.
+//
+// This is the difference between a run that waits at a usage limit and one that
+// halts at every limit: a walk that answered "nothing usable" here is refused as
+// state_unavailable, "none becomes usable by waiting", where the mark holds an
+// instant the run could wait out. It is retryPool's rule on the cascade's own
+// path, and it must hold for both kinds of source, because the two are judged by
+// two different rules: a single-credential source by the selector's judgement, a
+// pool by the rule its reference carries.
+func TestARetryAnswersTheResetTheSpentSourceHolds(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		chain []routing.Source
+		pools []config.Pool
+	}{
+		{"a key", []routing.Source{chainKey()}, nil},
+		{"a pool", []routing.Source{{Kind: routing.KindPool, Pool: slipTestPoolName}},
+			[]config.Pool{{Name: slipTestPoolName, Owner: testLauncherAccount, Members: []string{testPoolCredential}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			table := routing.Table{{Match: testModel, Chain: tc.chain}}
+			s := chainFixture(t, table, tc.pools...)
+			slip := chainBinding(coverage(tc.chain...), "")
+
+			served := s.walk(t, callBody("retry"), slip).picked(t)
+			mark := func(state creds.State, until time.Time) {
+				t.Helper()
+				if _, err := s.state.UpdateMark(ctx, served.Name,
+					func(creds.Mark, bool) (creds.Mark, error) {
+						return creds.Mark{State: state, Until: until}, nil
+					}); err != nil {
+					t.Fatalf("writing the served credential's mark: %v", err)
+				}
+			}
+			reset := s.now.Add(time.Hour)
+			mark(creds.StateExhausted, reset)
+
+			// The retry. The only credential this chain could serve with has
+			// been used and its mark now holds a reset, so the answer is that
+			// reset — and never a second attempt at the credential.
+			spent := map[string]bool{served.Name: true}
+			c, wait, err := s.walk(t, callBody("retry"), slip).next(ctx, spent)
+			var until *creds.ExhaustedUntil
+			if !errors.As(err, &until) {
+				t.Fatalf("the retry answered %q / %v, want the reset the spent source holds: a chain this call has "+
+					"spent is not a chain that serves nothing, and a run at a usage limit waits the reset out "+
+					"instead of halting", c.Name, err)
+			}
+			if !until.At.Equal(reset) || wait != time.Hour {
+				t.Errorf("the retry answers the reset %v (wait %v), want %v (%v)", until.At, wait, reset, time.Hour)
+			}
+
+			// The same source usable again and still this call's own: it is
+			// never served a second time, so the chain is spent with nothing to
+			// wait for rather than a credential handed back.
+			mark("", time.Time{})
+			c, _, err = s.walk(t, callBody("retry"), slip).next(ctx, spent)
+			if !errors.Is(err, creds.ErrNoCredential) {
+				t.Errorf("the retry answered %q / %v, want a selection refusal: this call has already used the only "+
+					"credential the chain can serve with, and a credential is never sent to twice", c.Name, err)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // 5. The answer names the source and whether it fell back
 // ---------------------------------------------------------------------------
 
@@ -463,22 +537,38 @@ func TestAnswerNamesTheSourceAndFallback(t *testing.T) {
 // that names none is a request refusal — nothing was read and no credential was
 // chosen — and a model in a header does not save it.
 func TestACallWithNoModelInTheBodyIsRefused(t *testing.T) {
-	table := routing.Table{{Match: testModel, Chain: []routing.Source{chainKey()}}}
-	s := chainFixture(t, table)
-	body := `{"max_tokens":16,"messages":[{"role":"user","content":"no model"}]}`
-	resp, answer := s.call(t, body, func(r *http.Request) {
-		r.Header.Set(HeaderModel, testModel)
-		r.Header.Set(HeaderStage, "coder")
-	})
-	if resp.StatusCode != StatusRequestRefused {
-		t.Fatalf("the call is %d, want %d: %s", resp.StatusCode, StatusRequestRefused, answer)
-	}
-	if e := refusal(t, resp.StatusCode, answer); e.Error != ErrorRequestRefused {
-		t.Errorf("the refusal is %q, want %q", e.Error, ErrorRequestRefused)
-	}
-	if sent := s.up.Seen(); len(sent) != 0 {
-		t.Errorf("the upstream saw %d requests, want none: a call that names no model is refused before anything is sent",
-			len(sent))
+	// The entry claims every model, `*`, and that is what makes this test the
+	// WALK's rule: a body that names no model is claimed by an entry like this
+	// one and would be served by it, so a walk that did not refuse an empty
+	// model first would serve the call with nothing, where a table of exact
+	// matches would refuse it by the resolver's own "no entry" and the walk's
+	// rule would be untested.
+	table := routing.Table{{Match: "*", Chain: []routing.Source{chainKey()}}}
+	// Both paths the walk serves, and the token count is the one that holds this
+	// rule to the walk's own door: the gateway's request check refuses a
+	// Messages body with no model before the chain is read at all
+	// (server.go), so on that path this refusal is not the walk's and the walk's
+	// own would be untested. The token count's body the gateway does not hold to
+	// that check, so it reaches the walk and only the walk refuses it.
+	for _, path := range []string{MessagesPath, CountTokensPath} {
+		t.Run(path, func(t *testing.T) {
+			s := chainFixture(t, table)
+			body := `{"max_tokens":16,"messages":[{"role":"user","content":"no model"}]}`
+			resp, answer := s.callPath(t, path, body, func(r *http.Request) {
+				r.Header.Set(HeaderModel, testModel)
+				r.Header.Set(HeaderStage, "coder")
+			})
+			if resp.StatusCode != StatusRequestRefused {
+				t.Fatalf("the call is %d, want %d: %s", resp.StatusCode, StatusRequestRefused, answer)
+			}
+			if e := refusal(t, resp.StatusCode, answer); e.Error != ErrorRequestRefused {
+				t.Errorf("the refusal is %q, want %q", e.Error, ErrorRequestRefused)
+			}
+			if sent := s.up.Seen(); len(sent) != 0 {
+				t.Errorf("the upstream saw %d requests, want none: a call that names no model is refused before "+
+					"anything is sent", len(sent))
+			}
+		})
 	}
 }
 

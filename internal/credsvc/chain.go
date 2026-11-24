@@ -300,15 +300,29 @@ func (w *chainWalk) next(ctx context.Context, sent map[string]bool) (creds.Crede
 }
 
 // offer is one source's answer: the credential it serves with, or the reason it
-// does not. A source with no credential left for this call — everything it
-// could serve with has already been attempted — is skipped like an empty one,
-// because the call has spent it and a second attempt is exactly what the loop
-// above forbids.
+// does not.
+//
+// A credential this call has ALREADY used is never used again (forward's sent
+// set), but a source left with nothing unsent is not an empty one: it is still
+// judged, and never served from. The difference is a whole behaviour — a
+// credential the call spent and left a mark on is one the call can wait for,
+// and a walk that answered "this source serves nothing" there would tell a run
+// at a usage limit that no credential becomes usable by waiting
+// (refuseSelection's state_unavailable) where the mark holds the reset it may
+// wait out. It is retryPool's rule, which is what the cascade's own retry does:
+// ask over the whole set again, and never send to what was already sent.
 func (w *chainWalk) offer(ctx context.Context, src *chainSource, sent map[string]bool) (creds.Credential, time.Duration, error) {
 	if src.pooled {
 		members := chainRemaining(src.members, sent)
-		if len(members) == 0 {
-			return creds.Credential{}, 0, creds.ErrNoCredential
+		// Every member this source could serve with has been attempted: the
+		// pool is asked over the WHOLE set all the same, and never served from.
+		// What comes back is then the state's own answer — the earliest reset
+		// of a pool whose members are all exhausted — and a member the picker
+		// hands back is one this call has already sent to, which is the one
+		// thing this loop must not do.
+		spent := len(members) == 0 && len(src.members) > 0
+		if spent {
+			members = src.members
 		}
 		// The pool's own rule judges and picks in one answer (PickInPool), so
 		// the member it answers is already free: the walk records the placement
@@ -318,13 +332,18 @@ func (w *chainWalk) offer(ctx context.Context, src *chainSource, sent map[string
 		if err != nil {
 			return creds.Credential{}, wait, err
 		}
+		if spent {
+			return creds.Credential{}, 0, creds.ErrNoCredential
+		}
 		if err := w.sel.Place(ctx, w.run, c); err != nil {
 			return creds.Credential{}, 0, err
 		}
 		return c, 0, nil
 	}
+	var spent []creds.Credential
 	for _, c := range src.members {
 		if sent[c.Name] {
+			spent = append(spent, c)
 			continue
 		}
 		wait, err := w.sel.Serve(ctx, w.run, c)
@@ -332,6 +351,16 @@ func (w *chainWalk) offer(ctx context.Context, src *chainSource, sent map[string
 			return creds.Credential{}, wait, err
 		}
 		return c, 0, nil
+	}
+	// Nothing in this source is left to serve with, so the credentials it was
+	// spent on are judged once more and never served (Judge): a mark among them
+	// is the reset the call waits for, and it is judged after the unsent ones
+	// so that a source which can still serve does.
+	for _, c := range spent {
+		wait, err := w.sel.Judge(ctx, w.run, c)
+		if err != nil {
+			return creds.Credential{}, wait, err
+		}
 	}
 	return creds.Credential{}, 0, creds.ErrNoCredential
 }
