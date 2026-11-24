@@ -60,6 +60,7 @@ func projectHarness(t *testing.T, mainYAML string) *harness {
 func setRef(t *testing.T, h *harness, spec task.Spec) {
 	t.Helper()
 	spec.Version, spec.RunID, spec.Repo, spec.Task = 1, runID, "acme/app", "Add a feature"
+	h.taskWithLayer(&spec)
 	if err := h.store.WriteTask(context.Background(), &spec); err != nil {
 		t.Fatal(err)
 	}

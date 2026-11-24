@@ -104,6 +104,24 @@ type harness struct {
 	// sidecarFailsDuring is the stage during which the fake sidecar's Dead
 	// channel closes, set by killSidecarDuring and hangSidecarDuring.
 	sidecarFailsDuring string
+	// layer is the project layer this fixture's run is resolved with, the
+	// task's own when it carries one and the harness's pins' otherwise. A
+	// task a test writes itself must carry it too (taskWithLayer): a
+	// repository's file names no model any more (S1, D3237), so the layer is
+	// the only thing that prices a run.
+	layer *task.ProjectLayer
+}
+
+// taskWithLayer is a task spec a test wrote itself, with the fixture's project
+// layer on it. Every path that stores a task — a follow-up, a resumed run, a
+// judge — writes one of its own, and a launcher writes the layer onto each of
+// them; a task without it is a run with no models at all, which is refused at
+// bootstrap (CheckPins) rather than the thing the test is about.
+func (h *harness) taskWithLayer(spec *task.Spec) *task.Spec {
+	if spec.ProjectLayer == nil {
+		spec.ProjectLayer = h.layer
+	}
+	return spec
 }
 
 // sidecarURL is what the fake sidecar says it listens on. Nothing dials it:
@@ -279,6 +297,7 @@ func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string
 			Local: true,
 		},
 		store: store, bucket: bucket, provider: p, agent: a, remote: remote, failsFile: failsFile,
+		layer: spec.ProjectLayer,
 	}
 	h.budget = testutil.NewBudget(t)
 	h.deps.Env = append(h.deps.Env, h.budget.Env()...)
@@ -309,6 +328,7 @@ func (h *harness) setTask(t *testing.T, text string) {
 // the same text has to hand the run both.
 func (h *harness) setSpec(t *testing.T, spec *task.Spec) {
 	t.Helper()
+	h.taskWithLayer(spec)
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
