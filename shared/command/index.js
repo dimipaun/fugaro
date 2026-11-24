@@ -41,6 +41,23 @@
 // D126 asks of everything that can be a pure function. `shared/command/README.md`
 // is the module's own contract, and `../../docs/mobile/implementation-plan.md`'s
 // P6.1 is this module's task.
+//
+// **The module's other half is J4's** (`verbs.js`, beside this file): the phone's
+// job-control verbs, what a session's role may send and the mailbox write each
+// one makes. It is re-exported below, and that re-export is this module's only
+// dependency -- the two files share one entry point, so a caller imports the
+// module and never a file inside it, and the purity claim above is a claim about
+// both files (pinned by this file's test). It is not an `import`: nothing is
+// executed or read at load time beyond the sibling's own pure definitions.
+
+export {
+  JOB_CODES,
+  JOB_COMMANDS,
+  JOB_ROLES,
+  JOB_VERBS,
+  jobWrite,
+  maySend,
+} from './verbs.js';
 
 /**
  * The three answers. Nothing else is a route: every other outcome is a refusal
