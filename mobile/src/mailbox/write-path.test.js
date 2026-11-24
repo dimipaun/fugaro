@@ -62,7 +62,17 @@
 //      door, and `@react-native-firebase/crashlytics/lib/index` reaches the same
 //      object a screen is not allowed to hold.
 //
-// **What this scan does NOT claim.** It is about MOBILE's source. The consumer
+// **The shared modules are walked too, since J4.** "The app's one write path"
+// stopped being a claim about `mobile/` alone the moment the phone's job verbs
+// moved into `shared/command/verbs.js` (J4; D2787): a module that composed a
+// mailbox write out of `shared/` would be a second write path the app's tree
+// does not contain. So the walk is the app AND `shared/`, keyed repo-relative
+// (`mobile/src/...`, `shared/command/...`) because both trees have a `src/` and
+// one of them has an `index.js`. One walk over the two means one rule and one
+// allow-list, not two scans that can drift apart.
+//
+// **What this scan does NOT claim.** It is about MOBILE's source and the modules
+// it shares. The consumer
 // (Go) writes the outbox, the heartbeat and everything else; the rules in
 // `internal/budget/rules/rules.json.tmpl` are what actually fence this, and they
 // are checks 81/82, owner-run. This file is the app holding its own end of that
@@ -77,23 +87,38 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import test from 'node:test';
 
-const ROOT = join(import.meta.dirname, '..', '..');
-const SELF = relative(ROOT, import.meta.filename).split(sep).join('/');
+const APP = join(import.meta.dirname, '..', '..');
+const REPO = join(APP, '..');
+const SELF = relative(REPO, import.meta.filename).split(sep).join('/');
 
-/** Directories that are not this app's source. */
+/** Directories that are not source: this app's build output and natives, and
+ * the SDKs a clone with no install does not have (D119). */
 const SKIP = new Set(['node_modules', '.git', '.expo', 'dist', 'android', 'ios']);
 
-/** Every `.js` file under `mobile/`, app-relative, sorted. */
-function sourceFiles(dir = ROOT, found = []) {
+// The trees this scan is about: the app, and the pure modules it shares with the
+// console (D119). The key is the tree's name, which is what makes a path in one
+// tree distinguishable from the same path in the other.
+const TREES = [
+  { name: 'mobile', dir: APP },
+  { name: 'shared', dir: join(REPO, 'shared') },
+];
+
+/** Every `.js` file under one tree, repo-relative (`mobile/src/...`), sorted. */
+function treeFiles(tree, dir = tree.dir, found = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (!SKIP.has(entry.name)) sourceFiles(path, found);
+      if (!SKIP.has(entry.name)) treeFiles(tree, path, found);
       continue;
     }
-    if (entry.name.endsWith('.js')) found.push(relative(ROOT, path).split(sep).join('/'));
+    if (entry.name.endsWith('.js')) found.push(`${tree.name}/${relative(tree.dir, path).split(sep).join('/')}`);
   }
   return found;
+}
+
+/** Every `.js` file under both trees, repo-relative, sorted. */
+function sourceFiles() {
+  return TREES.flatMap((tree) => treeFiles(tree)).sort();
 }
 
 const isTest = (file) => file.endsWith('.test.js');
@@ -113,21 +138,21 @@ const RULES = [
   {
     name: 'the store is written in one file',
     pattern: /\.write\s*\(/,
-    allow: ['src/mailbox/client.js'],
+    allow: ['mobile/src/mailbox/client.js'],
     controls: ["await store.write('mailbox/u/inbox/m-1', record);"],
     why: 'D113: the app writes its own inbox message and its own ack, and nothing else',
   },
   {
     name: 'the database SDK is imported in one file',
     pattern: /['"]@?firebase\/[a-z-]+['"]/,
-    allow: ['index.js'],
+    allow: ['mobile/index.js'],
     controls: ["import { getDatabase } from 'firebase/database';"],
     why: 'D125: the entry wires the port; a screen that imported the SDK could address any node',
   },
   {
     name: 'no path is named through the SDK',
     pattern: /\.ref\s*\(/,
-    allow: ['index.js'],
+    allow: ['mobile/index.js'],
     controls: ["db.ref('mailbox/u/outbox').remove();"],
     why: 'the path is what the rules fence on; only the adapter may compose one',
   },
@@ -137,7 +162,7 @@ const RULES = [
     // `'../licence/state'` to the same file, so a pattern that required `.js`
     // was a fence a screen walked through by typing one character less.
     pattern: /['"`][^'"`]*licence\/state(?:\.js)?['"`]/,
-    allow: ['src/mailbox/client.js'],
+    allow: ['mobile/src/mailbox/client.js'],
     controls: [
       "import { lapseRefusalAt } from '../licence/state.js';",
       // Metro resolves a specifier with no extension, and the door's own
@@ -152,7 +177,7 @@ const RULES = [
   {
     name: 'the telemetry SDK is imported in one file',
     pattern: /(?:\bimport\b|\brequire\b|\bfrom\b)\s*\(?\s*['"]@react-native-firebase\/[a-z-]+(?:\/[^'"]*)?['"]/,
-    allow: ['index.js'],
+    allow: ['mobile/index.js'],
     controls: [
       "import analytics from '@react-native-firebase/analytics';",
       "import crashlytics from '@react-native-firebase/crashlytics';",
@@ -176,6 +201,11 @@ const [WRITE_RULE] = RULES;
 const LAPSE_RULE = RULES[RULES.length - 2];
 const PROMISE_RULES = RULES.filter((rule) => rule !== WRITE_RULE && rule !== LAPSE_RULE);
 
+/** The walks' files as path -> text, for the tree sweeps. */
+function allSource() {
+  return new Map(sourceFiles().map((file) => [file, readFileSync(join(REPO, file), 'utf8')]));
+}
+
 /** Apply one rule to a map of path -> text, returning the offences. */
 function offences(rule, files) {
   return [...files]
@@ -184,19 +214,34 @@ function offences(rule, files) {
     .map(([file]) => file);
 }
 
-test('the scan walks the app, and not an empty list', () => {
+test('the scan walks the app and the shared modules, and not an empty list', () => {
   const files = sourceFiles();
   assert.ok(files.length >= 10, `expected the app's source, found ${files.length} files`);
   for (const expected of [
-    'index.js',
-    'src/mailbox/client.js',
-    'src/mailbox/store.js',
-    'src/app/root.js',
+    'mobile/index.js',
+    'mobile/src/mailbox/client.js',
+    'mobile/src/mailbox/store.js',
+    'mobile/src/app/root.js',
+    // Both trees are walked: `shared/command/verbs.js` is J4's module, the one
+    // whose composition this scan has to reach for "one write path" to be true.
+    'shared/command/index.js',
+    'shared/command/verbs.js',
+    'shared/mailbox-schema/index.js',
   ]) {
     assert.ok(files.includes(expected), `${expected} is in the walk`);
   }
   assert.ok(files.includes(SELF), 'this file is in the walk, which is why it exempts itself');
-  assert.equal(files.some((file) => file.startsWith('node_modules/')), false);
+  assert.equal(files.some((file) => file.includes('node_modules/')), false);
+});
+
+test('a second write path in the shared modules is caught, not just one in the app', () => {
+  // The red step J4's module has to survive: a `shared/` file that reached a
+  // store is a write path the app's own tree does not contain, so the walk above
+  // has to cover both trees or the claim is only about the app.
+  const planted = {
+    'shared/command/verbs.js': "async function ooze(store) { await store.write('mailbox/u/inbox/m-1', r); }\n",
+  };
+  assert.deepEqual(offences(WRITE_RULE, new Map(Object.entries(planted))), ['shared/command/verbs.js']);
 });
 
 for (const rule of RULES) {
@@ -208,14 +253,14 @@ for (const rule of RULES) {
     // missing extension, a `./` segment, a template literal), and a pattern
     // that holds only one of them is a fence with a gap in it.
     for (const control of rule.controls) {
-      const example = { 'src/app/offender.js': `function offence() { ${control} }\n` };
-      assert.deepEqual(offences(rule, new Map(Object.entries(example))), ['src/app/offender.js'], control);
+      const example = { 'mobile/src/app/offender.js': `function offence() { ${control} }\n` };
+      assert.deepEqual(offences(rule, new Map(Object.entries(example))), ['mobile/src/app/offender.js'], control);
       // The planted line is not flagged when it is only prose.
-      assert.deepEqual(offences(rule, new Map([['src/app/prose.js', `// ${control}\n`]])), [], control);
+      assert.deepEqual(offences(rule, new Map([['mobile/src/app/prose.js', `// ${control}\n`]])), [], control);
     }
 
     // ... and then the tree itself.
-    const files = sourceFiles().map((file) => [file, readFileSync(join(ROOT, file), 'utf8')]);
+    const files = allSource();
     assert.deepEqual(offences(rule, new Map(files)), [], `${rule.name}: see the allow-list above`);
   });
 }
@@ -225,13 +270,13 @@ test('the scan is not vacuous: the file each rule allows really does match it', 
   // offence. `client.js` must be flagged when its exemption is removed --
   // otherwise the rule matches nothing anywhere and the green runs above would
   // be tests about a pattern that no longer exists.
-  const files = sourceFiles().map((file) => [file, readFileSync(join(ROOT, file), 'utf8')]);
+  const files = allSource();
   // Two rules allow a file that really does the thing they fence, so each is
   // flagged the moment its exemption goes: the store is written in `client.js`
   // (D113) and the lapse is enforced there (S6.3).
   for (const [rule, flagged] of [
-    [WRITE_RULE, ['src/mailbox/client.js']],
-    [LAPSE_RULE, ['src/mailbox/client.js']],
+    [WRITE_RULE, ['mobile/src/mailbox/client.js']],
+    [LAPSE_RULE, ['mobile/src/mailbox/client.js']],
   ]) {
     assert.deepEqual(offences({ ...rule, allow: [] }, new Map(files)), flagged, rule.name);
   }
