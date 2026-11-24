@@ -1144,6 +1144,20 @@ var localRows = []Row{
 	locLocal("pools.*.name", "required: the name a craft's access speaks", "accounts", docCrafts),
 	locLocal("pools.*.strategy", config.PoolStrategyFailover, "accounts", docCrafts),
 	locLocal("pools.*.members", "required: a pool with no members serves nothing", "accounts", docCrafts),
+	// A pool's rule, its principal and its optional threshold (PL1, R5, R21,
+	// D3178, D3181). They are local-only like the rest of the block, and the
+	// principal is the enforcing half of who a pool's credentials are handed
+	// to — the reason `owner` beside it is local-only as well (R7).
+	//
+	// The rule is the pool's own and is a NEW member: an absent one is served
+	// by the pool's `strategy`, and by failover only where it names neither
+	// (config.Pool.RuleOrDefault), so a pool an installation already holds
+	// moves only where its owner writes a rule. `ordered` is a rule and never a
+	// strategy, which is why it is not in the strategy row's own vocabulary.
+	locLocal("pools.*.rule", "the pool's strategy, and failover where it names neither", "accounts", docCrafts),
+	locLocal("pools.*.principal.kind", "required: whose pool it is, one of "+strings.Join(config.PrincipalKinds, ", "), "accounts", docCrafts),
+	locLocal("pools.*.principal.id", "required: the person's Google subject, the service account's address, or the project's name", "accounts", docCrafts),
+	locLocal("pools.*.threshold", "none: the pool does nothing beyond its rule, and no value is invented for it", "accounts", docCrafts),
 	// A pool's owner and the people it is served to (D1936, R10). They are
 	// local-only like the rest of the block, and they are the two keys that
 	// decide WHO a pool's credentials are handed to, which is why they belong

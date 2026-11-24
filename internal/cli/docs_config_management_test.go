@@ -359,8 +359,15 @@ const (
 // writer is the converge — `fugaro update`'s migration writes a project's first
 // table (MG2) and `fugaro routing set` edits one after that (RT5) — so neither a
 // name in the allowlist nor a prefix of it reaches a row of it.
+//
+// PL1 of docs/model-credentials-routing/ is the last mover after it, by four
+// rows and by none: a pool's `rule`, its `principal.kind` and `principal.id`
+// (R21, D3181) and its optional `threshold` (D3178) are the config's, read from
+// the repository's own `fugaro.yaml` and the project layer, and the allowlist's
+// `pools.*.members` and `pools.*.strategy` names reach none of them — the four
+// join the rows with no generic writer.
 const (
-	cfmRegistryRows   = 536
+	cfmRegistryRows   = 540
 	cfmAllowlistNamed = 121
 )
 
