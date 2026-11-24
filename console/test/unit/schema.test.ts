@@ -545,6 +545,13 @@ const FULL_LIVE_RUN: JSONDoc = Object.freeze({
   // by id (`shared/rigor.ts`), and nothing draws these yet.
   mode: 'critical',
   from: 'area',
+  // model-credentials-routing CS9: what the run's running stage goes out on,
+  // the kind of source the routing table served it with and the name after a
+  // colon when the kind names one. Always present on a live row — `-` is what a
+  // run the project's table does not serve, and a run under rules that predate
+  // the member, writes. Accepted, not read from this row: the Live screen's
+  // replacement for the auth column is the visibility plan's VS1.
+  source: 'pool:team',
   notional: true,
   spent_usd: 12.5,
   age_seconds: 1761,

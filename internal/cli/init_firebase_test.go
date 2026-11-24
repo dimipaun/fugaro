@@ -320,7 +320,7 @@ func TestInitFirebaseSameProject(t *testing.T) {
 	if got := strs(v["skip_apis"]); !slices.Equal(got, infra.SharedAPIs) {
 		t.Errorf("skip_apis = %v, want %v", got, infra.SharedAPIs)
 	}
-	if !strings.Contains(out, "warning: the Firebase project is the installation's own project") || !strings.Contains(out, "123456789012-compute@developer.gserviceaccount.com (roles/editor)") ||
+	if !strings.Contains(out, "Warning: the Firebase project is the installation's own project") || !strings.Contains(out, "123456789012-compute@developer.gserviceaccount.com (roles/editor)") ||
 		!strings.Contains(out, "iam.automaticIamGrantsForDefaultServiceAccounts") {
 		t.Errorf("no warning about the default Compute account's roles/editor in\n%s", out)
 	}
@@ -806,19 +806,9 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	if strings.Contains(out, "every run halts") {
 		t.Errorf("a warning about missing caps with caps set:\n%s", out)
 	}
-
-	// off turns the jobs' backend off in the config and leaves the database's
-	// mode as it is; it still deploys the database, and says so.
-	out, _, err = executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--budget-mode", "off")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.localConfig(t).BudgetMode() != localcfg.BudgetOff || mode(r) != "enforce" {
-		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
-	}
-	if !strings.Contains(out, "still deployed the database") || !strings.Contains(out, "unchanged by off") {
-		t.Errorf("off doesn't say the database is still written:\n%s", out)
-	}
+	// The case that used to stand here — --budget-mode off turning the jobs'
+	// backend off in the config while the database was still deployed — is the
+	// flag's refusal now, and TestBudgetModeOffFlagIsRefused is its case (AB3).
 }
 
 // A first run with no database yet refuses enforce before any apply.
@@ -2175,7 +2165,7 @@ func TestUpdateRulesUnconfirmedRefusesPolicyWrite(t *testing.T) {
 	}
 	// And it is the rules step's own: the run reaches this stage's
 	// confirmation and stops there, not at a step of a stage before it.
-	if !strings.Contains(out, "stopped at "+initflow.Rules) {
+	if !strings.Contains(out, "to resume at "+initflow.Rules+".") {
 		t.Errorf("the run did not stop at the rules stage's own confirmation:\n%s", out)
 	}
 	if db.RulePuts() != puts {
