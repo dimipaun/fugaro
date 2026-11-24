@@ -335,13 +335,6 @@ def flag(name):
     return os.path.exists(os.path.join(D, name))
 
 
-def value(flag_name):
-    argv = sys.argv[1:]
-    if flag_name in argv:
-        return argv[argv.index(flag_name) + 1]
-    return ""
-
-
 def flag_value(name):
     for i, a in enumerate(sys.argv[1:]):
         if a == name and i + 2 < len(sys.argv):
