@@ -63,6 +63,20 @@ type cloudFixture struct {
 	// (noBudget, appendConfig) clears it: no helper goes looking for a line
 	// that is gone.
 	budget *testutil.Budget
+	// ledgerDB is the fake of the budget database this installation names, for
+	// the harness's fixtures: newCloudFixture gives every one of them a database
+	// (budget.DB), and the fixtures that write a block of their own name the
+	// same fake (newLaunchBudgetWith, buildBudgetWorld). It is nil where the
+	// installation names none (noBudget, dropBudgetBackend), which is the
+	// installation whose launches are refused (AB4, F7). It is what a test
+	// seeds a run's ledger node through: the figures a chain is read from are
+	// the database's (D1046), not the record's.
+	ledgerDB *gcpfake.RTDB
+	// iam is the fake IAM Credentials API the fixture's signer account is
+	// reached through: the launcher holds the only minter permission and mints
+	// every run's budget identity with it (AB4, F7), so a fixture whose
+	// launches are not refused has one, as a real installation reaches Google's.
+	iam *gcpfake.IAMCredentials
 }
 
 // newCloudFixture writes a local config whose endpoints point at the Run and
@@ -85,10 +99,19 @@ func newCloudFixture(t *testing.T, extraEndpoints ...string) *cloudFixture {
 	// job's mode and the project's published policy. A test that means the
 	// installation of a release that never had one asks for none (noBudget).
 	f.budget = testutil.NewBudget(t)
+	f.ledgerDB = f.budget.DB
 	adoptBudgetFake(f.budget.DB)
+	seedLaunchCaps(f.budget.DB)
+	// The signer account this installation's runs are minted with, and the fake
+	// IAM Credentials API that signs as it (a real installation reaches
+	// Google's): a launch mints through this, so a fixture without one refuses
+	// every launch (budgetSignerOn), and the account is the harness's own
+	// (testutil.BudgetSigner), which is what its config block names.
+	f.iam = gcpfake.NewIAMCredentials(t)
+	f.iam.AddSigner(testutil.BudgetSigner)
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\nbucket_url: " + f.bucket +
 		"\nuser: someone@example.com\nmax_parallel: 2\n" + f.budget.ConfigBlock() +
-		"endpoints: { run: " + f.run.URL + "/, logging: " + f.logging.URL + "/, " + extra(extraEndpoints) + "no_auth: true }\n" +
+		"endpoints: { run: " + f.run.URL + "/, logging: " + f.logging.URL + "/, iam_credentials: " + f.iam.URL + "/, " + extra(extraEndpoints) + "no_auth: true }\n" +
 		"repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
 	// The project config is aurora's, in a config directory of the test's
 	// own; FUGARO_CONFIG names it too, as tests append to it.
@@ -97,16 +120,62 @@ func newCloudFixture(t *testing.T, extraEndpoints ...string) *cloudFixture {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
+	// The jobs of this installation carry its database in their environment, as
+	// its deploy writes it (internal/infra's budgetEnv), and every job added
+	// afterwards carries it too: a launch reads the job it is about to start
+	// back, and a job that carries no database address is one deployed by an
+	// update from before the installation had one (R6) — a test that means that
+	// world makes such a job itself.
+	f.run.SetDefaultJobEnv(jobEnvOf(f.budget))
 	f.run.AddJob(gcp.JobName(appSlug, "web"), "4", "8Gi")
 	// The installation names its project in the runs bucket, as its
 	// Terraform does; every cloud command checks it.
 	f.writeMarker(t, "aurora", "proj-1234")
+	// And the build record of its repository's web workflow: the job image the
+	// launch starts was built from a base image whose runner reads the sealed
+	// budget token (releaseSeal and later). Every launch of this installation
+	// is judged against that record from AB4 on, because every launch mints
+	// (sealGate); a test whose subject is an image older than that — or the
+	// workflow an installation has built nothing for — says so with its own
+	// record (writeBuildRecordAt, removeBuildRecord).
+	writeBuildRecord(t, f, appSlug, "web", releasePolicy)
 	return f
+}
+
+// seedLaunchCaps is the cap state a launch of this installation is pre-checked
+// against, in the shape `fugaro update` writes it: the project's daily and
+// per-run caps, the repository defaults under them, and the reserve a lease
+// takes. Every launch of an installation with a database is pre-checked now
+// (AB4, F7: the pre-check is gated by budgetBackendOn, which no longer reads
+// the mode), so a fixture that means a launch to start has to have them. A test
+// that means the state the pre-check refuses for — no cap at all, a spent day,
+// a kill switch — says so on its own fixture, with its own numbers.
+func seedLaunchCaps(db *gcpfake.RTDB) {
+	db.Set(budget.PathCapsGlobal, map[string]any{"dailyMicros": 100 * usd1, "perRunMicros": 10 * usd1})
+	db.Set(budget.PathCapsDefaults, map[string]any{"repoDailyMicros": 50 * usd1, "repoPerRunMicros": 5 * usd1})
+	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5 * usd1})
 }
 
 // markerPath is where the fixture's runs bucket keeps the project marker.
 func (f *cloudFixture) markerPath() string {
 	return filepath.Join(f.dir, "runs", filepath.FromSlash(infra.ProjectMarkerObject))
+}
+
+// jobEnvOf is a budget's environment entries as the map a fake job's container
+// carries, and nil for a null budget: what a fixture gives the jobs of an
+// installation whose deploy wrote the database into each of them.
+func jobEnvOf(b *testutil.Budget) map[string]string {
+	entries := b.Env()
+	if len(entries) == 0 {
+		return nil
+	}
+	env := make(map[string]string, len(entries))
+	for _, kv := range entries {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			env[k] = v
+		}
+	}
+	return env
 }
 
 // writeMarker makes the fixture's installation name project name in GCP
@@ -213,7 +282,12 @@ func (f *cloudFixture) noBudget(t *testing.T) {
 		t.Fatal("noBudget needs a fixture whose installation has a budget database (newCloudFixture)")
 	}
 	f.rewriteConfig(t, f.budget.ConfigBlock(), "")
-	f.budget = nil
+	f.budget, f.ledgerDB = nil, nil
+	// The jobs go with it: an installation that never created a database
+	// deployed its jobs without one, and a launch reads the job it is about to
+	// start back — the environment the fixture gave them is the database's.
+	f.run.SetDefaultJobEnv(nil)
+	f.run.SetJobEnv(gcp.JobName(appSlug, "web"), nil)
 }
 
 // appendConfig adds top-level YAML (such as registry: …) to the local config. A

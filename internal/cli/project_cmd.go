@@ -1781,6 +1781,14 @@ func publishedCraftPools(lc *localcfg.Config, old *projectpolicy.Policy, creds [
 		}
 		q, held := craftPoolNamed(old, p.Name)
 		pub := p
+		// A pool's rule, principal and threshold are the config's three new
+		// members (PL1, R21) and the node's craft_pools may not carry them: that
+		// block is decoded strictly by every job image of the installation, so a
+		// release behind this one refuses the whole node for a key it does not
+		// know. The pools in their new shape travel under the policy's
+		// `model_routing` key instead (RT4), and what the node holds here is the
+		// pool as the readers of craft_pools have always read it.
+		pub.Rule, pub.Principal, pub.Threshold = "", nil, nil
 		// The marker is never the config's (D2608), so it starts cleared and is
 		// taken from the node alone, and only while nothing else answers for the
 		// pool: a pool that names an owner now is not one that predates owners.
