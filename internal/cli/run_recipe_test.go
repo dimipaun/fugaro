@@ -287,7 +287,7 @@ func TestRunRepoRecipeFromCheckout(t *testing.T) {
 func TestRunPRKeepsEmbeddedRecipeAfterProjectDelete(t *testing.T) {
 	f := newCloudFixture(t)
 	projectRecipesFixture(t, f, nil) // default bucket name; no team recipe published any more
-	writeBuildRecord(t, f, appSlug, "web", release050)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	team := "version: 1\nname: team\nsteps:\n  - review: {}\n"
 	root := firstRunSpec(rootID)
 	root.Recipe = &task.Recipe{Name: "team", Source: "project", SHA256: recipe.Sum([]byte(team)), YAML: team}
@@ -349,7 +349,7 @@ func TestRunPRRefusesInheritedReviewMode(t *testing.T) {
 
 func TestRunPRRecipeFlagWins(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	root := firstRunSpec(rootID)
 	root.Recipe = &task.Recipe{Name: "mine", Source: "repo"}
 	seedSpec(t, f, root, false)
@@ -553,7 +553,7 @@ func TestRunPRInheritedBadRecipeFailsBeforeLaunch(t *testing.T) {
 // A repeated --run-id with another --recipe is a different task.
 func TestRunPRRepeatRunIDWithAnotherRecipe(t *testing.T) {
 	f := newCloudFixture(t)
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
 	args := []string{"run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID}
 	if _, _, err := execute(t, append(args, "--recipe", "solo")...); err != nil {
@@ -572,7 +572,7 @@ func TestRunPRRepeatRunIDWithAnotherRecipe(t *testing.T) {
 // chose) and whose record says chosen; nil chosen leaves the record without.
 func seedChosenRoot(t *testing.T, f *cloudFixture, chosen *runstore.RecipeRecord) {
 	t.Helper()
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	seedSpec(t, f, firstRunSpec(rootID), false)
 	rec := prRecord(rootID, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)

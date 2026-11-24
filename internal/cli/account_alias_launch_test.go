@@ -184,7 +184,7 @@ func TestFollowUpLaunchLineNamesTheAliasItRead(t *testing.T) {
 	f.appendConfig(t, "claude_accounts:\n  acme-team:\n    allow_data_to: [\"acme/app\"]\n"+aliasBlock("reviewer", "acme-team"))
 	oauthCheckout(t, f, "")
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-team")), "2", "4Gi")
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--token", "reviewer", "--run-id", fuID, "A follow-up")
 	if err != nil {
@@ -225,7 +225,7 @@ func TestReviewLaunchLineNamesTheAliasItRead(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, "claude_accounts:\n  acme-overflow: { allow_data_to: [\"acme/app\"] }\n"+aliasBlock("reviewer", "acme-overflow"))
 	baseBranchCheckout(t, "acme/app", aliasChainYAML, "main")
-	writeBuildRecord(t, f, appSlug, "web", release070)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-overflow")), "2", "4Gi")
 	const reviewRun = "20261007-100000-abcd"
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", reviewRun, "--recipe", "review-only", "--pr", "7", "--token", "reviewer")
@@ -505,7 +505,7 @@ func followUpOnAliasedPR(t *testing.T, token, id string) (*cloudFixture, string)
 	f.appendConfig(t, "claude_accounts:\n  acme-overflow: { allow_data_to: [\"acme/app\"] }\n  acme-personal: { allow_data_to: [\"acme/app\"] }\n"+
 		"claude_account_aliases:\n  reviewer: acme-overflow\n  reviewer-other: acme-personal\n")
 	baseBranchCheckout(t, "acme/app", aliasChainYAML, "main")
-	writeBuildRecord(t, f, appSlug, "web", release065)
+	writeBuildRecord(t, f, appSlug, "web", release085)
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-overflow")), "2", "4Gi")
 	f.run.AddJob(gcp.JobName(appSlug, gcp.WorkflowVariant("web", "acme-personal")), "2", "4Gi")
 	spec := firstRunSpec(rootID)

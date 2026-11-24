@@ -1673,6 +1673,7 @@ func TestFollowUpDoesNotInheritThePlanTask(t *testing.T) {
 	root := firstRunSpec(rootID)
 	root.PlanTask = "setup-wizard/W1.3"
 	seedSpec(t, f, root, false)
+	seedTitleAwareImage(t, f)
 	rec := prRecord(rootID, "", 7, 1)
 	rec.StartedAt = time.Now().Add(-72 * time.Hour)
 	writeRecord(t, f, rootID, rec)
