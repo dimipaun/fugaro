@@ -52,13 +52,12 @@
 #     of another log cannot be read as this one's;
 #   * `gcloud` — what the project's jobs created while each part ran (T-TC10(a)
 #     and (b): no execution created, and (c): exactly one), read as a window on
-#     creation time — the newest
-#     executions, newest first, of which the check counts the ones created at or
-#     after the moment the window opened — rather than as a total of the
-#     project's executions, which a project that has run for weeks can never be
-#     counted against; and, in (c), the run's own objects in the runs bucket: the
-#     record, the stored task, the answer's two artifacts and the bundle that
-#     must be gone.
+#     creation time — the newest executions, newest first, of which the check
+#     counts the ones created at or after the moment the window opened — rather
+#     than as a total of the project's executions, which a project that has run
+#     for weeks can never be counted against; and, in (c), the run's own objects
+#     in the runs bucket: the record, the stored task, the answer's two artifacts
+#     and the bundle that must be gone.
 #
 # What it writes, and what it puts back. This check doctors ONE file, the
 # installation's own project config, and only ever by replacing a literal value
