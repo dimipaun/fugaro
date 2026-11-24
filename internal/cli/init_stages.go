@@ -416,12 +416,20 @@ func initStages(e *initEngine) []initflow.Stage {
 	} else {
 		stages = append(stages, newOrchestratorUnitStage(e))
 	}
-	// The Batch backend's provisioning is the owner's step and nothing else
-	// reaches it: the stage is registered only under its own flag, so an
-	// installation reaches it by asking for it and never as part of an update
-	// (design compute-backend §8.1 tasks 6 and 9).
+	// The Batch backend's provisioning. `setup` reaches the root by asking for
+	// it and nothing else does: the stage is registered under its own flag, so a
+	// first provisioning is the owner's step and never part of an update (design
+	// compute-backend §8.1 tasks 6 and 9). `fugaro update` reaches the SAME root
+	// by the installation's own fact instead (R2, D3110): where the published
+	// block's opt-in says this installation is on Batch, every operator's update
+	// converges the root -- tightened like the installation's other roots -- and
+	// a machine whose credential is not an operator's, or one whose root was
+	// never provisioned, skips the moment with one line. Which machine is
+	// updating, and what its own `backend:` says, decide nothing (F32).
 	if e.r.o.provisionBatch {
 		stages = append(stages, newComputeStage(e))
+	} else if e.updatesComputeRoot() {
+		stages = append(stages, newUpdateComputeStage(e))
 	}
 	// The project stage, which is the one stage that may create the GCP
 	// project. `setup` registers it on every first run: a first run makes its

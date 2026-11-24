@@ -994,6 +994,28 @@ func (e *initEngine) firstRun() bool {
 	return e.old == nil || (e.lc != nil && e.lc.SetupPending != "")
 }
 
+// updatesComputeRoot is whether this run reaches the Batch compute root by the
+// installation's own opt-in fact rather than by --provision-batch (R2, D3110):
+// the two doors whose business is converging what exists -- `fugaro update`, and
+// the `fugaro apply` that runs a step the machine owes -- and a block whose fact
+// says this installation is on Batch.
+//
+// A machine's own `backend:` is not read: the fact is the installation's and it
+// is published, so a machine that has selected nothing, or one that has selected
+// cloud-run, converges the same root (F32). A nil config, an absent fact and a
+// withdrawn one are all "not in", and a withdrawn one is BR20's and BR21's own
+// step rather than this one's.
+func (e *initEngine) updatesComputeRoot() bool {
+	if e.lc == nil || !e.lc.Batch.OptedIn() {
+		return false
+	}
+	switch e.r.o.door {
+	case updateDoor.name, applyName:
+		return true
+	}
+	return false
+}
+
 // programPrefix is the line's own "fugaro setup: ", or "" for a hand-built
 // options value — a test's — whose run has no door to name.
 func (o *initOptions) programPrefix() string {
