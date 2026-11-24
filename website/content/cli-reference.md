@@ -8907,7 +8907,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
-| `--state` | string | "" | no | only runs in this state, a run's or its pull request's (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed, live, ready, stalled) |
+| `--state` | string | "" | no | only runs in this state, a run's or its pull request's (cancelled, error, failed, halted, infra_error, launching, paused, pending, running, succeeded, unlaunched, unreviewed, live, ready, stalled) |
 | `--stream` | bool | `false` | no | with --json: one line per run, then a line saying how many there were |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
 
