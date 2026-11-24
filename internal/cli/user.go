@@ -111,7 +111,7 @@ func installationMemberRefusal(ctx context.Context, lc *localcfg.Config, past, d
 	if !linked {
 		return nil
 	}
-	return userErr("nothing was %s: %s is a linked member of workspace %s -- its own config carries the membership and its database carries the workspace's member list -- so a member's people are the workspace's record, and this installation-level door is refused (D2813, R11, D2819). Run `%s` instead: the workspace's own door is what writes a member's record, and this member's own `%s update` is what applies it",
+	return userErr("nothing was %s: %s is a linked member of workspace %s -- its own config carries the membership and its database carries the workspace's member list -- so a member's people are the workspace's record, and this installation-level door is refused (D2813, R11, D2819). Run %s instead: the workspace's own door is what writes a member's record, and this member's own `%s update` is what applies it",
 		past, safetext.Field(lc.Name), safetext.Field(workspaceNameOf(lc)), door, selfCommand())
 }
 
