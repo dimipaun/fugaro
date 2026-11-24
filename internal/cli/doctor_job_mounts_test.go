@@ -56,21 +56,33 @@ func TestDoctorJobMountsFlagsAWorkflowSecret(t *testing.T) {
 // TestDoctorJobMountsIgnoresOtherClasses: the report is of T3's class alone. A
 // git credential, a model credential, a provider's key and any plain-value
 // variable are other classes (every one of their variables is one Fugaro
-// reserves), so a job mounting only those gets no line at all.
+// reserves), so a job mounting only those gets no line at all — the mounts are
+// in the body doctor reads, which the control below pins, so a filter that
+// stopped applying would put them on the report.
 func TestDoctorJobMountsIgnoresOtherClasses(t *testing.T) {
 	r := newDoctorRig(t)
-	r.mountJob(t, "fugaro-acme-app-web", map[string]string{
+	const job = "fugaro-acme-app-web"
+	r.mountJob(t, job, map[string]string{
 		config.ReservedSecrets[config.BitbucketSecret]:  gcp.SecretID("acme-app-ab12cd34", config.BitbucketSecret),
 		config.ReservedSecrets[config.ClaudeOAuthToken]: gcp.SecretID("acme-app-ab12cd34", "claude-oauth-token"),
 		config.ReservedSecrets[config.AnthropicSecret]:  gcp.SecretID("acme-app-ab12cd34", config.AnthropicSecret),
 		config.ProviderKeyEnv("openrouter-api-key"):     gcp.SecretID("acme-app-ab12cd34", "openrouter-api-key"),
 	})
-	// A plain-value variable is no mount at all and reaches this read the same
-	// way: doctorJobEnv's half of the report already covers it, and it must not
-	// turn up here (a value would be printed, which this line never does).
-	r.run.SetJobEnv("fugaro-acme-app-web", map[string]string{"FUGARO_IMAGE_ENTRY": "acme-base"})
+	// A plain-value variable stands in the same env list as the mounts, which is
+	// what a real job's container carries: it is no mount at all (a value would
+	// be printed, which this line never does), and the image-env report reads it
+	// from that same body.
+	r.run.SetJobEnv(job, map[string]string{"FUGARO_IMAGE_ENTRY": "acme-base"})
 
 	o := r.runDoctorJSON(t)
+	// The other report's line about this job is the control: it is built from
+	// the same jobs get answer the mounts were set on, so its stamp proves the
+	// body doctor read really carried the reserved mounts this test is about —
+	// without it the test would pass on a job that mounts nothing at all.
+	env, found := doctorCheckByID(o.Checks, "image-env-"+job)
+	if !found || !strings.Contains(env.Problem, "acme-base") {
+		t.Fatalf("the read carried no environment for %s, so this test read no mounts either: %+v", job, o.Checks)
+	}
 	for _, c := range o.Checks {
 		if c.ID == doctorJobMountID || c.ID == doctorJobMountUnreadID {
 			t.Fatalf("a job mounting only other classes got a line: %+v", c)
