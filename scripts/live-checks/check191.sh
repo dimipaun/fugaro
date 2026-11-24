@@ -30,16 +30,15 @@
 # Check 192 (plan B1.14), under --after-flip, reads the other side of the same
 # switch: after the flip the repository's jobs no longer mount bitbucket-token
 # and its job accounts hold no accessor on it, a run on that repository still
-# succeeds, `fugaro doctor` reports bitbucket-direct clean for it, and a
-# NON-proxied Bitbucket repository of the same installation still mounts its
-# token and still runs.
+# succeeds, and `fugaro doctor` reports bitbucket-direct clean for it. No row
+# reads a repository that is not proxied: shared jobs give a repository no job
+# of its own and mount no Bitbucket token, so there is nothing of one to read.
 #
 # Usage:      CHECK191_REPO=<workspace>/<sandbox repo> \
 #             CHECK191_OTHER_REPO=<workspace>/<another sandbox repo> \
 #             CHECK191_OTHER_PR=<n> \
 #               bash scripts/live-checks/check191.sh
-#             CHECK191_REPO=... CHECK191_PLAIN_REPO=<workspace>/<plain repo> \
-#               bash scripts/live-checks/check191.sh --after-flip
+#             CHECK191_REPO=... bash scripts/live-checks/check191.sh --after-flip
 #             ... --dry-run          print the plan and run nothing
 #             ... --help             this text
 # Needs:      bash, mktemp, python3 (the reader), curl, gcloud (authenticated as
@@ -207,7 +206,7 @@
 #             written out in docs/secrets-brokering/check191-steps.md. The row
 #             is recorded as NOT MEASURED (exit 2), with that reason, where the
 #             service's lines carry neither a class nor a served call for it.
-# Knobs (all CHECK191_*): REPO, OTHER_REPO, PLAIN_REPO (the sandbox
+# Knobs (all CHECK191_*): REPO, OTHER_REPO (the sandbox
 # repositories), OTHER_PR (the number of an open pull request in REPO — the
 # run's OWN repository, and not the run's own pull request — that the run tries
 # to update; OTHER_REPO and OTHER_PR are the values the PROBE carries, and this
@@ -1026,8 +1025,6 @@ guard_inputs() {
   [ -n "$REPO" ] || stop "CHECK191_REPO must name the sandbox repository this check runs in (<workspace>/<repository>)"
   guard_one_repo "$REPO" CHECK191_REPO
   if [ "$MODE" = flip ]; then
-    [ -n "$PLAIN_REPO" ] || stop "CHECK191_PLAIN_REPO must name a Bitbucket repository of this installation that the published policy does NOT admit with proxy: true (<workspace>/<repository>): the flip's other half is that such a repository is left as it was"
-    guard_one_repo "$PLAIN_REPO" CHECK191_PLAIN_REPO
     guard_checkout
   else
     [ -n "$OTHER_REPO" ] || stop "CHECK191_OTHER_REPO must name a SECOND sandbox repository of the installation (<workspace>/<repository>): one of the refusals is a call to another repository, and it cannot be made against this one. The same value is the one ${REPO}'s own probe must carry (CHK191_PROBE_OTHER_REPO): the attempts are made by that repository's check command, and nothing carries a value from here into a run's container"
@@ -1112,7 +1109,6 @@ run_id() {
   review) printf '%s-0002' "$RUN_BASE" ;;
   ended) printf '%s-0003' "$RUN_BASE" ;;
   flip) printf '%s-0004' "$RUN_BASE" ;;
-  plain) printf '%s-0005' "$RUN_BASE" ;;
   *) die "Check 191 has no run id for the label '$1'" ;;
   esac
 }
@@ -1991,50 +1987,11 @@ TASK_EOF
   fact run-still-works PASS "a run in ${REPO} still pushed its branch and opened pull request #${pr} after the flip (status=${status:-unread}, pushed=yes): the credential is served by the credentials service, and the repository still works without its own mount. The branch and the pull request stay on ${REPO}: delete them when you are done"
 }
 
-# step_plain_run: the other half of the flip — a NON-proxied Bitbucket
-# repository of the same installation still mounts its token and still runs.
-step_plain_run() {
-  local file=$SCRATCH/jobs-plain.json n mounts task=$SCRATCH/task-plain.md row status pushed pr rid
-  rid=$(run_id plain)
-  gcloud run jobs list --project="$P" --region="$L" --format=json >"$file" 2>"$SCRATCH/jobs-plain.err" || true
-  n=$(reader jobs "$file" "$PLAIN_REPO" | sed -n 's/^jobs=//p')
-  mounts=$(reader jobs "$file" "$PLAIN_REPO" | sed -n 's/^mounts=//p')
-  if [ "${n:-0}" -lt 1 ]; then
-    fact plain-repo FAIL "no job of ${PLAIN_REPO} is in the installation's job list, so the non-proxied half of the flip was not read at all: the flip must leave a repository that is NOT proxied exactly as it was. Name one with CHECK191_PLAIN_REPO and run this check again"
-    return 0
-  fi
-  if [ "${mounts:-0}" -lt 1 ]; then
-    fact plain-repo FAIL "${n} job(s) of ${PLAIN_REPO} carry FUGARO_REMOTE and NONE of them mounts the Bitbucket token (FUGARO_BITBUCKET_TOKEN from Secret Manager): a repository the policy does not admit with proxy: true must keep its token MOUNTED — the flip is per-repository, and a plain repository that lost its mount is a repository whose runs cannot reach Bitbucket at all. Read 'gcloud run jobs list' for ${PLAIN_REPO} yourself"
-    return 0
-  fi
-  cat >"$task" <<TASK_EOF
-You are a probe for Fugaro's Check 192, run by this repository's owner. This
-repository is NOT proxied: its job still mounts its own Bitbucket token.
-
-Append one line to this repository's README.md saying that Check 192 ran here on
-$(date -u +%Y-%m-%d), commit it, push your branch and open the pull request.
-Change no other file, then stop.
-TASK_EOF
-  if ! row=$(launch_into "$PLAIN_REPO" "plain" "$rid" "$task"); then
-    fact plain-repo FAIL "the run in ${PLAIN_REPO} (the non-proxied repository) could not be read: $(launch_err)"
-    return 0
-  fi
-  status=$(field_of status "$row")
-  pushed=$(field_of pushed "$row")
-  pr=$(field_of pr "$row")
-  if [ "$pushed" != yes ] || [ -z "$pr" ] || [ "$pr" = 0 ]; then
-    fact plain-repo FAIL "the run in ${PLAIN_REPO} (the non-proxied repository, whose job still mounts its token) ended status=${status:-unread} pushed=${pushed:-unread} pr=${pr:-unread}: the flip must not disturb it, and a run there must still reach Bitbucket with the token its own job mounts. Read that run's log (fugaro runs ls --repo ${PLAIN_REPO}, then fugaro logs) before anything else"
-    return 0
-  fi
-  fact plain-repo PASS "${n} job$([ "$n" = 1 ] || printf 's') of ${PLAIN_REPO} still mounts the Bitbucket token ($(reader jobs "$file" "$PLAIN_REPO" | sed -n 's/^mounted=//p' | tr '\n' ' ')) and a run in it still pushed and opened pull request #${pr}: the flip is per-repository, and the repository the policy does not proxy is untouched"
-}
-
 run_192() {
   step_jobs
   step_accessor
   step_flip_run
   step_doctor
-  step_plain_run
 }
 
 # -------------------------------------------------------------------- the plan
@@ -2049,11 +2006,11 @@ plan() {
   say "CHECK ${CHECK} plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [no network, already read] the guards: fugaro doctor --project fugaro --all and fugaro version"
   if [ "$MODE" = flip ]; then
-    say "  [network, read] gcloud run jobs list --project=${P} --region=${L} --format=json — the jobs of ${REPO} and of ${PLAIN_REPO}, and whether they mount the Bitbucket token"
+    say "  [network, read] gcloud run jobs list --project=${P} --region=${L} --format=json — the jobs of ${REPO}, and whether they mount the Bitbucket token"
     say "  [network, read] gcloud secrets list --project=${P} --format=json, then gcloud secrets get-iam-policy <the container(s) labelled fugaro_secret=bitbucket-token> --project=${P} --format=json — the accessor on the credential"
     say "  [network, read] fugaro doctor --project fugaro --json, run IN ${CHECKOUT} (${REPO}'s own checkout: doctor has no --repo and resolves the checkout it is run in from the working directory) — bitbucket-direct for ${REPO}"
-    say "  [network, runs] two throwaway runs ($(run_id flip) in ${REPO} through the credentials service, $(run_id plain) in ${PLAIN_REPO} with its mounted token), each committing one line, pushing its branch and opening its pull request, and each waited for to a final status"
-    for key in jobs mount accessor run-still-works doctor plain-repo; do
+    say "  [network, runs] one throwaway run ($(run_id flip) in ${REPO} through the credentials service), committing one line, pushing its branch and opening its pull request, waited for to a final status"
+    for key in jobs mount accessor run-still-works doctor; do
       fact "$key" INFO "planned: a real run reads this row; --dry-run did not"
     done
   else
@@ -2084,13 +2041,13 @@ BLOCK_KEYS=(fugaro-version project-region xtrace dry-run proxied account-admitte
   run-launch run-outcome
   refusal-other-repository refusal-other-ref refusal-tag-ref refusal-ref-delete
   refusal-other-pull-request refusal-merge refusal-workspaces
-  review-run ended-identity run-still-works plain-repo restore scratch-removed)
+  review-run ended-identity run-still-works restore scratch-removed)
 
 # The rows each mode NEVER records — a key here was not reached by this run and
 # could not have been. Check 191 (proxy) reads the working run's rows and never
 # `jobs`, `mount`, `accessor` and `doctor` (Check 192's flip section), nor
-# `run-still-works` and `plain-repo` (the flip's own two runs); Check 192 (flip)
-# reads those six and none of Check 191's rows — not one of `proxied`,
+# and `run-still-works` (the flip's own run); Check 192 (flip)
+# reads those five and none of Check 191's rows — not one of `proxied`,
 # `account-admitted`, `run-launch`, `run-outcome`, the seven refusals,
 # `review-run` or `ended-identity` exists in that mode; and `dry-run` is written
 # by a --dry-run plan alone, whatever mode it is in. A key of the list for the
@@ -2098,7 +2055,7 @@ BLOCK_KEYS=(fugaro-version project-region xtrace dry-run proxied account-admitte
 # rather than `FAIL — not reached`: the run did not stop before it, and the row
 # is neither a pass nor a failure — it is not in the facts the verdict is taken
 # from, which counts a FAIL alone, so it can move no exit code.
-BLOCK_KEYS_PROXY_NA="dry-run jobs mount accessor doctor run-still-works plain-repo"
+BLOCK_KEYS_PROXY_NA="dry-run jobs mount accessor doctor run-still-works"
 BLOCK_KEYS_FLIP_NA="dry-run proxied account-admitted run-launch run-outcome refusal-other-repository refusal-other-ref refusal-tag-ref refusal-ref-delete refusal-other-pull-request refusal-merge refusal-workspaces review-run ended-identity"
 
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
@@ -2165,7 +2122,6 @@ done
 
 REPO=${CHECK191_REPO:-}
 OTHER_REPO=${CHECK191_OTHER_REPO:-}
-PLAIN_REPO=${CHECK191_PLAIN_REPO:-}
 OTHER_PR=${CHECK191_OTHER_PR:-}
 RUN_BASE=${CHECK191_RUN_ID:-$(date -u +%Y%m%d-%H%M%S)}
 CHECKOUT=${CHECK191_CHECKOUT:-$PWD}

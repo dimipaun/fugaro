@@ -57,11 +57,8 @@
 //
 // **What is deliberately not here.** No store and no file: where the app keeps
 // the key is S2.8's. No screen and no lapse state: what the app still allows
-// after the grace is S6.1's design and S6.3's build. No production key:
-// `PRODUCTION_KEYRING` below is where S2.9 puts the owner's published public
-// half, once S3.8 has created it, and until then nothing verifies in a real
-// build -- which is the honest state of an app that carries no key enforcement.
-// No vectors: one set of vectors for all three verifiers is S2.6's.
+// after the grace is S6.1's design and S6.3's build. No vectors: one set of
+// vectors for all three verifiers is S2.6's.
 //
 // **One reading is stricter than the CLI's, on purpose and in the safe
 // direction.** The six claims are all required and all typed, `issued`,
@@ -115,10 +112,13 @@ export const LICENCE_CODES = Object.freeze({
 /** PRODUCTION_KEYRING is the ring the shipped app verifies against, keyed by
  * the id the key text carries in the clear and holding each public key as
  * unpadded base64url of its 32 raw bytes -- the spelling the vectors file
- * carries, so one string moves between the three verifiers unchanged. It is
- * empty today because the owner's signing keys do not exist yet: S3.8 creates
- * them, S2.9 puts the published production public half in here. */
-export const PRODUCTION_KEYRING = Object.freeze({});
+ * carries. It holds the owner's one published signing key, whose bytes are
+ * `ee/licence/keys/production.pub` and which the Go ring holds as that file's
+ * PEM; the console's ring holds nothing yet, and takes the same key up in the
+ * release that takes it back out of its own environment. */
+export const PRODUCTION_KEYRING = Object.freeze({
+  'fugaro-licence-production': 'XyVVh9RSo6YQbabkTXoK-7dto7Ffglf8Y6g4RzXafMQ',
+});
 
 /** TIERS is the closed list the `tier` claim is checked against. */
 const TIERS = Object.freeze(['community', 'team', 'enterprise']);

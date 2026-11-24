@@ -591,6 +591,12 @@ func (p planned) digestOf() string {
 	return p.digest
 }
 
+// replacesForeign is a copy that would move a tag off an image this source
+// never published: the one replacement that needs a person's word.
+func (p planned) replacesForeign() bool {
+	return p.plan != nil && !p.plan.Present && p.plan.DestDigest != "" && p.plan.OwnEarlier == ""
+}
+
 // pins are the base kinds this run records a pin for.
 func pins(pl []planned) []planned {
 	var out []planned
@@ -651,6 +657,18 @@ func (s *imagesStage) read(ctx context.Context, m *mirror.Mirror, items []imageI
 		// live installs have a hand-pushed one, and we cannot tell a copy this
 		// tool made from one an older CLI or a person made).
 		replace := slices.Contains(s.e.r.o.replaceImages, it.key())
+		// An image this source published for an earlier release is Fugaro's
+		// own, and moving the tag off it to this release's replaces nothing
+		// that is not ours: no flag and no confirmation, which is the whole of
+		// `fugaro update` for an installation one release behind. Only an image
+		// the source never published (a customised or foreign digest) is
+		// refused below.
+		p.OwnEarlier = m.OwnEarlier(ctx, p)
+		if p.OwnEarlier != "" {
+			p.AllowReplace = true
+			out = append(out, planned{item: it, plan: p})
+			continue
+		}
 		if p.DestDigest != "" && !p.Present && !replace {
 			return nil, userErr("%s: %s is %s in your registry and the release's image is %s: it is never replaced silently; pass --replace-image %s to replace it, and confirm it at a real terminal (a base kind can instead be pointed at your own image with --base-image KIND=IMAGE)", it.label, it.dst, p.DestDigest, p.Digest, it.key())
 		}
@@ -716,6 +734,9 @@ func (s *imagesStage) show(pl []planned) {
 		switch {
 		case p.plan.Present:
 			fmt.Fprintf(w, "  %s: %s is already the release image %s, nothing to copy\n", p.item.label, to, p.plan.Digest)
+		case p.plan.OwnEarlier != "":
+			fmt.Fprintf(w, "  %s: copy %s to %s: moves it from %s's image %s to this release's %s (%.1f MB to send of %.1f MB, %d blobs)\n", p.item.label, p.item.src, to, p.plan.OwnEarlier, p.plan.DestDigest, p.plan.Digest,
+				float64(p.plan.TransferBytes)/1e6, float64(p.plan.TotalBytes)/1e6, len(p.plan.Blobs))
 		case p.plan.DestDigest != "":
 			fmt.Fprintf(w, "  %s: copy %s to %s: REPLACES %s with %s (%.1f MB to send of %.1f MB, %d blobs)\n", p.item.label, p.item.src, to, p.plan.DestDigest, p.plan.Digest,
 				float64(p.plan.TransferBytes)/1e6, float64(p.plan.TotalBytes)/1e6, len(p.plan.Blobs))
@@ -847,7 +868,7 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		o.yes = env.Yes
 		notCovered := ""
 		for _, p := range pl {
-			if p.plan != nil && !p.plan.Present && p.plan.DestDigest != "" {
+			if p.replacesForeign() {
 				notCovered = "it replaces a tag in your registry"
 			}
 		}
@@ -926,7 +947,7 @@ func (s *imagesStage) confirmText(pl []planned, n int, bytes int64, unpinned []s
 func (s *imagesStage) confirmReplace(pl []planned) error {
 	var kinds, lines []string
 	for _, p := range pl {
-		if p.plan != nil && !p.plan.Present && p.plan.DestDigest != "" {
+		if p.replacesForeign() {
 			kinds = append(kinds, p.item.key())
 			lines = append(lines, fmt.Sprintf("%s (%s) from %s to %s", p.item.dst, p.item.label, p.plan.DestDigest, p.plan.Digest))
 		}

@@ -37,6 +37,19 @@ type Cost struct {
 	// ModelSource says where ModelUSD came from: "gateway" (its settled
 	// ledger) or "claude-code" (the agent's own total_cost_usd).
 	ModelSource string `json:"model_source,omitempty"`
+	// FallbackUSD is the real money the run's fallback calls spent (C1, CS8):
+	// the calls a source that was not its chain's first served and that a
+	// metered source paid for -- a key, a provider key or Vertex.
+	//
+	// It is a part of ModelMoneyUSD and not a figure beside it: those calls'
+	// dollars are already in ModelUSD (and in the billed TotalUSD for a
+	// non-subscription basis), and this says how much of them went to a
+	// fallback. A fallback a subscription served is therefore NOT in it: the
+	// subscription's list price is notional, it is counted against a plan's
+	// limits rather than billed (P12, D140), and adding it would report money
+	// nobody paid. A run whose chain never fell back, and every run the
+	// credentials service does not serve, has none.
+	FallbackUSD float64 `json:"fallback_usd,omitempty"`
 	// ComputeSource is the source line of the compute estimate: the price
 	// table's own line for the figures ComputeUSD was computed from, so a
 	// reader can tell an estimate priced from the Compute Engine VM table

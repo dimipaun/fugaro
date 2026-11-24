@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/routing"
 	"github.com/dimipaun/fugaro/internal/tier"
 )
 
@@ -140,6 +141,17 @@ func unset(what string) Default { return Default{Unset: "unset = " + what} }
 
 // value is a row whose default is the value the loaders leave in place.
 func value(v, constant string) Default { return Default{Value: v, Const: constant} }
+
+// routingKinds is routing.Kinds as a default's sentence: the closed set of a
+// chain's source kinds is declared once, in the contract, and this table only
+// spells it (routing.ValidKind refuses the sixth, and so does RT2's decode).
+func routingKinds() string {
+	names := make([]string, 0, len(routing.Kinds))
+	for _, k := range routing.Kinds {
+		names = append(names, string(k))
+	}
+	return strings.Join(names, ", ")
+}
 
 // yamlMeta is the metadata of every `fugaro.yaml` key: what config.Scopes
 // cannot answer. The key set itself, and the layers, come from Scopes — this
@@ -541,6 +553,13 @@ const (
 	docModels     = "docs/multi-model.md"
 	docRigor      = "docs/rigor-modes/spec.md"
 	docCrafts     = "docs/model-crafts/spec.md"
+	// docRouting is the document that states the project's routing table
+	// (docs/model-credentials-routing/): where a project's models are reached,
+	// the five kinds of source a chain may name and the per-source admission
+	// (spec.md, D3182). The folder's contract-table.md and reconciliation.md
+	// are the contract's own documents, and the spec is where the block a
+	// person writes is stated.
+	docRouting = "docs/model-credentials-routing/spec.md"
 	// docEscalation is the escalation ladder's own document. The two model
 	// grades are stated in the plan rather than in the spec — the spec is the
 	// ladder's design and the plan is where each key it adds is defined (E2,
@@ -1173,6 +1192,28 @@ var localRows = []Row{
 	locLocal("crafts.security-review.access", "the senior review's access", "accounts", docCrafts),
 	locLocal("crafts.merge-judge.model", "the coder's model", "models", docCrafts),
 	locLocal("crafts.merge-judge.access", "the coder's access", "accounts", docCrafts),
+	// The project's routing table (docs/model-credentials-routing/spec.md,
+	// D3182, RT2): the ordered entries that say which credential reaches which
+	// model, and `admit` per source — the repositories a source of the three
+	// single-credential kinds may serve. It is local-only for the credentials'
+	// reason one step out (F12): the table says which credential serves which
+	// model, so a launcher who could write it into the shared file would aim
+	// every teammate's calls at a credential the owner never admitted. It is
+	// also not a key an operator writes by hand — `fugaro update`'s migration
+	// writes a project's first table (MG2) and `fugaro routing set` edits one
+	// after that (RT5) — which is why the rows name `update` until that command
+	// exists and the rows move to its own token.
+	//
+	// The two spellings are the block's own shape: `model_routing.*` is one
+	// entry, `model_routing.*.chain.*` one source of an entry's chain, and
+	// `admit` is a list per source rather than per kind because one provider
+	// key may be admitted to one repository and not another.
+	locLocal("model_routing.*.match", "required: an entry that matches nothing answers no model", "update", docRouting),
+	locLocal("model_routing.*.chain.*.kind", "required: a source names which credential serves the model, one of "+routingKinds(), "update", docRouting),
+	locLocal("model_routing.*.chain.*.pool", "none: only a source of kind pool names a pool", "update", docRouting),
+	locLocal("model_routing.*.chain.*.provider", "none: only a source of kind provider names a provider key", "update", docRouting),
+	locLocal("model_routing.*.chain.*.model", "the model the call asked for: a source names a model only for a written downgrade", "update", docRouting),
+	locLocal("model_routing.*.chain.*.admit", "nobody: an absent list and an empty one both admit no repository, and a pool's admission is its members' own allow_data_to", "update", docRouting),
 
 	loc("project_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
 	loc("project_secrets.*.proxy", "none: an entry that says nothing about the switch is the state `fugaro update` turns on, and a written false is a hold it never lifts", "secrets", docSetup),
@@ -1578,6 +1619,7 @@ var localRows = []Row{
 	locLocal("workspace_members.*.exchange_url", "none", "workspace", docWorkspace),
 	locLocal("workspace_cap.monthly", "the workspace states no cap", "workspace", docWorkspace),
 	locLocal("workspace_shared.*.kind", "the workspace offers no credential", "workspace", docWorkspace),
+	locLocal("workspace_shared.*.all_members", "false: the credential is offered to the members `projects` names, and only the written true offers it to every member of the workspace", "workspace", docWorkspace),
 	locLocal("workspace_shared.*.projects", "the credential is offered to no member", "workspace", docWorkspace),
 	locLocal("workspace_shared.*.covers", "the credential covers no repository", "workspace", docWorkspace),
 

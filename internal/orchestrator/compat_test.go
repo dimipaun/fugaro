@@ -66,12 +66,13 @@ const (
 // node and the standing backlog's, for the default orchestrator and for a named
 // one.
 //
-// Mutation: add a field to the state or to the lease — `project`, `name` or
-// `driver` on the state are the three D3218 as first written would have added —
-// and the release behind refuses the document this test writes, because the
-// frozen shape and the frozen two fields are what it decodes by. Move the
-// driver into the state or the lease instead of the sibling node and the same
-// two refusals land.
+// Mutation: add a field to the state or to the lease and the release behind
+// refuses the document — the state's because the frozen shape closes every
+// object it knows, the lease's because the frozen decoder carries the two fields
+// its own node holds and DisallowUnknownFields. `project`, `name` and `driver`
+// on the state are the three D3218 as first written would have added, and the
+// last subtest tries all three; a driver moved into the state or the lease
+// instead of the sibling node lands in the same two refusals.
 func TestPreviousReleaseReadsNewNodes(t *testing.T) {
 	prevState := compileSchema(t, prevStateSchema)
 	prevReleaseLease(t)
@@ -190,18 +191,44 @@ func TestPreviousReleaseReadsNewNodes(t *testing.T) {
 		readLeaseAndDriver(t, db, compatNamedID)
 	})
 
-	// The red step, and what makes the assertions above able to fail: the same
-	// shape with one added field — the `project` D3218 as first written would
-	// have put in the state, and `name` and `driver` would be refused exactly
-	// as it is — is a document the release behind refuses. A decoder that read
-	// anything would pass every case above.
-	t.Run("the added field is refused", func(t *testing.T) {
+	// The red step, and what makes the assertions above able to fail: one field
+	// added to a node the release behind reads is a document it refuses. The
+	// fixture is the state shape with `project` in it, so the document without
+	// any added field is that fixture with the key taken back out, and each of
+	// the three names is tried on top of it — a refusal that came from the
+	// document rather than from the field would show up as the clean one failing
+	// first. A decoder that read anything would pass every case above.
+	t.Run("the added fields are refused", func(t *testing.T) {
 		raw, err := os.ReadFile(prevAddedField)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := prevState.Validate(jsonValue(t, raw)); err == nil {
-			t.Errorf("the release behind read the node at %s, which carries a field no release writes: D3218 as amended derives it from the id rather than storing it", prevAddedField)
+		base := objectOf(t, raw)
+		delete(base, "project")
+		if err := prevState.Validate(jsonValue(t, marshalDoc(t, base))); err != nil {
+			t.Errorf("the release behind refuses %s with its one added field taken back out, so the refusals below are the field's doing and not the fixture's: %v", prevAddedField, err)
+		}
+		for _, field := range []string{"project", "name", "driver"} {
+			doc := map[string]any{}
+			for k, v := range base {
+				doc[k] = v
+			}
+			doc[field] = compatProject
+			if err := prevState.Validate(jsonValue(t, marshalDoc(t, doc))); err == nil {
+				t.Errorf("the release behind read a state carrying a `%s` field, which no release writes: D3218 as amended derives it from the id, or moves it to a node of its own, rather than storing it", field)
+			}
+		}
+
+		// And the lease, on the release behind's own node: a third field beside
+		// the holder and the time is one its frozen decoder refuses.
+		leaseRaw, err := os.ReadFile(prevLeasePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lease := objectOf(t, leaseRaw)
+		lease["driver"] = compatPrincipal
+		if _, err := decodePrevLease(marshalDoc(t, lease)); err == nil {
+			t.Errorf("the release behind read the lease at %s with a `driver` field added, which is the field D3218 as first written would have put beside the holder", prevLeasePath)
 		}
 	})
 }
@@ -225,22 +252,22 @@ func prevReleaseLease(t *testing.T) prevLeaseDoc {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc := decodePrevLease(t, raw)
+	doc, err := decodePrevLease(raw)
+	if err != nil {
+		t.Errorf("the release behind refuses the lease document at %s: %v", prevLeasePath, err)
+	}
 	if doc.Holder == "" || doc.At.IsZero() {
 		t.Errorf("the lease fixture at %s names no holder or no time: %+v", prevLeasePath, doc)
 	}
 	return doc
 }
 
-func decodePrevLease(t *testing.T, raw []byte) prevLeaseDoc {
-	t.Helper()
+func decodePrevLease(raw []byte) (prevLeaseDoc, error) {
 	var doc prevLeaseDoc
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&doc); err != nil {
-		t.Errorf("the release behind refuses the lease document: %v", err)
-	}
-	return doc
+	err := dec.Decode(&doc)
+	return doc, err
 }
 
 // writeStateNode writes one state-shaped document of this release's encoder for
@@ -295,7 +322,10 @@ func writeDriverNode(t *testing.T, db *gcpfake.RTDB, id string) {
 func readLeaseAndDriver(t *testing.T, db *gcpfake.RTDB, id string) {
 	t.Helper()
 	raw := storedNode(t, db, nodePath(t, id, orchestrator.LeaseNode))
-	got := decodePrevLease(t, raw)
+	got, err := decodePrevLease(raw)
+	if err != nil {
+		t.Errorf("the release behind refuses the lease this release writes for %q: %v", id, err)
+	}
 	if got.Holder != compatHolder || !got.At.Equal(compatNow) {
 		t.Errorf("the release behind reads the lease of %q as %+v, want the holder and the server time this release wrote", id, got)
 	}
@@ -378,6 +408,18 @@ func objectOf(t *testing.T, raw []byte) map[string]any {
 		t.Fatalf("the document is not a JSON object: %v", err)
 	}
 	return obj
+}
+
+// marshalDoc is one document as bytes, for the mutation cases: the test builds
+// them by editing a map, and every reader here is handed bytes rather than the
+// value the test meant.
+func marshalDoc(t *testing.T, doc map[string]any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 // jsonValue is a document as the schema validator reads it, the way the schema

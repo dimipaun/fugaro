@@ -196,7 +196,13 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * this list like every other read or write of a project. The console
  * improvements plan's MW1 and MW2 add the last four, thirty-seventh to fortieth:
  * the models write's two halves and the image write's two halves (`models add`
- * and `image add`), each a dry run and the write that dry run is of.
+ * and `image add`), each a dry run and the write that dry run is of. The
+ * console-fixes plan's CG7a adds the forty-first, `orchestrator.map`: `fugaro
+ * orchestrator map --json` resolves the installation whose active orchestrators
+ * it reads, through the same cloud flags `coordinator intents` takes, so it is a
+ * row of this list like every other project read -- and the one whose command no
+ * release carries yet, which is why the read itself sits behind
+ * `ORCHESTRATOR_MAP_CLI_FLOOR` (`src/shared/version.ts`).
  *
  * **The wizard's two are not**, and that is the one place this list disagrees
  * with the CLI: `setup.plan` and `setup.apply` (ST2's wizard, `setup
@@ -241,6 +247,15 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'coordinator.status',
   'coordinator.show',
   'coordinator.intents',
+  // The orchestrator map (the console-fixes plan's CG7a, D3221): `fugaro
+  // orchestrator map --json` resolves the installation whose active
+  // orchestrators, connections and coordinator heartbeat it reads, through the
+  // same `addCloudFlags` pair every cloud read here takes
+  // (`ee/orchestrator/cli/map.go`), so it takes the flag like every other
+  // project read -- the command is registered from `ee/` and no release has it
+  // yet, but that is the console's own version floor rather than a different
+  // argv.
+  'orchestrator.map',
   'roadmap.move',
   'managed.status',
   'policy.show',
@@ -612,7 +627,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: forty-four argvs, thirty-one commands, forty of them with --project', () => {
+  it('fixes the design allow-list exactly: forty-five argvs, thirty-two commands, forty-one of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -661,7 +676,14 @@ describe('the spawn table and the argv it builds', () => {
     // the row's own words and the installation's two, no argument at all, which
     // is what keeps `status`'s optional positional repository out of a caller's
     // reach -- and both take `--project`, so they are two more rows over two
-    // more commands in the count below. The Go
+    // more commands in the count below. The console-fixes plan's CG7a added the
+    // row above the two managed reads: the orchestrator map, `orchestrator map
+    // --json`, the Coordinator tab's map of the project's active orchestrators
+    // and the coordinator's own heartbeat, whose whole argv is the row's own
+    // words and the installation's two -- no argument a caller can fill, like
+    // the declarations read above it. It is the one row here whose command a
+    // released CLI has not got (it is registered from `ee/`), which is why the
+    // read itself sits behind `ORCHESTRATOR_MAP_CLI_FLOOR`. The Go
     // side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
@@ -722,6 +744,17 @@ describe('the spawn table and the argv it builds', () => {
       'coordinator status --from-store --all --json',
       'coordinator show --json',
       'coordinator intents --all --json',
+      // The orchestrator map (the console-fixes plan's CG7a, D3221; C-ORCH's
+      // document, `internal/orchestrator/mapdoc.go`): the Coordinator tab's map
+      // of the project's active orchestrators, which is `coordinator intents`'
+      // shape -- the whole argv is the row's own words and there is no argument
+      // a caller can fill. The command is registered from `ee/` and no release
+      // carries it yet, so the read sits behind `ORCHESTRATOR_MAP_CLI_FLOOR`
+      // (`src/shared/version.ts`) and below that floor the tab names the CLI
+      // version it needs instead of spawning this row; the row is on the table
+      // because it is the allow-list's entry, and the one independent review it
+      // needs is the same task's.
+      'orchestrator map --json',
       // The two managed reads (the managed screens' plan's CM4): the Project
       // tab's managed state with its audit trail, and the published policy node
       // its runs read. Both rows are the command and `--json` and nothing else
@@ -785,7 +818,7 @@ describe('the spawn table and the argv it builds', () => {
       'setup --answers-file - --events --json',
     ])
     // The rows that take the flag (addCloudFlags, internal/cli/cloud.go:51) are
-    // forty rows over thirty-one commands -- the wizard's two rows are
+    // forty-one rows over thirty-two commands -- the wizard's two rows are
     // not among them, and that is the one place the console leaves a flag of a
     // command it drives alone: `setup` *has* `--project`, and passing it would
     // aim the run at the installation it exists to create
@@ -829,6 +862,9 @@ describe('the spawn table and the argv it builds', () => {
         'coordinator status',
         'coordinator show',
         'coordinator intents',
+        // The orchestrator map (CG7a): the second row of the Coordinator tab's
+        // own family, and a command no release carries yet.
+        'orchestrator map',
         'managed status',
         'project policy show',
         'project repos ls',
@@ -847,7 +883,7 @@ describe('the spawn table and the argv it builds', () => {
         'recipes ls',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(40)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(41)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -1160,9 +1196,13 @@ describe('the spawn table and the argv it builds', () => {
   it('a source value outside the pattern is refused before any spawn', () => {
     // H1's closed set, checked where the renderer's payload is checked
     // (`src/main/ipc.ts`): `all`, `coordinator`, and an id-carrying scope whose
-    // id is one lower-case letter or digit then up to 39 more of those or a
-    // hyphen. Everything else is refused **before a child exists** -- so a
-    // string the renderer chose never reaches a path, another flag or a read.
+    // id is a project name -- one lower-case letter or digit then up to 39 more
+    // of those or a hyphen -- optionally `~` and a name of the same alphabet,
+    // which is the named-orchestrator form C-ORCH's own id rule gives the CLI
+    // (the console-fixes plan's CG7a, F40; the read that spends it is behind
+    // `ORCHESTRATOR_MAP_CLI_FLOOR`, and below it the tab says so rather than
+    // reaching here). Everything else is refused **before a child exists** -- so
+    // a string the renderer chose never reaches a path, another flag or a read.
     const refused = [
       '../../etc/passwd',
       'orchestrator:../..',
@@ -1174,10 +1214,19 @@ describe('the spawn table and the argv it builds', () => {
       'orchestrator:O1',
       'orchestrator:o.1',
       'orchestrator:-o1',
+      // The named form's own edges: a `~` with no name after it, one with no
+      // project before it, and a name that is not the CLI's alphabet.
+      'orchestrator:o1~',
+      'orchestrator:~o1',
+      'local:~blue',
+      'orchestrator:o1~O1',
+      'orchestrator:o1~a.1',
+      'orchestrator:o1~a b',
       // 41 characters, which the pattern's own ceiling refuses: at `local:`'s
       // length the value is still shorter than the bound below, so what refuses
       // it is the grammar and not the length.
       `local:${'a'.repeat(41)}`,
+      `orchestrator:o1~${'b'.repeat(41)}`,
       'orchestrator:o1 --watch',
       'all --source coordinator',
       '',
@@ -1191,20 +1240,36 @@ describe('the spawn table and the argv it builds', () => {
       // hostile value can be made to leave a trace of itself in a refusal
       // (which is why the sentence carries the pattern's own `orchestrator:`).
       expect(decision.ok ? '' : decision.reason, JSON.stringify(source)).toBe(
-        'source must be all, coordinator, or orchestrator:<id> / local:<id> with an id of 1 to 40 characters of a-z, 0-9 and -',
+        'source must be all, coordinator, or orchestrator:<id> / local:<id> with an id of a project name, optionally ~ and a name of 1 to 40 characters of a-z, 0-9 and -',
       )
     }
     // A value longer than the pattern could ever accept is refused by the
     // bound (`MAX_GRAPH_SCOPE_LENGTH`, the longest value the pattern admits)
     // rather than by the grammar, so a hostile payload cannot make the regular
     // expression work; and the bound is not tighter than the pattern, which the
-    // boundary id below is here to say.
-    const overlong = validateArguments('graph.read', { source: `orchestrator:${'a'.repeat(41)}` })
+    // boundary ids below are here to say.
+    const overlong = validateArguments('graph.read', { source: `orchestrator:${'a'.repeat(95)}` })
     expect(overlong.ok).toBe(false)
     expect(overlong.ok ? '' : overlong.reason).toContain('longer than')
-    // The four the pattern admits, and the boundary id: 40 characters is the
-    // longest the CLI's own pattern takes.
-    for (const source of ['all', 'coordinator', 'orchestrator:o1', 'local:o-1', `local:${'a'.repeat(40)}`]) {
+    // A `~` does not raise the bound: the named form's whole id is 81
+    // characters and the value is refused at the same 94 as the unnamed one.
+    const overlongNamed = validateArguments('graph.read', { source: `orchestrator:${'a'.repeat(42)}~${'b'.repeat(42)}` })
+    expect(overlongNamed.ok).toBe(false)
+    expect(overlongNamed.ok ? '' : overlongNamed.reason).toContain('longer than')
+    // The four the pattern admits, the boundary id no `~` (40 characters is the
+    // longest project name the CLI's own pattern takes), and the named form's
+    // boundary: 40 and 40 either side of the `~`, the longest orchestrator id
+    // C-ORCH's rule can build.
+    for (const source of [
+      'all',
+      'coordinator',
+      'orchestrator:o1',
+      'local:o-1',
+      `local:${'a'.repeat(40)}`,
+      'orchestrator:o1~blue',
+      'local:o-1~blue-2',
+      `orchestrator:${'a'.repeat(40)}~${'b'.repeat(40)}`,
+    ]) {
       expect(validateArguments('graph.read', { source }).ok, source).toBe(true)
     }
     // A payload that is not a string at all is refused too.
@@ -3411,11 +3476,13 @@ describe('the child environment', () => {
   it('keeps the keyring and the CLI floor that takes the key back moving together', () => {
     // The coupling the gate exists for, held as a test rather than as an
     // assertion in the code: a console that can **keep** a key
-    // (`PRODUCTION_KEYRING` with a key in it, which is S2.9's) while no CLI can
-    // take it back (`LICENCE_KEY_CLI_FLOOR` unset) is a console that hands a
-    // credential to a CLI which passes it on to every program it starts. Nothing
-    // is in that state today, and this case is what makes filling the keyring
-    // without naming the floor a red test rather than a shipped leak.
+    // (`PRODUCTION_KEYRING` with a key in it -- the owner's published one is in
+    // `ee/licence/keys/production.pub` since S2.9, and the entry waits for this
+    // floor) while no CLI can take it back (`LICENCE_KEY_CLI_FLOOR` unset) is a
+    // console that hands a credential to a CLI which passes it on to every
+    // program it starts. Nothing is in that state today, and this case is what
+    // makes filling the keyring without naming the floor a red test rather than
+    // a shipped leak.
     const canKeepAKey = Object.keys(PRODUCTION_KEYRING).length > 0
     expect(
       canKeepAKey && LICENCE_KEY_CLI_FLOOR === null,

@@ -476,7 +476,8 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 //
 // The second case is the pair's negative half: the same stale service over a
 // node this binary already publishes is moved with nothing raised, so no call
-// meets a service that cannot read the node, and the line names no such step.
+// meets a service that cannot read the node, and the line names no such step
+// (only the orchestrator's revision, which every call is served through).
 // Both halves are read off the line the door really printed, over a run really
 // in flight, rather than off the question the clause is gated on.
 func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
@@ -514,11 +515,15 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 	})
 	t.Run("the service moves over a node that does not", func(t *testing.T) {
 		got := line(t, currentNode())
-		if strings.Contains(got, "credentials service") {
-			t.Errorf("the note names the credentials service over a run that raises no node, so no call can meet a service that cannot read it:\n%s", got)
+		if strings.Contains(got, "credentials service:") || strings.Contains(got, "is refused") {
+			t.Errorf("the note names the credentials service's window over a run that raises no node, so no call can meet a service that cannot read it:\n%s", got)
 		}
-		if !strings.Contains(got, "no step reaches them") {
-			t.Errorf("the note names no step at all over a run this update leaves where it is:\n%s", got)
+		// The rig's installation can carry the resident orchestrator, so this
+		// update writes its block and the service takes the revision that names
+		// the daemon's account: the one step that does reach the run, and the
+		// line says it is served by either revision rather than refused.
+		if !strings.Contains(got, "resident orchestrator:") || strings.Count(got, "resident orchestrator:") != strings.Count(got, "\n  ") {
+			t.Errorf("the note names more or less than the orchestrator's revision over a run this update otherwise leaves where it is:\n%s", got)
 		}
 	})
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // The workspace's own project's root, as a stage of the converge
@@ -62,12 +63,14 @@ import (
 // The SECOND half of the root is the workspace's credentials service (WS6,
 // D2980, F4, F17, R9): the same image an installation's service runs, told what
 // it is by its environment, running as the account above, reading the ONE bundle
-// container this project holds and invoked by a member's own job accounts — one
-// invoke grant per account, which is why the root's variables carry the owner's
-// member table. So this stage passes two values no plan and no installation
-// output carries: the member table, from this machine's config (the owner's own
-// member table W2 publishes, read here for the grants), and the service's own
-// block. The image in that block is the reference this run's resolve answered
+// container this project holds and invoked by a member's own job accounts and by
+// the roster's people — one invoke grant per account and per person, which is
+// why the root's variables carry the owner's member table and the workspace's
+// own roster's people (R6, D2971). So this stage passes three values no plan and
+// no installation output carries: the member table, from this machine's config
+// (the owner's own member table W2 publishes, read here for the grants), the
+// roster's people, read from the workspace's own roster node (people), and the
+// service's own block. The image in that block is the reference this run's resolve answered
 // (credentialsResolve) — the same digest-pinned pin an installation's service is
 // deployed with, and the same owner the cover holds the plan's service to — and
 // the URL in it is the one Cloud Run assigns, read back from this root's own
@@ -95,6 +98,12 @@ type workspaceProjectStage struct {
 	// prints is one line.
 	svc     *workspaceServiceVar
 	svcRead bool
+	// peopleList is var.people as this run writes it — the workspace roster's
+	// human addresses — read once for the same reason, and the zero value is
+	// never the answer: people decides the empty list itself and memoizes that
+	// (peopleRead).
+	peopleList []string
+	peopleRead bool
 }
 
 func newWorkspaceProjectStage(e *initEngine) *workspaceProjectStage {
@@ -324,7 +333,7 @@ func (s *workspaceProjectStage) Check(ctx context.Context) (initflow.Status, err
 		project := s.e.lc.GCPProject
 		return initflow.Status{State: initflow.Done, Detail: s.converged(project)}, nil
 	}
-	return initflow.Status{State: initflow.Todo, Detail: s.todo()}, nil
+	return initflow.Status{State: initflow.Todo, Detail: s.todo(s.people(ctx))}, nil
 }
 
 // audienceMissing is whether the block this run writes carries no url: the state
@@ -371,9 +380,11 @@ func (s *workspaceProjectStage) converged(project string) string {
 // todo is what the stage says when it has something to do, in Check and in the
 // plan view: the root's two accounts, the one grant and — when this run's own
 // document carries them — the workspace's credentials service and the invoke
-// grant each of the owner's member job accounts gets, with the root's own name
-// for what reaches what.
-func (s *workspaceProjectStage) todo() string {
+// grant each of the owner's member job accounts and each of the roster's people
+// gets, with the root's own name for what reaches what. people is the list the
+// run has already read (people), passed rather than read again so the sentence
+// cannot disagree with the document it describes.
+func (s *workspaceProjectStage) todo(people []string) string {
 	lc := s.e.lc
 	out := fmt.Sprintf("the workspace root's two accounts (the workspace's own service account %s and the SA fallback's IAM account %s) and the one grant %s on %s",
 		workspaceAccount(lc.GCPProject), workspaceIAMAccount(lc.GCPProject), tf.WorkspaceDatabaseRole(lc.GCPProject), lc.GCPProject)
@@ -382,6 +393,9 @@ func (s *workspaceProjectStage) todo() string {
 	}
 	if n := len(workspaceMemberAccounts(lc)); n > 0 {
 		out += ", and one invoke grant per member job account"
+	}
+	if n := len(people); n > 0 {
+		out += ", and one per person of the workspace's roster"
 	}
 	return out + " are planned when applied"
 }
@@ -466,9 +480,18 @@ func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (init
 	// own document carries a block: a workspace whose config names no database
 	// deploys none, and a sentence naming a service that was not deployed is the
 	// one thing a confirmation may not do.
+	//
+	// It names every grant the root binds on that service, because the sentence
+	// is what the owner types their name against: the people of the workspace's
+	// roster are read from the same call the plan's own document was written from
+	// (people, memoized by the guard above), so the confirmation cannot name
+	// grants the plan does not make.
 	service := ""
 	if s.svc != nil {
 		service = fmt.Sprintf(", and the workspace's own credentials service %s running as that account on this release's verified image, with one invoke grant on it per member job account", s.svc.Service)
+		if len(s.people(ctx)) > 0 {
+			service += " and one per person of the workspace's roster"
+		}
 	}
 	if plan == nil && !s.audienceMissing() {
 		fmt.Fprintf(s.e.r.w, "No changes: the workspace's own service account %s holds %s on %s.\n", account, tf.WorkspaceDatabaseRole(project), project)
@@ -582,7 +605,7 @@ func (s *workspaceProjectStage) planRoot(ctx context.Context, guard bool) (*tf.P
 		return nil, nil, remote(err)
 	}
 	if guard {
-		if err := s.guard(plan); err != nil {
+		if err := s.guard(ctx, plan); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -593,9 +616,10 @@ func (s *workspaceProjectStage) planRoot(ctx context.Context, guard bool) (*tf.P
 // guard is this root's cover: the plan is the workspace's own role, its two
 // accounts (its service account and the SA fallback's IAM account), that
 // service account's one grant on the workspace's database, the
-// workspace's own credentials service, its ONE bundle accessor and its members'
-// invoke grants, and nothing else. tf.WorkspaceNotCovered answers what of the
-// plan is not, so the message can name it rather than say "refused".
+// workspace's own credentials service, its ONE bundle accessor, its members'
+// invoke grants and the invoke grant of each of the roster's people (R6, D2971),
+// and nothing else. tf.WorkspaceNotCovered answers what of the plan is not, so
+// the message can name it rather than say "refused".
 //
 // Its hand-written arguments are the half of the plan a reader outside it has
 // to supply, because none of them is a value any plan carries: the workspace's
@@ -603,16 +627,18 @@ func (s *workspaceProjectStage) planRoot(ctx context.Context, guard bool) (*tf.P
 // (credsvc.WorkspaceBundleSecretID — the same container this project's own
 // installation already holds every model credential in), the members' job
 // accounts are the owner's member table, which is this machine's config and not
-// terraform's, and the image identity the service is held to is the recorded
-// owner's released pin (workspaceImageCover). A rule that read any of them out
-// of the plan would accept whatever the plan named.
-func (s *workspaceProjectStage) guard(plan *tf.Plan) error {
+// terraform's, the roster's people are the workspace's own roster node, read
+// here (people) and not a value any plan holds, and the image identity the
+// service is held to is the recorded owner's released pin (workspaceImageCover).
+// A rule that read any of them out of the plan would accept whatever the plan
+// named.
+func (s *workspaceProjectStage) guard(ctx context.Context, plan *tf.Plan) error {
 	cover := workspaceImageCover(s.e.lc)
 	project := s.e.lc.GCPProject
 	why := cover.WorkspaceNotCovered(plan, project, tf.WorkspaceServiceAccountID,
-		credsvc.WorkspaceBundleSecretID(s.e.lc.Name), workspaceMemberAccounts(s.e.lc))
+		credsvc.WorkspaceBundleSecretID(s.e.lc.Name), workspaceMemberAccounts(s.e.lc), s.people(ctx))
 	if len(why) > 0 {
-		return userErr("the workspace root's plan is not the workspace's own role, its two accounts (the workspace's own service account %s and the SA fallback's IAM account %s) and the one grant that binds the service account to %s's database, its own credentials service with the ONE bundle accessor and the members' invoke grants (%s); nothing was applied, and a plan that carries anything else is not this root's to apply: read it with terraform in %s",
+		return userErr("the workspace root's plan is not the workspace's own role, its two accounts (the workspace's own service account %s and the SA fallback's IAM account %s) and the one grant that binds the service account to %s's database, its own credentials service with the ONE bundle accessor, the members' invoke grants and the roster's people's (%s); nothing was applied, and a plan that carries anything else is not this root's to apply: read it with terraform in %s",
 			workspaceAccount(project), workspaceIAMAccount(project), project, strings.Join(why, "; "), s.dir)
 	}
 	return nil
@@ -656,19 +682,137 @@ func workspaceMemberAccounts(lc *localcfg.Config) []string {
 	return out
 }
 
+// people is var.people as this run writes it: the workspace roster's human
+// addresses (R6, D2971), read from the roster node in the workspace's own
+// database — `workspaceRosters/<name>` — so `fugaro update` renders the people
+// the roster names and the root binds one invoke grant on the workspace's
+// service to each. It is the half of the root's document no plan and no
+// installation output carries, so the cover's own argument (guard) and the
+// tfvars are read from the same call, memoized so a plan and its sentence cannot
+// disagree with the document they describe — where that call is made with the
+// workdir set, which is every call that decides anything. A call made before the
+// workdir exists decides nothing and is not kept (below).
+//
+// A roster that cannot be read — no database named, no credentials, a read that
+// failed, a document this reader refuses — is not the run's failure: the people
+// the workdir's own tfvars already hold go back VERBATIM, and one line says why.
+// That is fail-closed and it is the security property: an empty list would plan
+// the deletion of every person's invoke grant, which is a loosening of the
+// workspace's own service this run never decided, and the cover would then be
+// admitting a deletion the roster did not ask for. An ABSENT roster (a workspace
+// whose first write has not happened) is a workspace with no people and writes
+// the empty list the variable's own default is.
+//
+// It is the same posture serviceBlock takes of the block a run that deploys
+// nothing carries, one document over.
+func (s *workspaceProjectStage) people(ctx context.Context) []string {
+	if s.peopleRead {
+		return s.peopleList
+	}
+	e, lc := s.e, s.e.lc
+	// s.wd is nil on a path where prepare failed before the workdir was set —
+	// Check answers Todo with a sentence even where its own read never reached a
+	// plan — and that call has no recorded list to carry and no document in
+	// front of it. Its answer is therefore NOT memoized: the call that decides
+	// what the tfvars carry is prepare's own vars, made with the workdir set, and
+	// an empty list kept from before it would write `people: []` over a roster
+	// this run never read — the plan that deletes every person's invoke grant,
+	// which is the one loosening this function exists to prevent.
+	if s.wd == nil {
+		return []string{}
+	}
+	s.peopleRead = true
+	recorded := recordedWorkspacePeople(s.wd.PrevVars)
+	carry := func(why string) []string {
+		s.peopleList = recorded
+		fmt.Fprintf(e.r.w, "the workspace's roster is not read: %s\n", why)
+		return s.peopleList
+	}
+	_, db, err := budgetDBFor(ctx, lc)
+	if err != nil {
+		return carry(err.Error())
+	}
+	store, err := workspace.NewRosterStore(db, lc.Name)
+	if err != nil {
+		return carry(err.Error())
+	}
+	node, found, err := store.Read(ctx)
+	if err != nil {
+		return carry(err.Error())
+	}
+	if !found {
+		s.peopleList = []string{}
+		return s.peopleList
+	}
+	roster, err := workspace.DecodeRoster(node.Raw)
+	if err != nil {
+		return carry(err.Error())
+	}
+	s.peopleList = rosterHumans(roster)
+	return s.peopleList
+}
+
+// rosterHumans is the roster's human addresses, deduped and in the sorted order
+// the root's document carries them: the people a workspace's own service admits
+// (R6), and never a machine — a `sa` entry of the roster is a member's job
+// account, which the root's `members` variable makes its own invoke grant for,
+// and a person is admitted by address and by nothing else.
+//
+// The list is never nil, so the document carries `[]` and not `null`: the
+// variable's default is `[]` and its value is walked, so a null here would make
+// the root's own validation fail on a null list rather than on anything real.
+func rosterHumans(r *workspace.Roster) []string {
+	out := []string{}
+	for _, p := range r.People {
+		if p.Kind != workspace.KindHuman {
+			continue
+		}
+		out = append(out, p.Address)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// recordedWorkspacePeople is var.people as the workdir's own tfvars already
+// carry it: Workdir.PrevVars snapshotted before this run rebuilt the tree,
+// decoded for the one field, and the empty list for a document that carries none
+// — a workspace whose first run predates the variable, or one whose tfvars were
+// never written. It is recordedWorkspaceService's shape, one field over: a
+// document this run cannot read is a document with no people to carry, and the
+// people the roster names are what the next run writes anyway.
+//
+// The answer is the empty LIST and never nil, on every path, because nil is
+// `"people": null` in the document this run writes and the root's own variable
+// walks the list: a null is refused at plan time with "iteration over null
+// value" rather than carrying nothing, which is the one thing carrying is for.
+func recordedWorkspacePeople(vars []byte) []string {
+	if len(vars) == 0 {
+		return []string{}
+	}
+	var v workspaceVars
+	if err := json.Unmarshal(vars, &v); err != nil {
+		return []string{}
+	}
+	if v.People == nil {
+		return []string{}
+	}
+	return v.People
+}
+
 // prepare writes the workspace workdir's tfvars and backend and inits it.
 //
-// The values the root takes are this machine's own config and the pin in
-// internal/infra/tf: the GCP project the workspace is named after, the
-// workspace's name (which is the Fugaro project name, and the last segment of
-// the path the record lives at), the account id the cover holds the plan to,
-// the owner's member table — one invoke grant per job account, F17 — and the
-// workspace's own credentials service (serviceBlock). Nothing is derived from
-// the installation's outputs, so the stage needs no spec of its own — only the
-// state bucket, which is the installation's, read from the same default chain
-// every other root's backend uses. The one value read back from the CLOUD is
-// the service's URL, and it is read after the apply that creates it
-// (fillServiceURL), not here.
+// The values the root takes are this machine's own config, the workspace's own
+// roster and the pin in internal/infra/tf: the GCP project the workspace is
+// named after, the workspace's name (which is the Fugaro project name, and the
+// last segment of the path the record lives at), the account id the cover holds
+// the plan to, the owner's member table — one invoke grant per job account, F17
+// — the roster's people — one invoke grant on the workspace's service per human
+// entry, R6, D2971 (people) — and the workspace's own credentials service
+// (serviceBlock). Nothing is derived from the installation's outputs, so the
+// stage needs no spec of its own — only the state bucket, which is the
+// installation's, read from the same default chain every other root's backend
+// uses. The one value read back from the CLOUD is the service's URL, and it is
+// read after the apply that creates it (fillServiceURL), not here.
 //
 // The workdir is a workdir of its own (WorkspaceWorkdir): the installation's
 // tfvars, imports and saved plan must never be written by an apply of another
@@ -729,6 +873,11 @@ type workspaceVars struct {
 		WorkspaceAccountID string `json:"workspace_account_id"`
 	} `json:"names"`
 	Members map[string]workspaceMemberVar `json:"members"`
+	// People is var.people: the workspace roster's human addresses, one invoke
+	// grant on the workspace's own service per entry (R6, D2971). It is never
+	// null — the root's own validation walks the list — and the empty list is a
+	// workspace whose roster names no person.
+	People []string `json:"people"`
 	// Service is var.credentials_service, null when this run writes no service:
 	// the variable's default, and the state of a workspace whose config names no
 	// database to serve from. A run that deploys no service but whose workdir
@@ -777,6 +926,7 @@ func (s *workspaceProjectStage) vars(ctx context.Context) ([]byte, error) {
 		Project:   s.e.lc.GCPProject,
 		Workspace: s.e.lc.Name,
 		Members:   workspaceMemberTable(s.e.lc),
+		People:    s.people(ctx),
 		Service:   s.serviceBlock(ctx),
 	}
 	v.Names.WorkspaceAccountID = tf.WorkspaceServiceAccountID

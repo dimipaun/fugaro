@@ -318,8 +318,16 @@ func TestReleaseRehearsalBuildsTheCLIFromTheCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the rehearsal did not build a CLI at all: %v", err)
 	}
-	if !strings.Contains(string(log), "cwd "+r.local+"\n") {
-		t.Errorf("the build did not run in the checkout (%s):\n%s", r.local, log)
+	// The fake logs the cwd a shell reports, which is getcwd() and not the
+	// path the test handed out: on macOS a temp dir under /var comes back out
+	// of /private/var, and the comparison is between resolved paths so that
+	// difference is not read as a build in the wrong directory.
+	local, err := filepath.EvalSymlinks(r.local)
+	if err != nil {
+		t.Fatalf("resolving the checkout's path (%s): %v", r.local, err)
+	}
+	if !strings.Contains(string(log), "cwd "+local+"\n") {
+		t.Errorf("the build did not run in the checkout (%s, as %s):\n%s", r.local, local, log)
 	}
 	if !strings.Contains(string(log), "./cmd/fugaro") {
 		t.Errorf("the build did not ask for this repository's CLI:\n%s", log)

@@ -108,12 +108,11 @@ type identityCase struct {
 }
 
 type keySetVector struct {
-	Header        KeySetHeader `json:"header"`
-	Payload       KeySet       `json:"payload"`
-	SigningInput  string       `json:"signing_input"`
-	Signature     string       `json:"signature"`
-	Compact       string       `json:"compact"`
-	RootPublicKey JWK          `json:"root_public_key"`
+	Header            KeySetHeader `json:"header"`
+	Payload           KeySet       `json:"payload"`
+	SigningInputParts []string     `json:"signing_input_parts"`
+	Signature         string       `json:"signature"`
+	RootPublicKey     JWK          `json:"root_public_key"`
 }
 
 func loadVectors(t *testing.T) contractVectors {
@@ -386,9 +385,10 @@ func roundTripWire(t *testing.T, v contractVectors) {
 
 // roundTripKeySet holds the envelope's one vector to what O7 fixes: the signing
 // input is the two base64url halves of the header and the payload exactly as
-// this package serialises them, the compact form is that input and the
-// signature, and the signature is a real Ed25519 signature by the root key over
-// that input. The last check is what makes the vector a proof rather than a
+// this package serialises them (the file carries them as `signing_input_parts`,
+// and the compact JWS form is their join with `signature`), and the signature is
+// a real Ed25519 signature by the root key over that input. The last check is
+// what makes the vector a proof rather than a
 // description: a header field reordered or a payload re-serialised here stops
 // verifying.
 func roundTripKeySet(t *testing.T, v contractVectors) {
@@ -437,11 +437,17 @@ func roundTripKeySet(t *testing.T, v contractVectors) {
 		t.Fatalf("marshalling the envelope's payload: %v", err)
 	}
 	wantInput := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
-	if ks.SigningInput != wantInput {
-		t.Fatalf("the signing input is %q, want %q: the envelope is signed over the header and payload exactly as this package serialises them, and a reader that rebuilt them its own way would verify a different document", ks.SigningInput, wantInput)
+	if len(ks.SigningInputParts) != 2 {
+		t.Fatalf("the signing input ships as %d base64url part(s), want 2 (the header and the payload): the file carries the halves rather than the joined token, which is a JWT-shaped string no fixture may hold", len(ks.SigningInputParts))
 	}
-	if want := ks.SigningInput + "." + ks.Signature; ks.Compact != want {
-		t.Errorf("the compact envelope is %q, want %q", ks.Compact, want)
+	gotInput := strings.Join(ks.SigningInputParts, ".")
+	if gotInput != wantInput {
+		t.Fatalf("the signing input is %q, want %q: the envelope is signed over the header and payload exactly as this package serialises them, and a reader that rebuilt them its own way would verify a different document", gotInput, wantInput)
+	}
+	for i, part := range ks.SigningInputParts {
+		if strings.Contains(part, ".") {
+			t.Errorf("signing input part %d carries a dot: the halves are joined by dots into the compact form, so a part carrying one is a document with the wrong number of segments", i)
+		}
 	}
 	root := decodeKey(t, "the root public key", ks.RootPublicKey.X)
 	if len(root) != ed25519.PublicKeySize {
@@ -454,7 +460,7 @@ func roundTripKeySet(t *testing.T, v contractVectors) {
 	if len(sig) != ed25519.SignatureSize {
 		t.Fatalf("the envelope's signature is %d bytes, want %d", len(sig), ed25519.SignatureSize)
 	}
-	if !ed25519.Verify(ed25519.PublicKey(root), []byte(ks.SigningInput), sig) {
+	if !ed25519.Verify(ed25519.PublicKey(root), []byte(gotInput), sig) {
 		t.Error("the envelope's signature does not verify against the root key over the signing input: the vector is what A4 signs and P1 checks, so it has to be a signature and not a description of one")
 	}
 }

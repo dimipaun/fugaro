@@ -31,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
 // `fugaro credentials serve` is the credentials service's own entry point
@@ -1021,7 +1022,8 @@ type credentialsWorkspaceDeployment struct {
 }
 
 // credentialsWorkspaceService builds the workspace's half: the node reader, the
-// verified front door, the meter and the resolver, in that order.
+// verified front door, the meter, the personal half and the resolver, in that
+// order.
 //
 // WHAT IT READS AT STARTUP, AND WHY IT READS IT HERE. The workspace's members
 // are not an environment: they are the workspace's own published credentials
@@ -1050,6 +1052,15 @@ type credentialsWorkspaceDeployment struct {
 // resolver is C1's constructor's answer — a workspace whose resolution could not
 // be built is a refusal and not a nil, which is what keeps a call from being
 // served by something nobody checked.
+//
+// The PERSONAL half (C2, WC14) is the other read of the workspace's own
+// database this function makes, and it is built by credentialsWorkspacePerson
+// below: the roster node's reader, the launcher class it admits its people with
+// and the slip store its own grants live in. It is set on the package variable
+// the workspace's scope reads at construction and set BEFORE the resolver is
+// built, because the resolver is what reads it (C2's two variables). Its own
+// refusals, and why a workspace with no roster node starts anyway, are that
+// function's.
 func credentialsWorkspaceService(ctx context.Context, workspace string, env map[string]string, db *rtdb.Client, ts oauth2.TokenSource) (credentialsWorkspaceDeployment, error) {
 	node := credentialsWorkspaceNode{db: db, name: workspace}
 	published, found, err := node.WorkspaceNode(ctx)
@@ -1064,13 +1075,13 @@ func credentialsWorkspaceService(ctx context.Context, workspace string, env map[
 		Project:  workspace,
 		Audience: env[envCredentialsServiceURL],
 		Members:  members,
-		// No owner person is named, and none can be: this deployment's
-		// environment carries no roster, and the workspace-wide routes that
-		// class is for are not among the routes this mode serves (R14: the
+		// No owner person is named, and none can be: the workspace-wide routes
+		// that class is for are not among the routes this mode serves (R14: the
 		// model routes, a run's forge routes and the keep-warm route, and the
-		// workspace owner's own read mint stays the installation's, D2988). An
-		// empty list is the fail-closed answer for a class no route here
-		// admits.
+		// workspace owner's own read mint stays the installation's, D2988). The
+		// roster WC14 hands the personal half below is the LAUNCHER class's and
+		// not this one's (C2's rule 2, R3). An empty list is the fail-closed
+		// answer for a class no route here admits.
 		Keys:    credsvc.NewGoogleKeys(),
 		JobKeys: credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
 		// A member's database client, at the URL the service derived from that
@@ -1093,6 +1104,18 @@ func credentialsWorkspaceService(ctx context.Context, workspace string, env map[
 	if err != nil {
 		return credentialsWorkspaceDeployment{}, userErr("the workspace's service cannot keep the workspace's own cap, so it will not start: %v", err)
 	}
+	// The workspace's personal half (C2, WC14), set on the package's one
+	// configuration variable and set BEFORE the resolver is built: the
+	// workspace's scope reads it once, at construction, and never per call
+	// (C2's "Two package-level variables are how the sides meet"). The
+	// assignment is unconditional, so a workspace with no roster node writes the
+	// ZERO configuration there rather than leaving whatever another deployment
+	// of this process had put in it.
+	person, err := credentialsWorkspacePerson(ctx, workspace, env, db)
+	if err != nil {
+		return credentialsWorkspaceDeployment{}, err
+	}
+	credsvc.PersonScopeConfigForServe = person
 	build := credsvc.NewWorkspaceScopeResolver
 	if credentialsWorkspaceTest != nil {
 		build = credentialsWorkspaceTest
@@ -1102,6 +1125,135 @@ func credentialsWorkspaceService(ctx context.Context, workspace string, env map[
 		return credentialsWorkspaceDeployment{}, userErr("the workspace's service cannot serve a call, so it will not start: %v", err)
 	}
 	return credentialsWorkspaceDeployment{members: members, resolver: resolver}, nil
+}
+
+// credentialsWorkspacePerson builds the workspace's personal half (C2, WC14):
+// the roster node's reader, the launcher verifier the workspace's own roster
+// admits its people with, and the slip store its own grants live in — all three
+// over the workspace's OWN database, the one this process was handed, and none
+// of them over a member's (R3, R8 of workspace-service).
+//
+// THE ROSTER IS READ HERE ONCE, FOR THE CLASS, AND THE READER IS HANDED ON
+// UNREAD. What a person may LAUNCH with is the workspace owner's published
+// roster (D2970, R3), and an addition to it takes effect at the owner's next
+// `fugaro update` (D2971), which is why the class's account list is fixed at
+// startup. What the reader answers beside it is not fixed at all: the scope
+// re-reads the node through it on the sixty-second rule the published node has
+// (C2's rule 3, WC4's clock), so a person REMOVED from the roster stops being
+// served within a minute without a restart. The reader is therefore the store
+// itself and never a snapshot of it.
+//
+// The class is PEOPLE ONLY, and the roster's machines are not on it (F12, C2's
+// rule 2): a `sa` person of the roster is a service account, and a service
+// account is never a launcher of this service — which is why no second list is
+// handed to it (a workspace's grant is asked for by a person, on a run they
+// launch; the roster's machines are the ones the WORKSPACE's own project runs
+// things as, WC3).
+//
+// AN ADDRESS OF THAT SHAPE IS DROPPED BEFORE THE CLASS IS BUILT, WHATEVER THE
+// ROSTER CALLS IT. The class's own construction refuses a
+// `*.gserviceaccount.com` entry, and nothing upstream stops one from being
+// written as a HUMAN: a roster address is held to the address grammar and not
+// to its domain, `workspace user add` records a person as a human unless told
+// otherwise, and adopting a member project's grants records every address it
+// finds as one — a member's own roster among them, which that member's admins
+// can write (D1943). A class built straight off the people would then refuse
+// this whole deployment at its next cold start, every member's model and forge
+// routes with it, over an entry that could never be verified as a person
+// anyway. So the entry is left out and the process starts: C2 fixes a roster
+// this service can serve nobody from as a state and not a refusal ("What each
+// side may rely on", WC14's paragraph).
+//
+// A WORKSPACE WITH NO ROSTER NODE IS NOT A FAILURE TO START; A ROSTER THIS
+// BUILD CANNOT READ IS. The first is the state of every workspace whose owner
+// has published no roster — the state an installation's deployment is in, where
+// the personal half is not wired at all — and C2 fixes it as a state rather
+// than a refusal: the scope serves no grant and no personal candidate, which is
+// today's behaviour ("What each side may rely on", WC14's paragraph). The
+// second is a deployment whose owner HAS published one, and a process that
+// started with the half silently unwired would refuse every grant of every
+// person the owner just added while looking healthy — the reading this file
+// already takes of the published node above (D143's fail-closed direction),
+// which is read out of the same database a moment earlier and so cannot be
+// excused as an outage of something else.
+func credentialsWorkspacePerson(ctx context.Context, name string, env map[string]string, db *rtdb.Client) (credsvc.PersonScopeConfig, error) {
+	roster, err := workspace.NewRosterStore(db, name)
+	if err != nil {
+		return credsvc.PersonScopeConfig{}, userErr("%s names a workspace whose roster node cannot be addressed, so its service will not start: %v", creds.WorkspaceModeEnv, err)
+	}
+	node, found, err := roster.Read(ctx)
+	if err != nil {
+		return credsvc.PersonScopeConfig{}, remote(fmt.Errorf("the workspace's roster could not be read: %w", err))
+	}
+	if !found {
+		return credsvc.PersonScopeConfig{}, nil
+	}
+	// Decoded here and not by the scope, because the CLASS is built from it and
+	// the class is this function's: what the scope reads through the reader
+	// above is C1's business and stays C1's (C2's "the shape of the document is
+	// internal/workspace/roster.go's").
+	document, err := workspace.DecodeRoster(node.Raw)
+	if err != nil {
+		return credsvc.PersonScopeConfig{}, userErr("%s names a workspace whose roster is not a document this build reads, so its service will not start: %v", creds.WorkspaceModeEnv, err)
+	}
+	launchers, err := credsvc.NewLaunchers(credsvc.LauncherConfig{
+		Audience: env[envCredentialsServiceURL],
+		Accounts: workspaceRosterLaunchers(document),
+		// Google's published ID-token key set and not the Firebase set: this
+		// class is a person's own `gcloud` identity, and the Firebase keys sign
+		// the run identities this process does not hold (the intake's own
+		// construction, intake_serve.go).
+		Keys: credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
+	})
+	if err != nil {
+		return credsvc.PersonScopeConfig{}, userErr("%s names a workspace whose roster does not name a launcher class this service can verify its callers with, so it will not start: %v", creds.WorkspaceModeEnv, err)
+	}
+	return credsvc.PersonScopeConfig{
+		Roster:    roster,
+		Launchers: launchers,
+		Slips:     &creds.RTDBStore{DB: db},
+	}, nil
+}
+
+// workspaceRosterLaunchers is the roster's people as the launcher class's
+// account list (R3, D2970): the address of every `human` and no machine's, in
+// the roster's own spelling, sorted and each once — and no address of the
+// service-account shape, whatever kind the roster gave it.
+//
+// The shape is dropped rather than handed on because the class refuses it and
+// this deployment cannot afford that refusal: one roster entry mis-kinded as a
+// human — a forgotten `--kind sa`, or a service account a member's own roster
+// granted a role to and this workspace adopted — would otherwise stop the whole
+// service on its next cold start, every member's routes with it. An address of
+// that shape can never be a caller of the launcher class (credsvc's own
+// foldLauncherAccounts refuses it for the same reason), so leaving it out costs
+// this class nothing it could have admitted. A roster whose people are ALL of
+// that shape therefore yields an empty list and not a refusal: the class admits
+// nobody, the scope serves no grant, and the process starts (C2).
+//
+// The roster's addresses are already canonical and unique within it
+// (workspace.Roster.Validate), so the sort and the compact are the class's own
+// shape rather than a repair of it (LauncherConfig.Accounts). An installation's
+// launcher list is derived from a `user:`-prefixed member list instead
+// (internal/infra's launcherAccounts, which drops every entry that is not one);
+// this one is read off the roster's people, which are bare addresses and carry
+// their kind in a field of their own (F11).
+func workspaceRosterLaunchers(document *workspace.Roster) []string {
+	out := []string{}
+	for _, p := range document.People {
+		if p.Kind != workspace.KindHuman {
+			continue
+		}
+		// Folded, as the class folds it: the domain is lowercased by the
+		// canonical spelling a roster is held to, and this is the same
+		// comparison credsvc makes of the address it is handed.
+		if strings.HasSuffix(strings.ToLower(p.Address), saAddressSuffix) {
+			continue
+		}
+		out = append(out, p.Address)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // credentialsWorkspaceNode reads the workspace's own published credentials node

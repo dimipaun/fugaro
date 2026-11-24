@@ -18,7 +18,7 @@ package cli
 // than this file's own:
 //
 //   - It is the WORKSPACE project's owner's command, run on the machine whose
-//     config holds the member table (D2821, as `workspace member add` is
+//     config holds the member table (D2821, as `workspace project add` is
 //     today): the member table is that config's, and its owner's `fugaro
 //     update` publishes it whole, so a second writer would republish a
 //     different table. Every other workspace admin manages users, grants,

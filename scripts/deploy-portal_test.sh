@@ -46,6 +46,7 @@ setup() {
     "$work/repo/ee/keyservice/terraform/services" "$work/bin"
   cp "$here/deploy-portal.sh" "$work/repo/scripts/"
   cp "$root/ee/portal/firebase.json" "$work/repo/ee/portal/firebase.json"
+  cp "$root/ee/portal/firebase.staging.json" "$work/repo/ee/portal/firebase.staging.json"
   cp "$root/ee/keyservice/terraform/services/variables.tf" \
     "$work/repo/ee/keyservice/terraform/services/variables.tf"
   # A second configuration, naming another region: --region is only accepted
@@ -145,6 +146,42 @@ run --dry-run --project my-portal-1 --config ee/portal/firebase-staging.json --r
   fail "the dry run did not build in the region it was given, with the images it will name: $out"
 [[ $out == *"would run: firebase deploy --only hosting,firestore:rules --project my-portal-1 --config ee/portal/firebase-staging.json"* ]] ||
   fail "the dry run did not deploy the configuration it was given: $out"
+
+# 2b-ii. The two projects' Hosting sites are two ids -- a site id is globally
+#        unique, so `fugaro-portal` belongs to fugaro-prod and fugaro-staging
+#        holds `fugaro-portal-staging` -- and the two shipped configurations
+#        differ in that name alone. A staging deploy that read the prod file, or
+#        the two files drifting apart in anything else, would put one project's
+#        bundle on the other's domain.
+setup
+run --dry-run --project fugaro-staging
+[[ $status -eq 0 ]] || fail "the staging dry run exited $status: $out"
+[[ $out == *"would run: firebase deploy --only hosting,firestore:rules --project fugaro-staging --config ee/portal/firebase.staging.json"* ]] ||
+  fail "the staging project does not deploy the staging configuration: $out"
+sed 's/"fugaro-portal-staging"/"fugaro-portal"/' "$root/ee/portal/firebase.staging.json" >"$work/staging-as-prod.json"
+diff -q "$work/staging-as-prod.json" "$root/ee/portal/firebase.json" >/dev/null ||
+  fail "ee/portal/firebase.staging.json is not ee/portal/firebase.json with the site name alone changed: the two projects' configurations are one file and one site id, and anything else that differs is a deploy difference nobody reads"
+grep -qF '"site": "fugaro-portal"' "$root/ee/portal/firebase.staging.json" &&
+  fail "ee/portal/firebase.staging.json names fugaro-portal, which is fugaro-prod's site"
+
+# 2b-iii. A --config naming the other project's site is refused before anything
+#         runs: a site id is globally unique, so that deploy is one Firebase
+#         refuses at best and one that lands this project's bundle on a site it
+#         does not own at worst. The refusal names the site, the project's own
+#         and the file to pass instead.
+setup
+run --dry-run --project fugaro-staging --config ee/portal/firebase.json
+[[ $status -ne 0 ]] || fail "the staging project was deployed with the prod configuration"
+[[ $out == *"fugaro-portal-staging"* && $out == *"ee/portal/firebase.staging.json"* ]] ||
+  fail "the refusal does not name the staging site and the file to pass: $out"
+[[ ! -s $work/calls ]] || fail "a crossed-site deploy ran tools first: $(cat "$work/calls")"
+
+setup
+run --dry-run --project fugaro-prod --config ee/portal/firebase.staging.json
+[[ $status -ne 0 ]] || fail "the prod project was deployed with the staging configuration"
+[[ $out == *"fugaro-portal"* && $out == *"ee/portal/firebase.json"* ]] ||
+  fail "the refusal does not name the prod site and the file to pass: $out"
+[[ ! -s $work/calls ]] || fail "a crossed-site deploy ran tools first: $(cat "$work/calls")"
 
 # 2c. --image-repository reaches the build as well as the two deploys: the build
 #     pushes what the deploys name, so a repository only one of them saw would
