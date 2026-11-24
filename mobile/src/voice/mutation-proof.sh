@@ -577,6 +577,14 @@ run "a line keeps the engine of the words it holds, not the next utterance's" \
   "    record(text, readEngineTag());" \
   mobile/src/voice/screen.js src/voice/screen.test.js
 
+# 20. X1 (D2788) + D118: the voice view records the REDACTED text the client
+#     signed, not the words the owner said. The client hands its redaction back
+#     as `sent.text`, and the owner's raw words never reach the one conversation.
+run "a spoken line is the text the client signed, not the words the owner said" \
+  "    record(sent.text, engine);" \
+  "    record(text, engine);" \
+  mobile/src/voice/screen.js src/text/one-transcript.test.js
+
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"
 if [ "$survivors" -ne 0 ] || [ "$unapplied" -ne 0 ] || [ "$killed" -ne "$guards" ]; then
   echo "FAILED: a guard above is not proved by any test" >&2

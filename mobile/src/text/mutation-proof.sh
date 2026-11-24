@@ -408,6 +408,15 @@ run "the app's own refusal sentence is not the agent's line" \
   "      if (said !== null && typeof said === 'object' && said.ok === true) {" \
   mobile/src/text/transcript.js src/text/transcript.test.js
 
+# 12. X1 (D2788): a line is what REACHED the session, and what reached it is the
+#     REDACTED text -- the client signs `body.text` and hands it back as
+#     `sent.text` (D118). A wrapper that recorded the words it was handed would
+#     keep a secret in the one conversation, and the text view would draw it.
+run "a line is the text the client signed, not the words handed in" \
+  "        transcript.append({ who: TRANSCRIPT_WHO.OPERATOR, source, text: sent.text });" \
+  "        transcript.append({ who: TRANSCRIPT_WHO.OPERATOR, source, text });" \
+  mobile/src/text/transcript.js src/text/transcript.test.js
+
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"
 if [ "$survivors" -ne 0 ] || [ "$unapplied" -ne 0 ] || [ "$killed" -ne "$guards" ]; then
   echo "FAILED: a guard above is not proved by any test" >&2

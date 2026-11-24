@@ -504,7 +504,10 @@ export function createVoiceScreen({
     // give: the message has already left the phone, and what is left is whether
     // the line was kept -- one that was not (a session that signed out
     // mid-sentence) is a conversation this screen must not pretend is live.
-    record(text, engine);
+    // The line is the REDACTED text the client signed, not the words the owner
+    // said (D118): the client hands its own redaction back as `sent.text`
+    // precisely so this screen does not have to redact, or guess, again.
+    record(sent.text, engine);
     return sent;
   }
 
@@ -515,9 +518,15 @@ export function createVoiceScreen({
    * the whole point: by the time the send has answered, the pipeline may have
    * heard the next utterance, and a line tagged with its engine is a line the
    * conversation lies about.
+   *
+   * `text` is the text the client SIGNED (`sent.text`, the redacted one), never
+   * the owner's raw words: a line is what reached the session (D118). A client
+   * that answers `ok` without saying what it sent is not the mailbox client,
+   * and nothing is recorded for it -- a line is never guessed from the words
+   * this screen was handed.
    */
   function record(text, engine) {
-    if (transcript === null) return;
+    if (transcript === null || typeof text !== 'string') return;
     transcript.append({
       who: TRANSCRIPT_WHO.OPERATOR,
       source: TRANSCRIPT_SOURCE.VOICE,

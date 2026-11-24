@@ -673,7 +673,13 @@ export function createMailboxClient(options = {}) {
    *   the caller's classification that lets the lapse refuse it (see "The lapse"
    *   above). Neither option is written to the record: what the record carries is
    *   P6.3's.
-   * @returns {Promise<{ok: true, id: string, at: number}
+   * The accepted verdict carries **the redacted text** as `text`. D118 makes
+   * redaction this file's rule and no other's, so a caller that has to show or
+   * keep what was sent -- a conversation, D167's `unsent()` parity -- is given
+   * the string that was signed rather than left to redact it again, or to
+   * record the owner's raw words and put a secret on a screen.
+   *
+   * @returns {Promise<{ok: true, id: string, at: number, text: string}
    *   | {ok: false, code: string, field: string|null}>}
    */
   async function send(text, options) {
@@ -789,7 +795,7 @@ export function createMailboxClient(options = {}) {
       // is not in `outbound`, so `flush` cannot re-send it, `pending()` cannot
       // offer it and nothing here will ever write it a second time.
       if (!isAction) outbound.set(id, { record, landed: true });
-      return Object.freeze({ ok: true, id, at });
+      return Object.freeze({ ok: true, id, at, text: body.text });
     }
     // It did not land. The record is kept VERBATIM for `flush` -- never
     // re-minted, never re-stamped (P1.1's caller duty: "never retry an id with

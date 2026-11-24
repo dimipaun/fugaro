@@ -348,6 +348,11 @@ export function transcriptSpeaker({ transcript, speaker } = {}) {
  * nothing, and refuses nothing of its own: the words never reached the session,
  * and `unsent()` (D167) is where refused text is kept for the owner to see.
  *
+ * A send the client accepted records **the text that was signed**, which is the
+ * redacted one (D118): the client hands its own redaction back as `sent.text`,
+ * and the line is that string rather than the words this wrapper was given, so
+ * a secret is in neither the message nor the conversation.
+ *
  * @param {object} deps
  * @param {object} deps.transcript a transcript (`createTranscript`)
  * @param {object} deps.mailbox the mailbox client (`{ send(text, options) }`)
@@ -370,8 +375,14 @@ export function recordingMailbox({ transcript, mailbox, source = TRANSCRIPT_SOUR
     ...mailbox,
     async send(text, options) {
       const sent = await mailbox.send(text, options);
-      if (sent !== null && typeof sent === 'object' && sent.ok === true) {
-        transcript.append({ who: TRANSCRIPT_WHO.OPERATOR, source, text });
+      // The line is the REDACTED text the client signed (`sent.text`), not the
+      // words handed in: D118's secrets are the client's rule, the record on the
+      // wire holds `[REDACTED]`, and a conversation that drew the raw string
+      // would put a secret on a screen and disagree with the message that
+      // reached the session. A verdict that carries no text is a client that is
+      // not this one: nothing is guessed, and no line is written.
+      if (sent !== null && typeof sent === 'object' && sent.ok === true && typeof sent.text === 'string') {
+        transcript.append({ who: TRANSCRIPT_WHO.OPERATOR, source, text: sent.text });
       }
       return sent;
     },

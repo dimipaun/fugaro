@@ -376,18 +376,25 @@ test('the speaker wrapper refuses a transcript or a port that is not one', () =>
 /** A mailbox client as the app hands it over: a `send` and the rest of it. */
 function fakeClient(options = {}) {
   const written = [];
-  const verdict = Object.freeze({
-    ok: true,
-    code: null,
-    message: Object.freeze({ id: `m-${written.length + 1}` }),
-  });
+  // One verdict per call, the way the real client answers: it carries the text
+  // it SIGNED (`options.redact` stands for D118's redaction, which is the
+  // client's own and changes the string), and `verdicts` keeps them so a test
+  // can assert the answer came back as it was.
+  const verdicts = [];
   return {
     written,
-    verdict,
+    verdicts,
     paths: Object.freeze({ inbox: 'mailbox/u/inbox' }),
     async send(text, sendOptions) {
       if (options.fail === true) return Object.freeze({ ok: false, code: 'offline', field: 'presence' });
       written.push({ text, options: sendOptions ?? null });
+      const verdict = Object.freeze({
+        ok: true,
+        id: `m-${written.length}`,
+        at: T0,
+        ...(options.nameless === true ? {} : { text: (options.redact ?? ((said) => said))(text) }),
+      });
+      verdicts.push(verdict);
       return verdict;
     },
     unsent: () => Object.freeze([]),
@@ -401,7 +408,7 @@ test('a typed word the client accepted is the operator\'s line, and the verdict 
 
   const sent = await mailbox.send('ship the release notes', { verb: 'launch' });
 
-  assert.equal(sent, client.verdict, 'the client\'s own answer, returned as it is');
+  assert.equal(sent, client.verdicts[0], 'the client\'s own answer, returned as it is');
   assert.deepEqual(client.written, [{ text: 'ship the release notes', options: { verb: 'launch' } }],
     'and the write is still the client\'s');
   assert.deepEqual(h.transcript.entries(), [
@@ -426,6 +433,31 @@ test('a typed word the client refused is not a line, and nothing is refused of i
   // The words never reached the session: D167's `unsent` is where they stay
   // visible, and the transcription is not a history of what the owner tried.
   assert.deepEqual(h.transcript.entries(), []);
+});
+
+test('a typed word is the text the client SIGNED, and a client that says nothing sent nothing is not recorded', async () => {
+  const h = makeStore();
+  const secret = 'synthetic-token-0123456789';
+  // D118's redaction is the client's own rule and it changes the string: the
+  // line is what REACHED the session, so it is the redacted text -- a
+  // conversation that held the owner's raw words would put the secret on a
+  // screen and disagree with the message that was written.
+  const mailbox = recordingMailbox({
+    transcript: h.transcript,
+    mailbox: fakeClient({ redact: () => 'deploy with [REDACTED] please' }),
+  });
+
+  const sent = await mailbox.send(`deploy with ${secret} please`);
+
+  assert.equal(sent.ok, true, 'the client sent it');
+  assert.deepEqual(h.transcript.entries().map((one) => one.text), ['deploy with [REDACTED] please']);
+  assert.equal(JSON.stringify(h.transcript.entries()).includes(secret), false, 'and the secret is in none of it');
+
+  // A verdict with no text is a client that is not the mailbox client: nothing
+  // is guessed from the words the wrapper was handed, and no line is written.
+  const quiet = makeStore();
+  await recordingMailbox({ transcript: quiet.transcript, mailbox: fakeClient({ nameless: true }) }).send('hello');
+  assert.deepEqual(quiet.transcript.entries(), []);
 });
 
 test('the recording mailbox is the client, with one member recorded', async () => {

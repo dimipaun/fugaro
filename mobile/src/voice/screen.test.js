@@ -416,7 +416,7 @@ test('a live orchestrator is what lifts the refusal, and it is P1.4 that says so
 
   const accepted = await h.screen.accept('run the tests');
   await settle();
-  assert.deepEqual({ ...accepted }, { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual({ ...accepted }, { ok: true, id: 'm-1', at: T0, text: 'run the tests' });
   assert.deepEqual(
     h.pathsWritten().filter((path) => path.includes('/inbox/')),
     [`mailbox/${UID}/inbox/m-1`],
@@ -705,7 +705,7 @@ test('the lease does not gate the app: the phone sends while another consumer ho
 
   const accepted = await h.screen.accept('run the tests');
   await settle();
-  assert.deepEqual({ ...accepted }, { ok: true, id: 'm-1', at: T0 });
+  assert.deepEqual({ ...accepted }, { ok: true, id: 'm-1', at: T0, text: 'run the tests' });
 });
 
 // --- D122: the microphone the OS refused ------------------------------------

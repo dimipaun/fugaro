@@ -385,3 +385,38 @@ test('the refusal the app speaks over the same port is not an agent line in the 
   assert.equal(shown(h.transcript.entries()).includes(NO_CONVERSATION), true,
     'so the view still says nothing has been said');
 });
+
+
+// ---------------------------------------------------------------------------
+// 6. A line is the text that reached the session -- the redacted one.
+// ---------------------------------------------------------------------------
+
+test('a secret said by voice or typed is not in the conversation, and not on the screen', async () => {
+  const h = await harness();
+  await h.plantHeartbeat();
+  await h.screen.poll();
+
+  // D118: the client redacts before it signs, and the record on the wire holds
+  // `[REDACTED]`. A line is what REACHED the session, so the one conversation
+  // holds that string -- the only sentences here are ones the client signed.
+  const secret = SECRETS[0];
+  await h.speak(`deploy with ${secret} please`);
+  const typed = await h.typed.submit(`and the token is ${secret}`);
+  assert.equal(typed.ok, true, 'the typed door sent it too');
+
+  const inbox = h.db.writes().filter((entry) => entry.path.startsWith(`${INBOX}/`)).map((entry) => entry.value.text);
+  const lines = h.transcript.entries().map((one) => one.text);
+  assert.deepEqual(lines, inbox, 'the conversation is the text that was written, not the words that were said');
+  assert.deepEqual(lines, ['deploy with [REDACTED] please', 'and the token is [REDACTED]']);
+
+  // The promise is about what a person could see: the list, what the text view
+  // draws, and what the voice view's snapshot carries.
+  assert.equal(JSON.stringify(h.transcript.entries()).includes(secret), false, 'no line holds the secret');
+  assert.deepEqual(drawn(h.transcript.entries()), [
+    ['You', 'deploy with [REDACTED] please'],
+    ['You', 'and the token is [REDACTED]'],
+  ]);
+  assert.equal(JSON.stringify(drawn(h.transcript.entries())).includes(secret), false, 'and no screenshot does');
+  assert.equal(JSON.stringify(h.screen.state().conversation).includes(secret), false,
+    'nor the voice view, which draws the same list');
+});

@@ -230,7 +230,10 @@ speech** a line: the client says its refusal — "No connection. I have not sent
 that." — over the same speaker port it speaks replies through (S6.3), marks it
 as a refusal, and the transcript records nothing for it, because the agent never
 said it. What the owner heard is the voice and text views' own `refused` state,
-not a reply.
+not a reply. And the words on a line are the **redacted** ones: `send` answers
+with the text it signed (D118) as `sent.text`, and both wrappers record that
+string rather than the raw sentence they were handed, so a secret is in neither
+the message nor the conversation.
 
 **Who writes it, and why there are four seams and not one.** The voice view
 records its own spoken words (the engine tag is a fact only it holds at that
