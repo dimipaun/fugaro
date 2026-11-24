@@ -688,3 +688,21 @@ func TestIndexRunKeepsTheTaskBranch(t *testing.T) {
 		t.Fatalf("the bucket drew PR %d and the index %d, want them equal", bucket.PR, index.PR)
 	}
 }
+
+// TestIndexRunKeepsTheRecordBranchWithoutTheEntryField is the rollout guard the
+// new Entry.Branch field needs. The index is written by the history job, whose
+// image may lag the CLI that reads it (TestContractShapes' own reason), so an
+// entry written before this field existed carries no branch: indexRun must then
+// read the record's own branch as it always did. A run with neither the field
+// nor a record draws no branch rather than a wrong one -- the absence is the
+// honest answer, and it is what a re-fold heals.
+func TestIndexRunKeepsTheRecordBranchWithoutTheEntryField(t *testing.T) {
+	const run = "20261123-230118-f3b0"
+	rec := &runstore.Record{Version: 1, RunID: run, Branch: "fugaro/" + run}
+	if got := indexRun(runindex.Entry{RunID: run, Record: rec}).Branch; got != rec.Branch {
+		t.Fatalf("branch = %q, want the record's %q when the entry carries no branch field", got, rec.Branch)
+	}
+	if got := indexRun(runindex.Entry{RunID: run}).Branch; got != "" {
+		t.Fatalf("branch = %q, want none for a run the entry and its records both leave branchless", got)
+	}
+}
