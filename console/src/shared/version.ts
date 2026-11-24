@@ -435,6 +435,52 @@ export function modelsAddSupported(
 }
 
 /**
+ * IMAGE_ADD_CLI_FLOOR is the oldest CLI whose `image add` takes **`--no-apply`**
+ * -- the word that says *write this and run none of its follow-up steps*
+ * (D1565), which is the word the console's own write passes -- **and** whose
+ * `--dry-run --json` prints the plan document the confirmation window draws
+ * (`schemas/image-add-plan.schema.json`, MD2). It is the release the whole image
+ * write waits for: below it, `fugaro image add` either has no `--no-apply` (so
+ * the write would **build an image and redeploy a repository** behind the
+ * operator's back, which is the one step of this surface that bills by itself) or
+ * no document for the window to show.
+ *
+ * **It is `null` until that release exists**, which is this console's state
+ * today: the row is inert rather than absent -- it is on the surface, its argv is
+ * built and refused like every other row's, and `imageAddSupported` answers false
+ * for every version, so the screen shows the command's Copy-command instead of
+ * the action (R9's floor, and the shape every AL row has). The task that ships
+ * MD2's release sets this string in the same change, and no other change may.
+ */
+export const IMAGE_ADD_CLI_FLOOR: string | null = null
+
+/**
+ * imageAddSupported answers whether one version line may be shown the image
+ * write's action at all, by comparing it against `IMAGE_ADD_CLI_FLOOR` at the
+ * patch level.
+ *
+ * **Its caller is the renderer's**, through the compatibility facts the main
+ * process already publishes: a version below the floor is a CLI whose
+ * `image add` cannot be driven the way the row drives it, so the Manage view
+ * shows the Copy-command and no button. The main-process half of the same fact is
+ * `src/main/imageadd.ts`'s own `refuseBelowFloor`, which refuses a plan from a
+ * renderer that asked anyway -- the two read one constant, so a screen and the
+ * process behind it cannot disagree.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested: with the constant unset, every version is
+ * refused, which is the state this console is in until MD2's release lands
+ * (`version.test.ts` drives both).
+ */
+export function imageAddSupported(
+  version: string,
+  floor: string | null = IMAGE_ADD_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
  * licenceKeySupported answers whether one version line may be handed the
  * installation's licence key, by comparing it against `LICENCE_KEY_CLI_FLOOR`.
  *
@@ -624,8 +670,9 @@ export const BUDGET_STREAM_CLI_FLOOR: string | null = null
  * binary's two argvs -- and no CLI answers either word before it.
  *
  * `null` until that release names itself, which is where the wizard stands
- * today: the two rows exist in the allow-list and the handlers behind them
- * answer 'not available in this build'.
+ * today: the two rows exist in the allow-list and the handler behind each
+ * refuses in the wizard's own words (`SETUP_FLOOR_UNSET`), so no child is
+ * spawned for either.
  */
 export const SETUP_CLI_FLOOR: string | null = null
 
@@ -645,6 +692,116 @@ export const SETUP_CLI_FLOOR: string | null = null
  */
 export const IMAGE_CATALOG_CLI_FLOOR: string | null = null
 export const RECIPES_CLI_FLOOR: string | null = null
+
+/**
+ * ORCHESTRATOR_MAP_CLI_FLOOR is the oldest CLI that carries **`orchestrator map
+ * --json`** -- the one document the Coordinator tab draws: the project's active
+ * orchestrators, the connections between them and the coordinator's own
+ * heartbeat (the console-fixes plan's CG7a; D3221, and the contract
+ * `docs/console-fixes/contract-orchestrators.md` for the shape).
+ *
+ * **No release carries the command yet, so the constant is `null`** and the tab
+ * spawns no map read at all. It is registered from `ee/`
+ * (`ee/orchestrator/cli/map.go`, the way `ee/graph/cli` registers `graph`), so
+ * only a build with the `ee` tag has the command, and it is on `main` and in no
+ * tag. A floor is a claim about a release that exists, and a version this
+ * console guessed at would be an `orchestrator map` handed to a CLI that answers
+ * `unknown command` and fails the whole read. Unset is the safe direction and
+ * the only honest one, and it is the same state the console-improvements floors
+ * above are in: below the floor the Coordinator tab names the CLI the read needs
+ * -- while the constant is unset, that no release carries the command yet --
+ * rather than drawing a document it cannot read.
+ *
+ * **It is one floor for two facts, deliberately** (F40). The first is the read
+ * above. The second is the graph scope grammar's **named orchestrator id**:
+ * `src/main/ipc.ts`'s `GRAPH_SCOPE_RE` admits
+ * `orchestrator:<project>~<name>`, C-ORCH's own id rule -- the one the CLI's
+ * `graph.ParseScope` reads (the plan's CG8) -- and `MAX_GRAPH_SCOPE_LENGTH` is
+ * the longest id that rule admits. Both sit behind this floor, because a console
+ * that admitted a named scope would spawn a child an older CLI refuses; and the
+ * two are one release's, since the release that first carries `orchestrator map
+ * --json` is the one that first names an orchestrator with a `~` at all.
+ *
+ * It is a floor and not a switch, so every older CLI keeps being answered what
+ * it can read -- the same patch-level comparison the floors above use -- and a
+ * release that ships the command sets this constant to its own version in a
+ * one-line pull request, which is a release step and not a task of the plan.
+ */
+export const ORCHESTRATOR_MAP_CLI_FLOOR: string | null = null
+
+/**
+ * orchestratorMapSupported answers whether one version line may be asked for
+ * `orchestrator map --json` -- and, with it, whether it may be handed a **named
+ * orchestrator scope** -- by comparing the line against
+ * `ORCHESTRATOR_MAP_CLI_FLOOR` at the patch level.
+ *
+ * **Its callers are the two places a named orchestrator enters this console.**
+ * The Coordinator tab (`src/renderer/entry.ts`, the plan's CG7b) asks it before
+ * the map read, and names the CLI it needs when the answer is no rather than
+ * spawning a child that cannot answer. `CliSource`'s bound-source scope guard
+ * (`src/source/cli.ts`) asks it for a scope whose id carries C-ORCH's separator,
+ * and refuses that scope with `NO_NAMED_SCOPE` below the floor -- before a
+ * binary is probed and before any word of an argv is built -- so F40's widening
+ * is behind the floor rather than merely beside it. The map read itself is
+ * refused at the source with `NO_ORCHESTRATOR_MAP`, `CliSource`'s
+ * `orchestratorMap` handler asking this floor before `resolve`.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested: with the constant unset, every version is
+ * refused, which is the state this console is in until a release carries the
+ * command (`version.test.ts` drives both).
+ */
+export function orchestratorMapSupported(
+  version: string,
+  floor: string | null = ORCHESTRATOR_MAP_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
+
+/**
+ * PLAN_STATUS_NO_MERGES_CLI_FLOOR is the release that first carries `plan
+ * status --no-merges` (D3217 as amended, the indexed-reads spec): the flag the
+ * Graph's first paint passes so the canvas is drawn without waiting for the
+ * merge lookups. Below the floor the read is the single `plan status --json
+ * --all` it has always been -- the node set is the same either way, and only the
+ * merge state of a task whose run recorded a ready pull request differs -- so an
+ * installation on an older CLI gets today's drawing rather than a child that
+ * answers `unknown flag: --no-merges`.
+ *
+ * **No release carries the flag yet, so the constant is `null`** and the
+ * console's first paint is the single read on every installation today. It is
+ * `ORCHESTRATOR_MAP_CLI_FLOOR`'s state and its own rules: a floor is a claim
+ * about a release that exists, a guessed version is a child spawned to fail, and
+ * the release that ships the flag sets this constant to its own version in a
+ * one-line pull request -- a release step, not a task of the plan.
+ */
+export const PLAN_STATUS_NO_MERGES_CLI_FLOOR: string | null = null
+
+/**
+ * planStatusNoMergesSupported answers whether one version line may be asked for
+ * `plan status --json --all --no-merges`, by comparing the line against
+ * `PLAN_STATUS_NO_MERGES_CLI_FLOOR` at the patch level.
+ *
+ * **Its callers are the two places the flag could reach a child.** The Graph tab
+ * (`src/renderer/entry.ts`, the plan's IR4) asks it before the canvas read and
+ * passes the flag only when the answer is yes; `CliSource`'s `planStatus`
+ * handler (`src/source/cli.ts`) refuses a `noMerges` argument below the floor
+ * with `NO_PLAN_NO_MERGES`, before a binary is probed and before any word of an
+ * argv is built -- so the flag is behind the floor rather than merely beside it.
+ *
+ * `floor` is the constant by default and an argument only so that the branch a
+ * release will take can be tested: with the constant unset every version is
+ * refused, which is the state this console is in until a release carries the
+ * flag (`version.test.ts` drives both).
+ */
+export function planStatusNoMergesSupported(
+  version: string,
+  floor: string | null = PLAN_STATUS_NO_MERGES_CLI_FLOOR,
+): boolean {
+  if (floor === null) return false
+  return meetsCliFloor(version, floor)
+}
 
 /**
  * CONSOLE_CLI_UPGRADE_COMMAND is the fix line an *old* CLI's banner offers. It

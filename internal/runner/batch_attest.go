@@ -48,9 +48,10 @@ func (r *run) onBatch() bool {
 
 // batchAttestation is what this run's claim carries beside its ticket: the
 // VM's identity token in full format, read from the metadata server for the
-// audience the service verifies it at. A run that is not on Batch returns ""
-// and asks the metadata server nothing, which is what a Cloud Run claim
-// carries (C1: the attestation is empty for a Cloud Run launch).
+// audience the service verifies it at, as the contract's own type for it
+// (identitywire.Attestation, C1). A run that is not on Batch returns "" and
+// asks the metadata server nothing, which is what a Cloud Run claim carries
+// (C1: the attestation is empty for a Cloud Run launch).
 //
 // It is read at the claim and not cached, for the reason the job's own token
 // is minted per call (metadataIDToken): what the run needs is the token the
@@ -58,7 +59,7 @@ func (r *run) onBatch() bool {
 // it is a millisecond. The caller is the claim, and it is the caller that
 // decides the audience: the service the claim is made to is the one that
 // verifies it.
-func (r *run) batchAttestation(ctx context.Context, audience string) (string, error) {
+func (r *run) batchAttestation(ctx context.Context, audience string) (identitywire.Attestation, error) {
 	if !r.onBatch() {
 		return "", nil
 	}
@@ -71,7 +72,7 @@ func (r *run) batchAttestation(ctx context.Context, audience string) (string, er
 		return "", fmt.Errorf("%w: %v", errNoAttestation, err)
 	}
 	r.addSecret(tok)
-	return tok, nil
+	return identitywire.Attestation(tok), nil
 }
 
 // batchLaunchWithNoTicket is the refusal of a Batch task that carries neither a

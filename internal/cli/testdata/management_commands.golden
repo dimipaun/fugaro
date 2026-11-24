@@ -1,0 +1,51 @@
+# The management commands, one row each, and what each one ends with. The set is
+# D1566's list (docs/composite-commands/spec.md): the commands that write a
+# change whose steps exist, plus `project policy publish`, which is itself one of
+# the steps. A command the spec puts OUT of the set — `budget set`,
+# `secrets`/`creds set`, `recipes publish`, `allow-delete` — is not here, because
+# it writes the cloud in the same act and has no follow-up to leave owed.
+#
+# Columns, tab separated, five of them:
+#
+#   command  the command line as a person runs it, "fugaro" included. It is
+#            resolved against this build's own command tree, so a command that
+#            is renamed or removed fails the test rather than going stale here.
+#   change   what the command changes, "<kind>:<key>" in internal/apply's own
+#            spelling (a setting key, or one of the resource type constants), or
+#            "-" for a command whose change the table answers nothing for —
+#            which is every command in the last group below.
+#   steps    what internal/apply.Steps declares for that change, in order, joined
+#            with ", ", or "-" for a command that declares none. The test
+#            compares this against the table both ways: the table answers a
+#            different list, or answers a gap, and the row fails.
+#   end      what one run of the command, with no --no-apply, against this
+#            package's fakes, ends with:
+#              live  the steps ran here and nothing is owed afterwards;
+#              owed  a step did not finish in a hermetic world, the change was
+#                    saved and D1563's sentence names what is still owed, over a
+#                    non-zero exit;
+#              none  the change declares no step, so nothing may be owed and no
+#                    sentence may send the reader to `fugaro apply`.
+#   why      why this command ends the way it does, and what the run is read
+#            back against. A `live` row's read-back is a measurement of the
+#            change having reached the store the step writes, never the absence
+#            of a line.
+#
+# A row is a fact about the tree and not a transcription of a run, so nothing
+# here is written by a flag: a row that has gone stale fails, and the failure
+# names the command, the table's list and the run's own answer.
+fugaro settings set	setting:orchestrator.max_running	policy	live	the write's own key owes the policy stage, which republishes the node the key is served from: the fixture's version-3 node moves to this build's version and the node's orchestrator.max_running is the value written
+fugaro settings unset	setting:orchestrator.max_running	policy	live	the same key's removal owes the same stage: the file loses the key and the stage publishes the file as it now stands
+fugaro image add	resource:image	catalog-build, repository, policy	live	the entry is built, the checkout's repository is redeployed onto the image that build promoted, and the catalog is published: one build submitted and the deployed job's image is the entry's own catalog image (AP4)
+fugaro image rm	resource:image	catalog-build, repository, policy	live	the removal owes the same steps as the addition: the entry leaves the config and the checkout's repositories are planned again without it. The world removes an entry of its own (tools), because taking away the entry the deployed job runs is refused — a refusal with its own test and not this row's question
+fugaro accounts add	resource:account	installation, policy	live	the declaration, the secret and the installation's job set, in one act: the config the converge wrote carries the account, and the command's own block names the declaration it wrote
+fugaro accounts rm	resource:account	installation, policy	live	the node stops naming the account and the job the account owned goes from the installation's job set (AP6)
+fugaro project repos add	resource:repo	installation, repository, policy	live	the enrolment's three stages run here, so the report ends on "fugaro run --repo <entry> is ready" printed over an installation that really has the job set (AP6)
+fugaro project repos rm	-	-	none	RE4's inverse converge: the local entry, the published admission, the jobs and the allow-list entry go in the one act, so no step of this machine's is left to run and nothing is queued
+fugaro project sync	-	-	none	the sync is its own act too: it offers the provider's repositories and writes the accepted ones through the same ETag-guarded path `project repos add` uses, with no stage behind it
+fugaro models add	resource:model	policy	live	the price reaches the node the project's runs are admitted by, in process (AP6)
+fugaro models rm	resource:model	policy	live	the same stage's other direction: the model leaves the config and the node stops pricing it
+fugaro workspace add	-	-	none	the MEMBER's half: the membership key and its pin are this machine's own record, live once the file is written, and what carries them to the runs is the project's own `fugaro update` (R3, R4). No step of this machine's apply can publish another project's file, so nothing is owed and the write names that command (workspaceHandoff; the lint's allow-list records the text as class (b))
+fugaro workspace rm	-	-	none	the same half's other direction: the key and the pin come out, and the project's own update is again what publishes the file
+fugaro workspace cap set	resource:workspace	workspace-project, workspace	owed	the cap reaches the workspace's own database and the record its service reads is published there, so both steps stay owed in this fixture, as `member add`'s do
+fugaro project policy publish	-	-	none	D1566's one exception: the publish IS the step the table names (initflow.Policy), so it publishes in place, owes nothing, records nothing and names no second command

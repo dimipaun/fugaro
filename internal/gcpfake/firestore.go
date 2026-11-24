@@ -14,12 +14,14 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/firestore"
+	"github.com/dimipaun/fugaro/internal/place"
 )
 
 // Firestore is a fake of the Cloud Firestore v1 REST API the history client
 // uses, for one project's (default) database: documents GET/PATCH/DELETE
-// (updateMask, currentDocument preconditions), runQuery (a field range, order
-// by, limit, startAt cursor) and the databases get/create calls with their
+// (updateMask, currentDocument preconditions), runQuery (equality and range
+// filters, an order by of one or two fields in either direction, a limit, a
+// startAt cursor) and the databases get/create calls with their
 // long-running operation. It is as strict as the real service where that is
 // known: typed values only (an integerValue is a decimal string), updateMask
 // paths parsed with the backtick grammar, a name that must match the URL,
@@ -54,12 +56,17 @@ type fsDoc struct {
 }
 
 // firestoreLocations is the fake's idea of the locations a native database
-// accepts. The real list is Google's; this is an assumption (plan A1).
-var firestoreLocations = map[string]bool{
-	"nam5": true, "nam7": true, "eur3": true, "eur5": true,
-	"us-central1": true, "us-east1": true, "us-east4": true, "us-east5": true, "us-west1": true,
-	"europe-west1": true, "europe-west3": true, "asia-northeast1": true,
-}
+// accepts: every location the mapping can choose (place.FirestoreLocations),
+// plus Firestore's multi-regions, which a database fugaro adopts where it
+// finds it can be in (D3091). The real list is Google's; this is an
+// assumption (plan A1).
+var firestoreLocations = func() map[string]bool {
+	locs := map[string]bool{"nam5": true, "nam7": true, "eur3": true, "eur5": true}
+	for _, loc := range place.FirestoreLocations {
+		locs[loc] = true
+	}
+	return locs
+}()
 
 // NewFirestore starts a fake that lives until the test ends, with a native
 // database in us-east5 (see RemoveDatabase and SetDatabase).
@@ -138,6 +145,15 @@ func (f *Firestore) DisabledReadsAfterCreate(n int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.disabledAfterCreate = n
+}
+
+// DisabledReads is DisabledReadsAfterCreate without the create: the next n
+// reads of the database resource answer 403 SERVICE_DISABLED from now, which
+// is the read a run makes before it has created anything (RI2).
+func (f *Firestore) DisabledReads(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disabledReads = n
 }
 
 // Credentials lists the Authorization header of each request in order.
@@ -688,11 +704,22 @@ type fsQuery struct {
 		} `json:"field"`
 		Direction string `json:"direction"`
 	} `json:"orderBy"`
-	Limit   int `json:"limit"`
-	StartAt *struct {
-		Values []any `json:"values"`
-		Before bool  `json:"before"`
-	} `json:"startAt"`
+	Limit int `json:"limit"`
+	// A query continues from one cursor: a startAt, exclusive unless it sets
+	// before. The service has no startAfter field — a client's exclusive
+	// cursor is a startAt with before false.
+	StartAt *fsCursor `json:"startAt"`
+}
+
+type fsCursor struct {
+	Values []any `json:"values"`
+	Before bool  `json:"before"`
+}
+
+// fsOrder is one resolved orderBy clause: a top-level field or __name__.
+type fsOrder struct {
+	field string
+	desc  bool
 }
 
 type fsFilter struct {
@@ -768,11 +795,14 @@ func (f *Firestore) runQuery(w http.ResponseWriter, project string, body []byte)
 		return
 	}
 	// Order: the inequality field must come first; __name__ is the implicit
-	// last tie-break.
-	var order []string
+	// last tie-break, in the direction of the last orderBy clause.
+	var order []fsOrder
 	for _, o := range q.OrderBy {
-		if o.Direction != "" && o.Direction != "ASCENDING" {
-			writeError(w, 400, "INVALID_ARGUMENT", "the fake orders ascending only")
+		switch o.Direction {
+		case "", "ASCENDING":
+		case "DESCENDING":
+		default:
+			writeError(w, 400, "INVALID_ARGUMENT", "bad orderBy direction "+o.Direction)
 			return
 		}
 		fp := o.Field.FieldPath
@@ -784,19 +814,20 @@ func (f *Firestore) runQuery(w http.ResponseWriter, project string, body []byte)
 			}
 			fp = p[0]
 		}
-		order = append(order, fp)
+		order = append(order, fsOrder{field: fp, desc: o.Direction == "DESCENDING"})
 	}
-	if ineqField != "" && len(order) > 0 && order[0] != ineqField {
+	if ineqField != "" && len(order) > 0 && order[0].field != ineqField {
 		writeError(w, 400, "INVALID_ARGUMENT", "The first sort property must be the same as the property to which the inequality filter is applied.")
 		return
 	}
-	if len(order) == 0 || order[len(order)-1] != "__name__" {
-		order = append(order, "__name__")
+	if len(order) == 0 || order[len(order)-1].field != "__name__" {
+		order = append(order, fsOrder{field: "__name__", desc: len(order) > 0 && order[len(order)-1].desc})
 	}
 	if q.StartAt != nil && len(q.StartAt.Values) != len(order) {
 		writeError(w, 400, "INVALID_ARGUMENT", "the cursor must have one value per orderBy field (including __name__)")
 		return
 	}
+	cursor, exclusive := q.StartAt, q.StartAt != nil && !q.StartAt.Before
 	if q.Limit < 0 {
 		writeError(w, 400, "INVALID_ARGUMENT", "negative limit")
 		return
@@ -831,8 +862,8 @@ func (f *Firestore) runQuery(w http.ResponseWriter, project string, body []byte)
 		}
 		// Ordering by a field excludes documents without it.
 		for _, o := range order {
-			if o != "__name__" {
-				if _, has := d.fields[o]; !has {
+			if o.field != "__name__" {
+				if _, has := d.fields[o.field]; !has {
 					ok = false
 				}
 			}
@@ -841,23 +872,28 @@ func (f *Firestore) runQuery(w http.ResponseWriter, project string, body []byte)
 			rows = append(rows, row{prefix + id, d})
 		}
 	}
-	cmpRow := func(a row, o string, bv any) int {
-		if o == "__name__" {
-			s, _ := bv.(map[string]any)["referenceValue"].(string)
-			return strings.Compare(a.name, s)
+	// cmpAt compares a row with one typed value of a cursor or of another row
+	// at one order clause, in that clause's direction.
+	cmpAt := func(r row, o fsOrder, v any) int {
+		var c int
+		if o.field == "__name__" {
+			s, _ := v.(map[string]any)["referenceValue"].(string)
+			c = strings.Compare(r.name, s)
+		} else {
+			c, _ = compareValues(r.d.fields[o.field], v)
 		}
-		c, _ := compareValues(a.d.fields[o], bv)
+		if o.desc {
+			return -c
+		}
 		return c
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		for _, o := range order {
-			var bv any
-			if o == "__name__" {
-				bv = map[string]any{"referenceValue": rows[j].name}
-			} else {
-				bv = rows[j].d.fields[o]
+			v := rows[j].d.fields[o.field]
+			if o.field == "__name__" {
+				v = map[string]any{"referenceValue": rows[j].name}
 			}
-			if c := cmpRow(rows[i], o, bv); c != 0 {
+			if c := cmpAt(rows[i], o, v); c != 0 {
 				return c < 0
 			}
 		}
@@ -865,14 +901,14 @@ func (f *Firestore) runQuery(w http.ResponseWriter, project string, body []byte)
 	})
 	var out []any
 	for _, r := range rows {
-		if q.StartAt != nil {
+		if cursor != nil {
 			c := 0
 			for i, o := range order {
-				if c = cmpRow(r, o, q.StartAt.Values[i]); c != 0 {
+				if c = cmpAt(r, o, cursor.Values[i]); c != 0 {
 					break
 				}
 			}
-			if c < 0 || (c == 0 && !q.StartAt.Before) {
+			if c < 0 || (c == 0 && exclusive) {
 				continue
 			}
 		}

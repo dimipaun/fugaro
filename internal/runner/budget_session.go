@@ -643,6 +643,16 @@ func (r *run) registryEntry() budget.AgentEntry {
 	if runes := []rune(title); len(runes) > 80 {
 		title = string(runes[:80])
 	}
+	// Auth is the whole-run upstream this release still picks, and it is the
+	// only fact about the upstream a stage has until the run's calls follow the
+	// table (model-credentials-routing CS6: the runner stops choosing a
+	// whole-run upstream from agent.auth, and the entry then carries the
+	// stage's own answer instead — the gateway's chain answer, C1's hook that
+	// CS2 makes an option and CS8 reads into the record — as `source` and
+	// `fallback`). Until that lands no run is one "the table serves", so there
+	// is nothing else to write: the registry, the rules' allowlist and every
+	// view already take all three (CS9, D3070), and this member is the whole of
+	// what CS6 changes.
 	e := budget.AgentEntry{
 		Repo: r.spec.Repo, Workflow: r.rec.Workflow, Title: title, Stage: "bootstrap", Auth: r.cfg.Agent.Auth,
 		Coder: r.cfg.Agent.ModelFor(config.RoleCoder), Reviewer: r.cfg.Agent.ModelFor(config.RoleReviewer),

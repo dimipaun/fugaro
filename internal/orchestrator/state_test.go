@@ -781,6 +781,81 @@ func TestStateSchemasAcceptSpec(t *testing.T) {
 	}
 }
 
+// TestStateSchemasAcceptItemRefs is the reader's half of what depends_on
+// gained (D3208): both documents describe a `<orchestrator>/<item>` reference
+// and neither bumps its version, because a state this release writes and the
+// schema refuses is a document a consumer that validates before it reads would
+// refuse — which is what the bare-id pattern alone does to a reference.
+//
+// Every case is asked of both readers, the schema's pattern and the rule
+// ValidateState applies (validate.go's depRef), and the test fails naming the
+// side that drifted. The bare-id cases are ones the document really carries:
+// the validator resolves a bare name in the node, so a case about the shape of
+// one must not be refused for naming nothing.
+//
+// Mutation: put either pattern back to the bare-id shape and the reference
+// cases fail on the schema's side; widen it to something that admits a space
+// and the refused ones do.
+func TestStateSchemasAcceptItemRefs(t *testing.T) {
+	stateSch := compileSchema(t, "../../schemas/orchestrator-state.schema.json")
+	patchSch := compileSchema(t, "../../schemas/orchestrator-patch.schema.json")
+	validates := func(sch *jsonschema.Schema, raw []byte) error {
+		t.Helper()
+		doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(doc)
+	}
+
+	for _, tc := range []struct {
+		name string
+		dep  string
+		ok   bool
+	}{
+		{"a work item id of the document", "wi-1", true},
+		{"a reference to another orchestrator's item", "beta/wi-9", true},
+		{"a reference whose item half is a plan task", "beta/demo/C", true},
+		{"a reference to a named orchestrator", "fugaro~beta/wi-9", true},
+		{"an orchestrator half in upper case", "Beta/wi-9", false},
+		{"a reference that names no item", "beta/", false},
+		{"an item half that is neither an id nor a plan task", "beta/wi 9", false},
+		{"an orchestrator half that is an item id", "wi-9/", false},
+		{"an orchestrator half one past its bound", strings.Repeat("a", 41) + "/wi-9", false},
+		{"a work item id one past its bound", strings.Repeat("a", 65), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The fixture carries wi-1 and wi-2, and wi-2 is the item that
+			// depends, so a bare id resolves against a document that has it.
+			s := mustDecode(t, readFixture(t), false)
+			s.WorkItems[1].DependsOn = []string{tc.dep}
+			if got := orchestrator.ValidateState(s) == nil; got != tc.ok {
+				t.Errorf("ValidateState reads the dependency %q as ok=%v, want %v", tc.dep, got, tc.ok)
+			}
+
+			carried := document(t, readFixture(t))
+			workItemAt(t, carried, 1)["depends_on"] = []any{tc.dep}
+			if err := validates(stateSch, remarshal(t, carried)); (err == nil) != tc.ok {
+				t.Errorf("the state schema reads the dependency %q as ok=%v, want %v (err = %v)", tc.dep, err == nil, tc.ok, err)
+			}
+
+			patch, err := json.Marshal(map[string]any{
+				"base_rev": 7,
+				"ops": []any{map[string]any{
+					"op":        "work_item_upsert",
+					"work_item": map[string]any{"id": "wi-2", "depends_on": []any{tc.dep}},
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validates(patchSch, patch); (err == nil) != tc.ok {
+				t.Errorf("the patch schema reads the dependency %q as ok=%v, want %v (err = %v)", tc.dep, err == nil, tc.ok, err)
+			}
+		})
+	}
+}
+
 // TestSpecDigestCoversEveryFieldButTheBookkeepingList is what makes an
 // approval mean one spec and not another. Every field that describes the work
 // moves the digest when it changes, the eight bookkeeping fields move it not at

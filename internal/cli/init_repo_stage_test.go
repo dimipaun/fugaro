@@ -1105,6 +1105,8 @@ func sharedRepoCheckout(t *testing.T) string {
 // this test fails on its first assertion — the repository root's plan and apply
 // are in the fake's log, and its first build is submitted.
 func TestOnboardingASharedRepoAppliesNoTerraform(t *testing.T) {
+	infra.SharedJobBaked = true
+	t.Cleanup(func() { infra.SharedJobBaked = false })
 	repoSecretsOn(t) // the door as it ships, which is what M1's warning is about
 	r := repoBuildRig(t, "")
 	db := buildBudgetForRig(t, r)

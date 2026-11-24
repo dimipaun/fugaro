@@ -119,6 +119,16 @@ func newInitRig(t *testing.T) *initRig {
 		logs: gcpfake.NewLogging(t), sched: gcpfake.NewScheduler(t), su: gcpfake.NewServiceUsage(t),
 		script: map[string]any{},
 	}
+	// `fugaro update`'s lift stage reads every repository its config names
+	// through the project's own provider credential (repoProviderEnv, the read
+	// spec §5.1 makes "as internal/catalog/fetch.go does"), so a rig with
+	// repositories reads a value: the same permission the catalog fixtures
+	// give (image_build_catalog_test.go). No value is seeded, so the read is
+	// the one a project that never stored a key gets — the repository is named
+	// as one update could not read and its values are dropped, never moved
+	// (D3306) — and a test that wants a readable repository seeds the secret
+	// and stubs the provider.
+	r.sm.AllowAccess()
 	r.crm.AddProject(initProject, initProjectNumber)
 	r.gcs.AddProject(initProject, initProjectNumber)
 	for _, k := range []string{"XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "HOME"} {
@@ -1560,7 +1570,7 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	vertex, apiKey := cfgFile("vertex"), cfgFile("api-key")
 	enforce := withBudget("budget: { mode: enforce, per_run_usd: 5 }\n")
 	err := checkVertexBudget(enforce, vertex)
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet: use budget.mode observe or off") {
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet: use budget.mode observe for this repository") {
 		t.Fatalf("vertex + enforce: exit %d, err %v", ExitCode(err), err)
 	}
 	// A committed enforce is the effective mode under an off ceiling, and

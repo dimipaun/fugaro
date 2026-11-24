@@ -173,15 +173,15 @@ func TestRunConfirmationNeverCoversTheSeparateSteps(t *testing.T) {
 	})
 	t.Run("the Firestore location", func(t *testing.T) {
 		r, _ := taken(t, "")
-		if err := r.confirmLocation(); err == nil {
+		if err := r.confirmLocation(fsLocation("us-east5")); err == nil {
 			t.Fatal("the permanent location was confirmed by the run confirmation")
 		}
 		r, _ = taken(t, "y\n")
-		if err := r.confirmLocation(); err != nil {
+		if err := r.confirmLocation(fsLocation("us-east5")); err != nil {
 			t.Fatalf("answering the location's own question is the confirmation: %v", err)
 		}
 		r, _ = taken(t, "n\n")
-		if err := r.confirmLocation(); err == nil {
+		if err := r.confirmLocation(fsLocation("us-east5")); err == nil {
 			t.Fatal("a no at the location's own question confirmed the location")
 		}
 	})
@@ -627,7 +627,7 @@ func TestFirebaseRunTakesOneConfirmationPlusTheLocation(t *testing.T) {
 		return out + errOut, err, r
 	}
 	// One project for everything (the Firebase project is the installation's).
-	out, err, r := run(t, initProject, true, initProjectName+"\n"+infra.FirestoreLocation+"\n")
+	out, err, r := run(t, initProject, true, initProjectName+"\n"+fsLocation("us-east5")+"\n")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -673,7 +673,7 @@ func TestFirebaseRunTakesOneConfirmationPlusTheLocation(t *testing.T) {
 	}
 	// Another project for Firebase is no layout any more (Fugaro only starts
 	// fresh): it is refused before anything is asked or applied.
-	out, err, r = run(t, "aurora-fp", true, initProjectName+"\n"+names(1)+names(1)+infra.FirestoreLocation+"\n")
+	out, err, r = run(t, "aurora-fp", true, initProjectName+"\n"+names(1)+names(1)+fsLocation("us-east5")+"\n")
 	if ExitCode(err) != ExitUserError || !strings.Contains(errString(err), "is not the installation's GCP project") {
 		t.Fatalf("separate Firebase project: %v\n%s", err, out)
 	}
@@ -681,7 +681,7 @@ func TestFirebaseRunTakesOneConfirmationPlusTheLocation(t *testing.T) {
 		t.Fatalf("a refused separate Firebase project asked %d run and %d step confirmation(s), copied %v\n%s", runP, stepP, r.dst.tags, out)
 	}
 	// Unmarked: a confirmation per step, and the count is what it was.
-	out, err, _ = run(t, initProject, false, names(4)+infra.FirestoreLocation+"\n"+names(8))
+	out, err, _ = run(t, initProject, false, names(4)+fsLocation("us-east5")+"\n"+names(8))
 	if err != nil {
 		t.Fatalf("unmarked: %v\n%s", err, out)
 	}
@@ -907,6 +907,31 @@ func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
 	}
 	if strings.Contains(out, "base image base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:1.2.3 (OUTSIDE") {
 		t.Errorf("the project's own base image is flagged:\n%s", out)
+	}
+}
+
+// TestReviewScreenShowsTheCarriedBillingAccount: the review screen names the
+// account the plan's budget resource will name, and says where it came from.
+// The account a carried block is on came from no flag — it is the one the
+// installation's own state records — so a screen reading only --billing-account
+// would show no billing account at all while the cover admits the plan's budget
+// on that account (billingAccount, R7 of
+// docs/managed-flag-ergonomics/reconciliation.md).
+func TestReviewScreenShowsTheCarriedBillingAccount(t *testing.T) {
+	var b strings.Builder
+	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{}, w: &b, projectName: initProjectName, gcpProject: initProject,
+		budgetAccount: billingAcc}
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5", RegistryHost: "us-east5-docker.pkg.dev/" + initProject}
+	e := &initEngine{r: r, lc: lc, adminsRead: true, images: &imagesStage{}, spec: infra.InstallationSpec{RunsBucket: initRunsBucket, StateBucket: initStateBucket}}
+	e.images.e = e
+	e.previewed = []initflow.StageResult{{Name: initflow.Images, State: initflow.Todo}}
+	e.reviewScreen(t.Context(), "test")
+	out := b.String()
+	if !strings.Contains(out, "billing account: "+billingAcc) {
+		t.Errorf("the screen does not name the account the carry took:\n%s", out)
+	}
+	if !strings.Contains(out, "from the installation's state") {
+		t.Errorf("the screen does not say the account came from the installation's state:\n%s", out)
 	}
 }
 

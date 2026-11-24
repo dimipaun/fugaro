@@ -64,11 +64,12 @@ func recordSpec(t *testing.T) gcp.CatalogBuildSpec {
 			SHA256:       strings.Repeat("b", 64),
 		},
 		Context: "ci/", ContextCommit: strings.Repeat("e", 40), ContextSHA256: strings.Repeat("f", 64),
-		ServiceAccount: gcp.BuildIdentityEmail("proj-1234"),
-		MachineType:    "E2_HIGHCPU_8",
-		Bucket:         "gs://fugaro-runs-proj-1234",
-		Selftest:       []byte(`{"skip_verify":true,"tools":"critical"}`),
-		TemplateSalt:   strings.Repeat("1", 64),
+		CredentialsServiceURL: "https://credentials.example.com",
+		ServiceAccount:        gcp.BuildIdentityEmail("proj-1234"),
+		MachineType:           "E2_HIGHCPU_8",
+		Bucket:                "gs://fugaro-runs-proj-1234",
+		Selftest:              []byte(`{"skip_verify":true,"tools":"critical"}`),
+		TemplateSalt:          strings.Repeat("1", 64),
 	}
 }
 

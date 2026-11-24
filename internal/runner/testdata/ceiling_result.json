@@ -7,17 +7,17 @@
     ],
     "total": 1
   },
-  "config_sha256": "20c542ebba0809f2ffc89712044d35d33ea4b161b7a528fa0b9452cc9554d1f2",
+  "config_sha256": "3d2cab421e44197b179b39e2aa04ac4b2178b2852004a5c71ed3cd1e9986bbe3",
   "cost": {
     "compute_estimated": false,
     "compute_usd": 0,
     "estimate": true,
     "model_basis": "api-list",
-    "model_source": "claude-code",
-    "model_usd": 1.5,
-    "total_usd": 1.5
+    "model_source": "gateway",
+    "model_usd": 0,
+    "total_usd": 0
   },
-  "cost_usd": 1.5,
+  "cost_usd": 0,
   "deadline": "<time>",
   "finalize_reserve_s": 30,
   "finished_at": "<time>",
@@ -27,6 +27,14 @@
     "format": 1
   },
   "outcome": "ready",
+  "plan": {
+    "steps": [
+      {
+        "kind": "review",
+        "rounds": 2
+      }
+    ]
+  },
   "policy": {
     "effective": {
       "max_run_tokens": 900000,
@@ -66,6 +74,7 @@
       },
       "findings": 0,
       "head": "<sha>",
+      "model": "claude-opus-5",
       "round": 1,
       "verdict": "ship"
     }
@@ -82,8 +91,9 @@
   "stages": [
     {
       "agents": 0,
+      "calls": 0,
       "duration_s": 0,
-      "model_usd": 1,
+      "model": "claude-sonnet-5-5",
       "name": "implement",
       "repeats": 0,
       "served_by": "api-key",
@@ -91,8 +101,9 @@
     },
     {
       "agents": 0,
+      "calls": 0,
       "duration_s": 0,
-      "model_usd": 0.5,
+      "model": "claude-opus-5",
       "name": "review",
       "repeats": 0,
       "served_by": "api-key",

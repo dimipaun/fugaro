@@ -5,10 +5,10 @@ the five names. This document is the prose half, and it is the half the sides ar
 rely on, what none of them may, and what changing the contract costs.
 
 C2 is a contract and not an implementation ([implementation-plan.md](implementation-plan.md) §3). Nothing here
-computes: it holds a record's shape, the two functions that read and write it, a schema, and a stub reader
-(`internal/creds/route_stub.go`, `StubRoute`) that answers "every repository and kind is the project's" and decides
-nothing. I1 deletes exactly that file when it wires the sides. It exists because five tasks are written against the
-same decision at once and cannot wait for each other: **WS11** (the run routes each kind) is the reader; **WS5**
+computes: it holds a record's shape, the two functions that read and write it and a schema, and it held a stub reader
+(`internal/creds/route_stub.go`, `StubRoute`) that answered "every repository and kind is the project's" and decided
+nothing — which I1 deleted, exactly that file and no other, once the sides were wired. It existed because five tasks
+were written against the same decision at once and could not wait for each other: **WS11** (the run routes each kind) is the reader; **WS5**
 (workspace mode in `fugaro credentials serve`), **WS14** (`fugaro doctor`), **WS20** (the live checks) and **WS22**
 (the route's rule) spell its names and its path; and **WS3** (the pin's address field), **WS6** (the workspace root
 deploys the service) and **WS9** (the member publishes the route) build its other side.
@@ -211,8 +211,9 @@ over that path and moves `RulesVersion` with it.
 
 ## What no side may rely on
 
-- **A stub's answer.** `StubRoute` admits nothing, moves nothing and reads no record. Nothing it returns is a
-  decision any side may act on, and I1 deletes the file rather than promoting it.
+- **A stub's answer.** `StubRoute` admitted nothing, moved nothing and read no record. Nothing it returned was a
+  decision any side may act on, and I1 deleted the file rather than promoting it. The reader a run reads its route
+  through is WS11's, over the member's own record.
 - **A kind this code does not know moving anywhere.** `Kinds` is the closed vocabulary of this contract and `Holder`
   has no third value. A side that added a kind moves it in a new version of the record, in this package, and not by
   spelling it into a record and hoping.

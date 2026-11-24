@@ -175,6 +175,23 @@ func TestBoundaryDeniesRunsTheRepoAuthRecord(t *testing.T) {
 	}
 }
 
+// TestBoundaryDeniesRunsTheRepoAccessRecord: the same pair for the repository
+// access record (R4) — the node that says which credentials a repository's runs
+// may be served by, which the service decides each call from and the launch
+// reads to hand a run its access. It is the third record of this package that
+// lives under creds/ with a path built from a name the CLI and the service share
+// rather than from a run's own identity, so it is the third place "the rules
+// deny creds/" could quietly stop being true of the node the code writes: a
+// later move of this family out of creds/ would leave every other test in this
+// repository green, and a run's token could then read — and widen — the
+// credentials its repository's runs are served by.
+func TestBoundaryDeniesRunsTheRepoAccessRecord(t *testing.T) {
+	rules := rulesDocument(t)
+	for _, slug := range boundarySlugs {
+		assertDenied(t, rules, PathRepoAccess(slug), "the record says which credentials a repository's runs may be served by")
+	}
+}
+
 // boundarySlugs are the two slug spellings the paths are built from: the GitHub
 // and the Bitbucket shape a task's own slug has.
 var boundarySlugs = []string{"gh-acme-app-1a2b", "bb-acme-web-9f8e"}

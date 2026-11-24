@@ -113,7 +113,7 @@ export const PROJECTS_SHAPE: SkeletonShape = Object.freeze({
  * PROJECTS_MODELS_SHAPE is the Projects screen's **second** section (console
  * 0.119.0): the routes, the models a run can name and the price catalog's age,
  * drawn from `models ls --json`. The tab is one panel with two reads behind it,
- * and the two are not one section for `COORDINATOR_WINDOW_SHAPE`'s reason -- the
+ * and the two are not one section -- the
  * models read is offline and cheap and does not wait on `budget show`, so a tab
  * that held one mark for both would hold the models behind the budget or the
  * budget behind the models. Its name is its own, so "which of the tab's two reads
@@ -125,58 +125,20 @@ export const PROJECTS_MODELS_SHAPE: SkeletonShape = Object.freeze({
 })
 
 /**
- * COORDINATOR_SHAPE is the shape of what the Coordinator screen's body holds
- * while its read is out: a repository's name and counts, then the rows of the
- * records and collisions under them. The header above that body -- the source
- * line and the console's sentence about the view's age -- is drawn before the
- * read answers, so it is not part of this shape: a skeleton over content that is
- * already on screen would be a second drawing of the same section.
+ * COORDINATOR_SHAPE is the Coordinator tab's **one** section (CG7b, D3210): the
+ * header line, the health line, then the graph's boxes. The v2 tab's queue,
+ * totals, job list and transcript shapes are gone with their reads -- one read,
+ * one mark, one shape.
  *
- * It is one repository's shape and not one per repository, because the document
- * says how many there are only once it lands; the shape is what the panel looks
- * like while that is still unknown.
+ * The header above the drawing -- the source line -- is drawn before the read
+ * answers, so it is not part of this shape: a skeleton over content that is
+ * already on screen would be a second drawing of the same section. The boxes'
+ * count is unknown until the map lands, so the shape is what the canvas looks
+ * like while that is still unknown: a line, then rows of box-sized blocks.
  */
 export const COORDINATOR_SHAPE: SkeletonShape = Object.freeze({
   section: 'coordinator',
   blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row', 'row', 'row']),
-})
-
-/**
- * COORDINATOR_QUEUE_SHAPE and COORDINATOR_TOTALS_SHAPE are the Coordinator
- * screen's two sections above that body (console 0.118.0, K1): the action queue
- * -- the line that counts what is waiting and a row per item -- and the fleet's
- * totals strip. They are exported because the **entry** places them, like
- * Spend's two: the queue is built from four reads (`coordinator.status`,
- * `runs ls`, `plan status`, `budget show`) and the totals from three of them, and
- * a section whose own read is still out wears the shape of what it will hold
- * while the others are already filled.
- *
- * The section names are distinct from the body's, so "which section is still
- * out" is answerable from a tree alone.
- */
-export const COORDINATOR_QUEUE_SHAPE: SkeletonShape = Object.freeze({
-  section: 'queue',
-  blocks: Object.freeze<SkeletonBlock[]>(['line', 'row', 'row', 'row']),
-})
-
-export const COORDINATOR_TOTALS_SHAPE: SkeletonShape = Object.freeze({
-  section: 'fleet',
-  blocks: Object.freeze<SkeletonBlock[]>(['row']),
-})
-
-/**
- * COORDINATOR_WINDOW_SHAPE is the fleet strip's **second** section (console
- * 0.119.0): the runs `runs summary --json` counted in the window and what they
- * spent. The strip is one panel with two reads behind it, and the two are not
- * one section for `COORDINATOR_QUEUE_SHAPE`'s reason -- the window's read is not
- * one of `coordinator status`' three and does not wait on them, so a strip that
- * held one mark for both would have the window's figures behind the sweep's
- * 724 KB document. Its name is its own, so "which of the strip's two reads is
- * still out" is answerable from a tree alone.
- */
-export const COORDINATOR_WINDOW_SHAPE: SkeletonShape = Object.freeze({
-  section: 'window',
-  blocks: Object.freeze<SkeletonBlock[]>(['row']),
 })
 
 /** SkeletonTab is the five views of the navigation, which is the whole list of
@@ -206,12 +168,7 @@ export const SKELETON_SHAPES: Readonly<Record<SkeletonTab, readonly SkeletonShap
   ]),
   spend: Object.freeze([SPEND_CAPS_SHAPE, SPEND_REPORT_SHAPE]),
   projects: Object.freeze([PROJECTS_SHAPE, PROJECTS_MODELS_SHAPE]),
-  coordinator: Object.freeze([
-    COORDINATOR_QUEUE_SHAPE,
-    COORDINATOR_WINDOW_SHAPE,
-    COORDINATOR_TOTALS_SHAPE,
-    COORDINATOR_SHAPE,
-  ]),
+  coordinator: Object.freeze([COORDINATOR_SHAPE]),
 })
 
 /** block draws one block of a kind: a `div` carrying the block class and the

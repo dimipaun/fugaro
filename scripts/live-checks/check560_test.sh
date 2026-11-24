@@ -375,10 +375,12 @@ open(out, "w").write(json.dumps(doc, indent=2) + "\n")
 PY
 }
 
-job_doc() { # job_doc FILE LABEL_FUGARO LABEL_ROLE ARGS SA FUGARO_PROJECT GCP_PROJECT
+job_doc() { # job_doc FILE LABEL_FUGARO LABEL_ROLE ARGS SA FUGARO_PROJECT GCP_PROJECT [TIMEOUT_SECONDS] [MAX_RETRIES]
   python3 - "$@" <<'PY'
 import json, sys
 out, lf, lr, args, sa, fp, gp = sys.argv[1:8]
+timeout = sys.argv[8] if len(sys.argv) > 8 else "600"
+retries = int(sys.argv[9]) if len(sys.argv) > 9 else 0
 doc = {
     "metadata": {"name": "fugarolicence", "labels": {"fugaro": lf, "fugaro_role": lr}},
     "spec": {
@@ -387,8 +389,8 @@ doc = {
                 "template": {
                     "spec": {
                         "serviceAccountName": sa,
-                        "timeoutSeconds": "600",
-                        "maxRetries": 0,
+                        "timeoutSeconds": timeout,
+                        "maxRetries": retries,
                         "containers": [{
                             "image": "europe-west2-docker.pkg.dev/p/coordinator/fugaro:latest",
                             "command": ["/usr/local/bin/fugaro"],
@@ -743,6 +745,18 @@ test_job_foreign_installation() {
   no_fire "a job whose environment names another installation"
 }
 
+test_job_with_another_timeout_is_refused() {
+  local dir=$work/job-timeout
+  prepare "$dir"
+  job_doc "$dir/state/job.json" managed licence "licence renew --job" \
+    "fugaro-licence@$project.iam.gserviceaccount.com" "$fugaro_project" "$project" 900 2
+  run_check "$dir"
+  expect_status "$status" 1 "a licence job with another timeout and retries"
+  expect_row job "600 seconds and no retries" "a licence job with another timeout and retries: the row names what K4.2 pins"
+  expect_contains "$err" "timeout and retries are not the ones" "a licence job with another timeout and retries"
+  no_fire "a licence job with another timeout and retries"
+}
+
 test_premise_machine_key() {
   local dir=$work/machine-key
   prepare "$dir"
@@ -914,6 +928,7 @@ t test_scheduler_foreign_account
 t test_job_missing
 t test_job_is_something_else
 t test_job_foreign_installation
+t test_job_with_another_timeout_is_refused
 t test_premise_machine_key
 t test_premise_manual_key
 t test_premise_no_key

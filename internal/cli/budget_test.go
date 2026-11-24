@@ -866,6 +866,35 @@ func TestPricesShowsLocalOverrides(t *testing.T) {
 	}
 }
 
+// TestBudgetPricesNamesASecondPublishersRows: a row the embedded table prices
+// from a publisher that is not the Claude API — Vertex's Gemini rows (GV3 of
+// docs/model-credentials-routing) — names its own source and the day it was
+// read, on the row. The header line above the table is the embedded table's own
+// source and date, which are the Claude page's, and a row that left them to
+// speak for it would show Vertex's number under Anthropic's page.
+func TestBudgetPricesNamesASecondPublishersRows(t *testing.T) {
+	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: http://127.0.0.1:9 }\n")
+	out, _, err := execute(t, "budget", "prices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gemini, claude := "", ""
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "google/gemini-3-pro") {
+			gemini = l
+		}
+		if strings.HasPrefix(l, "claude-opus-5-5") {
+			claude = l
+		}
+	}
+	if !strings.Contains(gemini, "cloud.google.com") || !strings.Contains(gemini, "2026-11-22") {
+		t.Errorf("the Gemini row does not name where its price came from and when:\n%s", out)
+	}
+	if strings.Contains(claude, "cloud.google.com") {
+		t.Errorf("a Claude row names a source of its own: the table's own is the header line's, and the row is one publisher's price under it:\n%s", claude)
+	}
+}
+
 // TestBudgetPricesJSONPinsTheFigures is the price pin M1 needs: the document
 // `budget prices --json` prints is held against rows written out here, field
 // for field — one embedded Claude row, one row the built-in provider price

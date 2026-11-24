@@ -27,7 +27,11 @@ judged by what reaches it, and the launch refusal KS6 planned), **KS9 by its CM6
 narrows by the repository's access record) and **KS10 by its CM9** (a subscription token leaves
 the agent's environment for every subscription, not only a stage's). **KS13 waits on that plan's
 I1 in their place** (its F37, F50), so keys release B cannot drop a mount before that plan's
-release 1 is integrated. **C1's second fact, "the stage account is served", is not needed** (its
+release 1 is integrated. **Amended 2026-11-22:** credentials belong to models is itself superseded
+in part by [model credentials routing](../model-credentials-routing/README.md) (its D3170), whose
+table supersedes that plan's craft access and which withdraws every task of it that is not merged
+— including the CM6, CM9, CM15 and CM16 that KS6, KS9 and KS10 were replaced by. **KS13 now waits
+on model credentials routing's I1** (its A1, the task that says so here). **C1's second fact, "the stage account is served", is not needed** (its
 F20): one fact per repository, "its credentials are served", covers it. **KS3's clause that offers
 a provider credential "under every auth the service serves" is CM6's** (its F21); KS3 keeps the
 narrowed Check 50 gate and the per-repository Anthropic entry. The owner stopped KS6, KS9 and KS10
@@ -61,7 +65,7 @@ are the last commit and were not reviewed again.
 
 **What a reader should not take from here:** no task is approved; each needs the owner's go by name.
 Release A is not cut before the owner has run Check 50 and KS20 has merged. Release B (KS13,
-KS11, KS14 to KS16) is not launched before release A is cut, and KS13 not before credentials
-belong to models' I1 has merged. KS14 and KS15 also
+KS11, KS14 to KS16) is not launched before release A is cut, and KS13 not before model
+credentials routing's I1 has merged (2026-11-22; credentials belong to models' own I1 before it). KS14 and KS15 also
 wait on the plan that removes budget mode off, which is not written yet, and KS16 on secrets
 brokering's B5.7, which is not started. Checks 50, 780 and 781 are owner-run.

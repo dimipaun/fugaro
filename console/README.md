@@ -113,19 +113,30 @@ Task 4.4 added it back, exactly pinned, with the code that uses it.
 `pinning.test.ts`'s runtime allow-list holds the set to that one entry, and a
 second one is a deliberate edit there with the case for it written down.
 
-**The Node is pinned exactly too: `engines.node` is `22.23.3`, not a range.**
-It is the version every command in this task was run on, and it is a member of
-both pinned tools' own engine ranges (Electron 45.2.3 declares `>= 22.12.0`,
-Vitest 5.1.0 declares `^22.12.0 || ^24.0.0 || >=26.0.0`), so nothing in the
-toolchain is asking for anything narrower. A range here would have been the one
-float left in a task whose whole subject is exact pins — and the plan already
-hands this field to CI (Task 1.4's `actions/setup-node` takes its version from
-it), so an exact value is what makes the runner's Node the same Node the tests
-were written against. Bumping it is a deliberate edit, like every other pin, and
-`test/unit/pinning.test.ts` refuses a wildcard, a tag or an operator in this
-field the way it refuses one in a specifier. `.npmrc` sets `engine-strict=true`,
-so a reader whose Node is another version finds out at install time rather than
-in a test failure nobody can explain.
+**The Node is the one field pinned to a range: `engines.node` is
+`>=22.23.3 <23` — a floor and the next major as its ceiling.** The floor is the
+version every command in this task was run on, and it is a member of both pinned
+tools' own engine ranges (Electron 45.3.1 declares `>= 22.12.0`, Vitest 5.1.0
+declares `^22.12.0 || ^24.0.0 || >=26.0.0`), so nothing in the toolchain is
+asking for anything narrower. The ceiling is what keeps it a pin on that line: an
+open `>=22.23.3` would let CI resolve this field (Task 1.4's
+`actions/setup-node` takes `node-version-file: console/package.json`) onto
+whatever major the runner had, and a floor with a ceiling on the major after it
+is the narrowest field that still installs.
+**It was an exact version, `22.23.3`, until 2026-11-22, and the pin was the
+fault.** `.npmrc` sets `engine-strict=true`, so `npm ci` on Node 22.23.5 — the
+next patch of the very line the toolchain was tested on, and a version Electron
+and Vitest both accept — failed with `EBADENGINE`, and the fix a reader reached
+for was to install an older Node rather than to run the tests. The cost of the
+change is worth naming: CI's Node *line* is unchanged (still 22, still read from
+this file), but the *patch* is now the newest 22.x the runner can install rather
+than the one fixed version, because `actions/setup-node` resolves a range the way
+npm does. Bumping the floor is a deliberate edit, like every other pin, and
+`test/unit/pinning.test.ts` refuses a wildcard, a tag, a caret or tilde, a floor
+with no ceiling and a ceiling that is not the floor's next major — an exact
+version included, which is the shape this field had before. `.npmrc` sets
+`engine-strict=true`, so a reader whose Node is outside the range finds out at
+install time rather than in a test failure nobody can explain.
 
 ### Commands
 
@@ -566,15 +577,16 @@ own bundle.
 **A refusal's text is bounded, and the reason is a hostile `error.message`.**
 Design §6.3 wants the CLI's own sentence shown verbatim, and a CLI sentence is
 short and dull; a handler that threw with four megabytes in it, or with a
-newline, an escape sequence or `/home/you/.fugaro/secrets.yaml` in it, would put
-all of that in a renderer that is entitled to treat a reply as the console's own
-words. `replyReason` therefore flattens a message to one line, drops control
-characters and invisible format characters (bidi overrides and isolates,
-zero-width characters), replaces absolute paths (POSIX, `~/`, drive-letter and
-UNC, after a space, quote, backtick, bracket, `;` or `:`, and a `file://` URL
-whole) with `<path>` while leaving a web URL whole, and cuts at 2 KB with an
-ellipsis, never inside a surrogate pair. The test that an ordinary CLI
-sentence comes through byte for byte is what keeps those three from eating the
+newline or an escape sequence in it, would put all of that in a renderer that is
+entitled to treat a reply as the console's own words. `replyReason` therefore
+flattens a message to one line, drops control characters and invisible format
+characters (bidi overrides and isolates, zero-width characters), and cuts at
+2 KB with an ellipsis, never inside a surrogate pair. It replaces nothing else:
+a path in a refusal (POSIX, `~/`, drive-letter and UNC, or a `file://` URL) is
+the operator's own directory and the remedy the refusal names, so it stays as
+written (D3213), and the renderer's `sanitizeRefusal` is what masks a secret,
+wherever one stands. The test that an ordinary CLI
+sentence comes through byte for byte is what keeps those two from eating the
 case the design asks for. The same shape applies to what the console *accepts*:
 after the argument-count bound, a payload's own width (every key plus every
 scalar value) is bounded at `MAX_PAYLOAD_WIDTH`, set deliberately above what the
@@ -661,7 +673,7 @@ allow-list drives `budget kill`, or `--follow`, or any other row.
 | a schema accepting an extra key, a prototype-pollution key, a path, a command, a control or format character, an oversize string or a wrong type | the table entry that names it |
 | one kind shared by two commands whose flags are not one grammar | the per-command window table, row by row, and "gives each command its own window kind" |
 | the sender check removed, or any of its three checks (frame present, frame *is* the main frame, frame URL on the console's origin) | the "sender gate" tests: 12 failures for the check as a whole, and the row named for each individual check |
-| a handler's message left unbounded, or its control characters or absolute paths left in | "bounds a handler's own message", "keeps a refusal to one line", "takes an absolute path out of a handler's message" |
+| a handler's message left unbounded, or its control characters left in | "bounds a handler's own message", "keeps a refusal to one line" |
 | `assertReachableSurface(CONSOLE_OPERATIONS)` removed from registration, or moved after the channels are on | "checks the surface before it registers anything" |
 | the allowed-flags half of `assertReachableSurface` removed (a flag the never table does not even list) | "refuses a table with a flag the never table does not even list" |
 | a never-table *flag* row renamed away | "carries a never-table row for *flag*", one test per flag |
@@ -4419,11 +4431,13 @@ checkout, or one from a branch ago on the machine of whoever runs it next (revie
 2026-10-20, high finding). It **needs a display**: Electron opens a real window, so this
 is a run on a Mac with a desktop session and never a run in CI — the script's own header says
 so, and with no display the launch fails and the command exits non-zero. It refuses to start
-on any Node but the exact one `package.json`'s `engines.node` pins (`.npmrc` sets
+on any Node outside the range `package.json`'s `engines.node` declares (`.npmrc` sets
 `engine-strict=true`, so `npm ci` is the check) with a one-line error rather than a stack
-trace — and the version it wants is *read from that file* and compared exactly, because a
-major-only guard lets Node 22.11 through to precisely the `npm ci` EBADENGINE failure the
-guard exists to prevent, with a message that said the version was fine.
+trace — and the range it wants is *read from that file* and asked the way npm asks it
+(is this shell's Node inside the floor and the ceiling), because a major-only guard lets
+Node 22.11 through to precisely the `npm ci` EBADENGINE failure the guard exists to prevent,
+with a message that said the version was fine, while a guard comparing the whole string
+would refuse the newer 22.x patch the range exists to allow.
 
 ### What it launches, and the checks that keep it fake
 

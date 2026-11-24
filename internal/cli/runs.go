@@ -66,11 +66,18 @@ type lsOptions struct {
 // They are the vocabulary a row's `status` carries, never the decorated cell
 // statusCell prints -- `failed (preempted)` is --state failed, as a reader
 // switching on status has always seen it.
+//
+// `paused` is the run's own status word (R15) and belongs here with the
+// others: a run that suspended itself is a state a reader asks a listing for,
+// and it is a scan rather than a live query, because a pause ends the run's
+// execution and releases its lease (R12, runs_live.go). It is also the state
+// of the pull request such a run is on, and it is deliberately not one of the
+// three in lsPRStates -- that list's own note says why.
 var lsStates = []string{
 	string(runstore.StatusCancelled), runview.StatusError, string(runstore.StatusFailed),
 	string(runstore.StatusHalted), string(runstore.StatusInfraError), runview.StatusLaunching,
-	runview.StatusPending, string(runstore.StatusRunning), string(runstore.StatusSucceeded),
-	runview.StatusUnlaunched, string(runstore.StatusUnreviewed),
+	string(runstore.StatusPaused), runview.StatusPending, string(runstore.StatusRunning),
+	string(runstore.StatusSucceeded), runview.StatusUnlaunched, string(runstore.StatusUnreviewed),
 }
 
 // prLookback is runs ls --pr's default --since: run --pr's window
@@ -255,7 +262,7 @@ func newRunsCmd() *cobra.Command {
 		Use:   "runs",
 		Short: "List and inspect runs",
 	}
-	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsSummaryCmd(), newRunsDigestCmd(), newRunsReportsCmd(), newRunsShowCmd(), newRunsWatchCmd())
+	cmd.AddCommand(newLsCmd(), newRunsStatsCmd(), newRunsSummaryCmd(), newRunsDigestCmd(), newRunsReportsCmd(), newRunsShowCmd(), newRunsWatchCmd(), newRunsReindexCmd())
 	return cmd
 }
 
@@ -695,6 +702,11 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// that listing found: its answer is the join's, so the two states cost one
 	// backend call and never two (U2).
 	execs := map[string]backend.Execution{}
+	// listed is set only when the listing below is the whole of the window: an
+	// execution it lacks is then one the platform no longer holds, which is
+	// what a read of it would answer, one call per run, for every run of the
+	// window whose execution Cloud Run has already deleted.
+	listed := false
 	switch {
 	case live != nil:
 		execs = live.execs
@@ -712,6 +724,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 				execs[id.Key()] = e
 			}
 		}
+		listed = true
 	}
 
 	// The price book warns through warnf too: a VM run whose region or
@@ -722,7 +735,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	rows := make([]runview.Row, len(runs))
 	errs = make([]error, len(runs))
 	parallelN(len(runs), followWorkers, func(i int) {
-		if errs[i] = followExecution(ctx, env, &runs[i], execs, warnf); errs[i] == nil {
+		if errs[i] = followExecution(ctx, env, &runs[i], execs, listed, warnf); errs[i] == nil {
 			rows[i] = runview.Join(runs[i].in, prices, now)
 		}
 	})
@@ -742,11 +755,36 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 			reviewing[rows[i].RunID] = pr
 		}
 	}
+	// The run that resumed each paused run of the window, by the paused run's
+	// key: the resumer's own task names the paused run under `resumes`
+	// (task.Spec.Resumes, contract-pause R17), and the paused run's chain
+	// cannot — ResolveChain walks backwards, so a paused run's chain holds its
+	// ancestors and never the run the orchestrator launched to pick it up.
+	// Built before the filters below narrow the rows, like the states beside
+	// it: a resumer is often a run those filters drop, and the paused row it
+	// names still reads who resumed it. The first in the listing's own order
+	// wins, which is the newest launch (newerRow) — two runs naming one pause
+	// is a state the resume guards exist to prevent, and the listing must not
+	// flip between two answers on consecutive reads.
+	resumers := map[string]string{}
+	for i := range rows {
+		if t := runs[i].in.Task; t != nil && t.Resumes != "" {
+			key := pauseRowKey(rowRef(rows[i]).Slug, t.Resumes)
+			if _, ok := resumers[key]; !ok {
+				resumers[key] = rows[i].RunID
+			}
+		}
+	}
 	// The state of each pull request the window holds, set before the filters
 	// below pick the page: a state is the pull request's, read from every run
 	// of it the listing read, so it is the same on every row of a page as on
-	// the rows the filters below dropped.
-	markPRStates(rows, reviewing)
+	// the rows the filters below dropped. The pause of a paused row is stamped
+	// here too, and from the same lookup: the state of its pull request and the
+	// instant its own row shows are two questions about one node, and the
+	// lookup reads it once (pauseFactsFor).
+	pauses := pauseFactsFor(ctx, env, warnf)
+	markPRStates(rows, reviewing, pauses)
+	markPauses(rows, resumers, pauses)
 	// A review run --pr kept for the fold alone is not a row it prints: the
 	// state every row of the pull request carries is read from it, and the
 	// review itself is not one of the pull request's own runs. rows is runs
@@ -999,8 +1037,12 @@ func readRecord(ctx context.Context, s *runstore.Store, rd runcache.Reader) (*ru
 }
 
 // followExecution joins r with its execution, from execs (the listing)
-// or, when the listing lacks it, from the backend.
-func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs map[string]backend.Execution, warnf func(string, ...any)) error {
+// or, when the listing lacks it, from the backend. A listing that is the whole
+// of the window (listed) is the platform's answer for every run in it, so a run
+// it lacks has no execution and none is read: a read would be one request per
+// run of the window, which on a long history is thousands against a quota the
+// launches share.
+func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs map[string]backend.Execution, listed bool, warnf func(string, ...any)) error {
 	in, s, name := &r.in, r.store, r.execution
 	if name == "" || in.Problem != "" {
 		return nil
@@ -1017,7 +1059,15 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 	if e, ok := execs[eid.Key()]; ok {
 		hint = &e
 	}
-	x, err := env.checkExecution(ctx, hint, name, in.Slug, in.RunID)
+	var (
+		x   *backend.Execution
+		err error
+	)
+	if hint != nil || !listed {
+		x, err = env.checkExecution(ctx, hint, name, in.Slug, in.RunID)
+	} else {
+		err = env.checkExecutionName(name)
+	}
 	if err != nil {
 		in.Problem = "not following its execution: " + err.Error()
 		warnf("warning: run %s/%s: %s\n", in.Slug, task.ShortRun(in.RunID), in.Problem)
@@ -1143,6 +1193,11 @@ func printDoc(w io.Writer, project string, rows []runview.Row, tot runview.Total
 	// that died before bootstrap, has none and does not widen every other
 	// run's columns for it.
 	showMode := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Rigor != nil })
+	// The resume column appears only when some listed run ended paused
+	// (contract-pause R15, D3195): a listing whose window holds no paused run
+	// does not widen every other run's columns for a cell it would leave `-`
+	// on every row of the page.
+	showResume := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Status == string(runstore.StatusPaused) })
 	// RUN is the ending a person reads, says and types back (spec.md §1), and
 	// the repository has the column beside it: together the two are what
 	// Row.Run carries as `<slug>/<run-id>` and what --json keeps whole (D1705).
@@ -1164,6 +1219,9 @@ func printDoc(w io.Writer, project string, rows []runview.Row, tot runview.Total
 	}
 	if showMode {
 		header += "\tMODE"
+	}
+	if showResume {
+		header += "\tRESUME"
 	}
 	fmt.Fprintln(tw, header)
 	endings := runEndings(rows)
@@ -1203,6 +1261,9 @@ func printDoc(w io.Writer, project string, rows []runview.Row, tot runview.Total
 		}
 		if showMode {
 			line += "\t" + modeCell(r)
+		}
+		if showResume {
+			line += "\t" + pauseCell(r)
 		}
 		fmt.Fprintln(tw, line)
 	}
@@ -1379,7 +1440,37 @@ func statusCell(r runview.Row) string {
 	return r.Status
 }
 
-// changedFilesCell is a row's recorded changed-path count (design D27): the
+// pauseCell is a paused run's resume fact for the listing's RESUME column
+// (contract-pause R15, D3195): the instant the orchestrator will resume its
+// chain at, in RFC 3339 UTC like the document's other instants, and the run
+// that resumed it, shortened the way a run id is spelled in a cell
+// (task.ShortRun). It is the two facts `internal/watch`'s plain frame draws for
+// a paused finished row, spelled for this table.
+//
+// `-` for a run that is not paused, and for a paused run whose pause this read
+// could not see at all: a node the lookup could not read leaves the instant
+// unknown and a listing that holds no resumer leaves the resumer unknown, and
+// an unknown answer is never rendered as an empty one (the rule the changed-
+// files and mode cells beside it follow). A paused run the reader can place
+// always has at least one of the two, since the node names the instant it was
+// written with.
+func pauseCell(r runview.Row) string {
+	if r.Status != string(runstore.StatusPaused) {
+		return "-"
+	}
+	var parts []string
+	if r.ResumeAt != nil {
+		parts = append(parts, r.ResumeAt.UTC().Format(time.RFC3339))
+	}
+	if r.ResumedBy != "" {
+		parts = append(parts, "by "+task.ShortRun(r.ResumedBy))
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return cellOneLine(strings.Join(parts, " "))
+}
+
 // count of paths the record holds, and "N/M" when the record was truncated at
 // M paths, so a reader can see that the set it holds is not the whole set.
 // "-" for a run that recorded none — an unknown answer, never a zero.

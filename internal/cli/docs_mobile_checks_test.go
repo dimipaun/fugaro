@@ -142,7 +142,7 @@ func TestDocsMobileChecklistHasCheck81And82And89(t *testing.T) {
 				"Paste back:",
 				"Restore",
 			},
-			refuses: []string{"FUGARO_LIVE_", "policyRules = 1"},
+			refuses: []string{"FUGARO_LIVE_", "policyRules = 1)"},
 		},
 		{
 			heading: "## Check 89:",
@@ -328,7 +328,7 @@ func TestDocsMobileChecklistHasChecks80And83To88(t *testing.T) {
 		{
 			n:     "80",
 			row:   []string{"never `belong`", "P5.1"},
-			stops: []string{"[ -f \"$ROOT/internal/cli/mailbox.go\" ]", "mailboxHandOff", "--orchestrator", "P5.1c"},
+			stops: []string{"[ -f \"$ROOT/internal/cli/mailbox.go\" ]", "mailboxHandOff", "ensureOrchestratorBlock", "P5.1c"},
 		},
 		{
 			n:     "83",

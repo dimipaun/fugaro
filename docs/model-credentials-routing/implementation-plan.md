@@ -95,8 +95,9 @@ by the task named.
 ## What becomes of the earlier plan (D3170)
 
 `docs/credentials-belong-to-models` keeps what is merged and its two-release shape. Every task
-of it that is not merged is withdrawn and carried here. A1 writes this table into that plan's
-own documents. **The owner stops the withdrawn tasks by hand before any launches (O1)**; C1's
+of it that is not merged is withdrawn and carried here, except CM2 (per-repository crafts), which
+is not replaced: one table per project, and RT2 carries admission. A1 writes this table into that
+plan's own documents. **The owner stops the withdrawn tasks by hand before any launches (O1)**; C1's
 draft pull request #3460 is closed unmerged.
 
 | Earlier task | State | Here |
@@ -456,7 +457,7 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### CS2: the gateway says which stage a call is for
 
 - Module: `chain-serving`.
-- Acceptance: The in-job gateway sends the run's current stage on every call to the service and no model header (the service reads the body), reads the answer's source and fallback members into the step's record hook, and strips them before the agent sees the answer (they join the explicit list in `dropResponseHeaders`); it holds no key and no table (R2).
+- Acceptance: The in-job gateway sends the run's current stage on every call to the service and no model header (the service reads the body), reads the answer's source and fallback members into the step's record hook, and strips them before the agent sees the answer (they join the explicit list in `dropResponseHeaders`). The stage header is the gateway's own: it is set from the run's current stage and the caller's copy is dropped before it is set, the same rule and place as `HeaderProvider` in `serviceUpstream` — an agent that could send it would make the service answer in full, and a release-behind gateway passes an unknown answer header to the agent — and the mirror test carries the request side with the names. It holds no key and no table (R2).
 - Files: `internal/gateway/service.go`, `internal/gateway/chainwire.go` (new), `internal/gateway/chainwire_test.go` (new), `internal/gateway/gateway.go`, `internal/gateway/forward.go`.
 - Interfaces: Consumes C1's wire names. Produces the hook CS8 reads and the file CS4 extends.
 - Tests: `TestGatewaySendsTheStage`, `TestTheAgentNeverSeesTheSource`.
@@ -671,11 +672,11 @@ The keys plan's KS13 waits on that plan's I1; A1 re-points it at this plan's I1.
 ### MG3: the old record is written beside the table for one release
 
 - Module: `migration`.
-- Acceptance: For release 1 `fugaro update` keeps writing `creds/repoauth/<slug>` as today, so a run that bootstrapped on the release behind still resolves; the service reads the table first and the old record only for a run whose image predates the table; the old record is derived from the table on every write of either (`update`, `routing set`, an admission change), so it is never wider than the table and a call that omits the stage header to reach the old path gains nothing; the update's in-flight line counts such runs.
+- Acceptance: For release 1 `fugaro update` keeps writing `creds/repoauth/<slug>` as today, so a run that bootstrapped on the release behind still resolves; the service reads the table first and the old record only for a run whose image predates the table; the old record is derived from the table on every write of either (`update`, `routing set`, an admission change), so it gains no source the table does not have, and the entries D3196 leaves on it — the ones the checks refuse — stay there, so it is wider than the table by exactly those and never wider than the repository's own pre-migration access; the walk reads the record only for a run whose image predates the table, so a call of this release reaches the old path never, whatever header it sends; the update's in-flight line counts such runs.
 - Files: `internal/cli/update_repoauth.go`, `internal/cli/update_repoauth_table_test.go` (new), `internal/credsvc/legacy_auth.go` (new), `internal/credsvc/legacy_auth_test.go` (new), `internal/cli/update_in_flight.go`.
 - Interfaces: Consumes C1. Produces the bridge X4 removes.
-- Tests: `TestTheOldRecordIsStillWritten`, `TestAnOlderRunStillResolves`, `TestTheOldRecordIsNeverWiderThanTheTable`.
-- Command: `go test ./internal/cli/ -run 'TestTheOldRecordIsStillWritten|TestTheOldRecordIsNeverWiderThanTheTable' -count=1` and `go test ./internal/credsvc/ -run 'TestAnOlderRunStillResolves' -count=1`
+- Tests: `TestTheOldRecordIsStillWritten`, `TestAnOlderRunStillResolves`, `TestTheOldRecordGainsNoSourceTheTableLacks`.
+- Command: `go test ./internal/cli/ -run 'TestTheOldRecordIsStillWritten|TestTheOldRecordGainsNoSourceTheTableLacks' -count=1` and `go test ./internal/credsvc/ -run 'TestAnOlderRunStillResolves' -count=1`
 - Red step: `TestAnOlderRunStillResolves` fails once CS1 is in and before this bridge exists; before CS1 it is written to fail on the missing file.
 - Depends on: C1 (the contract's names).
 - Commit: `model-credentials-routing MG3: the old record is written beside the table for one release`

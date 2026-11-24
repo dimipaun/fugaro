@@ -19,7 +19,7 @@ func TestValidateResolvesAMinimalFile(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	layerCheckout(t, f, minimalAnchored)
+	layerCheckout(t, f, pinnedMinimal)
 	out, errOut, err := execute(t, "validate")
 	if err != nil || !strings.Contains(out, "fugaro.yaml is valid") || !strings.Contains(errOut, "uses the project layer") {
 		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
@@ -30,7 +30,7 @@ func TestValidateWithAProjectLayerFile(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, "") // none published
-	layerCheckout(t, f, minimalAnchored)
+	layerCheckout(t, f, pinnedMinimal)
 	dir := t.TempDir()
 	testutil.WriteFiles(t, dir, map[string]string{"layer.yaml": testProjectLayer, "bad.yaml": layerWithDefaults("  budget: { per_run_usd: 1 }\n")})
 	if out, _, err := execute(t, "validate", "--project-layer", filepath.Join(dir, "layer.yaml")); err != nil || !strings.Contains(out, "is valid") {
@@ -80,7 +80,7 @@ func TestValidateOfflineWarnsForAFullFile(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	layerCheckout(t, f, pinnedMinimal+"git: { provider: github }\nworkflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n")
 	out, errOut, err := execute(t, "validate", "--offline")
 	if err != nil || !strings.Contains(out, "is valid") || !strings.Contains(errOut, "project layer") || !strings.Contains(errOut, "was not checked") {
 		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
@@ -144,7 +144,7 @@ func TestValidateWarnsWhenAWorkflowUsesAProfile(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	layerCheckout(t, f, minimalAnchored)
+	layerCheckout(t, f, pinnedMinimal)
 	_, errOut, err := execute(t, "validate")
 	if err != nil || !strings.Contains(errOut, "profiles need fugaro "+layeredSince) {
 		t.Fatalf("stderr %q, err %v", errOut, err)
@@ -161,7 +161,7 @@ func TestValidateJSONCarriesTheLayerSHA256(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	layerCheckout(t, f, minimalAnchored)
+	layerCheckout(t, f, pinnedMinimal)
 	out, _, err := execute(t, "validate", "--json")
 	if err != nil {
 		t.Fatalf("err %v\n%s", err, out)
@@ -190,7 +190,7 @@ func TestValidateShowsTheRealLayerSHA256Prefix(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
-	layerCheckout(t, f, minimalAnchored)
+	layerCheckout(t, f, pinnedMinimal)
 	_, errOut, err := execute(t, "validate")
 	if err != nil {
 		t.Fatalf("err %v\nstderr %s", err, errOut)
@@ -357,6 +357,9 @@ func TestRunMemoizesTheLayerReadThroughTheRealCommand(t *testing.T) {
 		"git: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n" +
 		"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"})
 	t.Chdir(dir)
+	// The job image every launch of this installation needs a build record for
+	// (AB4, F7: a launch that mints is judged by the seal's image gate).
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", releaseSeal)
 
 	reads := 0
 	read := layerRead

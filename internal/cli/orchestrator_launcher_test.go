@@ -1198,6 +1198,9 @@ func TestResidentRunIsTheItemsRefusesAFieldNoLaunchWrites(t *testing.T) {
 		{"the branch of a follow-up", "the pull request of a follow-up", func(ts *task.Spec) { ts.Branch = "feature" }},
 		{"the pull request of a follow-up", "the pull request of a follow-up", func(ts *task.Spec) { ts.PR = 7 }},
 		{"the run a follow-up continues", "the pull request of a follow-up", func(ts *task.Spec) { ts.PreviousRun = runID }},
+		{"the pause a resumed run picks up", "a resumed run's pause", func(ts *task.Spec) {
+			ts.Branch, ts.PR, ts.PreviousRun, ts.Resumes = "fugaro/"+runID, 7, runID, runID
+		}},
 		{"review pull requests", "review pull requests", func(ts *task.Spec) { ts.ReviewPRs = []int{7} }},
 		{"a change set", "a change set", func(ts *task.Spec) {
 			ts.ChangeSet = &task.ChangeSet{ID: runID, Members: []task.ChangeSetMember{{Repo: "acme/app", RunID: runID}}}
@@ -1299,7 +1302,7 @@ func TestResidentTaskFieldsAreAllClassified(t *testing.T) {
 	compared := []string{"repo", "task", "title", "plan_task", "tier", "external", "recipe"}
 	resolved := []string{"version", "run_id", "ref", "base_branch", "workflow", "requested_by",
 		"mode", "oauth_token", "overrides", "project_layer", "author", "digest_runs"}
-	refused := []string{"branch", "pr", "previous_run", "owner_ruled", "context_repos", "review_prs",
+	refused := []string{"branch", "pr", "previous_run", "resumes", "owner_ruled", "context_repos", "review_prs",
 		"change_set", "inputs", "reports", "ab", "mutate", "paths", "rigor", "batch", "review_levels",
 		"expected_scope", "follow_up_of", "model_grade", "review_class", "compression_off", "debt", "security",
 		"review_spec", "from_findings", "own_text"}

@@ -90,8 +90,9 @@ It is a name condition on the accessor rather than a second implementation of an
 **Nobody else.** The container is in the workspace's project, so no member's admin reads it through
 their own project's IAM, and a member holds no grant on the workspace's project beyond the invoke
 grants of its job accounts (`tf.Cover.WorkspaceNotCovered`, `internal/infra/tf/workspace.go`: the one
-accessor on the bundle and invoke grants to member job accounts are the whole of what a plan of that
-root may add, and the one deletion it admits is a member's invoke grant — F15). Another roster person
+accessor on the bundle, the conditioned accessor above, invoke grants to member job accounts and one
+invoke grant per address for each `human` of the roster are the whole of what a plan of that root may
+add, and the two deletions it admits are a member's and a person's invoke grant — F15, WC2). Another roster person
 reads nothing of it: a grant names only the caller's own personal names (`checkGrantedNames`,
 `internal/credsvc/slip.go`; D2962). A launcher reads nothing of it: the grant's answer is a slip id and
 a runtime (`SlipGrantResponse`). A run reads nothing of it: no value is handed to a run, a CLI or a
@@ -119,9 +120,12 @@ the token out of band. That is one reach and not two, and it is stated once more
 residual risk.
 
 **What a deletion does.** A container that is missing, or holds no version, **refuses** the call and
-names `fugaro secrets user set`; it never falls to a bundle entry (R7, D2974). So deleting a token is
-a denial of that person's runs on their own subscription, visible and named, and never a silent move
-to a paid shared entry. A member's admin turning the member's switch off is the same thing by another
+names `fugaro secrets user set`; it never falls to a bundle entry (R7, D2974). So a deletion refuses a call
+that names the token, visibly, and never moves it to a paid shared entry. **It is not loud for a run
+that has not yet asked:** on the person's next launch the grant answers `held:false` and the run
+starts on the shared entries exactly as before and prints nothing (contract-person.md, R8), so a
+deletion or a replacement can silently move a person's runs onto paid shared entries or through
+another account (§11, finding 5). A member's admin turning the member's switch off is the same thing by another
 route, and it is theirs to set (§4).
 
 ## 4. Who can spend a token, and for how long
@@ -130,12 +134,17 @@ route, and it is theirs to set (§4).
 exactly: a grant answers a slip's **id** and nothing secret (`SlipGrantResponse`); the launcher hands
 the id to the job, and the job's claim is answered the claim secret once, which the run keeps out of
 its environment (`slipHold`, `internal/runner/budget_session.go`); the claim is held to the run's
-verified identity and job account; and a slip serves until `maxSlipRuntime`, 24 hours
-(`internal/credsvc/slip.go`). A call under the slip, with the member's switch on, is served the
+verified identity and job account; and a slip serves until `maxSlipRuntime`, 24 hours **counted from
+its claim** (`internal/credsvc/slip.go`; `creds.Slip.Expires` is `Claimed.At + MaxRuntime`). That
+clock starts only at the claim, and an unclaimed record carries no creation time, so as the code
+stands **a grant nobody has claimed never expires**; the owner narrowed that (§11, finding 1): WC4
+gives a workspace slip a **claim deadline counted from the grant**, chosen and pinned by WC4, after
+which the slip cannot be claimed. Every bound below is read with that deadline. A call under the slip, with the member's switch on, is served the
 person's token as one more subscription candidate and reserves nothing against the workspace's cap
 (R7, D2965, workspace-service R15).
 
-**A member's admins, for up to 24 hours after that person launched a run in that member.** The claim
+**A member's admins, for a claim deadline counted from the grant (chosen and pinned by WC4) plus up to
+24 hours from the claim, after that person launched a run in that member.** The claim
 is held to the run's verified identity and job account, and both are the member's: the identity is
 minted in the member's own Firebase project, which its admins can forge (D1943's class, dynamic
 delivery F33), and the image the run executes is theirs. So a member's admins can claim a person's
@@ -154,13 +163,18 @@ spend the token (F14). `fugaro run` says in one line that it draws on the person
 launched in carry no slip, so that member's switch exposes nothing of theirs *through their own
 runs*; it is no fence against the replay below, whose grant names any member's job account.
 
-**The replay, and about 25 hours.** The grant of R3 is asked at the workspace service's address, which
-a run and a launcher read from the member's own published route (workspace-service R3, R4). A member
-admin who publishes a **false** address receives the identity token of whoever launches there and can
-replay it while it lives: the services accept gcloud's own audience (`GcloudAudience`,
-`internal/credsvc/launchers.go`), so the replay is not limited to the workspace and works at **every
-Fugaro service that admits that person**, the intakes of their other projects included (F24, corrected
-after review round 3; D1939 and D1944 accepted the replayability of such a token). What the replay can
+**The replay, and the bound the review corrected.** The grant of R3 is asked at the workspace service's
+address, which a run and a launcher read from the member's own published route (workspace-service R3,
+R4). A member admin who publishes a **false** address receives the identity token of whoever launches
+there and can replay it while it lives: the services accept gcloud's own audience (`GcloudAudience`,
+`internal/credsvc/auth.go`), and Cloud Run accepts that token at **any Cloud Run service the person can
+invoke**, the intakes of their other projects included (F24, corrected after review round 3 and again
+by the review of this file; D1939 and D1944 accepted the replayability of such a token). **The false
+address is not needed for the reach.** On every switched-on launch the launcher sends the person's
+gcloud-audience token to the member's own credentials service (`slipGrantOverService` and
+`slipIdentity` in `internal/cli/run.go`, and `serviceReadIdentity` and `pairIdentity`), whose
+deployment the member's admins control, so a member's admins receive it with no false address at all
+(§11, finding 2). What the replay can
 do, in the hour the token lives: **ask for grants as the person**, naming **any member's job account**
 — R3 holds the account to a member row of the node and the repository to that account's list, and
 nothing on the route ties the grant to the member the person launched in (F24) — and **replace or
@@ -168,17 +182,24 @@ delete the person's own secrets** at any intake that admits them, and a project'
 the person is an admin of that project. What it cannot do: **read a token**, which a grant never
 answers (D2962), and **spend the slip it takes**: the claim is held to the run's verified identity and
 job account, so a grant naming a second member's job account is spent by *that* member's admins. A
-grant taken in that time lasts up to 24 hours more, so the window is about **25 hours** — and where
-the replayer administers that second member too, or its admins collude, the subscription is spent in
-a member the person never launched in. §10's third residual risk states it: the window in the member
-the person launched in is the second the owner accepts in words (O2), and the cross-member reach is
-not in that record, so it is put to the owner in §11. What narrows it as the design stands: the
-identity token is short-lived, and the member's route record carries an address and no key, so the
-replay and not the route is what has to be caught; the address a person stores a token at is read out
+grant taken in that time can be claimed up to the claim deadline after the grant (chosen and pinned
+by WC4) and then serves up to 24 hours from the claim, so the window ends at most the token's hour,
+plus that deadline, plus 24 hours; the "about 25 hours" this file first stated was false, because
+with no claim deadline an unclaimed grant never expired (§11, finding 1). Where the replayer
+administers a second member too, or its admins collude, the subscription is spent in a member the
+person never launched in; the owner narrowed that reach to the members the person is a launcher of,
+checked against that member's own list (§11, finding 2). §10's third residual risk states it. What
+narrows it as the design stands: the identity token is short-lived; the address a person stores a token at is read out
 of the **workspace's** project config on that person's own machine and out of nothing a member holds
 or publishes, so the intake leg is not one a member can aim (F23, R13, `intakeURLOf`); and
 `fugaro doctor` calls neither the workspace's service nor its
 intake, so it sends a person's identity nowhere (WC11, declined in the plan's §10).
+
+**The reverse direction.** Every roster person sends their gcloud-audience token to the workspace's
+service on each launch and to its intake (WC9). The workspace's admins, or a compromised workspace
+service, can replay it for about an hour after each launch and reach the person's projects outside the
+workspace: forge read mints, pairing, slips, and intake writes, `fugaro_p_` secrets included where the
+person is an admin of that project. The owner accepted it (§10 risk 10, §11 finding 4).
 
 ## 5. What each actor can do
 
@@ -187,14 +208,15 @@ intake, so it sends a person's identity nowhere (WC11, declined in the plan's §
 The member's own admin holds that member's database write, controls its job images and its published
 policy, and can publish the address its runs read. In this half they can: turn the member's switch on
 or off, because it is their policy (R9); forge a run identity of their member and take a claim secret
-from a run they control, so they spend any slip granted in that member for its life (F14, §4);
-publish a false service address and replay the identity token of whoever launches there at every
-Fugaro service that admits that person (F24, §4); and replace or delete the person's own secrets at
+from a run they control, so they spend any slip granted in that member until it expires (F14, §4);
+replay the identity token of whoever launches there (sent to their own service on every launch, with
+no false address needed) at every Cloud Run service that person can invoke (F24, §4, §11 finding 2); and replace or delete the person's own secrets at
 any intake that admits them, and a project's shared ones where the person is an admin there (F24).
 And, with the replayed identity, ask for a grant of the person's token **naming any member's job
-account**: R3 holds that account to a member row of the node and nothing on the route ties the grant to
-the member the person launched in, so where they administer a second member — or its admins collude —
-the person's subscription is spent in a member the person never launched in (F24, §4, §10 risk 3).
+account**: until the owner's narrowing is built (a grant bound to the members the person is a launcher
+of, §11 finding 2), R3 holds that account only to a member row of the node, so where they administer a
+second member — or its admins collude — the person's subscription is spent in a member the person never
+launched in (F24, §4, §10 risk 3).
 
 What they **cannot** do: read a token's value (§2); spend a slip held to a job account of a member
 they do not administer — the claim is held to that run's own identity and job account, so the reach
@@ -243,8 +265,10 @@ risk is this reach, and it is not closed.
 A run of a person's own in a member executes that member's image, so "compromised" and "the member's
 own act" meet: what the run can do is bounded by its own identity, which is the member's (F14). In
 this half a compromised run can: make model calls under its slip with the member's switch on, and so
-spend the person's subscription while the slip lives (up to 24 hours, though the run's own execution
-is shorter and the slip ends with the run's outcome); and take the claim secret, since the agent
+spend the person's subscription while the slip lives (up to 24 hours from its claim, though the run's
+own execution is shorter); for a workspace slip the run's outcome record is no bound against a hostile
+member, because it sits in the member's own database, which that member's admins write (§11, finding
+8); and take the claim secret, since the agent
 shares the runner's container and reaches what the runner reaches (F22 of dynamic delivery, D1941) —
 `slipHold` keeps the secret out of the environment and out of logs, not out of the run's own process.
 
@@ -271,9 +295,8 @@ one bit. It is bounded and deliberately not closed: **every refusal of a grant i
 no account, repository or person**, so a refusal discloses nothing beyond itself; every grant and every
 refusal writes one audit line, so the probing is visible to the workspace's owner; and what is
 disclosed is a fact about the **workspace's own table** (which job accounts are a member's), not about
-a member's secrets, its people or its policy. D3145 was answered with this residue in view: the roster's
-`grants` list is a record and not a grant, and being on the roster and having launched the run is
-enough, so the list is not asked. §10's eighth residual risk states the residue, as R3 asks WC0 to.
+a member's secrets, its people or its policy. D3145 is **reopened** by the review (§11, finding 2): the roster's `grants` list is a record
+and not a grant, and the owner now binds a grant to the members the person is a launcher of. §10's eighth residual risk states the residue, as R3 asks WC0 to.
 
 ## 7. What offboarding ends, and what it does not
 
@@ -366,8 +389,8 @@ tests that pin the old wording (`TestWorkspaceScopeRefusesACallThatPresentsASlip
 **It becomes:** the first two sentences stand as written. The third does not: with D3146 a removed
 person's grants and their runs in flight **stop within a minute**, because the slip's owner is checked
 against the roster on every call (R3, §7). What remains of the third sentence is its other half: a
-slip whose owner is still on the roster is not ended by anything here and serves up to its 24 hours,
-which is §4's bound for the members who still admit that person. D3146 states the cost of the reversal:
+slip whose owner is still on the roster is not ended by anything here and serves up to 24 hours from
+its claim, which is §4's bound for the members who still admit that person. D3146 states the cost of the reversal:
 it stops the runs of someone removed from the workspace who still holds a role in that member.
 
 ## 9. The two rules of the workspaces design this half keeps
@@ -413,34 +436,36 @@ accepts it.
    spec §6). **Accepted by the workspace's owner**, who names the admins; the same acceptance the model
    this file sits beside records for the member's side, at risk 1 of its §7.
 
-2. **A member's admins can spend a person's subscription in that member for up to 24 hours after that
-   person launched a run there.** The claim is held to the member's own identity and job account, so
+2. **A member's admins can spend a person's subscription in that member for up to 24 hours from the
+   claim of a slip granted when that person launched a run there, the claim itself bounded by a deadline
+   counted from the grant, chosen and pinned by WC4.** The claim is held to the member's own identity and job account, so
    the member's admins can take a slip's claim secret or claim it first and spend it until it expires
    (F14, §4). It is D2970's bound — no spending without an act by the person — and no stronger one.
-   **Accepted by the owner in words** (reconciliation O2), and the cost of D3142's automatic use is
+   The owner's words (O2) were given on "up to 24 hours"; the deadline is the review's correction of a
+   bound that was false (§11, finding 1). **Accepted by the owner in words** (reconciliation O2), and the cost of D3142's automatic use is
    part of it: the switch that exposes the subscription is set by the member's admins, the party that
    can then spend it.
 
-3. **A member admin who publishes a false address can act as a person who launched there while that
-   person's identity token lives, about an hour, at every Fugaro service that admits the person, and a
-   grant taken in that hour reaches a member the person never launched in: the grant names a job
-   account R3 holds only to a member row of the node, and nothing binds it to the route it came
-   through, so a second member whose jobs the replayer administers, or whose admins collude, spends
-   the person's subscription for up to 24 hours more — about 25 hours (F24, D1939, D1944).** What the
+3. **A member's admin can act as a person who launched there while that person's identity token
+   lives, about an hour, at every Cloud Run service the person can invoke, with or without a false
+   address, and a grant taken in that hour reaches a member the person never launched in: the grant
+   names a job account R3 holds only to a member row of the node, so a second member whose jobs the
+   replayer administers, or whose admins collude, spends the person's subscription — the window ends at
+   most the token's hour, plus WC4's claim deadline counted from the grant, plus 24 hours from the
+   claim (F24, D1939, D1944).** The owner has narrowed the reach: a grant is bound to the members the
+   person is a launcher of (§11, finding 2). What the
    replay can do, and what it cannot, are §4's: ask for grants as the person, naming any member's job
    account; replace or delete the person's own secrets at any intake that admits them, and a project's
    shared ones where the person is an admin there; never read a token; never spend the slip itself,
    which that member's own admins claim (F24).
 
    **The window in the member the person launched in is accepted by the owner in words**
-   (reconciliation O2). **The cross-member reach is not in that record** — F24 and O2 both state the
+   (reconciliation O2). **The cross-member reach was not in that record** — F24 and O2 both state the
    narrower one ("grants as that person for jobs of that member"; "cannot run a job in another
-   member") — so it is not read here as accepted: it is put to the owner, and §11 is where that word
-   goes (O1, which is the owner's page and not O2's). What the owner can answer with is the reach as
-   stated, a narrower token, or the narrower grant: one bound to the member the person actually
-   launched in and checked against that member's own list, which is a design decision and not a
-   wording one, because the workspace's service holds no grant to read a member's own list (§8,
-   workspaces spec §4).
+   member") — so it was put to the owner (O1), who answered on 2026-11-22: narrow it, a grant bound to
+   the members the person is a launcher of, checked against that member's own list (§11, finding 2).
+   The mechanism is an open design question for WC4 and WC5's briefs, because the workspace's service
+   holds no grant to read a member's own list (§8, workspaces spec §4).
 
 4. **A person's runs draw on their own subscription by default.** With D3142 the person stored the
    token to use it, and every run they launch in a member whose admins turned the switch on draws on
@@ -452,8 +477,9 @@ accepts it.
    token in one place.** One container per person and name in the workspace's project means one
    account's reach is workspace-wide (D3143, spec §6). What bounds it is not a fence: a token someone
    else replaced is one the person did not write, and the design's answer is that the next run draws on
-   it, while a deletion is loud — a refusal that names `fugaro secrets user set` rather than a silent
-   move to a paid shared entry (R7, D2974, §3).
+   it, while a deletion refuses a call that names the token and
+   moves it to no paid entry (R7, D2974, §3). It is not loud for the person's next launch: the grant
+   answers `held:false` and the run starts on the shared entries and prints nothing (§11, finding 5).
    **Accepted by the workspace's owner**, who holds that account and names its admins.
 
 6. **A person removed from the roster stays admitted at the workspace's intake until the workspace
@@ -484,7 +510,73 @@ accepts it.
    personal token is never lent and never a pool's (spec §6, D2976, R11 of dynamic delivery).
    **Accepted by the person who stores the token**, who chose to store it once for their members.
 
+10. **Every roster person sends their gcloud token to the workspace's service and its intake, and the
+    workspace's admins can replay it.** On each launch and at the intake (WC9) the token goes to
+    services the workspace's admins deploy; they, or a compromised workspace service, can replay it
+    for about an hour after each launch and reach the person's projects outside the workspace: forge
+    read mints, pairing, slips and intake writes, `fugaro_p_` secrets included where the person is an
+    admin of that project. **Accepted by the owner** (2026-11-22, §11 finding 4), as a new residual risk.
+
 ## 11. Review findings and the owner's answers
 
-This section is filled in by the owner after the independent review of this document: each finding is
-recorded here with the owner's answer, and no agent answers one (reconciliation O1).
+An independent security review of this file (read-only, by an Opus security reviewer, 2026-11-22)
+found the eight things below. Each is recorded with the owner's answer. **Answered by the owner
+2026-11-22**, in the owner's own words through a question dialog; an agent only recorded them here, and
+no agent answers one (reconciliation O1, now answered).
+
+1. **High: the "about 25 hours" and "up to 24 hours" bound was false.** A workspace grant nobody has
+   claimed never expires: `creds.Slip.Expires()` is `Claimed.At + MaxRuntime` and an unclaimed record
+   has no creation time, so a replayer can take grants in the token's hour and claim each weeks later;
+   the person cannot end them (rotating the token does not end a slip, and deleting then storing again
+   re-arms them). **Owner: narrow it.** WC4 gives a workspace slip a claim deadline counted from the
+   grant, chosen and pinned by WC4 (its length is WC4's to choose; this file states no number), and
+   the document's bound is corrected to the token's hour plus that deadline plus 24 hours from the
+   claim (§4, §5, §10 risks 2 and 3). Carried into WC4's acceptance and tests and the plan's §2.
+2. **High: F24's cross-member reach needs no false address.** On every switched-on launch the launcher
+   sends the person's gcloud-audience token to the member's own credentials service
+   (`slipGrantOverService` and `slipIdentity` in `internal/cli/run.go`, and `serviceReadIdentity` and
+   `pairIdentity`), whose deployment the member's admins control, and Cloud Run accepts it at any
+   service the person can invoke (the `GcloudAudience` comment in `internal/credsvc/auth.go`), so
+   "the replay and not the route is what has to be caught" and "every Fugaro service" were wrong, and
+   D3145's premise "having launched the run" is checked by nothing. **Owner: narrow it.** A grant is
+   bound to the members the person is a launcher of, checked against that member's own list. **This
+   reopens D3145's `grants` mark**, the one record the workspace can read (reconciliation D3145, F18).
+   The mechanism is an open design question for the briefs of WC4 and WC5: where the member's own
+   list is read from, given that the workspace's service holds no grant to read it.
+3. **Medium-high: the intake address is writable by any launcher.** It comes from
+   `credentials_service.url` in the workspace project's published shared file, which any launcher can
+   write (`internal/localcfg/shared.go`), and only the leading `fugaro-credentials-` label is checked
+   (`validCredentialsServiceURL`), so any launcher of the workspace's project can collect every roster
+   person's raw Claude token, which works outside Fugaro. **Owner: narrow it.** WC9 reads the address
+   from a source only the workspace's admins write (WC9's acceptance). The same weakness for ordinary
+   installations (`secrets user set`) is a follow-up to the dynamic-delivery work, listed below and not
+   a task.
+4. **Medium: the reverse direction.** Every roster person sends their gcloud token to the workspace's
+   service and its intake (WC9), and the workspace's admins can replay it for about an hour after each
+   launch (§4, "The reverse direction"). **Owner: accepted**, as new residual risk 10 (§10).
+5. **Medium: a deletion is loud only for a run that already holds a slip.** On the next launch the
+   grant answers `held:false` and the run starts on the shared entries and prints nothing
+   (contract-person.md, R8). **Owner: accepted**, with the wording "a deletion is loud" corrected (§3,
+   §10 risk 5); no new warning behaviour, because a new warning would be a product decision.
+6. **Medium: the acceptances were not the owner's.** Only risk 2 and the in-member part of risk 3 carry
+   the owner's words (O2), and "D3145 was answered with this residue in view" was unsupported (D3145's
+   question does not mention the probe). **Owner: accepted risks 1 and 4 to 9**, one line each below;
+   the unsupported sentence is struck (§6).
+7. **Low: the check on every call needs the verified address**, and `creds.Slip` stores only the `sub`
+   and the roster holds no id (F11). **Owner: yes.** WC4 stores the case-folded address at grant time
+   (WC4's acceptance).
+8. **Low: "the slip ends with the run's outcome" is no bound against a member's admins**, because for a
+   workspace slip the outcome record sits in the member's own database, which its admins write.
+   **Owner: yes**, the wording is corrected (§5).
+
+**Acceptances, 2026-11-22, by the owner:** risk 1 (a workspace admin reads every token): accepted.
+Risk 4 (runs draw on the person's own subscription by default): accepted. Risk 5 (whoever holds the
+intake's account replaces or deletes any token): accepted. Risk 6 (a removed person stays admitted at
+the intake until the next update): accepted. Risk 7 (a failed grant starts the run on the shared
+entries): accepted. Risk 8 (the grant route's yes/no over a member's pairs): accepted. Risk 9 (one
+subscription, more runs): accepted. Risk 10: accepted. Risks 2 and 3 were accepted in words earlier
+(O2), on the bounds as corrected by findings 1 and 2.
+
+**Follow-ups, not tasks.** The address `secrets user set` reaches for an ordinary installation has the
+same weakness as finding 3, the service address read from the project's shared file that any launcher
+can write; it goes to the dynamic-delivery work as one open item.

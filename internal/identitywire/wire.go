@@ -66,10 +66,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 )
 
-// The five routes (R2), one per ask. Their caller holds no run identity — the
-// ticket is asked for before the run exists and the claim is the run's first
-// call — which is why every one of them is answered ahead of the shared request
-// parse (internal/credsvc's aheadOfTheSharedParse).
+// The five routes of R2, one per ask, and the registration this plan adds to
+// them (JobPath, declared beside its bodies in batchclaim.go) — six paths in
+// one table, read by RouteFor and mounted by the service one by one. Their
+// caller holds no run identity — the ticket is asked for before the run exists
+// and the claim is the run's first call — which is why every one of them is
+// answered ahead of the shared request parse (internal/credsvc's
+// aheadOfTheSharedParse).
 const (
 	// TicketPath is where a launcher asks for a run's ticket (LM6), and where
 	// the resident orchestrator asks for an attempt it re-issues (LM24).
@@ -115,8 +118,8 @@ const (
 	ClassJobAccount CallerClass = "job_account"
 )
 
-// Route is one of the five identity routes: the path it is reached on, the
-// classes it admits, and whether it admits the roster's OPERATORS alone.
+// Route is one of the identity routes: the path it is reached on, the classes
+// it admits, and whether it admits the roster's OPERATORS alone.
 type Route struct {
 	// Path is the route's path.
 	Path string
@@ -129,19 +132,33 @@ type Route struct {
 	OperatorsOnly bool
 }
 
-// routes is the one spelling of the five routes, and the paths of this
-// contract are read from it rather than respelled by a caller.
+// routes is the one spelling of the routes, and the paths of this contract are
+// read from it rather than respelled by a caller.
 var routes = []Route{
 	{Path: TicketPath, Admits: []CallerClass{ClassPerson, ClassServiceAccount, ClassOrchestrator}},
 	{Path: ClaimPath, Admits: []CallerClass{ClassJobAccount}},
 	{Path: PairingPath, Admits: []CallerClass{ClassPerson}},
 	{Path: DevicePath, Admits: []CallerClass{ClassPerson}},
 	{Path: ProbePath, Admits: []CallerClass{ClassPerson}, OperatorsOnly: true},
+	// The registration (BR17, R19). Its classes are the ticket ask's, because
+	// the registration is the ticket ask's second half: the caller that may be
+	// issued a run is the caller that may name the job it launched — and R19
+	// holds it to its own record, since only the identity that asked for the
+	// ticket may write that record's id. A roster service account is a launcher
+	// (D3123, R20) and the resident orchestrator launches attempts it re-issues
+	// under its own class (D3136), so both are here beside the person.
+	{Path: JobPath, Admits: []CallerClass{ClassPerson, ClassServiceAccount, ClassOrchestrator}},
 }
 
-// Routes answers the five routes as the service mounts them: the path, the
-// classes each admits and the probe's own rule. It is a copy, so a caller
-// cannot edit the contract's table.
+// Routes answers the routes as the service mounts them: the path, the classes
+// each admits and the probe's own rule. It is a copy, so a caller cannot edit
+// the contract's table.
+//
+// A route's presence here is the CONTRACT's word and not the mount's: the
+// service mounts these paths one by one (internal/credsvc's servedRoute), and
+// the registration is mounted by BR17 — until then a caller that reaches the
+// path gets the unknown-path answer at the door and no refusal of this
+// contract's.
 func Routes() []Route {
 	out := make([]Route, len(routes))
 	for i, rt := range routes {
@@ -238,6 +255,29 @@ type TicketRequest struct {
 	// (D3136). Every other class leaves it empty, and an orchestrator's ask
 	// that names none is refused.
 	Attempt AttemptID `json:"attempt,omitempty"`
+	// Resumes is the orchestrator's reference to the paused run it continues
+	// (D3189): the run that suspended itself, whose pause the credentials
+	// service recorded and which the run this ticket is for picks up. It is
+	// spelled as the task member a resumed run is launched with
+	// (runstore.PauseMemberResumes), because it is the same reference in the
+	// two places a resume is named.
+	//
+	// It is the orchestrator's own and no other class may name one, exactly as
+	// Attempt is — and an ask names one or the other and never both, because a
+	// run either re-issues an attempt of the orchestrator's own record or
+	// continues a pause the service wrote (D3136, D3189).
+	Resumes string `json:"resumes,omitempty"`
+	// Job is the full resource name of the Cloud Batch job this launch is about
+	// to create (R1, R19), and it is empty for a Cloud Run launch, which is the
+	// launch this plan leaves exactly as it was (R18).
+	//
+	// It is the launcher's own word, and the ticket does not depend on it: what
+	// it does is land on the record (Record.Job), where it decides how the run
+	// may claim — a record that names a job is a Batch launch, and a Batch
+	// launch is served only to a VM of that job, with the VM's own attestation
+	// (D3114). A run whose record names no job claims as every run of the
+	// release behind claims.
+	Job JobName `json:"job,omitempty"`
 }
 
 // TicketResponse is the issuer's answer (LM1, LM6). The ticket is the one-time
@@ -255,10 +295,10 @@ type TicketResponse struct {
 }
 
 // ClaimRequest is the run's ask for its identity (LM2, LM7). It carries the
-// ticket, the nonce and — on Batch — the attestation, and nothing else: the
-// uid, the claims and the account are the record's (R2, R3), and the caller is
-// the job's own Google ID token on the Authorization bearer, of which nothing
-// but the account is read.
+// ticket, the nonce and — for a Batch run — the attestation, and nothing else:
+// the uid, the claims and the account are the record's (R2, R3), and the caller
+// is the job's own Google ID token on the Authorization bearer, of which
+// nothing but the account is read.
 type ClaimRequest struct {
 	// Ticket is the secret the launcher asked for and put on the execution.
 	Ticket string `json:"ticket"`
@@ -268,17 +308,18 @@ type ClaimRequest struct {
 	// refused. The service keeps only its digest (Claim.NonceHash), and the
 	// nonce reaches no log line and no audit line.
 	Nonce string `json:"nonce"`
-	// Attestation is the VM identity token of the execution making the claim,
-	// in the metadata server's full format (BR4 of docs/batch-run-identity, R1,
-	// U2). It is empty for a Cloud Run launch, whose job's own ID token already
-	// names the one execution the identity is served to; the account a Batch
-	// job runs as is shared by every job the launcher creates, so a Batch claim
-	// carries its own VM's token and the service serves the identity only to a
-	// VM of the job the record names (D3114). The value is the running VM's
-	// credential: it reaches no log line, no audit line and no record (R7), and
-	// a service of the release behind refuses the field it does not know, which
-	// is the fail-closed answer (F37).
-	Attestation string `json:"attestation,omitempty"`
+	// Attestation is the claiming VM's identity token, in the metadata server's
+	// full format (U2, R18), and it is empty for a Cloud Run launch — whose
+	// claim is then byte for byte the body of the release behind, which is what
+	// the two sides of a bridge agree on.
+	//
+	// A record that names a job (Record.Job) is a Batch launch and is served
+	// ONLY with one: the account proves the job and never the execution (F4,
+	// F11), so the VM's own token is the whole of what tells two runs on one
+	// job's account apart (D3114). The value is a credential of that VM and is
+	// treated as a secret: no refusal repeats it, no audit line carries it, and
+	// nothing of it is stored (Record keeps no copy).
+	Attestation Attestation `json:"attestation,omitempty"`
 }
 
 // ClaimResponse is the claim's answer: the custom token the run exchanges for
@@ -459,6 +500,29 @@ type Record struct {
 	// every other class. It is kept so that the record says which attempt the
 	// run id belongs to, which is what the issuer's own check reads (LM24).
 	Attempt AttemptID `json:"attempt,omitempty"`
+	// Job is the Cloud Batch job this run's launch is, as the launcher named it
+	// in its ticket ask (R1, R19). It is empty on a Cloud Run run's record, and
+	// it is the field that decides how the run may claim: a record that names a
+	// job is served only to a VM of that job, with the VM's own attestation
+	// (D3114), and a record that names none is claimed as every run of the
+	// release behind claims.
+	//
+	// It is written with the ticket and written AGAIN by every ask before the
+	// claim, because the ask replaces the whole record — a re-ask re-issues the
+	// ticket and the old one dies with the node's digest (R6) — so the LAST
+	// ask's name is the one the claim is held to. What it never does is change
+	// under a claimed record: the store refuses a replacement once the ticket is
+	// claimed (R5), so the name the run's identity was signed from is the name
+	// it keeps, and a second job under the same name is a different launch with
+	// a different run id.
+	Job JobName `json:"job,omitempty"`
+	// JobID is the platform's id for that job, as the registration wrote it
+	// (R19). It is empty on a record that names no job and on one whose job is
+	// not yet registered — the launcher's second call is what writes it — and a
+	// Batch run whose record still carries none is refused at its claim: the
+	// claim route has no id to hold the VM's job to, and the safe side of that
+	// is the run stopping.
+	JobID string `json:"job_id,omitempty"`
 }
 
 // Claim is one run's claim on its record: the account that claimed it, the

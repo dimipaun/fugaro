@@ -70,7 +70,9 @@ func TestDocsCliOutputStatesTheContract(t *testing.T) {
 		"*done*, *failed* or *left for you*",
 		"a step left for you is never a green tick",
 		"`Done in 4.2s, 6 steps`",
-		"`Failed in 12.0s, 4 steps`",
+		// The failed run's own closing line: what it resumes at, and not a
+		// count of steps most of which it never reached (loop.finish).
+		"`Failed in 12.0s. Rerun fugaro setup to resume at installation.`",
 		"`Left for you in 8.1s, 5 steps`",
 		"0 done or only planned, 1 a failure or a step left for you, 2 a cloud error",
 		"the last lines of context on the screen",

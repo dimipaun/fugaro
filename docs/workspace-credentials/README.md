@@ -17,6 +17,15 @@ Claude token stored once at the workspace and served only to the runs that perso
 | [implementation-plan.md](implementation-plan.md) | Contracts C1 and C2, tasks WC0–WC14, integration I1 (18 runs, and two contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 850 and 851 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
+**Amended 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md), and
+nothing here changes.** That plan gives a person's own token a model call, served through that person's
+personal pool in the project (its PL4, D3179), so the workspace is not the only place a personal token
+is served from — but a project with a routing table serves the call from its own service, and a person's
+token at the workspace still follows the route (D3141), which stands as written. Its D3191 amends
+**D2976** by one case in a project: a run that resumes a person's paused run draws on that person's pool,
+where a run launched by a service account is otherwise served none. No task of this plan is withdrawn,
+none is amended, and none waits on that plan.
+
 **Numbers reserved:** decisions **D3140–D3159** (D3140–D3148 used), checks **850–859** (850 and 851
 used). Read on 2026-11-21: the highest decision reserved on `main` and in the open pull requests
 was D3139, the highest check 849.
@@ -37,7 +46,13 @@ project; there is no `--workspace` flag), answered the same day as recommended. 
 far the replay of F24 reaches, narrowed the accessor of R6 to the one name served, and gave C2
 the configuration WC14 fills. Its fixes are the last commit and were not reviewed again.
 
+**WC0's review, answered 2026-11-22.** An independent security review of the threat model found
+eight things, and the owner answered each (O1, answered): a claim deadline counted from the grant for
+a workspace slip (WC4), a grant bound to the members the person is a launcher of, which reopens D3145
+(WC4, WC5), the intake's address read from a source only the workspace's admins write (WC9), a new
+residual risk 10, and wording corrections. See [threat-model.md](threat-model.md) §11. The personal
+tasks, WC2 onward, are launchable by their plan edges.
+
 **What a reader should not take from here:** no task is approved; each needs the owner's go by
-name. No personal task is launched before the owner has answered the review of the threat model
-(WC0). Checks 850 and 851 are owner-run after the release that carries the personal half. A
+name. Checks 850 and 851 are owner-run after the release that carries the personal half. A
 project in no workspace is unchanged (D2966).

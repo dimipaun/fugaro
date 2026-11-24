@@ -140,7 +140,7 @@ const workspaceNoDBReason = "the project's config names no Firebase budget backe
 // workspaceNoMemberReason is the skip for a config that declares a workspace and
 // lists no member in it. The state is one the owner's own commands reach —
 // `fugaro workspace cap set` writes the cap alone on a project that has no
-// table, and `fugaro workspace member rm` of the last member leaves the table
+// table, and `fugaro workspace project rm` of the last member leaves the table
 // empty — so it is a config this program must be able to read, and the sentence
 // names the local edit that fixes it rather than leaving the owner to work it
 // out from a node that was not written.
@@ -153,7 +153,7 @@ const workspaceNoDBReason = "the project's config names no Firebase budget backe
 // this one — never ran. Nothing is published either way: no member is a record
 // that admits nobody.
 func workspaceNoMemberReason(lc *localcfg.Config) string {
-	return fmt.Sprintf("the workspace %s declares no member, and a record that lists none is a workspace that admits nobody: nothing is published; declare the projects the workspace groups with 'fugaro workspace member add %s <project>' in this project's config, then run %s",
+	return fmt.Sprintf("the workspace %s declares no member, and a record that lists none is a workspace that admits nobody: nothing is published; declare the projects the workspace groups with 'fugaro workspace project add <project> --workspace %s' on this project's machine, then run %s",
 		lc.Name, lc.Name, selfCommand()+" update")
 }
 
@@ -169,7 +169,7 @@ func workspaceNoMemberReason(lc *localcfg.Config) string {
 //
 // A config that declares the cap and lists NO member is still this project's
 // workspace: `fugaro workspace cap set` writes the cap alone, and `workspace
-// member rm` of the last member leaves the table empty (workspaceNoMemberReason
+// project rm` of the last member leaves the table empty (workspaceNoMemberReason
 // is that state's own sentence, and it is a skip and never a "not ours").
 //
 // The MEMBER's half decides where both are written, and the narrow reading is
@@ -186,8 +186,8 @@ func workspaceNoMemberReason(lc *localcfg.Config) string {
 // owner's remedy is to delete the half they did not mean. A config reaches the
 // state through this machine's own commands, which name the config they write
 // by the project and not by the half: `fugaro workspace cap set --workspace
-// <a member>` and `member add <a member> <project>` both write the owner's half
-// into a member's file.
+// <a member>` and `fugaro workspace project add <a member> --workspace <name>`
+// both write the owner's half into a member's file.
 func workspaceDeclared(lc *localcfg.Config) bool {
 	if workspaceMember(lc) {
 		return false
@@ -232,7 +232,7 @@ func workspaceOwnFirebase(lc *localcfg.Config, fp string) bool {
 // database it holds no grant on at all.
 //
 // The two lists are SORTED here rather than required to be sorted in the file:
-// yamledit appends where `fugaro workspace member add` writes, so the file's
+// yamledit appends where `fugaro workspace project add` writes, so the file's
 // order is the order the owner's edits happened in and not an order anyone
 // chose (internal/localcfg says so beside the table). The record that is
 // published is sorted, which is what makes two spellings of one member list one
@@ -245,7 +245,7 @@ func workspaceOwnFirebase(lc *localcfg.Config, fp string) bool {
 // fixes it, rather than written and discovered from the other side. It is the
 // skip workspaceNoMemberReason gives and not an error of this function's: the
 // state is this config's own file, reachable from `fugaro workspace cap set` and
-// from `fugaro workspace member rm` of the last member, and a stage of `fugaro
+// from `fugaro workspace project rm` of the last member, and a stage of `fugaro
 // update` that failed the run on it would leave every stage after it blocked.
 func workspaceRecordOf(lc *localcfg.Config) (*workspace.Record, error) {
 	if !workspaceDeclared(lc) {
@@ -455,7 +455,7 @@ func (p *workspacePublication) allWidens() []string {
 // That is what keeps the group's first record out of a coding agent's reach: it
 // is money or permanent, and D1026 admits no plan gate's answer for one. A
 // hand edit of `workspace_members` in the YAML — past the fenced `fugaro
-// workspace member add` — is a document this stage would otherwise publish
+// workspace project add` — is a document this stage would otherwise publish
 // behind a mark, and the node is the group's whole membership.
 //
 // The comparison is against the published node and not the local file: a member
@@ -507,7 +507,7 @@ func workspaceWidening(rec *workspace.Record, node *projectpolicy.Workspace, fou
 //
 // A removal is not a widening — it takes away rather than admits — and it does
 // not take the typed name: the owner asked for it by editing their own table
-// (`fugaro workspace member rm`), which is their own word about their own group
+// (`fugaro workspace project rm`), which is their own word about their own group
 // already. One removal is both a removal and a widening, and it is in both
 // lists: the cap. It is stated here as what the node loses and in
 // workspaceWidening as what the group gains, because it is one change with two
@@ -725,12 +725,19 @@ func workspaceCredentialsIn(ctx context.Context, lc *localcfg.Config, db *rtdb.C
 		return nil, err
 	}
 	c.declared = declared
+	// The fence is asked on EVERY path, the unchanged one included, and that is
+	// the path it exists for: the credentials node carries no cap, so an owner
+	// who removes `workspace_cap` from their own file while an all_members entry
+	// stands leaves the node saying exactly what the installation declares. The
+	// run that skipped the fence there would report nothing to publish and leave
+	// a pool offered to every member of a workspace whose ceiling is gone —
+	// existing members and the ones that join later, bounded by nothing.
+	if err := workspaceCredentialsAllMembersFence(rec, declared, node); err != nil {
+		return nil, err
+	}
 	if found && len(c.changes) == 0 && workspaceCredentialsMatch(node, declared) {
 		c.done = true
 		return c, nil
-	}
-	if err := workspaceCredentialsAllMembersFence(rec, declared, node); err != nil {
-		return nil, err
 	}
 	written, err := projectpolicy.WorkspaceCredentialsNode(declared)
 	if err != nil {
@@ -808,8 +815,11 @@ func workspaceCredentialsDeclared(ctx context.Context, lc *localcfg.Config, rec 
 // is held to the workspace's member table first: a shared entry naming a project
 // the table does not declare is an entry the service would resolve a caller
 // against and find no member for (F13), and the table is the whole of who the
-// workspace reaches. The covers are the entry's repositories, canonical, with
-// the entry's own kind as the provider segment (rule 4, U2).
+// workspace reaches. An entry offered to every member names no project here —
+// the node carries `all_members` instead, and the service offers it to each of
+// the node's members, the intersection with the member's own policy unchanged
+// (D2977, R5). The covers are the entry's repositories, canonical, with the
+// entry's own kind as the provider segment (rule 4, U2).
 func workspaceSharedEntry(rec *workspace.Record, name string, entry localcfg.WorkspaceShared) (projectpolicy.WorkspaceShared, error) {
 	var kind string
 	switch entry.Kind {
@@ -820,8 +830,22 @@ func workspaceSharedEntry(rec *workspace.Record, name string, entry localcfg.Wor
 	default:
 		return projectpolicy.WorkspaceShared{}, userErr("workspace_shared.%s: kind %q is not one this Fugaro publishes for a workspace's pool", name, entry.Kind)
 	}
-	out := projectpolicy.WorkspaceShared{Name: name, Kind: kind, Projects: slices.Clone(entry.Projects)}
-	slices.Sort(out.Projects)
+	// Who the entry may be served to is the node's one-of-two column (contract
+	// C3's rule 5): an entry offered to the members it names carries the projects
+	// and no all_members at all, and one offered to every member carries
+	// all_members and no projects. The local list's own loader refuses both at
+	// once, and this writes the one the entry declared rather than passing both
+	// through, so a value built past that loader is still a node the service
+	// reads.
+	if entry.AllMembers && len(entry.Projects) > 0 {
+		return projectpolicy.WorkspaceShared{}, userErr("workspace_shared.%s carries both all_members and projects, which the node's own reader refuses: an entry offered to every member of the workspace names no project, and one offered to the members it names carries projects and no all_members; nothing was written — write the one the entry means ('fugaro workspace share %s --workspace %s --all-members', or --projects <member>)",
+			name, name, rec.Name)
+	}
+	out := projectpolicy.WorkspaceShared{Name: name, Kind: kind, AllMembers: entry.AllMembers}
+	if !entry.AllMembers {
+		out.Projects = slices.Clone(entry.Projects)
+		slices.Sort(out.Projects)
+	}
 	// The local list's name is the map key and the node's is a field, so an empty
 	// key is the one entry the two cannot be built from; the loader refuses it, and
 	// a config this function is handed has not always been through that loader.
@@ -830,8 +854,8 @@ func workspaceSharedEntry(rec *workspace.Record, name string, entry localcfg.Wor
 	}
 	for _, p := range out.Projects {
 		if !slices.Contains(memberProjects(rec), p) {
-			return projectpolicy.WorkspaceShared{}, userErr("workspace_shared.%s offers the workspace's credential to %s, which the workspace's member table does not declare: the workspace's own service would be asked to reach a member the workspace does not have (F13); nothing was written — declare the member ('fugaro workspace member add %s %s'), or offer the entry to the members it is for ('fugaro workspace share %s --workspace %s --projects <member>'), then run %s again",
-				out.Name, p, rec.Name, p, out.Name, rec.Name, selfCommand()+" update")
+			return projectpolicy.WorkspaceShared{}, userErr("workspace_shared.%s offers the workspace's credential to %s, which the workspace's member table does not declare: the workspace's own service would be asked to reach a member the workspace does not have (F13); nothing was written — declare the member ('fugaro workspace project add %s --workspace %s'), or offer the entry to the members it is for ('fugaro workspace share %s --workspace %s --projects <member>'), then run %s again",
+				out.Name, p, p, rec.Name, out.Name, rec.Name, selfCommand()+" update")
 		}
 	}
 	if kind != projectpolicy.SharedKindModel {

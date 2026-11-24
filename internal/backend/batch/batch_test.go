@@ -2054,34 +2054,35 @@ func TestTheJobHasNoTaskEnvironments(t *testing.T) {
 // built for a block that names nothing, which is what
 // TestABatchJobMountsNothing holds (secrets_test.go).
 
-// TestLaunchCarriesTheSpecEnv: the launcher's per-execution variables (the
-// budget marker) go into the task's own variables, which is the whole of a
-// Batch task's environment on the VM (design §2.2). The marker is how a run
-// tells a minted token from a project that published no policy (plan
-// R2-8(a)), and a Batch backend that dropped it would leave every Batch run
-// reading the token's absence as "nothing was minted".
-//
-// The map is also why the job's own names are reserved here and not only on
-// Cloud Run: a later write to a map key is what the run would believe about
+// TestLaunchCarriesTheSpecEnv: the launcher's per-execution variables go into
+// the task's own variables, which is the whole of a Batch task's environment
+// on the VM (design §2.2). A Batch backend that dropped Env would launch every
+// run without them -- the run's own slip, the services its image provides --
+// and the map is also why the job's own names are reserved here and not only
+// on Cloud Run: a later write to a map key is what the run would believe about
 // itself, so an entry naming FUGARO_RUN (the run's own identity, which
 // jobDefinition writes for the same map), FUGARO_BACKEND or FUGARO_PROJECT is
-// refused rather than applied — the same collision the secrets check below
-// refuses, for the same reason. The platform's own five are reserved beside
+// refused rather than applied. The platform's own five are reserved beside
 // them (backend.ReservedEnvNames, which is the same list Cloud Run asks), so
 // the two backends refuse one set of launch entries rather than each its own.
+//
+// The entry below is a slip and not the budget marker: the marker is refused
+// by name whatever its shape (TestEveryBatchLaunchIsRefusedWithOneReason, AB9),
+// and what this test holds is the other half -- an entry this backend may carry
+// reaches the task's variables beside the job's own identity.
 func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 	ctx := context.Background()
 	b, bf, _, _ := newTestBackend(t, nil)
 	s := spec()
-	s.Env = []string{"FUGARO_BUDGET_TOKEN=1"}
+	s.Env = []string{"FUGARO_SLIP=1"}
 	if _, err := b.Launch(ctx, s); err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
 	vars := object(t, bf.Creates()[0].Job, "taskGroups", "0", "taskSpec", "environment", "variables")
-	if vars["FUGARO_BUDGET_TOKEN"] != "1" {
+	if vars["FUGARO_SLIP"] != "1" {
 		t.Errorf("the task's variables = %v, want the launch's own entry in them", vars)
 	}
-	// And the job's own identity is still the job's: the marker went in
+	// And the job's own identity is still the job's: the entry went in
 	// beside it, not over it.
 	if vars["FUGARO_RUN"] != backendtest.Slug+"/"+spec().RunID || vars["FUGARO_BACKEND"] != backend.CloudBatch {
 		t.Errorf("the task's variables = %v, want the job's own identity intact", vars)
@@ -2101,7 +2102,7 @@ func TestLaunchCarriesTheSpecEnv(t *testing.T) {
 	// where the job's environment already holds it.
 	before := len(bf.Creates())
 	for _, bad := range []string{
-		"FUGARO_BUDGET_TOKEN", "=1", "FUGARO_RUN=acme-app/someone-elses-run",
+		"FUGARO_SLIP", "=1", "FUGARO_RUN=acme-app/someone-elses-run",
 		"FUGARO_PROJECT=someone-elses-project", "FUGARO_BUCKET=gs://someone-elses-bucket",
 		"FUGARO_REGION=elsewhere",
 	} {
@@ -2616,7 +2617,7 @@ func TestLaunchRefusesASecretEnv(t *testing.T) {
 		"the job's definition",
 		"docs/budget-token-channel/spec.md",
 		"cannot launch any run on Batch",
-		"a budget database with budget mode on, or a published policy",
+		"one that names a budget database, with the signer account it mints through",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: the answer is a documented limit, and a refusal that stops naming its reason, its consequence or the condition sends an operator to provision a backend their project cannot use\n\nmessage: %v", want, err)

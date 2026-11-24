@@ -5,7 +5,7 @@
   "nodes": [
     {
       "id": "C1",
-      "title": "the access contract",
+      "title": "the access contract (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "small",
@@ -49,7 +49,7 @@
     },
     {
       "id": "CM2",
-      "title": "the project's per-repository crafts",
+      "title": "the project's per-repository crafts (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -86,7 +86,7 @@
     },
     {
       "id": "CM4",
-      "title": "`fugaro update` migrates auth to access",
+      "title": "`fugaro update` migrates auth to access (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "large",
@@ -104,7 +104,7 @@
     },
     {
       "id": "CM5",
-      "title": "the access record is written beside the old one",
+      "title": "the access record is written beside the old one (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "small",
@@ -121,7 +121,7 @@
     },
     {
       "id": "CM6",
-      "title": "the service narrows by access",
+      "title": "the service narrows by access (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "large",
@@ -142,7 +142,7 @@
     },
     {
       "id": "CM7",
-      "title": "the gateway carries the access",
+      "title": "the gateway carries the access (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -159,7 +159,7 @@
     },
     {
       "id": "CM8",
-      "title": "the run's model path follows its access",
+      "title": "the run's model path follows its access (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "large",
@@ -179,7 +179,7 @@
     },
     {
       "id": "CM9",
-      "title": "the agent's environment, by credential type",
+      "title": "the agent's environment, by credential type (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -196,7 +196,7 @@
     },
     {
       "id": "CM10",
-      "title": "the record and the cost, by what served",
+      "title": "the record and the cost, by what served (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -214,7 +214,7 @@
     },
     {
       "id": "CM11",
-      "title": "the run's account rules, by credential",
+      "title": "the run's account rules, by credential (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -231,7 +231,7 @@
     },
     {
       "id": "CM12",
-      "title": "the registry entry and the views",
+      "title": "the registry entry and the views (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -252,7 +252,7 @@
     },
     {
       "id": "CM13",
-      "title": "the cloud side is planned from the crafts",
+      "title": "the cloud side is planned from the crafts (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -270,7 +270,7 @@
     },
     {
       "id": "CM14",
-      "title": "the launch, by access",
+      "title": "the launch, by access (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "large",
@@ -289,7 +289,7 @@
     },
     {
       "id": "CM15",
-      "title": "the gates and the bundle's readiness",
+      "title": "the gates and the bundle's readiness (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -310,7 +310,7 @@
     },
     {
       "id": "CM16",
-      "title": "the config's checks, by reach",
+      "title": "the config's checks, by reach (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -328,7 +328,7 @@
     },
     {
       "id": "CM17",
-      "title": "validate, craft ls, models use and the enterprise code",
+      "title": "validate, craft ls, models use and the enterprise code (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -346,7 +346,7 @@
     },
     {
       "id": "CM18",
-      "title": "doctor",
+      "title": "doctor (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -363,7 +363,7 @@
     },
     {
       "id": "CM19",
-      "title": "the update says what will change, first",
+      "title": "the update says what will change, first (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -383,7 +383,7 @@
     },
     {
       "id": "CM20",
-      "title": "the settings registry and the schemas",
+      "title": "the settings registry and the schemas (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "small",
@@ -403,7 +403,7 @@
     },
     {
       "id": "CM21",
-      "title": "the console reads the new member",
+      "title": "the console reads the new member (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "small",
@@ -440,7 +440,7 @@
     },
     {
       "id": "CM23",
-      "title": "the help texts and the CLI reference",
+      "title": "the help texts and the CLI reference (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "small",
@@ -465,7 +465,7 @@
     },
     {
       "id": "I1",
-      "title": "integration",
+      "title": "integration (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -491,7 +491,7 @@
     },
     {
       "id": "CM24",
-      "title": "`SECURITY.md`, its page and the rules file",
+      "title": "`SECURITY.md`, its page and the rules file (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -510,7 +510,7 @@
     },
     {
       "id": "CM25",
-      "title": "the credentials documents and the checklist",
+      "title": "the credentials documents and the checklist (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "small",
@@ -529,7 +529,7 @@
     },
     {
       "id": "CM26",
-      "title": "the accounts documents, the README and the release notes",
+      "title": "the accounts documents, the README and the release notes (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -552,7 +552,7 @@
     },
     {
       "id": "CM27",
-      "title": "the plugin's skills",
+      "title": "the plugin's skills (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -573,7 +573,7 @@
     },
     {
       "id": "CM28",
-      "title": "release 2: the token's old path goes",
+      "title": "release 2: the token's old path goes (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -594,7 +594,7 @@
     },
     {
       "id": "CM29",
-      "title": "release 2: the retired keys of a file and a layer are rejected",
+      "title": "release 2: the retired keys of a file and a layer are rejected (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -616,7 +616,7 @@
     },
     {
       "id": "CM30",
-      "title": "release 2: the installation's account keys and the node's members",
+      "title": "release 2: the installation's account keys and the node's members (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -635,7 +635,7 @@
     },
     {
       "id": "CM31",
-      "title": "release 2: the old record stops being written",
+      "title": "release 2: the old record stops being written (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -672,7 +672,7 @@
     },
     {
       "id": "CM33",
-      "title": "release 2: `fugaro update` rewrites the published layer",
+      "title": "release 2: `fugaro update` rewrites the published layer (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "small",
@@ -689,7 +689,7 @@
     },
     {
       "id": "CM34",
-      "title": "the account and craft commands write the project's access",
+      "title": "the account and craft commands write the project's access (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -726,7 +726,7 @@
     },
     {
       "id": "CM36",
-      "title": "the service serves the cascade's pool as the cascade",
+      "title": "the service serves the cascade's pool as the cascade (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -741,7 +741,7 @@
     },
     {
       "id": "R-pool-members",
-      "title": "amend the access contract: a pool's members in the record",
+      "title": "amend the access contract: a pool's members in the record (withdrawn 2026-11-22 by D3170)",
       "run": null,
       "version": null,
       "tier": "trivial",

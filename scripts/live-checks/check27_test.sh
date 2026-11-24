@@ -194,8 +194,9 @@ write_fake_fugaro() { # dir
 #
 # `setup` is the whole point of the check, so this fake models what makes it a
 # person's run: with NO terminal it REFUSES (the project is created only where a
-# person can type), and with one it prints the wizard's banner and suggestion,
-# asks "Type the GCP project's ID: " and reads the line the pty wrote — then
+# person can type), and with one it prints the wizard's question and its
+# suggestion, "GCP project ID [fugaro-fugaro]: ", and reads the line the pty
+# wrote — then
 # writes the project, its buckets, its job, its secrets, its images, its billing
 # link and its Firestore location into $FAKE27_DIR/state, so every read-back the
 # check makes is a reading of what this fake really leaves behind. With a
@@ -243,8 +244,11 @@ rigor_or_wait() { # mode args...
   local mode=$1
   shift
   if [ "${FAKE27_NO_RIGOR:-}" = "$mode" ] || [ -z "$(flag --rigor "$@" || true)" ]; then
-    printf "the project's rigor mode decides how much review every run of it gets; type one of them (this is the one question of the wizard with no suggestion, so Enter is not an answer):\n"
-    printf "Type the project's rigor mode: "
+    # The heading above the modes and the question's own line, as the wizard
+    # prints them. The four mode rows between the two are left out: this check
+    # reads none of them, and its own row reader would take them for plan rows.
+    printf 'Rigor mode, which sets how much review each run gets:\n'
+    printf 'Rigor mode: '
     sleep 600
   fi
 }
@@ -390,10 +394,8 @@ setup)
     exit "${FAKE27_NEG_EXIT:-1}"
   fi
   answer=""
-  printf 'fugaro setup: this is the first run here; each answer has a suggestion, press Enter to accept it.\n'
   if [ -z "${FAKE27_ASK_NOTHING:-}" ]; then
-    printf "the GCP project's ID [fugaro-fugaro]\n"
-    printf "Type the GCP project's ID: "
+    printf "GCP project ID [fugaro-fugaro]: "
     if [ -n "${FAKE27_BLOCK:-}" ]; then
       sleep 600
     fi
@@ -1064,36 +1066,50 @@ test_a_billing_readback_is_redacted_in_the_block() {
   expect_absent "$(cat "$dir/err")" "billingAccounts/$ACCOUNT" "the lines this script writes to your terminal"
 }
 
-test_a_firestore_location_that_is_not_the_region_is_a_fail() {
+test_a_firestore_location_that_is_not_the_mapping_s_is_a_fail() {
   setup_case firestore-other
   RUN27_ENV=(FAKE27_FIRESTORE=europe-west4)
   run27_default
-  expect_status "$status" 2 "a Firestore location that is not the region"
+  expect_status "$status" 2 "a Firestore location that is not the mapping's"
   expect_contains "$(fact_line firestore)" "FAIL" "the firestore row"
   expect_contains "$(fact_line firestore)" "permanent" "the row says the location cannot be changed"
 }
 
-test_a_firestore_location_the_cli_fixes_is_a_pass_on_another_region() {
+test_a_firestore_location_the_mapping_answers_with_the_region_is_a_pass() {
   setup_case firestore-region
-  # The CLI creates the (default) database in its own fixed location whatever
-  # --region says (infra.FirestoreLocation, internal/infra/firestore.go:21), so
-  # a correct installation converged on another region must PASS this row: the
-  # read-back is compared with that constant, not with --region. In the case
-  # above the two are the same value, which is why this one has to exist.
-  RUN27_ENV=(FAKE27_FIRESTORE=us-east5)
-  run27_default --region europe-west4
-  expect_status "$status" 0 "a run whose --region is not the CLI's Firestore location"
-  expect_no_fails "a run whose --region is not the CLI's Firestore location"
-  expect_contains "$(fact_line firestore)" "PASS" "the firestore row"
-  expect_contains "$(fact_line firestore)" "us-east5" "the location the CLI itself fixes"
-}
-
-test_a_firestore_location_that_follows_the_region_is_a_fail() {
-  setup_case firestore-follows-region
-  # The other half of the pair: a database answering the run's own --region is
-  # NOT what the CLI creates, so it is a finding even though it matches the flag.
+  # The CLI creates the (default) database where place.For puts a $REGION
+  # installation's history database (D3085, internal/place/place.go), and
+  # europe-west4 is a region Firestore offers a database in: the answer is the
+  # region itself, so a correct installation converged there must PASS.
   RUN27_ENV=(FAKE27_FIRESTORE=europe-west4)
   run27_default --region europe-west4
+  expect_status "$status" 0 "a run whose --region is a Firestore location"
+  expect_no_fails "a run whose --region is a Firestore location"
+  expect_contains "$(fact_line firestore)" "PASS" "the firestore row"
+  expect_contains "$(fact_line firestore)" "europe-west4" "the region the mapping answers with"
+}
+
+test_a_firestore_location_the_mapping_falls_back_to_is_a_pass() {
+  setup_case firestore-fallback
+  # Firestore is not offered in us-west8, so the mapping answers the US
+  # default region (us-east5) and NOT the run's own --region: the read-back is
+  # compared with that answer, and a correct installation must PASS here. In
+  # the case above the two are the same value, which is why this one exists.
+  RUN27_ENV=(FAKE27_FIRESTORE=us-east5)
+  run27_default --region us-west8
+  expect_status "$status" 0 "a run whose --region is not where Firestore puts the database"
+  expect_no_fails "a run whose --region is not where Firestore puts the database"
+  expect_contains "$(fact_line firestore)" "PASS" "the firestore row"
+  expect_contains "$(fact_line firestore)" "us-east5" "the location the mapping falls back to"
+}
+
+test_a_firestore_location_that_follows_the_region_where_firestore_is_not_offered_is_a_fail() {
+  setup_case firestore-follows-region
+  # The other half of the pair: a database answering the run's own --region in
+  # a region Firestore does not offer one in is NOT what the CLI creates, so it
+  # is a finding even though it matches the flag.
+  RUN27_ENV=(FAKE27_FIRESTORE=us-west8)
+  run27_default --region us-west8
   expect_status "$status" 2 "a Firestore location that follows --region"
   expect_contains "$(fact_line firestore)" "FAIL" "the firestore row"
   expect_contains "$(fact_line firestore)" "permanent" "the row says the location cannot be changed"
@@ -1577,9 +1593,10 @@ t test_a_create_that_fails_stops_and_the_restore_reports_it
 t test_a_create_that_half_created_is_reported_by_the_restore
 t test_a_billing_link_to_another_account_is_a_fail
 t test_a_billing_readback_is_redacted_in_the_block
-t test_a_firestore_location_that_is_not_the_region_is_a_fail
-t test_a_firestore_location_the_cli_fixes_is_a_pass_on_another_region
-t test_a_firestore_location_that_follows_the_region_is_a_fail
+t test_a_firestore_location_that_is_not_the_mapping_s_is_a_fail
+t test_a_firestore_location_the_mapping_answers_with_the_region_is_a_pass
+t test_a_firestore_location_the_mapping_falls_back_to_is_a_pass
+t test_a_firestore_location_that_follows_the_region_where_firestore_is_not_offered_is_a_fail
 t test_a_missing_bucket_stops_the_installation_row
 t test_a_missing_job_stops_the_installation_row
 t test_a_missing_image_is_a_fail

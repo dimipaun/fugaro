@@ -86,21 +86,38 @@ type claim struct {
 
 // Lease is one daemon's claim on one orchestrator id. Holder is the daemon,
 // not the orchestrator: a run id (task.NewRunID), so a takeover is visible in
-// the node as a change of holder rather than as a gap.
+// the node as a change of holder rather than as a gap. Driver is who the
+// daemon is — the principal of the credential that holds the lease — and it is
+// written to the sibling driver node and never into this one (D3218, F18,
+// F35): the lease is decoded strictly and gains no field.
 type Lease struct {
-	db      CAS
-	agentID string
-	holder  string
-	path    string
-	now     ServerNow
+	db         CAS
+	agentID    string
+	holder     string
+	driver     string
+	path       string
+	driverPath string
+	now        ServerNow
 }
 
 // The guard Node.Save consults is this type: a lease that stopped satisfying it
 // would make that write unfenced.
 var _ LeaseGuard = (*Lease)(nil)
 
-// NewLease builds the claim of one daemon on one orchestrator id.
-func NewLease(db CAS, agentID, holder string, now ServerNow) (*Lease, error) {
+// NewLease builds the claim of one daemon on one orchestrator id. driver is
+// the principal of the credential that holds it — a person's account or a
+// service account's address, the spelling the rest of the tree uses for a
+// person (localcfg's Me) — and the holder writes it to the sibling node
+// `orchestrator/<id>/driver` when its claim lands (D3218, F18).
+//
+// A daemon that cannot say who it is passes "" and writes no node of its own:
+// a node naming nobody is a driver of nobody, while an absent one reads as
+// unknown, which is what such a daemon is. What its claim does write is the
+// clearing of the node a daemon before it left — the node beside a claim says
+// who drives the id *now*, and a principal-less takeover must not leave the
+// previous holder's address standing as the driver of a lease it no longer
+// holds (writeDriver).
+func NewLease(db CAS, agentID, holder, driver string, now ServerNow) (*Lease, error) {
 	if db == nil {
 		return nil, errors.New("orchestrator: a lease needs a store to be read and written through")
 	}
@@ -114,7 +131,11 @@ func NewLease(db CAS, agentID, holder string, now ServerNow) (*Lease, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Lease{db: db, agentID: agentID, holder: holder, path: path, now: now}, nil
+	driverPath, err := PathDriver(agentID)
+	if err != nil {
+		return nil, err
+	}
+	return &Lease{db: db, agentID: agentID, holder: holder, driver: driver, path: path, driverPath: driverPath, now: now}, nil
 }
 
 // Path returns the lease node's path, `orchestrator/<id>/lease`.
@@ -131,6 +152,18 @@ func (l *Lease) Path() string { return l.path }
 // read a free lease exactly one lands; the loser re-reads and re-decides, a
 // bounded number of times (ErrLeaseContention), and never writes again without
 // a fresh read.
+//
+// The claim that lands is the daemon's to write the driver node beside, and it
+// is written here rather than left to the caller: whoever holds the id is who
+// drives it, and the two must not be able to disagree (D3218). A claim that
+// did not land writes nothing at all — not the lease, not the driver.
+//
+// A claim that landed and whose driver write then failed is taken back, so a
+// daemon told its Acquire failed is not the holder of the id: the lease node is
+// freed the way a clean exit frees one (Release), and the failure the caller
+// sees is the driver write's. Leaving the claim standing would hand the id to a
+// daemon that stops on the error and never beats — an id nobody drives until the
+// TTL runs out — which is the one outcome the fence exists to prevent.
 func (l *Lease) Acquire(ctx context.Context) (LeaseState, error) {
 	var last error
 	for attempt := 0; attempt < leaseAttempts; attempt++ {
@@ -147,6 +180,12 @@ func (l *Lease) Acquire(ctx context.Context) (LeaseState, error) {
 		}
 		err = l.db.PutIfMatch(ctx, l.path, etag, leaseDoc{Holder: l.holder, At: at})
 		if err == nil {
+			if derr := l.writeDriver(ctx, at); derr != nil {
+				if _, rerr := l.Release(ctx); rerr != nil {
+					return LeaseState{}, errors.Join(derr, rerr)
+				}
+				return LeaseState{}, derr
+			}
 			return LeaseState{Held: true, Holder: l.holder, At: at}, nil
 		}
 		if !errors.Is(err, rtdb.ErrPrecondition) {
@@ -155,6 +194,59 @@ func (l *Lease) Acquire(ctx context.Context) (LeaseState, error) {
 		last = err
 	}
 	return LeaseState{}, fmt.Errorf("%w: %d claims, each refused by a moved ETag: %w", ErrLeaseContention, leaseAttempts, last)
+}
+
+// writeDriver records who holds the id at the sibling node `orchestrator/<id>/driver`
+// (D3218, F18). It is written by the daemon whose claim just landed and by
+// nobody else: the lease is the fence, so the node names the credential that
+// holds it rather than a guess at one.
+//
+// A daemon with no principal to name writes no node of its own and clears the
+// one a daemon before it left: the node beside a claim says who drives the id
+// now, so a takeover by a daemon that cannot say who it is must not leave the
+// previous holder's address standing as the driver of a lease it no longer
+// holds. An absent node reads as unknown, which is what this daemon is, where a
+// node naming nobody would read as a driver of nobody.
+//
+// It is a write of its own and not a field of the lease beside it (F35): the
+// lease and the state are decoded strictly, so a field either one gained would
+// be a document a release behind refuses. The read-then-write is the same
+// conditional one the lease node takes, and a moved ETag is an error and not a
+// retry — only a holder writes this node, so a moved one means another
+// daemon's claim landed in the window between this write and this read.
+func (l *Lease) writeDriver(ctx context.Context, at time.Time) error {
+	if l.driver == "" {
+		return l.clearDriver(ctx)
+	}
+	var raw json.RawMessage
+	etag, _, err := l.db.GetETag(ctx, l.driverPath, &raw)
+	if err != nil {
+		return err
+	}
+	if err := l.db.PutIfMatch(ctx, l.driverPath, etag, Driver{Principal: l.driver, At: at}); err != nil {
+		return fmt.Errorf("recording who drives %s: %w", safetext.OneLine(l.agentID), err)
+	}
+	return nil
+}
+
+// clearDriver removes the driver node a previous holder left, and writes
+// nothing when there is none: an absent driver is already the reading a daemon
+// with no principal to name wants (writeDriver). A moved ETag is an error here
+// as it is there, and for the same reason — another daemon's claim landed in
+// the window, so the node is that daemon's to write and not this one's to
+// remove.
+func (l *Lease) clearDriver(ctx context.Context) error {
+	etag, found, err := l.db.GetETag(ctx, l.driverPath, nil)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	if err := l.db.PutIfMatch(ctx, l.driverPath, etag, nil); err != nil {
+		return fmt.Errorf("clearing who drives %s: %w", safetext.OneLine(l.agentID), err)
+	}
+	return nil
 }
 
 // Beat renews the lease this daemon holds, and is how the fence expires for a

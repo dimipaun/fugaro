@@ -805,6 +805,32 @@ func TestWorkflowSecretsOneAuditLinePerRefusal(t *testing.T) {
 	}
 }
 
+// TestWorkflowSecretsRefusesABodyOfAnotherVersion: this route serves version 1
+// and nothing else (wire.go's Validate), and the strict decoder is no longer
+// enough on its own.
+//
+// `name` and `version` are fields this contract carries now, so a body that
+// names a secret, or that declares version 2, DECODES where it used to be
+// refused as an unknown field — and the route would then answer it as a
+// version-1 call, looking the variable up in a record that never held one. Both
+// are bodies version 1 never wrote, and the shape rule refuses them before any
+// record is read: exactly the answer the route gave when the fields did not
+// exist yet.
+func TestWorkflowSecretsRefusesABodyOfAnotherVersion(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"a version 2 body", `{"env":"DEPLOY_TOKEN","version":2}`},
+		{"a body carrying both shapes", `{"env":"DEPLOY_TOKEN","name":"deploy-token"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWorkflowSvc(t)
+			resp, body := f.call(t, tc.body)
+			// No record read and no container touched: assertRefused holds both,
+			// which is what makes this the shape rule and not a lookup.
+			assertRefused(t, "a body of another version", resp, body, f.svc, f.workflowReads, 1, ErrorRequestRefused)
+		})
+	}
+}
+
 // TestWorkflowSecretsNoReaderRefusesEvenForARecordedRepository: a service with
 // no record reader is a deployment whose database client is not wired, and the
 // route refuses rather than serving nothing — the fail-closed answer and not an

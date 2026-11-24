@@ -1,0 +1,23 @@
+{
+  "systemInstruction": {"parts": [{"text": "be terse"}]},
+  "contents": [{"role": "user", "parts": [{"text": "read it"}]}],
+  "tools": [
+    {
+      "functionDeclarations": [
+        {
+          "name": "read_file",
+          "description": "read a file",
+          "parametersJsonSchema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"]
+          }
+        }
+      ]
+    }
+  ],
+  "toolConfig": {
+    "functionCallingConfig": {"mode": "ANY", "allowedFunctionNames": ["read_file"]}
+  },
+  "generationConfig": {"maxOutputTokens": 128}
+}

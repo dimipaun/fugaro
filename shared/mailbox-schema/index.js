@@ -269,6 +269,15 @@ export const ZONE_MAX = 64;
 export const MINUTE_MAX = 1439;
 
 /**
+ * The permitted length of a launch's mode, in UTF-16 code units: 64, the bound
+ * the other short identity strings carry (AGENT_MAX, BOOT_MAX, ZONE_MAX) and
+ * the same bound the confirm machine's `MAX_MODE_LENGTH` puts on a mode it
+ * reads back. A mode is a short word — a rigor mode — and not a body, so the
+ * bound is what keeps a mode from becoming one (O10, task J5a).
+ */
+export const MODE_MAX = 64;
+
+/**
  * Attributes a Realtime Database key may not contain, ported from the tree's
  * own key rule (`internal/budget`'s Key): `%` (the escape Unkey parses), the
  * six characters the database itself rejects in a key (`.`, `$`, `#`, `[`,
@@ -294,12 +303,23 @@ const FORBIDDEN_KEY_CHARS = new Set(['%', '.', '$', '#', '[', ']', '/']);
  *            and, optionally, the user controls. It is the only kind that
  *            carries a `token`, and the only path by which a token can reach
  *            `config/admin/push/$uid` at all.
+ *   stop     the phone's stop request (P5.1g, Q10's answer (c)): the phone
+ *            asking a human to stop what it is looking at, which the human at
+ *            the console or the laptop acts on and which nothing raises as a
+ *            prompt. It is deliberately not an `action`: an action record is
+ *            executed, while this one is never executed by anything — the owner
+ *            refused a phone-writable kill switch, so no message this kind
+ *            carries stops a run, lowers a cap or writes `config/kill/**`. It
+ *            is a kind of its own rather than a `message` so that the consumer,
+ *            the rules and the app all read the same intent from the record
+ *            instead of from its prose, and so that a stop request can never be
+ *            handed to a launched run's agent as free text (P5.1-Q4).
  *
  * This is not P1.1's own `KIND` (`command` · `prompt`), which names the two
  * ACCEPTANCE WINDOWS; P6.5 and P6.7 map a message kind to a window, and only
  * they can, because the mapping needs the prompt's TTL and the command window.
  */
-export const KINDS = Object.freeze(['message', 'prompt', 'answer', 'action', 'registration']);
+export const KINDS = Object.freeze(['message', 'prompt', 'answer', 'action', 'registration', 'stop']);
 
 /**
  * The platforms a registration may name: the pair §3.4's node shape carries,
@@ -310,15 +330,22 @@ export const KINDS = Object.freeze(['message', 'prompt', 'answer', 'action', 're
 export const PLATFORMS = Object.freeze(['ios', 'android']);
 
 /**
- * The verbs an action record may carry: exactly the three the owner's ruling
- * of 2026-10-17 names (§3.1) — cancel, merge/approve, and confirming an
- * action. A launch is deliberately absent: D162 answered that "kick off …"
- * goes through without a read-back, so it travels as an ordinary `message`
- * and never as an action record. Every other destructive verb — the kill
- * switch, budget writes, deletes — stays refused by voice, and so has no verb
- * here at all.
+ * The verbs an action record may carry: the three the owner's ruling of
+ * 2026-10-17 names (§3.1) — cancel, merge/approve, and confirming an action —
+ * and, since O10, `launch`, the typed start (D2786 amends D162 for it). A
+ * launch used to travel as an ordinary `message` because D162 answered that
+ * "kick off …" goes through without a read-back; the owner's answer of
+ * 2026-11-18 typed it, so a start in a mode the session calls **costly** can be
+ * refused by the consumer when it carries no confirmation, and the mode it
+ * names is a field of the record rather than prose in a body. Every other
+ * destructive verb — the kill switch, budget writes, deletes — stays refused by
+ * voice, and so has no verb here at all.
+ *
+ * The field set is the version: a reader that predates this verb refuses the
+ * record as `unknown-verb`, which is the fail-closed answer a launch needs
+ * (O10, task J5a).
  */
-export const ACTIONS = Object.freeze(['cancel', 'merge', 'confirm']);
+export const ACTIONS = Object.freeze(['cancel', 'merge', 'confirm', 'launch']);
 
 /**
  * The directions a tag is made for, one per node a signed record lives in:
@@ -369,6 +396,7 @@ const KIND_OPTIONAL = Object.freeze({
   answer: Object.freeze(['reply_to']),
   action: Object.freeze(['action', 'reply_to']),
   registration: Object.freeze(['token', 'platform', 'prefs']),
+  stop: Object.freeze([]),
 });
 
 const KIND_REQUIRED = Object.freeze({
@@ -377,6 +405,7 @@ const KIND_REQUIRED = Object.freeze({
   answer: Object.freeze(['reply_to']),
   action: Object.freeze(['action']),
   registration: Object.freeze(['token', 'platform']),
+  stop: Object.freeze([]),
 });
 
 /**
@@ -420,14 +449,18 @@ export const QUIET_HOURS_FIELDS = Object.freeze(['zone', 'start', 'end']);
 /** The kind a message with no `kind` field is. */
 const DEFAULT_KIND = 'message';
 
-/** An action record's fields, exactly, and the ones it must have. */
-const ACTION_FIELDS = Object.freeze(['id', 'verb', 'target', 'head_sha', 'confirmation']);
-const ACTION_REQUIRED = Object.freeze(['id', 'verb', 'target', 'confirmation']);
+/** An action record's fields, exactly, and the ones it must have. `mode` and
+ * `confirmation` are conditional on the verb, so they are checked there rather
+ * than in the required list: a launch carries a `mode` and may carry no
+ * confirmation, and every other verb is the other way round. */
+const ACTION_FIELDS = Object.freeze(['id', 'verb', 'mode', 'target', 'head_sha', 'confirmation']);
+const ACTION_REQUIRED = Object.freeze(['id', 'verb', 'target']);
 
 /** A confirmation's fields, exactly, and the ones it must have. */
 const CONFIRMATION_FIELDS = Object.freeze(['id', 'at']);
 
-/** A resolved target's fields: a run id, or a repository and a pull request. */
+/** A resolved target's fields: a run id, a repository and a pull request, or
+ * the repository alone a launch resolves to. */
 const RUN_TARGET_FIELDS = Object.freeze(['run']);
 const REPO_TARGET_FIELDS = Object.freeze(['repo', 'pr']);
 
@@ -463,7 +496,7 @@ export const REFUSALS = Object.freeze({
   BAD_CHARACTER: 'bad-character',
   /** A number is not a non-negative epoch-millisecond safe integer. */
   BAD_TIMESTAMP: 'bad-timestamp',
-  /** A kind is not one of the four. */
+  /** A kind is not one of `KINDS`. */
   UNKNOWN_KIND: 'unknown-kind',
   /** An action's verb is not one of the three the ruling names. */
   UNKNOWN_VERB: 'unknown-verb',
@@ -872,11 +905,20 @@ function kindField(value) {
 }
 
 // actionField validates D169's action record: the verb, the target it
-// resolves to, the action id, the confirmation record, and — for a merge — the
-// head SHA the read-back named. Every part is required because every part is
-// executed: the consumer runs `fugaro cancel RUN` or `gh pr merge <n> --repo
-// <owner/name>` from these fields and nothing else, and a record missing any of
-// them is one that cannot be checked before it runs.
+// resolves to, the action id, the confirmation record, and the field the verb
+// alone carries — a merge's head SHA, or a launch's mode (O10).
+//
+// Two fields are conditional on the verb, and each is the mirror of the other.
+// A launch carries the `mode` it would start in and may carry **no**
+// confirmation: a plain start goes straight through (D162), and only a costly
+// one is read back (D2786), which is the gate's decision rather than this
+// schema's — a schema has no session policy to read. Every other verb is the
+// other way round: the confirmation is what authorises it and is required, and
+// a `mode` on one is a caller that thinks a mode changes what cancelling means.
+//
+// A record missing any of its parts is one that cannot be checked before it
+// runs: the consumer runs `fugaro cancel RUN` or `gh pr merge <n> --repo
+// <owner/name>` from these fields and nothing else.
 function actionField(value, kind) {
   if (kind !== 'action') return { bad: refuse(REFUSALS.FIELD_NOT_ALLOWED, 'action') };
   if (!isPlainObject(value)) return { bad: refuse(REFUSALS.NOT_AN_OBJECT, 'action') };
@@ -893,6 +935,21 @@ function actionField(value, kind) {
   if (typeof value.verb !== 'string') return { bad: refuse(REFUSALS.WRONG_TYPE, 'action.verb') };
   if (!ACTIONS.includes(value.verb)) return { bad: refuse(REFUSALS.UNKNOWN_VERB, 'action.verb') };
   const verb = value.verb;
+  const isLaunch = verb === 'launch';
+
+  // A launch names the mode it would start in, and no other verb does: the mode
+  // is the one thing D2786 reads back and binds, and it is a field of the
+  // record rather than a target, because a start has no run id yet. It is read
+  // before the target, in the order the rules carry the two.
+  if (isLaunch && !Object.hasOwn(value, 'mode')) {
+    return { bad: refuse(REFUSALS.MISSING_FIELD, 'action.mode') };
+  }
+  let mode;
+  if (Object.hasOwn(value, 'mode')) {
+    if (!isLaunch) return { bad: refuse(REFUSALS.FIELD_NOT_ALLOWED, 'action.mode') };
+    mode = identityField(value.mode, 'action.mode', MODE_MAX);
+    if (mode.bad) return { bad: mode.bad };
+  }
 
   const target = targetField(value.target, verb);
   if (target.bad) return { bad: target.bad };
@@ -911,28 +968,30 @@ function actionField(value, kind) {
     if (headSha.bad) return { bad: headSha.bad };
   }
 
-  const action = {
-    id: id.value,
-    verb,
-    target: target.value,
-    confirmation: null,
-  };
-  if (headSha) action.head_sha = headSha.value;
-
-  const confirmation = confirmationField(value.confirmation);
-  if (confirmation.bad) return { bad: confirmation.bad };
-  action.confirmation = confirmation.value;
+  // The confirmation authorises every verb but a launch, which may carry one
+  // (a costly start's read-back produces it) but does not need one here: which
+  // starts need it is the session's policy, and the consumer's gate is what
+  // reads that (O10).
+  if (!isLaunch && !Object.hasOwn(value, 'confirmation')) {
+    return { bad: refuse(REFUSALS.MISSING_FIELD, 'action.confirmation') };
+  }
+  let confirmation;
+  if (Object.hasOwn(value, 'confirmation')) {
+    confirmation = confirmationField(value.confirmation);
+    if (confirmation.bad) return { bad: confirmation.bad };
+  }
 
   // The keys are built in the schema's own order, not the caller's: the object
   // is a copy, and `canonicalBytes` sorts them anyway, so the order here only
   // decides what a human sees in a stack trace.
   return {
     value: {
-      id: action.id,
-      verb: action.verb,
-      target: action.target,
-      ...(action.head_sha === undefined ? {} : { head_sha: action.head_sha }),
-      confirmation: action.confirmation,
+      id: id.value,
+      verb,
+      ...(mode === undefined ? {} : { mode: mode.value }),
+      target: target.value,
+      ...(headSha === undefined ? {} : { head_sha: headSha.value }),
+      ...(confirmation === undefined ? {} : { confirmation: confirmation.value }),
     },
   };
 }
@@ -1034,10 +1093,11 @@ function minuteField(value, field) {
   return { value };
 }
 
-// targetField validates a resolved target: a run id, or a repository and a
-// pull request number, and the verb decides which. `confirm` — the ruling's
-// third verb, confirming an action — takes either, because the action being
-// confirmed can be a cancel or a merge.
+// targetField validates a resolved target: a run id, a repository and a pull
+// request number, or — for a launch — the repository alone (O10). The verb
+// decides which. `confirm` — the ruling's third verb, confirming an action —
+// takes either of the first two, because the action being confirmed can be a
+// cancel or a merge.
 //
 // The order of the questions is deliberate: what shape is this target, is that
 // shape complete and well formed, and only then does it agree with the verb.
@@ -1079,22 +1139,35 @@ function targetField(value, verb) {
     if (run.length > TARGET_MAX) return { bad: refuse(REFUSALS.TOO_LONG, 'action.target.run') };
     if (!RUN_CHARS.test(run)) return { bad: refuse(REFUSALS.BAD_CHARACTER, 'action.target.run') };
     if (!RUN_PATTERN.test(run)) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target.run') };
-    if (verb === 'merge') return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target') };
+    // A merge merges a pull request and a launch starts in a repository, so
+    // neither resolves to a run (D169, O10).
+    if (verb === 'merge' || verb === 'launch') return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target') };
     return { value: { run } };
   }
 
   for (const key of Object.keys(value)) {
     if (!REPO_TARGET_FIELDS.includes(key)) return { bad: refuse(REFUSALS.UNKNOWN_FIELD, `action.target.${key}`) };
   }
-  for (const key of REPO_TARGET_FIELDS) {
-    if (!Object.hasOwn(value, key)) return { bad: refuse(REFUSALS.MISSING_FIELD, `action.target.${key}`) };
-  }
+  if (!Object.hasOwn(value, 'repo')) return { bad: refuse(REFUSALS.MISSING_FIELD, 'action.target.repo') };
+  // The repository shape is complete with the repository alone for a launch:
+  // a start names the repository it starts in and has no pull request to name
+  // (O10, and the rules' own launch arm). Every other verb that resolves to a
+  // repository names both.
+  const wantsPR = verb !== 'launch';
+  if (wantsPR && !Object.hasOwn(value, 'pr')) return { bad: refuse(REFUSALS.MISSING_FIELD, 'action.target.pr') };
   const repo = value.repo;
   if (typeof repo !== 'string') return { bad: refuse(REFUSALS.WRONG_TYPE, 'action.target.repo') };
   if (repo === '') return { bad: refuse(REFUSALS.EMPTY_STRING, 'action.target.repo') };
   if (repo.length > TARGET_MAX) return { bad: refuse(REFUSALS.TOO_LONG, 'action.target.repo') };
   if (!REPO_CHARS.test(repo)) return { bad: refuse(REFUSALS.BAD_CHARACTER, 'action.target.repo') };
   if (!REPO_PATTERN.test(repo)) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target.repo') };
+  if (!wantsPR) {
+    // A launch resolves to the repository alone, so a pull request beside it is
+    // a target the verb cannot use: the start has no pull request to name, and
+    // the consumer would have to guess whether the record meant one.
+    if (Object.hasOwn(value, 'pr')) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target') };
+    return { value: { repo } };
+  }
   const pr = value.pr;
   if (typeof pr !== 'number') return { bad: refuse(REFUSALS.WRONG_TYPE, 'action.target.pr') };
   if (!Number.isSafeInteger(pr) || pr < 1) return { bad: refuse(REFUSALS.BAD_TARGET, 'action.target.pr') };

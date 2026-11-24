@@ -24,13 +24,14 @@ package credsvc
 //   - and an admitted call is relayed as the installation's is: streamed in both
 //     directions, with nothing held (B1.3, G2).
 //
-// The deployment is a TEST DOUBLE and not WS2's resolver, which is not merged:
-// the scope here is C1's shape with the readers this route asks answered by the
-// test, and a resolver that answers the scope registered for the run token a
-// call presents. It verifies nothing, and it does not pretend to — what the seam
+// The deployment is a TEST DOUBLE and not WS2's resolver: the scope here is
+// C1's shape with the readers this route asks answered by the test, and a
+// resolver that answers the scope registered for the run token a call
+// presents. It verifies nothing, and it does not pretend to — what the seam
 // means for this route is WHICH store, WHICH coverage and WHICH table a call is
-// served out of, and that is what a double can pin. WS2's resolver replaces it
-// in this package, and its tests ask the same questions of the real one.
+// served out of, and that is what a double can pin. WS2's resolver is what a
+// deployment holds and its tests ask the real readers; what this double answers
+// is the route's own half.
 
 import (
 	"bytes"

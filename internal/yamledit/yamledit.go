@@ -482,6 +482,149 @@ func UpsertSeqItemListByKey(src []byte, path []string, keyField, keyValue, field
 	return out, nil
 }
 
+// SeqItem is one item of a NESTED sequence of mappings: a field whose value is
+// a sequence of mappings rather than of scalars, which is the one shape
+// UpsertSeqItemByKey and UpsertSeqItemListByKey do not reach. The layer file's
+// `defaults.rigor.areas` has it — an area keyed on name, its level beside it,
+// and its `members` a sequence of `{repo, paths}` — and it is the shape
+// docs/repo-override-rulings/contract-migrate.md carries in LayerItem.Items.
+//
+// It nests: an item's own field may hold items again, which is what the shape
+// allows rather than what any layer file uses today.
+type SeqItem struct {
+	// KeyField is the field the item's sequence is addressed by, and Key its
+	// value.
+	KeyField string
+	Key      string
+	// Fields are the item's scalar fields, by name.
+	Fields map[string]string
+	// Lists are the item's fields whose value is a sequence of scalars.
+	Lists map[string][]string
+	// Items are the item's fields whose value is a sequence of mappings, each
+	// written the way this item is.
+	Items map[string][]SeqItem
+}
+
+// UpsertSeqItemItemsByKey sets a field whose value is a sequence of MAPPINGS on
+// the item of a sequence of mappings whose keyField holds keyValue: the item is
+// written whole with the field when the sequence does not have it, the field is
+// written beside the fields the item already carries when it does not have that
+// one yet, and the sequence of mappings is replaced where it stands when it does.
+// It is UpsertSeqItemListByKey's shape one level deeper — that operation writes a
+// list of scalars, and a member of a project area is a mapping — and it keeps the
+// same promises: the item keeps its place, its other fields and their lines, and
+// the field keeps the comment above its key and whatever trails its last item.
+//
+// An item already under a nested key is written where it stands rather than
+// doubled, so a second update converges; the nested sequence itself is replaced
+// whole, so an item the caller does not name is dropped rather than merged.
+// A field written in flow style, a sequence item that is not a mapping, and a
+// nested list asked for with no items are refused rather than half-written
+// (ReasonFlowCollection, ReasonNotAMapping, ReasonEmptyList).
+func UpsertSeqItemItemsByKey(src []byte, path []string, keyField, keyValue, field string, items []SeqItem) ([]byte, error) {
+	const op = "UpsertSeqItemItemsByKey"
+	if err := checkPath(op, path); err != nil {
+		return src, err
+	}
+	if keyField == "" || field == "" {
+		return src, refuse(op, pathString(path), ReasonEmptyField)
+	}
+	if field == keyField {
+		return src, refuse(op, pathString(path), ReasonFieldIsKeyField)
+	}
+	if err := checkSeqItems(op, path, items); err != nil {
+		return src, err
+	}
+	out, err := upsertItemsField(op, src, path, keyField, keyValue, field, items)
+	if err != nil {
+		return src, err
+	}
+	if err := verified(op, path, out, func(root *yaml.Node) bool {
+		item := keyedItem(resolve(root, path), keyField, keyValue)
+		if item == nil {
+			return false
+		}
+		return seqIs(mapValue(item, field), items)
+	}); err != nil {
+		return src, err
+	}
+	return out, nil
+}
+
+// checkSeqItems refuses a nested sequence the writer cannot state: a list asked
+// for with nothing in it has no bytes (an empty block sequence is a key with no
+// value under it, which is a null and not a list of nothing), and an item with no
+// key field is one no reader could find again.
+func checkSeqItems(op string, path []string, items []SeqItem) error {
+	if len(items) == 0 {
+		return refuse(op, pathString(path), ReasonEmptyList)
+	}
+	for _, it := range items {
+		if it.KeyField == "" {
+			return refuse(op, pathString(path), ReasonEmptyField)
+		}
+		for _, v := range it.Lists {
+			if len(v) == 0 {
+				return refuse(op, pathString(path), ReasonEmptyList)
+			}
+		}
+		if len(it.Items) > 0 {
+			if err := checkSeqItems(op, path, nestedItems(it)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// nestedItems is every item one level under it, in one slice: the walk
+// checkSeqItems and the verification share.
+func nestedItems(it SeqItem) []SeqItem {
+	var out []SeqItem
+	for _, f := range sortedItemKeys(it.Items) {
+		out = append(out, it.Items[f]...)
+	}
+	return out
+}
+
+// seqIs reports whether n is the sequence of mappings items describes: every
+// item's keyField holds its key, its scalars are written beside it and its lists
+// and nested items are there in full. It is the whole of what the caller asked
+// for, read back off the bytes the operation wrote.
+func seqIs(n *yaml.Node, items []SeqItem) bool {
+	if n == nil || n.Kind != yaml.SequenceNode || len(n.Content) != len(items) {
+		return false
+	}
+	for i, it := range items {
+		m := n.Content[i]
+		if m.Kind != yaml.MappingNode || !scalarIs(mapValue(m, it.KeyField), it.Key) {
+			return false
+		}
+		for f, want := range it.Fields {
+			if !scalarIs(mapValue(m, f), want) {
+				return false
+			}
+		}
+		for f, want := range it.Lists {
+			v := mapValue(m, f)
+			if v == nil || v.Kind != yaml.SequenceNode || len(v.Content) != len(want) {
+				return false
+			}
+			for j, s := range want {
+				if !scalarIs(v.Content[j], s) {
+					return false
+				}
+			}
+		}
+		for _, f := range sortedItemKeys(it.Items) {
+			if !seqIs(mapValue(m, f), it.Items[f]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // RemoveSeqItemByKey removes the item of a sequence of mappings whose keyField
 // holds keyValue, and only that one: a key value written twice loses one of its
 // items, not both. A sequence that does not hold it is left alone.
@@ -1311,6 +1454,144 @@ func upsertListField(op string, src []byte, path []string, keyField, keyValue, f
 	// included when the document had one there; the line break is the one byte
 	// of it a replacement has to give back, or the file would end — or run on —
 	// without it.
+	if end > 0 && d.src[end-1] == '\n' {
+		repl = append(repl, d.eol...)
+	}
+	return splice(d.src, start, end, repl), nil
+}
+
+// upsertItemsField applies one sequence-of-mappings field of an upsert, in the
+// same three places upsertListField's list can land: the key the sequence hangs
+// from written from nothing, the item written with the field, and the field
+// replaced on the item that already carries it. It differs from that walker in
+// one thing only — what the items' lines are — which is the reason the two are
+// two functions rather than one with a renderer argument: every refusal, every
+// span and every comment the entries keep is the same code path in both.
+func upsertItemsField(op string, src []byte, path []string, keyField, keyValue, field string, items []SeqItem) ([]byte, error) {
+	d, err := open(op, src)
+	if err != nil {
+		return src, err
+	}
+	leaf := itemsLeaf(keyField, keyValue, field, items)
+	if d.root == nil {
+		return d.openRoot(chain(path, 0, d.step, leaf)), nil
+	}
+	cur := d.root
+	for i := 0; i < len(path)-1; i++ {
+		out, next, done, err := d.descend(op, cur, path, i, leaf)
+		if err != nil {
+			return nil, err
+		}
+		if done {
+			return out, nil
+		}
+		cur = next
+	}
+	last := path[len(path)-1]
+	here := pathString(path)
+	if err := d.expectMapping(op, cur, here); err != nil {
+		return nil, err
+	}
+	e, err := d.find(op, cur, last, here)
+	if err != nil {
+		return nil, err
+	}
+	if e == nil {
+		if mergeKey(cur) {
+			return nil, refuse(op, here, ReasonMergeKey)
+		}
+		return d.appendBlock(op, cur, chain(path[len(path)-1:], d.entryIndent(cur), d.step, leaf))
+	}
+	if err := d.anchorFree(op, e, here); err != nil {
+		return nil, err
+	}
+	if empty, err := d.emptyValue(e.value); err != nil {
+		return nil, withOp(err, op)
+	} else if empty {
+		indent := d.entryIndent(cur) + d.step
+		lines := itemsFieldLines(indent, d.step, field, items)
+		item := seqItemLines(indent, d.step, SeqItem{KeyField: keyField, Key: keyValue})
+		return d.openChild(op, e, append(item, lines...))
+	}
+	seq := e.value
+	if seq.Style&yaml.FlowStyle != 0 {
+		return nil, refuse(op, here, ReasonFlowCollection)
+	}
+	if seq.Kind != yaml.SequenceNode {
+		return nil, refuse(op, here, ReasonNotASequence)
+	}
+	for _, it := range seq.Content {
+		if it.Kind != yaml.MappingNode {
+			return nil, refuse(op, here, ReasonNotAMapping)
+		}
+	}
+	indent, err := d.itemIndent(seq)
+	if err != nil {
+		return nil, err
+	}
+	if mergeKey(cur) {
+		return nil, refuse(op, here, ReasonMergeKey)
+	}
+	item := keyedItem(seq, keyField, keyValue)
+	if item == nil {
+		off, err := d.blockEnd(op, seq)
+		if err != nil {
+			return nil, err
+		}
+		lines := append(seqItemLines(indent, d.step, SeqItem{KeyField: keyField, Key: keyValue}),
+			itemsFieldLines(indent+2, d.step, field, items)...)
+		return splice(d.src, off, off, []byte(d.eol+strings.Join(lines, d.eol))), nil
+	}
+	if item.Style&yaml.FlowStyle != 0 {
+		return nil, refuse(op, here, ReasonFlowCollection)
+	}
+	at := pathString(append(append([]string{}, path...), field))
+	fe, err := d.find(op, item, field, at)
+	if err != nil {
+		return nil, err
+	}
+	fieldIndent := d.entryIndent(item)
+	if fe == nil {
+		off, err := d.blockEnd(op, item)
+		if err != nil {
+			return nil, err
+		}
+		return splice(d.src, off, off, []byte(d.eol+strings.Join(itemsFieldLines(fieldIndent, d.step, field, items), d.eol))), nil
+	}
+	if err := d.anchorFree(op, fe, at); err != nil {
+		return nil, err
+	}
+	if fe.value.Style&yaml.FlowStyle != 0 {
+		return nil, refuse(op, at, ReasonFlowCollection)
+	}
+	list := fe.value
+	empty, err := d.emptyValue(list)
+	if err != nil {
+		return nil, withOp(err, op)
+	}
+	if empty {
+		return d.openChild(op, fe, seqItemValueLines(fieldIndent, d.step, items))
+	}
+	if list.Kind == yaml.SequenceNode {
+		end, err := d.nodeEnd(op, list)
+		if err != nil {
+			return nil, err
+		}
+		first, err := d.offset(list.Content[0])
+		if err != nil {
+			return nil, withOp(err, op)
+		}
+		start := d.lines.start(d.lines.lineOf(first))
+		return splice(d.src, start, end, []byte(strings.Join(seqItemValueLines(fieldIndent, d.step, items), d.eol))), nil
+	}
+	if list.Kind == yaml.MappingNode {
+		return nil, refuse(op, at, ReasonReplacesCollection)
+	}
+	start, end, err := d.entrySpan(op, fe)
+	if err != nil {
+		return nil, err
+	}
+	repl := []byte(strings.Join(itemsFieldLines(fieldIndent, d.step, field, items), d.eol))
 	if end > 0 && d.src[end-1] == '\n' {
 		repl = append(repl, d.eol...)
 	}

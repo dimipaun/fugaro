@@ -2,7 +2,6 @@ package creds
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -310,28 +309,6 @@ func TestRouteAddressIsCarriedWithoutMovingAKind(t *testing.T) {
 	var none Route
 	if none.Address != "" {
 		t.Errorf("the zero Route's address = %q: it is what a repository with no record reads, and it has no second service to call", none.Address)
-	}
-}
-
-// TestStubRouteIsAlwaysTheProject: the stub is the other side of C2 for WS11
-// before WS9 publishes anything, and the one answer that keeps it honest is
-// today's — every repository and kind is the project's, and there is no second
-// service for a run to reach.
-func TestStubRouteIsAlwaysTheProject(t *testing.T) {
-	var reader RouteReader = StubRoute{}
-	for _, slug := range []string{"acme-app-0123", "", "owner/repo"} {
-		r, err := reader.Route(context.Background(), slug)
-		if err != nil {
-			t.Fatalf("StubRoute.Route(%q): %v", slug, err)
-		}
-		if r.Address != "" {
-			t.Errorf("StubRoute.Route(%q).Address = %q: a stub with an address builds a second upstream nobody published", slug, r.Address)
-		}
-		for _, kind := range append(Kinds, Kind("a-kind-of-a-later-release")) {
-			if got := r.Holder(kind); got != HolderProject {
-				t.Errorf("StubRoute.Route(%q).Holder(%s) = %q, want %q", slug, kind, got, HolderProject)
-			}
-		}
 	}
 }
 

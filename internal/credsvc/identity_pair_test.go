@@ -380,24 +380,32 @@ func TestPairRoutesTakeNoRunIdentity(t *testing.T) {
 	}
 }
 
-// TestPairRoutesAnswerNotServedWithNoIssuer is the route's own half of R7: an
+// TestPairRoutesAnswerNotServedWithNoIssuer is the routes' own half of R7: an
 // installation whose issuer is not configured is answered the contract's "not
 // served" — the code the CLI bridges on and signs a run's identity locally
 // against — and not a caller refusal, because there is no signer to verify a
-// caller FOR. It is what the stub answers today and what I1's handlers must go
-// on answering, and it is asked with a caller who WOULD be admitted, so that
-// the answer cannot be the class's.
+// caller FOR. Both routes are asked, each through its own handler, so the
+// answer is each route's and not one handler's read twice. It is what the stub
+// answers today and what I1's handlers must go on answering, and it is asked
+// with a caller who WOULD be admitted, so that the answer cannot be the
+// class's.
 func TestPairRoutesAnswerNotServedWithNoIssuer(t *testing.T) {
 	s := newSlips(t, testLauncherAccount)
-	for _, path := range []string{identitywire.PairingPath, identitywire.DevicePath} {
-		t.Run(path, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}"))
+	for _, route := range []struct {
+		path    string
+		handler func(context.Context, http.ResponseWriter, *http.Request, token.Signer)
+	}{
+		{identitywire.PairingPath, s.server.identityPairing},
+		{identitywire.DevicePath, s.server.identityDevice},
+	} {
+		t.Run(route.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, route.path, strings.NewReader("{}"))
 			req.Header.Set("Content-Type", contentTypeJSON)
 			req.Header.Set("Authorization", "Bearer "+s.launcherToken())
 			rec := httptest.NewRecorder()
 			// No signer and no identity configuration: the state I1 answers
 			// this route in before any issuer row exists.
-			s.server.identityPairing(context.Background(), rec, req, nil)
+			route.handler(context.Background(), rec, req, nil)
 			if rec.Code != StatusUnavailable {
 				t.Fatalf("the call is answered %s, want %d", answerSummary(rec), StatusUnavailable)
 			}

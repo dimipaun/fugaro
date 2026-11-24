@@ -641,12 +641,21 @@ const rulesRegistrationGeneration = 6
 const rulesSpendLeavesGeneration = 7
 
 // rulesOutcomeGeneration is the rules generation that added the paired device's
-// read of a run's outcome (mobile identity-pairing task J1, F30, D2797, O3). It
-// is the generation *below* this binary's, which is why the branch it gates in
-// rulesMarkerOlderText is the one that announces the credential route
-// (workspace-service task WS22, R3 and R4): a marker at 8 already has that read,
-// and what the deploy adds over it is generation 9's own grant.
+// read of a run's outcome (mobile identity-pairing task J1, F30, D2797, O3).
 const rulesOutcomeGeneration = 8
+
+// rulesRouteGeneration is the rules generation that added the credential route a
+// run reads at bootstrap (workspace-service task WS22, R3 and R4).
+const rulesRouteGeneration = 9
+
+// rulesLaunchGeneration is the rules generation that added the phone's stop
+// request and the launch envelope a paired device reads (mobile plan task
+// P5.1g). It is the generation *below* this binary's, which is why the branch
+// it gates in rulesMarkerOlderText is the one that announces generation 11's
+// two shapes (mobile identity-pairing task J5r): a marker at 10 already has the
+// stop kind and the envelope, and what the deploy adds over it is the tag a
+// signing device carries and the typed launch it sends.
+const rulesLaunchGeneration = 10
 
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
@@ -669,10 +678,22 @@ const rulesOutcomeGeneration = 8
 // (spend-accuracy task SA5.0, D2648 as amended by D2650), and one at
 // rulesSpendLeavesGeneration already has those leaves and only the paired
 // device's read of a run's outcome is new to it (mobile identity-pairing task
-// J1, F30, D2797, O3), and one at rulesOutcomeGeneration already has that read
-// and only the credential route a run reads is new to it (workspace-service task
-// WS22, R3 and R4).
+// J1, F30, D2797, O3), one at rulesOutcomeGeneration already has that read and
+// only the credential route a run reads is new to it (workspace-service task
+// WS22, R3 and R4), one at rulesRouteGeneration already has that route and only
+// the phone's stop request and the launch envelope are new to it (mobile plan
+// task P5.1g), and one at rulesLaunchGeneration already has those two and only
+// the tag a signing device carries and the typed launch it sends are new to it
+// (mobile identity-pairing task J5r).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesLaunchGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node, the registration kind's fields, the four day-counter leaves a run's stage report writes per model, the paired device's read of a run's outcome, the credential route a run reads, the phone's stop request and the launch envelope, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the two shapes a phone of this release writes (mobile identity-pairing task J5r, O6 and O10): a message and the heartbeat carry `sig` — the base64url Ed25519 signature a device that holds a key signs with — in place of the `mac` tag, exactly one of the two, and an inbox action may be the typed launch, whose `mode` names the rigor mode to start in and which needs no `confirmation` where every other verb carries one; under these rules a device that signs has every message and every heartbeat refused at the database with no error, and a launch is refused at the verb enumeration, so the app can neither speak nor start anything until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
+	}
+	if gen >= rulesRouteGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node, the registration kind's fields, the four day-counter leaves a run's stage report writes per model, the paired device's read of a run's outcome and the credential route a run reads, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds two things the phone needs (mobile plan task P5.1g): the `stop` kind, which is how the app asks a human to stop what they are looking at (the owner's Q10 answer (c): a request the human acts on at the console or the laptop, never a phone-writable kill switch) and which the older document refuses with no error, and the launch envelope at %s/{recipe,devices/$uid} (the installation's named safe recipe and the paired device's own repository allow-list, launch rate and daily cost ceiling, read by that device alone and written by no client) — without them the app can neither ask for a stop nor read the values it refuses an utterance against, so it refuses every launch until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, rules.PathLaunchEnvelope, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesOutcomeGeneration {
 		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node, the registration kind's fields, the four day-counter leaves a run's stage report writes per model and the paired device's read of a run's outcome, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the credential route a run reads at bootstrap (config/policy/route/$slug, one node per repository, granted to that repository's own run token and to nothing else, workspace-service WS22, R3 and R4): a run under these rules reads no route and is served by the project's own credential, so a member that pinned a workspace keeps calling the project until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
@@ -1188,6 +1209,9 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	profiles := policyProfiles(lc)
 	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets, lc.PolicyRepoAccounts())
 	if err != nil {
+		if gaps := repoAccountGaps(lc); len(gaps) > 0 {
+			return nil, false, userErr("%v. The one command that fixes it: %s", err, gaps[0].fix())
+		}
 		return nil, false, userErr("%v", err)
 	}
 	// The Bitbucket block is derived the same way and for the same reason: it
@@ -1610,6 +1634,19 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedMobile = old.Mobile
 	}
 	pol.Mobile = projectpolicy.MobileForPublish(publishedMobile)
+	// The app's crash-report switch is a top-level key BESIDE the block and not
+	// a member of it (policy.go's Policy.MobileCrashReports), and a publish keeps
+	// and fills it the way it keeps the block: a node that carries the key holds
+	// the project's own answer — the owner's hand-written false included (O13) —
+	// and a node published before the key existed is written the default on.
+	// Without that fill the reader's fail-safe (an absent key answers off) would
+	// leave every installation at the release behind sending nothing for ever
+	// (D731, D734, D738).
+	var publishedCrashReports *bool
+	if old != nil {
+		publishedCrashReports = old.MobileCrashReports
+	}
+	pol.MobileCrashReports = projectpolicy.MobileCrashReportsForPublish(publishedCrashReports)
 	// The crafts' credentials, their pools and the crafts that choose among
 	// them are the operator's own blocks from this release on (docs/model-crafts
 	// §1–3, MC18, D1667): the local config is their carrier, and this publish
@@ -1744,6 +1781,14 @@ func publishedCraftPools(lc *localcfg.Config, old *projectpolicy.Policy, creds [
 		}
 		q, held := craftPoolNamed(old, p.Name)
 		pub := p
+		// A pool's rule, principal and threshold are the config's three new
+		// members (PL1, R21) and the node's craft_pools may not carry them: that
+		// block is decoded strictly by every job image of the installation, so a
+		// release behind this one refuses the whole node for a key it does not
+		// know. The pools in their new shape travel under the policy's
+		// `model_routing` key instead (RT4), and what the node holds here is the
+		// pool as the readers of craft_pools have always read it.
+		pub.Rule, pub.Principal, pub.Threshold = "", nil, nil
 		// The marker is never the config's (D2608), so it starts cleared and is
 		// taken from the node alone, and only while nothing else answers for the
 		// pool: a pool that names an owner now is not one that predates owners.
@@ -3032,6 +3077,16 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if old != nil && old.Mobile != nil {
 		fmt.Fprintf(out, "  mobile kept: %s\n", mobileText(new.Mobile))
 	}
+	// The app's crash-report switch is kept too, and the line is the mobile
+	// block's one above: no key of this machine's config states it, so a key the
+	// node carries is unchanged and no +/- line above mentions it — and a person
+	// who turned the reports off by hand (O13) would read that silence as "they
+	// are on again". A node that carries no key is written the default on, and
+	// that is the diff's own row above: `kept` would be false of a switch this
+	// publish has just written.
+	if old != nil && old.MobileCrashReports != nil {
+		fmt.Fprintf(out, "  %s kept: %v\n", projectpolicy.MobileCrashReportsKey, *new.MobileCrashReports)
+	}
 	// The crafts, their credentials and their pools are the operator's own
 	// blocks (docs/model-crafts §1–3, MC18, D1667), so a publish that writes
 	// them names them: a credential by its name and its type, a pool by its
@@ -3199,6 +3254,11 @@ func issueSyncText(b *projectpolicy.IssueSync) string {
 // (projectpolicy's accessors), so the line says what the pairing route will do
 // and not what a node happens to spell — an absent `enabled` inside a written
 // block is on, and an absent `accepted_providers` is the default four.
+//
+// The app's crash-report switch is not a member of this block and is not printed
+// here: it is a top-level key beside it, with a line of its own
+// (projectpolicy.MobileCrashReportsKey in policyLines), because a member inside
+// this block would be refused by every reader of the release behind.
 func mobileText(b *projectpolicy.Mobile) string {
 	if b == nil {
 		return "none"
@@ -3692,6 +3752,17 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 	if p.Mobile != nil {
 		out["mobile"] = mobileText(p.Mobile)
 	}
+	// The app's crash-report switch is a row of its own, beside the block and
+	// never inside it (D731, D738): a publish writes the node's value where it
+	// carries one and the default on where it does not
+	// (projectpolicy.MobileCrashReportsForPublish), so the row is the switch as
+	// written — the diff prints it as the key a publish adds to a node published
+	// before it existed. A row is left out where the policy carries none, for
+	// the block's own reason one line up: "none" would read as a key this
+	// publish had taken away, which no publish does.
+	if p.MobileCrashReports != nil {
+		out[projectpolicy.MobileCrashReportsKey] = fmt.Sprintf("%v", *p.MobileCrashReports)
+	}
 	return out
 }
 
@@ -3853,19 +3924,38 @@ func policyRepoChildren(ctx context.Context, db *rtdb.Client, lc *localcfg.Confi
 	return slices.Sorted(maps.Keys(m)), nil
 }
 
-// runsInFlight counts the runs the registry still holds: a run's entry is
-// written when it starts and removed when it ends, which is the same source
-// `fugaro budget show` lists as running.
-func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (int, error) {
+// inFlightRegistry is the registry's own document: one entry per running run,
+// keyed by repository then by run ID. It is one read rather than a count and a
+// second read beside it, because the two questions asked of it — how many runs
+// are running, and which of them the update's note is about — are asked by the
+// same reader in the same breath, and the read is the expensive one on an
+// installation with many runs.
+func inFlightRegistry(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (map[string]map[string]budget.AgentEntry, error) {
 	var agents map[string]map[string]budget.AgentEntry
 	if _, err := db.Get(ctx, "agents", &agents); err != nil {
-		return 0, dbErr(lc, err, false)
+		return nil, dbErr(lc, err, false)
 	}
+	return agents, nil
+}
+
+// runsCount is how many runs one registry document holds.
+func runsCount(agents map[string]map[string]budget.AgentEntry) int {
 	n := 0
 	for _, runs := range agents {
 		n += len(runs)
 	}
-	return n, nil
+	return n
+}
+
+// runsInFlight counts the runs the registry still holds: a run's entry is
+// written when it starts and removed when it ends, which is the same source
+// `fugaro budget show` lists as running.
+func runsInFlight(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) (int, error) {
+	agents, err := inFlightRegistry(ctx, db, lc)
+	if err != nil {
+		return 0, err
+	}
+	return runsCount(agents), nil
 }
 
 // confirmRemovalStrict asks for the project's name before an un-enrollment,

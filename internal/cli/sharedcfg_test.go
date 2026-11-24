@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/routing"
 )
 
 func sharedObjectPath(dir string) string {
@@ -210,7 +211,7 @@ func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a publish failure must not fail init: %v", err)
 	}
-	if !strings.Contains(out, "warning: could not publish the shared config: ") || !strings.Contains(out, "teammates will need fugaro setup until it is published") {
+	if !strings.Contains(out, "Warning: could not publish the shared config: ") || !strings.Contains(out, "teammates will need fugaro setup until it is published") {
 		t.Errorf("no warning:\n%s", out)
 	}
 }
@@ -317,10 +318,10 @@ func setLocalBatch(t *testing.T, path string, b *localcfg.Batch) {
 // leaves in the runs bucket is the installation's, and every publish rewrites
 // this machine's own copy of it from the published one (R15, BR19). The
 // published object is the local config of every teammate who has none — the
-// reference the project shares and the copy their launches read the fact off —
-// so a publishing machine's own block is never the authority on it: a stale
-// local `in` neither publishes over a withdrawal nor survives one. The two
-// writers R15 names are the only publishes that CHANGE the value, through
+// reference `fugaro project show` reads and the copy their launches read the
+// fact off — so a publishing machine's own block is never the authority on it:
+// a stale local `in` neither publishes over a withdrawal nor survives one.
+// The two writers R15 names are the only publishes that CHANGE the value, through
 // publishSharedOptIn: an operator's selection passes `in` (R2, BR18) and the
 // opt-out passes `withdrawn` (R16, BR20), the value passed explicitly because
 // no other publish may write one.
@@ -733,14 +734,11 @@ func TestInitPublishConfigSaysSoWhenItDoesNotPublish(t *testing.T) {
 	}
 }
 
-// TestPublishSharedOversizeMergeFallsBackToLocal: a valid published object
-// just under the cap (a writer bloated model_prices) would push every merge
-// over it; the publisher then replaces it with this machine's view instead
-// of failing for good.
-func TestPublishSharedOversizeMergeFallsBackToLocal(t *testing.T) {
-	f := newCloudFixture(t)
-	f.noBudget(t)
-	dir := filepath.Join(f.dir, "runs")
+// oversizePublished is a valid published object just under the cap (a writer
+// bloated model_prices) whose every merge with this machine's own config goes
+// over it: the state both oversize tests below are written from.
+func oversizePublished(t *testing.T) []byte {
+	t.Helper()
 	pub, err := localcfg.Parse([]byte(publishedWithOtherRepo))
 	if err != nil {
 		t.Fatal(err)
@@ -771,7 +769,18 @@ func TestPublishSharedOversizeMergeFallsBackToLocal(t *testing.T) {
 	if len(data) <= localcfg.SharedMaxBytes-40 || len(data) > localcfg.SharedMaxBytes {
 		t.Fatalf("fixture is %d bytes", len(data))
 	}
-	writePublished(t, dir, string(data))
+	return data
+}
+
+// TestPublishSharedOversizeMergeFallsBackToLocal: a valid published object
+// just under the cap (a writer bloated model_prices) would push every merge
+// over it; the publisher then replaces it with this machine's view instead
+// of failing for good.
+func TestPublishSharedOversizeMergeFallsBackToLocal(t *testing.T) {
+	f := newCloudFixture(t)
+	f.noBudget(t)
+	dir := filepath.Join(f.dir, "runs")
+	writePublished(t, dir, string(oversizePublished(t)))
 	lc := publishable(t)
 	var warned []string
 	written, _, err := publishSharedWarn(context.Background(), lc, func(m string) { warned = append(warned, m) })
@@ -784,6 +793,66 @@ func TestPublishSharedOversizeMergeFallsBackToLocal(t *testing.T) {
 	got, _ := os.ReadFile(sharedObjectPath(dir))
 	if len(got) > localcfg.SharedMaxBytes || strings.Contains(string(got), "claude-sonnet-0-0") || !strings.Contains(string(got), "acme/app") {
 		t.Errorf("published %d bytes:\n%.400s", len(got), got)
+	}
+}
+
+// TestPublishSharedOversizeReplacementKeepsTheWritersValue: the oversize branch
+// is a replacement like the refused one (O18) — what it writes is this
+// machine's own block and not a merge — and the opt-in fact in it follows the
+// merge's own rule, which is the one place the two differ: the value a writer
+// passed, and this machine's own block's for an ordinary publish. An ordinary
+// publish takes the fact from the published copy, so a copy being replaced
+// leaves it nothing to take it from and its own block's value is what goes out;
+// a writer's value is what the two writers R15 names pass and no other publish
+// may write.
+func TestPublishSharedOversizeReplacementKeepsTheWritersValue(t *testing.T) {
+	f := newCloudFixture(t)
+	f.noBudget(t)
+	dir := filepath.Join(f.dir, "runs")
+	oversize := oversizePublished(t)
+	ctx := context.Background()
+	// This machine's own block states the other value, so a fact that reads
+	// `in` in the object can only be the writer's.
+	setLocalBatch(t, os.Getenv("FUGARO_CONFIG"), &localcfg.Batch{
+		Image: "us-east5-docker.pkg.dev/proj-1234/fugaro/acme-web:1",
+		OptIn: localcfg.BatchOptInWithdrawn,
+	})
+	for _, tc := range []struct {
+		name string
+		pub  func(*localcfg.Config, func(string)) (bool, string, error)
+		want string
+	}{
+		{"the writer's value", func(lc *localcfg.Config, warn func(string)) (bool, string, error) {
+			return publishSharedOptIn(ctx, lc, localcfg.BatchOptInOn, warn)
+		}, localcfg.BatchOptInOn},
+		{"this machine's own value", func(lc *localcfg.Config, warn func(string)) (bool, string, error) {
+			return publishSharedWarn(ctx, lc, warn)
+		}, localcfg.BatchOptInWithdrawn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writePublished(t, dir, string(oversize))
+			var warned []string
+			written, fact, err := tc.pub(publishable(t), func(m string) { warned = append(warned, m) })
+			if err != nil || !written {
+				t.Fatalf("written=%v err=%v", written, err)
+			}
+			if len(warned) != 1 || !strings.Contains(warned[0], "too large to merge") || !strings.Contains(warned[0], "replacing it with this machine's view") {
+				t.Errorf("warnings = %q", warned)
+			}
+			if fact != tc.want {
+				t.Errorf("publishedOptIn = %q, want %q: the fact is what the write really left in the bucket", fact, tc.want)
+			}
+			if got := publishedOptIn(t, dir); got != tc.want {
+				t.Errorf("the replacement left the installation with %q, want %q", got, tc.want)
+			}
+			got, err := os.ReadFile(sharedObjectPath(dir))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) > localcfg.SharedMaxBytes || strings.Contains(string(got), "claude-sonnet-0-0") || !strings.Contains(string(got), "acme/app") {
+				t.Errorf("published %d bytes:\n%.400s", len(got), got)
+			}
+		})
 	}
 }
 
@@ -1002,6 +1071,41 @@ func TestSharedConfigRefusesCloneURLs(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
+	}
+}
+
+// TestSharedConfigRefusesModelRouting: the routing table names which credential
+// serves which model, and by which admissions, so it is local-only the way the
+// pools and crafts are (RT2 of docs/model-credentials-routing/, D3182, F12): a
+// launcher who could write it into the runs bucket's shared file would be
+// aiming every teammate's calls at a credential and admissions the owner never
+// granted. The table travels to the policy node instead, which the runner reads
+// and fails closed on, and localcfg.Config.Shared nils it — so the reader
+// refuses the key by name before the file is parsed and again on the decoded
+// value, the way review_floor and the catalog are refused.
+func TestSharedConfigRefusesModelRouting(t *testing.T) {
+	if !slices.Contains(sharedForbidden, "model_routing") {
+		t.Fatal("sharedForbidden does not name model_routing, so a published table would be read")
+	}
+	block := "model_routing:\n  - match: claude-*\n    chain:\n      - kind: vertex\n"
+	_, err := ParseShared([]byte(validShared()+block), sharedAnchor)
+	if err == nil {
+		t.Fatal("a published shared config carrying model_routing: was accepted")
+	}
+	for _, want := range []string{"model_routing", "never published", "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// The decoded half, which no document reaches (the key is refused before
+	// Parse): a config built another way must not publish a table the converge
+	// never writes. The control beside it keeps the arm from being replaced by
+	// a predicate that refuses everything.
+	if !sharedNeverPublished(&localcfg.Config{ModelRouting: routing.Table{{Match: "claude-*", Chain: []routing.Source{{Kind: routing.KindVertex}}}}}) {
+		t.Error("only the routing table is set, and the config is called publishable")
+	}
+	if sharedNeverPublished(&localcfg.Config{}) {
+		t.Error("a config carrying no section at all is called unpublishable, so the check is not the sections it names")
 	}
 }
 

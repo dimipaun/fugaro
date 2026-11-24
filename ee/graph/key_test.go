@@ -27,11 +27,80 @@ func TestKeyIsSourceQualified(t *testing.T) {
 	}
 }
 
+// TestParseScopeNamedOrchestrator: a named orchestrator's id is a scope's id
+// too (D3207, F40). `orchestrator:<project>~<name>` and
+// `local:<project>~<name>` are read under C-ORCH's one rule — ValidScopeID,
+// the same rule the orchestrator tree validates its own ids with — so
+// `fugaro graph --source orchestrator:<id>` reads the named orchestrator, and
+// the value the console sends back is one the node it names is keyed by.
+//
+// Hand mutation this fails on: keeping the old `scopeIDPattern`, which refuses
+// `~` and so leaves every named orchestrator unreachable from the command line.
+func TestParseScopeNamedOrchestrator(t *testing.T) {
+	accept := []struct {
+		in   string
+		kind ScopeKind
+		id   string
+	}{
+		{"orchestrator:fugaro~night", ScopeOrchestrator, "fugaro~night"},
+		{"local:fugaro~night", ScopeLocal, "fugaro~night"},
+		// The default orchestrator is still the project's own name.
+		{"orchestrator:fugaro", ScopeOrchestrator, "fugaro"},
+		// The longest id the rule admits: a 40-character project name, the
+		// separator, and a 40-character name (MaxOrchestratorIDLength).
+		{"orchestrator:" + strings.Repeat("a", 40) + "~" + strings.Repeat("b", 40),
+			ScopeOrchestrator, strings.Repeat("a", 40) + "~" + strings.Repeat("b", 40)},
+		// A name may end in a hyphen where a project's name may not (D3207's
+		// asymmetry).
+		{"orchestrator:fugaro~night-", ScopeOrchestrator, "fugaro~night-"},
+	}
+	for _, tc := range accept {
+		got, err := ParseScope(tc.in)
+		if err != nil {
+			t.Errorf("ParseScope(%q) refused a valid named scope: %v", tc.in, err)
+			continue
+		}
+		if got.Kind != tc.kind || got.ID != tc.id {
+			t.Errorf("ParseScope(%q) = %+v, want kind %q id %q", tc.in, got, tc.kind, tc.id)
+		}
+		if s := got.String(); s != tc.in {
+			t.Errorf("ParseScope(%q).String() = %q, want the value back", tc.in, s)
+		}
+	}
+
+	refuse := []string{
+		"orchestrator:~night",         // no project
+		"orchestrator:fugaro~",        // no name
+		"orchestrator:fugaro~night~1", // one separator, and the id carries it
+		"orchestrator:fugaro~Night",
+		"orchestrator:Fugaro~night",
+		"orchestrator:fugaro~ni_ght",
+		"orchestrator:fugaro~night/x",
+		"orchestrator:fugaro ~night",
+		"orchestrator:fugaro~-night",
+		// A project's name ends with a letter or a digit, where the id this
+		// scope used to carry alone admitted a trailing hyphen.
+		"orchestrator:fugaro-",
+		"orchestrator:fugaro-~night",
+		"orchestrator:-fugaro~night",
+		"local:fugaro~night~1",
+		// One past the id's cap: a name one character too long, and a project
+		// name one too long.
+		"orchestrator:" + strings.Repeat("a", 40) + "~" + strings.Repeat("b", 41),
+		"orchestrator:" + strings.Repeat("a", 41) + "~night",
+	}
+	for _, in := range refuse {
+		if got, err := ParseScope(in); err == nil {
+			t.Errorf("ParseScope(%q) = %+v, want a refusal", in, got)
+		}
+	}
+}
+
 // TestScopePatternRefusesEverythingElse: `--source` is a renderer-supplied
 // string that reaches argv, so ParseScope accepts only the closed set of H1 —
-// `all`, `coordinator`, `orchestrator:<id>`, `local:<id>`, with an id of one
-// lower-case letter or digit and up to 39 more of those or a hyphen — and
-// refuses everything else before anything is read.
+// `all`, `coordinator`, `orchestrator:<id>`, `local:<id>`, with an id one
+// orchestrator node may be keyed by (C-ORCH's rule, F40) — and refuses
+// everything else before anything is read.
 //
 // Hand mutation this fails on: loosening the id pattern to `.+` (or dropping
 // its anchors), which lets a leading `-`, a path separator, an uppercase

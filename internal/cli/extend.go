@@ -116,6 +116,96 @@ func RegisterCommand(name string, newCmd func() *cobra.Command) error {
 	return nil
 }
 
+// RegisterSubcommand adds a command under one the released tree builds, for the
+// moved code that is a command of a command family the core keeps: `fugaro
+// orchestrator map` is `ee/orchestrator/cli`'s (CG6 of
+// docs/console-fixes/implementation-plan.md) and is registered here rather than
+// replacing the `orchestrator` family the core owns.
+//
+// Everything RegisterCommand refuses, this refuses at the parent's own depth:
+// the registration ADDS and never takes over, so the name may be one the
+// released tree does not answer to below that parent, and the command the
+// constructor builds must carry the name it is registered under. The parent is
+// named by its own name — the one the released tree holds at the root — and a
+// registration under a name the released tree has no command for is refused
+// rather than kept for a tree that would never show it.
+func RegisterSubcommand(parent, name string, newCmd func() *cobra.Command) error {
+	if parent == "" || strings.ContainsAny(parent, " \t\n") {
+		return fmt.Errorf("registering %s %s: a command name is one word", parent, name)
+	}
+	if name == "" || strings.ContainsAny(name, " \t\n") {
+		return fmt.Errorf("registering %s %s: a command name is one word", parent, name)
+	}
+	if newCmd == nil {
+		return fmt.Errorf("registering %s %s: no command constructor", parent, name)
+	}
+	if registrationsSealed {
+		return fmt.Errorf("registering %s %s: the command tree is already built, and a registration that arrives after it would never reach a tree", parent, name)
+	}
+	core := coreSurface()
+	below, held := core.subCommands[parent]
+	if !held {
+		return fmt.Errorf("registering %s %s: the released tree holds no command of that name for it to be added under", parent, name)
+	}
+	if below[name] {
+		return fmt.Errorf("registering %s %s: the released tree answers to that name below %s, and a registration adds a command rather than replacing one", parent, name, parent)
+	}
+	if cobraOwnNames[name] {
+		return fmt.Errorf("registering %s %s: %s answers to that name itself below every command that has children", parent, name, name)
+	}
+	key := parent + " " + name
+	if registeredSubNames[key] {
+		return fmt.Errorf("registering %s %s: an earlier registration already answers to that name", parent, name)
+	}
+	cmd := newCmd()
+	if cmd == nil {
+		return fmt.Errorf("registering %s %s: its constructor built no command", parent, name)
+	}
+	if cmd.Name() != name {
+		return fmt.Errorf("registering %s %s: the command it built is named %q, so it would be added under one name and answer to another", parent, name, cmd.Name())
+	}
+	for _, alias := range cmd.Aliases {
+		if below[alias] {
+			return fmt.Errorf("registering %s %s: it answers to %s, a name the released tree holds below %s, and cobra would find the released command first", parent, name, alias, parent)
+		}
+		if cobraOwnNames[alias] {
+			return fmt.Errorf("registering %s %s: it answers to %s, a name every command with children answers to itself", parent, name, alias)
+		}
+		if registeredSubNames[parent+" "+alias] {
+			return fmt.Errorf("registering %s %s: it answers to %s, which an earlier registration already holds", parent, name, alias)
+		}
+	}
+	// A persistent flag is inherited by everything under the command it sits on,
+	// so re-declaring one of the parent's own — or one of the root's, which the
+	// parent's subtree already inherits — takes that flag away from the subtree
+	// rather than adding a flag beside it.
+	var clash string
+	cmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		if clash == "" && (core.rootFlags[f.Name] || core.subFlags[parent][f.Name]) {
+			clash = f.Name
+		}
+	})
+	if clash != "" {
+		return fmt.Errorf("registering %s %s: it declares --%s as a persistent flag, and %s's own subtree already defines that name", parent, name, clash, parent)
+	}
+	if registeredSub[parent] == nil {
+		registeredSub[parent] = map[string]func() *cobra.Command{}
+	}
+	registeredSub[parent][name] = newCmd
+	registeredSubNames[key] = true
+	for _, alias := range cmd.Aliases {
+		registeredSubNames[parent+" "+alias] = true
+	}
+	return nil
+}
+
+// cobraOwnNames are the names cobra itself answers to below every command that
+// has children: the help command it adds when one executes, and the completion
+// command `InitDefaultCompletionCmd` adds beside it. A registration under one of
+// them would be found before cobra's own, which is a name this tree does not
+// hand out.
+var cobraOwnNames = map[string]bool{"help": true, "completion": true}
+
 // LaunchDeclarer declares one launch to the coordinator's record. An untagged
 // build registers none, so its launches declare nothing (D535): the record is
 // the coordinator's, and the code that writes it moved out of the core.
@@ -368,6 +458,35 @@ func paidCommandNames() []string {
 	return names
 }
 
+// paidSubcommand is one paid command that lives under a command the released
+// tree builds rather than at the root, named by the parent's own name and the
+// name below it: `fugaro orchestrator map` is `ee/orchestrator/cli`'s,
+// registered from ee/ under the `orchestrator` family the core keeps
+// (RegisterSubcommand; CG6 of docs/console-fixes/implementation-plan.md).
+type paidSubcommand struct {
+	// parent is the name the released tree holds at the root.
+	parent string
+	// name is the command's own name below that parent, which the released
+	// tree does not answer to.
+	name string
+}
+
+// paidSubcommands are the paid commands that sit under a core family, written
+// down rather than read off the tree: a registration happens at run time, in a
+// process that carries ee/register (applyExtensions), so a build without that
+// code — and the CLI reference's core-side check, which runs in one — cannot
+// see from the tree that the tagged tree answers to the name. Nothing here
+// decides what a tree holds: RegisterSubcommand judges a registration against
+// the released tree, and a core build carries no stub for such a name either —
+// the stub stands in for a paid name at the root (D522), and ee/orchestrator/cli
+// pins that the released tree answers no `orchestrator map` at all. Its one
+// reader is cliRefPaidSection, which admits a reference section that is the
+// tagged tree's to carry, and only while the released tree does not hold the
+// name.
+var paidSubcommands = []paidSubcommand{
+	{parent: "orchestrator", name: "map"},
+}
+
 // stubCommandNames are the paid names a core build answers with newPaidStub:
 // every name above that a core build may speak of. A core build shows a stub
 // for a name it does not hold rather than leaving the name unknown to cobra,
@@ -406,9 +525,9 @@ func newPaidStub(name string) *cobra.Command {
 }
 
 // applyExtensions is what a built root gets from this file: the commands
-// registered for it, and a stub for every paid name no core command holds.
-// It is called once per tree, when the tree is built, and it refuses nothing —
-// registration is where a name was judged.
+// registered for it, the commands registered under them, and a stub for every
+// paid name no core command holds. It is called once per tree, when the tree is
+// built, and it refuses nothing — registration is where a name was judged.
 func applyExtensions(root *cobra.Command) {
 	core := coreSurface()
 	names := make([]string, 0, len(registrations))
@@ -418,6 +537,35 @@ func applyExtensions(root *cobra.Command) {
 	sort.Strings(names)
 	for _, name := range names {
 		root.AddCommand(registrations[name]())
+	}
+	// The commands registered under one the released tree builds, and after the
+	// registrations above: a parent is one the released tree builds
+	// (RegisterSubcommand judges the parent against that tree and nothing else),
+	// so it is in the tree already. Its own children were added by its own
+	// constructor, so a registration under a name it already answers to was
+	// refused at RegisterSubcommand rather than landing here.
+	below := make([]string, 0, len(registeredSub))
+	for parent := range registeredSub {
+		below = append(below, parent)
+	}
+	sort.Strings(below)
+	for _, parent := range below {
+		c, _, err := root.Find([]string{parent})
+		if err != nil || c == nil {
+			// A parent the tree does not have cannot happen: the registration
+			// was judged against the released tree's own names. A registration
+			// that reached here anyway is dropped rather than taken as a reason
+			// to fail the command the binary is running.
+			continue
+		}
+		registered := make([]string, 0, len(registeredSub[parent]))
+		for name := range registeredSub[parent] {
+			registered = append(registered, name)
+		}
+		sort.Strings(registered)
+		for _, name := range registered {
+			c.AddCommand(registeredSub[parent][name]())
+		}
 	}
 	for _, name := range stubCommandNames() {
 		if core.rootCommands[name] {
@@ -456,9 +604,20 @@ func applyExtensions(root *cobra.Command) {
 // take over a name the root already has. Names deeper in the tree are not here
 // on purpose: a registered command's own subcommand sits under its own path,
 // where the same word is a different command.
+//
+// What is deeper in the tree is in the two maps below, for the same rule one
+// level down: a registration under a command the released tree builds
+// (RegisterSubcommand) may take over neither a name that command's own subtree
+// answers to nor a persistent flag that command declares.
 type coreNames struct {
 	rootCommands map[string]bool
 	rootFlags    map[string]bool
+	// subCommands are the names and aliases each root command's own subtree
+	// answers to below it, and subFlags the persistent flags that command
+	// declares, which everything under it inherits. Both carry an entry for
+	// every root command, empty where it has no children and declares none.
+	subCommands map[string]map[string]bool
+	subFlags    map[string]map[string]bool
 }
 
 // surface is built by building the bare tree once. Only the names are kept: a
@@ -470,7 +629,12 @@ func coreSurface() *coreNames {
 	if surface != nil {
 		return surface
 	}
-	names := &coreNames{rootCommands: map[string]bool{}, rootFlags: map[string]bool{}}
+	names := &coreNames{
+		rootCommands: map[string]bool{},
+		rootFlags:    map[string]bool{},
+		subCommands:  map[string]map[string]bool{},
+		subFlags:     map[string]map[string]bool{},
+	}
 	root := newCoreRoot()
 	// The tree a build hands to main is the one cobra executes, and cobra adds
 	// its help and completion commands and the root's version flag as it
@@ -494,6 +658,22 @@ func coreSurface() *coreNames {
 		for _, alias := range child.Aliases {
 			names.rootCommands[alias] = true
 		}
+		// The child's own subtree, one level down: the names and aliases it
+		// answers to below itself and the persistent flags it hands down. The
+		// help command cobra adds to it while one executes is not among them —
+		// cobraOwnNames is where that name is written down — and neither is a
+		// grandchild's own name, which sits at a depth no registration reaches.
+		below := map[string]bool{}
+		for _, grand := range child.Commands() {
+			below[grand.Name()] = true
+			for _, alias := range grand.Aliases {
+				below[alias] = true
+			}
+		}
+		names.subCommands[child.Name()] = below
+		flags := map[string]bool{}
+		child.PersistentFlags().VisitAll(func(f *pflag.Flag) { flags[f.Name] = true })
+		names.subFlags[child.Name()] = flags
 	}
 	root.LocalFlags().VisitAll(func(f *pflag.Flag) { names.rootFlags[f.Name] = true })
 	root.PersistentFlags().VisitAll(func(f *pflag.Flag) { names.rootFlags[f.Name] = true })
@@ -513,6 +693,15 @@ var (
 	// and the later one would be reached after the earlier rather than instead
 	// of it.
 	registeredNames = map[string]bool{}
+	// registeredSub are the commands a build registered under one the released
+	// tree builds, by the parent's own name and then by the name. They are
+	// constructors for the reason the registrations above are.
+	registeredSub = map[string]map[string]func() *cobra.Command{}
+	// registeredSubNames is every parent-qualified name and alias those
+	// registrations brought, `<parent> <name>` — the shape cobra's own
+	// CommandPath writes. It is what keeps two of them from answering to one
+	// name under one parent.
+	registeredSubNames = map[string]bool{}
 	// registrationsSealed is set when a tree is built: a registration that
 	// arrives after one would never reach a tree, so it is refused loudly
 	// rather than accepted and ignored.

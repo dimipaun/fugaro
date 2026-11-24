@@ -10,6 +10,16 @@ D3148 by round 3).
 **How to read a decision number here.** D2960–D2969 are allocated twice on `main` (F1). In this
 folder they always mean the workspace-credentials decisions of [spec.md](spec.md) §4 and §5.
 
+**Amended 2026-11-22 by [model credentials routing](../model-credentials-routing/README.md)**, whose
+task A2 writes this note, and nothing here changes. That plan gives a person's own token a model call,
+served through that person's personal pool in the project (its PL4, D3179), which is the half F4 below
+records as served by nothing. **D3141 stands**: a person's token at the workspace is served only where a
+repository's model route is the workspace, and a project that carries a routing table serves the call
+from its own service, so a project's own routing shadows it exactly as D3141's cost says. **D2976 is
+amended by one case in a project** (its D3191): a run that resumes a person's paused run draws on that
+person's pool, where a run launched by a service account is otherwise served no personal token. No
+task, resolution or finding of this plan is withdrawn or amended by that one.
+
 ## 1. What the spec asks for, and what the repository has now
 
 The spec was written on 2026-11-19, two days before this read. Most of what it proposes was planned
@@ -76,7 +86,10 @@ entries only, and the launcher's slip list is the crafts' resolved access names
 a `fugaro_u_` id. The header of `internal/credsvc/dynamicsecrets.go` says the same. The spec's §2
 reads "`fugaro secrets user set` stores a secret under the person's own prefix" as if a run then
 used it. Consequence: the personal half is not "move the token to the workspace". It has to build
-the producer of the candidate, and D3140 asks whether to plan that now.
+the producer of the candidate, and D3140 asks whether to plan that now. *(Amended 2026-11-22: the
+project half of the producer is planned — [model credentials routing](../model-credentials-routing/reconciliation.md)
+D3179 and PL4 serve a person's own tokens from that person's personal pool in the project, so "no
+model call can use a person's own token" holds at the workspace only, which is this plan's half.)*
 
 **F5 — Rule.** The route between a project's service and the workspace's is chosen once per
 repository and kind and holds for the run (D2982, D2989; `creds.Route`,
@@ -202,7 +215,10 @@ receives the token of whoever launches there and can replay it to the real servi
 lifetime: ask for grants as that person for jobs of that member, and replace or delete that
 person's token at the intake. *(Reach corrected after review round 3.)* The services accept
 gcloud's own audience (`GcloudAudience`, `internal/credsvc/launchers.go`), so the replay is not
-limited to the workspace: it works at every Fugaro service that admits that person, the intakes of
+limited to the workspace: it works at every Fugaro service that admits that person *(corrected again
+by WC0's review, 2026-11-22: Cloud Run accepts the token at any Cloud Run service the person can
+invoke, and the member's own service receives it on every switched-on launch with no false address;
+the owner narrowed the grant, D3145 below)*, the intakes of
 their other projects included, where the admin can replace or delete the person's own secrets and,
 where the person is a project admin, that project's shared ones. It cannot read a token and cannot
 run a job in another member.
@@ -226,7 +242,7 @@ answered on 2026-11-21.
 | **D3142** | With the member's switch on and the person holding a token, when is it used (F6)? | **Automatically**: every run that person launches there draws on it; `fugaro run` says so in one line, and `--no-personal-token` skips it for one run. Not chosen: only on `--personal-token` | 2026-11-21, as recommended. Why: the person stored it to use it. Cost: a person spends their own subscription unless they pass the flag |
 | **D3143** | Where do roster people's tokens go (F9)? | **The workspace project's existing intake**, admitting the roster's people as well; one container per person and name. Not chosen: a second intake with its own prefix | 2026-11-21, as recommended. Why: one code path. Cost, **corrected after review**: the question said the token would also serve the workspace project's own runs; it does not (A4, F4: no installation is served a personal token). What stands: one container per person in the workspace's project, and whoever holds the intake's account can replace any of them |
 | **D3144** | D2974 covers a missing token. What when the person's token is there but exhausted mid-run? | **The run moves on to the shared entries** it is admitted to, through their allow-list and the meter. Not chosen: wait and never switch | 2026-11-21, as recommended. Why: it is what the cascade does. Cost: a heavy user's runs spend the workspace's paid entries once their own window is used up |
-| **D3145** | Should the service also require the roster's `grants` list to name the person for that member (F18)? | **No.** Being on the roster and having launched the run is enough. Not chosen: require the mark | 2026-11-21, as recommended. Why: the list is a record and not a grant, and a person a member granted directly is not in it |
+| **D3145** | Should the service also require the roster's `grants` list to name the person for that member (F18)? | **No.** Being on the roster and having launched the run is enough. Not chosen: require the mark | 2026-11-21, as recommended. Why: the list is a record and not a grant, and a person a member granted directly is not in it. **Reopened by WC0's review, answered by the owner 2026-11-22:** "having launched the run" is checked by nothing, so a grant is bound to the members the person is a launcher of, checked against that member's own list (threat-model §11, finding 2); the `grants` mark, the one record the workspace can read, is reopened for WC4 and WC5's briefs, which list the open design question |
 | **D3146** | A person is removed from the roster while a run of theirs draws on their token. The spec's §6 says offboarding does not stop a run in flight (F25) | **The run halts within a minute**: the slip's owner is checked against the roster on every call (R3). Not chosen: let it finish on a grant that lasts up to 24 hours | 2026-11-21, added by review round 2, as recommended. Why: a removed person's token stops being spent at once. Cost: it reverses that sentence of the spec's §6, and it stops runs of someone removed from the workspace who still holds a role in that member |
 | **D3147** | The person holds a token and the grant fails at launch | **The run starts on the shared entries**, with one line saying it is not on the person's own token and why. Not chosen: refuse the launch | 2026-11-21, added by review round 2, as recommended. Why: it is what a failed grant does inside one project today. Cost: a run the person expected on their own subscription spends the workspace's paid entries |
 | **D3148** | `--workspace <name>` cannot tell the workspace's own project from a member's (R13). How does a person address the workspace's intake? | **By naming the workspace's project** with the existing `--project`; no `--workspace` flag. Not chosen: a new field in the workspace's shared config that marks it as the owner | 2026-11-21, added by review round 3, as recommended. Why: nothing resolves a name, so nothing can be spoofed. Cost: people must know the workspace's project name |
@@ -244,7 +260,7 @@ Each has one defensible answer given the decisions and the owner's constraints.
   | --- | --- |
   | D2960 (stored once at the workspace) | WC3, WC9, as amended by D3143 and R13 |
   | D2961 (which members) | "wherever the person launched a run" (the spec's own review), confirmed by D3145; WC4 |
-  | D2962 (owner-only), D2976 (never lent) | WC4: a grant names only the caller's own personal names, never a pool and never a `fugaro_p_` name |
+  | D2962 (owner-only), D2976 (never lent) | WC4: a grant names only the caller's own personal names, never a pool and never a `fugaro_p_` name. *(Amended 2026-11-22: D2976 by one case in a project — a run that resumes a person's paused run draws on that person's pool, [model credentials routing](../model-credentials-routing/reconciliation.md) D3191.)* |
   | D2963, D2977 (`all_members`) | workspace-service WS19 |
   | D2964, D2975 (provider keys) | keys-through-service for a project; WC1 for the workspace |
   | D2965 (not counted against the cap) | workspace-service WS8 (R15), and WC5 for the move of D3144 |
@@ -304,7 +320,7 @@ Each has one defensible answer given the decisions and the owner's constraints.
   no slip, and the run is served the shared entries exactly as before. The launcher never calls
   the intake. A grant that is refused, or a service that cannot be reached, starts the run on the
   shared entries with one line that says so and why (D3147); those entries are served through
-  their allow-list and the meter, which is what D2974 guards. A run launched by a service account asks for none (D2976's consequence).
+  their allow-list and the meter, which is what D2974 guards. A run launched by a service account asks for none (D2976's consequence). *(Amended 2026-11-22: except a run that resumes a person's paused run, which draws on that person's pool — D2976's one case in a project, [model credentials routing](../model-credentials-routing/reconciliation.md) D3191.)*
 - **R9. The member's switch.** One key at the top level of the member's published policy, off when
   absent, set by the member's admin and published by the member's `fugaro update`. It is read by
   the workspace's service, which is the only enforcer, so an older reader that lists the key as
@@ -336,11 +352,15 @@ Each has one defensible answer given the decisions and the owner's constraints.
 
 No two answers pull against each other.
 
-- **O1.** The owner answers every finding of WC0's independent review before any other personal
-  task is launched, as WU0 was handled. This is a gate the plan cannot pass on its own.
+- **O1. Answered by the owner 2026-11-22.** The owner answers every finding of WC0's independent
+  review before any other personal task is launched, as WU0 was handled. The eight findings and the
+  owner's answers are in [threat-model.md](threat-model.md) §11; the personal tasks, WC2 onward, are
+  launchable by their plan edges.
 - **O2.** F14's residual risk is the owner's to accept in WC0's review, in words: a member's admins
   can spend a person's subscription in that member for up to 24 hours after that person launched a
-  run there. F24's replay is the second: a member admin who publishes a false address can act
+  run there (its bound is a claim deadline counted from the grant, chosen and pinned by WC4, plus 24
+  hours from the claim, per the owner's answer to finding 1). F24's replay is the second, and the
+  owner narrowed its cross-member reach to the members the person is a launcher of (finding 2): a member admin can act
   as a person who launched there while that person's identity token lives, about an hour, at
   every Fugaro service that admits the person; a grant taken in that hour lasts up to 24 more.
 - **O3.** D3141's cost falls on a workspace whose projects still hold model credentials of their

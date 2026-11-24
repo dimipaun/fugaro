@@ -730,11 +730,12 @@ func TestTheSignerNeverPrintsTheKey(t *testing.T) {
 // still found a value in the outbox is a build that wrote unsigned.
 //
 // The corpus's own schedules (`shared/mailbox/parity.test.js` → T8's
-// `internal/mailbox/testdata/parity.json`) are not in the tree yet, so the draw
-// below is this test's own — seeded, replayable, and a failure prints its seed.
-// When T8 lands, the same assertions are replayed over the module's schedules;
-// this test is the fence until then, and it is why the sweep is a sweep rather
-// than one call.
+// `internal/mailbox/testdata/parity.json`) are the *ledger's* parity: they replay
+// the module's outcomes and codes through `Ledger.Perform` and `Ledger.Ack`, and
+// the signer never appears in them. The draw below is therefore this test's own
+// — seeded, replayable, and a failure prints its seed — and it is what sweeps
+// the signing half across schedules rather than one call. Replaying the corpus's
+// schedules through the signer as well is a later task's, not T8's.
 func TestOutboundWritesAreSignedAcrossSeededSchedules(t *testing.T) {
 	key := []byte(vectorKey(t))
 	ctx := context.Background()

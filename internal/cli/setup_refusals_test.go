@@ -109,12 +109,34 @@ var cliStages = []cliStage{
 		build: func(e *initEngine) initflow.Stage { return newPolicyMigrateStage(e) }},
 	{stage: initflow.CredentialsService, ctor: "newCredentialsStage(", covered: true, self: true,
 		build: func(e *initEngine) initflow.Stage { return newCredentialsStage(e) }},
+	// The copy of this installation's model keys into that service's bundle
+	// (update_keys.go, KS12): its own confirmation and never the run's one
+	// (covered: no), because what it writes is every model credential the
+	// installation holds — and --yes does reach it, because it prompts for no
+	// value: an operator who is not the project owner is skipped with the
+	// sentence naming the owner, which is a skip and not a question.
+	{stage: initflow.CredentialsCopy, ctor: "newCredentialsCopyStage(", self: true,
+		build: func(e *initEngine) initflow.Stage { return newCredentialsCopyStage(e) }},
+	// The required-CLI stamp (update_version_stamp.go, D3260/R1): its own
+	// confirmation and never the run's one (covered: no), because what it
+	// writes is a fence over every fugaro that may act on the project — and
+	// --yes does reach it, because it prompts for no value: the write is one
+	// conditional PUT of a version this binary already carries.
+	{stage: initflow.VersionStamp, ctor: "newVersionStampStage(", self: true,
+		build: func(e *initEngine) initflow.Stage { return newVersionStampStage(e) }},
 	{stage: initflow.WorkspaceProject, ctor: "newWorkspaceProjectStage(", noYes: true, self: true,
 		build: func(e *initEngine) initflow.Stage { return newWorkspaceProjectStage(e) }},
 	{stage: initflow.Workspace, ctor: "newWorkspaceStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newWorkspaceStage(e) }},
 	{stage: initflow.CredentialsRoute, ctor: "newCredentialsRouteStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newCredentialsRouteStage(e) }},
+	// The migration before the layer stage, and SelfConfirming for the layer
+	// stage's reason: its writes are this machine's own layer file, the store
+	// objects and the cap nodes, and each of the three goes through
+	// confirmStageWrite, which is the gate every stage's write passes
+	// (update_lift.go, L8).
+	{stage: initflow.Lift, ctor: "newLiftStage(", self: true,
+		build: func(e *initEngine) initflow.Stage { return newLiftStage(e) }},
 	{stage: initflow.Layer, ctor: "newLayerStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newLayerStage(e) }},
 	{stage: initflow.Checkout, ctor: "newCheckoutStage(", self: true,
@@ -517,7 +539,7 @@ func firestoreLocationLeft(t *testing.T, door string) initflow.Left {
 	t.Helper()
 	noTypedTerminal(t)
 	r := &initRun{o: &initOptions{door: door, firebase: "aurora-fp"}, w: io.Discard, in: bufio.NewReader(strings.NewReader(""))}
-	err := r.confirmLocation()
+	err := r.confirmLocation(fsLocation("us-east5"))
 	var ny *initflow.NeedsYouError
 	if !asNeedsYou(err, &ny) {
 		t.Fatalf("the Firestore location's refusal is %v, want needs-you", err)

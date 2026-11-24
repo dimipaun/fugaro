@@ -873,25 +873,6 @@ func TestRosterMirrorEntryWireShape(t *testing.T) {
 	}
 }
 
-// TestRosterStubsWriteNothing: the stubs exist so the sides compile against one
-// another while they are written in parallel, and a stub decides nothing. The
-// write is the one place where "decides nothing" has to be an error -- a stub
-// that answered nil would tell a caller an audit entry or a roster node exists
-// that does not, which is the audit trail and the fence both losing an entry
-// silently.
-func TestRosterStubsWriteNothing(t *testing.T) {
-	store := workspace.StubStore()
-	if _, _, err := store.Read(t.Context()); err != nil {
-		t.Errorf("StubStore.Read errs: %v", err)
-	}
-	if err := store.Write(t.Context(), workspace.Revision{ETag: "null_etag"}, []byte(`{"version":1}`)); err == nil {
-		t.Error("StubStore.Write reports a write it did not make")
-	}
-	if err := workspace.StubAuditSink().Create(t.Context(), "id", []byte(`{}`)); err == nil {
-		t.Error("StubAuditSink.Create reports an audit entry it did not write")
-	}
-}
-
 // c1AuditFixture is an audit event with every optional field written: a member
 // added to a project of the workspace.
 func c1AuditFixture() workspace.AuditEvent {

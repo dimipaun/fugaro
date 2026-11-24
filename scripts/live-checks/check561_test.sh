@@ -1090,7 +1090,9 @@ test_happy_path() {
   expect_row restore "It deleted nothing" "the happy path: what is left behind"
   # The one call this check makes is the tick's own fire, and it is made once.
   expect_contains "$(cat "$dir/state/logs/fire")" "gcloud scheduler jobs run $sched_job --location $sched_region" "the happy path: the Scheduler job's own fire"
-  [ "$(wc -l <"$dir/state/logs/fire")" = 1 ] || fail "the happy path: the Scheduler job was fired $(wc -l <"$dir/state/logs/fire") times"
+  # `tr -d ' '` because BSD `wc` pads its count, so `= 1` would read "      1"
+  # there and this case would fail on the machine the check is run from.
+  [ "$(wc -l <"$dir/state/logs/fire" | tr -d ' ')" = 1 ] || fail "the happy path: the Scheduler job was fired $(wc -l <"$dir/state/logs/fire" | tr -d ' ') times"
   expect_contains "$out" "MANUAL: revoke key $pre_key" "the happy path: the owner's own part is printed"
   no_object_reads "the happy path"
   assert_scratch_removed "the happy path"

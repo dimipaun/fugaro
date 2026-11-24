@@ -420,7 +420,7 @@
     {
       "task": "KS13",
       "needs": "KS12",
-      "reason": "a mount may go only once its value is in the bundle; it also waits for release A to be cut and for credentials-belong-to-models' I1"
+      "reason": "a mount may go only once its value is in the bundle; it also waits for release A to be cut and for model credentials routing's I1 (amended 2026-11-22: this plan's wait moved off credentials-belong-to-models' I1, withdrawn by its D3170)"
     },
     {
       "task": "KS13",

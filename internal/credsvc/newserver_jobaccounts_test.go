@@ -54,7 +54,7 @@ func TestServerBindsAnEmptyJobTableOnlyThroughAResolver(t *testing.T) {
 	}
 
 	own := config()
-	own.Resolver = StubScopeResolver()
+	own.Resolver = unservedResolver{}
 	srv, err := NewServer(own)
 	if err != nil {
 		t.Fatalf("NewServer refused a deployment that binds its runs through a resolver of its own: %v", err)

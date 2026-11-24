@@ -2439,8 +2439,8 @@ func withholdSharedJobProvider(t *testing.T, provider string) {
 // test-local act.
 func admitSharedJobBaked(t *testing.T) {
 	t.Helper()
-	sharedJobBaked = true
-	t.Cleanup(func() { sharedJobBaked = false })
+	infra.SharedJobBaked = true
+	t.Cleanup(func() { infra.SharedJobBaked = false })
 }
 
 // The two profiles a project whose repositories are on both providers

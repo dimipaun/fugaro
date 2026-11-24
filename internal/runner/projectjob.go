@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend"
@@ -1059,6 +1060,16 @@ func (r *run) checkProjectJobAccount(ctx context.Context, auth string) error {
 		// (implicitReviewCandidates).
 		return r.checkProjectReviewJobAccount(job)
 	}
+	if r.projectJobServed() {
+		// The arm of a job whose model credentials the credentials service
+		// serves. It is asked after the review arm and never before it: the
+		// review arm's check is what keeps a coding run out of a review
+		// container, and the review variant's environment is its coding job's
+		// (internal/infra's reviewVariant clones it), so a served profile's
+		// review job carries this fact too — an arm asked first would admit
+		// the very run the review arm exists to refuse.
+		return r.checkProjectJobServed(job)
+	}
 	p, found, err := r.projectPolicy(ctx)
 	if err != nil {
 		return err
@@ -1164,6 +1175,88 @@ func (r *run) checkProjectReviewJobAccount(job jobTriple) error {
 			gcp.ProjectJobName(job.Profile, job.Provider, job.Account))
 	}
 	return nil
+}
+
+// projectJobServed reports whether this run's job is one whose model
+// credentials the credentials service serves: the fact the deployer plans into
+// the job's own environment (config.CredentialsServedEnv, C1 (h)) exactly when
+// the class's mounts are gone from it (internal/infra's ProjectJobs).
+//
+// It is read from the execution's environment and from nothing else, the way
+// the service's address is (credentialsServiceURLEnv): both are the deployer's
+// own statements about the container this run is in. What it is NOT is a claim
+// a run makes about itself — the value is a constant, and the reader asks the
+// environment it was started with.
+//
+// The second clause is the container's own answer and not a restatement of the
+// first: the fact is an environment entry, which a launch override can write as
+// readily as the deployer's job definition can, while the mount it is about is
+// the deployer's — internal/infra's sharedJobServedEnv moves the two together,
+// and this is where they are held to each other. So a container that still
+// carries one of the class's mounts is not a served job whatever its
+// environment says, and the run in it meets the coding arm — the account and
+// its allow_repos list — rather than being let past the door holding a token
+// nobody bounded (D3).
+func (r *run) projectJobServed() bool {
+	return envLookup(r.d.Env, config.CredentialsServedEnv) == config.ServedValue && !mountedModelEnv(r.d.Env)
+}
+
+// mountedModelEnv reports whether env carries one of the model credentials a
+// served class drops (config.ModelSecretEnvs) — the mount side of the fact
+// config.CredentialsServedEnv states, asked of the container rather than taken
+// on the environment's word. A bare name counts as carried, since exec reads it
+// as the parent's value.
+func mountedModelEnv(env []string) bool {
+	for _, entry := range env {
+		if name, _, _ := strings.Cut(entry, "="); slices.Contains(config.ModelSecretEnvs, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkProjectJobServed is checkProjectJobAccount's arm for a job whose model
+// credentials the credentials service serves (projectJobServed).
+//
+// The coding arm's three rules are each refused for a reason that does not hold
+// here, and the first is what this arm exists for:
+//
+//   - The job holds no Claude token, so the account axis has nothing to be
+//     about. The axis is a statement about the token a job mounts
+//     (config.ProjectJobTokenAccount), and the class's mounts are exactly what
+//     the service took away — so comparing the run's own credential against
+//     the job's account would refuse every run of a job that is doing what it
+//     was deployed to do, and admitting the comparison would be reading an
+//     account name to choose a credential the container does not hold. Which
+//     credential serves a call is the credentials service's answer now, walked
+//     from the project's routing table (R2: the in-job gateway holds no key and
+//     no table), and this door reads neither agent.auth nor an account name to
+//     choose one.
+//   - The account's allow_repos list is not read either, for the same reason:
+//     it is the bound on a token's blast radius (D3), and there is no token
+//     here. Which repositories may reach which credential is the table's
+//     admissions, which the service refuses a call by.
+//   - What is left is the one thing that can still be wrong, and the one thing
+//     this arm refuses over: a run with no way to a model at all. The job holds
+//     no credential, so a run whose model path reaches neither the credentials
+//     service nor a credential that is not a mount would die at its first model
+//     call with nothing to fall back on (G17, D143). The refusal names the job
+//     and the run's own auth and is the launcher's to fix, because what decides
+//     whether a job is served at all is the profile's switch — one repository
+//     cannot take a shared job off it.
+//
+// A run whose auth is vertex is admitted without the service and is not an
+// exception to the rule above: Vertex is the installation's own identity, the
+// job's GCP service account, and it is no mount — the class never took it away
+// and the service serves no such credential (config.IsSharedJobServedModelEnv
+// holds a provider's key back for the same reason, and Vertex is not even a
+// key).
+func (r *run) checkProjectJobServed(job jobTriple) error {
+	if r.serviceModelPath() || r.modelAuth() == "vertex" {
+		return nil
+	}
+	return fmt.Errorf("this run is in the project job %s, which the credentials service serves: its container mounts none of the model credentials that class covers, so a run of it reaches a model through the service or not at all, and this run's model path reaches neither — agent.auth is %q, and the execution's environment carries no %s for the service. The fix is the launcher's: a run on a served job is handed the service's address, and which profiles are served at all is the deployer's own answer for the profile (B5.7), read from the repositories' records and not from this run. The run stops before the agent starts rather than reaching its first model call with no credential",
+		gcp.ProjectJobName(job.Profile, job.Provider, job.Account), r.modelAuth(), credentialsServiceURLEnv)
 }
 
 // allowReposSource is where an account's policy list is derived from at publish

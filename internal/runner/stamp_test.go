@@ -268,8 +268,12 @@ func authorSpec() *task.Spec {
 // Mutation (stamp the model from the agent's result instead of the
 // configuration): the trailer is empty or names another model.
 func TestRunnerModelTrailerIsTheStagePin(t *testing.T) {
+	// The background slot is named beside the model the roles fall back to:
+	// every run has a gateway now (AB1b), and a gateway run's pins must all be
+	// priced (CheckPins, D3020), the background model included — it is the one
+	// slot with no fallback to agent.model.
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"],
-		"  auth: api-key\n", "  auth: api-key\n  model: "+sonnet+"\n", 1)
+		"  auth: api-key\n", "  auth: api-key\n  model: "+sonnet+"\n  models: { background: "+haiku+" }\n", 1)
 	h := newHarness(t, cfg, nil)
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
@@ -283,8 +287,14 @@ func TestRunnerModelTrailerIsTheStagePin(t *testing.T) {
 // TestRunnerModelTrailerOmittedWithoutPin: a stage that pinned no model gets
 // no Fugaro-Model trailer at all, rather than one holding the model the
 // gateway routed to (D602).
+//
+// The run is an oauth one because that is the only one that can pin nothing
+// now (AB1b, D3009): every run the gateway carries is refused at bootstrap
+// unless its coder, reviewer and background slots all name a priced model
+// (CheckPins, D3020), so a stage with no pin is a stage of the one credential
+// the gateway does not carry (D3026, R12).
 func TestRunnerModelTrailerOmittedWithoutPin(t *testing.T) {
-	h := newHarness(t, "", nil)
+	h := oauthHarness(t, "", nil)
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}

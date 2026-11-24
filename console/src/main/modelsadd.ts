@@ -45,6 +45,7 @@ import type { LaunchConfirmer } from './launch'
 import type { ValidatedArguments } from './ipc'
 import { modelsAddView } from './modelsview'
 import type { ModelsAddView } from './modelsview'
+import { LAPSE_REFUSAL } from './licence-state'
 import { SourceRefusal } from '../source/source'
 import { MODELS_ADD_CLI_FLOOR, UNREADABLE_VERSION, meetsCliFloor } from '../shared/version'
 
@@ -184,7 +185,7 @@ export type ModelsAddPlanner = (
 ) => SpawnPlan
 
 /** ModelsAddDeps is what the write is built from. Everything but `confirmer`,
- * `plan` and `project` is a seam a test drives. */
+ * `plan`, `project` and `lapsed` is a seam a test drives. */
 export interface ModelsAddDeps {
   /** the window, which is SU1's one window and no second implementation. */
   readonly confirmer: LaunchConfirmer
@@ -201,6 +202,20 @@ export interface ModelsAddDeps {
    * write: every plan refuses its own sentence rather than spawning an argv
    * nothing answers. */
   readonly floor?: string | null
+  /** `lapsed` answers whether the licence has lapsed for the installation this
+   * write lands in, and it is asked **where the write really starts** and not
+   * only at the door: the window's own yes reaches `runApply` from `decide`,
+   * with no IPC handler anywhere on that path, so `lapseHandlers`' gate on the
+   * row -- the design's `refusedAfterLapse` column
+   * (`docs/lapse-read-only/spec.md`) -- is not what stops a plan made after the
+   * lapse, which is kept and opens its window. The plan is a dry
+   * run and stays reachable; the write it stands for is the row the lapse takes
+   * away, and this is the column made true on the window's path.
+   *
+   * It is required rather than optional for that reason: a write built without
+   * it would be a write the lapse does not stop, and no test of a payload could
+   * see the difference. */
+  readonly lapsed: () => boolean
   /** `digest` is the re-check apply runs, `modelsAddDigest` unless a test says
    * otherwise. */
   readonly digest?: (document: string) => string
@@ -313,7 +328,8 @@ function sameModelsAddValues(left: ModelsAddValues, right: ModelsAddValues): boo
  *   2. the window's plan frame answering no gives the record up and writes
  *      nothing;
  *   3. the window's **own top frame** answering yes arms the record and starts
- *      the write: the same argv, after the held document is hashed again;
+ *      the write: the same argv, after the lapse is asked and the held document
+ *      is hashed again;
  *   4. `models.add` is the renderer's door to that run: it refuses while no plan
  *      is held, while the values it carries are not the plan's own, or while the
  *      window has not said yes, joins the write the yes started rather than
@@ -351,9 +367,19 @@ export function createModelsAdd(deps: ModelsAddDeps): ModelsAddWriter {
     return { ok: outcome.kind === 'ran', sentence: outcome.sentence }
   }
 
-  /** runApply runs the write once for a record: the digest first, then the same
-   * argv. */
+  /** runApply runs the write once for a record: the lapse, the digest, then the
+   * same argv. */
   const runApply = async (writer: HeldModelsAdd): Promise<void> => {
+    // **The lapse's sentence, and the first fact.** The window's yes reaches
+    // this function from `decide`, and no IPC handler is on that path at all,
+    // so the gate at the door is not what stops this child -- see `lapsed`
+    // above. Nothing is spawned: the sentence is the console's own one for the
+    // lapse (`LAPSE_REFUSAL`), which is the same sentence a lapsed console
+    // answers `models.add` with, so the two paths say one thing.
+    if (deps.lapsed()) {
+      writer.outcome = { kind: 'refused', sentence: LAPSE_REFUSAL }
+      return
+    }
     if (writer.digest !== digest(writer.document)) {
       writer.outcome = { kind: 'refused', sentence: MODELS_ADD_DOCUMENT_CHANGED_REFUSAL }
       return

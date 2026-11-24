@@ -182,6 +182,15 @@ func (s *Server) identityTicket(ctx context.Context, w http.ResponseWriter, call
 		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
 			requestRefused+"the ask names no run id of this installation's shape")
 		return
+	case req.Job != "" && !req.Job.Valid():
+		// R1: a Batch launch's job is named by its full resource name, and the
+		// name is the tie two later calls are held to — the registration writes
+		// the job's id on it, and the claim is served only to a VM of it
+		// (D3114). A name of any other shape can never be served, so the ask is
+		// refused here, before the launcher has created anything to name.
+		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
+			requestRefused+"the job must be the full resource name of the Cloud Batch job this launch creates (projects/<project>/locations/<location>/jobs/<job>)")
+		return
 	case caller.Class != identitywire.ClassOrchestrator && req.Attempt != "":
 		// The attempt reference is the orchestrator's own (D3136): it is the
 		// orchestrator's id of an intent it re-issues, and no other class has
@@ -192,6 +201,20 @@ func (s *Server) identityTicket(ctx context.Context, w http.ResponseWriter, call
 	case req.Attempt != "" && !req.Attempt.Valid():
 		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
 			requestRefused+"the attempt the ask names is not one the orchestrator's own spelling could have written")
+		return
+	case caller.Class != identitywire.ClassOrchestrator && req.Resumes != "":
+		// The resume reference is the orchestrator's own (D3189), as the
+		// attempt reference is: it names a paused run of this installation, and
+		// the class is the one that continues one.
+		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
+			requestRefused+"the ask names a resume, which is the resident orchestrator's own reference to the pause it continues")
+		return
+	case req.Resumes != "" && (!task.ValidRunID(req.Resumes) || budget.Key(req.Resumes) != req.Resumes):
+		// A resume names a run of this installation, so it is held to the shape
+		// a run id has — the same shape and the same escaping rule the ask's own
+		// run is held to above, because it is a run id that is looked up.
+		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
+			requestRefused+"the resume the ask names is not a run id of this installation's shape")
 		return
 	case req.MaxRuntimeSeconds <= 0:
 		s.refuseTicket(ctx, w, caller, StatusRequestRefused, identitywire.RefusalIdentityRefused, ErrorRequestRefused,
@@ -301,7 +324,7 @@ func (s *Server) identityTicket(ctx context.Context, w http.ResponseWriter, call
 	// digest (identitywire.Digest): the value itself is answered to the launcher
 	// and written NOWHERE — not on the record, not in a log line, not in an
 	// audit line (R3, and the one rule audit.go exists for).
-	ticket, err := newTicket()
+	ticket, err := newTicket(req.Slug, req.Run)
 	if err != nil {
 		s.log.Error("credsvc: a ticket could not be drawn", "error", err)
 		s.refuseTicket(ctx, w, caller, StatusUnavailable, ErrorStateUnavailable, ErrorStateUnavailable,
@@ -316,6 +339,11 @@ func (s *Server) identityTicket(ctx context.Context, w http.ResponseWriter, call
 		ExpectedAccount: req.Account,
 		TicketHash:      identitywire.Digest(ticket),
 		Attempt:         req.Attempt,
+		// R19: the job the launcher named is written WITH the ticket, and it is
+		// what the registration's id is later written on and what the claim is
+		// held to (D3114). Empty for a Cloud Run launch, whose record is then the
+		// record of the release behind.
+		Job: req.Job,
 	}
 	// The store decides the two facts of the record that are the record's own,
 	// from the node as it stands (identity_record.go's Put): whose record this
@@ -413,20 +441,31 @@ func (s *Server) refuseTicket(ctx context.Context, w http.ResponseWriter, caller
 	s.refuse(w, status, typ, message)
 }
 
-// newTicket draws one ticket: ticketBytes from crypto/rand, in hex, which is the
-// alphabet these values are spelled in everywhere else in this service.
+// newTicket draws one ticket for the slug and run the record is written under:
+// ticketBytes from crypto/rand, in hex, which is the alphabet these values are
+// spelled in everywhere else in this service, carried beside the record's own
+// two names.
+//
+// The two names are part of the ticket and not decoration: the claim's caller
+// holds no run identity — the claim is a run's first call, made before it has
+// one (R2) — so C1's ClaimRequest carries the ticket and the nonce and nothing
+// else, and the ticket is the ONLY thing that can tell the claim which record to
+// read. The spelling that carries them is joinIdentityTicket's and not this
+// file's (identity_claim.go): one function spells the ticket for the mint and
+// reads it back at the claim, so the two cannot come apart into a ticket no run
+// could claim.
 //
 // It returns an error and never a fallback, for newSlipID's reason: a ticket
 // another caller could predict is a ticket it could claim, and the only thing
 // standing between it and the record would be the account the claim checks —
 // which is a fence this service must not lean on when it can simply draw a
 // secret.
-func newTicket() (string, error) {
+func newTicket(slug, run string) (string, error) {
 	raw := make([]byte, ticketBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("credsvc: drawing a ticket failed: %w", err)
 	}
-	return hex.EncodeToString(raw), nil
+	return joinIdentityTicket(slug, run, hex.EncodeToString(raw))
 }
 
 // ticketExpiry is when a ticket stops being claimable, read off the record it
