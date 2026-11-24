@@ -168,6 +168,7 @@ layer.ab.exchange_rate	open:no-writer
 layer.ab.judge_model	open:no-writer
 layer.ab.max_pairs_per_day	open:no-writer
 layer.ab.rate	open:no-writer
+layer.ab.repos	open:no-writer
 layer.claude_models	open:writer-unproven
 layer.defaults.agent.crafts.coder.access	open:no-writer
 layer.defaults.agent.crafts.coder.model	open:no-writer
