@@ -3739,12 +3739,27 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * `fugaro diagnose RUN` reads it from the runs bucket precisely because its
    * registry entry is gone -- so a ready row that could not be opened would be
    * the one run row on this screen with nothing behind it.
+   *
+   * **A paused run's row is a door, and it carries a second one** (VS3,
+   * model-credentials-routing). The row itself opens the paused run
+   * (`live-paused-run-id`), which is what `diagnose RUN` reads out of the runs
+   * bucket like any other finished row. The run named beside it -- the one whose
+   * resume brought the chain back (`live-paused-by-id`) -- opens *that* run, and
+   * a click on it is stopped rather than left to bubble: the row's own listener
+   * would otherwise answer the same click and open the paused run under it.
+   * Both ids are checked against `known`, which is the rows the model carries
+   * plus the resumers they name -- a resumer is not a row of this screen, and a
+   * door onto it must still be an id the model can vouch for.
    */
   const wireRuns = (drawn: Drawn, model: LiveModel): void => {
     const known = new Set<string>()
     for (const repo of model.repos) for (const row of repo.runs) known.add(row.run)
     for (const row of model.orphans) known.add(row.run)
     for (const row of model.review) known.add(row.run)
+    for (const row of model.paused) {
+      known.add(row.run)
+      if (row.resumedBy !== null) known.add(row.resumedBy)
+    }
     const door = (rowClass: string, idClass: string): void => {
       for (const row of classed(drawn, rowClass)) {
         const id = classed(row, idClass)[0]?.getAttribute('data-run-id') ?? ''
@@ -3766,6 +3781,19 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     }
     door('live-run', 'live-run-id')
     door('live-review-row', 'live-review-run-id')
+    door('live-paused-row', 'live-paused-run-id')
+
+    // The paused rows' second door: the resumer cell's own click opens the run
+    // that resumed the pause, and `stopPropagation` keeps the row's listener
+    // from answering the same click with the paused run underneath it.
+    for (const cell of classed(drawn, 'live-paused-by-id')) {
+      const id = cell.getAttribute('data-run-id') ?? ''
+      if (!known.has(id)) continue
+      surface.nodeOf(cell).addEventListener('click', (event: Event) => {
+        event.stopPropagation()
+        showRun(id)
+      })
+    }
   }
 
   // ---- The graph (GV2.3b) -----------------------------------------------
@@ -7802,16 +7830,39 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     const drawn = renderRunFrame(factory, theme, run)
     replace(drawn.root)
     // The breadcrumb's `Live` crumb is the way back from a run the operator
-    // opened, and it is the whole of what this screen wires: the same
-    // `show('live')` the nav's own Live button calls, and the run id beside it
-    // is selectable text rather than a control. Nothing else on Run binds
-    // anything -- the retry is `writes.ts`'s refused button. It is bound here
-    // and not when a read lands, because the frame the click drew carries it.
+    // opened: the same `show('live')` the nav's own Live button calls, and the
+    // run id beside it is selectable text rather than a control. The one other
+    // binding on Run is `wireRunPausedBy` below, which the record's own read
+    // lands with. Nothing else binds anything -- the retry is `writes.ts`'s
+    // refused button. It is bound here and not when a read lands, because the
+    // frame the click drew carries it.
     const crumb = classed(drawn.root, 'run-crumb-live')[0]
     if (crumb !== undefined) {
       surface.nodeOf(crumb).addEventListener('click', () => {
         show('live')
       })
+    }
+
+    /**
+     * wireRunPausedBy makes the run a paused run's resume was performed by a
+     * door: the cell keeps the whole id in `data-run-id` (`run.ts`'s
+     * `putRunRef`) and a click opens that run, the way the Live screen's rows
+     * open theirs. It is bound here rather than in `showRun` because the line is
+     * drawn from the run's own record (`fillRunRecord`), which lands after the
+     * frame the click drew -- and a cell whose id the sanitizer refused carries
+     * no attribute, so it opens nothing.
+     *
+     * It was the crumb alone until VS3: a run's record named no other run, so
+     * there was nothing else on this screen to open.
+     */
+    const wireRunPausedBy = (): void => {
+      for (const cell of classed(drawn.root, 'run-paused-by-value')) {
+        const id = cell.getAttribute('data-run-id')
+        if (id === null || id === '') continue
+        surface.nodeOf(cell).addEventListener('click', () => {
+          showRun(id)
+        })
+      }
     }
 
     /** what the two reads have drawn so far, held here so `placeMain` can write
@@ -7908,6 +7959,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         return
       }
       before = fillRunRecord(factory, buildRunModel({ diagnosis: answer.data, logs: null, logLink: null }), drawn).before
+      wireRunPausedBy()
       diagnosisDrawn = true
       placeMain()
     }
