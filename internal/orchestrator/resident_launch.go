@@ -192,3 +192,35 @@ func ResidentCarry(ctx context.Context, st Starter, s State, view RunView, caps 
 	}
 	return out
 }
+
+// ResidentResumes is the resident pass's other half, and the one action besides
+// a re-issue it may carry out (PR4, D3185): the pauses the credentials service
+// recorded that are due now, each started once as the run that continues it.
+//
+// It belongs to this file because it is the same question ResidentCarry answers
+// — what of the project's owed work may a process with no write of the node act
+// on — and the answer is the same shape of yes. A resume is not a write of the
+// node: the record of a resume is the chain's own run, whose task names
+// `resumes`, and the paused run's item is in flight and stays so; what the
+// service holds (the node under runstore.PauseNodeRoot) was written by the
+// service and never by this pass (R19). So the reason a resident pass carries
+// re-issues and nothing else does not exclude a resume — a resume reaches no
+// commit — and the pass that left it to `fugaro orchestrator patch` would leave
+// a suspended chain suspended for as long as no daemon ran, which is exactly the
+// always-on case this pass exists for.
+//
+// It reads nothing of the node, and there is nothing of the node for it to read:
+// whether a pause is due is the service's own record and the paused run's own
+// status (ResumePauses's decision), and a resident pass has the same two
+// readings a daemon has.
+//
+// It is ResumePauses under the name this pass reads, and the seam is called here
+// rather than by the caller for that reason: the body behind it is a build's own
+// (resume.go, or the stub until I2 deletes it), and a caller outside this package
+// that called the seam directly would be reading a variable instead of an
+// interface. A refusal is collected and the pass goes on, exactly as
+// ResidentCarry's is: the node has no breaker and no pause, so a pause a
+// launcher refuses for good must not hold the others back.
+func ResidentResumes(ctx context.Context, pauses PauseReader, launcher ResumeLauncher, now time.Time) (ResumeOutcome, error) {
+	return ResumePauses(ctx, pauses, launcher, now)
+}
