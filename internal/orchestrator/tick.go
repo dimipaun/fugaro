@@ -68,6 +68,16 @@ type Tick struct {
 	// Mint mints that run id. It is the daemon's (internal/task in O8): this
 	// package knows no run ids of its own.
 	Mint MintFunc
+	// Pauses reads the pauses the credentials service recorded for this project
+	// (PR4, D3185): the nodes under runstore.PauseNodeRoot, each with the paused
+	// run's own status and the run that has resumed it. Left unset the cycle
+	// resumes nothing at all, which is the direction a daemon that was given no
+	// path to the project's database fails in.
+	Pauses PauseReader
+	// Resume starts the run that continues one paused run, and answers its id.
+	// Left unset the cycle resumes nothing, for the reason above: a resume it
+	// cannot start is a resume it must not pretend to have made.
+	Resume ResumeLauncher
 	// Caps are the guardrails the cycle plans under. KillSwitch comes from
 	// whoever can read the budget (O8) and is on whenever it could not be
 	// read; a Tick built with the zero Caps starts nothing, which is the
@@ -171,6 +181,13 @@ type Report struct {
 	// Carried is how many of the plan's actions the starter carried out — a
 	// launch, a retry, a re-issue or an abandonment.
 	Carried int
+	// Resumed is how many paused runs the cycle started again (PR4, D3185): the
+	// pauses the credentials service recorded whose resume time had passed, that
+	// nothing had resumed and whose run really ended `paused`. It is a launch
+	// and not a plan action — nothing about it is a cap's business, because a
+	// chain's remaining budget is the resumed run's (D1045-D1047) — and it is
+	// counted as work for the same reason a re-issue is.
+	Resumed int
 	// Blocked is how many of the cycle's own items the cycle set blocked
 	// because they sit on a dependency cycle that crosses orchestrators (D3220).
 	// It is a write like any other and it is counted like one: a cycle whose
@@ -215,6 +232,12 @@ type Report struct {
 	// the cycle for the same reason: the comment is a channel and the ledger
 	// is the record.
 	LadderErr error
+	// ResumeErr is the pauses the cycle would not resume and why: a node this
+	// release cannot read, and a pause a launcher would not start. It never
+	// fails the cycle — the pause is still due at the next tick, and one pause
+	// that cannot be resumed must not hold the daemon's other work back — and
+	// it is what the loop's log reads.
+	ResumeErr error
 }
 
 // Step runs one cycle.
@@ -1156,6 +1179,14 @@ func (c *cycle) run(ctx context.Context) error {
 	if err := c.carry(ctx, view); err != nil {
 		return c.settled(err)
 	}
+	// The project's pauses are resumed with the state node's own turn, and once
+	// for the whole cycle: a paused chain belongs to no node of the plan — the
+	// item behind it is in flight and stays so — and the reading is the
+	// project's, so a plan node or the backlog that resumed the same pause again
+	// would be a second resumer of one node (D3185).
+	if err := c.resume(ctx); err != nil {
+		return c.settled(err)
+	}
 	if err := c.escalate(ctx); err != nil {
 		return c.settled(err)
 	}
@@ -1341,6 +1372,40 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 	return nil
 }
 
+// resume is one cycle's turn at the project's pauses (PR4, D3185): every pause
+// the credentials service recorded that is due now is started once as the run
+// that continues it.
+//
+// It writes nothing to the state node, and that is deliberate: what the cycle
+// knows about a resume is the launcher's answer — a run id this side has no item
+// for — and the record of the resume is the chain's own run, whose task names
+// `resumes`. A mark written here would be a second writer of the paused run's
+// chain for a fact the chain already carries.
+//
+// A pause a launcher would not start does not fail the cycle: the pause is still
+// due at the next tick, and one pause that cannot be resumed must not hold the
+// daemon's other work back (the resident pass's own rule). What it is is a line
+// the loop's log carries (Report.ResumeErr). The read failing is different and
+// is the cycle's own failure: a project whose pauses could not be read is a
+// project whose daemon is working blind, and it must not carry on as though
+// nothing were paused.
+//
+// It is a launch and it asks what every launch path asks before it starts
+// anything (Caps.KillSwitch's own note): the kill switch, and the daemon's pause
+// — the same reading the plan is handed, over the same nodes — so a cycle that
+// is stopped resumes nothing, whatever stopped it.
+func (c *cycle) resume(ctx context.Context) error {
+	out, err := ResumePauses(ctx, c.tick.Pauses, c.tick.Resume, c.tick.Caps, c.paused, c.now)
+	if err != nil {
+		return err
+	}
+	c.rep.Resumed += out.Resumed
+	if len(out.Refused) > 0 {
+		c.rep.ResumeErr = errors.Join(out.Refused...)
+	}
+	return nil
+}
+
 // outcome is how the cycle reads itself for the breaker: a cycle that folded,
 // carried or merged something moved the work, a cycle with an attempt that has
 // not reported is waiting on a run — never a failure, however many ticks of one
@@ -1366,7 +1431,7 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // is progress whatever the call beside it came to.
 func (c *cycle) outcome() CycleOutcome {
 	switch {
-	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0 || c.rep.Escalated > 0 || c.rep.Decided > 0 || c.rep.Merged > 0 || c.rep.Blocked > 0:
+	case c.rep.Folded > 0 || c.rep.Carried > 0 || c.rep.Triaged > 0 || c.rep.Escalated > 0 || c.rep.Decided > 0 || c.rep.Merged > 0 || c.rep.Blocked > 0 || c.rep.Resumed > 0:
 		return CycleProgress
 	case c.rep.DecideOutcome != "":
 		return c.rep.DecideOutcome
