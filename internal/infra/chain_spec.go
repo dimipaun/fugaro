@@ -136,10 +136,13 @@ func CredentialsServiceServesChains(installed, ready bool, plan ChainPlan) bool 
 // permission on a project whose budget mode is mode.
 //
 // Under `enforce` it is not, and that is CS11's third rule: no run in flight
-// can hold the permission there, because a `vertex` run under an enforcing mode
-// is refused at bootstrap (runner.VertexBudgetRefusal, internal/runner's
-// checkBudget), so the grant release 1 takes away is one nothing can be using —
-// and the run that would have used it is one the gateway stops first. Release 2
+// can hold the permission there, because a `vertex` run that would authenticate
+// to Vertex with its own job account is refused at bootstrap
+// (runner.VertexBudgetRefusal, internal/runner's checkBudget) — the one
+// `vertex` run an enforcing project still starts is a run the credentials
+// service serves, whose Vertex call is the service's own (CS5, D3174) — so the
+// grant release 1 takes away is one nothing can be using, and the run that
+// would have used it is one the gateway stops first. Release 2
 // (X8) takes it away in every mode, which is the change an `observe` project
 // waits for: there a run in flight really does authenticate to Vertex with its
 // own job account, and a plan that took the grant away would break it

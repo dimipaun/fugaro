@@ -473,7 +473,11 @@ func PoolMembers(p Pool, creds []Credential) []PoolMember {
 // none: the built-in credential needs no secret and its calls are the
 // project's own GCP service, so a pool that lists it cannot be capped by the
 // gateway, and under budget.mode: enforce the pool is refused outright
-// (D1626, F8).
+// (D1626, F8) — unless the run's own Vertex calls are the credentials
+// service's rather than the job's, which is D3174's lift: the service calls
+// Vertex on its own identity and the call is priced and capped as a key's, so
+// there is no uncapped path to refuse (internal/runner's
+// vertexServedByTheService, where that run's fact is read).
 func PoolHasVertexMember(p Pool, creds []Credential) string {
 	for _, m := range PoolMembers(p, creds) {
 		if m.Type == CredentialTypeVertex {

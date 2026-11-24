@@ -1569,9 +1569,27 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	}
 	vertex, apiKey := cfgFile("vertex"), cfgFile("api-key")
 	enforce := withBudget("budget: { mode: enforce, per_run_usd: 5 }\n")
-	err := checkVertexBudget(enforce, vertex)
+	err := checkVertexBudget(enforce, vertex, "acme/app")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet: use budget.mode observe for this repository") {
 		t.Fatalf("vertex + enforce: exit %d, err %v", ExitCode(err), err)
+	}
+	// A repository the project's routing table serves is not refused: its
+	// Vertex calls are the credentials service's, capped as a key's (CS5,
+	// D3174), whatever its file still says — while the same file on a
+	// repository no chain admits keeps the refusal above, and so does a
+	// repository this command cannot name.
+	const table = "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/app] }\n"
+	served := withBudget(table + "budget: { mode: enforce, per_run_usd: 5 }\n")
+	if err := checkVertexBudget(served, vertex, "acme/app"); err != nil {
+		t.Errorf("a vertex repository the table serves was refused: %v", err)
+	}
+	for _, repo := range []string{"acme/other", ""} {
+		if err := checkVertexBudget(served, vertex, repo); ExitCode(err) != ExitUserError || err == nil {
+			t.Errorf("a vertex repository no chain admits (%q) was not refused: exit %d, err %v", repo, ExitCode(err), err)
+		}
+	}
+	if err := checkVertexBudget(served, apiKey, "acme/app"); err != nil {
+		t.Errorf("an api-key repository the table serves was refused: %v", err)
 	}
 	// A committed enforce is the effective mode under an off ceiling, and
 	// under an observe one (the stricter wins).
@@ -1584,11 +1602,11 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 		return c
 	}
 	for name, lc := range map[string]*localcfg.Config{"off ceiling": withBudget(""), "observe ceiling": withBudget("budget: { mode: observe }\n")} {
-		err := checkVertexBudget(lc, committed("enforce"))
+		err := checkVertexBudget(lc, committed("enforce"), "acme/app")
 		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet") {
 			t.Errorf("committed enforce under %s: exit %d, err %v", name, ExitCode(err), err)
 		}
-		if err := checkVertexBudget(lc, committed("observe")); err != nil {
+		if err := checkVertexBudget(lc, committed("observe"), "acme/app"); err != nil {
 			t.Errorf("committed observe under %s: %v", name, err)
 		}
 	}
@@ -1601,7 +1619,7 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 		"vertex + none":     {withBudget(""), vertex},
 		"api-key + enforce": {enforce, apiKey},
 	} {
-		if err := checkVertexBudget(tc.lc, tc.cfg); err != nil {
+		if err := checkVertexBudget(tc.lc, tc.cfg, "acme/app"); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
 	}

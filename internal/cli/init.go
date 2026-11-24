@@ -5148,7 +5148,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		}
 	}
 	if !o.forget {
-		if err := checkVertexBudget(lc, cfg); err != nil {
+		if err := checkVertexBudget(lc, cfg, repo); err != nil {
 			return err
 		}
 	}
@@ -6039,11 +6039,32 @@ func (r *initRun) gateWorkflowAB(o *initOptions, repo string, lc *localcfg.Confi
 	return refuseWorkflowABSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
 }
 
+// servedByTheTable reports whether the project's routing table may serve repo:
+// some source of some of its entries admits that repository
+// (infra.ChainPlanFor, the plan-time answer the cloud side of this repository
+// is planned from — CS11 — read here by the two commands that judge
+// agent.auth before a run exists).
+//
+// It is the CLI's half of D3174's one question, "is this run's Vertex the
+// credentials service's or the job's own": a repository the table serves
+// reaches Vertex through the service, on the service's own identity and capped
+// as a key's, whatever its file still says, while a repository no chain admits
+// keeps its file's answer. The runner reads the same fact from the job it was
+// launched on (vertexServedByTheService); here there is no job, and the
+// document the answer comes from is this local config. A repository this
+// command cannot name, and one on an installation with no table, is not
+// served — the fail-closed direction, which leaves both refusals as they were.
+func servedByTheTable(lc *localcfg.Config, repo string) bool {
+	return lc != nil && infra.ChainPlanFor(lc, repo).Serves
+}
+
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
 // the agent through Vertex AI (agent.auth: vertex) under a project budget
-// in enforce mode. observe and off are allowed.
-func checkVertexBudget(lc *localcfg.Config, cfg *config.Config) error {
-	if cfg.Agent.Auth != "vertex" {
+// in enforce mode. observe and off are allowed, and so is a repository the
+// project's routing table serves, whose Vertex calls are the credentials
+// service's rather than the job's own GCP identity (D3174, servedByTheTable).
+func checkVertexBudget(lc *localcfg.Config, cfg *config.Config, repo string) error {
+	if cfg.Agent.Auth != "vertex" || servedByTheTable(lc, repo) {
 		return nil
 	}
 	// The ceiling's mode and the file's, the stricter of the two, as the

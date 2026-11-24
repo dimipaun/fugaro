@@ -407,6 +407,26 @@ func (r *run) serviceModelPath() bool {
 	return !r.d.Local && (r.serviceSwitched() || r.modelAuth() == config.AuthCascade)
 }
 
+// vertexServedByTheService reports whether this run's Vertex calls are the
+// credentials service's — made on the service's own identity and priced and
+// capped like a key's (D3174, CS4) — rather than this job's own GCP identity,
+// which nothing in this gateway can cap (D1626).
+//
+// The fact is the address the job carries (credentialsServiceURLEnv), which is
+// also what serviceUpstream builds this run's upstream from: a run whose calls
+// reach the service is a run whose every source the service serves, Vertex
+// included, so the two readers cannot disagree about where a Vertex call goes.
+// For a `vertex` auth it is the table's own fact: the release-1 bridge serves
+// api-key and oauth alone (ServiceSwitchedAuth, and infra's
+// CredentialsServiceServes answers false for vertex), so a vertex job that
+// carries the address is one a chain of the project's routing table may serve
+// (CredentialsServiceServesChains). An unmigrated repository's job carries
+// none, and its file's `auth: vertex` is the job's identity, as it was before
+// the table existed. A local run is never the service's (D149).
+func (r *run) vertexServedByTheService() bool {
+	return !r.d.Local && envLookup(r.d.Env, credentialsServiceURLEnv) != ""
+}
+
 // servedAuth is the auth this run's model path is spelled as for the arms that
 // know the four auths and nothing about the switch: agent.BuildEnv and
 // agent.GatewayVars build the agent's environment from it, and the record's
@@ -1492,13 +1512,20 @@ func (r *run) checkManagedDirWritable() error {
 // settings directory it can write.
 func (r *run) checkBudget(ctx context.Context) error {
 	auth, s := r.cfg.Agent.Auth, r.spend
-	if auth == "vertex" && s.Mode == "enforce" {
+	// D3174: a run whose Vertex calls are the credentials service's is not
+	// refused here — the service calls Vertex on its own identity, and the
+	// gateway prices and settles the call as it does a key's — while a run
+	// that authenticates as vertex itself spends the project's own GCP quota,
+	// which nothing caps (vertexServedByTheService).
+	if auth == "vertex" && s.Mode == "enforce" && !r.vertexServedByTheService() {
 		return errors.New(VertexBudgetRefusal)
 	}
 	// A pool one of the run's crafts goes out on that lists the built-in
 	// Vertex credential is refused here for VertexBudgetRefusal's own reason:
 	// those calls are the project's own GCP service, so the run above this
-	// line's own case cannot cap them either (D1626, F8).
+	// line's own case cannot cap them either (D1626, F8) — unless this run's
+	// Vertex is the service's, which is the same lift and is read in
+	// vertexPoolRefusal.
 	if s.Mode == "enforce" {
 		if reason := r.vertexPoolRefusal(ctx); reason != "" {
 			return errors.New(reason)

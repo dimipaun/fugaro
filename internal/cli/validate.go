@@ -183,10 +183,12 @@ func ceilingText(l policy.Layer) string {
 // clampWarning; the warning says the mode may lower the ceiling, which is the
 // part it cannot resolve). Every
 // model must be on the allow-list; with the effective mode on, every model is
-// an explicit priced ID and Vertex isn't under enforce. A key the file would
-// loosen is a warning, as is an enforce with no cap anywhere (the run would
-// halt no_cap). With no project config, or one for another project, only the
-// file's shape (checked by config.Check) applies.
+// an explicit priced ID and Vertex isn't under enforce for a repository no
+// chain of the project's routing table serves (D3174, servedByTheTable). A key
+// the file would loosen is a warning, as is an enforce with no cap anywhere
+// (the run would halt no_cap). With no project config, or one for another
+// project, only the file's shape (checked by config.Check) applies — and the
+// table, which lives in that same project config, is not in hand.
 // claimed is the owner's whole route table with the checkout layer's claims
 // written over the entries this repository's runs carry (layerRoutes). The
 // routes judged here are the run's own, filtered out of it with
@@ -216,7 +218,10 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 	if lc == nil || lc.Name != cfg.Project {
 		// No ceiling to compare with, but a committed enforce is the
 		// effective mode whatever the ceiling says (the stricter layer
-		// wins), so Vertex under it is refused on every run.
+		// wins), so Vertex under it is refused on every run. The table is
+		// the project config's own and is not here, so this branch cannot
+		// read the one fact that would lift the refusal (D3174): it refuses,
+		// which is the fail-closed direction.
 		if cfg.Agent.Auth == "vertex" && cfg.Budget != nil && cfg.Budget.Mode == policy.ModeEnforce {
 			problems = append(problems, config.Problem{Path: "agent.auth", Message: vertexBudgetRefusal})
 		}
@@ -301,7 +306,14 @@ func budgetProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config
 	for _, p := range allowNotes {
 		named[p.Path] = true
 	}
-	if cfg.Agent.Auth == "vertex" && e.Mode == policy.ModeEnforce {
+	// D3174: a repository the project's routing table serves reaches Vertex
+	// through the credentials service, which calls it on its own identity and
+	// whose calls the caps hold, so its file's `auth: vertex` is inert and the
+	// refusal does not fire — a served repository mounts no model credential
+	// at all and its chain names the source per call (R1, R2, CS11). A
+	// repository no chain admits is the file's: the job's own GCP identity,
+	// which nothing caps.
+	if cfg.Agent.Auth == "vertex" && e.Mode == policy.ModeEnforce && !servedByTheTable(lc, repo) {
 		problems = append(problems, config.Problem{Path: "agent.auth", Message: vertexBudgetRefusal})
 	}
 	// The price rules are every mode's: a model the gateway cannot price is

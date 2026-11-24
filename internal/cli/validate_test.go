@@ -713,6 +713,26 @@ func TestValidateRefusesVertexEnforceFromFile(t *testing.T) {
 	}
 }
 
+// TestValidateAcceptsVertexEnforceWhereTheTableServes is CS5 and D3174: a
+// repository a chain of the project's routing table may serve reaches Vertex
+// through the credentials service, which calls it on its own identity and
+// whose calls the caps hold, so its file's `auth: vertex` under enforce is not
+// refused. The table is the project config's own and is read per repository:
+// one no chain admits keeps the refusal, in the runner's words.
+func TestValidateAcceptsVertexEnforceWhereTheTableServes(t *testing.T) {
+	const table = "model_routing:\n  - match: \"claude-*\"\n    chain:\n      - { kind: vertex, admit: [acme/app] }\n"
+	pinned := "  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
+	path := fileWithBudget(t, "budget: { mode: enforce, per_run_usd: 5 }\n"+table, "", pinned)
+	inCheckoutOf(t, "acme/app")
+	if out, errOut, err := execute(t, "validate", path); err != nil || strings.Contains(out, vertexBudgetRefusal) {
+		t.Fatalf("a vertex file the table serves was refused: %v\n%s%s", err, out, errOut)
+	}
+	inCheckoutOf(t, "acme/other")
+	if out, _, err := execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, vertexBudgetRefusal) {
+		t.Fatalf("a vertex file no chain admits was accepted: exit %d: %s", ExitCode(err), out)
+	}
+}
+
 // A committed enforce under Vertex is refused by every run (the stricter of
 // the layers is enforce whatever the ceiling), so validate says so from the
 // file alone, with no project config selected, in the runner's words.
