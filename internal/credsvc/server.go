@@ -1772,6 +1772,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// switch or the path that would let it serve.
 		var refusal *poolRefusal
 		if errors.As(err, &refusal) {
+			// The class the walk set is the answer, and the two are not the
+			// same refusal: a walk that narrowed a candidate LIST to nothing
+			// read the state and found this call no candidate, which is
+			// no_candidate_credentials and carries the list; every other walk's
+			// refusal is about the call or about a document, and it keeps the
+			// service's own sentence under state_unavailable.
+			if refusal.class == ErrorNoCandidateCredentials {
+				s.refuseCandidates(ctx, w, id, purpose, refusal.message, refusal.tried)
+				return
+			}
 			s.refuseCall(ctx, w, id, purpose, "", "", StatusUnavailable, ErrorStateUnavailable, refusal.message)
 			return
 		}

@@ -828,7 +828,7 @@ func (s *workspaceProjectStage) prepare(ctx context.Context) error {
 	// no longer compose the default profile's job would stop here instead of
 	// converging. What this stage reads of the spec is its state bucket alone,
 	// which the carry never changes.
-	spec, err := installSpec(e.r.o, e.lc, e.r.warn)
+	spec, err := installSpec(e.r.o, e.lc, e.r.withheld)
 	if err != nil {
 		return err
 	}

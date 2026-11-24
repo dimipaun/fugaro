@@ -600,7 +600,7 @@ func userOutputs(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config) (
 	// operator would have to fix first (`fugaro update`) converges in that same
 	// state, by the carry heldDefaultProfiles answers it.
 	r := &initRun{cmd: cmd, o: &initOptions{door: "user"}, w: cmd.ErrOrStderr()}
-	spec, err := installSpec(r.o, lc, r.warn)
+	spec, err := installSpec(r.o, lc, r.withheld)
 	if err != nil {
 		return infra.InstallationOutputs{}, initErr(err)
 	}

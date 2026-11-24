@@ -10,12 +10,14 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 	"gopkg.in/yaml.v3"
@@ -931,6 +933,25 @@ func credentialsServiceProbe(lc *localcfg.Config, outs infra.InstallationOutputs
 // while both readers judge those two conditions again, live, on the run that
 // reads the record (localcfg.Repo.CredentialsServiceReady).
 //
+// The reading is the SHARP one wherever this installation records what the
+// repository's runs go out on (recordedRepoAuth, creds.ReadRepoAuth): the weak
+// question — "the bundle holds a model credential" — is right only for the
+// cascade, which settles on any of them, and the grant in the state does not
+// say which auth the apply that made it was for. The switch admits `api-key`
+// and `oauth` as well (infra.CredentialsServiceServes), and config.
+// ServiceServedAuths has served those two since 0.26.0, so an installation
+// whose repository is on one of them and whose bundle holds no credential for
+// it is a repository this door would otherwise record ON: its jobs' model
+// mounts are dropped, its launches are handed the service's address, and every
+// model call of it is refused while the bundle cannot serve the one credential
+// the repository's own record names (the owner's installation of 2026-11-24).
+// Recorded off, the fail-safe direction holds: the next `fugaro update` in that
+// repository's own checkout puts its jobs' mounts back and stops handing them
+// the address, which is the one command CLAUDE.md's HARD RULE promises. The
+// weak question stays for the entries this door cannot judge — no database, no
+// record, a read that failed — exactly as it was before the record was read
+// here at all.
+//
 // Nothing is written where the bundle was not read (credentialsBundleReady's
 // second answer): in a coding agent's session or in a run's own process, and on
 // a read that failed. Every entry keeps the record the person's last run left
@@ -996,7 +1017,8 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 	if len(switched) == 0 && len(heldOff) == 0 {
 		return
 	}
-	ready, record := r.credentialsBundleReady(ctx, credentialsServiceProbe(lc, outs))
+	probe := credentialsServiceProbe(lc, outs)
+	weak, record := r.credentialsBundleReady(ctx, probe)
 	if !record {
 		// Nowhere the bundle was not read — a coding agent's session, a run's
 		// own process, or a read that failed — is there a reading to write, so
@@ -1020,8 +1042,20 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 	// each fact only where the same record's switch is on (infra's repoCtx) —
 	// and the next `fugaro update --repo` in that repository writes both again
 	// from its own reading.
+	// The database the sharp question is read from, opened once for the entries
+	// below: an installation with no budget backend has none, and every entry
+	// then keeps the weak answer, which is what this door wrote before the
+	// record was read here.
+	var db *rtdb.Client
+	if len(switched) > 0 {
+		db = repoAuthDB(ctx, lc)
+	}
 	for _, key := range switched {
 		entry := lc.Repos[key]
+		ready := weak
+		if auth, accounts, ok := recordedRepoAuth(ctx, db, entry, key); ok {
+			ready, _ = r.credentialsBundleServes(ctx, probe, auth, accounts, entry.Provider)
+		}
 		entry.CredentialsServiceReady = localcfg.RecordSwitch(ready)
 		lc.Repos[key] = entry
 	}
@@ -1034,6 +1068,46 @@ func (r *initRun) backfillCredentialsServiceReady(ctx context.Context, c *infra.
 		entry.CredentialsServiceReady = localcfg.RecordSwitch(false)
 		lc.Repos[key] = entry
 	}
+}
+
+// repoAuthDB is this installation's budget database, or nil where its config
+// names none or the client cannot be opened: the record the sharp question is
+// judged from lives there (recordedRepoAuth), and a door that cannot read it
+// keeps the weak answer rather than failing the upgrade over a diagnosis.
+func repoAuthDB(ctx context.Context, lc *localcfg.Config) *rtdb.Client {
+	if lc == nil || lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		return nil
+	}
+	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	if err != nil {
+		return nil
+	}
+	return db
+}
+
+// recordedRepoAuth is what this installation records as one repository's own
+// auth and the accounts its runs may go out on (creds.ReadRepoAuth): the record
+// the repository door writes from the checkout's fugaro.yaml and the credentials
+// service narrows every call of that repository by, so it is the one answer to
+// "which auth" a door that has no checkout can reach.
+//
+// The second answer is false wherever there is nothing to read — no database, a
+// repository this config cannot name a slug for, a node the reader refuses — and
+// the caller then asks the weak question, which is the answer it had before this
+// reading existed.
+func recordedRepoAuth(ctx context.Context, db *rtdb.Client, entry localcfg.Repo, repo string) (string, []string, bool) {
+	if db == nil {
+		return "", nil, false
+	}
+	slug, err := task.Slug(entry.Provider, repo)
+	if err != nil {
+		return "", nil, false
+	}
+	rec, found, err := creds.ReadRepoAuth(ctx, db, slug)
+	if err != nil || !found {
+		return "", nil, false
+	}
+	return rec.Auth, rec.Accounts, true
 }
 
 // appliedRepoCredentialsService reports whether the repository root has been

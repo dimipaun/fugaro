@@ -860,6 +860,21 @@ type RepoSpec struct {
 	// tfvars as repo.project_secrets.
 	ProjectSecrets map[string]string `json:"project_secrets,omitempty"`
 
+	// DefaultAccountUnused says no run of this project's configuration holds
+	// the unsuffixed default Claude account (localcfg's
+	// RunsOnDefaultClaudeAccount): every account a launch picks is a named one,
+	// so the bare claude-oauth-token is a token nothing mounts and its absence
+	// is not a repository's missing secret. Readiness drops the mount of that
+	// name from every job and SecretCommands prints no step for it, because a
+	// step would send the owner to mint a token for an account their own
+	// configuration never chooses — the one repository copy no project-wide
+	// copy can replace (the bare name is deliberately outside D2's sweep). The
+	// job itself is unchanged and still deployed: an explicit
+	// `fugaro run --token default` targets it, and the account's own allow-list
+	// is what refuses that launch, not a job that is not there. json:"-": no
+	// Terraform input reads it.
+	DefaultAccountUnused bool `json:"-"`
+
 	// AccountProfiles names, for each named Claude account this repository's
 	// jobs mount, the profile whose claude_accounts already lists it
 	// (config.ClaudeAccountProfile: the first in name order, and no entry when
@@ -2136,8 +2151,9 @@ func Repo(in Inputs) (RepoSpec, error) {
 			CredentialsService:         repoCredentialsService(c.inst.CredentialsService, c.credentialsServiceOn),
 			CatalogCheckServiceAccount: c.inst.CatalogCheckServiceAccount,
 		},
-		BitbucketProxied: c.bitbucketProxied,
-		Shared:           c.sharedRepo(),
+		BitbucketProxied:     c.bitbucketProxied,
+		Shared:               c.sharedRepo(),
+		DefaultAccountUnused: !lc.RunsOnDefaultClaudeAccount(),
 		// The same answer workflow() dropped the mounts with, read from the
 		// same two facts, so the module's accessor drop and this spec's mount
 		// drop cannot disagree: a job whose account lost an accessor on a
