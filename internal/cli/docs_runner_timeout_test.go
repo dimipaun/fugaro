@@ -12,9 +12,27 @@ import (
 // runnerLocalCommand is how internal/runner is run with a bound of its own —
 // `go test`'s `-timeout` is 10 minutes per package by default, and that
 // package's own suite takes about 25. It is the local half of the same fact
-// the `test` job carries, and the step docs/pending-workflows/README.md asks
-// the owner to add runs exactly it.
+// the `shard` job carries — one leg per entry of a matrix the selector prints
+// (`.github/workflows/ci.yml`), where the step it lands on asks for this bound
+// — and the step docs/pending-workflows/README.md asks the owner to add runs
+// exactly it.
 const runnerLocalCommand = "go test -race -timeout 40m ./internal/runner/..."
+
+// runnerCIMechanics is how a document states the mechanism of that bound, with
+// the workflow's two numbers left for it to fill in: the `-timeout` the shard
+// step asks for, and the cap of the job that step runs in. One string for
+// every document that states it, so they cannot disagree with each other or
+// with the workflow.
+const runnerCIMechanics = "`-timeout %dm` under the shard job's `timeout-minutes: %d`"
+
+// runnerBoundMechanics is that sentence with the workflow's own numbers, and nothing
+// at all where the workflow gives the package no bound to describe.
+func runnerBoundMechanics(st runnerCIState) string {
+	if !st.ownStep {
+		return ""
+	}
+	return fmt.Sprintf(runnerCIMechanics, st.bound, st.cap)
+}
 
 // runnerTimeoutClaims are the three documents that say whether CI gives
 // internal/runner a bound of its own, with both forms of that claim: the
@@ -26,9 +44,18 @@ const runnerLocalCommand = "go test -race -timeout 40m ./internal/runner/..."
 // change in docs/pending-workflows/README.md's `## ci.yml`, and the applied
 // half of that has to be somewhere or the documents would be left saying CI
 // does not do what it does.
+//
+// mechanics is runnerCIMechanics for a document that states the mechanism
+// itself, and empty for one that states the claim without its numbers
+// (CONTRIBUTING.md). It is read off the workflow like the bound and the cap
+// are: the two documents that carry it named a fixed pair of legs
+// (`runner-0`, `runner-1`) until the matrix became the selector's output, and
+// a document that names the matrix's numbers is where a leg that no longer
+// exists, or a bound that moved, is left behind.
 var runnerTimeoutClaims = []struct {
 	path             string
 	pending, applied string
+	mechanics        string
 }{
 	{
 		path:    "CONTRIBUTING.md",
@@ -36,14 +63,16 @@ var runnerTimeoutClaims = []struct {
 		applied: "CI gives that package the same bound, on test-shard runners of its own.",
 	},
 	{
-		path:    "docs/dogfooding.md",
-		pending: "CI does not give that package the same bound yet",
-		applied: "CI gives that package the same bound, on test-shard runners of its own",
+		path:      "docs/dogfooding.md",
+		pending:   "CI does not give that package the same bound yet",
+		applied:   "CI gives that package the same bound, on test-shard runners of its own",
+		mechanics: runnerCIMechanics,
 	},
 	{
-		path:    "docs/pending-workflows/README.md",
-		pending: "**The change outstanding now: the `internal/runner` package's test timeout",
-		applied: "**Applied: the `internal/runner` package's test timeout",
+		path:      "docs/pending-workflows/README.md",
+		pending:   "**The change outstanding now: the `internal/runner` package's test timeout",
+		applied:   "**Applied: the `internal/runner` package's test timeout",
+		mechanics: runnerCIMechanics,
 	},
 }
 
@@ -172,6 +201,13 @@ func runnerTimeoutStateProblems(ci string, doc func(path string) string) []strin
 		if !strings.Contains(text, runnerLocalCommand) {
 			problems = append(problems, fmt.Sprintf("%s no longer names `%s`: that command is the bound this claim is about, and the three documents name the same one", c.path, runnerLocalCommand))
 		}
+		// And the mechanism, in the documents that state it: the numbers are
+		// the workflow's, so a document that carries last month's bound, or the
+		// name of a leg the matrix no longer has, is caught here. Nothing is
+		// asked while the workflow gives the package no bound to describe.
+		if want := runnerBoundMechanics(st); c.mechanics != "" && want != "" && !strings.Contains(text, want) {
+			problems = append(problems, fmt.Sprintf("%s no longer states this bound as .github/workflows/ci.yml carries it (%q): the bound and the cap are the workflow's, and a document that writes them down is where a matrix the selector prints leaves a number, or a runner's name, behind", c.path, want))
+		}
 	}
 	// The workflow side of the same fact, once it carries the step: the step's
 	// own bound can only fire if the job outlives it, and the step starts
@@ -226,25 +262,43 @@ func TestRunnerTimeoutStateRulesSeeEveryState(t *testing.T) {
 	)
 	// docsIn answers with the real sentences of whichever form is asked for,
 	// so a case fails on the rules and not on a fixture that misquotes them.
-	docsIn := func(state string) func(path string) string {
-		return func(path string) string {
-			for _, c := range runnerTimeoutClaims {
-				if c.path == path {
-					switch state {
-					case "pending":
-						return "some prose. " + c.pending + " " + runnerLocalCommand + "\n"
-					case "applied":
-						return "some prose. " + c.applied + " " + runnerLocalCommand + "\n"
+	// The mechanism sentence is the case's own workflow's, handed in by the
+	// loop below: a fixture that wrote those numbers down itself would be a
+	// second place they are stated, which is the drift the rule catches.
+	docsIn := func(state string) func(mechanics string) func(path string) string {
+		return func(mechanics string) func(path string) string {
+			return func(path string) string {
+				for _, c := range runnerTimeoutClaims {
+					if c.path == path {
+						switch state {
+						case "pending":
+							return "some prose. " + c.pending + " " + runnerLocalCommand + "\n"
+						case "applied":
+							return "some prose. " + c.applied + " " + runnerLocalCommand + " " + mechanics + "\n"
+						}
 					}
 				}
+				return "some prose about something else\n"
 			}
-			return "some prose about something else\n"
+		}
+	}
+	// overriding keeps the real sentences of a state and replaces one document,
+	// for the cases that plant a single mistake.
+	overriding := func(state string, path, text string) func(mechanics string) func(string) string {
+		return func(mechanics string) func(string) string {
+			docs := docsIn(state)(mechanics)
+			return func(p string) string {
+				if p == path {
+					return text
+				}
+				return docs(p)
+			}
 		}
 	}
 	for _, tc := range []struct {
 		name     string
 		ci       string
-		docs     func(path string) string
+		docs     func(mechanics string) func(path string) string
 		wantNone bool
 		want     []string // one substring per expected problem
 	}{
@@ -256,25 +310,29 @@ func TestRunnerTimeoutStateRulesSeeEveryState(t *testing.T) {
 			[]string{"CONTRIBUTING.md does not say CI gives internal/runner no bound", "docs/dogfooding.md does not say CI gives internal/runner no bound", "docs/pending-workflows/README.md does not say CI gives internal/runner no bound"}},
 		{"applied, but under the cap the job has today", ciAppliedUnderTheOldCap, docsIn("applied"), false,
 			[]string{"is capped at 30 minutes while the internal/runner step asks for `-timeout 40m`"}},
-		{"both sentences in one document", ciPending, func(path string) string {
-			if path == "CONTRIBUTING.md" {
-				return runnerTimeoutClaims[0].pending + runnerTimeoutClaims[0].applied + runnerLocalCommand
-			}
-			return docsIn("pending")(path)
-		}, false, []string{"CONTRIBUTING.md carries both"}},
-		{"a document that names another bound", ciPending, func(path string) string {
-			if path == "docs/dogfooding.md" {
-				return runnerTimeoutClaims[1].pending
-			}
-			return docsIn("pending")(path)
-		}, false, []string{"docs/dogfooding.md no longer names"}},
+		{"applied, with a document still naming the matrix that came before the selector", ciApplied, overriding("applied", "docs/dogfooding.md",
+			runnerTimeoutClaims[1].applied+" "+runnerLocalCommand+" (`-timeout 20m` under the shard job's `timeout-minutes: 30`, on the runners `runner-0` and `runner-1`)"),
+			false, []string{"docs/dogfooding.md no longer states this bound as .github/workflows/ci.yml carries it"}},
+		{"both sentences in one document", ciPending, overriding("pending", "CONTRIBUTING.md",
+			runnerTimeoutClaims[0].pending+runnerTimeoutClaims[0].applied+runnerLocalCommand),
+			false, []string{"CONTRIBUTING.md carries both"}},
+		{"a document that names another bound", ciPending, overriding("pending", "docs/dogfooding.md",
+			runnerTimeoutClaims[1].pending),
+			false, []string{"docs/dogfooding.md no longer names"}},
 		{"no test job at all", "  build:\n    steps:\n      - run: true\n", docsIn("pending"), false,
 			[]string{"has no `test` job"}},
 		{"a test job with no test step", "  test:\n    timeout-minutes: 30\n    steps:\n      - run: gofmt\n", docsIn("pending"), false,
 			[]string{"has no `go test` step"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			problems := runnerTimeoutStateProblems(tc.ci, tc.docs)
+			// The mechanism sentence the documents of this case carry, read off
+			// the case's own workflow: the pending workflow gives the package no
+			// bound, so its documents state none.
+			st, err := readRunnerCIState(tc.ci)
+			if err != nil {
+				st = runnerCIState{}
+			}
+			problems := runnerTimeoutStateProblems(tc.ci, tc.docs(runnerBoundMechanics(st)))
 			if tc.wantNone {
 				if len(problems) != 0 {
 					t.Fatalf("problems = %q, want none", problems)
