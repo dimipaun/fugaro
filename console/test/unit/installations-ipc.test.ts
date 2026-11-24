@@ -53,6 +53,7 @@ import { UPDATES_SWITCH_UNWRITTEN, createUpdateSettings, nodeUpdatesFs, readUpda
 import type { UpdateController } from '../../src/main/updates'
 import { TEMP_ROOTS } from '../../src/main/installationstate'
 import {
+  ADD_PROJECT_UNWIRED,
   DISTROS_NOT_WINDOWS,
   INSTALLATIONS_MENU_LABEL,
   OPEN_EXTERNAL_FAILED,
@@ -202,6 +203,10 @@ function pickerOver(
      * directory; the case that pins the rule passes the real one. */
     readonly tempRoots?: readonly string[]
     readonly spawnLog?: unknown
+    /** onAddProject is the entry point's seam for the picker's Add project door
+     * (SW3c): the picker hands the request over and the window that holds the
+     * wizard opens. */
+    readonly onAddProject?: () => void
     readonly onChosen?: Parameters<typeof createInstallationPicker>[0]['onChosen']
     readonly onRemoved?: Parameters<typeof createInstallationPicker>[0]['onRemoved']
     readonly onRecordRemoved?: Parameters<typeof createInstallationPicker>[0]['onRecordRemoved']
@@ -273,6 +278,8 @@ function pickerOver(
     appEnv: options.appEnv ?? {},
     ...(options.wslPath === undefined ? {} : { wslPath: options.wslPath }),
     ...(options.platform === undefined ? {} : { platform: options.platform }),
+    ...(options.spawnLog === undefined ? {} : { spawnLog: options.spawnLog as never }),
+    ...(options.onAddProject === undefined ? {} : { onAddProject: options.onAddProject }),
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
     ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
@@ -390,14 +397,15 @@ function listableStub(): Stub {
 // ---------------------------------------------------------------------------
 
 describe('the picker’s allow-list', () => {
-  it('is closed, frozen, and seven rows wide', () => {
-    // Seven, because the form is gone (owner's ruling of 2026-10-20) and the
-    // reveal affordance arrived with Part D: the list, one click that opens an
-    // installation, the checkout it is used from, the removal of this console's
-    // own record, the one directory Explorer opens, the one link, and -- the one
-    // row whose subject is the machine rather than this console -- the
-    // distributions `wsl.exe` lists (T-G3). A row that came back -- `add`,
-    // `pickBinary` -- fails here by name.
+  it('is closed, frozen, and eight rows wide', () => {
+    // Eight, because the form is gone (owner's ruling of 2026-10-20), the reveal
+    // affordance arrived with Part D and Add project with SW3c: the list, one
+    // click that opens an installation, the checkout it is used from, the removal
+    // of this console's own record, the one directory Explorer opens, the one
+    // link, the distributions `wsl.exe` lists (T-G3, the one row whose subject is
+    // the machine rather than this console), and the one door that opens the
+    // setup wizard (R4). A row that came back -- `add`, `pickBinary` -- fails
+    // here by name.
     expect(INSTALLATION_OPERATIONS.map((row) => row.name)).toEqual([
       'list',
       'choose',
@@ -406,6 +414,7 @@ describe('the picker’s allow-list', () => {
       'reveal',
       'openExternal',
       'distros',
+      'addProject',
     ])
     expect(Object.isFrozen(INSTALLATION_OPERATIONS)).toBe(true)
     for (const row of INSTALLATION_OPERATIONS) expect(Object.isFrozen(row)).toBe(true)
@@ -415,6 +424,10 @@ describe('the picker’s allow-list', () => {
     // crosses the boundary: a renderer that sends a `url` key has sent a key no
     // row declares.
     expect(INSTALLATION_OPERATIONS.find((row) => row.name === 'openExternal')?.args).toEqual([])
+    // Add project takes none either: the wizard it opens is the console's own
+    // screen, so there is nothing for a document to name -- no path, no project,
+    // no answers.
+    expect(INSTALLATION_OPERATIONS.find((row) => row.name === 'addProject')?.args).toEqual([])
   })
 
   it('is mirrored by the preload, exactly', () => {
@@ -446,9 +459,20 @@ describe('the picker’s bridge', () => {
       },
     })
     const keys = Object.keys(bridge).sort()
-    expect(
-      keys,
-    ).toEqual(['checkout', 'choose', 'list', 'openExternal', 'operations', 'remove', 'reveal', 'version', 'distros'].sort())
+    expect(keys).toEqual(
+      [
+        'addProject',
+        'checkout',
+        'choose',
+        'list',
+        'openExternal',
+        'operations',
+        'remove',
+        'reveal',
+        'version',
+        'distros',
+      ].sort(),
+    )
     // The three names a bridge would have, and their absence is the design's
     // rule 5: there is no general invoker to point at a channel.
     for (const forbidden of ['invoke', 'send', 'on', 'channel']) expect(keys).not.toContain(forbidden)
@@ -477,6 +501,40 @@ describe('the picker’s bridge', () => {
   it('answers a refusal for a reply that is not one', async () => {
     const reply = await invokeOperation({ invoke: async () => 'nonsense' }, 'list', undefined)
     expect(reply.ok).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Add project: the one row that opens a window rather than a process
+// ---------------------------------------------------------------------------
+
+describe('the picker’s Add project row', () => {
+  it('hands the request to the entry point and spawns no child', async () => {
+    const asked: string[] = []
+    const logged: unknown[] = []
+    // **No `fugaro` anywhere**: the machine has no CLI in the searched
+    // directories at all, which is the strongest form of "it spawns nothing" --
+    // a row that ran anything would have to answer a discovery failure.
+    const { ipcMain } = pickerOver({
+      prefixes: [],
+      onAddProject: () => asked.push('asked'),
+      spawnLog: {
+        enabled: true,
+        path: null,
+        records: 0,
+        error: null,
+        record: (entry: unknown) => logged.push(entry),
+        close: () => undefined,
+      },
+    })
+    expect(await answer(ipcMain, 'addProject')).toEqual({ ok: true, data: null })
+    expect(asked).toEqual(['asked'])
+    expect(logged).toEqual([])
+  })
+
+  it('refuses when the entry point wired no door', async () => {
+    const { ipcMain } = pickerOver()
+    expect(await answer(ipcMain, 'addProject')).toEqual({ ok: false, reason: ADD_PROJECT_UNWIRED })
   })
 })
 

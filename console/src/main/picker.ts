@@ -182,6 +182,15 @@ export const REVEAL_FAILED = 'the console could not open the installation’s di
  */
 export const DISTROS_NOT_WINDOWS = 'this machine is not Windows, so it has no WSL distributions to list'
 
+/**
+ * ADD_PROJECT_UNWIRED is what the Add project row answers when the entry point
+ * gave the picker no door to hand the request to (SW3c). The window it asks for
+ * is the dashboard's, and this module neither opens windows nor knows one
+ * exists, so an `ok` here would be a click that closed nothing and opened
+ * nothing -- the one answer this row must not give.
+ */
+export const ADD_PROJECT_UNWIRED = 'this console cannot open the setup wizard'
+
 /** UpdateMenuOptions is the off switch as the menu sees it: the value the
  * checkbox draws, and the two things the items do with it. Plain values and
  * callbacks rather than the store itself, so that the template stays a plain
@@ -313,6 +322,15 @@ export interface InstallationPickerDeps {
      * 2026-10-20). */
     readonly resolvedBinaryPath: string
   }) => Promise<void> | void
+  /**
+   * onAddProject is the Add project row's seam (SW3c, R4): the picker states
+   * that the operator asked for a new project and hands the request over, and
+   * the entry point does the rest -- close this window and bring the dashboard
+   * up on the wizard SW3b draws. The window is the dashboard's to open and this
+   * module knows nothing about it, which is why the seam exists rather than a
+   * call from here.
+   */
+  readonly onAddProject?: () => void
   /** onRemoved is the same seam for a removal that took the active installation
    * away: the console has none, and its dashboard must say so. */
   readonly onRemoved?: (id: string) => void
@@ -1291,6 +1309,20 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         if (!opened) return { ok: false, reason: OPEN_EXTERNAL_FAILED }
         return { ok: true, data: { opened: GETTING_STARTED_URL } }
       }
+      case 'addProject':
+        // The one row that opens a **window** this process does not own rather
+        // than a child: the setup wizard is a screen of the dashboard (SW3b), so
+        // the request goes to the entry point, which brings that window up on
+        // it. Nothing is spawned here and nothing is read: the setup run is
+        // SW3a's, started later by the window that shows the plan, and its
+        // answers never travel over this surface (the picker's schema is names
+        // and checkout directories, which is not a shape five answers fit in).
+        //
+        // A picker whose entry point wired no door refuses: the operator asked
+        // for a wizard, and an `ok` here would close the window on nothing.
+        if (deps.onAddProject === undefined) return { ok: false, reason: ADD_PROJECT_UNWIRED }
+        deps.onAddProject()
+        return { ok: true, data: null }
       case 'distros':
         // The one row whose subject is not this console's record of anything:
         // the distributions this machine has, asked of `wsl.exe` by the module
@@ -1478,6 +1510,7 @@ export function installInstallationPicker(options: {
   readonly spawnLog?: SpawnLogWriter
   readonly fs?: InstallationFs
   readonly onChosen?: InstallationPickerDeps['onChosen']
+  readonly onAddProject?: InstallationPickerDeps['onAddProject']
   readonly onRemoved?: InstallationPickerDeps['onRemoved']
   readonly onRecordRemoved?: InstallationPickerDeps['onRecordRemoved']
   readonly updateMenu?: UpdateMenuOptions | undefined
@@ -1543,6 +1576,7 @@ export function installInstallationPicker(options: {
     ...(options.spawnLog === undefined ? {} : { spawnLog: options.spawnLog }),
     ...(options.fs === undefined ? {} : { fs: options.fs }),
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
+    ...(options.onAddProject === undefined ? {} : { onAddProject: options.onAddProject }),
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
     ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
     ...(options.updateMenu === undefined ? {} : { updateMenu: options.updateMenu }),
