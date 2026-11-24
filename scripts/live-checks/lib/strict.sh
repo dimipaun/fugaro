@@ -46,10 +46,10 @@ strict_fugaro_verify() {
       # field into the next one: split the fields by hand instead.
       path=${rest%%$'\t'*}
       rest=${rest#*$'\t'}
-      name=${rest%%$'\t'*}
-      rest=${rest#*$'\t'}
       ar=${rest%%$'\t'*}
-      sh=${rest#*$'\t'}
+      rest=${rest#*$'\t'}
+      sh=${rest%%$'\t'*}
+      name=${rest#*$'\t'}
       flags["$path|$name"]=$ar
       [ -n "$sh" ] && flags["$path|$sh"]=$ar
       ;;

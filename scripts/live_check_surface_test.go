@@ -39,11 +39,27 @@ const liveCheckSurfacePath = "live-checks/lib/fugaro-surface.tsv"
 // with its arity. `bool` flags may be written bare; `value` ones are followed by
 // the value they take, which is what lets the verifier walk an argv without
 // re-reading the check's own argument rules.
+//
+// A flag row keeps the path in the second field, beside a command row's, and
+// writes the flag's own name last. The order is deliberate: with the name in
+// the second field, a live `init` subcommand's flag list would spell the
+// retired verb's pattern -- `<word> init`, then a flag -- and the census that
+// scans the live tree for it (internal/cli/docs_live_init_census_test.go,
+// initNameRE) would read this generated table as a mention of the retired
+// command. The arity between the path and the name keeps it out of that.
 func liveCheckSurface() []string {
 	root := cli.NewRootCmd()
 	var lines []string
 	var walk func(c *cobra.Command, path []string)
 	walk = func(c *cobra.Command, path []string) {
+		// A hidden command is not one this CLI offers. The retired tombstone
+		// (`fugaro`, then the old verb) is the only one, and the real binary
+		// exits 1 on it rather than running anything, so the fake refuses it
+		// as an unknown command -- which is what a check that typed the old
+		// name would meet.
+		if c.Hidden {
+			return
+		}
 		p := append(append([]string{}, path...), c.Name())
 		// Paths are relative to the root, so `fugaro accounts pool add` is
 		// `accounts pool add` here: it is what a fake's argv carries. The root's
@@ -65,8 +81,8 @@ func liveCheckSurface() []string {
 			if f.Shorthand != "" {
 				shorthand = "-" + f.Shorthand
 			}
-			lines = append(lines, fmt.Sprintf("flag\t%s\t--%s\t%s\t%s",
-				strings.Join(rel, " "), f.Name, arity, shorthand))
+			lines = append(lines, fmt.Sprintf("flag\t%s\t%s\t%s\t--%s",
+				strings.Join(rel, " "), arity, shorthand, f.Name))
 		})
 		for _, sub := range c.Commands() {
 			walk(sub, p)
@@ -79,9 +95,9 @@ func liveCheckSurface() []string {
 	// the root (cli.NormalizeVersionArgs reads a leading one before cobra).
 	lines = append(lines, "cmd\thelp")
 	for _, path := range append([]string{""}, surfaceCommandPaths(lines)...) {
-		lines = append(lines, "flag\t"+path+"\t--help\tbool\t-h")
+		lines = append(lines, "flag\t"+path+"\tbool\t-h\t--help")
 	}
-	lines = append(lines, "flag\t\t--version\tbool\t-v")
+	lines = append(lines, "flag\t\tbool\t-v\t--version")
 	sort.Strings(lines)
 	return lines
 }
