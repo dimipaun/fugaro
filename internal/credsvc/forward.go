@@ -1781,10 +1781,11 @@ func (s *Server) providerCall(ctx context.Context, w http.ResponseWriter, r *htt
 			err.Error(), labelRead(readUpstream, err))
 		return
 	}
-	// And what the provider's answer carried is recorded too, by the names of
-	// its rate-limit headers and never a value (U1, Check 880): this route is
-	// one of the sources a chain serves, and the record is read per source.
-	s.recordRateLimitHeaders(ctx, sel, cand.Name, ans.resp.Header)
+	// What the provider's answer carried is deliberately NOT recorded here: a
+	// routed call attaches a key and answers with what the provider said, and it
+	// writes no mark at all (TestARoutedCallLeavesTheRunsPlacementAlone). Check
+	// 880's record belongs to the sources whose state this service holds — the
+	// chain's — and a provider key's rate-limit headers are none of them.
 	s.answer(ctx, w, id, cl, ans, cand, nil, nil)
 }
 
@@ -1959,6 +1960,20 @@ func rateLimitHeaderNames(h http.Header) []string {
 // answer's headers are a fact about the credential whether or not the caller
 // stayed to read the body (the streamed usage limit's mark is written the same
 // way).
+//
+// It is called only for the answers this service reads as about the CREDENTIAL —
+// the ones it serves (a 2xx), a usage limit (429) and a 401 — because a record is
+// a claim that this answer says something about this credential, and a relayed
+// 529 or 500 says nothing about it (the published pool's own rule: "an answer
+// about the request moves nothing"). The line a failed write leaves names the
+// error's CLASS and never its text, as every other line of this service's log
+// does: the text of a state-write failure can carry the node's own content, and
+// this log is not a place a credential's value may reach.
+//
+// An observation that found no rate-limit header writes no field, and a
+// credential with no hold and no record is written as an empty node rather than
+// left alone: the write is the cheapest way to say "this answer reported none",
+// and the neighbours on this path already treat one extra mark node as nothing.
 func (s *Server) recordRateLimitHeaders(ctx context.Context, sel *creds.Selector, name string, h http.Header) {
 	if sel == nil || name == "" {
 		return
@@ -1967,7 +1982,7 @@ func (s *Server) recordRateLimitHeaders(ctx context.Context, sel *creds.Selector
 	if _, err := sel.Mark(context.WithoutCancel(ctx), name, func(prev creds.Mark, _ bool) (creds.Mark, error) {
 		return creds.Observed(prev, names), nil
 	}); err != nil {
-		s.log.Warn("credsvc: the rate-limit header names of an answer could not be recorded", "error", err)
+		s.log.Warn("credsvc: the rate-limit header names of an answer could not be recorded", "error_class", errorClass(err))
 	}
 }
 

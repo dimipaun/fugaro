@@ -1126,13 +1126,14 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			return
 		}
 
-		// What this source's answer carried is recorded before any arm reads
-		// it: the names of its rate-limit headers, and never a value (U1,
-		// Check 880). It is recorded for every arm — a limit's names are the
-		// answer the record is read for — and a later answer of the same
-		// credential replaces it, so the record is always the LAST answer's.
-		s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
-
+		// What this source's answer carried is recorded in the arms below — the
+		// three this service reads as about the CREDENTIAL — as the names of its
+		// rate-limit headers and never a value (U1, Check 880). This arm writes
+		// nothing for itself, and the record is written where the credential is
+		// judged because an answer about the REQUEST says nothing about it: a
+		// relayed 529 or 500 leaves the mark alone (the published pool's own
+		// rule, "an answer about the request moves nothing"), and so leaves the
+		// record alone.
 		switch status := ans.resp.StatusCode; {
 		case unauthorizedStatus(status):
 			// D139: a 401 marks the credential broken, and only an operator
@@ -1149,6 +1150,10 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 			// that cannot be written is the refusal the run gets — the
 			// credential's mark is not written, because the call is over either
 			// way and an unrecorded cost is the thing an operator has to act on.
+			// A 401 is an answer about the credential, so what it carried is
+			// recorded (U1, Check 880) — before the hold is written, because
+			// the transition rebuilds the mark and the record is the answer's.
+			s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
 			ans.resp.Body.Close()
 			if fail := s.settleCall(ctx, cl, unchargedUsage()); fail != nil {
 				s.refuseMeter(ctx, w, id, PurposeForward, fail)
@@ -1167,6 +1172,11 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 		case usageLimitStatus(status):
 			// A usage limit. Nothing has been streamed, so the call may be
 			// retried — on another credential, never on this one.
+			// The answer Check 880 is really read after: a usage limit's names
+			// are the record's whole point, so they are written before the hold
+			// (U1, D3178). A later answer of this credential replaces them, so
+			// the node holds the LAST answer's names.
+			s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
 			reset := usageLimitReset(ans.resp.Header, s.now())
 			// The attempt's reservation is settled as the 401 arm's is, and for
 			// the same reason: the retry that may follow is a SECOND call with a
@@ -1196,6 +1206,16 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 		// 400 for a request Anthropic refused, an overloaded_error, a 500. The
 		// service retries none of them — a retry is for a credential that
 		// cannot serve the call, and none of these says that.
+		// A serve is an answer about the credential: what it carried is
+		// recorded here and only here of this arm's statuses (U1, Check 880).
+		// The subscription token's own answer is exactly this one — the figure
+		// U1 asks about is what a provider reports while serving — so a 2xx is
+		// recorded and the relayed 4xx and 5xx beside it are not: this service
+		// retries none of them, because none of them says a credential cannot
+		// serve the call, and a record would be a claim that it did.
+		if code := ans.resp.StatusCode; code >= 200 && code < 300 {
+			s.recordRateLimitHeaders(ctx, sel, c.Name, ans.resp.Header)
+		}
 		var sw *Switch
 		if len(sent) > 0 && c.Name != started {
 			sw = &Switch{From: started, To: c.Name, Reason: reason}
