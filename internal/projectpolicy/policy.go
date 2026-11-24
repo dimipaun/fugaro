@@ -987,11 +987,42 @@ func (p *Policy) ModelRoutingProblems() (problems, warnings []routing.Problem) {
 		Table:           p.ModelRouting.Entries,
 		Models:          p.publishedModels(),
 		Credentials:     p.CraftCredentials,
-		Pools:           p.ModelRouting.Pools,
+		Pools:           p.routingPools(),
 		Providers:       providerCarrier(p.Providers),
 		BudgetMode:      p.Budget.Mode,
 		BudgetPerRunUSD: p.Budget.PerRunUSD,
 	})
+}
+
+// routingPools is the pools a source of the table is checked against: the key's
+// own list, plus every pool `craft_pools` declares and the key does not name.
+//
+// The node's pools are in the two blocks at once — `craft_pools` in the shape
+// every release reads, `model_routing.pools` in C2's — and this release resolves
+// a source of kind pool against the old one: `internal/credsvc`'s own lookup
+// walks `craft_pools`, and so does the layer it hands craft.Resolve. A source
+// naming a pool that is there and not in the key is therefore a source that
+// reaches a credential, and a check that read the key alone would refuse the
+// node such a source is published on.
+func (p *Policy) routingPools() []config.Pool {
+	if len(p.CraftPools) == 0 {
+		return p.ModelRouting.Pools
+	}
+	out := make([]config.Pool, 0, len(p.ModelRouting.Pools)+len(p.CraftPools))
+	out = append(out, p.ModelRouting.Pools...)
+	for _, pool := range p.CraftPools {
+		named := false
+		for _, have := range out {
+			if have.Name == pool.Name {
+				named = true
+				break
+			}
+		}
+		if !named {
+			out = append(out, pool)
+		}
+	}
+	return out
 }
 
 // publishedModels are the models the node itself says a run calls: the five
