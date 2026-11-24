@@ -611,12 +611,6 @@ func wordMacro(m string, depth int) (string, error) {
 	case "KILLS_OFF":
 		return "(root.child('config/kill/global/on').val() != true && root.child('config/kill/repos').child($slug).child('on').val() != true)", nil
 	case "REPODAILY":
-		// The repository's own daily cap, which the lease check reads: the lease's
-		// multi-path write raises this day counter as it takes a reservation
-		// (budget/lease.go), so this comparison carries a ceiling like the per-run
-		// one does (spec §5.6, B18 -- the ceiling is "for each of daily and
-		// per-run"). dailyClamp says why the clause it adds decides only where an
-		// admin's write has left the counters apart.
 		return fallback("dailyMicros", "repoDailyMicros") + dailyClamp(), nil
 	case "KINDREQ":
 		// The per-kind *required* half of a message's shape (P6.3's
@@ -1162,7 +1156,10 @@ func dailyCeiling() string {
 
 // dailyClamp is the conjunct the day counter's validator adds: the day's new
 // repository total against that ceiling, so a repository node above its ceiling
-// counts as the ceiling (spec §5.6, B18). A conjunct and never an alternative,
+// counts as the ceiling (spec §5.6, B18 -- the ceiling is "for each of daily and
+// per-run", and this counter is part of the lease check: the lease's multi-path
+// write raises it as it takes a reservation, budget/lease.go). A conjunct and
+// never an alternative,
 // which is what keeps the ceiling from *loosening* a node below it: a
 // repository whose own daily cap is $30 under a $60 default must not reach $60,
 // and `NEW <= cap || NEW <= ceiling` would hand it the $60.
