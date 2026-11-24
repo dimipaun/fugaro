@@ -372,6 +372,12 @@
           "from": {
             ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
           },
+          "source": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
+          "fallback": {
+            ".validate": "newData.isBoolean() && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
           "waiting_until": {
             ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 9007199254740991 && newData.val() % 1 == 0) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
           },
