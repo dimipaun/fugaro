@@ -827,18 +827,16 @@ var layerRows = []Row{
 	layerRow("defaults.rigor.areas.*.level", "none", "rigor", docRigor),
 	// What an area of the project layer is made of (LD4): each member is a
 	// repository of the project, or a repository with the paths of it that are
-	// in the area. No command of the settings surface writes them yet — a
-	// project area is written by hand, or by the project's own tooling — so the
-	// row names the generic writer and the write refuses the spelling, exactly
-	// as the other rows of a shape no family owns do.
+	// in the area. `fugaro rigor set --area <glob> --name <name> --repo
+	// <owner/name>` writes one member (RG3, D3237); the row's registered writer
+	// stays the generic path, which reaches the same key by its own spelling.
 	layerRow("defaults.rigor.areas.*.members.*.repo", "none", "settings set", docRigor),
 	layerRow("defaults.rigor.areas.*.members.*.paths", "none", "settings set", docRigor),
 	// The project layer's per-repository level, one entry per repository of the
-	// project it names one by one (LD4). Written by hand like the members above:
-	// the key a repository sets about itself is its own rigor.default, and
-	// `fugaro rigor set --layer repo` writes that one. Its row under the
-	// fugaro.yaml spelling is yamlMeta's, which names `config` as the owner
-	// because a repository's own file may not set the key at all.
+	// project it names one by one (LD4), which `fugaro rigor set <mode> --repo
+	// <owner/name>` writes (RG3, D3237). Its row under the fugaro.yaml spelling
+	// is yamlMeta's, which names `config` as the owner because a repository's
+	// own file may not set the key at all.
 	layerRow("defaults.rigor.repos", "none", "settings set", docRigor),
 	// The planning pass's switch, read the way defaults.git.pr.early_draft
 	// above is: a layer that states nothing leaves it as the fugaro.yaml row
