@@ -3740,6 +3740,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * first. **Nothing is marked on the panel for it**: the canvas is already
      * painted and true, and its state changes colour when the answer lands. */
     merging: boolean
+    /** mergeQueued is the generation a canvas read asked the merge section for
+     * while one was already outstanding, or `null`. It is `queued`'s rule
+     * one read over: a canvas painted while the previous merge read was still
+     * out is a canvas with no merge state coming, and the refresh that painted
+     * it is a gesture the operator made -- so the read is kept rather than
+     * dropped, and made the moment the one in flight settles. The generation is
+     * kept rather than a flag for `queued`'s own reason: a console that has
+     * moved on in the meantime has bumped it, and the kept read is then stale
+     * and draws nothing. */
+    mergeQueued: number | null
     /** mergeNotice is the sentence the merge read was refused with, kept apart
      * from `notice` because the two are different states of this tab: `notice`
      * is a **scope**'s refusal, drawn with the figures of the scope that
@@ -3795,6 +3805,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     runs: [],
     decorating: false,
     merging: false,
+    mergeQueued: null,
     mergeNotice: null,
     watching: false,
     feedInFlight: false,
@@ -4465,7 +4476,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * two children and a repeat of either is served rather than respawned.
    */
   const decorateMerges = async (mine: number): Promise<void> => {
-    if (graph.merging) return
+    if (graph.merging) {
+      // A canvas painted under a merge read that is still out is a canvas whose
+      // merge state is unknown with nothing coming for it, and it is a state a
+      // gesture reaches: Refresh paints the canvas again while the lookups are
+      // still running. The claim is kept rather than the read, as
+      // `readGraph` keeps one -- see `mergeQueued`.
+      graph.mergeQueued = mine
+      return
+    }
     graph.merging = true
     try {
       const plan = documentOf(await bridge.planStatus({ all: true }))
@@ -4495,6 +4514,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // the canvas as it was.
     } finally {
       graph.merging = false
+      // The claim a canvas read made while this one was out: it is made now, in
+      // the drawing the operator's own gesture left, and a generation that has
+      // passed since is dropped by the read's own check as every other read's is.
+      const queued = graph.mergeQueued
+      graph.mergeQueued = null
+      if (queued !== null) void decorateMerges(queued)
     }
   }
 

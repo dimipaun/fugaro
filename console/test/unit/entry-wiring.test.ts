@@ -8047,6 +8047,46 @@ describe('the Graph canvas read before its merge state', () => {
     expect(mergeMarkOf(document, 'task-one')).toBe('')
   })
 
+  it('keeps one merge read for a canvas painted while one was out, and never two at once', async () => {
+    // **The section has one read out at a time, and a claim is not dropped on
+    // the floor.** Refresh while the merge lookups are still running paints the
+    // canvas again -- a canvas with no merge state and nothing coming for it --
+    // so the read the refresh asked for is kept and made when the one in flight
+    // settles. Two at once would be two sets of up to thirty-two forge lookups
+    // against the same graph.
+    const plain = holding()
+    let canvasReads = 0
+    const { bridge, calls } = mergesGraphBridge({
+      planStatus: (args) => {
+        if ((args as { noMerges?: boolean }).noMerges === true) {
+          canvasReads += 1
+          return planStatusReply()
+        }
+        return plain.reply()
+      },
+    })
+    const document = await openGraph(bridge)
+
+    ;(classed(panelOf(document), 'graph-refresh')[0] as FakeNode).click()
+    await flush()
+    expect(canvasReads).toBe(2)
+    expect(calls.filter((call) => call.name === 'planStatus').map((call) => call.args)).toEqual([
+      { all: true, noMerges: true },
+      { all: true },
+      { all: true, noMerges: true },
+    ])
+
+    plain.release(planStatusReply(withMergesRead()))
+    await flush()
+    // The kept read was made the moment the one in flight settled, and its
+    // answer is in the drawing the refresh left.
+    const mergeReads = calls.filter(
+      (call) => call.name === 'planStatus' && (call.args as { noMerges?: boolean }).noMerges !== true,
+    )
+    expect(mergeReads).toHaveLength(2)
+    expect(mergeMarkOf(document, 'task-one')).toBe('')
+  })
+
   it('keeps the canvas and draws the sentence when the merge read is refused', async () => {
     // **A refusal of the merge state is a sentence in the drawing and never a
     // refusal screen**: the canvas on screen is the plan, read without merge
