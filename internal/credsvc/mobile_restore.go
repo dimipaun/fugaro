@@ -197,19 +197,19 @@ const (
 // service's failures and never a refusal of the caller, which is what the
 // sentence says.
 const (
-	mobileEndpointUnusable   = "this service's mobile endpoint is not one an assertion's audience can be derived from, so no assertion can be bound: the installation's endpoint is misconfigured"
+	mobileEndpointUnusable    = "this service's mobile endpoint is not one an assertion's audience can be derived from, so no assertion can be bound: the installation's endpoint is misconfigured"
 	mobileChallengeUnreadable = "the challenge could not be checked against the store, so this service cannot tell a fresh challenge from a spent one"
-	mobileChallengeUndrawn   = "this service could not draw a challenge, and a challenge that is not random is one an attacker can predict"
-	mobilePolicyUnreadable   = "the project's mobile policy could not be read, so this service cannot say whether this identity is admitted"
-	mobilePolicyUnnamed      = "the project's mobile policy answered a refusal this route does not serve, so this service cannot answer it"
-	mobilePolicyNoRole       = "the project's mobile policy admitted this identity with no role, and a device node with no role is a device no consumer can resolve"
+	mobileChallengeUndrawn    = "this service could not draw a challenge, and a challenge that is not random is one an attacker can predict"
+	mobilePolicyUnreadable    = "the project's mobile policy could not be read, so this service cannot say whether this identity is admitted"
+	mobilePolicyUnnamed       = "the project's mobile policy answered a refusal this route does not serve, so this service cannot answer it"
+	mobilePolicyNoRole        = "the project's mobile policy admitted this identity with no role, and a device node with no role is a device no consumer can resolve"
 	mobileProjectPolicyUnread = "the project's published policy could not be read, so this service cannot tell whether this project requires a QR for a new device"
-	mobileUIDUndrawn         = "this service could not draw a device id, and a device id that is not random is one another device's name could collide with"
-	mobileDeviceUnwritable   = "the device could not be recorded, so this service cannot admit it"
-	mobileFamilyUnwritable   = "the device's session could not be started, so this service cannot admit it"
-	mobileTokenUnminted      = "the device's first token could not be minted, so this service cannot admit it"
-	mobileAnswerUnbuildable  = "this service could not build the session it was about to answer with"
-	mobileUnaudited          = "the restore could not be recorded, and an act this service cannot record is not made: the device was not admitted"
+	mobileUIDUndrawn          = "this service could not draw a device id, and a device id that is not random is one another device's name could collide with"
+	mobileDeviceUnwritable    = "the device could not be recorded, so this service cannot admit it"
+	mobileFamilyUnwritable    = "the device's session could not be started, so this service cannot admit it"
+	mobileTokenUnminted       = "the device's first token could not be minted, so this service cannot admit it"
+	mobileAnswerUnbuildable   = "this service could not build the session it was about to answer with"
+	mobileUnaudited           = "the restore could not be recorded, and an act this service cannot record is not made: the device was not admitted"
 )
 
 // MobileProjectConfig is one project's mobile configuration: what the routes

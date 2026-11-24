@@ -5,14 +5,18 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/mobilesession"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -254,7 +258,6 @@ func newRestoreFixture(t *testing.T) *restoreFixture {
 		Devices:    f.devices,
 		Audit:      auditor,
 		Log:        slog.New(slog.NewJSONHandler(&logs, nil)),
-		Now:        func() time.Time { return time.Unix(1_700_000_000, 0) },
 	})
 	if err != nil {
 		t.Fatalf("NewMobileRestore: %v", err)
@@ -382,5 +385,875 @@ func TestMobileRestoreStrictProjectRefusesWithQR(t *testing.T) {
 	}
 	if got := auditField(lines[0], "status"); got != ErrorRequestRefused {
 		t.Errorf("the audit line's status is %q, want %q: the contract's refusal codes are not statuses of this service's audit", got, ErrorRequestRefused)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The doubles' reader side
+// ---------------------------------------------------------------------------
+
+// challenge posts a challenge call and answers what the handler wrote.
+func (f *restoreFixture) challengeCall(t *testing.T, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	f.h.ServeChallenge(rec, httptest.NewRequest(http.MethodPost, mobilesession.RouteRestoreChallenge, strings.NewReader(body)))
+	return rec
+}
+
+// wireRefusal is the service's own refusal from a body, failing the test when
+// the body is not one: a failure of the service (or a body it would not read) is
+// this service's WireError and never a code of the contract's, which is what a
+// test tells the two apart by.
+func wireRefusal(t *testing.T, rec *httptest.ResponseRecorder) WireError {
+	t.Helper()
+	var e WireError
+	if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil {
+		t.Fatalf("the refusal is not one this service's wire reads: %v (%s)", err, rec.Body.String())
+	}
+	if e.Error == "" {
+		t.Fatalf("the refusal names no error type: %s", rec.Body.String())
+	}
+	// The set is the service's own: a mobile refusal is the contract's Error
+	// and never one of these, so a body that reads as one is a failure of the
+	// service or a call it could not read.
+	switch e.Error {
+	case ErrorRequestRefused, ErrorStateUnavailable:
+	default:
+		t.Fatalf("the refusal names %q, which is not one of this service's own error types: %s", e.Error, rec.Body.String())
+	}
+	return e
+}
+
+// noAuditLine is the rule for a refusal taken before this service could name an
+// identity: the request shape and the assertion write nothing (P0, and the
+// file doc's order).
+func noAuditLine(t *testing.T, buf *bytes.Buffer) {
+	t.Helper()
+	if buf.Len() != 0 {
+		t.Fatalf("the call wrote an audit line it must not have: %s", buf.String())
+	}
+}
+
+// deviceUID is the uid the route drew, read off the node it wrote. It is one
+// node per admitted device, so a test that reads it has one and no more.
+func deviceUID(t *testing.T, f *restoreFixture) string {
+	t.Helper()
+	if len(f.devices.created) != 1 {
+		t.Fatalf("the restore wrote %d device nodes, want exactly one: %v", len(f.devices.created), f.devices.created)
+	}
+	for uid := range f.devices.created {
+		return uid
+	}
+	panic("one node, and the loop above returned nothing")
+}
+
+// ---------------------------------------------------------------------------
+// The challenge route
+// ---------------------------------------------------------------------------
+
+// TestMobileRestoreChallengeIsFreshAndBoundToTheContract has the challenge
+// route answer one challenge: a fresh random value of the contract's size, its
+// life in seconds, and no-store, so a cache in front of the public service
+// cannot hand one phone another's challenge.
+//
+// The route writes no audit line, and that is the point of it: a challenge
+// admits nobody and the caller has proved nothing, so there is no identity to
+// name (P0's rule is a line per act and this act has none until the restore
+// spends it).
+func TestMobileRestoreChallengeIsFreshAndBoundToTheContract(t *testing.T) {
+	f := newRestoreFixture(t)
+
+	seen := map[string]bool{}
+	for i := 0; i < 8; i++ {
+		rec := f.challengeCall(t, "{}")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("the challenge route answers %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != contentTypeJSON {
+			t.Errorf("the challenge answer's content type is %q, want %q", ct, contentTypeJSON)
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+			t.Errorf("the challenge answer's cache control is %q, want %q: one phone's challenge must never be another's", cc, "no-store")
+		}
+		var resp mobilesession.RestoreChallengeResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("the challenge answer is not one the contract reads: %v (%s)", err, rec.Body.String())
+		}
+		raw, err := base64.RawURLEncoding.Strict().DecodeString(resp.Challenge)
+		if err != nil || len(raw) != mobileChallengeBytes {
+			t.Fatalf("the challenge %q is not %d bytes of unpadded base64url: %v", resp.Challenge, mobileChallengeBytes, err)
+		}
+		if seen[resp.Challenge] {
+			t.Fatalf("the challenge route answered %q twice in eight calls, and a challenge that repeats is one an attacker can guess", resp.Challenge)
+		}
+		seen[resp.Challenge] = true
+		if want := int(mobilesession.ChallengeLifetime / time.Second); resp.ExpiresIn != want {
+			t.Errorf("the challenge's life is %d seconds, want the contract's %d (ChallengeLifetime)", resp.ExpiresIn, want)
+		}
+		noAuditLine(t, f.audit)
+	}
+}
+
+// TestMobileRestoreChallengeRefusesABodyThatNamesAField holds the route to the
+// shape the contract declares: RestoreChallengeRequest carries nothing, and a
+// field this release ignored would be one the next release reads as something
+// else. The call is answered as this service refuses a body it cannot read, and
+// it writes no line.
+func TestMobileRestoreChallengeRefusesABodyThatNamesAField(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"not JSON", "{"},
+		{"names a field", `{"anything":1}`},
+		{"an array", `[]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRestoreFixture(t)
+			rec := f.challengeCall(t, tc.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("a challenge body that is %s is answered %d, want %d: %s", tc.name, rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			if e := wireRefusal(t, rec); e.Error != ErrorRequestRefused {
+				t.Errorf("the refusal is %q, want %q", e.Error, ErrorRequestRefused)
+			}
+			noAuditLine(t, f.audit)
+		})
+	}
+}
+
+// TestMobileRestoreChallengeRefusesAChallengeItCannotDraw pins the one failure
+// this route may never fall back from: a challenge that is not random is one an
+// attacker binds their own assertion to and spends before the phone does, so a
+// draw that fails answers the service's unavailable state instead.
+func TestMobileRestoreChallengeRefusesAChallengeItCannotDraw(t *testing.T) {
+	f := newRestoreFixture(t)
+	restoreRandom(t, failingReader{})
+
+	rec := f.challengeCall(t, "{}")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a challenge that could not be drawn is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if e := wireRefusal(t, rec); e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+	}
+	noAuditLine(t, f.audit)
+}
+
+// failingReader is a randomness source that fails, which is the only way a test
+// reaches the routes' draw failures: crypto/rand does not fail on demand.
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) {
+	return 0, errors.New("the test's randomness source fails")
+}
+
+// restoreRandom replaces the routes' randomness source for one test and puts
+// the real one back, so a draw failure does not leak into another test.
+func restoreRandom(t *testing.T, r io.Reader) {
+	t.Helper()
+	previous := mobileRandom
+	mobileRandom = r
+	t.Cleanup(func() { mobileRandom = previous })
+}
+
+// ---------------------------------------------------------------------------
+// The allow path
+// ---------------------------------------------------------------------------
+
+// TestMobileRestoreAdmitsADevice is the whole of what a restore does when no
+// side refuses: it spends the challenge once, asks the pairing's own policy,
+// writes one device node, starts the family, mints the token, records one line
+// and answers the session (K2's acceptance, C1's SessionResponse).
+//
+// Every value the phone holds is checked, because the answer is the only place
+// three of them travel (the database URL, the API key and the consumer key are
+// in no QR, F4), and the device node is checked because it is what the consumer
+// and the database rules read afterwards.
+func TestMobileRestoreAdmitsADevice(t *testing.T) {
+	f := newRestoreFixture(t)
+
+	rec := f.restore(t, restoreBody("the-challenge"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the restore is answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("the session answer's cache control is %q, want %q: a session is one device's and never a cache's", cc, "no-store")
+	}
+	var session mobilesession.SessionResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &session); err != nil {
+		t.Fatalf("the session answer is not one the contract reads: %v (%s)", err, rec.Body.String())
+	}
+	if session.ProjectID != "the-project" {
+		t.Errorf("the session's project id is %q, want %q", session.ProjectID, "the-project")
+	}
+	if session.Endpoint != restoreEndpoint {
+		t.Errorf("the session's endpoint is %q, want the deployment's own %q", session.Endpoint, restoreEndpoint)
+	}
+	if session.DatabaseURL != "https://the-project.firebaseio.invalid" {
+		t.Errorf("the session's database URL is %q, want the deployment's own", session.DatabaseURL)
+	}
+	if session.APIKey != "the-api-key" {
+		t.Errorf("the session's API key is %q, want the deployment's own", session.APIKey)
+	}
+	if session.ConsumerPublicKey != "the-consumer-key" {
+		t.Errorf("the session's consumer key is %q, want the deployment's own: the phone pins it and verifies every mailbox reply with it (O12)", session.ConsumerPublicKey)
+	}
+	if session.Role != access.RoleOperator {
+		t.Errorf("the session's role is %q, want the roster's %q (O14)", session.Role, access.RoleOperator)
+	}
+	if want := int(mobilesession.CustomTokenLifetime / time.Second); session.ExpiresIn != want {
+		t.Errorf("the custom token's life is %d seconds, want the contract's %d", session.ExpiresIn, want)
+	}
+
+	// The policy half of the answer is the published node's (P6), and the
+	// compaction threshold is the contract's "the project set none" until Z2
+	// carries a project field for it.
+	node := f.projects.shared
+	wantModes := node.MobileCostlyModes()
+	if len(session.Policy.CostlyModes) != len(wantModes) {
+		t.Errorf("the session's costly modes are %v, want the published node's %v", session.Policy.CostlyModes, wantModes)
+	} else {
+		for i, mode := range wantModes {
+			if session.Policy.CostlyModes[i] != string(mode) {
+				t.Errorf("the session's costly mode %d is %q, want %q", i, session.Policy.CostlyModes[i], string(mode))
+			}
+		}
+	}
+	if session.Policy.BiometricOnCostly != node.MobileBiometricOnCostly() {
+		t.Errorf("the session's biometric switch is %v, want the published node's %v", session.Policy.BiometricOnCostly, node.MobileBiometricOnCostly())
+	}
+	if session.Policy.CompactThresholdPercent != 0 {
+		t.Errorf("the session's compaction threshold is %d, want 0: no project field carries one until Z2", session.Policy.CompactThresholdPercent)
+	}
+
+	// What the phone holds afterwards belongs to the device the route just
+	// made: the node's uid is the family's and the token's, and a route that
+	// mixed the three would hand one device another's session.
+	uid := deviceUID(t, f)
+	node0 := f.devices.created[uid]
+	if node0.Email != restoreEmail {
+		t.Errorf("the device node's address is %q, want the verified %q", node0.Email, restoreEmail)
+	}
+	if node0.Provider != projectpolicy.ProviderGoogle {
+		t.Errorf("the device node's provider is %q, want the assertion's %q", node0.Provider, projectpolicy.ProviderGoogle)
+	}
+	if node0.Sub != "provider-sub-1" {
+		t.Errorf("the device node's sub is %q, want the assertion's %q", node0.Sub, "provider-sub-1")
+	}
+	if node0.Role != access.RoleOperator {
+		t.Errorf("the device node's role is %q, want the roster's %q (O14)", node0.Role, access.RoleOperator)
+	}
+	if node0.PublicKey != deviceKey() {
+		t.Errorf("the device node's public key is not the one the call carried")
+	}
+	if len(f.refresh.issued) != 1 || f.refresh.issued[0] != uid {
+		t.Errorf("the families issued are %v, want the node's own uid %q", f.refresh.issued, uid)
+	}
+	if session.RefreshToken != "refresh-"+uid {
+		t.Errorf("the session's refresh token is %q, want the family's own for %q", session.RefreshToken, uid)
+	}
+	if len(f.minter.reqs) != 1 {
+		t.Fatalf("the restore asked for %d custom tokens, want exactly one", len(f.minter.reqs))
+	}
+	if f.minter.reqs[0].UID != uid {
+		t.Errorf("the mint was asked for uid %q, want the node's own %q", f.minter.reqs[0].UID, uid)
+	}
+	if f.minter.reqs[0].Role != access.RoleOperator {
+		t.Errorf("the mint was asked for role %q, want the roster's %q", f.minter.reqs[0].Role, access.RoleOperator)
+	}
+	if session.CustomToken != "custom-"+uid {
+		t.Errorf("the session's custom token is %q, want the mint's own for %q", session.CustomToken, uid)
+	}
+
+	// The assertion was bound to this deployment's audience and to the
+	// challenge the call carried, which is what F39 requires of it.
+	if len(f.verifier.bindings) != 1 {
+		t.Fatalf("the verifier was asked about %d assertions, want exactly one", len(f.verifier.bindings))
+	}
+	if want := mustAudience(t, restoreEndpoint); f.verifier.bindings[0].Audience != want {
+		t.Errorf("the assertion was bound to audience %q, want the deployment's own %q", f.verifier.bindings[0].Audience, want)
+	}
+	if f.verifier.bindings[0].Challenge != "the-challenge" {
+		t.Errorf("the assertion was bound to challenge %q, want the call's own", f.verifier.bindings[0].Challenge)
+	}
+
+	// The challenge was spent once, under the contract's namespace and for its
+	// own life, which is what makes it single-use across instances (F39).
+	if len(f.claims.keys) != 1 {
+		t.Fatalf("the route claimed %d values, want exactly one", len(f.claims.keys))
+	}
+	if f.claims.namespaces[0] != mobilesession.NamespaceChallenge {
+		t.Errorf("the challenge was claimed under namespace %q, want %q", f.claims.namespaces[0], mobilesession.NamespaceChallenge)
+	}
+	if f.claims.keys[0] != "the-challenge" {
+		t.Errorf("the route claimed %q, want the call's own challenge", f.claims.keys[0])
+	}
+	if f.claims.ttls[0] != mobilesession.ChallengeLifetime {
+		t.Errorf("the claim's ttl is %s, want the contract's %s", f.claims.ttls[0], mobilesession.ChallengeLifetime)
+	}
+
+	lines := auditLines(t, f.audit)
+	if len(lines) != 1 {
+		t.Fatalf("the restore wrote %d audit lines, want exactly one: %v", len(lines), lines)
+	}
+	checkAuditShape(t, lines[0])
+	if got := auditField(lines[0], "purpose"); got != PurposeMobileRestore {
+		t.Errorf("the audit line's purpose is %q, want %q", got, PurposeMobileRestore)
+	}
+	if got := auditField(lines[0], "caller"); got != restoreEmail {
+		t.Errorf("the audit line's caller is %q, want the verified address %q", got, restoreEmail)
+	}
+	if got := auditField(lines[0], "status"); got != StatusOK {
+		t.Errorf("the audit line's status is %q, want %q: the restore was made", got, StatusOK)
+	}
+}
+
+// TestMobileRestoreWritesTheCanonicalAddress has the node and the audit line
+// carry the address in the one spelling two writers agree on (mobileauth's
+// rule, D222): the domain folded and the local part kept byte for byte. A route
+// that wrote the assertion's text verbatim would key the node by a second
+// spelling of one person.
+func TestMobileRestoreWritesTheCanonicalAddress(t *testing.T) {
+	f := newRestoreFixture(t)
+	f.verifier.claims.Email = "Member@Example.INVALID"
+
+	rec := f.restore(t, restoreBody("the-challenge"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the restore is answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	const canonical = "Member@example.invalid"
+	uid := deviceUID(t, f)
+	if got := f.devices.created[uid].Email; got != canonical {
+		t.Errorf("the device node's address is %q, want the canonical %q", got, canonical)
+	}
+	lines := auditLines(t, f.audit)
+	if len(lines) != 1 {
+		t.Fatalf("the restore wrote %d audit lines, want exactly one: %v", len(lines), lines)
+	}
+	if got := auditField(lines[0], "caller"); got != canonical {
+		t.Errorf("the audit line's caller is %q, want the canonical %q", got, canonical)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The refusals a verified identity gets
+// ---------------------------------------------------------------------------
+
+// TestMobileRestoreRefusesAnAssertionItCannotVerify is the first refusal: an
+// assertion the verifier will not accept is answered as auth_too_old — the
+// app's screen for it is "sign out and back in", which is what a phone holding
+// one must do — and the route records NOTHING, because the identity is exactly
+// what it could not establish.
+//
+// The challenge is not spent either, and that order is deliberate: a claim
+// taken before the assertion verified would let any caller burn a project's
+// challenges with assertions that never verified.
+func TestMobileRestoreRefusesAnAssertionItCannotVerify(t *testing.T) {
+	f := newRestoreFixture(t)
+	f.verifier.err = errors.New("the assertion did not verify")
+
+	rec := f.restore(t, restoreBody("the-challenge"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("an unverifiable assertion is answered %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if code := refusalCode(t, rec); code != mobilesession.CodeAuthTooOld {
+		t.Errorf("the refusal is %q, want %q", code, mobilesession.CodeAuthTooOld)
+	}
+	noAuditLine(t, f.audit)
+	if len(f.claims.keys) != 0 {
+		t.Errorf("the route claimed %v before the assertion verified, want nothing claimed", f.claims.keys)
+	}
+}
+
+// TestMobileRestoreRefusesAnAddressItCannotName is the second half of the same
+// refusal: an assertion that verified but names an address this tree cannot
+// write down is an identity this service cannot key a node by or name in a
+// line, so it is refused before anything is written and recorded nowhere.
+func TestMobileRestoreRefusesAnAddressItCannotName(t *testing.T) {
+	f := newRestoreFixture(t)
+	f.verifier.claims.Email = "not an address"
+
+	rec := f.restore(t, restoreBody("the-challenge"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("an address this tree cannot write down is answered %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if code := refusalCode(t, rec); code != mobilesession.CodeAuthTooOld {
+		t.Errorf("the refusal is %q, want %q: what to do about it is sign in again", code, mobilesession.CodeAuthTooOld)
+	}
+	noAuditLine(t, f.audit)
+	if len(f.claims.keys) != 0 {
+		t.Errorf("the route claimed %v, want nothing claimed: the address was refused before the challenge was spent", f.claims.keys)
+	}
+}
+
+// TestMobileRestoreRefusesASpentChallenge is the challenge's single use: the
+// first restore spends it, and the second call with the same value is answered
+// nonce_expired. Unlike a failed assertion this refusal is RECORDED — the
+// identity verified and the address was nameable, so this service knows who
+// was refused.
+func TestMobileRestoreRefusesASpentChallenge(t *testing.T) {
+	f := newRestoreFixture(t)
+
+	if rec := f.restore(t, restoreBody("the-challenge")); rec.Code != http.StatusOK {
+		t.Fatalf("the first restore is answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	rec := f.restore(t, restoreBody("the-challenge"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("a spent challenge is answered %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+	}
+	if code := refusalCode(t, rec); code != mobilesession.CodeNonceExpired {
+		t.Errorf("the refusal is %q, want %q", code, mobilesession.CodeNonceExpired)
+	}
+	lines := auditLines(t, f.audit)
+	if len(lines) != 2 {
+		t.Fatalf("the two calls wrote %d audit lines, want one each: %v", len(lines), lines)
+	}
+	checkAuditShape(t, lines[1])
+	if got := auditField(lines[1], "caller"); got != restoreEmail {
+		t.Errorf("the refusal's caller is %q, want the verified address %q", got, restoreEmail)
+	}
+	if got := auditField(lines[1], "status"); got != ErrorRequestRefused {
+		t.Errorf("the refusal's status is %q, want %q", got, ErrorRequestRefused)
+	}
+	if len(f.devices.created) != 1 {
+		t.Errorf("the two calls wrote %d device nodes, want only the first call's one", len(f.devices.created))
+	}
+}
+
+// TestMobileRestoreRefusesAPolicyVerdict walks C1's Policy's refusals: each is
+// answered with the policy's own code — the app renders a screen per code — and
+// each writes exactly one line naming the member. Nothing of the allow path
+// runs, which is what a refusal means here.
+//
+// Two codes that are inside the contract's set are the service's own failure
+// when a policy answers them: nonce_expired is the pair route's answer about an
+// invite no policy sees, and strict_new_device_needs_qr is this route's own
+// decision from the published switch. A code outside the set is a code nobody
+// wrote, and the app would show it as a crash.
+func TestMobileRestoreRefusesAPolicyVerdict(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		verdict  mobilesession.Verdict
+		wantCode mobilesession.Code // empty means this service's own failure
+		wantList []string
+	}{
+		{"not a member", mobilesession.Verdict{Code: mobilesession.CodeNotAMember}, mobilesession.CodeNotAMember, nil},
+		{"provider not accepted", mobilesession.Verdict{Code: mobilesession.CodeProviderNotAccepted, Accepted: []string{projectpolicy.ProviderGoogle}}, mobilesession.CodeProviderNotAccepted, []string{projectpolicy.ProviderGoogle}},
+		{"authentication too old", mobilesession.Verdict{Code: mobilesession.CodeAuthTooOld}, mobilesession.CodeAuthTooOld, nil},
+		{"mobile disabled", mobilesession.Verdict{Code: mobilesession.CodeMobileDisabled}, mobilesession.CodeMobileDisabled, nil},
+		{"device revoked", mobilesession.Verdict{Code: mobilesession.CodeDeviceRevoked}, mobilesession.CodeDeviceRevoked, nil},
+		{"the pair route's own code", mobilesession.Verdict{Code: mobilesession.CodeNonceExpired}, "", nil},
+		{"this route's own strict code", mobilesession.Verdict{Code: mobilesession.CodeStrictNewDeviceNeedsQR}, "", nil},
+		{"a code nobody wrote", mobilesession.Verdict{Code: mobilesession.Code("not_a_code")}, "", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRestoreFixture(t)
+			f.membership.verdict = tc.verdict
+
+			rec := f.restore(t, restoreBody("the-challenge"))
+			if tc.wantCode == "" {
+				if rec.Code != http.StatusServiceUnavailable {
+					t.Fatalf("a policy answer this route does not render is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+				}
+				if e := wireRefusal(t, rec); e.Error != ErrorStateUnavailable {
+					t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+				}
+			} else {
+				if rec.Code != http.StatusForbidden {
+					t.Fatalf("the policy's refusal is answered %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
+				}
+				if code := refusalCode(t, rec); code != tc.wantCode {
+					t.Errorf("the refusal is %q, want the policy's own %q", code, tc.wantCode)
+				}
+				if tc.wantList != nil {
+					var e mobilesession.Error
+					if err := json.Unmarshal(rec.Body.Bytes(), &e); err != nil {
+						t.Fatalf("the refusal is not one the contract reads: %v", err)
+					}
+					if len(e.AcceptedProviders) != len(tc.wantList) || (len(tc.wantList) == 1 && e.AcceptedProviders[0] != tc.wantList[0]) {
+						t.Errorf("the refusal carries the accepted providers %v, want the policy's %v", e.AcceptedProviders, tc.wantList)
+					}
+				}
+			}
+			if len(f.devices.created) != 0 || len(f.refresh.issued) != 0 || len(f.minter.reqs) != 0 {
+				t.Errorf("the refused restore reached the allow path: %v nodes, %v families, %d mints", len(f.devices.created), f.refresh.issued, len(f.minter.reqs))
+			}
+			lines := auditLines(t, f.audit)
+			if len(lines) != 1 {
+				t.Fatalf("the refusal wrote %d audit lines, want exactly one: %v", len(lines), lines)
+			}
+			checkAuditShape(t, lines[0])
+			if got := auditField(lines[0], "caller"); got != restoreEmail {
+				t.Errorf("the line's caller is %q, want the verified address %q", got, restoreEmail)
+			}
+			wantStatus := ErrorRequestRefused
+			if tc.wantCode == "" {
+				wantStatus = ErrorStateUnavailable
+			}
+			if got := auditField(lines[0], "status"); got != wantStatus {
+				t.Errorf("the line's status is %q, want %q", got, wantStatus)
+			}
+		})
+	}
+}
+
+// TestMobileRestoreRefusesAnAllowedVerdictWithNoRole closes the one hole a
+// policy's own document names: an allowed verdict with no role is a policy bug,
+// and the node it would write is one no consumer can resolve an action against.
+// It is answered as the service's own failure and recorded, rather than written
+// as a device that can do nothing.
+func TestMobileRestoreRefusesAnAllowedVerdictWithNoRole(t *testing.T) {
+	f := newRestoreFixture(t)
+	f.membership.verdict = mobilesession.Verdict{Allowed: true, Role: access.RoleNone}
+
+	rec := f.restore(t, restoreBody("the-challenge"))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("an allowed verdict with no role is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if e := wireRefusal(t, rec); e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+	}
+	if len(f.devices.created) != 0 {
+		t.Errorf("the restore wrote %d device nodes, want none: a node with no role is one no consumer can resolve", len(f.devices.created))
+	}
+	lines := auditLines(t, f.audit)
+	if len(lines) != 1 {
+		t.Fatalf("the refusal wrote %d audit lines, want exactly one: %v", len(lines), lines)
+	}
+}
+
+// TestMobileRestoreRefusesAProjectPolicyItCannotRead is the read of the
+// published node: a policy the service cannot read is a project whose strict
+// switch it does not know, so it refuses rather than admitting a device into a
+// project that asked for a QR.
+func TestMobileRestoreRefusesAProjectPolicyItCannotRead(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*restoreFixture)
+	}{
+		{"the read fails", func(f *restoreFixture) { f.projects.sharedErr = errors.New("the policy store is down") }},
+		{"no node is published", func(f *restoreFixture) { f.projects.sharedFound = false }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRestoreFixture(t)
+			tc.mutate(f)
+
+			rec := f.restore(t, restoreBody("the-challenge"))
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("an unreadable policy is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+			}
+			if e := wireRefusal(t, rec); e.Error != ErrorStateUnavailable {
+				t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+			}
+			if len(f.devices.created) != 0 {
+				t.Errorf("the restore wrote %d device nodes, want none", len(f.devices.created))
+			}
+			lines := auditLines(t, f.audit)
+			if len(lines) != 1 {
+				t.Fatalf("the refusal wrote %d audit lines, want exactly one: %v", len(lines), lines)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The refusals a body gets
+// ---------------------------------------------------------------------------
+
+// TestMobileRestoreRefusesABadRequest holds the route to the contract's request
+// shape before it reads anything: a body it will not hold is answered as the
+// service refuses one, and it writes no line at all, because there is no
+// identity to name and nothing was done.
+func TestMobileRestoreRefusesABadRequest(t *testing.T) {
+	padded := base64.URLEncoding.EncodeToString(make([]byte, mobilesession.DevicePublicKeySize))
+	short := base64.RawURLEncoding.EncodeToString(make([]byte, 16))
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"not JSON", "{"},
+		{"names an unknown field", `{"assertion":"a","challenge":"c","device_public_key":"` + deviceKey() + `","extra":1}`},
+		{"an empty object", `{}`},
+		{"no assertion", `{"challenge":"c","device_public_key":"` + deviceKey() + `"}`},
+		{"no challenge", `{"assertion":"a","device_public_key":"` + deviceKey() + `"}`},
+		{"no device key", `{"assertion":"a","challenge":"c"}`},
+		{"a padded key", `{"assertion":"a","challenge":"c","device_public_key":"` + padded + `"}`},
+		{"a key of the wrong size", `{"assertion":"a","challenge":"c","device_public_key":"` + short + `"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRestoreFixture(t)
+			rec := f.restore(t, tc.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("a body that is %s is answered %d, want %d: %s", tc.name, rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+			if e := wireRefusal(t, rec); e.Error != ErrorRequestRefused {
+				t.Errorf("the refusal is %q, want %q", e.Error, ErrorRequestRefused)
+			}
+			noAuditLine(t, f.audit)
+			if len(f.verifier.assertions) != 0 {
+				t.Errorf("the route asked the verifier about %v, want nothing: the body was refused first", f.verifier.assertions)
+			}
+			if len(f.claims.keys) != 0 {
+				t.Errorf("the route claimed %v, want nothing claimed", f.claims.keys)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// What a failure of the service takes back
+// ---------------------------------------------------------------------------
+
+// TestMobileRestoreLeavesNothingBehindWhenItCannotAnswer is F32's rule one step
+// early: a restore this service cannot answer must leave no device node and no
+// live family — a node whose device holds no session is a device the database
+// rules admit and nobody can revoke, and a family with no device is a token
+// nobody holds.
+//
+// Each row is one step failing after the node was written, and the assertion is
+// what the route took back and what it left: the device node is gone in every
+// row, the family is revoked once it exists, and the caller is answered the
+// service's unavailable state with one line.
+func TestMobileRestoreLeavesNothingBehindWhenItCannotAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		mutate    func(*restoreFixture)
+		wantNode  bool // the refused call wrote a node (and so must take it back)
+		wantRevok bool // the refused call issued a family (and so must revoke it)
+	}{
+		{"the family cannot start", func(f *restoreFixture) { f.refresh.issueErr = errors.New("the family store is down") }, true, false},
+		{"the token cannot be minted", func(f *restoreFixture) { f.minter.err = errors.New("the signer grant is gone") }, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newRestoreFixture(t)
+			tc.mutate(f)
+
+			rec := f.restore(t, restoreBody("the-challenge"))
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("a restore the service cannot finish is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+			}
+			if e := wireRefusal(t, rec); e.Error != ErrorStateUnavailable {
+				t.Errorf("the refusal is %q, want %q", e.Error, ErrorStateUnavailable)
+			}
+			if tc.wantNode {
+				uid := deviceUID(t, f)
+				if !slices.Contains(f.devices.removed, uid) {
+					t.Errorf("the node %q is still there: a device with no session is one nobody can revoke (F32)", uid)
+				}
+			}
+			if tc.wantRevok {
+				if len(f.refresh.revoked) != 1 {
+					t.Errorf("the revoked families are %v, want the one this call issued", f.refresh.revoked)
+				}
+			} else if len(f.refresh.revoked) != 0 {
+				t.Errorf("the route revoked %v, want none: no family was issued", f.refresh.revoked)
+			}
+			lines := auditLines(t, f.audit)
+			if len(lines) != 1 {
+				t.Fatalf("the failure wrote %d audit lines, want exactly one: %v", len(lines), lines)
+			}
+			if got := auditField(lines[0], "status"); got != ErrorStateUnavailable {
+				t.Errorf("the line's status is %q, want %q", got, ErrorStateUnavailable)
+			}
+		})
+	}
+}
+
+// TestMobileRestoreLeavesNothingWhenTheDeviceCannotBeWritten is the first step
+// of the allow path failing: the node is not there, so there is nothing to take
+// back and nothing to revoke — and the answer is the service's, not a refusal
+// of a member the policy had already allowed.
+func TestMobileRestoreLeavesNothingWhenTheDeviceCannotBeWritten(t *testing.T) {
+	f := newRestoreFixture(t)
+	f.devices.createErr = errors.New("the device store is down")
+
+	rec := f.restore(t, restoreBody("the-challenge"))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a device that could not be written is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if len(f.devices.removed) != 0 {
+		t.Errorf("the route removed %v, want nothing: no node was written", f.devices.removed)
+	}
+	if len(f.refresh.issued) != 0 {
+		t.Errorf("the route issued %v, want no family for a device it could not write", f.refresh.issued)
+	}
+	lines := auditLines(t, f.audit)
+	if len(lines) != 1 {
+		t.Fatalf("the failure wrote %d audit lines, want exactly one: %v", len(lines), lines)
+	}
+}
+
+// TestMobileRestoreTakesBackADeviceItCannotRecord is D143's fail-closed rule on
+// this route: a restore the service cannot audit is a restore it does not make.
+// The node and the family are taken back before the caller is answered, so no
+// session exists that no line names.
+func TestMobileRestoreTakesBackADeviceItCannotRecord(t *testing.T) {
+	f := newRestoreFixture(t)
+	auditor, err := NewAuditor(&recordHandler{err: errors.New("the audit log is full")}, armed())
+	if err != nil {
+		t.Fatalf("NewAuditor: %v", err)
+	}
+	f.h.Audit = auditor
+
+	rec := f.restore(t, restoreBody("the-challenge"))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a restore that could not be recorded is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if e := wireRefusal(t, rec); e.Message != mobileUnaudited {
+		t.Errorf("the answer is %q, want the unaudited sentence: the act was not made", e.Message)
+	}
+	uid := deviceUID(t, f)
+	if !slices.Contains(f.devices.removed, uid) {
+		t.Errorf("the node %q survived a restore the service could not record", uid)
+	}
+	if len(f.refresh.revoked) != 1 {
+		t.Errorf("the revoked families are %v, want the one this call issued", f.refresh.revoked)
+	}
+	if f.log.Len() == 0 {
+		t.Error("the service logged nothing: an operator reads the cleanup's failure from the log")
+	}
+}
+
+// TestMobileRestoreRefusesADeviceUIDItCannotDraw is the other draw this route
+// makes: a device uid that is not random is a name another device's could
+// collide with, so a draw that fails refuses the call — with a line, because
+// by then the identity is known — and reaches none of the allow path.
+func TestMobileRestoreRefusesADeviceUIDItCannotDraw(t *testing.T) {
+	f := newRestoreFixture(t)
+	restoreRandom(t, failingReader{})
+
+	rec := f.restore(t, restoreBody("the-challenge"))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("a restore whose uid could not be drawn is answered %d, want %d: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if e := wireRefusal(t, rec); e.Message != mobileUIDUndrawn {
+		t.Errorf("the answer is %q, want the undrawn-uid sentence", e.Message)
+	}
+	if len(f.devices.created) != 0 || len(f.refresh.issued) != 0 {
+		t.Errorf("the failed draw reached the allow path: %d nodes, %v families", len(f.devices.created), f.refresh.issued)
+	}
+	lines := auditLines(t, f.audit)
+	if len(lines) != 1 {
+		t.Fatalf("the failure wrote %d audit lines, want exactly one: %v", len(lines), lines)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The shapes this route states and shares
+// ---------------------------------------------------------------------------
+
+// TestMobileRestoreDeviceUIDIsTheMintersOwn holds this package's spelling of a
+// device uid to internal/budget/token's, which is the code that mints one: the
+// uid is a database key and a Firebase uid, so the two writers have to draw the
+// same shape, and the constants are duplicated because the minter's are
+// unexported (internal/voicesvc's TestDeviceShapeIsTheMintersOwn is the same
+// test for the same reason).
+//
+// The signer is an echo: what is being read is the uid the minter DREW, not the
+// token it wrapped around it.
+func TestMobileRestoreDeviceUIDIsTheMintersOwn(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 32; i++ {
+		dt, err := token.MintDevice(context.Background(), restoreEchoSigner{}, time.Unix(1_700_000_000, 0))
+		if err != nil {
+			t.Fatalf("MintDevice: %v", err)
+		}
+		if !isRestoreDeviceUID(dt.UID) {
+			t.Fatalf("a uid the minter produced is not one this route would write: %q", dt.UID)
+		}
+		seen[dt.UID] = true
+	}
+	if len(seen) != 32 {
+		t.Errorf("the minter drew %d distinct uids of 32, and a uid that repeats is a device another one collides with", len(seen))
+	}
+	mine := map[string]bool{}
+	for i := 0; i < 32; i++ {
+		uid, err := mobileDeviceUID()
+		if err != nil {
+			t.Fatalf("mobileDeviceUID: %v", err)
+		}
+		if !isRestoreDeviceUID(uid) {
+			t.Fatalf("this route drew a uid the minter would not: %q", uid)
+		}
+		mine[uid] = true
+	}
+	if len(mine) != 32 {
+		t.Errorf("this route drew %d distinct uids of 32", len(mine))
+	}
+}
+
+// isRestoreDeviceUID is the shape a device uid has for every writer: the
+// prefix, then mobileDeviceUIDBytes of unpadded base64url. Both halves are this
+// file's own constants, so the test above is what holds this spelling to the
+// minter's.
+func isRestoreDeviceUID(uid string) bool {
+	rest, ok := strings.CutPrefix(uid, mobileDevicePrefix)
+	if !ok {
+		return false
+	}
+	raw, err := base64.RawURLEncoding.Strict().DecodeString(rest)
+	return err == nil && len(raw) == mobileDeviceUIDBytes
+}
+
+// restoreEchoSigner is a token.Signer that returns the payload it was handed as
+// a JWT: enough for MintDevice's own read-back, and no key of any kind.
+type restoreEchoSigner struct{}
+
+func (restoreEchoSigner) Email() string { return "signer@example.invalid" }
+
+func (restoreEchoSigner) SignJWT(_ context.Context, payload []byte) (string, error) {
+	return "header." + base64.RawURLEncoding.EncodeToString(payload) + ".signature", nil
+}
+
+// TestNewMobileRestoreRefusesAnIncompleteConfiguration pins the constructor: a
+// handler missing a side is not one that refuses, it is one that would answer a
+// session it cannot make or admit a device it cannot record, so the deployment
+// learns at construction instead of at the first phone.
+//
+// The endpoint is the one configuration fault that is not a missing field: an
+// endpoint no audience can be derived from is an assertion that can never be
+// bound, so it is refused too.
+func TestNewMobileRestoreRefusesAnIncompleteConfiguration(t *testing.T) {
+	f := newRestoreFixture(t)
+	valid := func() MobileRestore {
+		return MobileRestore{
+			Project: f.h.Project, Policy: f.h.Policy, Verifier: f.h.Verifier,
+			Membership: f.h.Membership, Claims: f.h.Claims, Refresh: f.h.Refresh,
+			Minter: f.h.Minter, Devices: f.h.Devices, Audit: f.h.Audit,
+		}
+	}
+	if _, err := NewMobileRestore(valid()); err != nil {
+		t.Fatalf("the fixture's own configuration is refused: %v", err)
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*MobileRestore)
+	}{
+		{"no project id", func(c *MobileRestore) { c.Project.ProjectID = "" }},
+		{"no endpoint", func(c *MobileRestore) { c.Project.Endpoint = "" }},
+		{"no database URL", func(c *MobileRestore) { c.Project.DatabaseURL = "" }},
+		{"no API key", func(c *MobileRestore) { c.Project.APIKey = "" }},
+		{"no consumer key", func(c *MobileRestore) { c.Project.ConsumerPublicKey = "" }},
+		{"no policy reader", func(c *MobileRestore) { c.Policy = nil }},
+		{"no verifier", func(c *MobileRestore) { c.Verifier = nil }},
+		{"no membership policy", func(c *MobileRestore) { c.Membership = nil }},
+		{"no claim store", func(c *MobileRestore) { c.Claims = nil }},
+		{"no refresh store", func(c *MobileRestore) { c.Refresh = nil }},
+		{"no minter", func(c *MobileRestore) { c.Minter = nil }},
+		{"no device store", func(c *MobileRestore) { c.Devices = nil }},
+		{"no auditor", func(c *MobileRestore) { c.Audit = nil }},
+		{"an endpoint no audience comes from", func(c *MobileRestore) { c.Project.Endpoint = "not-a-url" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := valid()
+			tc.mutate(&cfg)
+			if _, err := NewMobileRestore(cfg); err == nil {
+				t.Fatalf("a configuration with %s is accepted, want a refusal naming it", tc.name)
+			}
+		})
+	}
+	if f.h.Log == nil {
+		t.Error("the handler's log is nil: a handler built without one logs nowhere, and the cleanup's failures are read there")
 	}
 }
