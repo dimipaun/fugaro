@@ -713,6 +713,32 @@ import (
 // mount, what the service served a run and its review, what an unlisted
 // repository was refused with, and that a catalog build resolves no accessor
 // for the build identity.
+// Checks 136 and 341 to 343 are the periodic-reviews work's owner-run checks
+// (P8), and they drive the strict-fakes harness the other checks' libs carry:
+// the fake `fugaro` validates every command and flag against the real CLI's
+// surface, and the fake `gcloud` and `gh` refuse a subcommand or flag their
+// allow-lists do not name, so a check that called a command the CLI does not
+// have fails in its own test rather than on the owner's terminal. 136's are
+// that fake `fugaro`, a fake `git` and a fake `gh`, so a case says which period
+// a recipe's digest run wrote under a repository's reports folder, what a
+// period with no due date was refused with, and that a run whose digest
+// differed from the store was a finding. 341's are a fake `fugaro` (the
+// settings document the case's own state backs, so a write is visible to the
+// next read, and an `update` that records it ran), a fake `gcloud` (the
+// scheduler job, the reports job and its own spec document, the bucket's
+// listing, its lifecycle configuration and its IAM policy, and the executions
+// the case fires) and a fake `git`, so a case says which repositories the
+// deployed job was assigned, what a store missing a repository's report or a
+// period's aggregate reads, which principal may write under `reports/`, and
+// that the pause the check lifted is put back and the schedule reads PAUSED.
+// 342's are a fake `fugaro` and a fake `gcloud` over a stored failures report
+// and the window the check rebuilds, so a case says what a window whose class
+// counts disagree with the report's table reads, and that FC5's class marker
+// the store does not hold leaves the row UNVERIFIED rather than failing it.
+// 343's are a fake `fugaro`, a fake `gcloud`, a fake `gh` and a fake `git`
+// over the designated mirror, so a case says which stored reports the commit
+// run had to add, what a file the checkout already held and the run rewrote
+// reads, and that a report the folder holds by hand is left alone.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -726,6 +752,7 @@ var liveCheckScripts = []struct {
 	{"check211.sh", "check211_test.sh"},
 	{"check212.sh", "check212_test.sh"},
 	{"check130.sh", "check130_test.sh"},
+	{"check136.sh", "check136_test.sh"},
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},
 	{"check148.sh", "check148_test.sh"},
@@ -753,6 +780,9 @@ var liveCheckScripts = []struct {
 	{"check314.sh", "check314_test.sh"},
 	{"check330.sh", "check330_test.sh"},
 	{"check340.sh", "check340_test.sh"},
+	{"check341.sh", "check341_test.sh"},
+	{"check342.sh", "check342_test.sh"},
+	{"check343.sh", "check343_test.sh"},
 	{"check96.sh", "check96_test.sh"},
 	{"check361.sh", "check361_test.sh"},
 	{"check401.sh", "check401_test.sh"},
