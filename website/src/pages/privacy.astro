@@ -84,6 +84,18 @@
  * rule 9 holds each sentence to the source that makes it true. The owner approved the whole of it
  * with the plan's tasks on 2026-11-16.
  *
+ * **The push card states what the design and the tree hold, and it is Task P5.2.10's.** A paired
+ * phone's notifications are the one flow this page describes that a reader's own installation
+ * drives: the app registers a token with the publisher's relay (the design's Q7, answered
+ * 2026-11-21 — the publisher holds the delivery credentials once), a notification Fugaro sends
+ * carries a category and nothing else, the app resolves the detail from its own authenticated
+ * mailbox and does one thing on receipt, a forged push is not covered, quiet hours store one zone
+ * name (Q5), and retention is the pairing's (Q10). The card is written against the design's §9
+ * (`docs/mobile/design/push-notifications.md`), the sender `internal/cli/push.go` (Task P5.2.6)
+ * and the receipt `mobile/src/push/` (Task P5.2.9), and `website/test/privacy.mjs` rule 10 holds
+ * each sentence to them. It moved the page's count, which is why `website/README.md`'s ceiling is
+ * re-derived in the same commit.
+ *
  * **The software part's sentence about the project's hosts is restated, and the tree is why.**
  * The page said the CLI and the console talk "to nothing the Fugaro project operates", and
  * `ee/register/licence.go`'s `licenceServerURL` — the licence service, which `fugaro licence`'s
@@ -399,6 +411,32 @@ const repo = site.facts.repository
           turn them off: uninstalling the app stops them, and not installing it avoids them. The
           command line tool and the console are unaffected: they carry none of these reports.
           Earlier builds of the app send nothing at all.
+        </p>
+      </div>
+
+      <div class="card privacy-card">
+        <h3>Push notifications</h3>
+        <p>
+          A paired phone can be told when something needs you: a kill switch goes on, a spending
+          cap is reached or nearly reached, your orchestrator goes offline, or a question is
+          waiting. Turning this on is your act. The app asks its platform for a device token,
+          hands it to the relay the Fugaro project operates — the publisher holds the delivery
+          credentials once, so a phone on somebody else's Firebase project can still be reached —
+          and writes the token the relay answers with into your own installation, where it lives
+          only as long as the pairing.
+        </p>
+        <p>
+          <strong>A notification Fugaro sends carries a category and nothing else: no run title,
+          repository name, code, error text or amount.</strong> The app fetches the detail itself
+          over its authenticated connection, so a notification is never the source of truth, and
+          on receipt the app does one thing: shows an alert in its own words. It cannot make the
+          app act — no action, no link and no write. A notification Fugaro did not send is not
+          covered by any of this: a forged push can lie on your lock screen and the system cannot
+          tell it from ours, which is why you open the app rather than trust the banner. If you
+          set quiet hours, the app stores the time zone your device reports, in your installation
+          only. Revoking the device deletes the push data with it — the push data lives only as
+          long as the pairing — but what Google and Apple keep on their side is not this project's
+          to delete, and neither is what the relay holds.
         </p>
       </div>
 
