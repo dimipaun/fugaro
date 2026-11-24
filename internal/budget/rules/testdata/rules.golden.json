@@ -455,7 +455,7 @@
                 ".validate": "newData.parent().child('verb').val() == 'launch' && (newData.isString() && newData.val().length > 0 && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9._:-]+$/))"
               },
               "target": {
-                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : (newData.parent().child('verb').val() == 'launch' ? (newData.hasChildren(['repo']) && !newData.child('run').exists() && !newData.child('pr').exists()) : ((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()))))",
+                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : (newData.parent().child('verb').val() == 'launch' ? (newData.hasChildren(['repo']) && !newData.child('run').exists() && !newData.child('pr').exists()) : ((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists())))))",
                 "run": {
                   ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 200 && newData.val().matches(/^[A-Za-z0-9_:][A-Za-z0-9._:-]*$/))"
                 },
@@ -585,7 +585,7 @@
                 ".validate": "newData.parent().child('verb').val() == 'launch' && (newData.isString() && newData.val().length > 0 && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9._:-]+$/))"
               },
               "target": {
-                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : (newData.parent().child('verb').val() == 'launch' ? (newData.hasChildren(['repo']) && !newData.child('run').exists() && !newData.child('pr').exists()) : ((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()))))",
+                ".validate": "(newData.parent().child('verb').val() == 'merge' ? (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists()) : (newData.parent().child('verb').val() == 'cancel' ? (newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) : (newData.parent().child('verb').val() == 'launch' ? (newData.hasChildren(['repo']) && !newData.child('run').exists() && !newData.child('pr').exists()) : ((newData.hasChildren(['run']) && !newData.child('repo').exists() && !newData.child('pr').exists()) || (newData.hasChildren(['repo', 'pr']) && !newData.child('run').exists())))))",
                 "run": {
                   ".validate": "(newData.isString() && newData.val().length > 0 && newData.val().length <= 200 && newData.val().matches(/^[A-Za-z0-9_:][A-Za-z0-9._:-]*$/))"
                 },

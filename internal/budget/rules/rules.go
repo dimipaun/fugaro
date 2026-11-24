@@ -653,7 +653,7 @@ func wordMacro(m string, depth int) (string, error) {
 		repo := "(newData.hasChildren(['repo']) && !newData.child('run').exists() && !newData.child('pr').exists())"
 		return "(" + v + " == 'merge' ? " + pull + " : (" +
 			v + " == 'cancel' ? " + run + " : (" +
-			v + " == 'launch' ? " + repo + " : (" + run + " || " + pull + ")))", nil
+			v + " == 'launch' ? " + repo + " : (" + run + " || " + pull + "))))", nil
 	case "SHAOK":
 		// A merge's head SHA: present only on a merge (the record has no field
 		// for it on any other verb), and one of Git's two object-name lengths.
