@@ -6327,7 +6327,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	if err != nil {
 		return res, err
 	}
-	identityAsk, err := env.launchTicketFor(ctx, slug, spec, account, job, now)
+	identityAsk, err := env.launchTicketFor(ctx, slug, spec, account, job, reviewJob, now)
 	if err != nil {
 		return res, err
 	}

@@ -176,6 +176,12 @@ type ticketLaunchRig struct {
 // answer is something else (an address nothing answers, an installation with no
 // service at all). url is "" for an installation whose config carries no block,
 // which is R7's first trigger.
+//
+// A url comes with the repository's own half of the switch, because a launch
+// asks the issuer only where the run it starts is handed the address
+// (executionServesTheService): the block alone is an installation that carries
+// the service and does not serve this repository, which is the launch
+// TestLaunchSignsLocallyWhereTheServiceDoesNotServeTheRun builds for itself.
 func ticketWorld(t *testing.T, base, url string, svc *launchService) *ticketLaunchRig {
 	t.Helper()
 	f := newLaunchBudget(t, "enforce")
@@ -183,6 +189,7 @@ func ticketWorld(t *testing.T, base, url string, svc *launchService) *ticketLaun
 	r := &ticketLaunchRig{f: f, svc: svc}
 	if url != "" {
 		f.appendConfig(t, "credentials_service:\n  url: "+url+"\n")
+		markRepoCredentialsServiceReady(t, f.cloudFixture)
 	}
 	prevIdentity, prevSleep, prevSelf := launchIdentity, ticketSleep, selfCommand
 	prevAsk := launchAskTicket

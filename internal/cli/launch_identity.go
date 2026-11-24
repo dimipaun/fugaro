@@ -27,6 +27,13 @@ package cli
 // would mint with a role `fugaro update` has taken away and stop with IAM's own
 // error in place of the sentence that names the fix.
 //
+// The first of those three is asked of the RUN and not of the installation: the
+// ask is made only where the execution is really handed the service's address
+// (executionServesTheService), so a repository the switch holds off — a root
+// applied with it off, a project whose mode is off, a `vertex` repository — is
+// launched exactly as main launched it, with a sealed identity and the mounts
+// its job kept.
+//
 // The ask is retried where nothing answered it (R1): an unreachable service, a
 // 5xx or its rate limit, an answer that could not be read, and an identity this
 // launch could not mint are the attempts a retry is for, bounded by ticketWaits
@@ -250,7 +257,9 @@ func (u *ticketUnanswered) Unwrap() error { return u.err }
 
 // launchTicketFor asks the installation's credentials service for this run's
 // ticket, before the launch takes its claim and before it writes anything of
-// the run, and answers R7's bridge where there is nothing to ask.
+// the run, and answers R7's bridge where there is nothing to ask — including
+// where this run is handed no address for the service at all
+// (executionServesTheService).
 //
 // It is called by launchRun and by nothing else, so every way in — a person's
 // launch, a challenger, a cloud diagnosis, the daemon's and the resident
@@ -258,12 +267,25 @@ func (u *ticketUnanswered) Unwrap() error { return u.err }
 // account is the account the execution will run as (runAccount), derived by the
 // caller because the launch's own slip names the same string and the two must
 // not be able to disagree; job is the job the execution will really run on.
-func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.Spec, account string, job *launchProjectJob, now time.Time) (launchIdentityAsk, error) {
+func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.Spec, account string, job *launchProjectJob, reviewJob bool, now time.Time) (launchIdentityAsk, error) {
 	service := e.ticketServiceURL()
 	if service == "" {
 		// R7's first answer. The launch signs locally as it did before the
 		// service existed, and nothing here is judged: an installation with no
 		// service has no ticket route to be a release behind.
+		return launchIdentityAsk{bridge: bridgeNoService}, nil
+	}
+	served, err := e.executionServesTheService(ctx, slug, spec, job, reviewJob)
+	if err != nil {
+		return launchIdentityAsk{}, err
+	}
+	if !served {
+		// R7's first answer in the other shape an installation gives it: it
+		// carries the service and does not serve THIS run — the switch holds
+		// this repository off (a root applied with it off, a project whose mode
+		// is off, a `vertex` repository), so the job kept every mount it had and
+		// a ticket would be an identity the run cannot claim (it reads the
+		// address to claim at). The launch signs locally, exactly as main did.
 		return launchIdentityAsk{bridge: bridgeNoService}, nil
 	}
 	if err := checkSlipServiceURL(service); err != nil {
@@ -296,6 +318,50 @@ func (e *cloudEnv) launchTicketFor(ctx context.Context, slug string, spec *task.
 		return launchIdentityAsk{}, remote(fmt.Errorf("%w: the service issued run %s a ticket that had already expired (%s), so it could never be claimed; check this machine's clock against the installation's, and launch again", errLaunchTicketAnswer, task.ShortRun(oneLine(spec.RunID)), ans.ExpiresAt.UTC().Format(time.RFC3339)))
 	}
 	return launchIdentityAsk{ticket: &launchTicket{value: ans.Ticket, expiresAt: ans.ExpiresAt}}, nil
+}
+
+// executionServesTheService reports whether the run this launch starts will
+// read a credentials service address out of its own environment, which is the
+// address it claims its ticket at: what this launch writes
+// (credentialsServiceLaunchEnv), or what the job it lands on was deployed with
+// (internal/infra writes the same address, on the same switch, into the job's
+// own environment).
+//
+// The second half is what a resident service's launch has alone: its config
+// carries no block, so it writes nothing, and the jobs it starts hold the
+// address from their own deployment. A launch whose execution carries none
+// signs locally (R7's first answer): the job kept its mounts, and a ticket is
+// an identity the run could not claim.
+//
+// A job this launch cannot read — a backend with no job to read (Cloud Batch,
+// whose launches this gate never decides: batchLaunchRefusal refuses an
+// unserved one first), a workflow that is no job name (the launch's own steps
+// refuse that) — is answered by the launch's own write alone. A read that
+// FAILS is remote and refuses the launch: whether the run it starts has an
+// identity at all is exactly what cannot be answered then, and the same read
+// refuses a minting launch the same way (budgetJobBackend).
+func (e *cloudEnv) executionServesTheService(ctx context.Context, slug string, spec *task.Spec, job *launchProjectJob, reviewJob bool) (bool, error) {
+	jobProfile := ""
+	if job != nil {
+		jobProfile = job.Profile
+	}
+	auth, deployed := e.repoServiceAuth(ctx, spec, io.Discard)
+	if len(credentialsServiceLaunchEnv(e.lc, jobProfile, spec.Repo, auth, e.policyMode(ctx), deployed, reviewJob)) > 0 {
+		return true, nil
+	}
+	be, ok := e.be.(jobBackendEnvReader)
+	if !ok {
+		return false, nil
+	}
+	name := launchJobName(slug, spec, job)
+	if name == "" {
+		return false, nil
+	}
+	env, exists, err := be.JobFullEnv(ctx, name)
+	if err != nil {
+		return false, remote(fmt.Errorf("whether the job %s this launch would start carries a credentials service could not be read, so the launch is refused: %w", name, err))
+	}
+	return exists && env[envCredentialsServiceURL] != "", nil
 }
 
 // ticketServiceURL is the installation's credentials service as THIS launch

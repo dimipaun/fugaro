@@ -1305,12 +1305,7 @@ func (e *cloudEnv) budgetJobBackend(ctx context.Context, slug string, spec *task
 	if !ok {
 		return nil
 	}
-	name := ""
-	if job != nil {
-		name = job.Name
-	} else if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
-		name = gcp.JobName(slug, variant)
-	}
+	name := launchJobName(slug, spec, job)
 	if name == "" {
 		return nil
 	}
@@ -1323,6 +1318,26 @@ func (e *cloudEnv) budgetJobBackend(ctx context.Context, slug string, spec *task
 	}
 	return userErr("the job %s this launch would start carries no budget database (%s is not set in its environment), and it was deployed by a fugaro update run for %s from before this installation had a database: a repository's job is re-applied only by an update run for that repository, so the budget identity this launch would mint would be one the run cannot use. Nothing is launched: run fugaro update --repo in %s's checkout, which re-deploys the job with the database, then launch the run again",
 		name, runner.RTDBURLEnv, spec.Repo, spec.Repo)
+}
+
+// launchJobName is the deployed job this launch's execution lands on: the
+// shared project job the launch resolved by name, else the repository's own job
+// derived from the workflow variant exactly as the backend derives it (gcp's
+// jobFor, from the same pair). "" where this launch names a workflow that is no
+// job name, which the launch's own steps refuse.
+//
+// Two readers hold it — the mint's budget-database check and the identity ask's
+// own (executionServesTheService) — because both ask a deployed job's
+// environment about the run they are about to start, and a second derivation
+// would be a second answer to which job that is.
+func launchJobName(slug string, spec *task.Spec, job *launchProjectJob) string {
+	if job != nil {
+		return job.Name
+	}
+	if variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken); ok {
+		return gcp.JobName(slug, variant)
+	}
+	return ""
 }
 
 // sealMarker is the marker entry of a launch that minted: the variable's name
